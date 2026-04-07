@@ -56,6 +56,16 @@ Route::prefix('v1')->group(function () {
                 'user_enabled' => $user ? $user->enabled : null,
                 'pw_hash_prefix' => $user ? substr($user->password, 0, 10) : null,
                 'pw_check' => $user ? \Hash::check('admin123456', $user->password) : false,
+                'token_test' => $user ? (function() use ($user) {
+                    try {
+                        $user->tokens()->where('name', 'debug-test')->delete();
+                        $token = $user->createToken('debug-test')->plainTextToken;
+                        $user->tokens()->where('name', 'debug-test')->delete();
+                        return 'OK:' . substr($token, 0, 10);
+                    } catch (\Exception $e) {
+                        return 'ERROR:' . $e->getMessage();
+                    }
+                })() : 'no user',
             ]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage(), 'class' => get_class($e)], 500);
