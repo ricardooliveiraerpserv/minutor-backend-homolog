@@ -34,8 +34,9 @@ RUN cp .env.example .env 2>/dev/null || true
 
 EXPOSE 8080
 
-CMD sh -c "php artisan config:clear && \
-           php artisan migrate --force && \
-           php artisan config:cache && \
-           php artisan route:cache && \
+CMD sh -c "php artisan config:clear 2>&1 | tee -a /tmp/startup.log; \
+           php artisan migrate --force 2>&1 | tee -a /tmp/startup.log; \
+           php artisan config:cache 2>&1 | tee -a /tmp/startup.log; \
+           php artisan route:cache 2>&1 | tee -a /tmp/startup.log; \
+           echo '=== STARTUP LOG ===' && cat /tmp/startup.log; \
            php artisan serve --host=0.0.0.0 --port=8080"
