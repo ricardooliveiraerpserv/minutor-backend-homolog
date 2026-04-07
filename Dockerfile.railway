@@ -34,8 +34,14 @@ RUN cp .env.example .env 2>/dev/null || true
 
 EXPOSE 8080
 
-CMD sh -c "php artisan config:clear && \
-           php artisan migrate --force && \
-           php artisan config:cache && \
-           php artisan route:cache && \
+CMD sh -c "echo '=== DB CONFIG ===' && \
+           echo DB_HOST=\$DB_HOST && \
+           echo DB_PORT=\$DB_PORT && \
+           echo DB_USERNAME=\$DB_USERNAME && \
+           echo DB_CONNECTION=\$DB_CONNECTION && \
+           php -r \"try { \\\$p=new PDO('pgsql:host='\\\$_ENV['DB_HOST'].';port='\\\$_ENV['DB_PORT'].';dbname='\\\$_ENV['DB_DATABASE'],\\\$_ENV['DB_USERNAME'],\\\$_ENV['DB_PASSWORD']); echo 'PDO OK\\n'; } catch(Exception \\\$e){ echo 'PDO ERROR: '.\\\$e->getMessage().'\\n'; }\" && \
+           php artisan config:clear; \
+           php artisan migrate --force; \
+           php artisan config:cache; \
+           php artisan route:cache; \
            php artisan serve --host=0.0.0.0 --port=8080"
