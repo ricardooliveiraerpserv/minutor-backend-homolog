@@ -18,9 +18,9 @@ use Carbon\Carbon;
 
 class MovideskWebhookController extends Controller
 {
-    private function getMovideskToken(): string
+    private function getMovideskToken(): ?string
     {
-        return config('services.movidesk.token');
+        return config('services.movidesk.token') ?: null;
     }
 
     private function getMovideskBaseUrl(): string
@@ -111,7 +111,7 @@ class MovideskWebhookController extends Controller
                 'timestamp' => now()->toIso8601String(),
             ], 200);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('🚨 [MOVIDESK WEBHOOK] Erro', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile(),
