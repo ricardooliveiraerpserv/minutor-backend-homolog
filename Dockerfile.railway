@@ -1,0 +1,41 @@
+FROM php:8.3-cli
+
+WORKDIR /var/www
+
+# Dependências do sistema
+RUN apt-get update && apt-get install -y \
+    git curl libpng-dev libonig-dev libxml2-dev \
+    libzip-dev libpq-dev zip unzip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Extensões PHP (MySQL + PostgreSQL + extras)
+RUN docker-php-ext-install \
+    pdo_mysql pdo_pgsql pgsql \
+    mbstring exif pcntl bcmath gd zip
+
+# Instalar extensão Redis via PECL
+RUN pecl install redis && docker-php-ext-enable redis
+
+# Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Copiar código
+COPY . /var/www
+
+# Instalar dependências PHP
+RUN composer install --no-dev --optimize-autoloader --no-interaction
+
+# Permissões
+RUN chmod -R 775 storage bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache
+
+# Criar .env a partir das variáveis de ambiente em runtime
+RUN cp .env.example .env 2>/dev/null || true
+
+EXPOSE 8080
+
+CMD sh -c "php artisan config:clear && \
+           php artisan migrate --force && \
+           php artisan config:cache && \
+           php artisan route:cache && \
+           php artisan serve --host=0.0.0.0 --port=8080"
