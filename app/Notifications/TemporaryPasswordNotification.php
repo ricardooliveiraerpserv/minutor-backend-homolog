@@ -1,0 +1,61 @@
+<?php
+
+namespace App\Notifications;
+
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Notifications\Messages\MailMessage;
+use Illuminate\Notifications\Notification;
+
+class TemporaryPasswordNotification extends Notification
+{
+    use Queueable;
+
+    protected string $temporaryPassword;
+    protected int $expiresInHours;
+
+    /**
+     * Create a new notification instance.
+     */
+    public function __construct(string $temporaryPassword, int $expiresInHours = 24)
+    {
+        $this->temporaryPassword = $temporaryPassword;
+        $this->expiresInHours = $expiresInHours;
+    }
+
+    /**
+     * Get the notification's delivery channels.
+     *
+     * @return array<int, string>
+     */
+    public function via(object $notifiable): array
+    {
+        return ['mail'];
+    }
+
+    /**
+     * Get the mail representation of the notification.
+     */
+    public function toMail(object $notifiable): MailMessage
+    {
+        return (new MailMessage)
+            ->subject('Nova Senha Temporária - Minutor')
+            ->view('emails.auth.temporary-password', [
+                'notifiable' => $notifiable,
+                'temporaryPassword' => $this->temporaryPassword,
+                'expiresInHours' => $this->expiresInHours
+            ]);
+    }
+
+    /**
+     * Get the array representation of the notification.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(object $notifiable): array
+    {
+        return [
+            //
+        ];
+    }
+}

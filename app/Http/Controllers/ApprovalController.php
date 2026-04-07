@@ -1,0 +1,595 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Expense;
+use App\Models\Timesheet;
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+
+/**
+ * @OA\Tag(
+ *     name="Aprovações",
+ *     description="Endpoints para gerenciar aprovações de timesheets e despesas"
+ * )
+ */
+class ApprovalController extends Controller
+{
+    /**
+     * @OA\Get(
+     *     path="/api/v1/approvals/pending",
+     *     summary="Listar todas as aprovações pendentes do usuário logado",
+     *     description="Retorna timesheets e despesas pendentes de aprovação para o usuário logado",
+     *     tags={"Aprovações"},
+     *     security={{"sanctum": {}}},
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de aprovações pendentes"
+     *     ),
+     *     @OA\Response(
+     *         response=401,
+     *         description="Não autenticado"
+     *     )
+     * )
+     */
+    public function getPendingApprovals(): JsonResponse
+    {
+        $user = Auth::user();
+
+        try {
+            // Buscar timesheets pendentes que o usuário pode aprovar
+            $pendingTimesheets = $this->getPendingTimesheetsForUser($user);
+
+            // Buscar despesas pendentes que o usuário pode aprovar
+            $pendingExpenses = $this->getPendingExpensesForUser($user);
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'timesheets' => $pendingTimesheets,
+                    'expenses' => $pendingExpenses,
+                    'summary' => [
+                        'total_timesheets' => count($pendingTimesheets),
+                        'total_expenses' => count($pendingExpenses),
+                        'total_items' => count($pendingTimesheets) + count($pendingExpenses)
+                    ]
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao buscar aprovações pendentes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/approvals/timesheets",
+     *     summary="Listar timesheets pendentes de aprovação",
+     *     description="Retorna apenas timesheets pendentes de aprovação para o usuário logado",
+     *     tags={"Aprovações"},
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         description="Número da página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=1)
+     *     ),
+     *     @OA\Parameter(
+     *         name="per_page",
+     *         in="query",
+     *         description="Itens por página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=15)
+     *     ),
+     *     @OA\Parameter(
+     *         name="customer_id",
+     *         in="query",
+     *         description="ID do cliente para filtrar",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="project_id",
+     *         in="query",
+     *         description="ID do projeto para filtrar",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="user_id",
+     *         in="query",
+     *         description="ID do usuário para filtrar",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="date_from",
+     *         in="query",
+     *         description="Data inicial (YYYY-MM-DD)",
+     *         required=false,
+     *         @OA\Schema(type="string", format="date")
+     *     ),
+     *     @OA\Parameter(
+     *         name="date_to",
+     *         in="query",
+     *         description="Data final (YYYY-MM-DD)",
+     *         required=false,
+     *         @OA\Schema(type="string", format="date")
+     *     ),
+     *     @OA\Parameter(
+     *         name="service_type_id",
+     *         in="query",
+     *         description="Filtrar por tipo de serviço",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de timesheets pendentes"
+     *     )
+     * )
+     */
+    public function getPendingTimesheets(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $perPage = $request->get('per_page', 15);
+
+        try {
+            $query = $this->buildTimesheetQuery($user, $request);
+
+            $timesheets = $query->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $timesheets->items(),
+                'pagination' => [
+                    'current_page' => $timesheets->currentPage(),
+                    'last_page' => $timesheets->lastPage(),
+                    'per_page' => $timesheets->perPage(),
+                    'total' => $timesheets->total(),
+                    'from' => $timesheets->firstItem(),
+                    'to' => $timesheets->lastItem()
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao buscar timesheets pendentes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/approvals/expenses",
+     *     summary="Listar despesas pendentes de aprovação",
+     *     description="Retorna apenas despesas pendentes de aprovação para o usuário logado",
+     *     tags={"Aprovações"},
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         description="Número da página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=1)
+     *     ),
+     *     @OA\Parameter(
+     *         name="per_page",
+     *         in="query",
+     *         description="Itens por página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=15)
+     *     ),
+     *     @OA\Parameter(
+     *         name="customer_id",
+     *         in="query",
+     *         description="ID do cliente para filtrar",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="project_id",
+     *         in="query",
+     *         description="ID do projeto para filtrar",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="user_id",
+     *         in="query",
+     *         description="ID do usuário para filtrar",
+     *         required=false,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="date_from",
+     *         in="query",
+     *         description="Data inicial (YYYY-MM-DD)",
+     *         required=false,
+     *         @OA\Schema(type="string", format="date")
+     *     ),
+     *     @OA\Parameter(
+     *         name="date_to",
+     *         in="query",
+     *         description="Data final (YYYY-MM-DD)",
+     *         required=false,
+     *         @OA\Schema(type="string", format="date")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de despesas pendentes"
+     *     )
+     * )
+     */
+    public function getPendingExpenses(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $perPage = $request->get('per_page', 15);
+
+        try {
+            $query = $this->buildExpenseQuery($user, $request);
+
+            $expenses = $query->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $expenses->items(),
+                'pagination' => [
+                    'current_page' => $expenses->currentPage(),
+                    'last_page' => $expenses->lastPage(),
+                    'per_page' => $expenses->perPage(),
+                    'total' => $expenses->total(),
+                    'from' => $expenses->firstItem(),
+                    'to' => $expenses->lastItem()
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao buscar despesas pendentes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/approvals/timesheets/bulk-approve",
+     *     summary="Aprovar múltiplos timesheets",
+     *     description="Aprova uma lista de timesheets em lote",
+     *     tags={"Aprovações"},
+     *     security={{"sanctum": {}}},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             @OA\Property(
+     *                 property="timesheet_ids",
+     *                 type="array",
+     *                 @OA\Items(type="integer"),
+     *                 description="IDs dos timesheets a serem aprovados"
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Aprovações processadas com sucesso"
+     *     )
+     * )
+     */
+    public function bulkApproveTimesheets(Request $request): JsonResponse
+    {
+        $request->validate([
+            'timesheet_ids' => 'required|array|min:1',
+            'timesheet_ids.*' => 'integer|exists:timesheets,id'
+        ]);
+
+        $user = Auth::user();
+        $timesheetIds = $request->get('timesheet_ids');
+
+        $results = [
+            'approved' => [],
+            'failed' => [],
+            'errors' => []
+        ];
+
+        DB::beginTransaction();
+
+        try {
+            foreach ($timesheetIds as $timesheetId) {
+                $timesheet = Timesheet::with(['project.approvers'])->find($timesheetId);
+
+                if (!$timesheet) {
+                    $results['failed'][] = $timesheetId;
+                    $results['errors'][] = "Timesheet $timesheetId não encontrado";
+                    continue;
+                }
+
+                if ($timesheet->canBeApprovedBy($user)) {
+                    if ($timesheet->approve($user)) {
+                        $results['approved'][] = $timesheetId;
+                    } else {
+                        $results['failed'][] = $timesheetId;
+                        $results['errors'][] = "Erro ao aprovar timesheet $timesheetId";
+                    }
+                } else {
+                    $results['failed'][] = $timesheetId;
+                    $results['errors'][] = "Sem permissão para aprovar timesheet $timesheetId";
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => sprintf(
+                    'Processamento concluído. %d aprovados, %d falharam',
+                    count($results['approved']),
+                    count($results['failed'])
+                ),
+                'data' => $results
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao processar aprovações em lote',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/approvals/expenses/bulk-approve",
+     *     summary="Aprovar múltiplas despesas",
+     *     description="Aprova uma lista de despesas em lote",
+     *     tags={"Aprovações"},
+     *     security={{"sanctum": {}}},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             @OA\Property(
+     *                 property="expense_ids",
+     *                 type="array",
+     *                 @OA\Items(type="integer"),
+     *                 description="IDs das despesas a serem aprovadas"
+     *             ),
+     *             @OA\Property(
+     *                 property="charge_client",
+     *                 type="boolean",
+     *                 description="Se deve cobrar do cliente (aplicado a todas)",
+     *                 default=false
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Aprovações processadas com sucesso"
+     *     )
+     * )
+     */
+    public function bulkApproveExpenses(Request $request): JsonResponse
+    {
+        $request->validate([
+            'expense_ids' => 'required|array|min:1',
+            'expense_ids.*' => 'integer|exists:expenses,id',
+            'charge_client' => 'boolean'
+        ]);
+
+        $user = Auth::user();
+        $expenseIds = $request->get('expense_ids');
+        $chargeClient = $request->boolean('charge_client', false);
+
+        $results = [
+            'approved' => [],
+            'failed' => [],
+            'errors' => []
+        ];
+
+        DB::beginTransaction();
+
+        try {
+            foreach ($expenseIds as $expenseId) {
+                $expense = Expense::with(['project.approvers'])->find($expenseId);
+
+                if (!$expense) {
+                    $results['failed'][] = $expenseId;
+                    $results['errors'][] = "Despesa $expenseId não encontrada";
+                    continue;
+                }
+
+                // Administradores podem aprovar qualquer despesa
+                if ($user->hasRole('Administrator') || $expense->canBeApprovedBy($user)) {
+                    if ($expense->approve($user, $chargeClient)) {
+                        $results['approved'][] = $expenseId;
+                    } else {
+                        $results['failed'][] = $expenseId;
+                        $results['errors'][] = "Erro ao aprovar despesa $expenseId";
+                    }
+                } else {
+                    $results['failed'][] = $expenseId;
+                    $results['errors'][] = "Sem permissão para aprovar despesa $expenseId";
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => sprintf(
+                    'Processamento concluído. %d aprovadas, %d falharam',
+                    count($results['approved']),
+                    count($results['failed'])
+                ),
+                'data' => $results
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao processar aprovações em lote',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Busca timesheets pendentes que o usuário pode aprovar
+     */
+    private function getPendingTimesheetsForUser(User $user): array
+    {
+        return $this->buildTimesheetQuery($user, null)->limit(50)->get()->toArray();
+    }
+
+    /**
+     * Busca despesas pendentes que o usuário pode aprovar
+     */
+    private function getPendingExpensesForUser(User $user): array
+    {
+        return $this->buildExpenseQuery($user, null)->limit(50)->get()->toArray();
+    }
+
+    /**
+     * Constrói query para timesheets pendentes
+     */
+    private function buildTimesheetQuery(User $user, ?Request $request = null)
+    {
+        $query = Timesheet::with([
+            'user:id,name,email',
+            'customer:id,name',
+            'project:id,name,customer_id',
+            'project.customer:id,name'
+        ])
+        ->where('status', Timesheet::STATUS_PENDING)
+        ->orderBy('date', 'desc')
+        ->orderBy('created_at', 'desc');
+
+        // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
+        if (!$user->hasRole('Administrator')) {
+            $query->whereHas('project.approvers', function ($q) use ($user) {
+                $q->where('users.id', $user->id);
+            });
+        }
+
+        // Aplicar filtros se fornecidos
+        if ($request) {
+            $this->applyTimesheetFilters($query, $request);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Constrói query para despesas pendentes
+     */
+    private function buildExpenseQuery(User $user, ?Request $request = null)
+    {
+        $query = Expense::with([
+            'user:id,name,email',
+            'project:id,name,customer_id',
+            'project.customer:id,name',
+            'category:id,name,parent_id'
+        ])
+        ->whereIn('status', [Expense::STATUS_PENDING, Expense::STATUS_ADJUSTMENT_REQUESTED])
+        ->orderBy('expense_date', 'desc')
+        ->orderBy('created_at', 'desc');
+
+        // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
+        if (!$user->hasRole('Administrator')) {
+            $query->whereHas('project.approvers', function ($q) use ($user) {
+                $q->where('users.id', $user->id);
+            });
+        }
+
+        // Aplicar filtros se fornecidos
+        if ($request) {
+            $this->applyExpenseFilters($query, $request);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Aplica filtros na query de timesheets
+     */
+    private function applyTimesheetFilters($query, Request $request): void
+    {
+        // Filtro por cliente
+        if ($request->filled('customer_id')) {
+            $query->whereHas('project', function ($q) use ($request) {
+                $q->where('customer_id', $request->get('customer_id'));
+            });
+        }
+
+        // Filtro por projeto
+        if ($request->filled('project_id')) {
+            $query->where('project_id', $request->get('project_id'));
+        }
+
+        // Filtro por usuário
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->get('user_id'));
+        }
+
+        // Filtro por tipo de serviço
+        if ($request->filled('service_type_id')) {
+            $query->whereHas('project', function ($q) use ($request) {
+                $q->where('service_type_id', $request->get('service_type_id'));
+            });
+        }
+
+        // Filtro por data (período)
+        if ($request->filled('date_from')) {
+            $query->where('date', '>=', $request->get('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->where('date', '<=', $request->get('date_to'));
+        }
+    }
+
+    /**
+     * Aplica filtros na query de despesas
+     */
+    private function applyExpenseFilters($query, Request $request): void
+    {
+        // Filtro por cliente
+        if ($request->filled('customer_id')) {
+            $query->whereHas('project', function ($q) use ($request) {
+                $q->where('customer_id', $request->get('customer_id'));
+            });
+        }
+
+        // Filtro por projeto
+        if ($request->filled('project_id')) {
+            $query->where('project_id', $request->get('project_id'));
+        }
+
+        // Filtro por usuário
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->get('user_id'));
+        }
+
+        // Filtro por data (período)
+        if ($request->filled('date_from')) {
+            $query->where('expense_date', '>=', $request->get('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->where('expense_date', '<=', $request->get('date_to'));
+        }
+    }
+}

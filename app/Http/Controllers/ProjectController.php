@@ -1,0 +1,1478 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Project;
+use App\Models\Customer;
+use App\Models\ServiceType;
+use App\Models\ContractType;
+use App\Models\User;
+use App\Models\ProjectChangeLog;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\Rule;
+
+/**
+ * @OA\Tag(
+ *     name="Projects",
+ *     description="Gerenciamento de Projetos"
+ * )
+ */
+class ProjectController extends Controller
+{
+    /**
+     * @OA\Get(
+     *     path="/api/v1/projects",
+     *     tags={"Projects"},
+     *     summary="Listar projetos",
+     *     description="Lista projetos com paginação, filtros e ordenação",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer", minimum=1, example=1),
+     *         description="Página (padrão: 1)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="pageSize",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer", minimum=1, maximum=100, example=15),
+     *         description="Registros por página (padrão: 15, máximo: 100)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="search",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="string", example="Website"),
+     *         description="Busca por name, code ou description",
+     *     ),
+     *     @OA\Parameter(
+     *         name="status",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="string", example="started"),
+     *         description="Filtrar por status (active, awaiting_start, started, paused, cancelled, finished)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="customer_id",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer", example=1),
+     *         description="Filtrar por cliente"
+     *     ),
+     *     @OA\Parameter(
+     *         name="approver_id",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer", example=1),
+     *         description="Filtrar por aprovador"
+     *     ),
+     *     @OA\Parameter(
+     *         name="contract_type_name",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="string", example="Banco de Horas Mensal"),
+     *         description="Filtrar por nome do tipo de contrato"
+     *     ),
+     *     @OA\Parameter(
+     *         name="order",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="string", example="name,-created_at"),
+     *         description="Ordenação (ex: name,-created_at)",
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de projetos",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="hasNext", type="boolean", example=true),
+     *             @OA\Property(
+     *                 property="items",
+     *                 type="array",
+     *                 @OA\Items(
+     *                     @OA\Property(property="id", type="integer"),
+     *                     @OA\Property(property="name", type="string"),
+     *                     @OA\Property(property="code", type="string"),
+     *                     @OA\Property(property="description", type="string"),
+     *                     @OA\Property(property="status", type="string"),
+     *                     @OA\Property(property="status_display", type="string"),
+     *                     @OA\Property(property="contract_type", type="string"),
+     *                     @OA\Property(property="contract_type_display", type="string"),
+     *                     @OA\Property(property="customer", type="object"),
+     *                     @OA\Property(property="service_type", type="object"),
+     *                     @OA\Property(property="created_at", type="string"),
+     *                     @OA\Property(property="updated_at", type="string")
+     *                 )
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(response=401, description="Não autenticado"),
+     *     @OA\Response(response=403, description="Sem permissão")
+     * )
+     */
+    public function index(Request $request): JsonResponse
+    {
+        $perPage = min($request->get('pageSize', 15), 100);
+        $search = $request->get('filter') ?? $request->get('search');
+        $status = $request->get('status');
+        $customerId = $request->get('customer_id');
+        $approverId = $request->get('approver_id');
+        $consultantOnly = $request->get('consultant_only');
+        $contractTypeName = $request->get('contract_type_name');
+        $serviceTypeName = $request->get('service_type_name');
+
+        // Eager loading otimizado: carrega relacionamentos e soma de minutos apontados
+        $query = Project::with([
+            'customer',
+            'serviceType',
+            'contractType',
+            'parentProject',
+            // Carrega projetos filhos com contractType (necessário para cálculo de saldo)
+            'childProjects.contractType',
+            // Carrega aportes de horas para cálculos
+            'hourContributions'
+        ])
+        // Carrega a soma de minutos apontados junto com os projetos (evita N+1)
+        // IMPORTANTE: Exclui apontamentos rejeitados
+        ->addSelect([
+            'total_logged_minutes' => DB::table('timesheets')
+                ->selectRaw('COALESCE(SUM(effort_minutes), 0)')
+                ->whereColumn('timesheets.project_id', 'projects.id')
+                ->where('timesheets.status', '!=', 'rejected')
+        ]);
+
+        // Filtrar apenas projetos onde o usuário é consultor (exceto para Administrators)
+        if ($consultantOnly === 'true') {
+            $currentUser = $request->user();
+            $requestedUserId = $request->get('user_id');
+
+            // Determinar qual usuário usar para o filtro
+            $targetUserId = $currentUser->id;
+            $targetUser = $currentUser;
+
+            // Se admin forneceu user_id, usar esse usuário
+            if ($requestedUserId && $currentUser->hasRole('Administrator')) {
+                $targetUserId = $requestedUserId;
+                $targetUser = \App\Models\User::find($targetUserId);
+            }
+
+            // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
+            if ($targetUser && !$targetUser->hasRole('Administrator')) {
+                // $query->whereHas('consultants', function ($q) use ($targetUserId) {
+                //     $q->where('user_id', $targetUserId);
+                // });
+                $query->where(function ($q) use ($targetUserId) {
+                    $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId);
+                    })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId);
+                    });
+                });
+            }
+            // Se o usuário alvo for Administrator, não aplica filtro (vê todos os projetos)
+        }
+
+        // Busca por name, code ou description
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('code', 'like', "%{$search}%")
+                  ->orWhere('description', 'like', "%{$search}%");
+            });
+        }
+
+        // Filtro por status
+        if ($status) {
+            if ($status === 'active') {
+                $query->active(); // Usa o scope Active do modelo
+            } else {
+                $query->where('status', $status);
+            }
+        }
+
+        // Filtro por cliente
+        if ($customerId) {
+            $query->where('customer_id', $customerId);
+        }
+
+        // Filtro por aprovador
+        if ($approverId) {
+            $query->whereHas('approvers', function ($q) use ($approverId) {
+                $q->where('users.id', $approverId);
+            });
+        }
+
+        // Filtro por nome do tipo de contrato
+        if ($contractTypeName) {
+            $query->whereHas('contractType', function ($q) use ($contractTypeName) {
+                $q->where('name', $contractTypeName);
+            });
+        }
+
+        // Filtro por nome do tipo de serviço
+        if ($serviceTypeName) {
+            $query->whereHas('serviceType', function ($q) use ($serviceTypeName) {
+                $q->where('name', $serviceTypeName);
+            });
+        }
+
+        // Filtro para apenas projetos principais (sem parent_project_id)
+        if ($request->get('parent_projects_only') === 'true') {
+            $query->whereNull('parent_project_id');
+        }
+
+        // Excluir projeto específico (útil na edição)
+        if ($request->has('exclude_id')) {
+            $query->where('id', '!=', $request->get('exclude_id'));
+        }
+
+        // Ordenação PO-UI
+        if ($request->has('order')) {
+            $orderFields = explode(',', $request->get('order'));
+            foreach ($orderFields as $field) {
+                if (str_starts_with($field, '-')) {
+                    $query->orderBy(substr($field, 1), 'desc');
+                } else {
+                    $query->orderBy($field, 'asc');
+                }
+            }
+        } else {
+            $query->orderBy('name'); // Ordenação padrão
+        }
+
+        // Paginação PO-UI
+        $page = (int) $request->get('page', 1);
+        $projects = $query->paginate($perPage, ['*'], 'page', $page);
+
+        // Carregar soma de minutos dos projetos filhos em lote (uma única query adicional)
+        // Isso é mais eficiente que fazer N queries individuais
+        $allChildProjectIds = $projects->getCollection()
+            ->flatMap(function ($project) {
+                return $project->childProjects ? $project->childProjects->pluck('id') : collect();
+            })
+            ->unique()
+            ->values();
+
+        // Mapa de ID do projeto filho para total_logged_minutes
+        $childProjectsMinutesMap = [];
+
+        if ($allChildProjectIds->isNotEmpty()) {
+            // Carrega a soma de minutos para todos os projetos filhos de uma vez
+            // IMPORTANTE: Exclui apontamentos rejeitados
+            $childProjectsWithSum = Project::query()
+                ->whereIn('id', $allChildProjectIds)
+                ->addSelect([
+                    'total_logged_minutes' => DB::table('timesheets')
+                        ->selectRaw('COALESCE(SUM(effort_minutes), 0)')
+                        ->whereColumn('timesheets.project_id', 'projects.id')
+                        ->where('timesheets.status', '!=', 'rejected')
+                ])
+                ->get();
+
+            // Criar mapa para acesso rápido
+            foreach ($childProjectsWithSum as $childProject) {
+                $childProjectsMinutesMap[$childProject->id] = $childProject->total_logged_minutes ?? 0;
+            }
+
+            // Atribuir total_logged_minutes aos projetos filhos nos projetos principais
+            $projects->getCollection()->each(function ($project) use ($childProjectsMinutesMap) {
+                if ($project->childProjects) {
+                    $project->childProjects->each(function ($childProject) use ($childProjectsMinutesMap) {
+                        $childProject->total_logged_minutes = $childProjectsMinutesMap[$childProject->id] ?? 0;
+                    });
+                }
+            });
+        }
+
+        // Adicionar atributos computed aos itens
+        $projects->getCollection()->transform(function ($project) {
+            $project->status_display = $project->status_display;
+            $project->contract_type_display = $project->contract_type_display;
+
+            // Calcular saldo de horas de forma otimizada (sem queries adicionais)
+            $project->general_hours_balance = $this->calculateGeneralHoursBalance($project);
+
+            // Adicionar valores calculados de aportes de horas
+            $project->total_available_hours = $project->getTotalAvailableHours();
+            $project->total_project_value = $project->calculateTotalProjectValue();
+            $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
+            $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+            return $project;
+        });
+
+        // Resposta PO-UI
+        return response()->json([
+            'hasNext' => $projects->hasMorePages(),
+            'items' => $projects->items()
+        ]);
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/projects",
+     *     tags={"Projects"},
+     *     summary="Criar projeto",
+     *     description="Cria um novo projeto no sistema",
+     *     security={{"sanctum": {}}},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             required={"name", "code", "customer_id", "service_type_id", "contract_type"},
+     *             @OA\Property(property="name", type="string", example="Website Institucional", description="Nome do projeto"),
+     *             @OA\Property(property="code", type="string", example="WEB-001", description="Código único do projeto"),
+     *             @OA\Property(property="description", type="string", example="Desenvolvimento do website institucional"),
+     *             @OA\Property(property="customer_id", type="integer", example=1, description="ID do cliente"),
+     *             @OA\Property(property="service_type_id", type="integer", example=1, description="ID do tipo de serviço"),
+                  *             @OA\Property(property="contract_type_id", type="integer", example=1, description="ID do tipo de contrato"),
+     *             @OA\Property(property="project_value", type="number", example=50000.00, description="Valor do projeto"),
+     *             @OA\Property(property="hourly_rate", type="number", example=150.00, description="Valor da hora"),
+     *             @OA\Property(property="sold_hours", type="integer", example=200, description="Horas vendidas"),
+     *             @OA\Property(property="hour_contribution", type="integer", example=20, description="Aporte de horas"),
+     *             @OA\Property(property="exceeded_hour_contribution", type="integer", example=10, description="Aporte de horas excedidas"),
+     *             @OA\Property(property="additional_hourly_rate", type="number", example=180.00, description="Valor de horas adicionais"),
+     *             @OA\Property(property="start_date", type="string", format="date", example="2024-01-15", description="Data de início"),
+     *             @OA\Property(property="save_erpserv", type="number", example=0.00, description="Valor Save ERPSERV"),
+     *             @OA\Property(property="max_expense_per_consultant", type="number", example=500.00, description="Valor máximo de despesa por consultor"),
+     *             @OA\Property(property="expense_responsible_party", type="string", example="consultancy", description="Responsável pelas despesas (consultancy/client)"),
+     *             @OA\Property(property="consultant_ids", type="array", @OA\Items(type="integer"), example={1,2}, description="IDs dos consultores"),
+     *             @OA\Property(property="approver_ids", type="array", @OA\Items(type="integer"), example={3}, description="IDs dos aprovadores")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=201,
+     *         description="Projeto criado com sucesso",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="id", type="integer"),
+     *             @OA\Property(property="name", type="string"),
+     *             @OA\Property(property="code", type="string"),
+     *             @OA\Property(property="status", type="string"),
+     *             @OA\Property(property="customer", type="object"),
+     *             @OA\Property(property="service_type", type="object"),
+     *             @OA\Property(property="consultants", type="array", @OA\Items(type="object")),
+     *             @OA\Property(property="approvers", type="array", @OA\Items(type="object"))
+     *         )
+     *     ),
+     *     @OA\Response(response=422, description="Dados de validação inválidos"),
+     *     @OA\Response(response=401, description="Não autenticado"),
+     *     @OA\Response(response=403, description="Sem permissão")
+     * )
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:255|min:2',
+            'code' => 'required|string|max:50|unique:projects,code',
+            'description' => 'nullable|string|max:2000',
+            'customer_id' => 'required|exists:customers,id',
+            'parent_project_id' => 'nullable|exists:projects,id',
+            'service_type_id' => 'required|exists:service_types,id',
+                        'contract_type_id' => 'required|exists:contract_types,id',
+            'project_value' => 'nullable|numeric|min:0|max:999999999.99',
+            'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'sold_hours' => 'nullable|integer|min:0|max:999999',
+            'hour_contribution' => 'nullable|integer|min:0|max:999999',
+            'exceeded_hour_contribution' => 'nullable|integer|min:0|max:999999',
+            'initial_hours_balance' => 'nullable|numeric|min:-999999|max:999999',
+            'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
+            'consultant_hours' => 'nullable|integer|min:0|max:999999',
+            'coordinator_hours' => 'nullable|integer|min:0|max:999999',
+            'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'start_date' => 'nullable|date',
+            'save_erpserv' => 'nullable|numeric|min:0|max:999999999.99',
+            'max_expense_per_consultant' => 'nullable|numeric|min:0|max:999999999.99',
+            'unlimited_expense' => 'nullable|boolean',
+            'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
+            'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
+            'allow_manual_timesheets' => 'nullable|boolean',
+            'status' => ['nullable', Rule::in(array_keys(Project::getStatuses()))],
+            'consultant_ids' => 'nullable|array',
+            'consultant_ids.*' => 'exists:users,id',
+            'approver_ids' => 'nullable|array',
+            'approver_ids.*' => 'exists:users,id',
+        ], [
+            'name.required' => 'O nome é obrigatório',
+            'name.max' => 'O nome não pode ter mais de 255 caracteres',
+            'name.min' => 'O nome deve ter pelo menos 2 caracteres',
+            'code.required' => 'O código é obrigatório',
+            'code.unique' => 'Este código já está sendo usado por outro projeto',
+            'customer_id.required' => 'O cliente é obrigatório',
+            'customer_id.exists' => 'Cliente não encontrado',
+            'parent_project_id.exists' => 'Projeto pai não encontrado',
+            'service_type_id.required' => 'O tipo de serviço é obrigatório',
+            'service_type_id.exists' => 'Tipo de serviço não encontrado',
+                        'contract_type_id.required' => 'O tipo de contrato é obrigatório',
+            'contract_type_id.exists' => 'Tipo de contrato inválido',
+            'timesheet_retroactive_limit_days.integer' => 'O prazo deve ser um número inteiro',
+            'timesheet_retroactive_limit_days.min' => 'O prazo não pode ser negativo',
+            'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
+            'status.in' => 'Status inválido',
+        ]);
+
+        // Validar que o projeto pai não é um subprojeto (evitar múltiplos níveis)
+        if (isset($validated['parent_project_id'])) {
+            $parentProject = Project::find($validated['parent_project_id']);
+            if ($parentProject && $parentProject->isSubProject()) {
+                return response()->json([
+                    'code' => 'INVALID_PARENT_PROJECT',
+                    'type' => 'error',
+                    'message' => 'Projeto pai inválido',
+                    'detailMessage' => 'O projeto pai não pode ser um subprojeto. Selecione um projeto principal.'
+                ], 422);
+            }
+
+            // Validar horas vendidas + aportes do subprojeto
+            $subProjectSoldHours = $validated['sold_hours'] ?? 0;
+            $subProjectHourContribution = $validated['hour_contribution'] ?? 0;
+            $subProjectTotalHours = $subProjectSoldHours + $subProjectHourContribution;
+
+            if ($subProjectTotalHours > 0) {
+                $availableHours = $this->calculateAvailableHours($parentProject);
+
+                if ($subProjectTotalHours > $availableHours) {
+                    return response()->json([
+                        'code' => 'INVALID_SOLD_HOURS',
+                        'type' => 'error',
+                        'message' => 'Horas inválidas',
+                        'detailMessage' => "O subprojeto não pode ter mais horas (vendidas + aportes: {$subProjectTotalHours}h) do que as horas disponíveis no projeto pai ({$availableHours}h)."
+                    ], 422);
+                }
+            }
+        }
+
+        // Separar relacionamentos
+        $consultantIds = $validated['consultant_ids'] ?? [];
+        $approverIds = $validated['approver_ids'] ?? [];
+        unset($validated['consultant_ids'], $validated['approver_ids']);
+
+        $project = Project::create($validated);
+
+        // Vincular consultores
+        if (!empty($consultantIds)) {
+            $project->consultants()->attach($consultantIds);
+        }
+
+        // Vincular aprovadores
+        if (!empty($approverIds)) {
+            $project->approvers()->attach($approverIds);
+        }
+
+        // Recarregar com relacionamentos
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'approvers', 'parentProject']);
+
+        // Adicionar atributos computed
+        $project->status_display = $project->status_display;
+        $project->contract_type_display = $project->contract_type_display;
+
+        return response()->json($project, 201);
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/projects/{id}",
+     *     tags={"Projects"},
+     *     summary="Exibir projeto específico",
+     *     description="Retorna os dados de um projeto específico",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="integer"),
+     *         description="ID do projeto"
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Dados do projeto",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="id", type="integer"),
+     *             @OA\Property(property="name", type="string"),
+     *             @OA\Property(property="code", type="string"),
+     *             @OA\Property(property="description", type="string"),
+     *             @OA\Property(property="status", type="string"),
+     *             @OA\Property(property="contract_type", type="string"),
+     *             @OA\Property(property="project_value", type="number"),
+     *             @OA\Property(property="customer", type="object"),
+     *             @OA\Property(property="service_type", type="object"),
+     *             @OA\Property(property="consultants", type="array", @OA\Items(type="object")),
+     *             @OA\Property(property="approvers", type="array", @OA\Items(type="object"))
+     *         )
+     *     ),
+     *     @OA\Response(response=404, description="Projeto não encontrado"),
+     *     @OA\Response(response=401, description="Não autenticado"),
+     *     @OA\Response(response=403, description="Sem permissão")
+     * )
+     */
+    public function show(Project $project): JsonResponse
+    {
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'approvers', 'parentProject', 'childProjects', 'hourContributions']);
+
+        // Adicionar atributos computed
+        $project->status_display = $project->status_display;
+        $project->contract_type_display = $project->contract_type_display;
+
+        // Adicionar saldo de horas geral calculado
+        $project->general_hours_balance = $project->getGeneralHoursBalance(false);
+
+        // Adicionar valores calculados de aportes de horas
+        $project->total_available_hours = $project->getTotalAvailableHours();
+        $project->total_project_value = $project->calculateTotalProjectValue();
+        $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
+        $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+        return response()->json($project);
+    }
+
+    /**
+     * @OA\Put(
+     *     path="/api/v1/projects/{id}",
+     *     tags={"Projects"},
+     *     summary="Atualizar projeto",
+     *     description="Atualiza os dados de um projeto específico",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="integer"),
+     *         description="ID do projeto"
+     *     ),
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             @OA\Property(property="name", type="string", example="Website Institucional v2"),
+     *             @OA\Property(property="description", type="string", example="Nova versão do website"),
+     *             @OA\Property(property="status", type="string", example="started"),
+     *             @OA\Property(property="consultant_ids", type="array", @OA\Items(type="integer")),
+     *             @OA\Property(property="approver_ids", type="array", @OA\Items(type="integer"))
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Projeto atualizado com sucesso",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="id", type="integer"),
+     *             @OA\Property(property="name", type="string"),
+     *             @OA\Property(property="code", type="string"),
+     *             @OA\Property(property="status", type="string")
+     *         )
+     *     ),
+     *     @OA\Response(response=422, description="Dados de validação inválidos"),
+     *     @OA\Response(response=404, description="Projeto não encontrado"),
+     *     @OA\Response(response=401, description="Não autenticado"),
+     *     @OA\Response(response=403, description="Sem permissão")
+     * )
+     */
+    public function update(Request $request, Project $project): JsonResponse
+    {
+        // Verificar se projeto pode ser editado
+        if (!$project->canBeEdited()) {
+            return response()->json([
+                'code' => 'PROJECT_FINISHED',
+                'type' => 'error',
+                'message' => 'Projeto finalizado não pode ser editado',
+                'detailMessage' => 'Este projeto já foi finalizado e não pode mais ser modificado'
+            ], 422);
+        }
+
+        $validated = $request->validate([
+            'name' => 'sometimes|string|max:255|min:2',
+            'code' => 'sometimes|string|max:50|unique:projects,code,' . $project->id,
+            'description' => 'nullable|string|max:2000',
+            'customer_id' => 'sometimes|exists:customers,id',
+            'parent_project_id' => 'nullable|exists:projects,id',
+            'service_type_id' => 'sometimes|exists:service_types,id',
+            'contract_type_id' => 'sometimes|exists:contract_types,id',
+            'status' => ['sometimes', Rule::in(array_keys(Project::getStatuses()))],
+            'project_value' => 'nullable|numeric|min:0|max:999999999.99',
+            'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'sold_hours' => 'nullable|integer|min:0|max:999999',
+            'hour_contribution' => 'nullable|integer|min:0|max:999999',
+            'exceeded_hour_contribution' => 'nullable|integer|min:0|max:999999',
+            'initial_hours_balance' => 'nullable|numeric|min:-999999|max:999999',
+            'initial_cost' => 'nullable|numeric|min:0|max:999999999.99',
+            'consultant_hours' => 'nullable|integer|min:0|max:999999',
+            'coordinator_hours' => 'nullable|integer|min:0|max:999999',
+            'additional_hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'start_date' => 'nullable|date',
+            'save_erpserv' => 'nullable|numeric|min:0|max:999999999.99',
+            'max_expense_per_consultant' => 'nullable|numeric|min:0|max:999999999.99',
+            'unlimited_expense' => 'nullable|boolean',
+            'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
+            'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
+            'allow_manual_timesheets' => 'nullable|boolean',
+            'consultant_ids' => 'nullable|array',
+            'consultant_ids.*' => 'exists:users,id',
+            'approver_ids' => 'nullable|array',
+            'approver_ids.*' => 'exists:users,id',
+        ], [
+            'name.max' => 'O nome não pode ter mais de 255 caracteres',
+            'name.min' => 'O nome deve ter pelo menos 2 caracteres',
+            'code.unique' => 'Este código já está sendo usado por outro projeto',
+            'customer_id.exists' => 'Cliente não encontrado',
+            'parent_project_id.exists' => 'Projeto pai não encontrado',
+            'service_type_id.exists' => 'Tipo de serviço não encontrado',
+            'timesheet_retroactive_limit_days.integer' => 'O prazo deve ser um número inteiro',
+            'timesheet_retroactive_limit_days.min' => 'O prazo não pode ser negativo',
+            'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
+        ]);
+
+        // Validações de parent_project_id
+        if (isset($validated['parent_project_id'])) {
+            // Não pode ser pai de si mesmo
+            if ($validated['parent_project_id'] === $project->id) {
+                return response()->json([
+                    'code' => 'INVALID_PARENT_PROJECT',
+                    'type' => 'error',
+                    'message' => 'Projeto pai inválido',
+                    'detailMessage' => 'Um projeto não pode ser pai de si mesmo.'
+                ], 422);
+            }
+
+            // O projeto pai não pode ser um subprojeto (evitar múltiplos níveis)
+            $parentProject = Project::find($validated['parent_project_id']);
+            if ($parentProject && $parentProject->isSubProject()) {
+                return response()->json([
+                    'code' => 'INVALID_PARENT_PROJECT',
+                    'type' => 'error',
+                    'message' => 'Projeto pai inválido',
+                    'detailMessage' => 'O projeto pai não pode ser um subprojeto. Selecione um projeto principal.'
+                ], 422);
+            }
+
+            // Se o projeto tem filhos, não pode se tornar um subprojeto
+            if ($project->hasChildProjects()) {
+                return response()->json([
+                    'code' => 'PROJECT_HAS_CHILDREN',
+                    'type' => 'error',
+                    'message' => 'Operação não permitida',
+                    'detailMessage' => 'Este projeto possui subprojetos e não pode se tornar um subprojeto.'
+                ], 422);
+            }
+
+            // Validar horas vendidas + aporte de horas do subprojeto
+            $newSoldHours = $validated['sold_hours'] ?? $project->sold_hours;
+            $newHourContribution = $validated['hour_contribution'] ?? $project->hour_contribution;
+            $newSubProjectTotalHours = $newSoldHours + $newHourContribution;
+
+            if ($newSubProjectTotalHours > 0) {
+                // Usar calculateAvailableHours que já retorna o saldo disponível excluindo o projeto filho atual
+                // Segue a mesma lógica de $excludeProjectId: adiciona de volta o que foi subtraído do projeto filho
+                $availableHours = $this->calculateAvailableHours($parentProject, $project->id);
+
+                if ($newSubProjectTotalHours > $availableHours) {
+                    return response()->json([
+                        'code' => 'INVALID_SOLD_HOURS',
+                        'type' => 'error',
+                        'message' => 'Horas inválidas',
+                        'detailMessage' => "O subprojeto não pode ter mais horas (vendidas + aporte: {$newSubProjectTotalHours}h) do que as horas disponíveis no projeto pai ({$availableHours}h)."
+                    ], 422);
+                }
+            }
+        }
+
+        // Se o projeto é pai e está mudando sold_hours ou hour_contribution, validar que não fica menor que soma dos filhos
+        if (!isset($validated['parent_project_id']) && (isset($validated['sold_hours']) || isset($validated['hour_contribution']))) {
+            // Garantir que o tipo de contrato do projeto e dos filhos esteja carregado
+            $project->loadMissing('contractType', 'childProjects.contractType');
+
+            // === Horas efetivas do projeto pai ===
+            $parentBaseSoldHours = $validated['sold_hours'] ?? $project->sold_hours ?? 0;
+            $parentHourContribution = $validated['hour_contribution'] ?? $project->hour_contribution ?? 0;
+
+            $parentEffectiveSoldHours = $parentBaseSoldHours;
+
+            if ($project->isBankHoursMonthly()) {
+                // Para Banco de Horas Mensal, multiplicar pela quantidade de meses ativos
+                $startDateValue = $validated['start_date'] ?? $project->start_date;
+
+                if ($startDateValue) {
+                    $startDate = Carbon::parse($startDateValue);
+
+                    if (!$startDate->isFuture()) {
+                        $endDate = Carbon::now();
+                        $startMonth = $startDate->copy()->startOfMonth();
+                        $endMonth = $endDate->copy()->startOfMonth();
+                        $monthsDiff = $startMonth->diffInMonths($endMonth);
+                        // Incluir o mês corrente
+                        $totalMonths = $monthsDiff + 1;
+
+                        $parentEffectiveSoldHours = $parentBaseSoldHours * $totalMonths;
+                    } else {
+                        // Data de início no futuro: considerar 0 horas acumuladas
+                        $parentEffectiveSoldHours = 0;
+                    }
+                } else {
+                    // Sem data de início: considerar apenas 1 mês ativo
+                    $parentEffectiveSoldHours = $parentBaseSoldHours;
+                }
+            }
+
+            $parentTotalHours = $parentEffectiveSoldHours + $parentHourContribution;
+
+            // === Soma das horas efetivas dos filhos ===
+            $childrenTotalHours = 0;
+            $childProjects = $project->childProjects()->get();
+
+            foreach ($childProjects as $childProject) {
+                if ($childProject->isBankHoursMonthly()) {
+                    // Para Banco de Horas Mensal, usar accumulated_sold_hours se já calculado; fallback para sold_hours
+                    $childSoldHours = $childProject->accumulated_sold_hours ?? $childProject->sold_hours ?? 0;
+                } else {
+                    $childSoldHours = $childProject->sold_hours ?? 0;
+                }
+
+                $childHourContribution = $childProject->hour_contribution ?? 0;
+                $childrenTotalHours += ($childSoldHours + $childHourContribution);
+            }
+
+            if ($parentTotalHours < $childrenTotalHours) {
+                return response()->json([
+                    'code' => 'INVALID_SOLD_HOURS',
+                    'type' => 'error',
+                    'message' => 'Horas inválidas',
+                    'detailMessage' => "O projeto pai não pode ter menos horas (vendidas + aporte: {$parentTotalHours}h) do que a soma das horas (vendidas + aporte) dos subprojetos ({$childrenTotalHours}h)."
+                ], 422);
+            }
+        }
+
+        // Separar relacionamentos
+        $consultantIds = $validated['consultant_ids'] ?? null;
+        $approverIds = $validated['approver_ids'] ?? null;
+        unset($validated['consultant_ids'], $validated['approver_ids']);
+
+        // Tratar campos nullable explicitamente - se foram enviados como null ou string vazia, garantir que sejam null
+        // Isso permite limpar campos que antes tinham valores
+        // Verifica se o campo foi enviado na requisição (mesmo que seja null ou vazio)
+        if ($request->has('max_expense_per_consultant')) {
+            $maxExpenseValue = $request->input('max_expense_per_consultant');
+            // Se foi enviado como null, string vazia, ou 0, definir como null
+            if ($maxExpenseValue === null || $maxExpenseValue === '' || $maxExpenseValue === '0' || $maxExpenseValue === 0) {
+                $validated['max_expense_per_consultant'] = null;
+            }
+        }
+
+        $project->update($validated);
+
+        // Garantir que accumulated_sold_hours está atualizado para Banco de Horas Mensal
+        // O Observer já faz isso, mas garantimos aqui também para casos especiais
+        // Recarregar contractType para garantir que está disponível
+        if (!$project->relationLoaded('contractType') && $project->contract_type_id) {
+            $project->load('contractType');
+        }
+        
+        if ($project->isBankHoursMonthly()) {
+            $project->updateAccumulatedSoldHours(null, true);
+        }
+
+        // Atualizar consultores se fornecido
+        if ($consultantIds !== null) {
+            $project->consultants()->sync($consultantIds);
+        }
+
+        // Atualizar aprovadores se fornecido
+        if ($approverIds !== null) {
+            $project->approvers()->sync($approverIds);
+        }
+
+        // Recarregar com relacionamentos
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'approvers']);
+
+        // Adicionar atributos computed
+        $project->status_display = $project->status_display;
+        $project->contract_type_display = $project->contract_type_display;
+
+        return response()->json($project);
+    }
+
+    /**
+     * @OA\Delete(
+     *     path="/api/v1/projects/{id}",
+     *     tags={"Projects"},
+     *     summary="Deletar projeto",
+     *     description="Remove um projeto do sistema (soft delete)",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="integer"),
+     *         description="ID do projeto"
+     *     ),
+     *     @OA\Response(response=204, description="Projeto deletado com sucesso"),
+     *     @OA\Response(
+     *         response=422,
+     *         description="Projeto possui apontamentos vinculados e não pode ser deletado",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="code", type="string", example="PROJECT_HAS_TIMESHEETS"),
+     *             @OA\Property(property="type", type="string", example="error"),
+     *             @OA\Property(property="message", type="string", example="Não é possível excluir o projeto pois existem apontamentos vinculados."),
+     *             @OA\Property(property="detailMessage", type="string", example="Exclua ou remova os apontamentos vinculados antes de tentar excluir o projeto.")
+     *         )
+     *     ),
+     *     @OA\Response(response=404, description="Projeto não encontrado"),
+     *     @OA\Response(response=401, description="Não autenticado"),
+     *     @OA\Response(response=403, description="Sem permissão")
+     * )
+     */
+    public function destroy(Project $project): JsonResponse
+    {
+        // Verificar se existem timesheets (apontamentos) vinculados ao projeto
+        if ($project->timesheets()->exists()) {
+            return response()->json([
+                'code' => 'PROJECT_HAS_TIMESHEETS',
+                'type' => 'error',
+                'message' => 'Não é possível excluir o projeto pois existem apontamentos vinculados.',
+                'detailMessage' => 'Exclua ou remova os apontamentos vinculados antes de tentar excluir o projeto.'
+            ], 422);
+        }
+
+        $project->delete();
+
+        return response()->json(null, 204);
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/projects/{id}/cost-summary",
+     *     tags={"Projects"},
+     *     summary="Obter resumo de custos do projeto",
+     *     description="Retorna informações detalhadas de custos e horas do projeto",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="integer", example=1),
+     *         description="ID do projeto"
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Resumo de custos do projeto",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="project_info", type="object",
+     *                 @OA\Property(property="id", type="integer"),
+     *                 @OA\Property(property="name", type="string"),
+     *                 @OA\Property(property="code", type="string"),
+     *                 @OA\Property(property="project_value", type="number"),
+     *                 @OA\Property(property="hourly_rate", type="number"),
+     *                 @OA\Property(property="sold_hours", type="integer"),
+     *                 @OA\Property(property="hour_contribution", type="integer"),
+     *                 @OA\Property(property="exceeded_hour_contribution", type="integer")
+     *             ),
+     *             @OA\Property(property="hours_summary", type="object",
+     *                 @OA\Property(property="total_logged_hours", type="number"),
+     *                 @OA\Property(property="approved_hours", type="number"),
+     *                 @OA\Property(property="pending_hours", type="number"),
+     *                 @OA\Property(property="remaining_hours", type="number"),
+     *                 @OA\Property(property="hours_percentage", type="number")
+     *             ),
+     *             @OA\Property(property="cost_calculation", type="object",
+     *                 @OA\Property(property="total_cost", type="number"),
+     *                 @OA\Property(property="approved_cost", type="number"),
+     *                 @OA\Property(property="pending_cost", type="number"),
+     *                 @OA\Property(property="margin", type="number"),
+     *                 @OA\Property(property="margin_percentage", type="number")
+     *             ),
+     *             @OA\Property(property="consultant_breakdown", type="array",
+     *                 @OA\Items(type="object",
+     *                     @OA\Property(property="consultant_name", type="string"),
+     *                     @OA\Property(property="total_hours", type="number"),
+     *                     @OA\Property(property="approved_hours", type="number"),
+     *                     @OA\Property(property="pending_hours", type="number"),
+     *                     @OA\Property(property="cost", type="number")
+     *                 )
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=404,
+     *         description="Projeto não encontrado"
+     *     )
+     * )
+     */
+    public function costSummary(Project $project): JsonResponse
+    {
+        // Carregar dados relacionados do projeto principal
+        $project->load(['timesheets.user', 'consultants', 'childProjects.timesheets.user', 'childProjects.contractType']);
+
+        // Informações básicas do projeto
+        $projectInfo = [
+            'id' => $project->id,
+            'name' => $project->name,
+            'code' => $project->code,
+            'project_value' => $project->project_value,
+            'hourly_rate' => $project->hourly_rate,
+            'sold_hours' => $project->sold_hours,
+            'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
+            'exceeded_hour_contribution' => $project->exceeded_hour_contribution,
+            'initial_hours_balance' => $project->initial_hours_balance,
+            'initial_cost' => $project->initial_cost,
+            'has_child_projects' => $project->hasChildProjects(),
+            // ✨ Novos campos calculados usando hour_contributions table
+            'total_available_hours' => $project->getTotalAvailableHours(),
+            'total_project_value' => $project->calculateTotalProjectValue(),
+            'weighted_hourly_rate' => $project->getWeightedAverageHourlyRate(),
+            'total_contributions_hours' => $project->hourContributions()->sum('contributed_hours') ?? 0,
+        ];
+
+        // Calcular horas do projeto principal
+        $parentLoggedMinutes = $project->timesheets->sum('effort_minutes');
+        $parentApprovedMinutes = $project->timesheets->where('status', 'approved')->sum('effort_minutes');
+        $parentPendingMinutes = $project->timesheets->where('status', 'pending')->sum('effort_minutes');
+
+        // Calcular horas dos projetos filhos
+        $childLoggedMinutes = 0;
+        $childApprovedMinutes = 0;
+        $childPendingMinutes = 0;
+        $childProjectsBreakdown = [];
+
+        foreach ($project->childProjects as $childProject) {
+            $childTotalMinutes = $childProject->timesheets->sum('effort_minutes');
+            $childApproved = $childProject->timesheets->where('status', 'approved')->sum('effort_minutes');
+            $childPending = $childProject->timesheets->where('status', 'pending')->sum('effort_minutes');
+
+            $childLoggedMinutes += $childTotalMinutes;
+            $childApprovedMinutes += $childApproved;
+            $childPendingMinutes += $childPending;
+
+            // Calcular saldo consumido baseado no tipo de contrato
+            $childProject->loadMissing('contractType');
+            $isClosedContract = $childProject->contractType &&
+                                strtolower(trim($childProject->contractType->name)) === 'fechado';
+
+            if ($isClosedContract) {
+                // Para contratos fechados: saldo consumido = total de horas disponíveis (inclui aportes novos + fallback legado)
+                $consumedBalance = $childProject->getTotalAvailableHours();
+            } else {
+                // Para outros tipos: saldo consumido = total de horas apontadas
+                $consumedBalance = round($childTotalMinutes / 60, 2);
+            }
+
+            $childProjectsBreakdown[] = [
+                'id' => $childProject->id,
+                'name' => $childProject->name,
+                'code' => $childProject->code,
+                'total_hours' => round($childTotalMinutes / 60, 2),
+                'approved_hours' => round($childApproved / 60, 2),
+                'pending_hours' => round($childPending / 60, 2),
+                'consumed_balance' => round($consumedBalance, 2),
+            ];
+        }
+
+        // Totais combinados (projeto pai + filhos)
+        $totalLoggedMinutes = $parentLoggedMinutes + $childLoggedMinutes;
+        $approvedMinutes = $parentApprovedMinutes + $childApprovedMinutes;
+        $pendingMinutes = $parentPendingMinutes + $childPendingMinutes;
+
+        $totalLoggedHours = round($totalLoggedMinutes / 60, 2);
+        $approvedHours = round($approvedMinutes / 60, 2);
+        $pendingHours = round($pendingMinutes / 60, 2);
+
+        $soldHours = $project->sold_hours ?? 0;
+        // Usar método auxiliar para obter total disponível (inclui aportes novos + fallback legado)
+        $totalAvailableHours = $project->getTotalAvailableHours();
+
+        $remainingHours = max(0, $soldHours - $totalLoggedHours);
+        // Calcular percentual considerando o total disponível (horas vendidas + aportes)
+        $hoursPercentage = $totalAvailableHours > 0 ? round(($totalLoggedHours / $totalAvailableHours) * 100, 2) : 0;
+
+        // Calcular saldo real disponível usando getGeneralHoursBalance (considera lógica de contratos fechados)
+        $generalBalance = $project->getGeneralHoursBalance();
+
+        $hoursSummary = [
+            'total_logged_hours' => $totalLoggedHours,
+            'approved_hours' => $approvedHours,
+            'pending_hours' => $pendingHours,
+            'remaining_hours' => $remainingHours, // Mantido para compatibilidade (cálculo simples)
+            'general_balance' => round($generalBalance, 2), // Saldo real disponível calculado
+            'total_available_hours' => round($totalAvailableHours, 2), // Horas vendidas + aporte de horas
+            'hours_percentage' => $hoursPercentage,
+            'parent_project_hours' => round($parentLoggedMinutes / 60, 2),
+            'child_projects_hours' => round($childLoggedMinutes / 60, 2),
+        ];
+
+        // Calcular custos usando o valor/hora próprio de cada consultor
+        $totalCost = 0;
+        $approvedCost = 0;
+        $pendingCost = 0;
+
+        // Quebra por consultor (incluindo horas de projetos filhos)
+        $consultantBreakdown = [];
+
+        // Coletar todos os timesheets (do projeto pai e dos filhos)
+        $allTimesheets = collect($project->timesheets);
+        foreach ($project->childProjects as $childProject) {
+            // Adicionar informação do projeto filho aos timesheets
+            foreach ($childProject->timesheets as $timesheet) {
+                $timesheet->child_project_name = $childProject->name;
+                $timesheet->child_project_code = $childProject->code;
+            }
+            $allTimesheets = $allTimesheets->merge($childProject->timesheets);
+        }
+
+        $timesheetsByUser = $allTimesheets->groupBy('user_id');
+
+        foreach ($timesheetsByUser as $userId => $userTimesheets) {
+            $user = $userTimesheets->first()->user;
+            $userTotalMinutes = $userTimesheets->sum('effort_minutes');
+            $userApprovedMinutes = $userTimesheets->where('status', 'approved')->sum('effort_minutes');
+            $userPendingMinutes = $userTimesheets->where('status', 'pending')->sum('effort_minutes');
+
+            $userTotalHours = round($userTotalMinutes / 60, 2);
+            $userApprovedHours = round($userApprovedMinutes / 60, 2);
+            $userPendingHours = round($userPendingMinutes / 60, 2);
+
+            // Calcular o valor/hora efetivo do consultor:
+            // - rate_type = 'hourly': usa hourly_rate diretamente
+            // - rate_type = 'monthly': divide hourly_rate por 180 (horas mensais convencionadas)
+            // - sem hourly_rate: assume 0
+            $userHourlyRate = (float) ($user->hourly_rate ?? 0);
+            $rateType = $user->rate_type ?? 'hourly';
+            $effectiveHourlyRate = ($rateType === 'monthly' && $userHourlyRate > 0)
+                ? round($userHourlyRate / 180, 4)
+                : $userHourlyRate;
+
+            $userCost = round($userTotalHours * $effectiveHourlyRate, 2);
+            $userApprovedCost = round($userApprovedHours * $effectiveHourlyRate, 2);
+            $userPendingCost = round($userPendingHours * $effectiveHourlyRate, 2);
+
+            $totalCost += $userCost;
+            $approvedCost += $userApprovedCost;
+            $pendingCost += $userPendingCost;
+
+            // Detalhar horas por projeto (pai e filhos)
+            $projectsBreakdown = [];
+
+            // Horas do projeto pai
+            $parentUserTimesheets = $userTimesheets->filter(function ($ts) use ($project) {
+                return $ts->project_id === $project->id;
+            });
+
+            if ($parentUserTimesheets->count() > 0) {
+                $parentUserHours = round($parentUserTimesheets->sum('effort_minutes') / 60, 2);
+                $projectsBreakdown[] = [
+                    'project_name' => $project->name . ' (Principal)',
+                    'project_code' => $project->code,
+                    'hours' => $parentUserHours,
+                    'hourly_rate' => $effectiveHourlyRate,
+                ];
+            }
+
+            // Horas dos projetos filhos
+            foreach ($project->childProjects as $childProject) {
+                $childUserTimesheets = $userTimesheets->filter(function ($ts) use ($childProject) {
+                    return $ts->project_id === $childProject->id;
+                });
+
+                if ($childUserTimesheets->count() > 0) {
+                    $childUserHours = round($childUserTimesheets->sum('effort_minutes') / 60, 2);
+                    $projectsBreakdown[] = [
+                        'project_name' => $childProject->name . ' (Subprojeto)',
+                        'project_code' => $childProject->code,
+                        'hours' => $childUserHours,
+                        'hourly_rate' => $effectiveHourlyRate,
+                    ];
+                }
+            }
+
+            $consultantBreakdown[] = [
+                'consultant_name' => $user->name,
+                'total_hours' => $userTotalHours,
+                'approved_hours' => $userApprovedHours,
+                'pending_hours' => $userPendingHours,
+                'cost' => $userCost,
+                'consultant_hourly_rate' => $effectiveHourlyRate,
+                'consultant_rate_type' => $rateType,
+                'projects_breakdown' => $projectsBreakdown,
+            ];
+        }
+
+        $projectValue = $project->project_value ?? 0;
+        $margin = $projectValue - $totalCost;
+        $marginPercentage = $projectValue > 0 ? round(($margin / $projectValue) * 100, 2) : 0;
+
+        $costCalculation = [
+            'total_cost' => round($totalCost, 2),
+            'approved_cost' => round($approvedCost, 2),
+            'pending_cost' => round($pendingCost, 2),
+            'margin' => round($margin, 2),
+            'margin_percentage' => $marginPercentage,
+        ];
+
+        return response()->json([
+            'project_info' => $projectInfo,
+            'hours_summary' => $hoursSummary,
+            'cost_calculation' => $costCalculation,
+            'consultant_breakdown' => $consultantBreakdown,
+            'child_projects_summary' => $childProjectsBreakdown,
+        ]);
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/projects/enum-values",
+     *     tags={"Projects"},
+     *     summary="Obter valores dos enums",
+     *     description="Retorna os valores possíveis para enums de projetos",
+     *     security={{"sanctum": {}}},
+     *     @OA\Response(
+     *         response=200,
+     *         description="Valores dos enums",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="contract_types", type="object"),
+     *             @OA\Property(property="statuses", type="object"),
+     *             @OA\Property(property="expense_responsible_parties", type="object")
+     *         )
+     *     )
+     * )
+     */
+    public function enumValues(): JsonResponse
+    {
+        return response()->json([
+            'contract_types' => ContractType::getActiveOptions(),
+            'statuses' => Project::getStatuses(),
+            'expense_responsible_parties' => Project::getExpenseResponsiblePartyOptions(),
+        ]);
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/projects/{id}/available-hours",
+     *     tags={"Projects"},
+     *     summary="Obter horas disponíveis de um projeto pai",
+     *     description="Retorna quantas horas ainda estão disponíveis em um projeto pai para alocar em subprojetos",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="integer"),
+     *         description="ID do projeto pai"
+     *     ),
+     *     @OA\Parameter(
+     *         name="exclude_id",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer"),
+     *         description="ID do projeto a excluir do cálculo (útil na edição)"
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Horas disponíveis",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="parent_sold_hours", type="integer", example=100),
+     *             @OA\Property(property="children_total_hours", type="integer", example=60),
+     *             @OA\Property(property="available_hours", type="integer", example=40)
+     *         )
+     *     ),
+     *     @OA\Response(response=404, description="Projeto não encontrado")
+     * )
+     */
+    public function availableHours(Request $request, Project $project): JsonResponse
+    {
+        $excludeProjectId = $request->get('exclude_id');
+
+        // Obter o saldo geral do projeto (já inclui todos os filhos com a lógica correta)
+        $generalBalance = $project->getGeneralHoursBalance();
+
+        // Calcular saldo excluindo o projeto filho específico (se fornecido)
+        $availableBalance = $generalBalance;
+
+        if ($excludeProjectId) {
+            $excludedProject = $project->childProjects()->find($excludeProjectId);
+
+            if ($excludedProject) {
+                // Carregar contractType se necessário
+                $excludedProject->loadMissing('contractType');
+
+                // Verificar se o projeto excluído tem contract_type com name = "Fechado"
+                $isClosedContract = $excludedProject->contractType &&
+                                    strtolower(trim($excludedProject->contractType->name)) === 'fechado';
+
+                if ($isClosedContract) {
+                    // Para contratos fechados: foi subtraído (horas vendidas + aporte de horas)
+                    $excludedSoldHours = $excludedProject->sold_hours ?? 0;
+                    $excludedHourContribution = $excludedProject->hour_contribution ?? 0;
+                    $availableBalance += ($excludedSoldHours + $excludedHourContribution);
+                } else {
+                    // Para outros tipos: foi subtraído pelas horas apontadas
+                    $excludedLoggedHours = $excludedProject->getTotalLoggedHours(false);
+                    $availableBalance += $excludedLoggedHours;
+                }
+            }
+        }
+
+        // Calcular informações adicionais para o retorno
+        $parentSoldHours = $project->sold_hours ?? 0;
+        $parentTotalLoggedHours = $project->getTotalLoggedHours(false);
+        
+        // Usar método auxiliar para obter total disponível (inclui aportes novos + fallback legado)
+        $totalAvailable = $project->getTotalAvailableHours();
+
+        return response()->json([
+            'parent_sold_hours' => $parentSoldHours,
+            'parent_hour_contribution' => $project->hour_contribution ?? 0,  // @deprecated - mantido para compatibilidade
+            'parent_total_available' => $totalAvailable,
+            'parent_total_logged_hours' => round($parentTotalLoggedHours, 2),
+            'general_balance' => round($generalBalance, 2),
+            'available_balance' => max(0, round($availableBalance, 2)),
+            // ✨ Novos campos calculados usando hour_contributions table
+            'parent_total_contributions_hours' => $project->hourContributions()->sum('contributed_hours') ?? 0,
+            'parent_weighted_hourly_rate' => $project->getWeightedAverageHourlyRate(),
+        ]);
+    }
+
+    /**
+     * Calcula as horas disponíveis em um projeto pai para subprojetos
+     *
+     * Utiliza o método getGeneralHoursBalance do modelo Project para calcular o saldo,
+     * que já considera a lógica especial para contratos fechados.
+     *
+     * @param Project $parentProject Projeto pai
+     * @param int|null $excludeProjectId ID do projeto a excluir do cálculo (útil na edição)
+     * @return int Horas disponíveis
+     */
+    private function calculateAvailableHours(Project $parentProject, ?int $excludeProjectId = null): int
+    {
+        // Obter o saldo geral do projeto pai (já inclui todos os filhos)
+        $balance = $parentProject->getGeneralHoursBalance();
+
+        // Se há um projeto filho para excluir, adicionar de volta o que foi subtraído dele
+        if ($excludeProjectId) {
+            $excludedProject = $parentProject->childProjects()->find($excludeProjectId);
+
+            if ($excludedProject) {
+                // Carregar contractType se necessário
+                $excludedProject->loadMissing('contractType');
+
+                // Verificar se o projeto excluído tem contract_type com name = "Fechado"
+                $isClosedContract = $excludedProject->contractType &&
+                                    strtolower(trim($excludedProject->contractType->name)) === 'fechado';
+
+                if ($isClosedContract) {
+                    // Para contratos fechados: foi subtraído (horas vendidas + aportes)
+                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                    $excludedTotalHours = $excludedProject->getTotalAvailableHours();
+                    $balance += $excludedTotalHours;
+                } else {
+                    // Para outros tipos: foi subtraído pelas horas apontadas
+                    $excludedLoggedHours = $excludedProject->getTotalLoggedHours(false);
+                    $balance += $excludedLoggedHours;
+                }
+            }
+        }
+
+        // Retornar como int (arredondado) e garantir que não seja negativo
+        return max(0, (int) round($balance));
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/projects/{project}/change-history",
+     *     tags={"Projects"},
+     *     summary="Histórico de alterações do projeto",
+     *     description="Lista o histórico de alterações de dados sensíveis do projeto (valores, horas e políticas de despesas)",
+     *     security={{"sanctum": {}}},
+     *     @OA\Parameter(
+     *         name="project",
+     *         in="path",
+     *         required=true,
+     *         @OA\Schema(type="integer", example=1),
+     *         description="ID do projeto"
+     *     ),
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer", minimum=1, example=1),
+     *         description="Página (padrão: 1)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="pageSize",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="integer", minimum=1, maximum=100, example=20),
+     *         description="Registros por página (padrão: 20)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="order",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="string", example="-created_at"),
+     *         description="Ordenação (ex: -created_at para mais recentes primeiro)"
+     *     ),
+     *     @OA\Parameter(
+     *         name="field_name",
+     *         in="query",
+     *         required=false,
+     *         @OA\Schema(type="string", example="project_value"),
+     *         description="Filtrar por campo alterado (ex: project_value, hourly_rate, sold_hours, etc.)"
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Histórico de alterações",
+     *         @OA\JsonContent(
+     *             @OA\Property(property="hasNext", type="boolean", example=false),
+     *             @OA\Property(
+     *                 property="items",
+     *                 type="array",
+     *                 @OA\Items(
+     *                     @OA\Property(property="id", type="integer"),
+     *                     @OA\Property(property="project_id", type="integer"),
+     *                     @OA\Property(property="changed_by", type="integer"),
+     *                     @OA\Property(property="field_name", type="string"),
+     *                     @OA\Property(property="field_label", type="string"),
+     *                     @OA\Property(property="old_value", type="string"),
+     *                     @OA\Property(property="new_value", type="string"),
+     *                     @OA\Property(property="old_value_formatted", type="string"),
+     *                     @OA\Property(property="new_value_formatted", type="string"),
+     *                     @OA\Property(property="reason", type="string", nullable=true),
+     *                     @OA\Property(property="created_at", type="string", format="date-time"),
+     *                     @OA\Property(
+     *                         property="changed_by_user",
+     *                         type="object",
+     *                         @OA\Property(property="id", type="integer"),
+     *                         @OA\Property(property="name", type="string"),
+     *                         @OA\Property(property="email", type="string")
+     *                     )
+     *                 )
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(response=401, description="Não autenticado"),
+     *     @OA\Response(response=403, description="Sem permissão"),
+     *     @OA\Response(response=404, description="Projeto não encontrado")
+     * )
+     */
+    public function changeHistory(Request $request, Project $project): JsonResponse
+    {
+        // Preparar query base
+        $query = ProjectChangeLog::query()
+            ->where('project_id', $project->id)
+            ->with('changedByUser:id,name,email');
+
+        // Filtro por campo alterado
+        if ($request->has('field_name') && $request->get('field_name') !== 'all' && $request->get('field_name') !== null) {
+            $query->where('field_name', $request->get('field_name'));
+        }
+
+        // Ordenação
+        $orderField = 'created_at';
+        $orderDirection = 'desc';
+
+        if ($request->has('order')) {
+            $orderParam = $request->get('order');
+            if (str_starts_with($orderParam, '-')) {
+                $orderField = substr($orderParam, 1);
+                $orderDirection = 'desc';
+            } else {
+                $orderField = $orderParam;
+                $orderDirection = 'asc';
+            }
+        }
+
+        $query->orderBy($orderField, $orderDirection);
+
+        // Paginação
+        $pageSize = min((int)$request->get('pageSize', 20), 100);
+        $page = (int)$request->get('page', 1);
+
+        $logs = $query->paginate($pageSize, ['*'], 'page', $page);
+
+        // Formatar os registros
+        $items = $logs->map(function ($log) {
+            return $log->toFormattedArray();
+        });
+
+        return response()->json([
+            'hasNext' => $logs->hasMorePages(),
+            'items' => $items
+        ]);
+    }
+
+    /**
+     * Calcula o saldo geral de horas do projeto de forma otimizada
+     * usando dados já carregados (evita N+1 queries)
+     *
+     * Replica a lógica de getGeneralHoursBalance mas usando:
+     * - total_logged_minutes (carregado via withSum, já excluindo rejeitados)
+     * - childProjects já carregados com suas somas
+     * - accumulated_sold_hours para Banco de Horas Mensal
+     *
+     * @param Project $project Projeto com dados já carregados
+     * @return float Saldo geral em horas
+     */
+    private function calculateGeneralHoursBalance(Project $project): float
+    {
+        // Carregar contractType se necessário
+        if (!$project->relationLoaded('contractType') && $project->contract_type_id) {
+            $project->load('contractType');
+        }
+
+        // Para Banco de Horas Mensal, usar accumulated_sold_hours; caso contrário, usar sold_hours
+        if ($project->isBankHoursMonthly()) {
+            $soldHours = $project->accumulated_sold_hours ?? $project->sold_hours ?? 0;
+        } else {
+            $soldHours = $project->sold_hours ?? 0;
+        }
+        
+        // Usar método auxiliar para obter aportes (novos + fallback legado)
+        $totalAvailableHours = $project->getTotalAvailableHours();
+        $contributionHours = $totalAvailableHours - ($project->sold_hours ?? 0);
+
+        // Converter minutos apontados para horas (dados já carregados via withSum, excluindo rejeitados)
+        $totalLoggedMinutes = $project->total_logged_minutes ?? 0;
+        $totalLoggedHours = round($totalLoggedMinutes / 60, 2);
+
+        // Calcular saldo base do projeto atual
+        // IMPORTANTE: Para Banco de Horas Mensal, soldHours já é accumulated_sold_hours
+        $initialBalance = (float) ($project->initial_hours_balance ?? 0);
+        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance;
+
+        // Sempre incluir projetos filhos no cálculo (se existirem)
+        if ($project->relationLoaded('childProjects') && $project->childProjects->isNotEmpty()) {
+            foreach ($project->childProjects as $childProject) {
+                // Verificar se o projeto filho é do tipo "Fechado"
+                $isClosedContract = $childProject->contractType &&
+                                    strtolower(trim($childProject->contractType->name)) === 'fechado';
+
+                if ($isClosedContract) {
+                    // Para contratos fechados: subtrair (horas vendidas + aportes) do projeto filho
+                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                    $childTotalHours = $childProject->getTotalAvailableHours();
+                    $balance -= $childTotalHours;
+                } elseif ($childProject->isBankHoursMonthly()) {
+                    // Para Banco de Horas Mensal: usar accumulated_sold_hours no cálculo
+                    $childSoldHours = $childProject->accumulated_sold_hours ?? $childProject->sold_hours ?? 0;
+                    
+                    // Calcular aportes usando método auxiliar
+                    $childTotalAvailable = $childProject->getTotalAvailableHours();
+                    $childContributionHours = $childTotalAvailable - ($childProject->sold_hours ?? 0);
+                    
+                    // Calcular horas apontadas do filho (já excluindo rejeitados via withSum)
+                    $childLoggedMinutes = $childProject->total_logged_minutes ?? 0;
+                    $childLoggedHours = round($childLoggedMinutes / 60, 2);
+                    
+                    // Subtrair o saldo do filho: (accumulated_sold_hours + aportes + saldo inicial) - horas apontadas
+                    $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
+                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
+                    $balance -= $childBalance;
+                } else {
+                    // Para outros tipos: subtrair normalmente pelas horas apontadas (já excluindo rejeitados)
+                    $childLoggedMinutes = $childProject->total_logged_minutes ?? 0;
+                    $childLoggedHours = round($childLoggedMinutes / 60, 2);
+                    $balance -= $childLoggedHours;
+                }
+            }
+        }
+
+        return round($balance, 2);
+    }
+}

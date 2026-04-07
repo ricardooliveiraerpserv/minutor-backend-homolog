@@ -1,0 +1,1156 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Controllers\Controller;
+use App\Models\User;
+use App\Models\UserHourlyRateLog;
+use App\Http\Traits\ResponseHelpers;
+use App\Traits\PasswordGenerator;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Spatie\Permission\Models\Role;
+use App\Notifications\TemporaryPasswordNotification;
+use App\Notifications\WelcomeNotification;
+
+/**
+ * @OA\Tag(
+ *     name="Users",
+ *     description="API endpoints para gerenciamento de usuários"
+ * )
+ */
+
+/**
+ * @OA\Schema(
+ *     schema="User",
+ *     type="object",
+ *     title="User",
+ *     description="Modelo de usuário",
+ *     @OA\Property(property="id", type="integer", example=1),
+ *     @OA\Property(property="name", type="string", example="João Silva"),
+ *     @OA\Property(property="email", type="string", format="email", example="joao@email.com"),
+ *     @OA\Property(property="email_verified_at", type="string", format="datetime", nullable=true, example="2024-01-15T10:30:00Z"),
+ *     @OA\Property(property="created_at", type="string", format="datetime", example="2024-01-15T09:00:00Z"),
+ *     @OA\Property(property="updated_at", type="string", format="datetime", example="2024-01-15T09:00:00Z"),
+ *     @OA\Property(
+ *         property="roles",
+ *         type="array",
+ *         @OA\Items(
+ *             type="object",
+ *             @OA\Property(property="id", type="integer", example=1),
+ *             @OA\Property(property="name", type="string", example="Administrator"),
+ *             @OA\Property(property="guard_name", type="string", example="web")
+ *         )
+ *     )
+ * )
+ */
+class UserController extends Controller
+{
+    use ResponseHelpers, PasswordGenerator;
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/users",
+     *     summary="Listar usuários",
+     *     description="Lista usuários com paginação, filtros e ordenação seguindo padrões PO-UI",
+     *     operationId="getUsers",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         description="Número da página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=1)
+     *     ),
+     *     @OA\Parameter(
+     *         name="pageSize",
+     *         in="query",
+     *         description="Itens por página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=20)
+     *     ),
+     *     @OA\Parameter(
+     *         name="order",
+     *         in="query",
+     *         description="Ordenação (ex: name,-created_at)",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="search",
+     *         in="query",
+     *         description="Busca no nome ou email",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Parameter(
+     *         name="status",
+     *         in="query",
+     *         description="Filtrar por status (active ou inactive)",
+     *         required=false,
+     *         @OA\Schema(type="string", enum={"active","inactive"})
+     *     ),
+     *     @OA\Parameter(
+     *         name="role",
+     *         in="query",
+     *         description="Filtrar por papel",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de usuários",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="hasNext", type="boolean"),
+     *             @OA\Property(property="items", type="array", @OA\Items(ref="#/components/schemas/User"))
+     *         )
+     *     )
+     * )
+     */
+    public function index(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $pageSize = min((int) $request->get('pageSize', 20), 100);
+        $page = (int) $request->get('page', 1);
+
+        $query = User::with(['roles', 'customer']);
+
+        // Se não é admin nem tem permissão para ver todos, só pode ver próprio perfil
+        if (!$user->hasRole('Administrator') && !$user->can('users.view_all')) {
+            $query->where('id', $user->id);
+        }
+
+        // Filtros
+        $search = $request->get('filter') ?? $request->get('search');
+        if (!empty($search)) {
+            $query->where(function($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('role')) {
+            $query->whereHas('roles', function($q) use ($request) {
+                $q->where('name', $request->role);
+            });
+        }
+
+        // Filtro por status (ativo/inativo) usando campo enabled
+        $status = $request->get('status');
+        if ($status === 'active') {
+            $query->where('enabled', true);
+        } elseif ($status === 'inactive') {
+            $query->where('enabled', false);
+        }
+
+        // Ordenação padrão PO-UI
+        $orderFields = $request->get('order', 'name');
+        if ($orderFields) {
+            $fields = explode(',', $orderFields);
+            foreach ($fields as $field) {
+                $direction = 'asc';
+                if (str_starts_with($field, '-')) {
+                    $direction = 'desc';
+                    $field = substr($field, 1);
+                }
+
+                $allowedFields = ['name', 'email', 'created_at', 'updated_at'];
+                if (in_array($field, $allowedFields)) {
+                    $query->orderBy($field, $direction);
+                }
+            }
+        }
+
+        $users = $query->paginate($pageSize, ['*'], 'page', $page);
+
+        // Adicionar tipos de dashboard permitidos para cada usuário
+        $items = collect($users->items())->map(function ($user) {
+            $userData = $user->toArray();
+            $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            return $userData;
+        })->toArray();
+
+        // Resposta no padrão PO-UI
+        return response()->json([
+            'hasNext' => $users->hasMorePages(),
+            'items' => $items
+        ]);
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/users",
+     *     summary="Criar novo usuário",
+     *     description="Cria um novo usuário no sistema com senha gerada automaticamente e enviada por email",
+     *     operationId="createUser",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             type="object",
+     *             required={"name", "email"},
+     *             @OA\Property(property="name", type="string", example="João Silva"),
+     *             @OA\Property(property="email", type="string", format="email", example="joao@email.com"),
+     *             @OA\Property(property="enabled", type="boolean", example=true, description="Indica se o usuário está ativo (padrão: true)"),
+     *             @OA\Property(property="hourly_rate", type="number", format="float", example=50.00, description="Valor hora do usuário"),
+     *             @OA\Property(property="rate_type", type="string", enum={"hourly", "monthly"}, example="hourly", description="Tipo de rate (hora ou mês)"),
+     *             @OA\Property(
+     *                 property="roles",
+     *                 type="array",
+     *                 description="IDs dos papéis a serem atribuídos",
+     *                 @OA\Items(type="integer")
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=201,
+     *         description="Usuário criado com sucesso. Senha temporária enviada por email.",
+     *         @OA\JsonContent(ref="#/components/schemas/User")
+     *     )
+     * )
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'enabled' => 'sometimes|boolean',
+            'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'rate_type' => 'nullable|in:hourly,monthly',
+            'customer_id' => 'nullable|exists:customers,id',
+            'dashboard_types' => 'nullable|array',
+            'dashboard_types.*' => 'string|in:bank_hours_fixed',
+            'roles' => 'nullable|array',
+            'roles.*' => 'exists:roles,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        DB::beginTransaction();
+        try {
+            $userData = $validator->validated();
+
+            // Gerar senha temporária automaticamente
+            $temporaryPassword = $this->generateTemporaryPassword();
+
+            // Remover roles e dashboard_types dos dados do usuário
+            $roles = $userData['roles'] ?? [];
+            $dashboardTypes = $userData['dashboard_types'] ?? [];
+            unset($userData['roles'], $userData['dashboard_types']);
+
+            // Definir senha temporária nos dados do usuário
+            $userData['password'] = Hash::make($temporaryPassword);
+
+            // Criar usuário
+            $user = User::create($userData);
+
+            // Marcar como senha temporária (expira em 24 horas)
+            $user->setTemporaryPassword($temporaryPassword, 24);
+
+            // Atribuir papéis se fornecidos e se o usuário tem permissão
+            if (!empty($roles) && (Auth::user()->hasRole('Administrator') || Auth::user()->can('users.manage_roles'))) {
+                $roleNames = Role::whereIn('id', $roles)->pluck('name')->toArray();
+                $user->assignRole($roleNames);
+            }
+
+            // Sincronizar tipos de dashboard permitidos
+            if (!empty($dashboardTypes)) {
+                $user->syncDashboardTypes($dashboardTypes);
+            }
+
+            // Enviar email de boas-vindas com a senha temporária
+            $user->notify(new WelcomeNotification($temporaryPassword));
+
+            DB::commit();
+
+            $user->load(['roles', 'customer']);
+
+            // Adicionar tipos de dashboard permitidos na resposta
+            $userData = $user->toArray();
+            $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+
+            \Log::info('✅ [USER CREATED] Usuário criado com sucesso:', [
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'customer_id' => $user->customer_id,
+                'dashboard_types' => $userData['dashboard_types'],
+                'temporary_password_sent' => true
+            ]);
+
+            return response()->json($userData, 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('🚨 [USER CREATED] Erro ao criar usuário:', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            return $this->serverErrorResponse('Erro ao criar usuário: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/users/{id}",
+     *     summary="Visualizar usuário específico",
+     *     description="Retorna detalhes de um usuário específico",
+     *     operationId="getUser",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         description="ID do usuário",
+     *         required=true,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Detalhes do usuário",
+     *         @OA\JsonContent(ref="#/components/schemas/User")
+     *     )
+     * )
+     */
+    public function show(int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+
+        $user = User::with(['roles', 'customer'])->find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        // Verificar se pode visualizar este usuário
+        if (!$currentUser->hasRole('Administrator') &&
+            !$currentUser->can('users.view_all') &&
+            $user->id !== $currentUser->id) {
+            return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
+        }
+
+        // Adicionar tipos de dashboard permitidos na resposta
+        $userData = $user->toArray();
+        $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+
+        return response()->json($userData);
+    }
+
+    /**
+     * @OA\Put(
+     *     path="/api/v1/users/{id}",
+     *     summary="Atualizar usuário",
+     *     description="Atualiza um usuário existente",
+     *     operationId="updateUser",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         description="ID do usuário",
+     *         required=true,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="name", type="string", example="João Silva"),
+     *             @OA\Property(property="email", type="string", format="email", example="joao@email.com"),
+     *             @OA\Property(property="password", type="string", format="password", example="newpassword123"),
+     *             @OA\Property(property="password_confirmation", type="string", format="password", example="newpassword123"),
+     *             @OA\Property(property="enabled", type="boolean", example=true, description="Indica se o usuário está ativo"),
+     *             @OA\Property(
+     *                 property="roles",
+     *                 type="array",
+     *                 description="IDs dos papéis a serem atribuídos",
+     *                 @OA\Items(type="integer")
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Usuário atualizado com sucesso",
+     *         @OA\JsonContent(ref="#/components/schemas/User")
+     *     )
+     * )
+     */
+    public function update(Request $request, int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        // Verificar permissões
+        $canUpdateAll = $currentUser->hasRole('Administrator') || $currentUser->can('users.update');
+        $canUpdateOwnProfile = $currentUser->can('users.update_own_profile') && $user->id === $currentUser->id;
+
+        if (!$canUpdateAll && !$canUpdateOwnProfile) {
+            return $this->accessDeniedResponse('Você não tem permissão para atualizar este usuário');
+        }
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'email' => ['sometimes', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
+            'password' => 'sometimes|string|min:8|confirmed',
+            'enabled' => 'sometimes|boolean',
+            'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
+            'rate_type' => 'nullable|in:hourly,monthly',
+            'customer_id' => 'nullable|exists:customers,id',
+            'dashboard_types' => 'sometimes|array',
+            'dashboard_types.*' => 'string|in:bank_hours_fixed',
+            'roles' => 'sometimes|array',
+            'roles.*' => 'exists:roles,id',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        DB::beginTransaction();
+        try {
+            $updateData = $validator->validated();
+
+            // Verificar se houve alteração no valor hora para criar log
+            $hourlyRateChanged = false;
+            $oldHourlyRate = $user->hourly_rate;
+            $oldRateType = $user->rate_type;
+
+            if (isset($updateData['hourly_rate']) && $updateData['hourly_rate'] != $oldHourlyRate) {
+                $hourlyRateChanged = true;
+            }
+
+            if (isset($updateData['rate_type']) && $updateData['rate_type'] != $oldRateType) {
+                $hourlyRateChanged = true;
+            }
+
+            // Hash da senha se fornecida
+            if (isset($updateData['password'])) {
+                $updateData['password'] = Hash::make($updateData['password']);
+            }
+
+            // Remover campos desnecessários
+            $roles = $updateData['roles'] ?? null;
+            $dashboardTypes = $updateData['dashboard_types'] ?? null;
+            unset($updateData['roles'], $updateData['dashboard_types'], $updateData['password_confirmation']);
+
+            $user->update($updateData);
+
+            // Criar log se houve alteração no valor hora
+            if ($hourlyRateChanged) {
+                UserHourlyRateLog::create([
+                    'user_id' => $user->id,
+                    'changed_by' => $currentUser->id,
+                    'old_hourly_rate' => $oldHourlyRate,
+                    'new_hourly_rate' => $updateData['hourly_rate'] ?? null,
+                    'old_rate_type' => $oldRateType,
+                    'new_rate_type' => $updateData['rate_type'] ?? null,
+                    'reason' => $request->input('rate_change_reason'),
+                ]);
+            }
+
+            // Atualizar papéis se fornecidos e se tem permissão
+            if (!is_null($roles) && ($currentUser->hasRole('Administrator') || $currentUser->can('users.manage_roles'))) {
+                $roleNames = Role::whereIn('id', $roles)->pluck('name')->toArray();
+                $user->syncRoles($roleNames);
+            }
+
+            // Sincronizar tipos de dashboard se fornecidos
+            if (!is_null($dashboardTypes)) {
+                $user->syncDashboardTypes($dashboardTypes);
+            }
+
+            DB::commit();
+
+            $user->load(['roles', 'customer']);
+
+            // Adicionar tipos de dashboard permitidos na resposta
+            $userData = $user->toArray();
+            $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+
+            return response()->json($userData);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro ao atualizar usuário: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @OA\Delete(
+     *     path="/api/v1/users/{id}",
+     *     summary="Excluir usuário",
+     *     description="Exclui um usuário do sistema",
+     *     operationId="deleteUser",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         description="ID do usuário",
+     *         required=true,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Response(
+     *         response=204,
+     *         description="Usuário excluído com sucesso"
+     *     )
+     * )
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        // Não pode excluir próprio usuário
+        if ($user->id === $currentUser->id) {
+            return $this->businessRuleResponse(
+                'CANNOT_DELETE_SELF',
+                'Não é possível excluir próprio usuário',
+                'Você não pode excluir sua própria conta'
+            );
+        }
+
+        // Verificar permissões
+        if (!$currentUser->hasRole('Administrator') && !$currentUser->can('users.delete')) {
+            return $this->accessDeniedResponse('Você não tem permissão para excluir usuários');
+        }
+
+        // Não pode excluir último administrador
+        if ($user->hasRole('Administrator')) {
+            $adminCount = User::role('Administrator')->count();
+            if ($adminCount <= 1) {
+                return $this->businessRuleResponse(
+                    'CANNOT_DELETE_LAST_ADMIN',
+                    'Não é possível excluir último administrador',
+                    'Deve existir pelo menos um administrador no sistema'
+                );
+            }
+        }
+
+        DB::beginTransaction();
+        try {
+            // Remover papéis antes de excluir
+            $user->roles()->detach();
+            $user->delete();
+
+            DB::commit();
+
+            return response()->json(null, 204);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro ao excluir usuário: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/users/{id}/reset-password",
+     *     summary="Resetar senha do usuário",
+     *     description="Gera uma nova senha temporária para o usuário e envia por email",
+     *     operationId="resetUserPassword",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         description="ID do usuário",
+     *         required=true,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Senha temporária enviada por email",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="message", type="string", example="Senha temporária enviada para o email do usuário")
+     *         )
+     *     )
+     * )
+     */
+    public function resetPassword(int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        // Verificar permissões
+        if (!$currentUser->hasRole('Administrator') && !$currentUser->can('users.reset_password')) {
+            return $this->accessDeniedResponse('Você não tem permissão para resetar senhas');
+        }
+
+        DB::beginTransaction();
+        try {
+            // Gerar senha temporária
+            $temporaryPassword = $this->generateTemporaryPassword();
+
+            // Definir senha temporária (expira em 24 horas)
+            $user->setTemporaryPassword($temporaryPassword, 24);
+
+            // Enviar email com a senha temporária
+            $user->notify(new TemporaryPasswordNotification($temporaryPassword, 24));
+
+            DB::commit();
+
+            return response()->json([
+                'message' => 'Senha temporária enviada para o email do usuário'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro ao resetar senha: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/users/profile",
+     *     summary="Perfil do usuário atual",
+     *     description="Retorna o perfil do usuário autenticado",
+     *     operationId="getUserProfile",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Response(
+     *         response=200,
+     *         description="Perfil do usuário",
+     *         @OA\JsonContent(ref="#/components/schemas/User")
+     *     )
+     * )
+     */
+    public function profile(): JsonResponse
+    {
+        $user = Auth::user();
+        $user->load(['roles']);
+
+        return response()->json($user);
+    }
+
+    /**
+     * @OA\Put(
+     *     path="/api/v1/users/profile",
+     *     summary="Atualizar próprio perfil",
+     *     description="Permite ao usuário atualizar seu próprio perfil",
+     *     operationId="updateUserProfile",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="name", type="string", example="João Silva"),
+     *             @OA\Property(property="email", type="string", format="email", example="joao@email.com"),
+     *             @OA\Property(property="current_password", type="string", format="password", example="currentpass"),
+     *             @OA\Property(property="password", type="string", format="password", example="newpassword123"),
+     *             @OA\Property(property="password_confirmation", type="string", format="password", example="newpassword123")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Perfil atualizado com sucesso",
+     *         @OA\JsonContent(ref="#/components/schemas/User")
+     *     )
+     * )
+     */
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+
+        $validator = Validator::make($request->all(), [
+            'name' => 'sometimes|string|max:255',
+            'email' => ['sometimes', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
+            'current_password' => 'required_with:password|string',
+            'password' => 'sometimes|string|min:8|confirmed',
+        ]);
+
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        $updateData = $validator->validated();
+
+        // Verificar senha atual se está tentando alterar a senha
+        if (isset($updateData['password'])) {
+            if (!Hash::check($updateData['current_password'], $user->password)) {
+                return $this->businessRuleResponse(
+                    'INVALID_CURRENT_PASSWORD',
+                    'Senha atual incorreta',
+                    'A senha atual fornecida não confere'
+                );
+            }
+            $updateData['password'] = Hash::make($updateData['password']);
+        }
+
+        // Remover campos desnecessários
+        unset($updateData['current_password'], $updateData['password_confirmation']);
+
+        try {
+            $user->update($updateData);
+            $user->load(['roles']);
+
+            return response()->json($user);
+
+        } catch (\Exception $e) {
+            return $this->serverErrorResponse('Erro ao atualizar perfil: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/users/{id}/hourly-rate-history",
+     *     summary="Histórico de alterações de valor hora",
+     *     description="Retorna o histórico de alterações do valor hora de um usuário",
+     *     operationId="getUserHourlyRateHistory",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="id",
+     *         in="path",
+     *         description="ID do usuário",
+     *         required=true,
+     *         @OA\Schema(type="integer")
+     *     ),
+     *     @OA\Parameter(
+     *         name="page",
+     *         in="query",
+     *         description="Número da página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=1)
+     *     ),
+     *     @OA\Parameter(
+     *         name="pageSize",
+     *         in="query",
+     *         description="Itens por página",
+     *         required=false,
+     *         @OA\Schema(type="integer", default=20)
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Histórico de alterações",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="hasNext", type="boolean"),
+     *             @OA\Property(
+     *                 property="items",
+     *                 type="array",
+     *                 @OA\Items(
+     *                     type="object",
+     *                     @OA\Property(property="id", type="integer"),
+     *                     @OA\Property(property="old_hourly_rate", type="number", nullable=true),
+     *                     @OA\Property(property="new_hourly_rate", type="number", nullable=true),
+     *                     @OA\Property(property="old_rate_type", type="string", enum={"hourly", "monthly"}),
+     *                     @OA\Property(property="new_rate_type", type="string", enum={"hourly", "monthly"}),
+     *                     @OA\Property(property="reason", type="string", nullable=true),
+     *                     @OA\Property(property="created_at", type="string", format="datetime"),
+     *                     @OA\Property(
+     *                         property="changed_by",
+     *                         type="object",
+     *                         @OA\Property(property="id", type="integer"),
+     *                         @OA\Property(property="name", type="string"),
+     *                         @OA\Property(property="email", type="string")
+     *                     )
+     *                 )
+     *             )
+     *         )
+     *     )
+     * )
+     */
+    public function getHourlyRateHistory(Request $request, int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        // Verificar se pode visualizar este usuário
+        if (!$currentUser->hasRole('Administrator') &&
+            !$currentUser->can('users.view_all') &&
+            $user->id !== $currentUser->id) {
+            return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
+        }
+
+        $pageSize = min((int) $request->get('pageSize', 20), 100);
+        $page = (int) $request->get('page', 1);
+
+        $query = $user->hourlyRateLogs()
+            ->with(['changedBy:id,name,email']);
+
+        // Ordenação PO-UI
+        if ($request->has('order')) {
+            $orderFields = explode(',', $request->get('order'));
+            foreach ($orderFields as $field) {
+                $direction = 'asc';
+                if (str_starts_with($field, '-')) {
+                    $direction = 'desc';
+                    $field = substr($field, 1);
+                }
+
+                $allowedFields = ['created_at', 'old_hourly_rate', 'new_hourly_rate'];
+                if (in_array($field, $allowedFields)) {
+                    $query->orderBy($field, $direction);
+                }
+            }
+        } else {
+            $query->latest(); // Ordenação padrão
+        }
+
+        $logs = $query->paginate($pageSize, ['*'], 'page', $page);
+
+        // Transformar os dados para incluir changed_by_user
+        $transformedItems = $logs->items();
+        foreach ($transformedItems as $item) {
+            $item->changed_by_user = $item->changedBy;
+            unset($item->changedBy);
+        }
+
+        return response()->json([
+            'hasNext' => $logs->hasMorePages(),
+            'items' => $transformedItems
+        ]);
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/users/approvers",
+     *     summary="Listar usuários que podem aprovar",
+     *     description="Lista usuários que têm permissão para aprovar projetos, timesheets e despesas",
+     *     operationId="getApprovers",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="search",
+     *         in="query",
+     *         description="Busca no nome ou email",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de usuários aprovadores",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="success", type="boolean", example=true),
+     *             @OA\Property(property="data", type="array", @OA\Items(ref="#/components/schemas/User")),
+     *             @OA\Property(property="message", type="string", example="Usuários aprovadores listados com sucesso")
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=401,
+     *         description="Não autenticado"
+     *     )
+     * )
+     */
+    public function getApprovers(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+
+        // Verificar se o usuário tem permissão para ver usuários
+        if (!$user->hasRole('Administrator') && !$user->can('users.view')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Acesso negado'
+            ], 403);
+        }
+
+        $search = $request->get('filter') ?? $request->get('search', '');
+
+        // Buscar usuários que podem aprovar (admin ou com permissões específicas)
+        $query = User::where('enabled', true)
+            ->where(function ($q) {
+                $q->whereHas('roles', function ($roleQuery) {
+                    $roleQuery->where('name', 'Administrator');
+                })
+                ->orWhereHas('roles.permissions', function ($permissionQuery) {
+                    $permissionQuery->whereIn('name', [
+                        'hours.approve',
+                        'expenses.approve',
+                        'projects.assign_people'
+                    ]);
+                });
+            });
+
+        // Aplicar filtro de busca se fornecido
+        if (!empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $approvers = $query->select('id', 'name', 'email')
+            ->orderBy('name')
+            ->get();
+
+        \Log::info($query->toSql(), $query->getBindings());
+
+        return response()->json([
+            'success' => true,
+            'data' => $approvers,
+            'hasNext' => false,
+            'items' => $approvers,
+            'message' => 'Usuários aprovadores listados com sucesso'
+        ]);
+    }
+
+    /**
+     * @OA\Get(
+     *     path="/api/v1/users/for-timesheets",
+     *     summary="Lista usuários para seleção em apontamentos",
+     *     description="Lista todos os usuários ativos que podem ter apontamentos criados por administradores",
+     *     operationId="getUsersForTimesheets",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Parameter(
+     *         name="search",
+     *         in="query",
+     *         description="Termo de busca (nome ou email)",
+     *         required=false,
+     *         @OA\Schema(type="string")
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Lista de usuários para apontamentos",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="hasNext", type="boolean", example=false),
+     *             @OA\Property(property="items", type="array", @OA\Items(
+     *                 type="object",
+     *                 @OA\Property(property="id", type="integer", example=1),
+     *                 @OA\Property(property="name", type="string", example="João Silva"),
+     *                 @OA\Property(property="email", type="string", example="joao@exemplo.com")
+     *             ))
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=401,
+     *         description="Não autenticado"
+     *     ),
+     *     @OA\Response(
+     *         response=403,
+     *         description="Acesso negado - apenas administradores"
+     *     )
+     * )
+     */
+    public function getUsersForTimesheets(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+
+        // Verificar se o usuário tem permissão admin.full_access
+        if (!$user->hasRole('Administrator') && !$user->can('admin.full_access')) {
+            return response()->json([
+                'code' => 'ACCESS_DENIED',
+                'type' => 'error',
+                'message' => 'Acesso negado',
+                'detailMessage' => 'Apenas administradores podem acessar esta funcionalidade'
+            ], 403);
+        }
+
+        $search = $request->get('filter') ?? $request->get('search', '');
+
+        // Buscar todos os usuários ativos
+        $query = User::where('enabled', true);
+
+        // Aplicar filtro de busca se fornecido
+        if (!empty($search)) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $users = $query->select('id', 'name', 'email')
+            ->orderBy('name')
+            ->get();
+
+        // Resposta no padrão PO-UI
+        return response()->json([
+            'hasNext' => false,
+            'items' => $users
+        ]);
+    }
+
+    /**
+     * @OA\Post(
+     *     path="/api/v1/users/profile/photo",
+     *     summary="Upload de foto de perfil",
+     *     description="Faz upload de uma foto de perfil para o usuário autenticado",
+     *     operationId="uploadProfilePhoto",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\RequestBody(
+     *         required=true,
+     *         @OA\MediaType(
+     *             mediaType="multipart/form-data",
+     *             @OA\Schema(
+     *                 type="object",
+     *                 @OA\Property(
+     *                     property="photo",
+     *                     type="string",
+     *                     format="binary",
+     *                     description="Arquivo de imagem (JPG, PNG, GIF - máx 2MB)"
+     *                 )
+     *             )
+     *         )
+     *     ),
+     *     @OA\Response(
+     *         response=200,
+     *         description="Foto de perfil atualizada com sucesso",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="message", type="string", example="Foto de perfil atualizada com sucesso"),
+     *             @OA\Property(property="photo_url", type="string", example="http://localhost:8000/storage/profile_photos/user_1_photo.jpg")
+     *         )
+     *     )
+     * )
+     */
+    public function uploadProfilePhoto(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+
+
+
+        // Verificar se o arquivo foi enviado
+        if (!$request->hasFile('photo')) {
+            \Log::error('Upload de foto - Arquivo não encontrado');
+            return $this->validationErrorResponse(['O arquivo de foto é obrigatório']);
+        }
+
+        $file = $request->file('photo');
+
+        // Validação manual do arquivo
+        if (!$file->isValid()) {
+            \Log::error('Upload de foto - Arquivo inválido:', ['error' => $file->getError()]);
+            return $this->validationErrorResponse(['O arquivo enviado é inválido']);
+        }
+
+        // Validar tipo de arquivo
+        $allowedMimes = ['image/jpeg', 'image/png', 'image/jpg', 'image/gif'];
+        if (!in_array($file->getMimeType(), $allowedMimes)) {
+            return $this->validationErrorResponse(['O arquivo deve ser uma imagem (JPG, PNG, GIF)']);
+        }
+
+        // Validar tamanho (2MB)
+        if ($file->getSize() > 2 * 1024 * 1024) {
+            return $this->validationErrorResponse(['O arquivo deve ter no máximo 2MB']);
+        }
+
+
+
+        try {
+            // Remover foto anterior se existir
+            $user->removeProfilePhoto();
+
+            // Processar upload da nova foto (já temos $file da validação acima)
+            $fileName = 'user_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
+
+            // Garantir que o diretório profile_photos existe
+            $directory = storage_path('app/public/profile_photos');
+            if (!file_exists($directory)) {
+                mkdir($directory, 0755, true);
+            }
+
+
+
+            // Salvar arquivo no storage usando o disco public explicitamente
+            $path = $file->storeAs('profile_photos', $fileName, 'public');
+
+
+
+            // Atualizar usuário com o caminho da foto
+            $user->update(['profile_photo' => 'profile_photos/' . $fileName]);
+
+            return response()->json([
+                'message' => 'Foto de perfil atualizada com sucesso',
+                'photo_url' => $user->profile_photo_url
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->serverErrorResponse('Erro ao fazer upload da foto: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * @OA\Delete(
+     *     path="/api/v1/users/profile/photo",
+     *     summary="Remover foto de perfil",
+     *     description="Remove a foto de perfil do usuário autenticado",
+     *     operationId="removeProfilePhoto",
+     *     tags={"Users"},
+     *     security={{"sanctum":{}}},
+     *     @OA\Response(
+     *         response=200,
+     *         description="Foto de perfil removida com sucesso",
+     *         @OA\JsonContent(
+     *             type="object",
+     *             @OA\Property(property="message", type="string", example="Foto de perfil removida com sucesso")
+     *         )
+     *     )
+     * )
+     */
+    public function removeProfilePhoto(): JsonResponse
+    {
+        $user = Auth::user();
+
+        try {
+            $user->removeProfilePhoto();
+
+            return response()->json([
+                'message' => 'Foto de perfil removida com sucesso'
+            ]);
+
+        } catch (\Exception $e) {
+            return $this->serverErrorResponse('Erro ao remover foto de perfil: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Gera uma senha temporária segura
+     */
+    private function generateTemporaryPassword(): string
+    {
+        // Gera uma senha com 12 caracteres incluindo letras, números e símbolos
+        $lowercase = 'abcdefghijklmnopqrstuvwxyz';
+        $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $numbers = '0123456789';
+        $symbols = '@#$%&*!';
+
+        $password = '';
+
+        // Garantir pelo menos um de cada tipo
+        $password .= $lowercase[random_int(0, strlen($lowercase) - 1)];
+        $password .= $uppercase[random_int(0, strlen($uppercase) - 1)];
+        $password .= $numbers[random_int(0, strlen($numbers) - 1)];
+        $password .= $symbols[random_int(0, strlen($symbols) - 1)];
+
+        // Completar com caracteres aleatórios
+        $allChars = $lowercase . $uppercase . $numbers . $symbols;
+        for ($i = 4; $i < 12; $i++) {
+            $password .= $allChars[random_int(0, strlen($allChars) - 1)];
+        }
+
+        // Embaralhar a string
+        return str_shuffle($password);
+    }
+}
