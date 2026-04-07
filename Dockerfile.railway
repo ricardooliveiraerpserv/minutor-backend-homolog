@@ -1,11 +1,11 @@
-FROM php:8.3-cli
+FROM php:8.3-fpm
 
 WORKDIR /var/www
 
-# Dependências do sistema
+# Dependências do sistema + nginx
 RUN apt-get update && apt-get install -y \
     git curl libpng-dev libonig-dev libxml2-dev \
-    libzip-dev libpq-dev zip unzip \
+    libzip-dev libpq-dev zip unzip nginx \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Extensões PHP (MySQL + PostgreSQL + extras)
@@ -27,7 +27,20 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction
 
 # Permissões
 RUN chmod -R 775 storage bootstrap/cache \
-    && chown -R www-data:www-data storage bootstrap/cache
+    && chown -R www-data:www-data /var/www
+
+# Configuração do Nginx
+RUN echo 'server { \n\
+    listen 8080; \n\
+    root /var/www/public; \n\
+    index index.php; \n\
+    location / { try_files $uri $uri/ /index.php?$query_string; } \n\
+    location ~ \.php$ { \n\
+        fastcgi_pass 127.0.0.1:9000; \n\
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name; \n\
+        include fastcgi_params; \n\
+    } \n\
+}' > /etc/nginx/sites-available/default
 
 # Criar .env a partir das variáveis de ambiente em runtime
 RUN cp .env.example .env 2>/dev/null || true
@@ -38,4 +51,4 @@ CMD sh -c "php artisan config:clear; \
            php artisan migrate --force; \
            php artisan config:cache; \
            php artisan route:cache; \
-           php artisan serve --host=0.0.0.0 --port=8080"
+           php-fpm -D && nginx -g 'daemon off;'"
