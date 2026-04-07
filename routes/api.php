@@ -41,6 +41,27 @@ use App\Http\Controllers\HourContributionController;
 
 // Grupo de rotas versionadas v1
 Route::prefix('v1')->group(function () {
+
+    // ROTA TEMPORÁRIA DE DIAGNÓSTICO - remover após debug
+    Route::get('/debug-config', function () {
+        try {
+            $user = \App\Models\User::where('email', 'ricardo.oliveira@erpserv.com.br')->first();
+            return response()->json([
+                'db_host' => config('database.connections.pgsql.host'),
+                'db_user' => config('database.connections.pgsql.username'),
+                'db_port' => config('database.connections.pgsql.port'),
+                'app_debug' => config('app.debug'),
+                'app_env' => config('app.env'),
+                'user_found' => $user ? true : false,
+                'user_enabled' => $user ? $user->enabled : null,
+                'pw_hash_prefix' => $user ? substr($user->password, 0, 10) : null,
+                'pw_check' => $user ? \Hash::check('admin123456', $user->password) : false,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage(), 'class' => get_class($e)], 500);
+        }
+    });
+
     // Rotas públicas (sem autenticação)
     Route::prefix('auth')->group(function () {
         // Autenticação
