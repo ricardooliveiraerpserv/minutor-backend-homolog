@@ -633,5 +633,14 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:system_settings.update')->group(function () {
             Route::put('/system-settings', [SystemSettingController::class, 'update'])->name('system-settings.update');
         });
+
+        // 🔗 MOVIDESK ADMIN - Sync manual e status da integração (somente admins)
+        Route::middleware('permission.or.admin:system_settings.view')->group(function () {
+            Route::get('/movidesk/status', [\App\Http\Controllers\MovideskAdminController::class, 'status'])->name('movidesk.status');
+        });
+
+        Route::middleware('permission.or.admin:system_settings.update')->group(function () {
+            Route::post('/movidesk/sync', [\App\Http\Controllers\MovideskAdminController::class, 'sync'])->name('movidesk.sync');
+        });
     });
 });
