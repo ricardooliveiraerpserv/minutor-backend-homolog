@@ -40,3 +40,11 @@ Schedule::command('projects:ensure-monthly-update')
   ->dailyAt('02:00')
   ->name('ensure-monthly-accumulated-hours-update')
   ->description('Verifica se accumulated_sold_hours foi atualizado no mês atual');
+
+// Sync de apontamentos Movidesk (fallback do webhook — garante que nenhum apontamento seja perdido)
+Schedule::command('movidesk:sync')
+  ->everyFifteenMinutes()
+  ->name('movidesk-sync')
+  ->description('Sincroniza apontamentos do Movidesk via API')
+  ->withoutOverlapping()
+  ->runInBackground();
