@@ -71,7 +71,8 @@ class MovideskService
                 $response = Http::get("{$this->baseUrl()}/tickets", [
                     'token'   => $this->token(),
                     '$filter' => $filter,
-                    '$expand' => 'actions',
+                    '$expand' => 'actions($expand=timeAppointments)',
+                    '$select' => 'id,lastUpdate',
                     '$top'    => $top,
                     '$skip'   => $skip,
                 ]);
