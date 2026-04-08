@@ -29,6 +29,11 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction
 RUN chmod -R 775 storage bootstrap/cache \
     && chown -R www-data:www-data /var/www
 
+# php-fpm: redirecionar logs dos workers para stderr do container (visível no Railway)
+RUN echo "catch_workers_output = yes" >> /usr/local/etc/php-fpm.d/www.conf \
+    && echo "php_admin_flag[log_errors] = on" >> /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i 's|;error_log = log/php-fpm.log|error_log = /proc/self/fd/2|' /usr/local/etc/php-fpm.conf
+
 # Configuração do Nginx
 RUN echo 'server { \n\
     listen 8080; \n\
