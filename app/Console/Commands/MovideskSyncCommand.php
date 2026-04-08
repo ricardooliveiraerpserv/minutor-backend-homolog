@@ -19,6 +19,10 @@ class MovideskSyncCommand extends Command
     // Overlap para compensar delays da API do Movidesk
     private const OVERLAP_MINUTES = 20;
 
+    // Janela mínima de busca (garante que nunca deixamos passar apontamentos
+    // mesmo que o last_sync tenha sido gravado após um sync sem importações)
+    private const MIN_LOOKBACK_HOURS = 48;
+
     public function handle(MovideskService $service): int
     {
         if (!config('services.movidesk.token')) {
@@ -80,10 +84,14 @@ class MovideskSyncCommand extends Command
             return Carbon::parse($sinceOption);
         }
 
-        // 2. Último sync salvo (com overlap para compensar delays)
+        // 2. Último sync salvo (com overlap) — mas nunca mais recente que MIN_LOOKBACK_HOURS atrás
         $lastSync = SystemSetting::get('movidesk_last_sync');
         if ($lastSync) {
-            return Carbon::parse($lastSync)->subMinutes(self::OVERLAP_MINUTES);
+            $fromLastSync  = Carbon::parse($lastSync)->subMinutes(self::OVERLAP_MINUTES);
+            $minLookback   = now()->subHours(self::MIN_LOOKBACK_HOURS);
+
+            // Retorna o mais antigo dos dois (garante janela mínima de 48h)
+            return $fromLastSync->lt($minLookback) ? $fromLastSync : $minLookback;
         }
 
         // 3. Fallback: N horas atrás (configurável via --hours)
