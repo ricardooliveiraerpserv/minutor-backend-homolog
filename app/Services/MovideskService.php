@@ -64,7 +64,7 @@ class MovideskService
         $tickets = [];
         $top     = 50;
         $skip    = 0;
-        $filter  = "lastUpdate gt datetime'" . $since->utc()->format('Y-m-d\TH:i:s') . "'";
+        $filter  = "lastUpdate gt " . $since->utc()->format('Y-m-d\TH:i:s');
 
         do {
             try {
@@ -77,10 +77,17 @@ class MovideskService
                     '$skip'   => $skip,
                 ]);
 
+                Log::info('📦 [MOVIDESK SYNC] Resposta da API', [
+                    'filter' => $filter,
+                    'status' => $response->status(),
+                    'skip'   => $skip,
+                    'body_preview' => substr($response->body(), 0, 300),
+                ]);
+
                 if (!$response->successful()) {
                     Log::warning('📦 [MOVIDESK SYNC] Erro na listagem', [
                         'status' => $response->status(),
-                        'skip'   => $skip,
+                        'body'   => $response->body(),
                     ]);
                     break;
                 }
@@ -88,6 +95,7 @@ class MovideskService
                 $page = $response->json();
 
                 if (empty($page)) {
+                    Log::info('📦 [MOVIDESK SYNC] Nenhum ticket retornado', ['filter' => $filter]);
                     break;
                 }
 
