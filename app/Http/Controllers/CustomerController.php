@@ -87,6 +87,8 @@ class CustomerController extends Controller
         $search = $request->get('filter') ?? $request->get('search');
         $hasContractTypeName = $request->get('has_contract_type_name');
 
+        $executiveId = $request->get('executive_id');
+
         $query = Customer::with('executive');
 
         // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
@@ -95,6 +97,11 @@ class CustomerController extends Controller
                 $q->where('name', 'ilike', "%{$search}%")
                   ->orWhere('cgc', 'ilike', "%{$search}%");
             });
+        }
+
+        // Filtro por executivo responsável
+        if ($executiveId) {
+            $query->where('executive_id', $executiveId);
         }
 
         // Filtro por status ativo/inativo
