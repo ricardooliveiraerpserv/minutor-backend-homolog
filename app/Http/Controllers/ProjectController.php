@@ -288,18 +288,35 @@ class ProjectController extends Controller
             $query->where('id', '!=', $request->get('exclude_id'));
         }
 
+        // Mapeamento de campos virtuais/computados para colunas reais ou joins
+        $virtualFieldMap = [
+            'contract_type_display' => 'contract_types.name',
+            'customer.name'         => 'customers.name',
+        ];
+
         // Ordenação PO-UI
         if ($request->has('order')) {
             $orderFields = explode(',', $request->get('order'));
             foreach ($orderFields as $field) {
-                if (str_starts_with($field, '-')) {
-                    $query->orderBy(substr($field, 1), 'desc');
+                $desc = str_starts_with($field, '-');
+                $col  = $desc ? substr($field, 1) : $field;
+                $direction = $desc ? 'desc' : 'asc';
+
+                if (isset($virtualFieldMap[$col])) {
+                    $mapped = $virtualFieldMap[$col];
+                    [$joinTable] = explode('.', $mapped);
+                    if ($joinTable === 'contract_types') {
+                        $query->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id');
+                    } elseif ($joinTable === 'customers') {
+                        $query->leftJoin('customers', 'customers.id', '=', 'projects.customer_id');
+                    }
+                    $query->orderBy($mapped, $direction);
                 } else {
-                    $query->orderBy($field, 'asc');
+                    $query->orderBy('projects.' . $col, $direction);
                 }
             }
         } else {
-            $query->orderBy('name'); // Ordenação padrão
+            $query->orderBy('projects.name'); // Ordenação padrão
         }
 
         // Paginação PO-UI
