@@ -411,7 +411,8 @@ class MovideskService
     {
         $subject = $ticket['subject'] ?? '';
         $html    = $action['htmlDescription'] ?? '';
-        return "<h4>{$subject}</h4><br/>{$html}";
+        $plain   = trim(strip_tags($html));
+        return $subject . ($plain ? "\n" . $plain : '');
     }
 
     // ─────────────────────────────────────────────────────────────
