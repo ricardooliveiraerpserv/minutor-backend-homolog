@@ -69,17 +69,16 @@ class MovideskService
 
         do {
             try {
-                // Monta a URL manualmente para evitar que o Guzzle encode '$' → '%24'
-                // (Movidesk OData não reconhece %24filter, precisa de $filter literal)
+                // Busca com todos os campos necessários para evitar N+1 (sem fetchTicket por ticket)
+                // Monta URL manualmente: Guzzle codifica '$' → '%24', Movidesk não aceita %24filter
                 $url = "{$this->baseUrl()}/tickets"
                     . '?token=' . urlencode($this->token())
                     . '&$filter=' . urlencode($filter)
-                    . '&$select=id,lastUpdate'
-                    . '&$expand=actions($expand=timeAppointments)'
+                    . '&$expand=clients,owner,actions($expand=timeAppointments)'
                     . '&$top=' . $top
                     . '&$skip=' . $skip;
 
-                $response = Http::get($url);
+                $response = Http::timeout(30)->get($url);
 
                 Log::info('📦 [MOVIDESK SYNC] Resposta da API', [
                     'filter' => $filter,

@@ -41,7 +41,7 @@ class MovideskAdminController extends Controller
      * Dispara sincronização manual via service (output rico para debug).
      * Aceita parâmetro opcional `since` (ISO 8601).
      */
-    public function sync(Request $request, MovideskService $service): JsonResponse
+    public function sync(Request $request): JsonResponse
     {
         $sinceInput = $request->input('since');
 
@@ -52,83 +52,42 @@ class MovideskAdminController extends Controller
             ], 422);
         }
 
-        try {
-            // Resolver `since`
-            if ($sinceInput) {
-                $since = Carbon::parse($sinceInput);
+        // Resolver `since`
+        if ($sinceInput) {
+            $since = Carbon::parse($sinceInput);
+        } else {
+            $lastSync    = SystemSetting::get('movidesk_last_sync');
+            $minLookback = now()->subHours(48);
+
+            if ($lastSync) {
+                $fromLastSync = Carbon::parse($lastSync)->subMinutes(20);
+                $since = $fromLastSync->lt($minLookback) ? $fromLastSync : $minLookback;
             } else {
-                $lastSync    = SystemSetting::get('movidesk_last_sync');
-                $minLookback = now()->subHours(48);
-
-                if ($lastSync) {
-                    $fromLastSync = Carbon::parse($lastSync)->subMinutes(20);
-                    $since = $fromLastSync->lt($minLookback) ? $fromLastSync : $minLookback;
-                } else {
-                    $since = now()->subHours(24);
-                }
+                $since = now()->subHours(24);
             }
-
-            Log::info('🔧 [MOVIDESK ADMIN] Sync manual iniciado', [
-                'since'        => $since->toIso8601String(),
-                'triggered_by' => auth()->user()?->email,
-            ]);
-
-            $lines   = [];
-            $lines[] = "Buscando desde: {$since->timezone('America/Sao_Paulo')->format('d/m/Y H:i:s')}";
-
-            $tickets      = $service->fetchTicketsSince($since);
-            $ticketCount  = count($tickets);
-            $lines[]      = "{$ticketCount} ticket(s) encontrado(s)";
-
-            $totalCreated = 0;
-
-            foreach ($tickets as $ticketData) {
-                $ticketId   = $ticketData['id'] ?? '?';
-                $ticketData = $service->fetchTicket((int) $ticketId);
-
-                if (!$ticketData) {
-                    $lines[] = "  ⚠ Ticket #{$ticketId}: falha ao buscar detalhes";
-                    continue;
-                }
-
-                $created       = $service->processTicket($ticketData);
-                $totalCreated += $created;
-
-                if ($created > 0) {
-                    $lines[] = "  ✓ Ticket #{$ticketId}: {$created} apontamento(s) importado(s)";
-                } else {
-                    $lines[] = "  - Ticket #{$ticketId}: sem novos apontamentos";
-                }
-            }
-
-            $lines[] = "---";
-            $lines[] = "Total importado: {$totalCreated}";
-
-            SystemSetting::set('movidesk_last_sync', now()->toIso8601String(), 'string', 'movidesk');
-            $lastSync = SystemSetting::get('movidesk_last_sync');
-
-            return response()->json([
-                'success'         => true,
-                'message'         => 'Sincronização concluída.',
-                'output'          => implode("\n", $lines),
-                'tickets_found'   => $ticketCount,
-                'created'         => $totalCreated,
-                'last_sync'       => $lastSync,
-                'last_sync_human' => $lastSync
-                    ? Carbon::parse($lastSync)->timezone('America/Sao_Paulo')->format('d/m/Y H:i')
-                    : null,
-                'today_imported'  => Timesheet::where('origin', 'webhook')->whereDate('created_at', today())->count(),
-                'total_imported'  => Timesheet::where('origin', 'webhook')->count(),
-            ]);
-
-        } catch (\Throwable $e) {
-            Log::error('🚨 [MOVIDESK ADMIN] Erro no sync manual', ['error' => $e->getMessage()]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Erro ao executar sincronização: ' . $e->getMessage(),
-            ], 500);
         }
+
+        Log::info('🔧 [MOVIDESK ADMIN] Sync manual disparado', [
+            'since'        => $since->toIso8601String(),
+            'triggered_by' => auth()->user()?->email,
+        ]);
+
+        // Executa em background para não bloquear o HTTP request (evita 504)
+        $artisan   = base_path('artisan');
+        $sinceArg  = escapeshellarg($since->toIso8601String());
+        exec("php {$artisan} movidesk:sync --since={$sinceArg} > /dev/null 2>&1 &");
+
+        $sinceHuman = $since->timezone('America/Sao_Paulo')->format('d/m/Y H:i:s');
+
+        return response()->json([
+            'success'         => true,
+            'message'         => 'Sincronização iniciada em background.',
+            'output'          => "Sync iniciado desde: {$sinceHuman}\nAguarde 30-60s e atualize a página para ver os resultados.",
+            'last_sync'       => SystemSetting::get('movidesk_last_sync'),
+            'last_sync_human' => $since->timezone('America/Sao_Paulo')->format('d/m/Y H:i'),
+            'today_imported'  => Timesheet::where('origin', 'webhook')->whereDate('created_at', today())->count(),
+            'total_imported'  => Timesheet::where('origin', 'webhook')->count(),
+        ]);
     }
 
     /**
