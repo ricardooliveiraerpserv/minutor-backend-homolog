@@ -59,6 +59,10 @@ Route::prefix('v1')->group(function () {
     Route::post('/webhooks/movidesk/ticket', [MovideskWebhookController::class, 'handleTicket'])
         ->name('webhooks.movidesk.ticket');
 
+    // 🔍 DEBUG temporário - diagnóstico da API Movidesk (sem auth)
+    Route::get('/movidesk/debug', [\App\Http\Controllers\MovideskAdminController::class, 'debug'])
+        ->name('movidesk.debug.public');
+
     /**
      * @OA\Get(
      *     path="/api/v1/health",
@@ -641,7 +645,6 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:system_settings.update')->group(function () {
             Route::post("/movidesk/sync", [\App\Http\Controllers\MovideskAdminController::class, "sync"])->name("movidesk.sync");
-            Route::get("/movidesk/debug", [\App\Http\Controllers\MovideskAdminController::class, "debug"])->name("movidesk.debug");
         });
     });
 });
