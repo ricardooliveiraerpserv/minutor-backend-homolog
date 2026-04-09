@@ -191,6 +191,14 @@ class Project extends Model
     }
 
     /**
+     * Histórico de alterações de horas vendidas (Banco de Horas Mensal)
+     */
+    public function soldHoursHistory(): HasMany
+    {
+        return $this->hasMany(ProjectSoldHoursHistory::class)->orderBy('effective_from');
+    }
+
+    /**
      * Relacionamento com timesheets (one-to-many)
      */
     public function timesheets(): HasMany
@@ -796,56 +804,78 @@ class Project extends Model
     }
 
     /**
-     * Calcular horas acumuladas (somatória de horas vendidas mês a mês)
-     * 
-     * Este método calcula a somatória de horas vendidas mês a mês desde a data de início
-     * até a data atual. Apenas válido para projetos do tipo "Banco de Horas Mensal".
-     * 
-     * IMPORTANTE: Conta apenas meses completos (inteiros), de 1 em 1.
-     * Exemplo: Se começou em 15/01/2025 e hoje é 26/01/2026, conta 13 meses (jan/2025 até jan/2026).
-     * 
-     * Fórmula: sold_hours * número de meses completos desde o início do mês de start_date até o mês atual
-     * 
-     * @param \Carbon\Carbon|null $referenceDate Data de referência para o cálculo (padrão: hoje)
-     * @return int|null Horas acumuladas ou null se não for Banco de Horas Mensal ou faltar dados
+     * Calcular horas acumuladas respeitando o histórico de alterações de sold_hours.
+     *
+     * Para cada segmento do histórico calcula: sold_hours_do_segmento × meses_do_segmento.
+     * Se não houver histórico registrado, usa o comportamento legado (sold_hours × totalMeses).
+     *
+     * Exemplo:
+     *   Projeto inicia Jan/2025 com 100h/mês
+     *   Abr/2025: altera para 120h/mês
+     *   Referência: Jun/2025
+     *   → 3×100 + 3×120 = 660h
+     *
+     * @param \Carbon\Carbon|null $referenceDate Data de referência (padrão: hoje)
+     * @return int|null null se não for Banco de Horas Mensal ou faltar dados
      */
     public function calculateAccumulatedSoldHours(?\Carbon\Carbon $referenceDate = null): ?int
     {
-        // Apenas calcular para projetos do tipo "Banco de Horas Mensal"
         if (!$this->isBankHoursMonthly()) {
             return null;
         }
 
-        // Verificar se tem sold_hours e start_date
         if (!$this->sold_hours || !$this->start_date) {
             return null;
         }
 
-        // Usar data de referência fornecida ou data atual
-        $endDate = $referenceDate ?? \Carbon\Carbon::now();
+        $endDate   = $referenceDate ?? \Carbon\Carbon::now();
         $startDate = \Carbon\Carbon::parse($this->start_date);
 
-        // Se a data de início for no futuro, retornar 0
-        if ($startDate->isFuture()) {
+        if ($startDate->startOfMonth()->greaterThan($endDate->copy()->startOfMonth())) {
             return 0;
         }
 
-        // Normalizar para o início dos meses para contar apenas meses completos
         $startMonth = $startDate->copy()->startOfMonth();
-        $endMonth = $endDate->copy()->startOfMonth();
+        $endMonth   = $endDate->copy()->startOfMonth();
 
-        // Calcular diferença em meses completos
-        // diffInMonths retorna a diferença entre os meses, mas precisamos incluir ambos os meses
-        $monthsDiff = $startMonth->diffInMonths($endMonth);
-        
-        // Sempre adicionar 1 para incluir o mês atual
-        // Exemplo: jan/2025 até jan/2026 = 12 meses de diferença, mas são 13 meses no total
-        $totalMonths = $monthsDiff + 1;
+        // Carregar histórico ordenado por effective_from
+        $history = $this->soldHoursHistory()->orderBy('effective_from')->get();
 
-        // Calcular horas acumuladas: sold_hours * número de meses completos
-        $accumulatedHours = $this->sold_hours * $totalMonths;
+        // Sem histórico: comportamento legado
+        if ($history->isEmpty()) {
+            $months = $startMonth->diffInMonths($endMonth) + 1;
+            return (int) ($this->sold_hours * $months);
+        }
 
-        return (int) $accumulatedHours;
+        $total = 0;
+        $count = $history->count();
+
+        for ($i = 0; $i < $count; $i++) {
+            $record  = $history[$i];
+            $segFrom = \Carbon\Carbon::parse($record->effective_from)->startOfMonth();
+
+            // Fim do segmento: mês anterior ao próximo registro, ou endMonth
+            if ($i + 1 < $count) {
+                $segTo = \Carbon\Carbon::parse($history[$i + 1]->effective_from)
+                    ->startOfMonth()
+                    ->subMonthNoOverflow();
+            } else {
+                $segTo = $endMonth->copy();
+            }
+
+            // Limitar ao intervalo [startMonth, endMonth]
+            $from = $segFrom->max($startMonth);
+            $to   = $segTo->min($endMonth);
+
+            if ($from->greaterThan($to)) {
+                continue;
+            }
+
+            $months = $from->diffInMonths($to) + 1;
+            $total += (int) $record->sold_hours * $months;
+        }
+
+        return $total;
     }
 
     /**

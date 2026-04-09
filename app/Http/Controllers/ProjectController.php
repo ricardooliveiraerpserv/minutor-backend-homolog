@@ -529,8 +529,23 @@ class ProjectController extends Controller
             $project->coordinators()->attach($coordinatorIds);
         }
 
+        // Registrar histórico inicial de sold_hours para Banco de Horas Mensal
+        $project->loadMissing('contractType');
+        if ($project->isBankHoursMonthly() && $project->sold_hours) {
+            $effectiveFrom = $project->start_date
+                ? Carbon::parse($project->start_date)->startOfMonth()->toDateString()
+                : Carbon::now()->startOfMonth()->toDateString();
+
+            \App\Models\ProjectSoldHoursHistory::create([
+                'project_id'   => $project->id,
+                'sold_hours'   => $project->sold_hours,
+                'effective_from' => $effectiveFrom,
+                'changed_by'   => auth()->id(),
+            ]);
+        }
+
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'parentProject']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'parentProject', 'soldHoursHistory.changer']);
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
@@ -578,7 +593,7 @@ class ProjectController extends Controller
     public function show(Project $project): JsonResponse
     {
         // Carregar relacionamentos essenciais
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'parentProject', 'childProjects', 'hourContributions']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'parentProject', 'childProjects', 'hourContributions', 'soldHoursHistory.changer']);
 
         // Carregar coordinators com fallback (tabela pode estar em migração)
         try {
@@ -829,6 +844,10 @@ class ProjectController extends Controller
         $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
         unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids']);
 
+        // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
+        $previousSoldHours = (int) ($project->sold_hours ?? 0);
+        $newSoldHours      = isset($validated['sold_hours']) ? (int) $validated['sold_hours'] : $previousSoldHours;
+
         // Log de alteração do percentual de coordenação (auditoria)
         $previousPercentage = (float) ($project->coordinator_hours ?? 0);
         $newPercentage      = isset($validated['coordinator_hours']) ? (float) $validated['coordinator_hours'] : $previousPercentage;
@@ -898,8 +917,47 @@ class ProjectController extends Controller
             }
         }
 
+        // Registrar histórico de sold_hours se mudou (Banco de Horas Mensal)
+        $project->loadMissing('contractType');
+        if ($previousSoldHours !== $newSoldHours && $project->isBankHoursMonthly()) {
+            try {
+                $currentMonth = Carbon::now()->startOfMonth()->toDateString();
+
+                // Bootstrapar histórico inicial se ainda não existe nenhum registro
+                if ($project->soldHoursHistory()->count() === 0 && $project->start_date) {
+                    \App\Models\ProjectSoldHoursHistory::create([
+                        'project_id'     => $project->id,
+                        'sold_hours'     => $previousSoldHours,
+                        'effective_from' => Carbon::parse($project->start_date)->startOfMonth()->toDateString(),
+                        'changed_by'     => null,
+                    ]);
+                }
+
+                // Não criar duplicata se já existe registro para o mês atual
+                $exists = $project->soldHoursHistory()
+                    ->where('effective_from', $currentMonth)
+                    ->exists();
+
+                if (!$exists) {
+                    \App\Models\ProjectSoldHoursHistory::create([
+                        'project_id'     => $project->id,
+                        'sold_hours'     => $newSoldHours,
+                        'effective_from' => $currentMonth,
+                        'changed_by'     => auth()->id(),
+                    ]);
+                } else {
+                    // Atualizar o registro do mês atual
+                    $project->soldHoursHistory()
+                        ->where('effective_from', $currentMonth)
+                        ->update(['sold_hours' => $newSoldHours, 'changed_by' => auth()->id()]);
+                }
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao registrar histórico de sold_hours', ['error' => $e->getMessage()]);
+            }
+        }
+
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'soldHoursHistory.changer']);
         try {
             $project->load(['coordinators']);
         } catch (\Exception $e) {
