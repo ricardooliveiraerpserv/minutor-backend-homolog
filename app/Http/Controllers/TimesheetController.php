@@ -667,7 +667,14 @@ class TimesheetController extends Controller
         try {
             $user = Auth::user();
 
-            $timesheet = Timesheet::with(['user', 'customer', 'project.coordinators', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])
+            $timesheet = Timesheet::with([
+                    'user',
+                    'customer',
+                    'project' => fn($q) => $q->withTrashed()->with('coordinators'),
+                    'reviewedBy',
+                    'reversals.reversedBy',
+                    'reversals.originalApprover',
+                ])
                 ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
                 ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
                 ->where('timesheets.id', $id)
@@ -681,7 +688,7 @@ class TimesheetController extends Controller
             }
 
             // Verificar se pode visualizar este timesheet
-            if (!$user->hasRole('Administrator') && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
+            if ($user && !$user->hasRole('Administrator') && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Acesso negado'
