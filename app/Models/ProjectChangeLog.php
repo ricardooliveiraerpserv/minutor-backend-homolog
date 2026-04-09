@@ -26,6 +26,11 @@ class ProjectChangeLog extends Model
         'old_value',
         'new_value',
         'reason',
+        'effective_from',
+    ];
+
+    protected $casts = [
+        'effective_from' => 'date:Y-m-d',
     ];
 
     /**
@@ -62,6 +67,7 @@ class ProjectChangeLog extends Model
             'old_value_formatted' => $this->formatValue($this->old_value),
             'new_value_formatted' => $this->formatValue($this->new_value),
             'reason' => $this->reason,
+            'effective_from' => $this->effective_from?->toDateString(),
             'created_at' => $this->created_at?->toIso8601String(),
             'changed_by_user' => [
                 'id' => $this->changedByUser->id,
