@@ -125,6 +125,7 @@ class ProjectController extends Controller
         $executiveId = $request->get('executive_id');
         $consultantOnly = $request->get('consultant_only');
         $contractTypeName = $request->get('contract_type_name');
+        $contractTypeId = $request->get('contract_type_id');
         $serviceTypeName = $request->get('service_type_name');
 
         // Eager loading otimizado: carrega relacionamentos e soma de minutos apontados
@@ -260,8 +261,10 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro por nome do tipo de contrato
-        if ($contractTypeName) {
+        // Filtro por tipo de contrato (por ID ou nome)
+        if ($contractTypeId) {
+            $query->where('contract_type_id', $contractTypeId);
+        } elseif ($contractTypeName) {
             $query->whereHas('contractType', function ($q) use ($contractTypeName) {
                 $q->where('name', $contractTypeName);
             });
@@ -569,7 +572,7 @@ class ProjectController extends Controller
      */
     public function show(Project $project): JsonResponse
     {
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'approvers', 'parentProject', 'childProjects', 'hourContributions']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'parentProject', 'childProjects', 'hourContributions']);
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
