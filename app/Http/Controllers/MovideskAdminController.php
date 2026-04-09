@@ -8,6 +8,7 @@ use App\Services\MovideskService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -67,24 +68,33 @@ class MovideskAdminController extends Controller
             }
         }
 
-        Log::info('🔧 [MOVIDESK ADMIN] Sync manual disparado', [
+        Log::info('🔧 [MOVIDESK ADMIN] Sync manual iniciado', [
             'since'        => $since->toIso8601String(),
             'triggered_by' => auth()->user()?->email,
         ]);
 
-        // Executa em background para não bloquear o HTTP request (evita 504)
-        $artisan   = base_path('artisan');
-        $sinceArg  = escapeshellarg($since->toIso8601String());
-        exec("php {$artisan} movidesk:sync --since={$sinceArg} > /dev/null 2>&1 &");
+        try {
+            $params = ['--since' => $since->toIso8601String()];
+            Artisan::call('movidesk:sync', $params);
+            $output = trim(Artisan::output());
+        } catch (\Throwable $e) {
+            Log::error('🚨 [MOVIDESK ADMIN] Erro no sync manual', ['error' => $e->getMessage()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Erro ao executar sincronização: ' . $e->getMessage(),
+            ], 500);
+        }
 
-        $sinceHuman = $since->timezone('America/Sao_Paulo')->format('d/m/Y H:i:s');
+        $lastSync = SystemSetting::get('movidesk_last_sync');
 
         return response()->json([
             'success'         => true,
-            'message'         => 'Sincronização iniciada em background.',
-            'output'          => "Sync iniciado desde: {$sinceHuman}\nAguarde 30-60s e atualize a página para ver os resultados.",
-            'last_sync'       => SystemSetting::get('movidesk_last_sync'),
-            'last_sync_human' => $since->timezone('America/Sao_Paulo')->format('d/m/Y H:i'),
+            'message'         => 'Sincronização concluída.',
+            'output'          => $output ?: "Sync concluído desde: {$since->timezone('America/Sao_Paulo')->format('d/m/Y H:i:s')}",
+            'last_sync'       => $lastSync,
+            'last_sync_human' => $lastSync
+                ? Carbon::parse($lastSync)->timezone('America/Sao_Paulo')->format('d/m/Y H:i')
+                : null,
             'today_imported'  => Timesheet::where('origin', 'webhook')->whereDate('created_at', today())->count(),
             'total_imported'  => Timesheet::where('origin', 'webhook')->count(),
         ]);
