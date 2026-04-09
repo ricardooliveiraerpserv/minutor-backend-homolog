@@ -664,56 +664,61 @@ class TimesheetController extends Controller
      */
     public function show(int $id): JsonResponse
     {
+        $step = 'init';
         try {
             $user = Auth::user();
 
-            // Carrega o timesheet sem join para evitar ambiguidade de coluna 'id'
-            $timesheet = Timesheet::with([
-                    'user',
-                    'customer',
-                    'project' => fn($q) => $q->withTrashed()->with('coordinators'),
-                    'reviewedBy',
-                    'reversals.reversedBy',
-                    'reversals.originalApprover',
-                ])
-                ->find($id);
+            // Carrega o timesheet base sem relações
+            $step = 'find';
+            $timesheet = Timesheet::find($id);
 
-            // Busca o título do ticket Movidesk separadamente (sem join)
-            if ($timesheet && $timesheet->ticket) {
+            if (!$timesheet) {
+                return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+            }
+
+            // Carrega cada relação individualmente para isolar erros
+            $step = 'load:user';
+            $timesheet->load('user');
+
+            $step = 'load:customer';
+            $timesheet->load('customer');
+
+            $step = 'load:project';
+            $timesheet->load(['project' => fn($q) => $q->withTrashed()->with('coordinators')]);
+
+            $step = 'load:reviewedBy';
+            $timesheet->load('reviewedBy');
+
+            $step = 'load:reversals';
+            $timesheet->load(['reversals' => fn($q) => $q->with(['reversedBy', 'originalApprover'])]);
+
+            // Busca o título do ticket Movidesk separadamente
+            $step = 'movidesk';
+            if ($timesheet->ticket) {
                 $movideskTicket = \DB::table('movidesk_tickets')
                     ->where('ticket_id', $timesheet->ticket)
                     ->value('titulo');
                 $timesheet->setAttribute('ticket_subject', $movideskTicket);
             }
 
-            if (!$timesheet) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Apontamento não encontrado'
-                ], 404);
-            }
-
             // Verificar se pode visualizar este timesheet
+            $step = 'auth_check';
             if ($user && !$user->hasRole('Administrator') && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Acesso negado'
-                ], 403);
+                return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => $timesheet
-            ]);
+            $step = 'serialize';
+            return response()->json(['success' => true, 'data' => $timesheet]);
 
         } catch (\Exception $e) {
-            \Log::error('TimesheetController@show error: ' . $e->getMessage(), [
+            \Log::error("TimesheetController@show error at step [{$step}]: " . $e->getMessage(), [
                 'id' => $id,
+                'step' => $step,
                 'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
                 'success' => false,
-                'message' => '[' . class_basename($e) . '] ' . $e->getMessage() . ' — ' . basename($e->getFile()) . ':' . $e->getLine()
+                'message' => "Erro no passo [{$step}]: [" . class_basename($e) . '] ' . $e->getMessage() . ' — ' . basename($e->getFile()) . ':' . $e->getLine()
             ], 500);
         }
     }
