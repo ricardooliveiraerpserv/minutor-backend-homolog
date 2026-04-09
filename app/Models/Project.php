@@ -503,10 +503,9 @@ class Project extends Model
      *
      * Regras:
      * - On Demand: sempre 0
-     * - Banco de Horas aberto: horas_apontadas × percentual_coordenacao
-     * - Banco de Horas fechado (FINISHED): consultant_hours × percentual_coordenacao
+     * - Banco de Horas (qualquer status): horas_apontadas × percentual_coordenacao
      *
-     * @param float $loggedHours Horas apontadas (não usadas quando fechado)
+     * @param float $loggedHours Total de horas apontadas (excluindo rejeitados)
      * @return float Horas de coordenação
      */
     public function calculateCoordinationHours(float $loggedHours = 0.0): float
@@ -523,15 +522,7 @@ class Project extends Model
             return 0.0;
         }
 
-        // Projeto fechado: base = consultant_hours (fixo)
-        if ($this->status === self::STATUS_FINISHED) {
-            $base = (float) ($this->consultant_hours ?? 0);
-        } else {
-            // Projeto aberto: base = horas apontadas (dinâmico)
-            $base = $loggedHours;
-        }
-
-        return round($base * $percent / 100, 2);
+        return round($loggedHours * $percent / 100, 2);
     }
 
     /**
@@ -773,9 +764,7 @@ class Project extends Model
     /**
      * Calcular o saldo de horas dos coordenadores
      *
-     * Base do cálculo depende do status:
-     * - Projeto aberto:  base = horas_apontadas_pelos_consultores  × percentual
-     * - Projeto fechado: base = consultant_hours (fixo)            × percentual
+     * Fórmula: (horas_apontadas_consultores × percentual) - horas_apontadas_coordenadores
      *
      * @param bool $includeChildProjects Se deve incluir horas dos subprojetos
      * @param int|null $excludeTimesheetId ID do timesheet a excluir do cálculo (útil na edição)
@@ -783,17 +772,10 @@ class Project extends Model
      */
     public function getCoordinatorHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null): float
     {
-        $coordinatorLoggedHours = $this->getCoordinatorLoggedHours($includeChildProjects, $excludeTimesheetId);
-
-        // Base para cálculo do disponível
-        if ($this->status === self::STATUS_FINISHED) {
-            $base = (float) ($this->consultant_hours ?? 0);
-        } else {
-            $base = $this->getConsultantLoggedHours($includeChildProjects, $excludeTimesheetId);
-        }
-
-        $percent = (float) ($this->coordinator_hours ?? 0);
-        $coordinatorAvailableHours = round($base * $percent / 100, 2);
+        $coordinatorLoggedHours  = $this->getCoordinatorLoggedHours($includeChildProjects, $excludeTimesheetId);
+        $consultantLoggedHours   = $this->getConsultantLoggedHours($includeChildProjects, $excludeTimesheetId);
+        $percent                 = (float) ($this->coordinator_hours ?? 0);
+        $coordinatorAvailableHours = round($consultantLoggedHours * $percent / 100, 2);
 
         return round($coordinatorAvailableHours - $coordinatorLoggedHours, 2);
     }
