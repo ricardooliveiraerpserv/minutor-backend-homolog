@@ -69,14 +69,17 @@ class MovideskService
 
         do {
             try {
-                $response = Http::get("{$this->baseUrl()}/tickets", [
-                    'token'   => $this->token(),
-                    '$filter' => $filter,
-                    '$expand' => 'actions($expand=timeAppointments)',
-                    '$select' => 'id,lastUpdate',
-                    '$top'    => $top,
-                    '$skip'   => $skip,
-                ]);
+                // Monta a URL manualmente para evitar que o Guzzle encode '$' → '%24'
+                // (Movidesk OData não reconhece %24filter, precisa de $filter literal)
+                $url = "{$this->baseUrl()}/tickets"
+                    . '?token=' . urlencode($this->token())
+                    . '&$filter=' . urlencode($filter)
+                    . '&$select=id,lastUpdate'
+                    . '&$expand=actions($expand=timeAppointments)'
+                    . '&$top=' . $top
+                    . '&$skip=' . $skip;
+
+                $response = Http::get($url);
 
                 Log::info('📦 [MOVIDESK SYNC] Resposta da API', [
                     'filter' => $filter,
