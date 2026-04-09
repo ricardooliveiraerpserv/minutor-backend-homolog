@@ -664,33 +664,45 @@ class TimesheetController extends Controller
      */
     public function show(int $id): JsonResponse
     {
-        $user = Auth::user();
+        try {
+            $user = Auth::user();
 
-        $timesheet = Timesheet::with(['user', 'customer', 'project.coordinators', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])
-            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
-            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
-            ->where('timesheets.id', $id)
-            ->first();
+            $timesheet = Timesheet::with(['user', 'customer', 'project.coordinators', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])
+                ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
+                ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+                ->where('timesheets.id', $id)
+                ->first();
 
-        if (!$timesheet) {
+            if (!$timesheet) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Apontamento não encontrado'
+                ], 404);
+            }
+
+            // Verificar se pode visualizar este timesheet
+            if (!$user->hasRole('Administrator') && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Acesso negado'
+                ], 403);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $timesheet
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('TimesheetController@show error: ' . $e->getMessage(), [
+                'id' => $id,
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Apontamento não encontrado'
-            ], 404);
+                'message' => 'Erro ao carregar apontamento: ' . $e->getMessage()
+            ], 500);
         }
-
-        // Verificar se pode visualizar este timesheet
-        if (!$user->hasRole('Administrator') && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Acesso negado'
-            ], 403);
-        }
-
-        return response()->json([
-            'success' => true,
-            'data' => $timesheet
-        ]);
     }
 
     /**
