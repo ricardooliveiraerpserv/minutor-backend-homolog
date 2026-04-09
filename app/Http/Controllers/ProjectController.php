@@ -1036,7 +1036,7 @@ class ProjectController extends Controller
     }
 
     /**
-     * Atualiza o motivo de um registro do histórico de alterações.
+     * Atualiza um registro do histórico e aplica o novo valor no projeto.
      */
     public function updateChangeHistory(Project $project, \App\Models\ProjectChangeLog $log, Request $request): JsonResponse
     {
@@ -1045,21 +1045,40 @@ class ProjectController extends Controller
         }
 
         $validated = $request->validate([
-            'reason' => 'nullable|string|max:1000',
+            'new_value' => 'nullable',
+            'reason'    => 'nullable|string|max:1000',
         ]);
 
         $log->update($validated);
 
-        return response()->json($log->fresh(['changedByUser']));
+        // Aplicar o novo valor no projeto
+        if (array_key_exists('new_value', $validated) && in_array($log->field_name, $project->getFillable())) {
+            try {
+                $project->update([$log->field_name => $validated['new_value']]);
+            } catch (\Exception $e) {
+                \Log::warning('updateChangeHistory: falha ao atualizar projeto', ['error' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json($log->fresh(['changedByUser'])->toFormattedArray());
     }
 
     /**
-     * Remove um registro do histórico de alterações.
+     * Remove um registro do histórico e reverte o campo do projeto ao valor anterior.
      */
     public function destroyChangeHistory(Project $project, \App\Models\ProjectChangeLog $log): JsonResponse
     {
         if ($log->project_id !== $project->id) {
             return response()->json(['message' => 'Registro não pertence ao projeto.'], 404);
+        }
+
+        // Reverter o campo do projeto ao valor anterior
+        if ($log->old_value !== null && in_array($log->field_name, $project->getFillable())) {
+            try {
+                $project->update([$log->field_name => $log->old_value]);
+            } catch (\Exception $e) {
+                \Log::warning('destroyChangeHistory: falha ao reverter projeto', ['error' => $e->getMessage()]);
+            }
         }
 
         $log->delete();
