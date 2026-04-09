@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('projects', 'allow_negative_balance')) {
+            return;
+        }
+
         Schema::table('projects', function (Blueprint $table) {
             $table->boolean('allow_negative_balance')->default(false)->after('status');
         });
