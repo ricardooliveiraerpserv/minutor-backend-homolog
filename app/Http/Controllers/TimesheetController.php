@@ -669,7 +669,8 @@ class TimesheetController extends Controller
         $timesheet = Timesheet::with(['user', 'customer', 'project.coordinators', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
-            ->find($id);
+            ->where('timesheets.id', $id)
+            ->first();
 
         if (!$timesheet) {
             return response()->json([
