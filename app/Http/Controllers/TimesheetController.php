@@ -156,7 +156,8 @@ class TimesheetController extends Controller
         $page = (int) $request->get('page', 1);
 
         $query = Timesheet::with(['user', 'customer', 'project', 'reviewedBy'])
-            ->select('timesheets.*');
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
         if (!$user->hasRole('Administrator') && !$user->can('hours.view_all')) {
