@@ -36,6 +36,7 @@ class User extends Authenticatable
         'temporary_password_expires_at',
         'profile_photo',
         'customer_id',
+        'is_executive',
     ];
 
     /**
@@ -71,6 +72,7 @@ class User extends Authenticatable
             'hourly_rate' => 'decimal:2',
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
+            'is_executive' => 'boolean',
         ];
     }
 

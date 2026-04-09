@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -21,6 +22,7 @@ class Customer extends Model
         'company_name',
         'cgc',
         'active',
+        'executive_id',
     ];
 
     /**
@@ -179,5 +181,13 @@ class Customer extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    /**
+     * Relacionamento com o executivo responsável
+     */
+    public function executive(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'executive_id');
     }
 } 

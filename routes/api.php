@@ -26,6 +26,7 @@ use App\Http\Controllers\ProjectStatusController;
 use App\Http\Controllers\BankHoursFixedController;
 use App\Http\Controllers\BankHoursMonthlyController;
 use App\Http\Controllers\OnDemandController;
+use App\Http\Controllers\ExecutiveController;
 use App\Http\Controllers\HourContributionController;
 
 /*
@@ -312,6 +313,13 @@ Route::prefix('v1')->group(function () {
                 ->name('users.sync-roles');
             Route::delete('/users/{user}/roles', [UserRoleController::class, 'removeRoles'])
                 ->name('users.remove-roles');
+        });
+
+        // 🏆 EXECUTIVES - Gestão de executivos
+        Route::get('/executives', [ExecutiveController::class, 'index'])->name('executives.index');
+        Route::get('/executives/all', [ExecutiveController::class, 'all'])->name('executives.all');
+        Route::middleware('permission.or.admin:users.update')->group(function () {
+            Route::patch('/executives/{user}', [ExecutiveController::class, 'toggle'])->name('executives.toggle');
         });
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
