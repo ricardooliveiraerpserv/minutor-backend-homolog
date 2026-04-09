@@ -572,14 +572,29 @@ class ProjectController extends Controller
      */
     public function show(Project $project): JsonResponse
     {
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'parentProject', 'childProjects', 'hourContributions']);
+        // Carregar relacionamentos essenciais
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'parentProject', 'childProjects', 'hourContributions']);
+
+        // Carregar coordinators com fallback (tabela pode estar em migração)
+        try {
+            $project->load(['coordinators']);
+        } catch (\Exception $e) {
+            \Log::warning('ProjectController@show: falha ao carregar coordinators', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            $project->setRelation('coordinators', collect());
+            $project->setRelation('approvers', collect());
+        }
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
         $project->contract_type_display = $project->contract_type_display;
 
         // Adicionar saldo de horas geral calculado
-        $project->general_hours_balance = $project->getGeneralHoursBalance(false);
+        try {
+            $project->general_hours_balance = $project->getGeneralHoursBalance(false);
+        } catch (\Exception $e) {
+            \Log::warning('ProjectController@show: falha ao calcular general_hours_balance', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            $project->general_hours_balance = null;
+        }
 
         // Adicionar valores calculados de aportes de horas
         $project->total_available_hours = $project->getTotalAvailableHours();
