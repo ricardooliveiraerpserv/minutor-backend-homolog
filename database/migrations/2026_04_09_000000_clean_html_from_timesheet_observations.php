@@ -1,7 +1,7 @@
 <?php
 
-use App\Models\Timesheet;
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -9,55 +9,56 @@ return new class extends Migration
     {
         // Limpa HTML e remove o título do ticket (subject) das observations
         // geradas pelo Movidesk antes da correção do buildObservation.
-        // Formato antigo: "<h4>SUBJECT</h4><br/><p>HTML action</p>"
-        // Após strip_tags: "SUBJECT texto da ação"
-        // Após remoção do subject: "texto da ação"
+        // Usa DB::table() para evitar problemas de coluna 'id' ambígua com joins no PostgreSQL.
 
-        Timesheet::where('origin', 'webhook')
-            ->whereNotNull('observation')
-            ->where('observation', 'like', '<%')   // contém HTML
+        // Parte 1: observations com HTML (começam com '<')
+        $rows = DB::table('timesheets')
             ->join('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->where('timesheets.origin', 'webhook')
+            ->whereNotNull('timesheets.observation')
+            ->where('timesheets.observation', 'like', '<%')
+            ->whereNull('timesheets.deleted_at')
             ->select('timesheets.id', 'timesheets.observation', 'movidesk_tickets.titulo')
-            ->chunk(200, function ($rows) {
-                foreach ($rows as $row) {
-                    $plain = html_entity_decode(
-                        strip_tags($row->observation),
-                        ENT_QUOTES | ENT_HTML5,
-                        'UTF-8'
-                    );
-                    $plain = preg_replace('/\s+/', ' ', trim($plain));
+            ->get();
 
-                    // Remove o título do início se presente
-                    if ($row->titulo) {
-                        $escapedTitulo = preg_quote(trim($row->titulo), '/');
-                        $plain = preg_replace('/^' . $escapedTitulo . '\s*/i', '', $plain);
-                        $plain = trim($plain);
-                    }
+        foreach ($rows as $row) {
+            $plain = html_entity_decode(
+                strip_tags($row->observation),
+                ENT_QUOTES | ENT_HTML5,
+                'UTF-8'
+            );
+            $plain = preg_replace('/\s+/', ' ', trim($plain));
 
-                    Timesheet::where('id', $row->id)->update(['observation' => $plain]);
-                }
-            });
+            if ($row->titulo) {
+                $escapedTitulo = preg_quote(trim($row->titulo), '/');
+                $plain = preg_replace('/^' . $escapedTitulo . '\s*/i', '', $plain);
+                $plain = trim($plain);
+            }
 
-        // Também corrige observations que não têm HTML mas têm o subject prefixado
-        // (foram importadas com a versão que fazia strip_tags mas mantinha subject)
-        Timesheet::where('origin', 'webhook')
-            ->whereNotNull('observation')
-            ->where('observation', 'not like', '<%')
+            DB::table('timesheets')->where('id', $row->id)->update(['observation' => $plain]);
+        }
+
+        // Parte 2: observations sem HTML mas com subject prefixado
+        $rows2 = DB::table('timesheets')
             ->join('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->where('timesheets.origin', 'webhook')
+            ->whereNotNull('timesheets.observation')
+            ->where('timesheets.observation', 'not like', '<%')
+            ->whereNull('timesheets.deleted_at')
             ->select('timesheets.id', 'timesheets.observation', 'movidesk_tickets.titulo')
-            ->chunk(200, function ($rows) {
-                foreach ($rows as $row) {
-                    if (!$row->titulo) continue;
+            ->get();
 
-                    $escapedTitulo = preg_quote(trim($row->titulo), '/');
-                    $plain = preg_replace('/^' . $escapedTitulo . '\s*/i', '', $row->observation);
-                    $plain = trim(preg_replace('/\s+/', ' ', $plain));
+        foreach ($rows2 as $row) {
+            if (!$row->titulo) continue;
 
-                    if ($plain !== $row->observation) {
-                        Timesheet::where('id', $row->id)->update(['observation' => $plain]);
-                    }
-                }
-            });
+            $escapedTitulo = preg_quote(trim($row->titulo), '/');
+            $plain = preg_replace('/^' . $escapedTitulo . '\s*/i', '', $row->observation);
+            $plain = trim(preg_replace('/\s+/', ' ', $plain));
+
+            if ($plain !== $row->observation) {
+                DB::table('timesheets')->where('id', $row->id)->update(['observation' => $plain]);
+            }
+        }
     }
 
     public function down(): void
