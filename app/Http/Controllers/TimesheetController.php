@@ -684,7 +684,7 @@ class TimesheetController extends Controller
             $timesheet->load('customer');
 
             $step = 'load:project';
-            $timesheet->load(['project' => fn($q) => $q->withTrashed()->with('coordinators')]);
+            $timesheet->load(['project' => fn($q) => $q->withTrashed()]);
 
             $step = 'load:reviewedBy';
             $timesheet->load('reviewedBy');
