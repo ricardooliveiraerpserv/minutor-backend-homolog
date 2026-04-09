@@ -413,6 +413,13 @@ class MovideskService
         $html    = $action['htmlDescription'] ?? '';
         $plain = trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
         $plain = preg_replace('/\s+/', ' ', $plain);
+
+        if ($subject) {
+            $escaped = preg_quote(trim($subject), '/');
+            $plain   = preg_replace('/^' . $escaped . '\s*/iu', '', $plain);
+            $plain   = trim($plain);
+        }
+
         return $plain;
     }
 

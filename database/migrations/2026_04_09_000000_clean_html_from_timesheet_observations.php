@@ -47,7 +47,7 @@ return new class extends Migration
             ->select('timesheets.id', 'timesheets.observation', 'movidesk_tickets.titulo')
             ->chunk(200, function ($rows) {
                 foreach ($rows as $row) {
-                    if (!$row->titulo) return;
+                    if (!$row->titulo) continue;
 
                     $escapedTitulo = preg_quote(trim($row->titulo), '/');
                     $plain = preg_replace('/^' . $escapedTitulo . '\s*/i', '', $row->observation);
