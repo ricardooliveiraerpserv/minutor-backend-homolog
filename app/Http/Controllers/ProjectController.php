@@ -11,6 +11,7 @@ use App\Models\ProjectChangeLog;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\Rule;
@@ -512,6 +513,10 @@ class ProjectController extends Controller
         $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? [];
         unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids']);
 
+        if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
+            unset($validated['allow_negative_balance']);
+        }
+
         $project = Project::create($validated);
 
         // Vincular consultores
@@ -839,17 +844,24 @@ class ProjectController extends Controller
             }
         }
 
+        // Remover campos que ainda não existem no banco (migrações pendentes)
+        if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
+            unset($validated['allow_negative_balance']);
+        }
+
         $project->update($validated);
 
         // Garantir que accumulated_sold_hours está atualizado para Banco de Horas Mensal
-        // O Observer já faz isso, mas garantimos aqui também para casos especiais
-        // Recarregar contractType para garantir que está disponível
         if (!$project->relationLoaded('contractType') && $project->contract_type_id) {
             $project->load('contractType');
         }
-        
+
         if ($project->isBankHoursMonthly()) {
-            $project->updateAccumulatedSoldHours(null, true);
+            try {
+                $project->updateAccumulatedSoldHours(null, true);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao atualizar accumulated_sold_hours', ['error' => $e->getMessage()]);
+            }
         }
 
         // Gravar log se o percentual de coordenação mudou
