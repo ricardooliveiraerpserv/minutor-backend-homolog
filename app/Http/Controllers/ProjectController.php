@@ -854,19 +854,22 @@ class ProjectController extends Controller
 
         // Gravar log se o percentual de coordenação mudou
         if ($previousPercentage !== $newPercentage) {
-            $previousBalance = $project->getGeneralHoursBalance();
-            // Recarregar para pegar novo percentual já salvo
-            $project->refresh();
-            $newBalance = $project->getGeneralHoursBalance();
+            try {
+                $previousBalance = $project->getGeneralHoursBalance();
+                $project->refresh();
+                $newBalance = $project->getGeneralHoursBalance();
 
-            \App\Models\ProjectCoordinatorPercentageLog::create([
-                'project_id'          => $project->id,
-                'changed_by'          => auth()->id(),
-                'previous_percentage' => $previousPercentage,
-                'new_percentage'      => $newPercentage,
-                'previous_balance'    => $previousBalance,
-                'new_balance'         => $newBalance,
-            ]);
+                \App\Models\ProjectCoordinatorPercentageLog::create([
+                    'project_id'          => $project->id,
+                    'changed_by'          => auth()->id(),
+                    'previous_percentage' => $previousPercentage,
+                    'new_percentage'      => $newPercentage,
+                    'previous_balance'    => $previousBalance,
+                    'new_balance'         => $newBalance,
+                ]);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao gravar log de percentual', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
         }
 
         // Atualizar consultores se fornecido
@@ -876,11 +879,21 @@ class ProjectController extends Controller
 
         // Atualizar coordenadores se fornecido
         if ($coordinatorIds !== null) {
-            $project->coordinators()->sync($coordinatorIds);
+            try {
+                $project->coordinators()->sync($coordinatorIds);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao sincronizar coordinators', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
         }
 
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants']);
+        try {
+            $project->load(['coordinators']);
+        } catch (\Exception $e) {
+            \Log::warning('ProjectController@update: falha ao carregar coordinators', ['error' => $e->getMessage()]);
+            $project->setRelation('coordinators', collect());
+        }
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
