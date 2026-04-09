@@ -65,7 +65,7 @@ class MovideskService
         $tickets = [];
         $top     = 50;
         $skip    = 0;
-        $filter  = "lastUpdate gt " . $since->utc()->format('Y-m-d\TH:i:s');
+        $filter  = "lastUpdate gt " . $since->utc()->format('Y-m-d\TH:i:s\Z');
 
         do {
             try {
