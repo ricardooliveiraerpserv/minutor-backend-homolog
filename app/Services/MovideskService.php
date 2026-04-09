@@ -34,8 +34,9 @@ class MovideskService
     {
         try {
             $response = Http::get("{$this->baseUrl()}/tickets", [
-                'token' => $this->token(),
-                'id'    => $ticketId,
+                'token'   => $this->token(),
+                'id'      => $ticketId,
+                '$expand' => 'clients,owner,actions($expand=timeAppointments)',
             ]);
 
             if ($response->successful()) {
