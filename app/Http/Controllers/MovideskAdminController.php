@@ -54,17 +54,20 @@ class MovideskAdminController extends Controller
         }
 
         // Resolver `since`
+        // Manual sync usa janela de 2h para não estourar timeout HTTP (504).
+        // O cron cobre janela de 48h em background sem timeout.
         if ($sinceInput) {
             $since = Carbon::parse($sinceInput);
         } else {
-            $lastSync    = SystemSetting::get('movidesk_last_sync');
-            $minLookback = now()->subHours(48);
+            $lastSync     = SystemSetting::get('movidesk_last_sync');
+            $maxLookback  = now()->subHours(2); // limite para evitar 504 no HTTP
 
             if ($lastSync) {
                 $fromLastSync = Carbon::parse($lastSync)->subMinutes(20);
-                $since = $fromLastSync->lt($minLookback) ? $fromLastSync : $minLookback;
+                // Usa o mais antigo entre last_sync-20min e now-2h, mas não mais que 2h
+                $since = $fromLastSync->lt($maxLookback) ? $maxLookback : $fromLastSync;
             } else {
-                $since = now()->subHours(24);
+                $since = $maxLookback;
             }
         }
 
