@@ -18,6 +18,7 @@ class ExecutiveController extends Controller
 
         $query = User::where('is_executive', true)
             ->whereNull('customer_id')
+            ->with('roles')
             ->orderBy('name');
 
         if ($filter) {
@@ -33,7 +34,7 @@ class ExecutiveController extends Controller
     }
 
     /**
-     * Lista todos os usuários internos (para tela de gestão)
+     * Lista usuários internos candidatos a executivo (não são executivos ainda)
      */
     public function all(Request $request): JsonResponse
     {
@@ -41,7 +42,8 @@ class ExecutiveController extends Controller
         $perPage = (int) $request->query('pageSize', 50);
 
         $query = User::whereNull('customer_id')
-            ->with('roles')
+            ->where('is_executive', false)
+            ->where('enabled', true)
             ->orderBy('name');
 
         if ($filter) {
