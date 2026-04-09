@@ -704,6 +704,7 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_manual_timesheets' => 'nullable|boolean',
             'allow_negative_balance' => 'nullable|boolean',
+            'sold_hours_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
             'coordinator_ids' => 'nullable|array',
@@ -839,10 +840,13 @@ class ProjectController extends Controller
             }
         }
 
-        // Separar relacionamentos
+        // Separar relacionamentos e campos que não pertencem ao model
         $consultantIds  = $validated['consultant_ids'] ?? null;
         $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids']);
+        $soldHoursEffectiveFrom = isset($validated['sold_hours_effective_from'])
+            ? Carbon::parse($validated['sold_hours_effective_from'])->startOfMonth()->toDateString()
+            : Carbon::now()->startOfMonth()->toDateString();
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['sold_hours_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
         $previousSoldHours = (int) ($project->sold_hours ?? 0);
@@ -921,8 +925,6 @@ class ProjectController extends Controller
         $project->loadMissing('contractType');
         if ($previousSoldHours !== $newSoldHours && $project->isBankHoursMonthly()) {
             try {
-                $currentMonth = Carbon::now()->startOfMonth()->toDateString();
-
                 // Bootstrapar histórico inicial se ainda não existe nenhum registro
                 if ($project->soldHoursHistory()->count() === 0 && $project->start_date) {
                     \App\Models\ProjectSoldHoursHistory::create([
@@ -933,22 +935,22 @@ class ProjectController extends Controller
                     ]);
                 }
 
-                // Não criar duplicata se já existe registro para o mês atual
+                // Não criar duplicata se já existe registro para a data efetiva informada
                 $exists = $project->soldHoursHistory()
-                    ->where('effective_from', $currentMonth)
+                    ->where('effective_from', $soldHoursEffectiveFrom)
                     ->exists();
 
                 if (!$exists) {
                     \App\Models\ProjectSoldHoursHistory::create([
                         'project_id'     => $project->id,
                         'sold_hours'     => $newSoldHours,
-                        'effective_from' => $currentMonth,
+                        'effective_from' => $soldHoursEffectiveFrom,
                         'changed_by'     => auth()->id(),
                     ]);
                 } else {
-                    // Atualizar o registro do mês atual
+                    // Atualizar o registro já existente para essa data
                     $project->soldHoursHistory()
-                        ->where('effective_from', $currentMonth)
+                        ->where('effective_from', $soldHoursEffectiveFrom)
                         ->update(['sold_hours' => $newSoldHours, 'changed_by' => auth()->id()]);
                 }
             } catch (\Exception $e) {
@@ -1018,6 +1020,50 @@ class ProjectController extends Controller
         $project->delete();
 
         return response()->json(null, 204);
+    }
+
+    /**
+     * Atualiza um registro do histórico de horas vendidas.
+     */
+    public function updateSoldHoursHistory(Project $project, \App\Models\ProjectSoldHoursHistory $history, Request $request): JsonResponse
+    {
+        if ($history->project_id !== $project->id) {
+            return response()->json(['message' => 'Registro não pertence ao projeto.'], 404);
+        }
+
+        $validated = $request->validate([
+            'sold_hours'     => 'required|integer|min:0|max:999999',
+            'effective_from' => 'required|date',
+        ]);
+
+        $validated['effective_from'] = Carbon::parse($validated['effective_from'])->startOfMonth()->toDateString();
+        $validated['changed_by'] = auth()->id();
+
+        $history->update($validated);
+
+        $project->updateAccumulatedSoldHours(null, true);
+
+        $project->load('soldHoursHistory.changer');
+
+        return response()->json($project->soldHoursHistory->sortBy('effective_from')->values());
+    }
+
+    /**
+     * Remove um registro do histórico de horas vendidas.
+     */
+    public function destroySoldHoursHistory(Project $project, \App\Models\ProjectSoldHoursHistory $history): JsonResponse
+    {
+        if ($history->project_id !== $project->id) {
+            return response()->json(['message' => 'Registro não pertence ao projeto.'], 404);
+        }
+
+        $history->delete();
+
+        $project->updateAccumulatedSoldHours(null, true);
+
+        $project->load('soldHoursHistory.changer');
+
+        return response()->json($project->soldHoursHistory->sortBy('effective_from')->values());
     }
 
     /**
