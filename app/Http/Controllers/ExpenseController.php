@@ -189,6 +189,12 @@ class ExpenseController extends Controller
             });
         }
 
+        if ($request->filled('executive_id')) {
+            $query->whereHas('project.customer', function ($q) use ($request) {
+                $q->where('executive_id', $request->executive_id);
+            });
+        }
+
         if ($request->filled('user_id')) {
             $query->where('user_id', $request->user_id);
         }

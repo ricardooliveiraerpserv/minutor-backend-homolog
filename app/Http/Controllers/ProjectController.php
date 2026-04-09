@@ -122,6 +122,7 @@ class ProjectController extends Controller
         $status = $request->get('status');
         $customerId = $request->get('customer_id');
         $approverId = $request->get('approver_id');
+        $executiveId = $request->get('executive_id');
         $consultantOnly = $request->get('consultant_only');
         $contractTypeName = $request->get('contract_type_name');
         $serviceTypeName = $request->get('service_type_name');
@@ -249,6 +250,13 @@ class ProjectController extends Controller
         if ($approverId) {
             $query->whereHas('approvers', function ($q) use ($approverId) {
                 $q->where('users.id', $approverId);
+            });
+        }
+
+        // Filtro por executivo responsável do cliente
+        if ($executiveId) {
+            $query->whereHas('customer', function ($q) use ($executiveId) {
+                $q->where('executive_id', $executiveId);
             });
         }
 

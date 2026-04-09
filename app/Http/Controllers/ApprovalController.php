@@ -534,6 +534,13 @@ class ApprovalController extends Controller
             });
         }
 
+        // Filtro por executivo responsável do cliente
+        if ($request->filled('executive_id')) {
+            $query->whereHas('project.customer', function ($q) use ($request) {
+                $q->where('executive_id', $request->get('executive_id'));
+            });
+        }
+
         // Filtro por projeto
         if ($request->filled('project_id')) {
             $query->where('project_id', $request->get('project_id'));
@@ -570,6 +577,13 @@ class ApprovalController extends Controller
         if ($request->filled('customer_id')) {
             $query->whereHas('project', function ($q) use ($request) {
                 $q->where('customer_id', $request->get('customer_id'));
+            });
+        }
+
+        // Filtro por executivo responsável do cliente
+        if ($request->filled('executive_id')) {
+            $query->whereHas('project.customer', function ($q) use ($request) {
+                $q->where('executive_id', $request->get('executive_id'));
             });
         }
 
