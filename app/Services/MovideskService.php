@@ -69,12 +69,12 @@ class MovideskService
 
         do {
             try {
-                // Busca com todos os campos necessários para evitar N+1 (sem fetchTicket por ticket)
                 // Monta URL manualmente: Guzzle codifica '$' → '%24', Movidesk não aceita %24filter
+                // $select é obrigatório na listagem do Movidesk (sem ele retorna 400)
                 $url = "{$this->baseUrl()}/tickets"
                     . '?token=' . urlencode($this->token())
                     . '&$filter=' . urlencode($filter)
-                    . '&$expand=clients,owner,actions($expand=timeAppointments)'
+                    . '&$select=id,lastUpdate'
                     . '&$top=' . $top
                     . '&$skip=' . $skip;
 

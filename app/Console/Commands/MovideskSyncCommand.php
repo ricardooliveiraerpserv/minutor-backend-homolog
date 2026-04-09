@@ -50,8 +50,14 @@ class MovideskSyncCommand extends Command
         foreach ($tickets as $ticketData) {
             $ticketId = $ticketData['id'] ?? '?';
 
-            // O listing já retorna clients, owner e actions($expand=timeAppointments)
-            // fetchTicket só é necessário se o ticket vier incompleto
+            // Listing retorna só id+lastUpdate ($select obrigatório no Movidesk).
+            // Busca ticket completo individualmente para ter clients, owner e timeAppointments.
+            $ticketData = $service->fetchTicket((int) $ticketId);
+            if (!$ticketData) {
+                $this->warn("  ⚠️  Ticket #{$ticketId}: falhou ao buscar detalhes");
+                continue;
+            }
+
             $created       = $service->processTicket($ticketData);
             $totalCreated += $created;
 
