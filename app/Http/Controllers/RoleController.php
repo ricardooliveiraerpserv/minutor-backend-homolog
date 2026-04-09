@@ -88,7 +88,7 @@ class RoleController extends Controller
         // Filtro por nome (search/filter)
         $search = $request->get('filter') ?? $request->get('search');
         if (!empty($search)) {
-            $query->where('name', 'like', "%{$search}%");
+            $query->where('name', 'ilike', "%{$search}%");
         }
 
         // Ordenação PO-UI

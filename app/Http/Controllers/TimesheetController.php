@@ -182,7 +182,7 @@ class TimesheetController extends Controller
         }
 
         if ($request->filled('ticket')) {
-            $query->where('ticket', 'like', "%{$request->ticket}%");
+            $query->where('ticket', 'ilike', "%{$request->ticket}%");
         }
 
         if ($request->filled('service_type_id')) {
@@ -199,13 +199,13 @@ class TimesheetController extends Controller
         if ($request->filled('search')) {
             $search = $request->get('search');
             $query->where(function ($q) use ($search) {
-                $q->where('observation', 'like', "%{$search}%")
-                  ->orWhere('ticket', 'like', "%{$search}%")
+                $q->where('observation', 'ilike', "%{$search}%")
+                  ->orWhere('ticket', 'ilike', "%{$search}%")
                   ->orWhereHas('project', function ($pq) use ($search) {
-                      $pq->where('name', 'like', "%{$search}%");
+                      $pq->where('name', 'ilike', "%{$search}%");
                   })
                   ->orWhereHas('customer', function ($cq) use ($search) {
-                      $cq->where('name', 'like', "%{$search}%");
+                      $cq->where('name', 'ilike', "%{$search}%");
                   });
             });
         }

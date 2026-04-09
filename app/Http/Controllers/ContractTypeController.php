@@ -104,8 +104,8 @@ class ContractTypeController extends Controller
         // Filtro de busca (nome ou código)
         if ($search) {
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('code', 'like', "%{$search}%");
+                $q->where('name', 'ilike', "%{$search}%")
+                  ->orWhere('code', 'ilike', "%{$search}%");
             });
         }
 
