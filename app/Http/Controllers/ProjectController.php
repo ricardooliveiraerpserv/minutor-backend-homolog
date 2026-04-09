@@ -186,12 +186,57 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro por status
+        // Filtro por status — hierárquico (WITH RECURSIVE) para status específicos
+        $nodeStateMap = collect(); // id => node_state ('ACTIVE' | 'DISABLED')
+
         if ($status) {
             if ($status === 'active') {
-                $query->active(); // Usa o scope Active do modelo
+                $query->active(); // Scope: exclui cancelled e finished
             } else {
-                $query->where('status', $status);
+                // CTE recursiva: sobe a árvore a partir dos nós que batem,
+                // depois expande para mostrar todos os filhos de cada ancestral.
+                $cte = "
+                    WITH RECURSIVE path_nodes AS (
+                        SELECT id, parent_project_id, status
+                        FROM projects
+                        WHERE status = ?
+                          AND deleted_at IS NULL
+
+                        UNION
+
+                        SELECT p.id, p.parent_project_id, p.status
+                        FROM projects p
+                        INNER JOIN path_nodes pn ON p.id = pn.parent_project_id
+                        WHERE p.deleted_at IS NULL
+                    ),
+                    path_deduped AS (
+                        SELECT DISTINCT id, parent_project_id, status
+                        FROM path_nodes
+                    ),
+                    all_visible AS (
+                        SELECT id, parent_project_id, status
+                        FROM path_deduped
+
+                        UNION
+
+                        SELECT p.id, p.parent_project_id, p.status
+                        FROM projects p
+                        INNER JOIN path_deduped pd ON p.parent_project_id = pd.id
+                        WHERE p.deleted_at IS NULL
+                    )
+                    SELECT
+                        av.id,
+                        CASE WHEN av.status = ? THEN 'ACTIVE' ELSE 'DISABLED' END AS node_state
+                    FROM all_visible av
+                ";
+
+                $rows = DB::select($cte, [$status, $status]);
+
+                $nodeStateMap = collect($rows)->keyBy('id');
+                $visibleIds   = $nodeStateMap->keys()->toArray();
+
+                // Restringe a query principal aos IDs encontrados pela CTE
+                $query->whereIn('projects.id', $visibleIds);
             }
         }
 
@@ -290,7 +335,7 @@ class ProjectController extends Controller
         }
 
         // Adicionar atributos computed aos itens
-        $projects->getCollection()->transform(function ($project) {
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap) {
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
 
@@ -302,6 +347,11 @@ class ProjectController extends Controller
             $project->total_project_value = $project->calculateTotalProjectValue();
             $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
             $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+            // node_state: 'ACTIVE' | 'DISABLED' | null (sem filtro de status ativo)
+            $project->node_state = $nodeStateMap->has($project->id)
+                ? $nodeStateMap->get($project->id)->node_state
+                : null;
 
             return $project;
         });
