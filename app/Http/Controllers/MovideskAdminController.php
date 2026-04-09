@@ -143,20 +143,20 @@ class MovideskAdminController extends Controller
             }
         }
 
-        // Teste sem filtro (retorna os 5 mais recentes)
+        // Busca o ticket mais recente com expand completo para ver estrutura real
         try {
-            $urlNoFilter = 'https://api.movidesk.com/public/v1/tickets'
+            $urlFull = 'https://api.movidesk.com/public/v1/tickets'
                 . '?token=' . urlencode($token)
-                . '&$select=id,lastUpdate'
-                . '&$top=5'
+                . '&$expand=clients,owner,actions($expand=timeAppointments)'
+                . '&$top=1'
                 . '&$orderby=lastUpdate desc';
-            $resp = Http::timeout(15)->get($urlNoFilter);
-            $tests['no_filter'] = [
+            $resp = Http::timeout(20)->get($urlFull);
+            $tests['latest_full'] = [
                 'status' => $resp->status(),
-                'body'   => $resp->body(),
+                'body'   => $resp->json(),
             ];
         } catch (\Throwable $e) {
-            $tests['no_filter'] = ['error' => $e->getMessage()];
+            $tests['latest_full'] = ['error' => $e->getMessage()];
         }
 
         return response()->json($tests);
