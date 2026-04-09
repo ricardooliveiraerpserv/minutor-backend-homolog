@@ -62,6 +62,7 @@ class Project extends Model
         'service_type_id',
         'contract_type_id',
         'status',
+        'allow_negative_balance',
     ];
 
     /**
@@ -84,6 +85,7 @@ class Project extends Model
         'coordinator_hours' => 'integer',
         'timesheet_retroactive_limit_days' => 'integer',
         'allow_manual_timesheets' => 'boolean',
+        'allow_negative_balance' => 'boolean',
         'save_erpserv' => 'decimal:2',
         'start_date' => 'date:Y-m-d', // Retorna apenas a data sem horário
         'created_at' => 'datetime',
@@ -172,12 +174,20 @@ class Project extends Model
     }
 
     /**
-     * Relacionamento com aprovadores (many-to-many)
+     * Relacionamento com coordenadores (many-to-many)
+     */
+    public function coordinators(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'project_coordinators')
+                    ->withTimestamps();
+    }
+
+    /**
+     * @deprecated Use coordinators()
      */
     public function approvers(): BelongsToMany
     {
-        return $this->belongsToMany(User::class, 'project_approvers')
-                    ->withTimestamps();
+        return $this->coordinators();
     }
 
     /**
@@ -434,8 +444,8 @@ class Project extends Model
      */
     public function getCoordinatorLoggedMinutes(bool $includeChildProjects = false, ?int $excludeTimesheetId = null): int
     {
-        // Obter IDs dos coordenadores (aprovadores do projeto)
-        $coordinatorIds = $this->approvers()->pluck('users.id')->toArray();
+        // Obter IDs dos coordenadores do projeto
+        $coordinatorIds = $this->coordinators()->pluck('users.id')->toArray();
 
         // Também incluir usuários com role 'Coordinator' se existir
         if (class_exists(\Spatie\Permission\Models\Role::class)) {
@@ -489,23 +499,77 @@ class Project extends Model
     }
 
     /**
+     * Calcular horas de coordenação para um total de horas apontadas.
+     *
+     * Regras:
+     * - On Demand: sempre 0
+     * - Banco de Horas aberto: horas_apontadas × percentual_coordenacao
+     * - Banco de Horas fechado (FINISHED): consultant_hours × percentual_coordenacao
+     *
+     * @param float $loggedHours Horas apontadas (não usadas quando fechado)
+     * @return float Horas de coordenação
+     */
+    public function calculateCoordinationHours(float $loggedHours = 0.0): float
+    {
+        $this->loadMissing('contractType');
+
+        // On Demand não tem coordenação
+        if ($this->isOnDemand()) {
+            return 0.0;
+        }
+
+        $percent = (float) ($this->coordinator_hours ?? 0);
+        if ($percent <= 0) {
+            return 0.0;
+        }
+
+        // Projeto fechado: base = consultant_hours (fixo)
+        if ($this->status === self::STATUS_FINISHED) {
+            $base = (float) ($this->consultant_hours ?? 0);
+        } else {
+            // Projeto aberto: base = horas apontadas (dinâmico)
+            $base = $loggedHours;
+        }
+
+        return round($base * $percent / 100, 2);
+    }
+
+    /**
+     * Verificar se o projeto é do tipo On Demand
+     */
+    public function isOnDemand(): bool
+    {
+        if (!$this->contractType) {
+            return false;
+        }
+        return strtolower(trim($this->contractType->name)) === 'on demand';
+    }
+
+    /**
      * Calcular o saldo geral de horas do projeto
      *
-     * Fórmula: (horas vendidas + aporte de horas) - todos apontamentos vinculados
+     * Fórmula (Banco de Horas):
+     *   saldo = horas_disponíveis - (horas_apontadas + horas_coordenação) + saldo_inicial
+     *
+     * Fórmula (On Demand):
+     *   sem saldo (retorna 0)
      *
      * IMPORTANTE: Sempre inclui projetos filhos no cálculo.
-     * Para projetos com contract_type.name = "Banco de Horas Mensal", usa accumulated_sold_hours ao invés de sold_hours.
-     * Para projetos filhos com contract_type.name = "Fechado", subtrai (horas vendidas + aporte de horas).
-     * Para outros tipos, subtrai normalmente pelas horas apontadas.
+     * Para projetos com contract_type.name = "Banco de Horas Mensal", usa accumulated_sold_hours.
+     * Para projetos filhos com contract_type.name = "Fechado", subtrai (horas vendidas + aporte).
      *
-     * @param bool $includeChildProjects Se deve incluir horas dos subprojetos (sempre true internamente)
+     * @param bool $includeChildProjects Não utilizado (sempre inclui filhos)
      * @param int|null $excludeTimesheetId ID do timesheet a excluir do cálculo (útil na edição)
      * @return float Saldo geral em horas
      */
     public function getGeneralHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null): float
     {
-        // Carregar contractType se necessário
         $this->loadMissing('contractType');
+
+        // On Demand não controla saldo
+        if ($this->isOnDemand()) {
+            return 0.0;
+        }
 
         // Para Banco de Horas Mensal, usar accumulated_sold_hours; caso contrário, usar sold_hours
         if ($this->isBankHoursMonthly()) {
@@ -513,28 +577,23 @@ class Project extends Model
         } else {
             $soldHours = $this->sold_hours ?? 0;
         }
-        
-        // Usar método auxiliar que já contempla aportes novos + fallback para legado
-        // getTotalAvailableHours() retorna: sold_hours + sum(hour_contributions) OU sold_hours + hour_contribution (legado)
+
         $totalAvailableHours = $this->getTotalAvailableHours();
-        
-        // Calcular apenas os aportes (total disponível - horas vendidas base)
         $contributionHours = $totalAvailableHours - ($this->sold_hours ?? 0);
 
-        // Sempre incluir horas apontadas do projeto atual (excluindo rejeitados)
+        // Horas apontadas (excluindo rejeitados)
         $query = $this->timesheets()->where('status', '!=', 'rejected');
-
         if ($excludeTimesheetId) {
             $query->where('id', '!=', $excludeTimesheetId);
         }
-
         $totalLoggedMinutes = $query->sum('effort_minutes') ?? 0;
-        $totalLoggedHours = round($totalLoggedMinutes / 60, 2);
+        $totalLoggedHours   = round($totalLoggedMinutes / 60, 2);
 
-        // Calcular saldo base do projeto atual
-        // IMPORTANTE: Para Banco de Horas Mensal, soldHours já é accumulated_sold_hours
+        // Horas de coordenação sobre as horas apontadas deste projeto
+        $coordinationHours = $this->calculateCoordinationHours($totalLoggedHours);
+
         $initialBalance = (float) ($this->initial_hours_balance ?? 0);
-        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance;
+        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) + $initialBalance;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -547,43 +606,38 @@ class Project extends Model
                                     strtolower(trim($childProject->contractType->name)) === 'fechado';
 
                 if ($isClosedContract) {
-                    // Para contratos fechados: subtrair (horas vendidas + aportes) do projeto filho
-                    // Usar getTotalAvailableHours() que já contempla novos aportes + fallback legado
+                    // Contratos fechados: subtrai horas vendidas + aportes (valor fixo)
                     $childTotalHours = $childProject->getTotalAvailableHours();
                     $balance -= $childTotalHours;
+                } elseif ($childProject->isOnDemand()) {
+                    // On Demand: não consome saldo do projeto pai
                 } elseif ($childProject->isBankHoursMonthly()) {
-                    // Para Banco de Horas Mensal: usar accumulated_sold_hours no cálculo
+                    // Banco de Horas Mensal: usa accumulated_sold_hours
                     $childSoldHours = $childProject->accumulated_sold_hours ?? $childProject->sold_hours ?? 0;
-                    
-                    // Calcular aportes usando método auxiliar
                     $childTotalAvailable = $childProject->getTotalAvailableHours();
                     $childContributionHours = $childTotalAvailable - ($childProject->sold_hours ?? 0);
-                    
-                    // Calcular horas apontadas do filho
-                    $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
 
+                    $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
                     if ($excludeTimesheetId) {
                         $childQuery->where('id', '!=', $excludeTimesheetId);
                     }
+                    $childLoggedHours = round(($childQuery->sum('effort_minutes') ?? 0) / 60, 2);
+                    $childCoordinationHours = $childProject->calculateCoordinationHours($childLoggedHours);
 
-                    $childLoggedMinutes = $childQuery->sum('effort_minutes') ?? 0;
-                    $childLoggedHours = round($childLoggedMinutes / 60, 2);
-                    
-                    // Subtrair o saldo do filho: (accumulated_sold_hours + aportes) - horas apontadas
                     $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
-                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
+                    $childBalance = ($childSoldHours + $childContributionHours)
+                        - ($childLoggedHours + $childCoordinationHours)
+                        + $childInitialBalance;
                     $balance -= $childBalance;
                 } else {
-                    // Para outros tipos: subtrair normalmente pelas horas apontadas (excluindo rejeitados)
+                    // Outros tipos de Banco de Horas
                     $childQuery = $childProject->timesheets()->where('status', '!=', 'rejected');
-
                     if ($excludeTimesheetId) {
                         $childQuery->where('id', '!=', $excludeTimesheetId);
                     }
-
-                    $childLoggedMinutes = $childQuery->sum('effort_minutes') ?? 0;
-                    $childLoggedHours = round($childLoggedMinutes / 60, 2);
-                    $balance -= $childLoggedHours;
+                    $childLoggedHours = round(($childQuery->sum('effort_minutes') ?? 0) / 60, 2);
+                    $childCoordinationHours = $childProject->calculateCoordinationHours($childLoggedHours);
+                    $balance -= ($childLoggedHours + $childCoordinationHours);
                 }
             }
         }
@@ -719,9 +773,9 @@ class Project extends Model
     /**
      * Calcular o saldo de horas dos coordenadores
      *
-     * Fórmula: (Percentual Horas Coordenador * consultant_hours) - todos apontamentos de coordenadores
-     *
-     * Nota: coordinator_hours é tratado como percentual (0-100) em relação a consultant_hours
+     * Base do cálculo depende do status:
+     * - Projeto aberto:  base = horas_apontadas_pelos_consultores  × percentual
+     * - Projeto fechado: base = consultant_hours (fixo)            × percentual
      *
      * @param bool $includeChildProjects Se deve incluir horas dos subprojetos
      * @param int|null $excludeTimesheetId ID do timesheet a excluir do cálculo (útil na edição)
@@ -729,16 +783,19 @@ class Project extends Model
      */
     public function getCoordinatorHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null): float
     {
-        $coordinatorHoursPercent = $this->coordinator_hours ?? 0;
         $coordinatorLoggedHours = $this->getCoordinatorLoggedHours($includeChildProjects, $excludeTimesheetId);
 
-        // Calcular horas disponíveis para coordenadores (percentual de consultant_hours)
-        $consultantHours = $this->consultant_hours ?? 0;
-        $coordinatorAvailableHours = ($consultantHours * $coordinatorHoursPercent) / 100;
+        // Base para cálculo do disponível
+        if ($this->status === self::STATUS_FINISHED) {
+            $base = (float) ($this->consultant_hours ?? 0);
+        } else {
+            $base = $this->getConsultantLoggedHours($includeChildProjects, $excludeTimesheetId);
+        }
 
-        $balance = $coordinatorAvailableHours - $coordinatorLoggedHours;
+        $percent = (float) ($this->coordinator_hours ?? 0);
+        $coordinatorAvailableHours = round($base * $percent / 100, 2);
 
-        return round($balance, 2);
+        return round($coordinatorAvailableHours - $coordinatorLoggedHours, 2);
     }
 
     /**
@@ -874,8 +931,8 @@ class Project extends Model
      */
     public function isUserCoordinator(int $userId): bool
     {
-        // Verificar se é aprovador do projeto
-        if ($this->approvers()->where('users.id', $userId)->exists()) {
+        // Verificar se é coordenador do projeto
+        if ($this->coordinators()->where('users.id', $userId)->exists()) {
             return true;
         }
 

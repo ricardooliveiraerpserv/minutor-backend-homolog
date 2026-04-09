@@ -128,12 +128,20 @@ class User extends Authenticatable
     }
 
     /**
-     * Relacionamento com projetos onde o usuário é aprovador
+     * Relacionamento com projetos onde o usuário é coordenador
+     */
+    public function coordinatorProjects(): BelongsToMany
+    {
+        return $this->belongsToMany(Project::class, 'project_coordinators')
+                    ->withTimestamps();
+    }
+
+    /**
+     * @deprecated Use coordinatorProjects()
      */
     public function approverProjects(): BelongsToMany
     {
-        return $this->belongsToMany(Project::class, 'project_approvers')
-                    ->withTimestamps();
+        return $this->coordinatorProjects();
     }
 
     /**

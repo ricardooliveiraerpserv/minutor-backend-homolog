@@ -204,8 +204,8 @@ class Expense extends Model
             return true;
         }
 
-        // Verifica se o usuário é aprovador do projeto
-        return $this->project->approvers()->where('user_id', $user->id)->exists();
+        // Verifica se o usuário é coordenador do projeto
+        return $this->project->coordinators()->where('users.id', $user->id)->exists();
     }
 
     /**

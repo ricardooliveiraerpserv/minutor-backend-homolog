@@ -167,7 +167,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.approvers', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.coordinators', 'category', 'reviewedBy']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
         if (!$user->hasRole('Administrator') && !$user->can('expenses.view_all')) {
@@ -391,7 +391,7 @@ class ExpenseController extends Controller
         $canView = $user->hasRole('Administrator') ||
                    $user->can('expenses.view_all') ||
                    $expense->user_id === $user->id ||
-                   $expense->project->approvers()->where('user_id', $user->id)->exists();
+                   $expense->project->coordinators()->where('users.id', $user->id)->exists();
 
         if (!$canView) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar esta despesa');

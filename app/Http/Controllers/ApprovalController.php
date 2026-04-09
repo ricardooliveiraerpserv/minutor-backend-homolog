@@ -305,7 +305,7 @@ class ApprovalController extends Controller
 
         try {
             foreach ($timesheetIds as $timesheetId) {
-                $timesheet = Timesheet::with(['project.approvers'])->find($timesheetId);
+                $timesheet = Timesheet::with(['project.coordinators'])->find($timesheetId);
 
                 if (!$timesheet) {
                     $results['failed'][] = $timesheetId;
@@ -401,7 +401,7 @@ class ApprovalController extends Controller
 
         try {
             foreach ($expenseIds as $expenseId) {
-                $expense = Expense::with(['project.approvers'])->find($expenseId);
+                $expense = Expense::with(['project.coordinators'])->find($expenseId);
 
                 if (!$expense) {
                     $results['failed'][] = $expenseId;
@@ -479,7 +479,7 @@ class ApprovalController extends Controller
 
         // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
         if (!$user->hasRole('Administrator')) {
-            $query->whereHas('project.approvers', function ($q) use ($user) {
+            $query->whereHas('project.coordinators', function ($q) use ($user) {
                 $q->where('users.id', $user->id);
             });
         }
@@ -509,7 +509,7 @@ class ApprovalController extends Controller
 
         // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
         if (!$user->hasRole('Administrator')) {
-            $query->whereHas('project.approvers', function ($q) use ($user) {
+            $query->whereHas('project.coordinators', function ($q) use ($user) {
                 $q->where('users.id', $user->id);
             });
         }

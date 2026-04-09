@@ -448,11 +448,12 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_manual_timesheets' => 'nullable|boolean',
+            'allow_negative_balance' => 'nullable|boolean',
             'status' => ['nullable', Rule::in(array_keys(Project::getStatuses()))],
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
-            'approver_ids' => 'nullable|array',
-            'approver_ids.*' => 'exists:users,id',
+            'coordinator_ids' => 'nullable|array',
+            'coordinator_ids.*' => 'exists:users,id',
         ], [
             'name.required' => 'O nome é obrigatório',
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
@@ -504,9 +505,9 @@ class ProjectController extends Controller
         }
 
         // Separar relacionamentos
-        $consultantIds = $validated['consultant_ids'] ?? [];
-        $approverIds = $validated['approver_ids'] ?? [];
-        unset($validated['consultant_ids'], $validated['approver_ids']);
+        $consultantIds  = $validated['consultant_ids'] ?? [];
+        $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? [];
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids']);
 
         $project = Project::create($validated);
 
@@ -515,13 +516,13 @@ class ProjectController extends Controller
             $project->consultants()->attach($consultantIds);
         }
 
-        // Vincular aprovadores
-        if (!empty($approverIds)) {
-            $project->approvers()->attach($approverIds);
+        // Vincular coordenadores
+        if (!empty($coordinatorIds)) {
+            $project->coordinators()->attach($coordinatorIds);
         }
 
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'approvers', 'parentProject']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'parentProject']);
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
@@ -664,10 +665,11 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_manual_timesheets' => 'nullable|boolean',
+            'allow_negative_balance' => 'nullable|boolean',
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
-            'approver_ids' => 'nullable|array',
-            'approver_ids.*' => 'exists:users,id',
+            'coordinator_ids' => 'nullable|array',
+            'coordinator_ids.*' => 'exists:users,id',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -800,9 +802,13 @@ class ProjectController extends Controller
         }
 
         // Separar relacionamentos
-        $consultantIds = $validated['consultant_ids'] ?? null;
-        $approverIds = $validated['approver_ids'] ?? null;
-        unset($validated['consultant_ids'], $validated['approver_ids']);
+        $consultantIds  = $validated['consultant_ids'] ?? null;
+        $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids']);
+
+        // Log de alteração do percentual de coordenação (auditoria)
+        $previousPercentage = (float) ($project->coordinator_hours ?? 0);
+        $newPercentage      = isset($validated['coordinator_hours']) ? (float) $validated['coordinator_hours'] : $previousPercentage;
 
         // Tratar campos nullable explicitamente - se foram enviados como null ou string vazia, garantir que sejam null
         // Isso permite limpar campos que antes tinham valores
@@ -828,18 +834,35 @@ class ProjectController extends Controller
             $project->updateAccumulatedSoldHours(null, true);
         }
 
+        // Gravar log se o percentual de coordenação mudou
+        if ($previousPercentage !== $newPercentage) {
+            $previousBalance = $project->getGeneralHoursBalance();
+            // Recarregar para pegar novo percentual já salvo
+            $project->refresh();
+            $newBalance = $project->getGeneralHoursBalance();
+
+            \App\Models\ProjectCoordinatorPercentageLog::create([
+                'project_id'          => $project->id,
+                'changed_by'          => auth()->id(),
+                'previous_percentage' => $previousPercentage,
+                'new_percentage'      => $newPercentage,
+                'previous_balance'    => $previousBalance,
+                'new_balance'         => $newBalance,
+            ]);
+        }
+
         // Atualizar consultores se fornecido
         if ($consultantIds !== null) {
             $project->consultants()->sync($consultantIds);
         }
 
-        // Atualizar aprovadores se fornecido
-        if ($approverIds !== null) {
-            $project->approvers()->sync($approverIds);
+        // Atualizar coordenadores se fornecido
+        if ($coordinatorIds !== null) {
+            $project->coordinators()->sync($coordinatorIds);
         }
 
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'approvers']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators']);
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;

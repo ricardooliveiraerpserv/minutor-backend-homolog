@@ -294,8 +294,8 @@ class Timesheet extends Model
             return true;
         }
 
-        // Aprovadores do projeto podem aprovar
-        return $this->project->approvers()->where('users.id', $user->id)->exists();
+        // Coordenadores do projeto podem aprovar
+        return $this->project->coordinators()->where('users.id', $user->id)->exists();
     }
 
     /**

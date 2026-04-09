@@ -434,8 +434,8 @@ class CustomerController extends Controller
                     $projectQuery->whereHas('consultants', function ($consultantQuery) use ($targetUserId) {
                         $consultantQuery->where('user_id', $targetUserId);
                     })
-                    ->orWhereHas('approvers', function ($approverQuery) use ($targetUserId) {
-                        $approverQuery->where('user_id', $targetUserId);
+                    ->orWhereHas('coordinators', function ($coordinatorQuery) use ($targetUserId) {
+                        $coordinatorQuery->where('user_id', $targetUserId);
                     });
                 });
             })->pluck('id');

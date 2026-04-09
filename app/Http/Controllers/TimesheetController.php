@@ -666,7 +666,7 @@ class TimesheetController extends Controller
     {
         $user = Auth::user();
 
-        $timesheet = Timesheet::with(['user', 'customer', 'project.approvers', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])
+        $timesheet = Timesheet::with(['user', 'customer', 'project.coordinators', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->find($id);
@@ -1181,7 +1181,7 @@ class TimesheetController extends Controller
     {
         $user = Auth::user();
 
-        $timesheet = Timesheet::with(['project.approvers'])->find($id);
+        $timesheet = Timesheet::with(['project.coordinators'])->find($id);
 
         if (!$timesheet) {
             return response()->json([
@@ -1260,7 +1260,7 @@ class TimesheetController extends Controller
             ], 422);
         }
 
-        $timesheet = Timesheet::with(['project.approvers'])->find($id);
+        $timesheet = Timesheet::with(['project.coordinators'])->find($id);
 
         if (!$timesheet) {
             return response()->json([
@@ -1554,7 +1554,7 @@ class TimesheetController extends Controller
         ]);
 
         // Carregar relacionamentos necessários
-        $project->load(['consultants', 'approvers']);
+        $project->load(['consultants', 'coordinators']);
 
         // Verificar se é consultor
         $isConsultant = $project->isUserConsultant($userId);
@@ -1568,7 +1568,7 @@ class TimesheetController extends Controller
             'is_consultant' => $isConsultant,
             'is_coordinator' => $isCoordinator,
             'consultant_ids' => $project->consultants->pluck('id')->toArray(),
-            'approver_ids' => $project->approvers->pluck('id')->toArray(),
+            'coordinator_ids' => $project->coordinators->pluck('id')->toArray(),
         ]);
 
         // Se não é nem consultor nem coordenador, não precisa validar saldo específico
@@ -1588,7 +1588,7 @@ class TimesheetController extends Controller
                 'exclude_timesheet_id' => $excludeTimesheetId,
             ]);
 
-            if ($generalBalance < $hoursToAdd) {
+            if ($generalBalance < $hoursToAdd && !$project->allow_negative_balance) {
                 Log::warning('Saldo de horas insuficiente - Validação falhou', [
                     'project_id' => $project->id,
                     'user_id' => $userId,
@@ -1634,7 +1634,7 @@ class TimesheetController extends Controller
                 'exclude_timesheet_id' => $excludeTimesheetId,
             ]);
 
-            if ($consultantBalance < $hoursToAdd) {
+            if ($consultantBalance < $hoursToAdd && !$project->allow_negative_balance) {
                 Log::warning('Saldo de horas de consultor insuficiente - Validação falhou', [
                     'project_id' => $project->id,
                     'user_id' => $userId,
@@ -1689,7 +1689,7 @@ class TimesheetController extends Controller
                 'exclude_timesheet_id' => $excludeTimesheetId,
             ]);
 
-            if ($coordinatorBalance < $hoursToAdd) {
+            if ($coordinatorBalance < $hoursToAdd && !$project->allow_negative_balance) {
                 Log::warning('Saldo de horas de coordenador insuficiente - Validação falhou', [
                     'project_id' => $project->id,
                     'user_id' => $userId,
@@ -1741,7 +1741,7 @@ class TimesheetController extends Controller
             'exclude_timesheet_id' => $excludeTimesheetId,
         ]);
 
-        if ($generalBalance < $hoursToAdd) {
+        if ($generalBalance < $hoursToAdd && !$project->allow_negative_balance) {
             Log::warning('Saldo geral de horas insuficiente - Validação final falhou', [
                 'project_id' => $project->id,
                 'user_id' => $userId,
