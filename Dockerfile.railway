@@ -65,5 +65,5 @@ CMD sh -c "php artisan config:clear; \
            php artisan config:cache; \
            php artisan route:cache; \
            chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
-           su -s /bin/sh www-data -c 'php artisan schedule:work' & \
+           php artisan schedule:work & \
            php-fpm -D && nginx -g 'daemon off;'"
