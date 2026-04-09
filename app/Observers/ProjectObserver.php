@@ -41,7 +41,11 @@ class ProjectObserver
         }
         
         // Atualizar o campo accumulated_sold_hours (skipObserver=true para evitar loop)
-        $project->updateAccumulatedSoldHours(null, true);
+        try {
+            $project->updateAccumulatedSoldHours(null, true);
+        } catch (\Exception $e) {
+            \Log::warning('ProjectObserver@created: falha ao calcular accumulated_sold_hours', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+        }
     }
 
     /**
@@ -90,11 +94,17 @@ class ProjectObserver
         
         // Se for Banco de Horas Mensal, sempre recalcular
         if ($project->isBankHoursMonthly()) {
-            // Atualizar o campo accumulated_sold_hours (skipObserver=true para evitar loop)
-            $project->updateAccumulatedSoldHours(null, true);
+            try {
+                $project->updateAccumulatedSoldHours(null, true);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectObserver@updated: falha ao atualizar accumulated_sold_hours', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
         } elseif ($project->wasChanged('contract_type_id')) {
-            // Se mudou de Banco de Horas Mensal para outro tipo, limpar o campo
-            $project->updateAccumulatedSoldHours(null, true);
+            try {
+                $project->updateAccumulatedSoldHours(null, true);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectObserver@updated: falha ao limpar accumulated_sold_hours', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
         }
     }
 
