@@ -28,6 +28,6 @@ class ProjectSoldHoursHistory extends Model
 
     public function changer(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'changed_by');
+        return $this->belongsTo(User::class, 'changed_by')->select(['id', 'name', 'email']);
     }
 }
