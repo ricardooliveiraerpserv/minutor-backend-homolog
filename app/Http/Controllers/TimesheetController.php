@@ -713,7 +713,7 @@ class TimesheetController extends Controller
             ]);
             return response()->json([
                 'success' => false,
-                'message' => 'Erro ao carregar apontamento: ' . $e->getMessage()
+                'message' => '[' . class_basename($e) . '] ' . $e->getMessage() . ' — ' . basename($e->getFile()) . ':' . $e->getLine()
             ], 500);
         }
     }
