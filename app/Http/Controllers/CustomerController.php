@@ -87,7 +87,7 @@ class CustomerController extends Controller
         $search = $request->get('filter') ?? $request->get('search');
         $hasContractTypeName = $request->get('has_contract_type_name');
 
-        $query = Customer::query();
+        $query = Customer::with('executive');
 
         // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
         if ($search) {
@@ -187,7 +187,8 @@ class CustomerController extends Controller
             'name' => 'required|string|max:255|min:2',
             'company_name' => 'nullable|string|max:255',
             'cgc' => 'required|string|unique:customers,cgc,NULL,id,deleted_at,NULL',
-            'active' => 'nullable|boolean'
+            'active' => 'nullable|boolean',
+            'executive_id' => 'nullable|exists:users,id',
         ]);
 
         // Remove caracteres especiais do CGC
@@ -220,7 +221,7 @@ class CustomerController extends Controller
         $customer = Customer::create($validated);
 
         // Resposta PO-UI
-        return response()->json($customer, 201);
+        return response()->json($customer->load('executive'), 201);
     }
 
     /**
@@ -254,7 +255,7 @@ class CustomerController extends Controller
      */
     public function show(Customer $customer): JsonResponse
     {
-        return response()->json($customer);
+        return response()->json($customer->load('executive'));
     }
 
     /**
@@ -294,7 +295,8 @@ class CustomerController extends Controller
             'name' => 'sometimes|string|max:255|min:2',
             'company_name' => 'nullable|string|max:255',
             'cgc' => 'sometimes|string|unique:customers,cgc,' . $customer->id . ',id,deleted_at,NULL',
-            'active' => 'nullable|boolean'
+            'active' => 'nullable|boolean',
+            'executive_id' => 'nullable|exists:users,id',
         ]);
 
         if (isset($validated['cgc'])) {
@@ -329,7 +331,7 @@ class CustomerController extends Controller
         $customer->update($validated);
 
         // Resposta PO-UI
-        return response()->json($customer);
+        return response()->json($customer->load('executive'));
     }
 
     /**
