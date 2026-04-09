@@ -712,6 +712,7 @@ class ProjectController extends Controller
             'allow_manual_timesheets' => 'nullable|boolean',
             'allow_negative_balance' => 'nullable|boolean',
             'sold_hours_effective_from' => 'nullable|date',
+            'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
             'coordinator_ids' => 'nullable|array',
@@ -853,7 +854,11 @@ class ProjectController extends Controller
         $soldHoursEffectiveFrom = isset($validated['sold_hours_effective_from'])
             ? Carbon::parse($validated['sold_hours_effective_from'])->startOfMonth()->toDateString()
             : Carbon::now()->startOfMonth()->toDateString();
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['sold_hours_effective_from']);
+        $hourlyRateEffectiveFrom = isset($validated['hourly_rate_effective_from'])
+            ? Carbon::parse($validated['hourly_rate_effective_from'])->startOfMonth()->toDateString()
+            : null;
+        $previousHourlyRate = $project->hourly_rate;
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
         $previousSoldHours = (int) ($project->sold_hours ?? 0);
@@ -962,6 +967,20 @@ class ProjectController extends Controller
                 }
             } catch (\Exception $e) {
                 \Log::warning('ProjectController@update: falha ao registrar histórico de sold_hours', ['error' => $e->getMessage()]);
+            }
+        }
+
+        // Se hourly_rate mudou e foi enviada uma data de vigência, atualizar o change log
+        if ($hourlyRateEffectiveFrom && $project->wasChanged('hourly_rate')) {
+            try {
+                ProjectChangeLog::where('project_id', $project->id)
+                    ->where('field_name', 'hourly_rate')
+                    ->where('changed_by', auth()->id())
+                    ->latest()
+                    ->first()
+                    ?->update(['effective_from' => $hourlyRateEffectiveFrom]);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao registrar effective_from no change log de hourly_rate', ['error' => $e->getMessage()]);
             }
         }
 
