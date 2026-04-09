@@ -8,7 +8,7 @@ use App\Services\MovideskService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class MovideskAdminController extends Controller
@@ -129,5 +129,67 @@ class MovideskAdminController extends Controller
                 'message' => 'Erro ao executar sincronização: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Diagnóstico: chama a API Movidesk e retorna a resposta bruta para debug.
+     * GET /api/v1/movidesk/debug
+     */
+    public function debug(Request $request): JsonResponse
+    {
+        $token = config('services.movidesk.token');
+
+        if (!$token) {
+            return response()->json(['error' => 'Token não configurado'], 422);
+        }
+
+        $since = $request->input('since', now()->subHours(48)->utc()->format('Y-m-d\TH:i:s'));
+
+        // Testa 3 formatos de filtro diferentes
+        $tests = [];
+
+        $formats = [
+            'bare'     => "lastUpdate gt {$since}",
+            'with_Z'   => "lastUpdate gt {$since}Z",
+            'datetime' => "lastUpdate gt datetime'{$since}'",
+        ];
+
+        foreach ($formats as $name => $filter) {
+            $url = 'https://api.movidesk.com/public/v1/tickets'
+                . '?token=' . urlencode($token)
+                . '&$filter=' . urlencode($filter)
+                . '&$select=id,lastUpdate'
+                . '&$top=5';
+
+            try {
+                $resp = Http::timeout(15)->get($url);
+                $tests[$name] = [
+                    'filter'  => $filter,
+                    'url'     => $url,
+                    'status'  => $resp->status(),
+                    'body'    => $resp->body(),
+                ];
+            } catch (\Throwable $e) {
+                $tests[$name] = ['error' => $e->getMessage()];
+            }
+        }
+
+        // Teste sem filtro (retorna os 5 mais recentes)
+        try {
+            $urlNoFilter = 'https://api.movidesk.com/public/v1/tickets'
+                . '?token=' . urlencode($token)
+                . '&$select=id,lastUpdate'
+                . '&$top=5'
+                . '&$orderby=lastUpdate desc';
+            $resp = Http::timeout(15)->get($urlNoFilter);
+            $tests['no_filter'] = [
+                'status' => $resp->status(),
+                'body'   => $resp->body(),
+            ];
+        } catch (\Throwable $e) {
+            $tests['no_filter'] = ['error' => $e->getMessage()];
+        }
+
+        return response()->json($tests);
     }
 }
