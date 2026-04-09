@@ -170,9 +170,7 @@ class TimesheetController extends Controller
         }
 
         if ($request->filled('customer_id')) {
-            $query->whereHas('project', function ($q) use ($request) {
-                $q->where('customer_id', $request->customer_id);
-            });
+            $query->where('timesheets.customer_id', $request->customer_id);
         }
 
         if ($request->filled('user_id') && ($user->hasRole('Administrator') || $user->can('hours.view_all'))) {
