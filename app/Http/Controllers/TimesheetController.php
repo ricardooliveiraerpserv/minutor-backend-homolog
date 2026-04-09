@@ -667,6 +667,7 @@ class TimesheetController extends Controller
         try {
             $user = Auth::user();
 
+            // Carrega o timesheet sem join para evitar ambiguidade de coluna 'id'
             $timesheet = Timesheet::with([
                     'user',
                     'customer',
@@ -675,10 +676,15 @@ class TimesheetController extends Controller
                     'reversals.reversedBy',
                     'reversals.originalApprover',
                 ])
-                ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
-                ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
-                ->where('timesheets.id', $id)
-                ->first();
+                ->find($id);
+
+            // Busca o título do ticket Movidesk separadamente (sem join)
+            if ($timesheet && $timesheet->ticket) {
+                $movideskTicket = \DB::table('movidesk_tickets')
+                    ->where('ticket_id', $timesheet->ticket)
+                    ->value('titulo');
+                $timesheet->setAttribute('ticket_subject', $movideskTicket);
+            }
 
             if (!$timesheet) {
                 return response()->json([
