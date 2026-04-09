@@ -593,7 +593,14 @@ class ProjectController extends Controller
     public function show(Project $project): JsonResponse
     {
         // Carregar relacionamentos essenciais
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'parentProject', 'childProjects', 'hourContributions', 'soldHoursHistory.changer']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'parentProject', 'childProjects', 'hourContributions']);
+
+        try {
+            $project->load(['soldHoursHistory.changer']);
+        } catch (\Exception $e) {
+            \Log::warning('ProjectController@show: falha ao carregar soldHoursHistory', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            $project->setRelation('soldHoursHistory', collect());
+        }
 
         // Carregar coordinators com fallback (tabela pode estar em migração)
         try {
@@ -959,7 +966,13 @@ class ProjectController extends Controller
         }
 
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'soldHoursHistory.changer']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants']);
+        try {
+            $project->load(['soldHoursHistory.changer']);
+        } catch (\Exception $e) {
+            \Log::warning('ProjectController@update: falha ao carregar soldHoursHistory', ['error' => $e->getMessage()]);
+            $project->setRelation('soldHoursHistory', collect());
+        }
         try {
             $project->load(['coordinators']);
         } catch (\Exception $e) {
