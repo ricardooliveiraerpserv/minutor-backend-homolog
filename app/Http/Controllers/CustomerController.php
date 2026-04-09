@@ -89,11 +89,11 @@ class CustomerController extends Controller
 
         $query = Customer::query();
 
-        // Filtros PO-UI
+        // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
         if ($search) {
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('cgc', 'like', "%{$search}%");
+                $q->where('name', 'ilike', "%{$search}%")
+                  ->orWhere('cgc', 'ilike', "%{$search}%");
             });
         }
 
@@ -435,11 +435,11 @@ class CustomerController extends Controller
             $query = Customer::whereIn('id', $customerIds);
         }
 
-        // Filtros PO-UI
+        // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
         if ($search) {
             $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('cgc', 'like', "%{$search}%");
+                $q->where('name', 'ilike', "%{$search}%")
+                  ->orWhere('cgc', 'ilike', "%{$search}%");
             });
         }
 

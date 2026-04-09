@@ -101,7 +101,7 @@ class ConsultantGroupController extends Controller
 
             // Filtros
             if ($request->has('name') && $request->get('name') !== '') {
-                $query->where('name', 'like', '%' . $request->get('name') . '%');
+                $query->where('name', 'ilike', '%' . $request->get('name') . '%');
             }
 
             if ($request->has('active')) {

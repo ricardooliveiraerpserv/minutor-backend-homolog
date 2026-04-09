@@ -176,7 +176,7 @@ class ExpenseController extends Controller
 
         // Filtros
         if ($request->filled('search')) {
-            $query->where('description', 'like', '%' . $request->search . '%');
+            $query->where('description', 'ilike', '%' . $request->search . '%');
         }
 
         if ($request->filled('project_id')) {
