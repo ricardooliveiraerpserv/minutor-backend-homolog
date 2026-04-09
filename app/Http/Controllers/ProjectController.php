@@ -1036,6 +1036,38 @@ class ProjectController extends Controller
     }
 
     /**
+     * Atualiza o motivo de um registro do histórico de alterações.
+     */
+    public function updateChangeHistory(Project $project, \App\Models\ProjectChangeLog $log, Request $request): JsonResponse
+    {
+        if ($log->project_id !== $project->id) {
+            return response()->json(['message' => 'Registro não pertence ao projeto.'], 404);
+        }
+
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:1000',
+        ]);
+
+        $log->update($validated);
+
+        return response()->json($log->fresh(['changedByUser']));
+    }
+
+    /**
+     * Remove um registro do histórico de alterações.
+     */
+    public function destroyChangeHistory(Project $project, \App\Models\ProjectChangeLog $log): JsonResponse
+    {
+        if ($log->project_id !== $project->id) {
+            return response()->json(['message' => 'Registro não pertence ao projeto.'], 404);
+        }
+
+        $log->delete();
+
+        return response()->json(null, 204);
+    }
+
+    /**
      * Atualiza um registro do histórico de horas vendidas.
      */
     public function updateSoldHoursHistory(Project $project, \App\Models\ProjectSoldHoursHistory $history, Request $request): JsonResponse
