@@ -28,15 +28,30 @@ trait ListCacheable
      */
     protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60): mixed
     {
+        // Se o driver não suporta tags, executa a query diretamente sem cache
+        if (!($this->cacheStoreSupportsTagging())) {
+            return $query();
+        }
+
         $userId = Auth::id() ?? 'guest';
         $cacheKey = "{$resource}:list:{$userId}:" . md5($request->getQueryString() ?? '');
 
         try {
             return Cache::tags([$resource, "user:{$userId}"])
                 ->remember($cacheKey, $ttl, $query);
-        } catch (\BadMethodCallException $e) {
-            // Driver não suporta tags (array, file) — executa sem cache
+        } catch (\Throwable $e) {
+            // Fallback seguro: qualquer falha de cache não deve derrubar a request
             return $query();
+        }
+    }
+
+    private function cacheStoreSupportsTagging(): bool
+    {
+        try {
+            $store = Cache::getStore();
+            return $store instanceof \Illuminate\Cache\TaggableStore;
+        } catch (\Throwable $e) {
+            return false;
         }
     }
 

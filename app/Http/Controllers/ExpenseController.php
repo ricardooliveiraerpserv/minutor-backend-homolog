@@ -248,15 +248,23 @@ class ExpenseController extends Controller
             }
         }
 
-        return response()->json(
-            $this->cachedList($request, 'expenses', function () use ($query, $pageSize, $page) {
+        try {
+            $result = $this->cachedList($request, 'expenses', function () use ($query, $pageSize, $page) {
                 $expenses = $query->paginate($pageSize, ['*'], 'page', $page);
                 return [
                     'hasNext' => $expenses->hasMorePages(),
                     'items'   => $expenses->items(),
                 ];
-            })
-        );
+            });
+            return response()->json($result);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('ExpenseController@index error', [
+                'message' => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+            ]);
+            return response()->json(['error' => 'Erro ao listar despesas', 'details' => config('app.debug') ? $e->getMessage() : null], 500);
+        }
     }
 
     /**

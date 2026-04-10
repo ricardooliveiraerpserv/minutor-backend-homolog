@@ -314,8 +314,8 @@ class TimesheetController extends Controller
         }
 
         // Resposta PO-UI (com cache Redis de 60s por usuário + filtros)
-        return response()->json(
-            $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page) {
+        try {
+            $result = $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page) {
                 $totalEffortMinutes = (int) (clone $query)->sum('effort_minutes');
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;
@@ -328,8 +328,22 @@ class TimesheetController extends Controller
                     'totalEffortMinutes' => $totalEffortMinutes,
                     'totalEffortHours'   => sprintf('%d:%02d', $totalHours, $totalMinutes),
                 ];
-            })
-        );
+            });
+
+            return response()->json($result);
+        } catch (\Throwable $e) {
+            Log::error('TimesheetController@index error', [
+                'message' => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+                'trace'   => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'error'   => 'Erro ao listar apontamentos',
+                'details' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
     }
 
     /**

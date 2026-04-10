@@ -323,8 +323,8 @@ class ProjectController extends Controller
         // Paginação PO-UI
         $page = (int) $request->get('page', 1);
 
-        return response()->json(
-            $this->cachedList($request, 'projects', function () use ($query, $perPage, $page) {
+        try {
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de minutos dos projetos filhos em lote (uma única query adicional)
@@ -394,8 +394,16 @@ class ProjectController extends Controller
             'hasNext' => $projects->hasMorePages(),
             'items'   => $projects->items(),
         ];
-        }) // fim cachedList
-        );
+        }); // fim cachedList
+        return response()->json($result);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('ProjectController@index error', [
+                'message' => $e->getMessage(),
+                'file'    => $e->getFile(),
+                'line'    => $e->getLine(),
+            ]);
+            return response()->json(['error' => 'Erro ao listar projetos', 'details' => config('app.debug') ? $e->getMessage() : null], 500);
+        }
     }
 
     /**
