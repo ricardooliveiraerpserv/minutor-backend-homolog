@@ -156,7 +156,7 @@ class TimesheetController extends Controller
         $perPage = min($request->get('pageSize', 15), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Timesheet::with(['user', 'customer', 'project', 'reviewedBy'])
+        $query = Timesheet::with(['user', 'customer', 'project.contractType', 'project.customer', 'reviewedBy'])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
