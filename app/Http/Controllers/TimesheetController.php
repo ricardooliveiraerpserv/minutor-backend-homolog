@@ -341,7 +341,7 @@ class TimesheetController extends Controller
 
             return response()->json([
                 'error'   => 'Erro ao listar apontamentos',
-                'details' => config('app.debug') ? $e->getMessage() : null,
+                'details' => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
             ], 500);
         }
     }

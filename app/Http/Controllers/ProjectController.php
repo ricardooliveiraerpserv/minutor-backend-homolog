@@ -402,7 +402,7 @@ class ProjectController extends Controller
                 'file'    => $e->getFile(),
                 'line'    => $e->getLine(),
             ]);
-            return response()->json(['error' => 'Erro ao listar projetos', 'details' => config('app.debug') ? $e->getMessage() : null], 500);
+            return response()->json(['error' => 'Erro ao listar projetos', 'details' => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine()], 500);
         }
     }
 
