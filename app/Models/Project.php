@@ -66,6 +66,11 @@ class Project extends Model
     ];
 
     /**
+     * Atributos calculados incluídos automaticamente no JSON.
+     */
+    protected $appends = ['status_display', 'contract_type_display'];
+
+    /**
      * The attributes that should be cast.
      *
      * @var array<string, string>
