@@ -305,7 +305,7 @@ class ApprovalController extends Controller
 
         try {
             foreach ($timesheetIds as $timesheetId) {
-                $timesheet = Timesheet::with(['project.coordinators'])->find($timesheetId);
+                $timesheet = Timesheet::with(['project'])->find($timesheetId);
 
                 if (!$timesheet) {
                     $results['failed'][] = $timesheetId;
@@ -401,7 +401,7 @@ class ApprovalController extends Controller
 
         try {
             foreach ($expenseIds as $expenseId) {
-                $expense = Expense::with(['project.coordinators'])->find($expenseId);
+                $expense = Expense::with(['project'])->find($expenseId);
 
                 if (!$expense) {
                     $results['failed'][] = $expenseId;
