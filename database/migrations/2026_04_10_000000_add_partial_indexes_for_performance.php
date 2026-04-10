@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -10,72 +11,58 @@ return new class extends Migration
 
     public function up(): void
     {
-        // ──────────────────────────────────────────────────────────
-        // TIMESHEETS — partial indexes (excluem soft-deleted rows)
-        // ──────────────────────────────────────────────────────────
+        $tsHasSoftDelete   = Schema::hasColumn('timesheets', 'deleted_at');
+        $expHasSoftDelete  = Schema::hasColumn('expenses', 'deleted_at');
+        $projHasSoftDelete = Schema::hasColumn('projects', 'deleted_at');
 
-        // Listagem por usuário ordenada por data (query mais frequente)
+        // ──────────────────────────────────────────────────────────
+        // TIMESHEETS
+        // ──────────────────────────────────────────────────────────
+        $tsWhere = $tsHasSoftDelete ? 'WHERE deleted_at IS NULL' : '';
+
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ts_active_user_date
-            ON timesheets (user_id, date DESC)
-            WHERE deleted_at IS NULL
+            ON timesheets (user_id, date DESC) {$tsWhere}
         ");
-
-        // Filtro por projeto + status (aprovações, relatórios)
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ts_active_project_status
-            ON timesheets (project_id, status)
-            WHERE deleted_at IS NULL
+            ON timesheets (project_id, status) {$tsWhere}
         ");
-
-        // Fila de aprovação: status = 'pending' + data
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ts_active_status_date
-            ON timesheets (status, date DESC)
-            WHERE deleted_at IS NULL
+            ON timesheets (status, date DESC) {$tsWhere}
         ");
 
         // ──────────────────────────────────────────────────────────
-        // EXPENSES — partial indexes
+        // EXPENSES
         // ──────────────────────────────────────────────────────────
+        $expWhere = $expHasSoftDelete ? 'WHERE deleted_at IS NULL' : '';
 
-        // Listagem por usuário ordenada por data
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_exp_active_user_date
-            ON expenses (user_id, expense_date DESC)
-            WHERE deleted_at IS NULL
+            ON expenses (user_id, expense_date DESC) {$expWhere}
         ");
-
-        // Filtro por projeto + status (aprovações)
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_exp_active_project_status
-            ON expenses (project_id, status)
-            WHERE deleted_at IS NULL
+            ON expenses (project_id, status) {$expWhere}
         ");
-
-        // Fila de aprovação: status pending/adjustment + data
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_exp_active_status_date
-            ON expenses (status, expense_date DESC)
-            WHERE deleted_at IS NULL
+            ON expenses (status, expense_date DESC) {$expWhere}
         ");
 
         // ──────────────────────────────────────────────────────────
-        // PROJECTS — partial indexes
+        // PROJECTS
         // ──────────────────────────────────────────────────────────
+        $projWhere = $projHasSoftDelete ? 'WHERE deleted_at IS NULL' : '';
 
-        // Listagem por cliente (filtro mais comum no project-list)
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_proj_active_customer_name
-            ON projects (customer_id, name)
-            WHERE deleted_at IS NULL
+            ON projects (customer_id, name) {$projWhere}
         ");
-
-        // Filtro por status na listagem de projetos
         DB::statement("
             CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_proj_active_status_name
-            ON projects (status, name)
-            WHERE deleted_at IS NULL
+            ON projects (status, name) {$projWhere}
         ");
     }
 
