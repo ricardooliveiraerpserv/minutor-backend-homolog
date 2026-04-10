@@ -119,9 +119,20 @@ class ProjectController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $perPage = min($request->get('pageSize', 15), 100);
+        $perPage = min($request->get('pageSize', $request->get('per_page', 15)), 200);
+        $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
         $status = $request->get('status');
+
+        // Modo minimal: retorna apenas id, name, code (para dropdowns)
+        if ($minimal) {
+            $q = Project::select('id', 'name', 'code', 'status');
+            if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
+            if ($status === 'active') $q->active();
+            elseif ($status) $q->where('status', $status);
+            $items = $q->orderBy('name')->limit($perPage)->get();
+            return response()->json(['hasNext' => false, 'items' => $items]);
+        }
         $customerId = $request->get('customer_id');
         $approverId = $request->get('approver_id');
         $executiveId = $request->get('executive_id');
