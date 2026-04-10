@@ -74,6 +74,7 @@ use Maatwebsite\Excel\Facades\Excel;
 class TimesheetController extends Controller
 {
     use ResponseHelpers;
+    use \App\Http\Traits\ListCacheable;
 
     /**
      * @OA\Get(
@@ -312,24 +313,23 @@ class TimesheetController extends Controller
             $query->orderBy('date', 'desc')->orderBy('start_time', 'desc');
         }
 
-        // Calcular total de horas (sem considerar paginação)
-        $totalEffortMinutes = (clone $query)->sum('effort_minutes');
-        $totalEffortMinutes = (int) $totalEffortMinutes;
+        // Resposta PO-UI (com cache Redis de 60s por usuário + filtros)
+        return response()->json(
+            $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page) {
+                $totalEffortMinutes = (int) (clone $query)->sum('effort_minutes');
+                $totalHours   = intdiv($totalEffortMinutes, 60);
+                $totalMinutes = $totalEffortMinutes % 60;
 
-        $totalHours = intdiv($totalEffortMinutes, 60);
-        $totalMinutes = $totalEffortMinutes % 60;
-        $totalEffortHours = sprintf('%d:%02d', $totalHours, $totalMinutes);
+                $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
-        // Paginação PO-UI (após calcular o total geral)
-        $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
-
-        // Resposta PO-UI
-        return response()->json([
-            'hasNext' => $timesheets->hasMorePages(),
-            'items' => $timesheets->items(),
-            'totalEffortMinutes' => $totalEffortMinutes,
-            'totalEffortHours' => $totalEffortHours,
-        ]);
+                return [
+                    'hasNext'            => $timesheets->hasMorePages(),
+                    'items'              => $timesheets->items(),
+                    'totalEffortMinutes' => $totalEffortMinutes,
+                    'totalEffortHours'   => sprintf('%d:%02d', $totalHours, $totalMinutes),
+                ];
+            })
+        );
     }
 
     /**
@@ -623,6 +623,8 @@ class TimesheetController extends Controller
             $message = $timesheetUserId === Auth::id()
                 ? 'Apontamento criado com sucesso!'
                 : 'Apontamento criado com sucesso para ' . $timesheet->user->name . '!';
+
+            $this->invalidateListCache('timesheets');
 
             return response()->json([
                 'success' => true,
@@ -1109,6 +1111,8 @@ class TimesheetController extends Controller
                 'user_changed' => $userChanged ?? false,
             ]);
 
+            $this->invalidateListCache('timesheets');
+
             return response()->json([
                 'success' => true,
                 'data' => $timesheet,
@@ -1177,6 +1181,7 @@ class TimesheetController extends Controller
         }
 
         $timesheet->delete();
+        $this->invalidateListCache('timesheets');
 
         return response()->json([
             'success' => true,

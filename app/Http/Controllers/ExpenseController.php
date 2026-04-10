@@ -50,6 +50,7 @@ use Maatwebsite\Excel\Facades\Excel;
 class ExpenseController extends Controller
 {
     use ResponseHelpers;
+    use \App\Http\Traits\ListCacheable;
 
     /**
      * @OA\Get(
@@ -247,13 +248,15 @@ class ExpenseController extends Controller
             }
         }
 
-        $expenses = $query->paginate($pageSize, ['*'], 'page', $page);
-
-        // Resposta no padrão PO-UI
-        return response()->json([
-            'hasNext' => $expenses->hasMorePages(),
-            'items' => $expenses->items()
-        ]);
+        return response()->json(
+            $this->cachedList($request, 'expenses', function () use ($query, $pageSize, $page) {
+                $expenses = $query->paginate($pageSize, ['*'], 'page', $page);
+                return [
+                    'hasNext' => $expenses->hasMorePages(),
+                    'items'   => $expenses->items(),
+                ];
+            })
+        );
     }
 
     /**
@@ -348,6 +351,7 @@ class ExpenseController extends Controller
 
         $expense = Expense::create($expenseData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+        $this->invalidateListCache('expenses');
 
         return response()->json($expense, 201);
     }
@@ -529,6 +533,7 @@ class ExpenseController extends Controller
 
         $expense->update($updateData);
         $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+        $this->invalidateListCache('expenses');
 
         return response()->json($expense);
     }
@@ -583,6 +588,7 @@ class ExpenseController extends Controller
         }
 
         $expense->delete();
+        $this->invalidateListCache('expenses');
 
         return response()->json(null, 204);
     }

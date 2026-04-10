@@ -24,6 +24,7 @@ use Illuminate\Validation\Rule;
  */
 class ProjectController extends Controller
 {
+    use \App\Http\Traits\ListCacheable;
     /**
      * @OA\Get(
      *     path="/api/v1/projects",
@@ -321,6 +322,9 @@ class ProjectController extends Controller
 
         // Paginação PO-UI
         $page = (int) $request->get('page', 1);
+
+        return response()->json(
+            $this->cachedList($request, 'projects', function () use ($query, $perPage, $page) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de minutos dos projetos filhos em lote (uma única query adicional)
@@ -386,10 +390,12 @@ class ProjectController extends Controller
         });
 
         // Resposta PO-UI
-        return response()->json([
+        return [
             'hasNext' => $projects->hasMorePages(),
-            'items' => $projects->items()
-        ]);
+            'items'   => $projects->items(),
+        ];
+        }) // fim cachedList
+        );
     }
 
     /**
@@ -567,6 +573,7 @@ class ProjectController extends Controller
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
         $project->contract_type_display = $project->contract_type_display;
+        $this->invalidateListCache('projects');
 
         return response()->json($project, 201);
     }
@@ -645,6 +652,7 @@ class ProjectController extends Controller
         $project->total_project_value = $project->calculateTotalProjectValue();
         $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
         $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+        $this->invalidateListCache('projects');
 
         return response()->json($project);
     }
@@ -1067,6 +1075,7 @@ class ProjectController extends Controller
         }
 
         $project->delete();
+        $this->invalidateListCache('projects');
 
         return response()->json(null, 204);
     }
