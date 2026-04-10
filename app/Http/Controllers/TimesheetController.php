@@ -198,8 +198,17 @@ class TimesheetController extends Controller
             });
         }
 
-        if ($request->filled('start_date') && $request->filled('end_date')) {
-            $query->inPeriod($request->start_date, $request->end_date);
+        if ($request->filled('contract_type_id')) {
+            $query->whereHas('project', function ($q) use ($request) {
+                $q->where('contract_type_id', $request->contract_type_id);
+            });
+        }
+
+        if ($request->filled('start_date')) {
+            $endDate = $request->filled('end_date') ? $request->end_date : now()->toDateString();
+            $query->inPeriod($request->start_date, $endDate);
+        } elseif ($request->filled('end_date')) {
+            $query->where('timesheets.date', '<=', $request->end_date);
         }
 
         // Busca geral
@@ -300,9 +309,9 @@ class TimesheetController extends Controller
                 $query->leftJoin('customers', 'customers.id', '=', 'timesheets.customer_id');
             }
 
-            // Ordenação por campos da própria tabela
+            // Ordenação por campos da própria tabela (prefixo para evitar ambiguidade com JOINs)
             foreach ($scalarOrders as $order) {
-                $query->orderBy($order['column'], $order['direction']);
+                $query->orderBy('timesheets.' . $order['column'], $order['direction']);
             }
 
             // Ordenação por campos de relacionamentos
