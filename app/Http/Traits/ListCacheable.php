@@ -31,8 +31,13 @@ trait ListCacheable
         $userId = Auth::id() ?? 'guest';
         $cacheKey = "{$resource}:list:{$userId}:" . md5($request->getQueryString() ?? '');
 
-        return Cache::tags([$resource, "user:{$userId}"])
-            ->remember($cacheKey, $ttl, $query);
+        try {
+            return Cache::tags([$resource, "user:{$userId}"])
+                ->remember($cacheKey, $ttl, $query);
+        } catch (\BadMethodCallException $e) {
+            // Driver não suporta tags (array, file) — executa sem cache
+            return $query();
+        }
     }
 
     /**
