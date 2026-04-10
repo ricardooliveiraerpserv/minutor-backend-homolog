@@ -310,7 +310,7 @@ class TimesheetController extends Controller
                 $query->orderBy($order['table'] . '.' . $order['column'], $order['direction']);
             }
         } else {
-            $query->orderBy('date', 'desc')->orderBy('start_time', 'desc');
+            $query->orderBy('timesheets.date', 'desc')->orderBy('timesheets.start_time', 'desc');
         }
 
         // Resposta PO-UI (com cache Redis de 60s por usuário + filtros)

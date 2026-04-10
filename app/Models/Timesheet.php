@@ -219,7 +219,7 @@ class Timesheet extends Model
      */
     public function scopeWithStatus($query, string $status)
     {
-        return $query->where('status', $status);
+        return $query->where('timesheets.status', $status);
     }
 
     /**
@@ -235,7 +235,7 @@ class Timesheet extends Model
      */
     public function scopePending($query)
     {
-        return $query->where('status', self::STATUS_PENDING);
+        return $query->where('timesheets.status', self::STATUS_PENDING);
     }
 
     /**
@@ -243,7 +243,7 @@ class Timesheet extends Model
      */
     public function scopeApproved($query)
     {
-        return $query->where('status', self::STATUS_APPROVED);
+        return $query->where('timesheets.status', self::STATUS_APPROVED);
     }
 
     /**
@@ -251,7 +251,7 @@ class Timesheet extends Model
      */
     public function scopeRejected($query)
     {
-        return $query->where('status', self::STATUS_REJECTED);
+        return $query->where('timesheets.status', self::STATUS_REJECTED);
     }
 
     /**
@@ -259,7 +259,7 @@ class Timesheet extends Model
      */
     public function scopeConflicted($query)
     {
-        return $query->where('status', self::STATUS_CONFLICTED);
+        return $query->where('timesheets.status', self::STATUS_CONFLICTED);
     }
 
     /**
