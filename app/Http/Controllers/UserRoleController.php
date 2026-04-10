@@ -253,23 +253,27 @@ class UserRoleController extends Controller
     /**
      * Lista usuários com roles (método auxiliar - não exposto como rota)
      */
-    public function listUsersWithRoles(): JsonResponse
+    public function listUsersWithRoles(Request $request): JsonResponse
     {
-        $users = User::with('roles')->get()->map(function ($user) {
-            return [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'roles' => $user->roles->pluck('name')->toArray(),
-                'created_at' => $user->created_at,
-                'updated_at' => $user->updated_at
-            ];
-        });
+        $pageSize = min((int) $request->get('pageSize', 50), 200);
+        $page = (int) $request->get('page', 1);
 
-        // Resposta PO-UI
+        $paginator = User::with('roles')
+            ->orderBy('name')
+            ->paginate($pageSize, ['id', 'name', 'email', 'created_at', 'updated_at'], 'page', $page);
+
+        $items = $paginator->getCollection()->map(fn($user) => [
+            'id'         => $user->id,
+            'name'       => $user->name,
+            'email'      => $user->email,
+            'roles'      => $user->roles->pluck('name')->toArray(),
+            'created_at' => $user->created_at,
+            'updated_at' => $user->updated_at,
+        ]);
+
         return response()->json([
-            'hasNext' => false,
-            'items' => $users
+            'hasNext' => $paginator->hasMorePages(),
+            'items'   => $items,
         ]);
     }
 
