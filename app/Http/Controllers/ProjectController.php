@@ -335,7 +335,7 @@ class ProjectController extends Controller
         $page = (int) $request->get('page', 1);
 
         try {
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page) {
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de minutos dos projetos filhos em lote (uma única query adicional)
