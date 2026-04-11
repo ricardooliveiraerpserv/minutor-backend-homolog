@@ -51,5 +51,32 @@ namespace App\Http\Controllers;
  */
 abstract class Controller
 {
-    //
+    /**
+     * Resolve o intervalo de datas para endpoints de indicadores.
+     * Suporta seleção de um único mês (month+year) ou faixa de meses
+     * (start_month+start_year → month+year).
+     *
+     * Retorna [startDate, endDate] em formato 'Y-m-d', ou null se nenhum
+     * parâmetro de período for fornecido.
+     */
+    protected function resolveIndicatorDateRange(\Illuminate\Http\Request $request): ?array
+    {
+        $month = $request->get('month');
+        $year  = $request->get('year');
+
+        if (!$month && !$year) {
+            return null;
+        }
+
+        $endYear  = (int) ($year  ?: date('Y'));
+        $endMonth = (int) ($month ?: 12);
+
+        $startMonth = $request->filled('start_month') ? (int) $request->get('start_month') : $endMonth;
+        $startYear  = $request->filled('start_year')  ? (int) $request->get('start_year')  : $endYear;
+
+        $startDate = \Carbon\Carbon::create($startYear, $startMonth, 1)->startOfMonth()->format('Y-m-d');
+        $endDate   = \Carbon\Carbon::create($endYear,   $endMonth,   1)->endOfMonth()->format('Y-m-d');
+
+        return [$startDate, $endDate];
+    }
 }
