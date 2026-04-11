@@ -627,6 +627,30 @@ class UserController extends Controller
     }
 
     /**
+     * Gera uma senha temporária para o próprio usuário autenticado
+     * (sem precisar de permissão de admin).
+     */
+    public function selfResetPassword(): JsonResponse
+    {
+        $user = Auth::user();
+
+        DB::beginTransaction();
+        try {
+            $temporaryPassword = $this->generateTemporaryPassword();
+            $user->setTemporaryPassword($temporaryPassword, 24);
+            DB::commit();
+
+            return response()->json([
+                'message'            => 'Nova senha gerada com sucesso',
+                'temporary_password' => $temporaryPassword,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro ao gerar senha: ' . $e->getMessage());
+        }
+    }
+
+    /**
      * @OA\Get(
      *     path="/api/v1/users/profile",
      *     summary="Perfil do usuário atual",

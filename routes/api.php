@@ -567,6 +567,7 @@ Route::prefix('v1')->group(function () {
         // Upload de foto de perfil
         Route::post('/users/profile/photo', [UserController::class, 'uploadProfilePhoto'])->name('users.upload-photo');
         Route::delete('/users/profile/photo', [UserController::class, 'removeProfilePhoto'])->name('users.remove-photo');
+        Route::post('/users/profile/reset-password', [UserController::class, 'selfResetPassword'])->name('users.profile.reset-password');
 
         // Gerenciamento completo de usuários (requer permissões específicas)
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
