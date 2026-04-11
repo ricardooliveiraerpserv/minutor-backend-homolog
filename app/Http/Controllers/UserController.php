@@ -616,7 +616,8 @@ class UserController extends Controller
             DB::commit();
 
             return response()->json([
-                'message' => 'Senha temporária enviada para o email do usuário'
+                'message'            => 'Senha temporária gerada com sucesso',
+                'temporary_password' => $temporaryPassword,
             ]);
 
         } catch (\Exception $e) {
