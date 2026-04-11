@@ -1578,26 +1578,10 @@ class OnDemandController extends Controller
             ->where('ticket', '!=', '')
             ->where('status', '!=', 'rejected');
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            // Criar data inicial e final do mês
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate)); // Último dia do mês
-
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            // Se apenas o ano for fornecido, filtrar por todo o ano
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            // Se apenas o mês for fornecido, usar o ano atual
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -1785,20 +1769,10 @@ class OnDemandController extends Controller
             ->where('status', '!=', 'rejected')
             ->with(['user', 'project', 'reviewedBy']);
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -1989,20 +1963,10 @@ class OnDemandController extends Controller
             ->where('ticket', '!=', '')
             ->where('status', '!=', 'rejected');
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -2187,20 +2151,10 @@ class OnDemandController extends Controller
             ->where('status', '!=', 'rejected')
             ->with(['user', 'project', 'reviewedBy']);
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -2376,20 +2330,10 @@ class OnDemandController extends Controller
             ->where('ticket', '!=', '')
             ->where('status', '!=', 'rejected');
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -2583,20 +2527,10 @@ class OnDemandController extends Controller
             ->where('status', '!=', 'rejected')
             ->with(['user', 'project', 'reviewedBy']);
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -2779,20 +2713,10 @@ class OnDemandController extends Controller
             ->where('ticket', '!=', '')
             ->where('status', '!=', 'rejected');
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -2991,20 +2915,10 @@ class OnDemandController extends Controller
             ->where('status', '!=', 'rejected')
             ->with(['user', 'project', 'reviewedBy']);
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -3186,20 +3100,10 @@ class OnDemandController extends Controller
             ->where('ticket', '!=', '')
             ->where('status', '!=', 'rejected');
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -3393,20 +3297,10 @@ class OnDemandController extends Controller
             ->where('status', '!=', 'rejected')
             ->with(['user', 'project', 'reviewedBy']);
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
@@ -3581,20 +3475,10 @@ class OnDemandController extends Controller
             ->where('ticket', '!=', '')
             ->where('status', '!=', 'rejected');
 
-        // Aplicar filtro de mês e ano
-        if ($month && $year) {
-            $startDate = sprintf('%04d-%02d-01', $year, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($year) {
-            $startDate = sprintf('%04d-01-01', $year);
-            $endDate = sprintf('%04d-12-31', $year);
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
-        } elseif ($month) {
-            $currentYear = date('Y');
-            $startDate = sprintf('%04d-%02d-01', $currentYear, $month);
-            $endDate = date('Y-m-t', strtotime($startDate));
-            $timesheetsQuery->whereBetween('date', [$startDate, $endDate]);
+        // Aplicar filtro de período (suporta range start_month/start_year → month/year)
+        $dateRange = $this->resolveIndicatorDateRange($request);
+        if ($dateRange) {
+            $timesheetsQuery->whereBetween('date', $dateRange);
         }
 
         // Aplicar filtro de cliente através dos projetos
