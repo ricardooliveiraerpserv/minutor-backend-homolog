@@ -147,6 +147,12 @@ class PermissionSeeder extends Seeder
             'project_statuses.create',
             'project_statuses.update',
             'project_statuses.delete',
+
+            // Permissões de Parceiros
+            'partners.view',
+            'partners.create',
+            'partners.update',
+            'partners.delete',
         ];
 
         // Criar as permissões (usando firstOrCreate para evitar duplicatas)

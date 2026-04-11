@@ -28,6 +28,7 @@ use App\Http\Controllers\BankHoursMonthlyController;
 use App\Http\Controllers\OnDemandController;
 use App\Http\Controllers\ExecutiveController;
 use App\Http\Controllers\HourContributionController;
+use App\Http\Controllers\PartnerController;
 
 /*
 |--------------------------------------------------------------------------
@@ -638,6 +639,24 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:consultant_groups.delete')->group(function () {
             Route::delete('/consultant-groups/{consultant_group}', [ConsultantGroupController::class, 'destroy'])->name('consultant-groups.destroy');
+        });
+
+        // 🤝 PARCEIROS
+        Route::middleware('permission.or.admin:partners.view')->group(function () {
+            Route::get('/partners', [PartnerController::class, 'index'])->name('partners.index');
+            Route::get('/partners/{partner}', [PartnerController::class, 'show'])->name('partners.show');
+        });
+
+        Route::middleware('permission.or.admin:partners.create')->group(function () {
+            Route::post('/partners', [PartnerController::class, 'store'])->name('partners.store');
+        });
+
+        Route::middleware('permission.or.admin:partners.update')->group(function () {
+            Route::put('/partners/{partner}', [PartnerController::class, 'update'])->name('partners.update');
+        });
+
+        Route::middleware('permission.or.admin:partners.delete')->group(function () {
+            Route::delete('/partners/{partner}', [PartnerController::class, 'destroy'])->name('partners.destroy');
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)

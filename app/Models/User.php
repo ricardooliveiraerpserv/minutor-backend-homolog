@@ -36,6 +36,7 @@ class User extends Authenticatable
         'temporary_password_expires_at',
         'profile_photo',
         'customer_id',
+        'partner_id',
         'is_executive',
     ];
 
@@ -100,6 +101,14 @@ class User extends Authenticatable
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    /**
+     * Relacionamento com parceiro (se o usuário for do tipo Parceiro / Parceiro ADM)
+     */
+    public function partner(): BelongsTo
+    {
+        return $this->belongsTo(Partner::class);
     }
 
     /**
