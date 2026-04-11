@@ -192,6 +192,17 @@ class TimesheetController extends Controller
             $query->where('ticket', 'ilike', "%{$request->ticket}%");
         }
 
+        if ($request->filled('origin')) {
+            $originVal = $request->get('origin');
+            if ($originVal === 'web') {
+                $query->where(function ($q) {
+                    $q->whereNull('timesheets.origin')->orWhere('timesheets.origin', 'web');
+                });
+            } else {
+                $query->where('timesheets.origin', $originVal);
+            }
+        }
+
         if ($request->filled('service_type_id')) {
             $query->whereHas('project', function ($q) use ($request) {
                 $q->where('service_type_id', $request->service_type_id);
