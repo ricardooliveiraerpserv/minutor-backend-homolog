@@ -604,26 +604,31 @@ class UserController extends Controller
 
         DB::beginTransaction();
         try {
-            // Gerar senha temporária
             $temporaryPassword = $this->generateTemporaryPassword();
-
-            // Definir senha temporária (expira em 24 horas)
             $user->setTemporaryPassword($temporaryPassword, 24);
-
-            // Enviar email com a senha temporária
-            $user->notify(new TemporaryPasswordNotification($temporaryPassword, 24));
-
             DB::commit();
-
-            return response()->json([
-                'message'            => 'Senha temporária gerada com sucesso',
-                'temporary_password' => $temporaryPassword,
-            ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->serverErrorResponse('Erro ao resetar senha: ' . $e->getMessage());
         }
+
+        // Envia e-mail fora da transação — falha de e-mail não desfaz o reset
+        $emailSent = false;
+        try {
+            $user->notify(new TemporaryPasswordNotification($temporaryPassword, 24));
+            $emailSent = true;
+        } catch (\Exception $e) {
+            \Log::error('Falha ao enviar e-mail de reset de senha', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'message'            => 'Senha temporária gerada com sucesso',
+            'temporary_password' => $temporaryPassword,
+            'email_sent'         => $emailSent,
+        ]);
     }
 
     /**
@@ -639,15 +644,21 @@ class UserController extends Controller
             $temporaryPassword = $this->generateTemporaryPassword();
             $user->setTemporaryPassword($temporaryPassword, 24);
             DB::commit();
-
-            return response()->json([
-                'message'            => 'Nova senha gerada com sucesso',
-                'temporary_password' => $temporaryPassword,
-            ]);
         } catch (\Exception $e) {
             DB::rollBack();
             return $this->serverErrorResponse('Erro ao gerar senha: ' . $e->getMessage());
         }
+
+        try {
+            $user->notify(new TemporaryPasswordNotification($temporaryPassword, 24));
+        } catch (\Exception $e) {
+            \Log::error('Falha ao enviar e-mail de reset (self)', ['user_id' => $user->id, 'error' => $e->getMessage()]);
+        }
+
+        return response()->json([
+            'message'            => 'Nova senha gerada com sucesso',
+            'temporary_password' => $temporaryPassword,
+        ]);
     }
 
     /**
