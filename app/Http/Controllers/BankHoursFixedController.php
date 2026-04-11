@@ -135,6 +135,14 @@ class BankHoursFixedController extends Controller
             $query->where('customer_id', $customerId);
         }
 
+        // Aplicar filtro de executivo (admin apenas, quando não há cliente específico)
+        if ($user->hasRole('Administrator') && !$customerId && $request->filled('executive_id')) {
+            $executiveId = (int) $request->get('executive_id');
+            $query->whereHas('customer', function ($q) use ($executiveId) {
+                $q->where('executive_id', $executiveId);
+            });
+        }
+
         // Aplicar filtro de projeto específico
         if ($projectId) {
             $query->where('id', $projectId);
@@ -670,6 +678,14 @@ class BankHoursFixedController extends Controller
 
             if ($customerId) {
                 $query->where('customer_id', $customerId);
+            }
+
+            // Aplicar filtro de executivo (admin apenas, quando não há cliente específico)
+            if ($user->hasRole('Administrator') && !$customerId && $request->filled('executive_id')) {
+                $executiveId = (int) $request->get('executive_id');
+                $query->whereHas('customer', function ($q) use ($executiveId) {
+                    $q->where('executive_id', $executiveId);
+                });
             }
 
             $projects = $query->get();
