@@ -92,7 +92,7 @@ class AuthController extends Controller
             ], 422);
         }
 
-        $user = User::where('email', strtolower(trim($request->email)))->first();
+        $user = User::whereRaw('LOWER(email) = ?', [strtolower(trim($request->email))])->first();
 
         if (!$user || !$user->verifyPassword($request->password)) {
             return response()->json(['message' => 'Credenciais inválidas'], 401);

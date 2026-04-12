@@ -72,11 +72,10 @@ class PasswordResetController extends Controller
         $email = strtolower(trim($request->input('email', '')));
 
         $validator = Validator::make(['email' => $email], [
-            'email' => 'required|email|exists:users,email',
+            'email' => 'required|email',
         ], [
             'email.required' => 'O email é obrigatório',
             'email.email' => 'Formato de email inválido',
-            'email.exists' => 'Email não encontrado em nossa base de dados',
         ]);
 
         if ($validator->fails()) {
@@ -99,9 +98,9 @@ class PasswordResetController extends Controller
         ]);
 
         try {
-            // Buscar o usuário
-            $user = User::where('email', $email)->first();
-            
+            // Buscar o usuário (LOWER para ignorar case no banco)
+            $user = User::whereRaw('LOWER(email) = ?', [$email])->first();
+
             if (!$user) {
                 \Log::warning("⚠️ [FORGOT PASSWORD] Usuário não encontrado: {$email}");
                 return response()->json([
