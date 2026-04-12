@@ -90,8 +90,9 @@ class User extends Authenticatable
      */
     public function updatePassword(string $newPassword): void
     {
+        // O cast 'hashed' no modelo aplica Hash::make() automaticamente
         $this->update([
-            'password' => Hash::make($newPassword)
+            'password' => $newPassword
         ]);
     }
 
@@ -222,8 +223,9 @@ class User extends Authenticatable
      */
     public function setTemporaryPassword(string $password, int $hoursToExpire = 24): void
     {
+        // O cast 'hashed' no modelo aplica Hash::make() automaticamente
         $this->update([
-            'password' => Hash::make($password),
+            'password' => $password,
             'has_temporary_password' => true,
             'temporary_password_expires_at' => now()->addHours($hoursToExpire),
         ]);
