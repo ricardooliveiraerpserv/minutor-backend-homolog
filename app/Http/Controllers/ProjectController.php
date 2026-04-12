@@ -672,6 +672,13 @@ class ProjectController extends Controller
         $project->total_project_value = $project->calculateTotalProjectValue();
         $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
         $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+        // Adicionar total de minutos apontados (excluindo rejeitados)
+        $project->total_logged_minutes = DB::table('timesheets')
+            ->where('project_id', $project->id)
+            ->where('status', '!=', 'rejected')
+            ->sum('effort_minutes') ?? 0;
+
         $this->invalidateListCache('projects');
 
         return response()->json($project);
