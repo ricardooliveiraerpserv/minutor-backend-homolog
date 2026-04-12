@@ -600,10 +600,8 @@ class AuthController extends Controller
     public function changeTemporaryPassword(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'current_password' => 'required|string',
             'new_password' => 'required|string|min:8|confirmed',
         ], [
-            'current_password.required' => 'A senha atual é obrigatória',
             'new_password.required' => 'A nova senha é obrigatória',
             'new_password.min' => 'A nova senha deve ter pelo menos 8 caracteres',
             'new_password.confirmed' => 'A confirmação da nova senha não confere',
@@ -623,13 +621,6 @@ class AuthController extends Controller
             return response()->json([
                 'message' => 'Usuário não possui senha temporária'
             ], 400);
-        }
-
-        // Verificar senha atual
-        if (!$user->verifyPassword($request->current_password)) {
-            return response()->json([
-                'message' => 'Senha atual inválida'
-            ], 401);
         }
 
         // Atualizar senha e remover marca de temporária
