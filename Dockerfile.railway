@@ -57,9 +57,16 @@ RUN echo 'server { \n\
 # Criar .env a partir das variáveis de ambiente em runtime
 RUN cp .env.example .env 2>/dev/null || true
 
+# Log para stderr (melhor para Docker/Railway)
+ENV LOG_CHANNEL=stderr
+
 EXPOSE 8080
 
-CMD sh -c "php artisan config:clear; \
+CMD sh -c "mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data /var/www/storage/framework/sessions /var/www/storage/framework/views /var/www/bootstrap/cache; \
+           touch /var/www/storage/logs/laravel.log; \
+           chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
+           chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
+           php artisan config:clear; \
            php artisan db:fix-sequence; \
            php artisan migrate --force; \
            php artisan db:seed --class=PermissionSeeder --force; \
@@ -69,8 +76,5 @@ CMD sh -c "php artisan config:clear; \
            php artisan db:seed --class=SystemSettingSeeder --force; \
            php artisan config:cache; \
            php artisan route:cache; \
-           mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data /var/www/storage/framework/sessions /var/www/storage/framework/views /var/www/bootstrap/cache; \
-           chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
-           chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
            php artisan schedule:work & \
            php-fpm -D && nginx -g 'daemon off;'"
