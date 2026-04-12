@@ -65,7 +65,6 @@ EXPOSE 8080
 CMD sh -c "mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data /var/www/storage/framework/sessions /var/www/storage/framework/views /var/www/bootstrap/cache; \
            touch /var/www/storage/logs/laravel.log; \
            chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
-           chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
            php artisan config:clear; \
            php artisan db:fix-sequence; \
            php artisan migrate --force; \
@@ -76,5 +75,7 @@ CMD sh -c "mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data 
            php artisan db:seed --class=SystemSettingSeeder --force; \
            php artisan config:cache; \
            php artisan route:cache; \
+           chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
+           chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
            php artisan schedule:work & \
            php-fpm -D && nginx -g 'daemon off;'"
