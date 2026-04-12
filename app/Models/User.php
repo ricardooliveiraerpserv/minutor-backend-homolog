@@ -78,6 +78,14 @@ class User extends Authenticatable
     }
 
     /**
+     * Normaliza o email para minúsculo ao salvar
+     */
+    public function setEmailAttribute(string $value): void
+    {
+        $this->attributes['email'] = strtolower(trim($value));
+    }
+
+    /**
      * Método seguro para verificar senha
      */
     public function verifyPassword(string $password): bool
