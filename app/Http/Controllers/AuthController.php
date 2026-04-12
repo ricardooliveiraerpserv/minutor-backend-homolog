@@ -113,45 +113,48 @@ class AuthController extends Controller
             ], 401);
         }
 
+        $user->load(['roles']);
+        $roles = $user->roles->pluck('name')->values()->toArray();
+
         // Verificar se usuário tem senha temporária
         if ($user->hasTemporaryPassword()) {
-            // Login permitido, mas usuário deve trocar a senha
             $token = $user->createToken($request->device_name ?? 'api-token')->plainTextToken;
 
             return response()->json([
                 'message' => 'Login realizado com sucesso',
                 'user' => [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'email_verified_at' => $user->email_verified_at,
-                    'has_temporary_password' => true,
-                    'temporary_password_expires_at' => $user->temporary_password_expires_at,
+                    'id'                             => $user->id,
+                    'name'                           => $user->name,
+                    'email'                          => $user->email,
+                    'email_verified_at'              => $user->email_verified_at,
+                    'has_temporary_password'         => true,
+                    'temporary_password_expires_at'  => $user->temporary_password_expires_at,
+                    'roles'                          => $roles,
                 ],
-                'token' => $token,
-                'token_type' => 'Bearer',
-                'requires_password_change' => true
+                'token'                    => $token,
+                'token_type'               => 'Bearer',
+                'requires_password_change' => true,
             ], 200);
         }
 
-        // Revoga tokens antigos do dispositivo (opcional)
+        // Revoga tokens antigos do dispositivo
         $user->tokens()->where('name', $request->device_name ?? 'api-token')->delete();
 
-        // Cria novo token
         $token = $user->createToken($request->device_name ?? 'api-token')->plainTextToken;
 
         return response()->json([
             'message' => 'Login realizado com sucesso',
             'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'email_verified_at' => $user->email_verified_at,
+                'id'                    => $user->id,
+                'name'                  => $user->name,
+                'email'                 => $user->email,
+                'email_verified_at'     => $user->email_verified_at,
                 'has_temporary_password' => false,
+                'roles'                 => $roles,
             ],
-            'token' => $token,
-            'token_type' => 'Bearer',
-            'requires_password_change' => false
+            'token'                    => $token,
+            'token_type'               => 'Bearer',
+            'requires_password_change' => false,
         ], 200);
     }
 
@@ -257,7 +260,9 @@ class AuthController extends Controller
         $user->load(['roles']);
 
         return response()->json([
-            'user' => $user
+            'user' => array_merge($user->toArray(), [
+                'roles' => $user->roles->pluck('name')->values()->toArray(),
+            ])
         ], 200);
     }
 
