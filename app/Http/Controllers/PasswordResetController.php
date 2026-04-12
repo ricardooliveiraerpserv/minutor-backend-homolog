@@ -69,7 +69,9 @@ class PasswordResetController extends Controller
         \Log::info('🔐 [FORGOT PASSWORD] Iniciando processo de recuperação de senha');
         \Log::info('📧 [FORGOT PASSWORD] Dados recebidos:', $request->all());
 
-        $validator = Validator::make($request->all(), [
+        $email = strtolower(trim($request->input('email', '')));
+
+        $validator = Validator::make(['email' => $email], [
             'email' => 'required|email|exists:users,email',
         ], [
             'email.required' => 'O email é obrigatório',
@@ -84,8 +86,6 @@ class PasswordResetController extends Controller
                 'errors' => $validator->errors()
             ], 422);
         }
-
-        $email = $request->email;
         \Log::info("📤 [FORGOT PASSWORD] Tentando enviar email para: {$email}");
 
         // Verificar configurações de email
