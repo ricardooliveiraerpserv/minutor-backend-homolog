@@ -29,6 +29,8 @@ use App\Http\Controllers\OnDemandController;
 use App\Http\Controllers\ExecutiveController;
 use App\Http\Controllers\HourContributionController;
 use App\Http\Controllers\PartnerController;
+use App\Http\Controllers\ConsultantHourBankController;
+use App\Http\Controllers\HolidayController;
 
 /*
 |--------------------------------------------------------------------------
@@ -658,6 +660,23 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:partners.delete')->group(function () {
             Route::delete('/partners/{partner}', [PartnerController::class, 'destroy'])->name('partners.destroy');
+        });
+
+        // 🏦 BANCO DE HORAS (CONSULTORES)
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::get('/consultant-hour-bank/consultants', [ConsultantHourBankController::class, 'consultants']);
+            Route::get('/consultant-hour-bank/{userId}/preview', [ConsultantHourBankController::class, 'preview']);
+            Route::get('/consultant-hour-bank/{userId}/history', [ConsultantHourBankController::class, 'history']);
+            Route::post('/consultant-hour-bank/{userId}/close', [ConsultantHourBankController::class, 'close']);
+            Route::post('/consultant-hour-bank/{userId}/reopen', [ConsultantHourBankController::class, 'reopen']);
+        });
+
+        // 📅 FERIADOS
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::get('/holidays', [HolidayController::class, 'index']);
+            Route::post('/holidays', [HolidayController::class, 'store']);
+            Route::put('/holidays/{holiday}', [HolidayController::class, 'update']);
+            Route::delete('/holidays/{holiday}', [HolidayController::class, 'destroy']);
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
