@@ -241,6 +241,11 @@ class UserController extends Controller
         try {
             $userData = $validator->validated();
 
+            // Normalizar email para minúsculas
+            if (isset($userData['email'])) {
+                $userData['email'] = strtolower(trim($userData['email']));
+            }
+
             // Gerar senha temporária automaticamente
             $temporaryPassword = $this->generateTemporaryPassword();
 
@@ -425,6 +430,11 @@ class UserController extends Controller
         DB::beginTransaction();
         try {
             $updateData = $validator->validated();
+
+            // Normalizar email para minúsculas
+            if (isset($updateData['email'])) {
+                $updateData['email'] = strtolower(trim($updateData['email']));
+            }
 
             // Verificar se houve alteração no valor hora para criar log
             $hourlyRateChanged = false;
