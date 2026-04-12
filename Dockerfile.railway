@@ -69,6 +69,8 @@ CMD sh -c "php artisan config:clear; \
            php artisan db:seed --class=SystemSettingSeeder --force; \
            php artisan config:cache; \
            php artisan route:cache; \
+           mkdir -p /var/www/storage/logs /var/www/storage/framework/cache/data /var/www/storage/framework/sessions /var/www/storage/framework/views /var/www/bootstrap/cache; \
+           chmod -R 777 /var/www/storage /var/www/bootstrap/cache; \
            chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
            php artisan schedule:work & \
            php-fpm -D && nginx -g 'daemon off;'"
