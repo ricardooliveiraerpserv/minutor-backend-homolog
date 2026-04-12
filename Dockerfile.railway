@@ -64,6 +64,9 @@ CMD sh -c "php artisan config:clear; \
            php artisan migrate --force; \
            php artisan db:seed --class=PermissionSeeder --force; \
            php artisan db:seed --class=RoleSeeder --force; \
+           php artisan db:seed --class=ServiceAndContractTypeSeeder --force; \
+           php artisan db:seed --class=ExpenseCategorySeeder --force; \
+           php artisan db:seed --class=SystemSettingSeeder --force; \
            php artisan config:cache; \
            php artisan route:cache; \
            chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache; \
