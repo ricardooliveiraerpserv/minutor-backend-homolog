@@ -265,8 +265,8 @@ class UserController extends Controller
 
             // Atribuir papéis se fornecidos e se o usuário tem permissão
             if (!empty($roles) && (Auth::user()->hasRole('Administrator') || Auth::user()->can('users.manage_roles'))) {
-                $roleNames = Role::whereIn('id', $roles)->pluck('name')->toArray();
-                $user->assignRole($roleNames);
+                $roleObjects = Role::whereIn('id', $roles)->get();
+                $user->assignRole($roleObjects);
             }
 
             // Sincronizar tipos de dashboard permitidos
@@ -476,8 +476,8 @@ class UserController extends Controller
 
             // Atualizar papéis se fornecidos e se tem permissão
             if (!is_null($roles) && ($currentUser->hasRole('Administrator') || $currentUser->can('users.manage_roles'))) {
-                $roleNames = Role::whereIn('id', $roles)->pluck('name')->toArray();
-                $user->syncRoles($roleNames);
+                $roleObjects = Role::whereIn('id', $roles)->get();
+                $user->syncRoles($roleObjects);
             }
 
             // Sincronizar tipos de dashboard se fornecidos
