@@ -38,9 +38,13 @@ class ConsultantHourBankController extends Controller
                 ? \Carbon\Carbon::parse($startDate)->format('Y-m')
                 : $toYearMonth;
 
-            // Garante que from <= to
+            // Se o mês solicitado é anterior à data de início, não há dados
             if ($fromYearMonth > $toYearMonth) {
-                $fromYearMonth = $toYearMonth;
+                return response()->json([
+                    'current'               => null,
+                    'history'               => [],
+                    'bank_hours_start_date' => $startDate,
+                ]);
             }
 
             $all = $this->service->calculateRange(
@@ -49,12 +53,12 @@ class ConsultantHourBankController extends Controller
 
             $months  = array_values($all);
             $current = end($months) ?: null;
-            // History = todos menos o último (o mês atual), do mais recente ao mais antigo
+            // History = todos menos o último, do mais recente ao mais antigo
             $history = array_reverse(array_slice($months, 0, -1));
 
             return response()->json([
-                'current' => $current,
-                'history' => $history,
+                'current'               => $current,
+                'history'               => $history,
                 'bank_hours_start_date' => $startDate,
             ]);
         } catch (\Exception $e) {
