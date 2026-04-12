@@ -186,6 +186,8 @@ class ProjectController extends Controller
                         $subQ->where('user_id', $targetUserId);
                     })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
                         $subQ->where('user_id', $targetUserId);
+                    })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
+                        $subQ->where('users.id', $targetUserId);
                     });
                 });
             }
@@ -501,6 +503,8 @@ class ProjectController extends Controller
             'consultant_ids.*' => 'exists:users,id',
             'coordinator_ids' => 'nullable|array',
             'coordinator_ids.*' => 'exists:users,id',
+            'consultant_group_ids' => 'nullable|array',
+            'consultant_group_ids.*' => 'exists:consultant_groups,id',
         ], [
             'name.required' => 'O nome é obrigatório',
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
@@ -552,9 +556,10 @@ class ProjectController extends Controller
         }
 
         // Separar relacionamentos
-        $consultantIds  = $validated['consultant_ids'] ?? [];
-        $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? [];
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids']);
+        $consultantIds      = $validated['consultant_ids'] ?? [];
+        $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? [];
+        $consultantGroupIds = $validated['consultant_group_ids'] ?? [];
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids']);
 
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
@@ -570,6 +575,11 @@ class ProjectController extends Controller
         // Vincular coordenadores
         if (!empty($coordinatorIds)) {
             $project->coordinators()->attach($coordinatorIds);
+        }
+
+        // Vincular grupos de consultores
+        if (!empty($consultantGroupIds)) {
+            $project->consultantGroups()->sync($consultantGroupIds);
         }
 
         // Registrar histórico inicial de sold_hours para Banco de Horas Mensal
@@ -588,7 +598,7 @@ class ProjectController extends Controller
         }
 
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'parentProject', 'soldHoursHistory.changer']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups', 'parentProject', 'soldHoursHistory.changer']);
 
         // Adicionar atributos computed
         $project->status_display = $project->status_display;
@@ -637,7 +647,7 @@ class ProjectController extends Controller
     public function show(Project $project): JsonResponse
     {
         // Carregar relacionamentos essenciais
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'parentProject', 'childProjects', 'hourContributions']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups.consultants', 'parentProject', 'childProjects', 'hourContributions']);
 
         try {
             $project->load(['soldHoursHistory.changer']);
@@ -769,6 +779,8 @@ class ProjectController extends Controller
             'consultant_ids.*' => 'exists:users,id',
             'coordinator_ids' => 'nullable|array',
             'coordinator_ids.*' => 'exists:users,id',
+            'consultant_group_ids' => 'nullable|array',
+            'consultant_group_ids.*' => 'exists:consultant_groups,id',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -901,8 +913,9 @@ class ProjectController extends Controller
         }
 
         // Separar relacionamentos e campos que não pertencem ao model
-        $consultantIds  = $validated['consultant_ids'] ?? null;
-        $coordinatorIds = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
+        $consultantIds      = $validated['consultant_ids'] ?? null;
+        $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
+        $consultantGroupIds = array_key_exists('consultant_group_ids', $validated) ? $validated['consultant_group_ids'] : false;
         $soldHoursEffectiveFrom = isset($validated['sold_hours_effective_from'])
             ? Carbon::parse($validated['sold_hours_effective_from'])->startOfMonth()->toDateString()
             : Carbon::now()->startOfMonth()->toDateString();
@@ -910,7 +923,7 @@ class ProjectController extends Controller
             ? Carbon::parse($validated['hourly_rate_effective_from'])->startOfMonth()->toDateString()
             : null;
         $previousHourlyRate = $project->hourly_rate;
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
         $previousSoldHours = (int) ($project->sold_hours ?? 0);
@@ -985,6 +998,15 @@ class ProjectController extends Controller
             }
         }
 
+        // Atualizar grupos de consultores se fornecido
+        if ($consultantGroupIds !== false) {
+            try {
+                $project->consultantGroups()->sync($consultantGroupIds ?? []);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao sincronizar consultant_groups', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
+        }
+
         // Registrar histórico de sold_hours se mudou (Banco de Horas Mensal)
         $project->loadMissing('contractType');
         if ($previousSoldHours !== $newSoldHours && $project->isBankHoursMonthly()) {
@@ -1037,7 +1059,7 @@ class ProjectController extends Controller
         }
 
         // Recarregar com relacionamentos
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups.consultants']);
         try {
             $project->load(['soldHoursHistory.changer']);
         } catch (\Throwable $e) {

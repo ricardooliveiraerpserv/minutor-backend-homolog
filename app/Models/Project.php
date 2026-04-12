@@ -179,6 +179,15 @@ class Project extends Model
     }
 
     /**
+     * Relacionamento com grupos de consultores (many-to-many)
+     */
+    public function consultantGroups(): BelongsToMany
+    {
+        return $this->belongsToMany(ConsultantGroup::class, 'project_consultant_groups')
+                    ->withTimestamps();
+    }
+
+    /**
      * Relacionamento com coordenadores (many-to-many)
      */
     public function coordinators(): BelongsToMany
@@ -937,7 +946,15 @@ class Project extends Model
      */
     public function isUserConsultant(int $userId): bool
     {
-        return $this->consultants()->where('users.id', $userId)->exists();
+        // Vinculado diretamente como consultor
+        if ($this->consultants()->where('users.id', $userId)->exists()) {
+            return true;
+        }
+
+        // Pertence a algum grupo de consultores vinculado ao projeto
+        return $this->consultantGroups()
+            ->whereHas('consultants', fn ($q) => $q->where('users.id', $userId))
+            ->exists();
     }
 
     /**
