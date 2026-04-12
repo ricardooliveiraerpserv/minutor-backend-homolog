@@ -83,7 +83,7 @@ class CustomerController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $perPage = min($request->get('pageSize', 15), 100);
+        $perPage = min($request->get('pageSize', 15), 500);
         $search = $request->get('filter') ?? $request->get('search');
         $hasContractTypeName = $request->get('has_contract_type_name');
 
@@ -410,7 +410,7 @@ class CustomerController extends Controller
     public function getUserLinkedCustomers(Request $request): JsonResponse
     {
         $currentUser = $request->user();
-        $perPage = min($request->get('pageSize', 15), 100);
+        $perPage = min($request->get('pageSize', 15), 500);
         $search = $request->get('filter') ?? $request->get('search');
         $requestedUserId = $request->get('user_id');
 
