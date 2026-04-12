@@ -8,10 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasColumn('users', 'partner_id')) {
+            return;
+        }
+
         Schema::table('users', function (Blueprint $table) {
             $table->foreignId('partner_id')
                   ->nullable()
-                  ->after('customer_id')
                   ->constrained('partners')
                   ->nullOnDelete();
         });
@@ -19,6 +22,10 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (!Schema::hasColumn('users', 'partner_id')) {
+            return;
+        }
+
         Schema::table('users', function (Blueprint $table) {
             $table->dropForeignIdFor(\App\Models\Partner::class);
             $table->dropColumn('partner_id');
