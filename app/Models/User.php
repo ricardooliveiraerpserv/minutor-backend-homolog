@@ -39,6 +39,7 @@ class User extends Authenticatable
         'rate_type',
         'daily_hours',
         'consultant_type',
+        'bank_hours_start_date',
         'theme_preference',
         'has_temporary_password',
         'temporary_password_expires_at',
@@ -83,6 +84,7 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'bank_hours_start_date' => 'date:Y-m-d',
         ];
     }
 

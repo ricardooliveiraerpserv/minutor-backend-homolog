@@ -16,22 +16,25 @@ class ConsultantHourBankController extends Controller
 
     /**
      * GET /consultant-hour-bank/{userId}/preview[?year_month=YYYY-MM]
-     * Cálculo dinâmico (não persiste). Se fechado, retorna snapshot.
      */
     public function preview(Request $request, int $userId): JsonResponse
     {
         try {
-            $user = User::findOrFail($userId);
+            $user       = User::findOrFail($userId);
             $dailyHours = (float) ($request->input('daily_hours', $user->daily_hours ?? 8.0));
             $yearMonth  = $request->input('year_month');
+            $startDate  = $user->bank_hours_start_date
+                ? \Carbon\Carbon::parse($user->bank_hours_start_date)->format('Y-m-d')
+                : null;
 
             if ($yearMonth) {
-                $data = $this->service->previewMonth($userId, $yearMonth, $dailyHours);
+                $data = $this->service->previewMonth($userId, $yearMonth, $dailyHours, $startDate);
             } else {
-                $data = $this->service->previewCurrentMonth($userId, $dailyHours);
+                $data = $this->service->previewCurrentMonth($userId, $dailyHours, $startDate);
             }
 
-            $data['user'] = ['id' => $user->id, 'name' => $user->name, 'email' => $user->email];
+            $data['user']                  = ['id' => $user->id, 'name' => $user->name, 'email' => $user->email];
+            $data['bank_hours_start_date'] = $startDate;
             return response()->json($data);
         } catch (\Exception $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -46,9 +49,13 @@ class ConsultantHourBankController extends Controller
     public function history(Request $request, int $userId): JsonResponse
     {
         try {
-            User::findOrFail($userId);
-            $limit   = (int) $request->input('limit', 24);
-            $history = $this->service->getHistory($userId, $limit);
+            $user      = User::findOrFail($userId);
+            $limit     = (int) $request->input('limit', 24);
+            $startDate = $user->bank_hours_start_date
+                ? \Carbon\Carbon::parse($user->bank_hours_start_date)->format('Y-m-d')
+                : null;
+
+            $history = $this->service->getHistory($userId, $limit, $startDate);
             return response()->json(['items' => $history]);
         } catch (\Exception $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -70,13 +77,18 @@ class ConsultantHourBankController extends Controller
         ]);
 
         try {
-            User::findOrFail($userId);
+            $user      = User::findOrFail($userId);
+            $startDate = $user->bank_hours_start_date
+                ? \Carbon\Carbon::parse($user->bank_hours_start_date)->format('Y-m-d')
+                : null;
+
             $closing = $this->service->closeMonth(
                 $userId,
                 $validated['year_month'],
                 auth()->id(),
-                (float) ($validated['daily_hours'] ?? 8.0),
-                $validated['notes'] ?? null
+                (float) ($validated['daily_hours'] ?? $user->daily_hours ?? 8.0),
+                $validated['notes'] ?? null,
+                $startDate
             );
             return response()->json($closing);
         } catch (\Exception $e) {
@@ -109,31 +121,32 @@ class ConsultantHourBankController extends Controller
 
     /**
      * GET /consultant-hour-bank/consultants
-     * Retorna usuários com role Consultor e o saldo atual do banco de horas.
      */
     public function consultants(Request $request): JsonResponse
     {
         $users = User::whereHas('roles', fn ($q) => $q->whereIn('name', ['Consultor', 'Consultant']))
             ->where('enabled', true)
-            ->select('id', 'name', 'email', 'daily_hours')
+            ->select('id', 'name', 'email', 'daily_hours', 'bank_hours_start_date')
             ->orderBy('name')
             ->get();
 
         $now = now();
         $result = $users->map(function ($user) use ($now) {
-            // Pega o saldo final mais recente (mês anterior fechado)
             $lastClosing = ConsultantHourBankClosing::where('user_id', $user->id)
                 ->where('status', 'closed')
                 ->orderBy('year_month', 'desc')
                 ->first();
 
             return [
-                'id'             => $user->id,
-                'name'           => $user->name,
-                'email'          => $user->email,
-                'daily_hours'    => $user->daily_hours ?? 8.0,
-                'current_balance'=> $lastClosing ? (float) $lastClosing->final_balance : 0.0,
-                'last_closed'    => $lastClosing?->year_month,
+                'id'                    => $user->id,
+                'name'                  => $user->name,
+                'email'                 => $user->email,
+                'daily_hours'           => $user->daily_hours ?? 8.0,
+                'bank_hours_start_date' => $user->bank_hours_start_date
+                    ? \Carbon\Carbon::parse($user->bank_hours_start_date)->format('Y-m-d')
+                    : null,
+                'current_balance'       => $lastClosing ? (float) $lastClosing->final_balance : 0.0,
+                'last_closed'           => $lastClosing?->year_month,
             ];
         });
 
