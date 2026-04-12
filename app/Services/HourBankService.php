@@ -14,14 +14,24 @@ class HourBankService
 
     /**
      * Calcula dias úteis do mês, excluindo fins de semana e feriados em dias úteis.
-     * Feriados que caem em FDS não são descontados novamente.
+     * Se $startDate for fornecido e cair no mesmo mês/ano, conta apenas a partir dessa data.
      */
-    public function calculateWorkingDays(int $year, int $month): array
+    public function calculateWorkingDays(int $year, int $month, ?string $startDate = null): array
     {
-        $startDate = Carbon::createFromDate($year, $month, 1)->startOfMonth();
-        $endDate   = $startDate->copy()->endOfMonth();
+        $monthStart = Carbon::createFromDate($year, $month, 1)->startOfMonth();
+        $monthEnd   = $monthStart->copy()->endOfMonth();
 
-        // Busca feriados ativos do mês (qualquer tipo)
+        // Se existe data de início, ajusta o começo do intervalo
+        $rangeStart = $monthStart->copy();
+        if ($startDate) {
+            $sd = Carbon::parse($startDate)->startOfDay();
+            // Só aplica restrição se a data de início cai neste mesmo mês
+            if ($sd->year === $year && $sd->month === $month && $sd->gt($rangeStart)) {
+                $rangeStart = $sd;
+            }
+        }
+
+        // Busca feriados ativos do mês
         $holidayDates = Holiday::whereYear('date', $year)
             ->whereMonth('date', $month)
             ->where('active', true)
@@ -32,19 +42,18 @@ class HourBankService
         $workingDays   = 0;
         $holidaysCount = 0;
 
-        $current = $startDate->copy();
-        while ($current->lte($endDate)) {
+        $current = $rangeStart->copy();
+        while ($current->lte($monthEnd)) {
             $isWeekend = $current->isWeekend();
             $isHoliday = in_array($current->format('Y-m-d'), $holidayDates);
 
             if (!$isWeekend) {
                 if ($isHoliday) {
-                    $holidaysCount++; // feriado em dia útil
+                    $holidaysCount++;
                 } else {
                     $workingDays++;
                 }
             }
-            // feriado em FDS: não conta (não desconta dia útil)
 
             $current->addDay();
         }
@@ -59,28 +68,44 @@ class HourBankService
 
     /**
      * Soma horas apontadas (approved + pending) no mês para o consultor.
+     * Se $startDate cair no mesmo mês, só conta apontamentos a partir dessa data.
      */
-    public function getWorkedHours(int $userId, int $year, int $month): float
+    public function getWorkedHours(int $userId, int $year, int $month, ?string $startDate = null): float
     {
-        $minutes = Timesheet::where('user_id', $userId)
+        $query = Timesheet::where('user_id', $userId)
             ->whereYear('date', $year)
             ->whereMonth('date', $month)
-            ->whereIn('status', ['approved', 'pending'])
-            ->sum('effort_minutes');
+            ->whereIn('status', ['approved', 'pending']);
 
+        if ($startDate) {
+            $sd = Carbon::parse($startDate);
+            if ($sd->year === $year && $sd->month === $month) {
+                $query->where('date', '>=', $sd->format('Y-m-d'));
+            }
+        }
+
+        $minutes = $query->sum('effort_minutes');
         return round($minutes / 60, 2);
     }
 
     // ─── Saldo Anterior ────────────────────────────────────────────────────
 
     /**
-     * Retorna o SaldoFinal do mês anterior (a partir do snapshot fechado/aberto).
-     * Se não existir registro, retorna 0.
+     * Retorna o SaldoFinal do mês anterior.
+     * Se o mês anterior for antes de $startDate, retorna 0 (não há histórico antes do início).
      */
-    public function getPreviousBalance(int $userId, int $year, int $month): float
+    public function getPreviousBalance(int $userId, int $year, int $month, ?string $startDate = null): float
     {
         $prevDate      = Carbon::createFromDate($year, $month, 1)->subMonth();
         $prevYearMonth = $prevDate->format('Y-m');
+
+        // Se existe data de início e o mês anterior é anterior a ela, saldo anterior é zero
+        if ($startDate) {
+            $startYearMonth = Carbon::parse($startDate)->format('Y-m');
+            if ($prevYearMonth < $startYearMonth) {
+                return 0.0;
+            }
+        }
 
         $closing = ConsultantHourBankClosing::where('user_id', $userId)
             ->where('year_month', $prevYearMonth)
@@ -93,21 +118,22 @@ class HourBankService
 
     /**
      * Calcula todos os campos do mês dinamicamente.
-     * Pode ser usado tanto para preview (mês aberto) quanto para fechar.
+     * $startDate limita cálculos ao período após o início do banco de horas.
      */
     public function calculateMonth(
-        int   $userId,
-        int   $year,
-        int   $month,
-        float $dailyHours = 8.0
+        int     $userId,
+        int     $year,
+        int     $month,
+        float   $dailyHours = 8.0,
+        ?string $startDate  = null
     ): array {
-        $workingData  = $this->calculateWorkingDays($year, $month);
-        $expectedHours = round($workingData['working_days'] * $dailyHours, 2);
-        $workedHours   = $this->getWorkedHours($userId, $year, $month);
-        $previousBalance = $this->getPreviousBalance($userId, $year, $month);
+        $workingData     = $this->calculateWorkingDays($year, $month, $startDate);
+        $expectedHours   = round($workingData['working_days'] * $dailyHours, 2);
+        $workedHours     = $this->getWorkedHours($userId, $year, $month, $startDate);
+        $previousBalance = $this->getPreviousBalance($userId, $year, $month, $startDate);
 
-        $monthBalance    = round($workedHours - $expectedHours, 2);
-        $accumulated     = round($previousBalance + $monthBalance, 2);
+        $monthBalance = round($workedHours - $expectedHours, 2);
+        $accumulated  = round($previousBalance + $monthBalance, 2);
 
         // Regra de pagamento
         if ($accumulated > 0) {
@@ -143,15 +169,15 @@ class HourBankService
      * @throws \Exception se o mês já estiver fechado
      */
     public function closeMonth(
-        int    $userId,
-        string $yearMonth,
-        int    $closedBy,
-        float  $dailyHours = 8.0,
-        ?string $notes = null
+        int     $userId,
+        string  $yearMonth,
+        int     $closedBy,
+        float   $dailyHours = 8.0,
+        ?string $notes      = null,
+        ?string $startDate  = null
     ): ConsultantHourBankClosing {
         [$year, $month] = array_map('intval', explode('-', $yearMonth));
 
-        // Verificar se já está fechado
         $existing = ConsultantHourBankClosing::where('user_id', $userId)
             ->where('year_month', $yearMonth)
             ->first();
@@ -160,7 +186,7 @@ class HourBankService
             throw new \Exception("O mês {$yearMonth} já está fechado e não pode ser recalculado.");
         }
 
-        $data = $this->calculateMonth($userId, $year, $month, $dailyHours);
+        $data = $this->calculateMonth($userId, $year, $month, $dailyHours, $startDate);
 
         $closing = ConsultantHourBankClosing::updateOrCreate(
             ['user_id' => $userId, 'year_month' => $yearMonth],
@@ -202,48 +228,49 @@ class HourBankService
     // ─── Histórico Completo ────────────────────────────────────────────────
 
     /**
-     * Retorna o histórico de fechamentos de um consultor, do mais recente ao mais antigo.
-     * Meses fechados → dados do snapshot. Mês atual aberto → cálculo dinâmico.
+     * Retorna o histórico de fechamentos, do mais recente ao mais antigo.
+     * Se $startDate for fornecido, ignora meses anteriores à data de início.
      */
-    public function getHistory(int $userId, int $limit = 24): Collection
+    public function getHistory(int $userId, int $limit = 24, ?string $startDate = null): Collection
     {
-        return ConsultantHourBankClosing::where('user_id', $userId)
+        $query = ConsultantHourBankClosing::where('user_id', $userId)
             ->orderBy('year_month', 'desc')
             ->limit($limit)
-            ->with(['closedByUser:id,name'])
-            ->get();
+            ->with(['closedByUser:id,name']);
+
+        if ($startDate) {
+            $query->where('year_month', '>=', Carbon::parse($startDate)->format('Y-m'));
+        }
+
+        return $query->get();
     }
 
     // ─── Preview do Mês Atual ─────────────────────────────────────────────
 
     /**
      * Retorna o cálculo do mês atual dinamicamente (sem persistir).
-     * Se já houver registro aberto, retorna os dados atualizados.
-     * Se já houver registro fechado, retorna o snapshot.
      */
-    public function previewCurrentMonth(int $userId, float $dailyHours = 8.0): array
+    public function previewCurrentMonth(int $userId, float $dailyHours = 8.0, ?string $startDate = null): array
     {
-        $now        = Carbon::now();
-        $yearMonth  = $now->format('Y-m');
-        $year       = (int) $now->year;
-        $month      = (int) $now->month;
+        $now       = Carbon::now();
+        $yearMonth = $now->format('Y-m');
+        $year      = (int) $now->year;
+        $month     = (int) $now->month;
 
         $existing = ConsultantHourBankClosing::where('user_id', $userId)
             ->where('year_month', $yearMonth)
             ->first();
 
-        // Se fechado, retorna o snapshot
         if ($existing && $existing->isClosed()) {
             return $existing->toArray();
         }
 
-        // Calcula dinamicamente
-        return $this->calculateMonth($userId, $year, $month, $dailyHours);
+        return $this->calculateMonth($userId, $year, $month, $dailyHours, $startDate);
     }
 
     // ─── Preview de Mês Específico ─────────────────────────────────────────
 
-    public function previewMonth(int $userId, string $yearMonth, float $dailyHours = 8.0): array
+    public function previewMonth(int $userId, string $yearMonth, float $dailyHours = 8.0, ?string $startDate = null): array
     {
         [$year, $month] = array_map('intval', explode('-', $yearMonth));
 
@@ -255,6 +282,6 @@ class HourBankService
             return $existing->toArray();
         }
 
-        return $this->calculateMonth($userId, $year, $month, $dailyHours);
+        return $this->calculateMonth($userId, $year, $month, $dailyHours, $startDate);
     }
 }
