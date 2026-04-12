@@ -82,7 +82,9 @@ class User extends Authenticatable
      */
     public function verifyPassword(string $password): bool
     {
-        return Hash::check($password, $this->password);
+        // Lê o hash direto do banco, sem passar pelo cast 'hashed'
+        $stored = \DB::table('users')->where('id', $this->id)->value('password');
+        return Hash::check($password, $stored);
     }
 
     /**
@@ -90,10 +92,11 @@ class User extends Authenticatable
      */
     public function updatePassword(string $newPassword): void
     {
-        // O cast 'hashed' no modelo aplica Hash::make() automaticamente
-        $this->update([
-            'password' => $newPassword
+        \DB::table('users')->where('id', $this->id)->update([
+            'password'   => Hash::make($newPassword),
+            'updated_at' => now(),
         ]);
+        $this->refresh();
     }
 
     /**
@@ -223,12 +226,13 @@ class User extends Authenticatable
      */
     public function setTemporaryPassword(string $password, int $hoursToExpire = 24): void
     {
-        // O cast 'hashed' no modelo aplica Hash::make() automaticamente
-        $this->update([
-            'password' => $password,
-            'has_temporary_password' => true,
+        \DB::table('users')->where('id', $this->id)->update([
+            'password'                      => Hash::make($password),
+            'has_temporary_password'        => true,
             'temporary_password_expires_at' => now()->addHours($hoursToExpire),
+            'updated_at'                    => now(),
         ]);
+        $this->refresh();
     }
 
     /**
