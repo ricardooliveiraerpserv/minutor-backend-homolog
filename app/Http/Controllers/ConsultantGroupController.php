@@ -540,14 +540,14 @@ class ConsultantGroupController extends Controller
             }
 
             $consultants = User::whereHas('roles', function ($query) {
-                $query->where('name', 'Consultant');
+                $query->whereIn('name', ['Consultor', 'Consultant']);
             })
             ->where('enabled', true)
             ->select('id', 'name', 'email')
             ->orderBy('name')
             ->get();
 
-            return response()->json($consultants);
+            return response()->json(['items' => $consultants]);
         } catch (\Exception $e) {
             Log::error('Erro ao listar consultores disponíveis: ' . $e->getMessage(), [
                 'exception' => $e,
