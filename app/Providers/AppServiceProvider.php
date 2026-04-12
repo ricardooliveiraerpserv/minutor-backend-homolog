@@ -4,11 +4,15 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Events\MessageSent;
 use App\Listeners\EmailSentListener;
 use App\Models\Project;
+use App\Models\Timesheet;
 use App\Observers\ProjectObserver;
+use App\Policies\ProjectPolicy;
+use App\Policies\TimesheetPolicy;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -31,5 +35,9 @@ class AppServiceProvider extends ServiceProvider
 
         // Registrar observers
         Project::observe(ProjectObserver::class);
+
+        // Registrar Policies
+        Gate::policy(Timesheet::class, TimesheetPolicy::class);
+        Gate::policy(Project::class, ProjectPolicy::class);
     }
 }
