@@ -38,6 +38,7 @@ class User extends Authenticatable
         'hourly_rate',
         'rate_type',
         'daily_hours',
+        'consultant_type',
         'theme_preference',
         'has_temporary_password',
         'temporary_password_expires_at',
