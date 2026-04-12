@@ -497,6 +497,13 @@ class UserController extends Controller
 
         } catch (\Exception $e) {
             DB::rollBack();
+            \Log::error('[UserController::update] Exception', [
+                'user_id'   => $id,
+                'message'   => $e->getMessage(),
+                'file'      => $e->getFile(),
+                'line'      => $e->getLine(),
+                'trace'     => $e->getTraceAsString(),
+            ]);
             return $this->serverErrorResponse('Erro ao atualizar usuário: ' . $e->getMessage());
         }
     }
