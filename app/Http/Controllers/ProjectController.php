@@ -641,16 +641,16 @@ class ProjectController extends Controller
 
         try {
             $project->load(['soldHoursHistory.changer']);
-        } catch (\Exception $e) {
-            \Log::warning('ProjectController@show: falha ao carregar soldHoursHistory', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@show: falha ao carregar soldHoursHistory', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
             $project->setRelation('soldHoursHistory', collect());
         }
 
         // Carregar coordinators com fallback (tabela pode estar em migração)
         try {
             $project->load(['coordinators']);
-        } catch (\Exception $e) {
-            \Log::warning('ProjectController@show: falha ao carregar coordinators', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@show: falha ao carregar coordinators', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
             $project->setRelation('coordinators', collect());
             $project->setRelation('approvers', collect());
         }
@@ -662,8 +662,8 @@ class ProjectController extends Controller
         // Adicionar saldo de horas geral calculado
         try {
             $project->general_hours_balance = $project->getGeneralHoursBalance(false);
-        } catch (\Exception $e) {
-            \Log::warning('ProjectController@show: falha ao calcular general_hours_balance', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@show: falha ao calcular general_hours_balance', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
             $project->general_hours_balance = null;
         }
 
@@ -1033,14 +1033,14 @@ class ProjectController extends Controller
         $project->load(['customer', 'serviceType', 'contractType', 'consultants']);
         try {
             $project->load(['soldHoursHistory.changer']);
-        } catch (\Exception $e) {
-            \Log::warning('ProjectController@update: falha ao carregar soldHoursHistory', ['error' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@update: falha ao carregar soldHoursHistory', ['error' => $e->getMessage()]); } catch (\Throwable $_) {}
             $project->setRelation('soldHoursHistory', collect());
         }
         try {
             $project->load(['coordinators']);
-        } catch (\Exception $e) {
-            \Log::warning('ProjectController@update: falha ao carregar coordinators', ['error' => $e->getMessage()]);
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@update: falha ao carregar coordinators', ['error' => $e->getMessage()]); } catch (\Throwable $_) {}
             $project->setRelation('coordinators', collect());
         }
 
