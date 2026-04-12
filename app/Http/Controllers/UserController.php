@@ -265,8 +265,16 @@ class UserController extends Controller
 
             // Atribuir papéis se fornecidos e se o usuário tem permissão
             if (!empty($roles) && (Auth::user()->hasRole('Administrator') || Auth::user()->can('users.manage_roles'))) {
-                $roleObjects = Role::whereIn('id', $roles)->get();
-                $user->assignRole($roleObjects);
+                // Bypass Spatie guard logic — raw pivot manipulation
+                $roleRecords = Role::whereIn('id', $roles)->get();
+                foreach ($roleRecords as $role) {
+                    DB::table('model_has_roles')->insertOrIgnore([
+                        'role_id'    => $role->id,
+                        'model_type' => get_class($user),
+                        'model_id'   => $user->id,
+                    ]);
+                }
+                app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
             }
 
             // Sincronizar tipos de dashboard permitidos
@@ -476,8 +484,21 @@ class UserController extends Controller
 
             // Atualizar papéis se fornecidos e se tem permissão
             if (!is_null($roles) && ($currentUser->hasRole('Administrator') || $currentUser->can('users.manage_roles'))) {
-                $roleObjects = Role::whereIn('id', $roles)->get();
-                $user->syncRoles($roleObjects);
+                // Bypass Spatie guard logic — raw pivot manipulation
+                DB::table('model_has_roles')
+                    ->where('model_type', get_class($user))
+                    ->where('model_id', $user->id)
+                    ->delete();
+
+                $roleRecords = Role::whereIn('id', $roles)->get();
+                foreach ($roleRecords as $role) {
+                    DB::table('model_has_roles')->insertOrIgnore([
+                        'role_id'    => $role->id,
+                        'model_type' => get_class($user),
+                        'model_id'   => $user->id,
+                    ]);
+                }
+                app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
             }
 
             // Sincronizar tipos de dashboard se fornecidos
