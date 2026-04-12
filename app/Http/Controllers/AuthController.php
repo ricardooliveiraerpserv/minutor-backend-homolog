@@ -94,9 +94,19 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
-        if (!$user || !$user->verifyPassword($request->password)) {
+        if (!$user) {
+            return response()->json(['message' => 'Usuário não encontrado'], 401);
+        }
+
+        if (!$user->verifyPassword($request->password)) {
             return response()->json([
-                'message' => 'Credenciais inválidas'
+                'message' => 'Senha incorreta',
+                'debug'   => [
+                    'hash_len'      => strlen($user->password),
+                    'has_temp'      => $user->has_temporary_password,
+                    'temp_expires'  => $user->temporary_password_expires_at,
+                    'enabled'       => $user->enabled,
+                ],
             ], 401);
         }
 
