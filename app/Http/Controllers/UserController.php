@@ -981,8 +981,6 @@ class UserController extends Controller
             ->orderBy('name')
             ->get();
 
-        \Log::info($query->toSql(), $query->getBindings());
-
         return response()->json([
             'success' => true,
             'data' => $approvers,
