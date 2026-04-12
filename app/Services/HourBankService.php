@@ -245,6 +245,68 @@ class HourBankService
         return $query->get();
     }
 
+    // ─── Cálculo em Cadeia (sem closings armazenados) ────────────────────
+
+    /**
+     * Calcula todos os meses de $fromYearMonth até $toYearMonth em sequência,
+     * encadeando o saldo final de cada mês como saldo anterior do próximo.
+     * Retorna array indexado por 'YYYY-MM', do mais antigo ao mais recente.
+     */
+    public function calculateRange(
+        int     $userId,
+        string  $fromYearMonth,
+        string  $toYearMonth,
+        float   $dailyHours = 8.0,
+        ?string $startDate  = null
+    ): array {
+        $results         = [];
+        $prevFinalBalance = 0.0;
+
+        $current = Carbon::parse($fromYearMonth . '-01');
+        $end     = Carbon::parse($toYearMonth   . '-01');
+
+        while ($current->lte($end)) {
+            $year      = (int) $current->year;
+            $month     = (int) $current->month;
+            $yearMonth = $current->format('Y-m');
+
+            $workingData   = $this->calculateWorkingDays($year, $month, $startDate);
+            $expectedHours = round($workingData['working_days'] * $dailyHours, 2);
+            $workedHours   = $this->getWorkedHours($userId, $year, $month, $startDate);
+
+            $monthBalance = round($workedHours - $expectedHours, 2);
+            $accumulated  = round($prevFinalBalance + $monthBalance, 2);
+
+            if ($accumulated > 0) {
+                $paidHours    = $accumulated;
+                $finalBalance = 0.0;
+            } else {
+                $paidHours    = 0.0;
+                $finalBalance = $accumulated;
+            }
+
+            $results[$yearMonth] = [
+                'user_id'             => $userId,
+                'year_month'          => $yearMonth,
+                'daily_hours'         => $dailyHours,
+                'working_days'        => $workingData['working_days'],
+                'holidays_count'      => $workingData['holidays_count'],
+                'expected_hours'      => $expectedHours,
+                'worked_hours'        => $workedHours,
+                'month_balance'       => $monthBalance,
+                'previous_balance'    => round($prevFinalBalance, 2),
+                'accumulated_balance' => $accumulated,
+                'paid_hours'          => round($paidHours, 2),
+                'final_balance'       => round($finalBalance, 2),
+            ];
+
+            $prevFinalBalance = $finalBalance;
+            $current->addMonth();
+        }
+
+        return $results;
+    }
+
     // ─── Preview do Mês Atual ─────────────────────────────────────────────
 
     /**
