@@ -20,6 +20,12 @@ class User extends Authenticatable
     use HasFactory, Notifiable, HasApiTokens, HasRoles;
 
     /**
+     * Força o guard 'web' para o Spatie Permission,
+     * independente de como o usuário é autenticado (Sanctum, etc.)
+     */
+    protected string $guard_name = 'web';
+
+    /**
      * The attributes that are mass assignable.
      *
      * @var list<string>
