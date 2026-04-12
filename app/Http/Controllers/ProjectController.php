@@ -290,9 +290,10 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro para apenas projetos principais (sem parent_project_id)
+        // Filtro para apenas projetos que têm filhos (hierarquia pai/filho)
         if ($request->get('parent_projects_only') === 'true') {
-            $query->whereNull('parent_project_id');
+            $query->whereNull('parent_project_id')
+                  ->whereHas('childProjects');
         }
 
         // Excluir projeto específico (útil na edição)
