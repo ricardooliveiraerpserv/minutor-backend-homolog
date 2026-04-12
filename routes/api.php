@@ -665,6 +665,7 @@ Route::prefix('v1')->group(function () {
         // 🏦 BANCO DE HORAS (CONSULTORES)
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/consultant-hour-bank/consultants', [ConsultantHourBankController::class, 'consultants']);
+            Route::get('/consultant-hour-bank/{userId}/range', [ConsultantHourBankController::class, 'range']);
             Route::get('/consultant-hour-bank/{userId}/preview', [ConsultantHourBankController::class, 'preview']);
             Route::get('/consultant-hour-bank/{userId}/history', [ConsultantHourBankController::class, 'history']);
             Route::post('/consultant-hour-bank/{userId}/close', [ConsultantHourBankController::class, 'close']);

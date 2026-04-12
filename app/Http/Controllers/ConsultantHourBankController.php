@@ -12,6 +12,56 @@ class ConsultantHourBankController extends Controller
 {
     public function __construct(private HourBankService $service) {}
 
+    // ─── Range: todos os meses em cadeia ─────────────────────────────────
+
+    /**
+     * GET /consultant-hour-bank/{userId}/range?year_month=YYYY-MM
+     *
+     * Retorna:
+     *   current  → dados calculados do mês solicitado (ou mês atual se omitido)
+     *   history  → meses anteriores ao current, do mais recente ao mais antigo
+     */
+    public function range(Request $request, int $userId): JsonResponse
+    {
+        try {
+            $user       = User::findOrFail($userId);
+            $dailyHours = (float) ($user->daily_hours ?? 8.0);
+            $startDate  = $user->bank_hours_start_date
+                ? \Carbon\Carbon::parse($user->bank_hours_start_date)->format('Y-m-d')
+                : null;
+
+            // Mês solicitado (default: mês atual)
+            $toYearMonth = $request->input('year_month', \Carbon\Carbon::now()->format('Y-m'));
+
+            // Mês de início do banco
+            $fromYearMonth = $startDate
+                ? \Carbon\Carbon::parse($startDate)->format('Y-m')
+                : $toYearMonth;
+
+            // Garante que from <= to
+            if ($fromYearMonth > $toYearMonth) {
+                $fromYearMonth = $toYearMonth;
+            }
+
+            $all = $this->service->calculateRange(
+                $userId, $fromYearMonth, $toYearMonth, $dailyHours, $startDate
+            );
+
+            $months  = array_values($all);
+            $current = end($months) ?: null;
+            // History = todos menos o último (o mês atual), do mais recente ao mais antigo
+            $history = array_reverse(array_slice($months, 0, -1));
+
+            return response()->json([
+                'current' => $current,
+                'history' => $history,
+                'bank_hours_start_date' => $startDate,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
     // ─── Preview do mês atual ou específico ───────────────────────────────
 
     /**
