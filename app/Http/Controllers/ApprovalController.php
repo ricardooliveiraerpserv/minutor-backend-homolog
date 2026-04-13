@@ -546,9 +546,16 @@ class ApprovalController extends Controller
             $query->where('project_id', $request->get('project_id'));
         }
 
-        // Filtro por usuário
+        // Filtro por usuário (colaborador)
         if ($request->filled('user_id')) {
             $query->where('user_id', $request->get('user_id'));
+        }
+
+        // Filtro por coordenador do projeto
+        if ($request->filled('coordinator_id')) {
+            $query->whereHas('project.coordinators', function ($q) use ($request) {
+                $q->where('users.id', $request->get('coordinator_id'));
+            });
         }
 
         // Filtro por tipo de serviço
@@ -592,9 +599,16 @@ class ApprovalController extends Controller
             $query->where('project_id', $request->get('project_id'));
         }
 
-        // Filtro por usuário
+        // Filtro por usuário (colaborador)
         if ($request->filled('user_id')) {
             $query->where('user_id', $request->get('user_id'));
+        }
+
+        // Filtro por coordenador do projeto
+        if ($request->filled('coordinator_id')) {
+            $query->whereHas('project.coordinators', function ($q) use ($request) {
+                $q->where('users.id', $request->get('coordinator_id'));
+            });
         }
 
         // Filtro por data (período)

@@ -142,6 +142,10 @@ class UserController extends Controller
             });
         }
 
+        if ($request->filled('is_executive')) {
+            $query->where('is_executive', true);
+        }
+
         // Filtro por status (ativo/inativo) usando campo enabled
         $status = $request->get('status');
         if ($status === 'active') {
