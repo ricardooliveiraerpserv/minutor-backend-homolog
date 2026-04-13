@@ -1706,13 +1706,38 @@ class TimesheetController extends Controller
 
         // Validar saldo de consultor se for consultor
         if ($isConsultant) {
+            $consultantConfiguredHours = $project->consultant_hours ?? 0;
+
+            // Se consultant_hours não está configurado (0), usa o saldo geral do projeto
+            if ($consultantConfiguredHours <= 0) {
+                $generalBalance = $project->getGeneralHoursBalance(false, $excludeTimesheetId);
+                Log::info('Consultor sem cota configurada — usando saldo geral do projeto', [
+                    'project_id' => $project->id,
+                    'user_id' => $userId,
+                    'general_balance' => $generalBalance,
+                    'hours_to_add' => $hoursToAdd,
+                ]);
+                if ($generalBalance < $hoursToAdd && !$project->allow_negative_balance) {
+                    return response()->json([
+                        'code' => 'INSUFFICIENT_HOURS_BALANCE',
+                        'type' => 'error',
+                        'message' => 'Saldo de horas insuficiente',
+                        'detailMessage' => sprintf(
+                            'O projeto não possui saldo suficiente. Saldo disponível: %.2f h, horas solicitadas: %.2f h.',
+                            $generalBalance,
+                            $hoursToAdd
+                        ),
+                        'details' => ['available_balance' => $generalBalance, 'requested_hours' => $hoursToAdd, 'balance_type' => 'general']
+                    ], 422);
+                }
+            } else {
             $consultantBalance = $project->getConsultantHoursBalance(false, $excludeTimesheetId);
             $consultantLoggedHours = $project->getConsultantLoggedHours(false, $excludeTimesheetId);
 
             Log::info('Validação de saldo de consultor', [
                 'project_id' => $project->id,
                 'user_id' => $userId,
-                'consultant_hours' => $project->consultant_hours ?? 0,
+                'consultant_hours' => $consultantConfiguredHours,
                 'consultant_logged_hours' => $consultantLoggedHours,
                 'consultant_balance' => $consultantBalance,
                 'hours_to_add' => $hoursToAdd,
@@ -1752,6 +1777,7 @@ class TimesheetController extends Controller
                 'consultant_balance' => $consultantBalance,
                 'hours_to_add' => $hoursToAdd,
             ]);
+            } // end else (consultant_hours configurado)
         }
 
         // Validar saldo de coordenador se for coordenador
