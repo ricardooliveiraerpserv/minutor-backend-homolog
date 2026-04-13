@@ -42,6 +42,11 @@ RUN printf 'server {\n\
     listen 8080;\n\
     root /var/www/public;\n\
     index index.php;\n\
+    disable_symlinks off;\n\
+    location /storage/ {\n\
+        alias /var/www/storage/app/public/;\n\
+        try_files $uri =404;\n\
+    }\n\
     location / {\n\
         try_files $uri $uri/ /index.php?$query_string;\n\
     }\n\
