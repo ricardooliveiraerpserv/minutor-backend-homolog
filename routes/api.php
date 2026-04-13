@@ -403,6 +403,9 @@ Route::prefix('v1')->group(function () {
         // Enum values - endpoint público dentro da autenticação
         Route::get('/projects/enum-values', [ProjectController::class, 'enumValues'])->name('projects.enum-values');
 
+        // Projetos do próprio usuário (sem permissão especial — filtra automaticamente pelo consultor logado)
+        Route::get('/my-projects', [ProjectController::class, 'myProjects'])->name('projects.my');
+
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
