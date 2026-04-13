@@ -1,43 +1,34 @@
-FROM php:8.3-fpm
+FROM php:8.3-cli
 
-# Set working directory
 WORKDIR /var/www
 
-# Install system dependencies
+# Dependências do sistema
 RUN apt-get update && apt-get install -y \
-    git \
-    curl \
-    libpng-dev \
-    libonig-dev \
-    libxml2-dev \
-    libzip-dev \
-    zip \
-    unzip \
-    nodejs \
-    npm
+    git curl libpng-dev libonig-dev libxml2-dev \
+    libzip-dev zip unzip libpq-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Clear cache
-RUN apt-get clean && rm -rf /var/lib/apt/lists/*
+# Extensões PHP (incluindo pgsql para PostgreSQL)
+RUN docker-php-ext-install pdo pdo_pgsql pdo_mysql mbstring exif pcntl bcmath gd zip
 
-# Install PHP extensions
-RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip
+# Composer
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Install Composer
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+# Copia o projeto
+COPY . .
 
-# Create system user to run Composer and Artisan Commands
-RUN groupadd -g 1000 www
-RUN useradd -u 1000 -ms /bin/bash -g www www
+# Instala dependências PHP (sem dev)
+RUN composer install --no-dev --optimize-autoloader --no-interaction
 
-# Copy existing application directory contents
-COPY . /var/www
+# Permissões de storage e cache
+RUN mkdir -p storage/logs storage/framework/cache storage/framework/sessions storage/framework/views bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
 
-# Copy existing application directory permissions
-COPY --chown=www:www . /var/www
+# Porta exposta pelo Render
+EXPOSE 8080
 
-# Change current user to www
-USER www
-
-# Expose port 9000 and start php-fpm server
-EXPOSE 9000
-CMD ["php-fpm"] 
+# Inicia o servidor Laravel na porta correta
+CMD php artisan config:cache && \
+    php artisan route:cache && \
+    php artisan migrate --force && \
+    php artisan serve --host=0.0.0.0 --port=8080
