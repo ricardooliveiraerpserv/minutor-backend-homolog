@@ -337,12 +337,14 @@ class ExpenseController extends Controller
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 
-        // Validar valor máximo acumulado por consultor (apenas se não for despesa ilimitada)
+        // Validar valor máximo diário por consultor (apenas se não for despesa ilimitada)
         $maxLimit = $project->max_expense_per_consultant;
         if (!$project->unlimited_expense && $maxLimit) {
             $newAmount   = (float) $validator->validated()['amount'];
+            $expenseDate = $validator->validated()['expense_date'];
             $accumulated = Expense::where('project_id', $project->id)
                 ->where('user_id', $targetUserId)
+                ->whereDate('expense_date', $expenseDate)
                 ->whereNotIn('status', ['rejected'])
                 ->sum('amount');
             $totalAfter  = $accumulated + $newAmount;
@@ -350,9 +352,9 @@ class ExpenseController extends Controller
             if ($totalAfter > (float) $maxLimit) {
                 return $this->businessRuleResponse(
                     'EXPENSE_AMOUNT_EXCEEDED',
-                    'Limite de despesas excedido',
+                    'Limite diário de despesas excedido',
                     sprintf(
-                        'O limite de despesas para este projeto é R$ %s. Você já possui R$ %s registrados. Valor disponível: R$ %s.',
+                        'O limite diário de despesas neste projeto é R$ %s. Já registrado no dia: R$ %s. Disponível: R$ %s.',
                         number_format($maxLimit, 2, ',', '.'),
                         number_format($accumulated, 2, ',', '.'),
                         number_format(max(0, (float)$maxLimit - $accumulated), 2, ',', '.')
@@ -525,15 +527,17 @@ class ExpenseController extends Controller
             $project = $expense->project;
         }
 
-        // Validar limite acumulado por consultor ao editar (se o valor está sendo alterado e não for despesa ilimitada)
+        // Validar limite diário por consultor ao editar (se o valor está sendo alterado e não for despesa ilimitada)
         if (isset($updateData['amount'])) {
             $maxLimit = $project->max_expense_per_consultant;
             if (!$project->unlimited_expense && $maxLimit) {
                 $editUserId  = $expense->user_id;
                 $newAmount   = (float) $updateData['amount'];
-                // Exclui a própria despesa do acumulado para recalcular com o novo valor
+                $expenseDate = $updateData['expense_date'] ?? $expense->expense_date;
+                // Exclui a própria despesa do acumulado do dia para recalcular com o novo valor
                 $accumulated = Expense::where('project_id', $project->id)
                     ->where('user_id', $editUserId)
+                    ->whereDate('expense_date', $expenseDate)
                     ->whereNotIn('status', ['rejected'])
                     ->where('id', '!=', $expense->id)
                     ->sum('amount');
@@ -542,9 +546,9 @@ class ExpenseController extends Controller
                 if ($totalAfter > (float) $maxLimit) {
                     return $this->businessRuleResponse(
                         'EXPENSE_AMOUNT_EXCEEDED',
-                        'Limite de despesas excedido',
+                        'Limite diário de despesas excedido',
                         sprintf(
-                            'O limite de despesas para este projeto é R$ %s. Valor disponível: R$ %s.',
+                            'O limite diário de despesas neste projeto é R$ %s. Disponível no dia: R$ %s.',
                             number_format($maxLimit, 2, ',', '.'),
                             number_format(max(0, (float)$maxLimit - $accumulated), 2, ',', '.')
                         )
