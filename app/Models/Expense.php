@@ -164,7 +164,9 @@ class Expense extends Model
             return null;
         }
 
-        return Storage::url($this->receipt_path);
+        // Garante URL absoluta apontando para o backend (não relativa ao frontend)
+        $backendUrl = rtrim(config('app.url'), '/');
+        return $backendUrl . '/storage/' . ltrim($this->receipt_path, '/');
     }
 
     /**
