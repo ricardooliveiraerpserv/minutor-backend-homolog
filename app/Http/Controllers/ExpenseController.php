@@ -940,6 +940,41 @@ class ExpenseController extends Controller
     }
 
     /**
+     * Download/visualização de comprovante — serve o arquivo direto via PHP
+     */
+    public function downloadReceipt(Request $request, int $id)
+    {
+        $user = Auth::user();
+        $expense = Expense::findOrFail($id);
+
+        // Permissão: dono, admin ou coordenador do projeto
+        if (!$user->hasRole('Administrator') && $expense->user_id !== $user->id) {
+            if (!$expense->canBeApprovedBy($user)) {
+                return response()->json(['message' => 'Sem permissão'], 403);
+            }
+        }
+
+        if (!$expense->receipt_path) {
+            return response()->json(['message' => 'Comprovante não encontrado'], 404);
+        }
+
+        $disk = \Storage::disk('public');
+
+        if (!$disk->exists($expense->receipt_path)) {
+            return response()->json(['message' => 'Arquivo não encontrado no servidor'], 404);
+        }
+
+        $mime = $disk->mimeType($expense->receipt_path);
+        $name = $expense->receipt_original_name ?? basename($expense->receipt_path);
+
+        return response($disk->get($expense->receipt_path), 200, [
+            'Content-Type'        => $mime,
+            'Content-Disposition' => 'inline; filename="' . $name . '"',
+            'Cache-Control'       => 'no-cache',
+        ]);
+    }
+
+    /**
      * Upload de comprovante de despesa
      */
     public function uploadReceipt(Request $request, int $id): JsonResponse

@@ -164,9 +164,9 @@ class Expense extends Model
             return null;
         }
 
-        // Garante URL absoluta apontando para o backend (não relativa ao frontend)
+        // Serve via endpoint da API (não depende de symlink do storage)
         $backendUrl = rtrim(config('app.url'), '/');
-        return $backendUrl . '/storage/' . ltrim($this->receipt_path, '/');
+        return $backendUrl . '/api/v1/expenses/' . $this->id . '/receipt';
     }
 
     /**

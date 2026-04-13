@@ -502,6 +502,7 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::post('/expenses/{expense}/upload-receipt', [ExpenseController::class, 'uploadReceipt'])->name('expenses.upload-receipt');
+        Route::get('/expenses/{expense}/receipt', [ExpenseController::class, 'downloadReceipt'])->name('expenses.download-receipt');
 
         // 📝 CATEGORIAS DE DESPESAS
         // Rotas de leitura - acessíveis a todos os usuários autenticados
