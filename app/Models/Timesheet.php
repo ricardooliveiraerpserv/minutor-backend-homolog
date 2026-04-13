@@ -20,6 +20,7 @@ class Timesheet extends Model
     public const STATUS_APPROVED = 'approved';
     public const STATUS_REJECTED = 'rejected';
     public const STATUS_CONFLICTED = 'conflicted';
+    public const STATUS_ADJUSTMENT_REQUESTED = 'adjustment_requested';
 
     /**
      * The attributes that are mass assignable.
@@ -92,10 +93,11 @@ class Timesheet extends Model
     public static function getStatuses(): array
     {
         return [
-            self::STATUS_PENDING => 'Pendente',
-            self::STATUS_APPROVED => 'Aprovado',
-            self::STATUS_REJECTED => 'Rejeitado',
-            self::STATUS_CONFLICTED => 'Conflitante',
+            self::STATUS_PENDING              => 'Pendente',
+            self::STATUS_APPROVED             => 'Aprovado',
+            self::STATUS_REJECTED             => 'Rejeitado',
+            self::STATUS_CONFLICTED           => 'Conflitante',
+            self::STATUS_ADJUSTMENT_REQUESTED => 'Ajuste Solicitado',
         ];
     }
 
@@ -269,7 +271,8 @@ class Timesheet extends Model
     {
         return $this->status === self::STATUS_PENDING ||
                $this->status === self::STATUS_REJECTED ||
-               $this->status === self::STATUS_CONFLICTED;
+               $this->status === self::STATUS_CONFLICTED ||
+               $this->status === self::STATUS_ADJUSTMENT_REQUESTED;
     }
 
     /**
@@ -277,7 +280,8 @@ class Timesheet extends Model
      */
     public function canBeApproved(): bool
     {
-        return $this->status === self::STATUS_PENDING;
+        return $this->status === self::STATUS_PENDING ||
+               $this->status === self::STATUS_ADJUSTMENT_REQUESTED;
     }
 
     /**
@@ -325,6 +329,23 @@ class Timesheet extends Model
         }
 
         $this->status = self::STATUS_REJECTED;
+        $this->reviewed_by = $approver->id;
+        $this->reviewed_at = now();
+        $this->rejection_reason = $reason;
+
+        return $this->save();
+    }
+
+    /**
+     * Solicitar ajuste no timesheet
+     */
+    public function requestAdjustment(User $approver, string $reason): bool
+    {
+        if (!$this->canBeApprovedBy($approver)) {
+            return false;
+        }
+
+        $this->status = self::STATUS_ADJUSTMENT_REQUESTED;
         $this->reviewed_by = $approver->id;
         $this->reviewed_at = now();
         $this->rejection_reason = $reason;

@@ -474,6 +474,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:hours.reject')->group(function () {
             Route::post('/timesheets/{timesheet}/reject', [TimesheetController::class, 'reject'])->name('timesheets.reject');
+            Route::post('/timesheets/{timesheet}/request-adjustment', [TimesheetController::class, 'requestAdjustment'])->name('timesheets.request-adjustment');
             Route::post('/timesheets/{timesheet}/reverse-approval', [TimesheetController::class, 'reverseApproval'])->name('timesheets.reverse-approval');
             Route::post('/timesheets/{timesheet}/reverse-rejection', [TimesheetController::class, 'reverseRejection'])->name('timesheets.reverse-rejection');
         });
