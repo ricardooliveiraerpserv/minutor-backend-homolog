@@ -430,4 +430,47 @@ class RoleController extends Controller
             'data' => $role->permissions
         ]);
     }
+
+    /**
+     * Retorna os usuários vinculados a este role/grupo.
+     */
+    public function users(Role $role): JsonResponse
+    {
+        $users = \App\Models\User::whereHas('roles', function ($q) use ($role) {
+            $q->where('roles.id', $role->id);
+        })->select('id', 'name', 'email')->orderBy('name')->get();
+
+        return response()->json(['items' => $users]);
+    }
+
+    /**
+     * Sincroniza os usuários vinculados a este role/grupo.
+     * Recebe { user_ids: [1, 2, 3] } e substitui os vínculos existentes.
+     */
+    public function syncUsers(Request $request, Role $role): JsonResponse
+    {
+        $validated = $request->validate([
+            'user_ids'   => 'required|array',
+            'user_ids.*' => 'integer|exists:users,id',
+        ]);
+
+        $modelType = (new \App\Models\User)->getMorphClass();
+
+        // Remove todos os vínculos deste role com usuários
+        \DB::table('model_has_roles')
+            ->where('role_id', $role->id)
+            ->where('model_type', $modelType)
+            ->delete();
+
+        // Insere os novos vínculos
+        foreach ($validated['user_ids'] as $userId) {
+            \DB::table('model_has_roles')->insertOrIgnore([
+                'role_id'    => $role->id,
+                'model_type' => $modelType,
+                'model_id'   => $userId,
+            ]);
+        }
+
+        return response()->json(['success' => true, 'message' => 'Usuários sincronizados com sucesso']);
+    }
 }

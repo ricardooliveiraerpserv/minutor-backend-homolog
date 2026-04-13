@@ -261,6 +261,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/roles/{role}', [RoleController::class, 'show'])->name('roles.show');
             Route::get('/roles/{role}/permissions', [RoleController::class, 'permissions'])
                 ->name('roles.permissions');
+            Route::get('/roles/{role}/users', [RoleController::class, 'users'])
+                ->name('roles.users');
         });
 
         Route::middleware('permission.or.admin:roles.create')->group(function () {
@@ -273,6 +275,8 @@ Route::prefix('v1')->group(function () {
                 ->name('roles.give-permissions');
             Route::delete('/roles/{role}/permissions', [RoleController::class, 'revokePermissions'])
                 ->name('roles.revoke-permissions');
+            Route::post('/roles/{role}/sync-users', [RoleController::class, 'syncUsers'])
+                ->name('roles.sync-users');
         });
 
         Route::middleware('permission.or.admin:roles.delete')->group(function () {
