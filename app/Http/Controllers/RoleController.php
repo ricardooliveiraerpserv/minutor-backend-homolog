@@ -450,7 +450,7 @@ class RoleController extends Controller
     public function syncUsers(Request $request, Role $role): JsonResponse
     {
         $validated = $request->validate([
-            'user_ids'   => 'required|array',
+            'user_ids'   => 'present|array',
             'user_ids.*' => 'integer|exists:users,id',
         ]);
 
