@@ -21,21 +21,33 @@ class MovideskAdminController extends Controller
      */
     public function status(): JsonResponse
     {
-        $lastSync = SystemSetting::get('movidesk_last_sync');
+        try {
+            $lastSync = SystemSetting::get('movidesk_last_sync');
 
-        $totalImported = Timesheet::where('origin', 'webhook')->count();
+            $totalImported = Timesheet::where('origin', 'webhook')->count();
 
-        $todayImported = Timesheet::where('origin', 'webhook')
-            ->whereDate('created_at', today())
-            ->count();
+            $todayImported = Timesheet::where('origin', 'webhook')
+                ->whereDate('created_at', today())
+                ->count();
 
-        return response()->json([
-            'last_sync'      => $lastSync,
-            'last_sync_human'=> $lastSync ? Carbon::parse($lastSync)->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : null,
-            'total_imported' => $totalImported,
-            'today_imported' => $todayImported,
-            'token_configured' => !empty(config('services.movidesk.token')),
-        ]);
+            return response()->json([
+                'last_sync'        => $lastSync,
+                'last_sync_human'  => $lastSync ? Carbon::parse($lastSync)->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : null,
+                'total_imported'   => $totalImported,
+                'today_imported'   => $todayImported,
+                'token_configured' => !empty(config('services.movidesk.token')),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('[Movidesk] Erro ao carregar status: ' . $e->getMessage());
+            return response()->json([
+                'last_sync'        => null,
+                'last_sync_human'  => null,
+                'total_imported'   => 0,
+                'today_imported'   => 0,
+                'token_configured' => !empty(config('services.movidesk.token')),
+                'error'            => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
