@@ -401,11 +401,13 @@ class TimesheetController extends Controller
         $user = Auth::user();
 
         // Definir regras de validação base
+        // start_time e end_time são opcionais quando total_hours é informado diretamente
+        $hasTotalHours = !empty($request->total_hours);
         $rules = [
             'project_id' => 'required|exists:projects,id',
             'date' => 'required|date|before_or_equal:today',
-            'start_time' => 'required|date_format:H:i',
-            'end_time' => 'required|date_format:H:i|after:start_time',
+            'start_time' => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i',
+            'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
             'total_hours' => 'nullable|string|regex:/^\d+:[0-5][0-9]$/',
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
@@ -502,6 +504,8 @@ class TimesheetController extends Controller
             ], 422);
         }
 
+        // Verificações de duplicado/sobreposição só fazem sentido quando há horários definidos
+        if (!$hasTotalHours && $request->start_time && $request->end_time) {
         // Verificar se já existe um apontamento duplicado para o mesmo usuário, data, projeto e horário
         $existingTimesheet = Timesheet::where('user_id', $timesheetUserId)
             ->where('project_id', $request->project_id)
@@ -553,6 +557,7 @@ class TimesheetController extends Controller
                 ]
             ], 422);
         }
+        } // fim do bloco: verificações de duplicado/sobreposição com horários
 
         DB::beginTransaction();
         try {
