@@ -117,6 +117,16 @@ class ProjectController extends Controller
      *     @OA\Response(response=403, description="Sem permissão")
      * )
      */
+    /**
+     * Retorna apenas os projetos do usuário logado (sem permissão projects.view).
+     * Usado pelo meu-painel para popular dropdowns de cliente/projeto.
+     */
+    public function myProjects(Request $request): JsonResponse
+    {
+        $request->merge(['consultant_only' => 'true']);
+        return $this->index($request);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $perPage = min($request->get('pageSize', $request->get('per_page', 15)), 200);
