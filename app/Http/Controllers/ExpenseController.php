@@ -337,13 +337,28 @@ class ExpenseController extends Controller
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 
-        // Validar valor máximo por consultor (apenas se não for despesa ilimitada)
-        if (!$project->unlimited_expense && $project->max_expense_per_consultant && $request->amount > $project->max_expense_per_consultant) {
-            return $this->businessRuleResponse(
-                'EXPENSE_AMOUNT_EXCEEDED',
-                'Valor da despesa excede o limite permitido',
-                "O valor máximo permitido para despesas neste projeto é de R$ " . number_format($project->max_expense_per_consultant, 2, ',', '.')
-            );
+        // Validar valor máximo acumulado por consultor (apenas se não for despesa ilimitada)
+        $maxLimit = $project->max_expense_per_consultant;
+        if (!$project->unlimited_expense && $maxLimit) {
+            $newAmount   = (float) $validator->validated()['amount'];
+            $accumulated = Expense::where('project_id', $project->id)
+                ->where('user_id', $targetUserId)
+                ->whereNotIn('status', ['rejected'])
+                ->sum('amount');
+            $totalAfter  = $accumulated + $newAmount;
+
+            if ($totalAfter > (float) $maxLimit) {
+                return $this->businessRuleResponse(
+                    'EXPENSE_AMOUNT_EXCEEDED',
+                    'Limite de despesas excedido',
+                    sprintf(
+                        'O limite de despesas para este projeto é R$ %s. Você já possui R$ %s registrados. Valor disponível: R$ %s.',
+                        number_format($maxLimit, 2, ',', '.'),
+                        number_format($accumulated, 2, ',', '.'),
+                        number_format(max(0, (float)$maxLimit - $accumulated), 2, ',', '.')
+                    )
+                );
+            }
         }
 
         $expenseData = $validator->validated();
@@ -510,14 +525,31 @@ class ExpenseController extends Controller
             $project = $expense->project;
         }
 
-        // Validar valor máximo por consultor (se o valor está sendo alterado e não for despesa ilimitada)
+        // Validar limite acumulado por consultor ao editar (se o valor está sendo alterado e não for despesa ilimitada)
         if (isset($updateData['amount'])) {
-            if (!$project->unlimited_expense && $project->max_expense_per_consultant && $updateData['amount'] > $project->max_expense_per_consultant) {
-                return $this->businessRuleResponse(
-                    'EXPENSE_AMOUNT_EXCEEDED',
-                    'Valor da despesa excede o limite permitido',
-                    "O valor máximo permitido para despesas neste projeto é de R$ " . number_format($project->max_expense_per_consultant, 2, ',', '.')
-                );
+            $maxLimit = $project->max_expense_per_consultant;
+            if (!$project->unlimited_expense && $maxLimit) {
+                $editUserId  = $expense->user_id;
+                $newAmount   = (float) $updateData['amount'];
+                // Exclui a própria despesa do acumulado para recalcular com o novo valor
+                $accumulated = Expense::where('project_id', $project->id)
+                    ->where('user_id', $editUserId)
+                    ->whereNotIn('status', ['rejected'])
+                    ->where('id', '!=', $expense->id)
+                    ->sum('amount');
+                $totalAfter  = $accumulated + $newAmount;
+
+                if ($totalAfter > (float) $maxLimit) {
+                    return $this->businessRuleResponse(
+                        'EXPENSE_AMOUNT_EXCEEDED',
+                        'Limite de despesas excedido',
+                        sprintf(
+                            'O limite de despesas para este projeto é R$ %s. Valor disponível: R$ %s.',
+                            number_format($maxLimit, 2, ',', '.'),
+                            number_format(max(0, (float)$maxLimit - $accumulated), 2, ',', '.')
+                        )
+                    );
+                }
             }
         }
 
