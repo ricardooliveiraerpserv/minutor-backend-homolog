@@ -400,6 +400,16 @@ class TimesheetController extends Controller
     {
         $user = Auth::user();
 
+        // Clientes não podem criar apontamentos
+        if ($user->hasRole('Cliente')) {
+            return response()->json([
+                'code' => 'PERMISSION_DENIED',
+                'type' => 'error',
+                'message' => 'Acesso negado',
+                'detailMessage' => 'Usuários com perfil Cliente não podem criar apontamentos de horas.',
+            ], 403);
+        }
+
         // Definir regras de validação base
         // start_time e end_time são opcionais quando total_hours é informado diretamente
         $hasTotalHours = !empty($request->total_hours);

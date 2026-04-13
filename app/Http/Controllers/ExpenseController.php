@@ -323,6 +323,11 @@ class ExpenseController extends Controller
         $project = Project::find($request->project_id);
         $user = Auth::user();
 
+        // Clientes não podem registrar despesas
+        if ($user->hasRole('Cliente')) {
+            return $this->accessDeniedResponse('Usuários com perfil Cliente não podem registrar despesas.');
+        }
+
         // Determinar o usuário alvo da despesa
         $targetUserId = (!empty($request->user_id) && $user->hasRole('Administrator'))
             ? $request->user_id

@@ -459,9 +459,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
         Route::get('/timesheets/{timesheet}', [TimesheetController::class, 'show'])->name('timesheets.show');
 
-        Route::middleware('permission.or.admin:hours.create')->group(function () {
-            Route::post('/timesheets', [TimesheetController::class, 'store'])->name('timesheets.store');
-        });
+        // Qualquer usuário autenticado (exceto Cliente — verificado no controller) pode criar apontamentos
+        Route::post('/timesheets', [TimesheetController::class, 'store'])->name('timesheets.store');
 
         // Atualização e exclusão verificadas no controller baseado na propriedade
         Route::put('/timesheets/{timesheet}', [TimesheetController::class, 'update'])->name('timesheets.update');
@@ -484,9 +483,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/expenses/export', [ExpenseController::class, 'export'])->name('expenses.export');
         Route::get('/expenses/{expense}', [ExpenseController::class, 'show'])->name('expenses.show');
 
-        Route::middleware('permission.or.admin:expenses.create')->group(function () {
-            Route::post('/expenses', [ExpenseController::class, 'store'])->name('expenses.store');
-        });
+        // Qualquer usuário autenticado (exceto Cliente — verificado no controller) pode registrar despesas
+        Route::post('/expenses', [ExpenseController::class, 'store'])->name('expenses.store');
 
         Route::put('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.update');
         Route::patch('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.patch');
