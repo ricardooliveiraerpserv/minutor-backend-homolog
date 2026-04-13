@@ -1378,6 +1378,57 @@ class TimesheetController extends Controller
     }
 
     /**
+     * Solicitar ajuste no apontamento
+     */
+    public function requestAdjustment(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+
+        $validator = Validator::make($request->all(), [
+            'reason' => 'required|string|max:500'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Motivo do ajuste é obrigatório',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+
+        $timesheet = Timesheet::with(['project.coordinators'])->find($id);
+
+        if (!$timesheet) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Apontamento não encontrado'
+            ], 404);
+        }
+
+        if (!$timesheet->canBeApprovedBy($user)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Você não tem permissão para solicitar ajuste neste apontamento'
+            ], 403);
+        }
+
+        if ($timesheet->requestAdjustment($user, $request->reason)) {
+            $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $timesheet,
+                'message' => 'Ajuste solicitado com sucesso!'
+            ]);
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Erro ao solicitar ajuste'
+        ], 500);
+    }
+
+    /**
      * @OA\Post(
      *     path="/api/v1/timesheets/{id}/reverse-approval",
      *     summary="Estornar aprovação do apontamento",
