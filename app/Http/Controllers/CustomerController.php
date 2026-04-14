@@ -437,14 +437,14 @@ class CustomerController extends Controller
         $targetUserId = $currentUser->id;
         $targetUser = $currentUser;
 
-        if ($requestedUserId && ($currentUser->hasRole('Administrator') || $currentUser->hasRole('Project Manager'))) {
+        if ($requestedUserId && ($currentUser->isAdmin() || $currentUser->hasRole('Project Manager'))) {
             // Admin e Project Manager podem consultar para qualquer usuário
             $targetUserId = $requestedUserId;
             $targetUser = \App\Models\User::find($targetUserId);
         }
 
         // Se o usuário alvo é Administrator ou Project Manager, retorna TODOS os clientes (sem filtro de vinculação)
-        if ($targetUser && ($targetUser->hasRole('Administrator') || $targetUser->hasRole('Project Manager'))) {
+        if ($targetUser && ($targetUser->isAdmin() || $targetUser->hasRole('Project Manager'))) {
             $query = Customer::query();
         } else {
             // Para usuários não-admin, busca apenas clientes onde o usuário é consultor ou aprovador

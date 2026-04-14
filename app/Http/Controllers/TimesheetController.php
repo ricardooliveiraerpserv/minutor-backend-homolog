@@ -161,7 +161,7 @@ class TimesheetController extends Controller
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$user->hasRole('Administrator') && !$user->can('hours.view_all')) {
+        if (!$user->isAdmin() && !$user->can('hours.view_all')) {
             $query->forUser($user->id);
         }
 
@@ -180,7 +180,7 @@ class TimesheetController extends Controller
             });
         }
 
-        if ($request->filled('user_id') && ($user->hasRole('Administrator') || $user->can('hours.view_all'))) {
+        if ($request->filled('user_id') && ($user->isAdmin() || $user->can('hours.view_all'))) {
             $query->forUser($request->user_id);
         }
 
@@ -401,7 +401,7 @@ class TimesheetController extends Controller
         $user = Auth::user();
 
         // Clientes não podem criar apontamentos
-        if ($user->hasRole('Cliente')) {
+        if ($user->isCliente()) {
             return response()->json([
                 'code' => 'PERMISSION_DENIED',
                 'type' => 'error',
@@ -425,7 +425,7 @@ class TimesheetController extends Controller
         ];
 
         // Se é administrador, pode especificar user_id
-        if ($user->hasRole('Administrator') || $user->can('admin.full_access')) {
+        if ($user->isAdmin() || $user->can('admin.full_access')) {
             $rules['user_id'] = 'nullable|exists:users,id';
         }
 
@@ -445,7 +445,7 @@ class TimesheetController extends Controller
         $timesheetUserId = Auth::id(); // Padrão: usuário logado
 
         // Se é admin e especificou user_id, usar o usuário especificado
-        if (($user->hasRole('Administrator') || $user->can('admin.full_access')) && $request->filled('user_id')) {
+        if (($user->isAdmin() || $user->can('admin.full_access')) && $request->filled('user_id')) {
             $timesheetUserId = $request->user_id;
 
             // Verificar se o usuário especificado existe e está ativo
@@ -472,7 +472,7 @@ class TimesheetController extends Controller
         }
 
         // Verificar se o projeto permite apontamentos manuais (exceto para administradores)
-        if (!$user->hasRole('Administrator') && !$user->can('admin.full_access')) {
+        if (!$user->isAdmin() && !$user->can('admin.full_access')) {
             if (!$project->allow_manual_timesheets) {
                 return response()->json([
                     'code' => 'MANUAL_TIMESHEETS_NOT_ALLOWED',
@@ -763,7 +763,7 @@ class TimesheetController extends Controller
 
             // Verificar se pode visualizar este timesheet
             $step = 'auth_check';
-            if ($user && !$user->hasRole('Administrator') && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
+            if ($user && !$user->isAdmin() && !$user->can('hours.view_all') && $timesheet->user_id !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
             }
 
@@ -832,7 +832,7 @@ class TimesheetController extends Controller
         }
 
         // Verificar permissões
-        if (!$user->hasRole('Administrator') && !$user->can('hours.update_all') && $timesheet->user_id !== $user->id) {
+        if (!$user->isAdmin() && !$user->can('hours.update_all') && $timesheet->user_id !== $user->id) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado'
@@ -873,7 +873,7 @@ class TimesheetController extends Controller
         $validatedData = $validator->validated();
         if (isset($validatedData['user_id'])) {
             // Verificar se o usuário atual tem permissão para alterar o usuário do apontamento
-            if (!($user->hasRole('Administrator') || $user->can('admin.full_access'))) {
+            if (!($user->isAdmin() || $user->can('admin.full_access'))) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -942,7 +942,7 @@ class TimesheetController extends Controller
         }
 
         // Verificar se o projeto permite apontamentos manuais (exceto para administradores)
-        if ($projectForValidation && !$user->hasRole('Administrator') && !$user->can('admin.full_access')) {
+        if ($projectForValidation && !$user->isAdmin() && !$user->can('admin.full_access')) {
             // Se mudou de projeto, validar o novo projeto
             if (isset($validatedData['project_id']) && $validatedData['project_id'] != $timesheet->project_id) {
                 if (!$projectForValidation->allow_manual_timesheets) {
@@ -1235,7 +1235,7 @@ class TimesheetController extends Controller
         }
 
         // Verificar permissões
-        if (!$user->hasRole('Administrator') && !$user->can('hours.delete_all') && $timesheet->user_id !== $user->id) {
+        if (!$user->isAdmin() && !$user->can('hours.delete_all') && $timesheet->user_id !== $user->id) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado'
@@ -1971,7 +1971,7 @@ class TimesheetController extends Controller
         $user = Auth::user();
         $timesheet = Timesheet::findOrFail($id);
 
-        if (!$user->hasRole('Administrator') && $timesheet->user_id !== $user->id) {
+        if (!$user->isAdmin() && $timesheet->user_id !== $user->id) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 

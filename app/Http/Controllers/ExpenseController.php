@@ -171,7 +171,7 @@ class ExpenseController extends Controller
         $query = Expense::with(['user', 'project.customer', 'category', 'reviewedBy']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$user->hasRole('Administrator') && !$user->can('expenses.view_all')) {
+        if (!$user->isAdmin() && !$user->can('expenses.view_all')) {
             $query->where('user_id', $user->id);
         }
 
@@ -324,16 +324,16 @@ class ExpenseController extends Controller
         $user = Auth::user();
 
         // Clientes não podem registrar despesas
-        if ($user->hasRole('Cliente')) {
+        if ($user->isCliente()) {
             return $this->accessDeniedResponse('Usuários com perfil Cliente não podem registrar despesas.');
         }
 
         // Determinar o usuário alvo da despesa
-        $targetUserId = (!empty($request->user_id) && $user->hasRole('Administrator'))
+        $targetUserId = (!empty($request->user_id) && $user->isAdmin())
             ? $request->user_id
             : $user->id;
 
-        if (!$user->hasRole('Administrator') && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
+        if (!$user->isAdmin() && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 
@@ -419,7 +419,7 @@ class ExpenseController extends Controller
         }
 
         // Verificar se o usuário pode visualizar esta despesa
-        $canView = $user->hasRole('Administrator') ||
+        $canView = $user->isAdmin() ||
                    $user->can('expenses.view_all') ||
                    $expense->user_id === $user->id;
 
@@ -480,7 +480,7 @@ class ExpenseController extends Controller
         }
 
         // Verificar se pode editar (só o próprio usuário ou admin)
-        if (!$user->hasRole('Administrator') && $expense->user_id !== $user->id) {
+        if (!$user->isAdmin() && $expense->user_id !== $user->id) {
             return $this->accessDeniedResponse('Você só pode editar suas próprias despesas');
         }
 
@@ -512,14 +512,14 @@ class ExpenseController extends Controller
         $updateData = $validator->validated();
 
         // Apenas administradores podem alterar o user_id
-        if (isset($updateData['user_id']) && !$user->hasRole('Administrator')) {
+        if (isset($updateData['user_id']) && !$user->isAdmin()) {
             unset($updateData['user_id']);
         }
 
         // Verificar acesso ao novo projeto se alterado
         if (isset($updateData['project_id'])) {
             $project = Project::find($updateData['project_id']);
-            if (!$user->hasRole('Administrator') && !$project->consultants()->where('user_id', $user->id)->exists()) {
+            if (!$user->isAdmin() && !$project->consultants()->where('user_id', $user->id)->exists()) {
                 return $this->accessDeniedResponse('Você não tem acesso ao projeto selecionado');
             }
         } else {
@@ -618,7 +618,7 @@ class ExpenseController extends Controller
         }
 
         // Verificar se pode excluir (só o próprio usuário ou admin)
-        if (!$user->hasRole('Administrator') && $expense->user_id !== $user->id) {
+        if (!$user->isAdmin() && $expense->user_id !== $user->id) {
             return $this->accessDeniedResponse('Você só pode excluir suas próprias despesas');
         }
 
@@ -686,7 +686,7 @@ class ExpenseController extends Controller
         }
 
         // Administradores podem aprovar qualquer despesa
-        if (!$user->hasRole('Administrator') && !$expense->canBeApprovedBy($user)) {
+        if (!$user->isAdmin() && !$expense->canBeApprovedBy($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Você não tem permissão para aprovar esta despesa'
@@ -756,7 +756,7 @@ class ExpenseController extends Controller
         }
 
         // Administradores podem rejeitar qualquer despesa
-        if (!$user->hasRole('Administrator') && !$expense->canBeApprovedBy($user)) {
+        if (!$user->isAdmin() && !$expense->canBeApprovedBy($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Você não tem permissão para rejeitar esta despesa'
@@ -832,7 +832,7 @@ class ExpenseController extends Controller
         }
 
         // Administradores podem solicitar ajuste em qualquer despesa
-        if (!$user->hasRole('Administrator') && !$expense->canBeApprovedBy($user)) {
+        if (!$user->isAdmin() && !$expense->canBeApprovedBy($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Você não tem permissão para solicitar ajuste nesta despesa'
@@ -908,7 +908,7 @@ class ExpenseController extends Controller
         }
 
         // Administradores podem estornar qualquer aprovação
-        if (!$user->hasRole('Administrator') && !$expense->canBeReversedBy($user)) {
+        if (!$user->isAdmin() && !$expense->canBeReversedBy($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Você não tem permissão para estornar esta aprovação ou o período permitido expirou'
@@ -948,7 +948,7 @@ class ExpenseController extends Controller
         $expense = Expense::findOrFail($id);
 
         // Permissão: dono, admin ou coordenador do projeto
-        if (!$user->hasRole('Administrator') && $expense->user_id !== $user->id) {
+        if (!$user->isAdmin() && $expense->user_id !== $user->id) {
             if (!$expense->canBeApprovedBy($user)) {
                 return response()->json(['message' => 'Sem permissão'], 403);
             }
@@ -992,7 +992,7 @@ class ExpenseController extends Controller
         $expense = Expense::findOrFail($id);
 
         // Permissão: só o dono ou admin
-        if (!$user->hasRole('Administrator') && $expense->user_id !== $user->id) {
+        if (!$user->isAdmin() && $expense->user_id !== $user->id) {
             return $this->accessDeniedResponse('Você só pode enviar comprovante para suas próprias despesas');
         }
 
@@ -1063,7 +1063,7 @@ class ExpenseController extends Controller
         }
 
         // Administradores podem estornar qualquer rejeição
-        if (!$user->hasRole('Administrator') && !$expense->canBeRejectionReversedBy($user)) {
+        if (!$user->isAdmin() && !$expense->canBeRejectionReversedBy($user)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Você não tem permissão para estornar esta rejeição ou o período permitido expirou'

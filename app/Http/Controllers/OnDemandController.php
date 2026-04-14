@@ -92,7 +92,7 @@ class OnDemandController extends Controller
         }
 
         // Verificar se o usuário tem permissão de dashboard geral ou é admin
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -108,7 +108,7 @@ class OnDemandController extends Controller
             $customerId = $user->customer_id;
         }
         // Se for admin e forneceu customer_id, usar o fornecido
-        elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -148,7 +148,7 @@ class OnDemandController extends Controller
         }
 
         // Aplicar filtro de executivo (admin apenas, quando não há cliente específico)
-        if ($user->hasRole('Administrator') && !$customerId && $request->filled('executive_id')) {
+        if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
             $executiveId = (int) $request->get('executive_id');
             $query->whereHas('customer', function ($q) use ($executiveId) {
                 $q->where('executive_id', $executiveId);
@@ -636,7 +636,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -647,7 +647,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -710,7 +710,7 @@ class OnDemandController extends Controller
             }
 
             // Aplicar filtro de executivo (admin apenas, quando não há cliente específico)
-            if ($user->hasRole('Administrator') && !$customerId && $request->filled('executive_id')) {
+            if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
                 $executiveId = (int) $request->get('executive_id');
                 $query->whereHas('customer', function ($q) use ($executiveId) {
                     $q->where('executive_id', $executiveId);
@@ -823,7 +823,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1011,7 +1011,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1023,7 +1023,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -1291,7 +1291,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1303,7 +1303,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -1547,7 +1547,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1559,7 +1559,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -1732,7 +1732,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1752,7 +1752,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -1935,7 +1935,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1947,7 +1947,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -2114,7 +2114,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2134,7 +2134,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -2302,7 +2302,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2314,7 +2314,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -2490,7 +2490,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2510,7 +2510,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -2685,7 +2685,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2697,7 +2697,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -2878,7 +2878,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2898,7 +2898,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -3072,7 +3072,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3084,7 +3084,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -3260,7 +3260,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3280,7 +3280,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -3447,7 +3447,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3459,7 +3459,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -3657,7 +3657,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3678,7 +3678,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -3827,7 +3827,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3839,7 +3839,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -3991,7 +3991,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -4040,7 +4040,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -4185,7 +4185,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -4197,7 +4197,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 
@@ -4382,7 +4382,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->hasRole('Administrator') && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -4431,7 +4431,7 @@ class OnDemandController extends Controller
         $customerId = null;
         if ($user->customer_id) {
             $customerId = $user->customer_id;
-        } elseif ($user->hasRole('Administrator') && $request->has('customer_id')) {
+        } elseif ($user->isAdmin() && $request->has('customer_id')) {
             $customerId = $request->get('customer_id');
         }
 

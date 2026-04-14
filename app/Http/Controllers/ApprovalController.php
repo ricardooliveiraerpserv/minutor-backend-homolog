@@ -410,7 +410,7 @@ class ApprovalController extends Controller
                 }
 
                 // Administradores podem aprovar qualquer despesa
-                if ($user->hasRole('Administrator') || $expense->canBeApprovedBy($user)) {
+                if ($user->isAdmin() || $expense->canBeApprovedBy($user)) {
                     if ($expense->approve($user, $chargeClient)) {
                         $results['approved'][] = $expenseId;
                     } else {
@@ -478,7 +478,7 @@ class ApprovalController extends Controller
         ->orderBy('created_at', 'desc');
 
         // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
-        if (!$user->hasRole('Administrator')) {
+        if (!$user->isAdmin()) {
             $query->whereHas('project.coordinators', function ($q) use ($user) {
                 $q->where('users.id', $user->id);
             });
@@ -508,7 +508,7 @@ class ApprovalController extends Controller
         ->orderBy('created_at', 'desc');
 
         // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
-        if (!$user->hasRole('Administrator')) {
+        if (!$user->isAdmin()) {
             $query->whereHas('project.coordinators', function ($q) use ($user) {
                 $q->where('users.id', $user->id);
             });

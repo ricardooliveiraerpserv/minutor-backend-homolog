@@ -182,13 +182,13 @@ class ProjectController extends Controller
             $targetUser = $currentUser;
 
             // Se admin forneceu user_id, usar esse usuário
-            if ($requestedUserId && $currentUser->hasRole('Administrator')) {
+            if ($requestedUserId && $currentUser->isAdmin()) {
                 $targetUserId = $requestedUserId;
                 $targetUser = \App\Models\User::find($targetUserId);
             }
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
-            if ($targetUser && !$targetUser->hasRole('Administrator')) {
+            if ($targetUser && !$targetUser->isAdmin()) {
                 // $query->whereHas('consultants', function ($q) use ($targetUserId) {
                 //     $q->where('user_id', $targetUserId);
                 // });
@@ -209,7 +209,7 @@ class ProjectController extends Controller
         // (aplica apenas quando não está no modo consultant_only, que tem escopo próprio)
         if ($consultantOnly !== 'true') {
             $currentUser = $request->user();
-            if ($currentUser && $currentUser->hasRole('Coordenador') && !$currentUser->hasRole('Administrator')) {
+            if ($currentUser && $currentUser->isCoordenador()) {
                 $query->whereHas('coordinators', fn($q) => $q->where('users.id', $currentUser->id));
             }
         }

@@ -123,7 +123,7 @@ class UserController extends Controller
         $query = User::with(['roles', 'customer']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver próprio perfil
-        if (!$user->hasRole('Administrator') && !$user->can('users.view_all')) {
+        if (!$user->isAdmin() && !$user->can('users.view_all')) {
             $query->where('id', $user->id);
         }
 
@@ -272,7 +272,7 @@ class UserController extends Controller
             $user->setTemporaryPassword($temporaryPassword, 24);
 
             // Atribuir papéis se fornecidos e se o usuário tem permissão
-            if (!empty($roles) && (Auth::user()->hasRole('Administrator') || Auth::user()->can('users.manage_roles'))) {
+            if (!empty($roles) && (Auth::user()->isAdmin() || Auth::user()->can('users.manage_roles'))) {
                 // Bypass Spatie guard logic — raw pivot manipulation
                 $roleRecords = Role::whereIn('id', $roles)->get();
                 foreach ($roleRecords as $role) {
@@ -359,7 +359,7 @@ class UserController extends Controller
         }
 
         // Verificar se pode visualizar este usuário
-        if (!$currentUser->hasRole('Administrator') &&
+        if (!$currentUser->isAdmin() &&
             !$currentUser->can('users.view_all') &&
             $user->id !== $currentUser->id) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
@@ -421,7 +421,7 @@ class UserController extends Controller
         }
 
         // Verificar permissões
-        $canUpdateAll = $currentUser->hasRole('Administrator') || $currentUser->can('users.update');
+        $canUpdateAll = $currentUser->isAdmin() || $currentUser->can('users.update');
         $canUpdateOwnProfile = $currentUser->can('users.update_own_profile') && $user->id === $currentUser->id;
 
         if (!$canUpdateAll && !$canUpdateOwnProfile) {
@@ -499,7 +499,7 @@ class UserController extends Controller
             }
 
             // Atualizar papéis se fornecidos e se tem permissão
-            if (!is_null($roles) && ($currentUser->hasRole('Administrator') || $currentUser->can('users.manage_roles'))) {
+            if (!is_null($roles) && ($currentUser->isAdmin() || $currentUser->can('users.manage_roles'))) {
                 // Bypass Spatie guard logic — raw pivot manipulation
                 DB::table('model_has_roles')
                     ->where('model_type', get_class($user))
@@ -589,12 +589,12 @@ class UserController extends Controller
         }
 
         // Verificar permissões
-        if (!$currentUser->hasRole('Administrator') && !$currentUser->can('users.delete')) {
+        if (!$currentUser->isAdmin() && !$currentUser->can('users.delete')) {
             return $this->accessDeniedResponse('Você não tem permissão para excluir usuários');
         }
 
         // Não pode excluir último administrador
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             $adminCount = User::role('Administrator')->count();
             if ($adminCount <= 1) {
                 return $this->businessRuleResponse(
@@ -656,7 +656,7 @@ class UserController extends Controller
         }
 
         // Verificar permissões
-        if (!$currentUser->hasRole('Administrator') && !$currentUser->can('users.reset_password')) {
+        if (!$currentUser->isAdmin() && !$currentUser->can('users.reset_password')) {
             return $this->accessDeniedResponse('Você não tem permissão para resetar senhas');
         }
 
@@ -881,7 +881,7 @@ class UserController extends Controller
         }
 
         // Verificar se pode visualizar este usuário
-        if (!$currentUser->hasRole('Administrator') &&
+        if (!$currentUser->isAdmin() &&
             !$currentUser->can('users.view_all') &&
             $user->id !== $currentUser->id) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
@@ -963,7 +963,7 @@ class UserController extends Controller
         $user = Auth::user();
 
         // Verificar se o usuário tem permissão para ver usuários
-        if (!$user->hasRole('Administrator') && !$user->can('users.view')) {
+        if (!$user->isAdmin() && !$user->can('users.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado'
@@ -1052,7 +1052,7 @@ class UserController extends Controller
         $user = Auth::user();
 
         // Verificar se o usuário tem permissão admin.full_access
-        if (!$user->hasRole('Administrator') && !$user->can('admin.full_access')) {
+        if (!$user->isAdmin() && !$user->can('admin.full_access')) {
             return response()->json([
                 'code' => 'ACCESS_DENIED',
                 'type' => 'error',
