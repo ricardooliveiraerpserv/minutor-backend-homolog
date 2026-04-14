@@ -113,9 +113,6 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $user->load(['roles']);
-        $roles = $user->roles->pluck('name')->values()->toArray();
-
         // Verificar se usuário tem senha temporária
         if ($user->hasTemporaryPassword()) {
             $token = $user->createToken($request->device_name ?? 'api-token')->plainTextToken;
@@ -129,7 +126,7 @@ class AuthController extends Controller
                     'email_verified_at'              => $user->email_verified_at,
                     'has_temporary_password'         => true,
                     'temporary_password_expires_at'  => $user->temporary_password_expires_at,
-                    'roles'                          => $roles,
+                    'type'                           => $user->type,
                 ],
                 'token'                    => $token,
                 'token_type'               => 'Bearer',
@@ -150,7 +147,6 @@ class AuthController extends Controller
                 'email'                   => $user->email,
                 'email_verified_at'       => $user->email_verified_at,
                 'has_temporary_password'  => false,
-                'roles'                   => $roles,
                 'type'                    => $user->type,
                 'consultant_type'         => $user->consultant_type,
                 'rate_type'               => $user->rate_type,
@@ -264,11 +260,9 @@ class AuthController extends Controller
     public function user(Request $request): JsonResponse
     {
         $user = $request->user();
-        $user->load(['roles']);
 
         return response()->json([
             'user' => array_merge($user->toArray(), [
-                'roles'                 => $user->roles->pluck('name')->values()->toArray(),
                 'type'                  => $user->type,
                 'consultant_type'       => $user->consultant_type,
                 'rate_type'             => $user->rate_type,
@@ -349,7 +343,6 @@ class AuthController extends Controller
         }
 
         $user->update($validator->validated());
-        $user->load(['roles']);
 
         return response()->json([
             'message' => 'Perfil atualizado com sucesso',
@@ -360,7 +353,7 @@ class AuthController extends Controller
                 'email_verified_at' => $user->email_verified_at,
                 'enabled' => $user->enabled,
                 'theme_preference' => $user->theme_preference,
-                'roles' => $user->roles,
+                'type' => $user->type,
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at,
             ]
@@ -424,7 +417,6 @@ class AuthController extends Controller
         }
 
         $user->update($validator->validated());
-        $user->load(['roles']);
 
         return response()->json([
             'message' => 'Preferência de tema atualizada com sucesso',
@@ -435,7 +427,7 @@ class AuthController extends Controller
                 'email_verified_at' => $user->email_verified_at,
                 'enabled' => $user->enabled,
                 'theme_preference' => $user->theme_preference,
-                'roles' => $user->roles,
+                'type' => $user->type,
                 'created_at' => $user->created_at,
                 'updated_at' => $user->updated_at,
             ]
@@ -560,7 +552,6 @@ class AuthController extends Controller
     public function verifyToken(Request $request): JsonResponse
     {
         $user = $request->user();
-        $user->load(['roles']);
 
         return response()->json([
             'message' => 'Token válido',
