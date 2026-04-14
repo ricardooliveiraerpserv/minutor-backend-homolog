@@ -989,13 +989,18 @@ class Project extends Model
      */
     public function getTotalAvailableHours(): int
     {
-        // Se existem aportes novos, usar apenas eles (ignorar hour_contribution legado)
-        $newContributions = $this->hourContributions()->sum('contributed_hours') ?? 0;
-        
+        // Usa a relação já carregada em memória (evita N+1).
+        // Se não estiver carregada (chamada isolada), faz a query normalmente.
+        $contributions = $this->relationLoaded('hourContributions')
+            ? $this->hourContributions
+            : $this->hourContributions()->get();
+
+        $newContributions = $contributions->sum('contributed_hours');
+
         if ($newContributions > 0) {
-            return ($this->sold_hours ?? 0) + $newContributions;
+            return ($this->sold_hours ?? 0) + (int) $newContributions;
         }
-        
+
         // Fallback: usar aporte legado (para projetos antigos)
         return ($this->sold_hours ?? 0) + ($this->hour_contribution ?? 0);
     }
@@ -1010,18 +1015,21 @@ class Project extends Model
     {
         // Valor das horas vendidas inicialmente
         $baseSoldHoursValue = ($this->sold_hours ?? 0) * ($this->hourly_rate ?? 0);
-        
-        // Se existem aportes novos, usar apenas eles
-        $newContributions = $this->hourContributions()->sum(\Illuminate\Support\Facades\DB::raw('contributed_hours * hourly_rate')) ?? 0;
-        
+
+        // Usa relação já carregada em memória (evita N+1)
+        $contributions = $this->relationLoaded('hourContributions')
+            ? $this->hourContributions
+            : $this->hourContributions()->get();
+
+        $newContributions = $contributions->sum(fn($c) => $c->contributed_hours * $c->hourly_rate);
+
         if ($newContributions > 0) {
-            // Usar apenas novos aportes (ignorar hour_contribution legado)
             return round($baseSoldHoursValue + $newContributions, 2);
         }
-        
+
         // Fallback: usar aporte legado (para projetos antigos)
         $legacyContributionValue = ($this->hour_contribution ?? 0) * ($this->hourly_rate ?? 0);
-        
+
         return round($baseSoldHoursValue + $legacyContributionValue, 2);
     }
 
@@ -1033,26 +1041,27 @@ class Project extends Model
      */
     public function getWeightedAverageHourlyRate(): float
     {
-        // Se existem aportes novos
-        $contributionsCount = $this->hourContributions()->count();
-        
-        if ($contributionsCount > 0) {
+        // Usa relação já carregada em memória (evita N+1)
+        $contributions = $this->relationLoaded('hourContributions')
+            ? $this->hourContributions
+            : $this->hourContributions()->get();
+
+        if ($contributions->count() > 0) {
             $totalHours = $this->sold_hours ?? 0;
             $totalValue = ($this->sold_hours ?? 0) * ($this->hourly_rate ?? 0);
-            
-            // Adicionar horas e valores dos novos aportes
-            foreach ($this->hourContributions as $contribution) {
+
+            foreach ($contributions as $contribution) {
                 $totalHours += $contribution->contributed_hours;
                 $totalValue += $contribution->getTotalValue();
             }
-            
+
             return $totalHours > 0 ? round($totalValue / $totalHours, 2) : 0;
         }
-        
+
         // Fallback: usar aporte legado (para projetos antigos)
         $totalHours = ($this->sold_hours ?? 0) + ($this->hour_contribution ?? 0);
         $totalValue = $totalHours * ($this->hourly_rate ?? 0);
-        
+
         return $totalHours > 0 ? round($totalValue / $totalHours, 2) : ($this->hourly_rate ?? 0);
     }
 }

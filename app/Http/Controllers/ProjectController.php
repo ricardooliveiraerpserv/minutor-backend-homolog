@@ -400,10 +400,11 @@ class ProjectController extends Controller
             $project->general_hours_balance = $this->calculateGeneralHoursBalance($project);
 
             // Adicionar valores calculados de aportes de horas
+            // Usa a relação já eager-loaded (hourContributions sem parênteses = coleção em memória)
             $project->total_available_hours = $project->getTotalAvailableHours();
             $project->total_project_value = $project->calculateTotalProjectValue();
             $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
-            $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+            $project->total_contributions_hours = $project->hourContributions->sum('contributed_hours');
 
             // node_state: 'ACTIVE' | 'DISABLED' | null (sem filtro de status ativo)
             $project->node_state = $nodeStateMap->has($project->id)
