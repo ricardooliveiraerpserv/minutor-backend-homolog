@@ -205,6 +205,15 @@ class ProjectController extends Controller
             // Se o usuário alvo for Administrator, não aplica filtro (vê todos os projetos)
         }
 
+        // Escopo por role: Coordenador só vê projetos onde é coordinator
+        // (aplica apenas quando não está no modo consultant_only, que tem escopo próprio)
+        if ($consultantOnly !== 'true') {
+            $currentUser = $request->user();
+            if ($currentUser && $currentUser->hasRole('Coordenador') && !$currentUser->hasRole('Administrator')) {
+                $query->whereHas('coordinators', fn($q) => $q->where('users.id', $currentUser->id));
+            }
+        }
+
         // Busca por name, code ou description
         if ($search) {
             $query->where(function ($q) use ($search) {
