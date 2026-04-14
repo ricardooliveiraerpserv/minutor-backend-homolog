@@ -10,7 +10,7 @@ class ProjectPolicy
     /** Admin passa direto */
     private function isAdmin(User $user): bool
     {
-        return $user->isAdmin() || $user->can('admin.full_access');
+        return $user->isAdmin() || $user->hasAccess('admin.full_access');
     }
 
     /** Verifica se o usuário coordena este projeto */
@@ -25,7 +25,7 @@ class ProjectPolicy
 
     public function viewAny(User $user): bool
     {
-        return $user->can('projects.view');
+        return $user->hasAccess('projects.view');
     }
 
     // ── view: pode ver este projeto específico? ───────────────────────────────
@@ -33,7 +33,7 @@ class ProjectPolicy
     public function view(User $user, Project $project): bool
     {
         if ($this->isAdmin($user)) return true;
-        if (!$user->can('projects.view')) return false;
+        if (!$user->hasAccess('projects.view')) return false;
 
         // Coordenador vê apenas projetos que coordena
         if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
@@ -68,7 +68,7 @@ class ProjectPolicy
 
     public function create(User $user): bool
     {
-        return $this->isAdmin($user) || $user->can('projects.create');
+        return $this->isAdmin($user) || $user->hasAccess('projects.create');
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ class ProjectPolicy
     public function update(User $user, Project $project): bool
     {
         if ($this->isAdmin($user)) return true;
-        if (!$user->can('projects.update')) return false;
+        if (!$user->hasAccess('projects.update')) return false;
 
         // Coordenador pode atualizar projetos que coordena
         if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
@@ -88,7 +88,7 @@ class ProjectPolicy
 
     public function delete(User $user, Project $project): bool
     {
-        return $this->isAdmin($user) || $user->can('projects.delete');
+        return $this->isAdmin($user) || $user->hasAccess('projects.delete');
     }
 
     // ── viewFinancial: ver valores financeiros do projeto ─────────────────────
@@ -96,14 +96,14 @@ class ProjectPolicy
     public function viewFinancial(User $user, Project $project): bool
     {
         if ($this->isAdmin($user)) return true;
-        if ($user->can('financial.view_all')) return true;
+        if ($user->hasAccess('financial.view_all')) return true;
 
         // Coordenador vê custos dos projetos que coordena
-        if ($user->can('financial.view_project_cost') && $this->coordinatesProject($user, $project))
+        if ($user->hasAccess('financial.view_project_cost') && $this->coordinatesProject($user, $project))
             return true;
 
         // Parceiro ADM vê dados financeiros do próprio parceiro (taxa parceiro)
-        if ($user->can('financial.view_partner_rate') && $user->isParceiroAdmin()
+        if ($user->hasAccess('financial.view_partner_rate') && $user->isParceiroAdmin()
             && $user->partner_id !== null) {
             return $project->consultants()
                 ->where('users.partner_id', $user->partner_id)
@@ -118,7 +118,7 @@ class ProjectPolicy
     public function changeStatus(User $user, Project $project): bool
     {
         if ($this->isAdmin($user)) return true;
-        if (!$user->can('projects.change_status')) return false;
+        if (!$user->hasAccess('projects.change_status')) return false;
 
         // Coordenador altera status dos projetos que coordena
         if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
@@ -131,7 +131,7 @@ class ProjectPolicy
     public function assignConsultants(User $user, Project $project): bool
     {
         if ($this->isAdmin($user)) return true;
-        if (!$user->can('projects.assign_consultants')) return false;
+        if (!$user->hasAccess('projects.assign_consultants')) return false;
 
         // Coordenador gerencia consultores dos próprios projetos
         if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);

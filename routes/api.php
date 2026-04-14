@@ -6,9 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ContractTypeController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\PasswordResetController;
-use App\Http\Controllers\PermissionController;
 use App\Http\Controllers\ProjectController;
-use App\Http\Controllers\RoleController;
 use App\Http\Controllers\ServiceTypeController;
 use App\Http\Controllers\TimesheetController;
 use App\Http\Controllers\ExpenseController;
@@ -16,7 +14,6 @@ use App\Http\Controllers\ExpenseCategoryController;
 use App\Http\Controllers\ExpenseTypeController;
 use App\Http\Controllers\PaymentMethodController;
 use App\Http\Controllers\UserController;
-use App\Http\Controllers\UserRoleController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\CustomFieldController;
 use App\Http\Controllers\ConsultantGroupController;
@@ -252,75 +249,6 @@ Route::prefix('v1')->group(function () {
             ->name('auth.change-password');
         Route::post('/auth/change-temporary-password', [AuthController::class, 'changeTemporaryPassword'])
             ->name('auth.change-temporary-password');
-
-        // === GERENCIAMENTO DE ROLES E PERMISSÕES ===
-
-        // 🔐 ROLES (Perfis) - Protegido por permissões específicas (Admins sempre têm acesso)
-        Route::middleware('permission.or.admin:roles.view')->group(function () {
-            Route::get('/roles', [RoleController::class, 'index'])->name('roles.index');
-            Route::get('/roles/{role}', [RoleController::class, 'show'])->name('roles.show');
-            Route::get('/roles/{role}/permissions', [RoleController::class, 'permissions'])
-                ->name('roles.permissions');
-            Route::get('/roles/{role}/users', [RoleController::class, 'users'])
-                ->name('roles.users');
-        });
-
-        Route::middleware('permission.or.admin:roles.create')->group(function () {
-            Route::post('/roles', [RoleController::class, 'store'])->name('roles.store');
-        });
-
-        Route::middleware('permission.or.admin:roles.update')->group(function () {
-            Route::put('/roles/{role}', [RoleController::class, 'update'])->name('roles.update');
-            Route::post('/roles/{role}/permissions', [RoleController::class, 'givePermissions'])
-                ->name('roles.give-permissions');
-            Route::delete('/roles/{role}/permissions', [RoleController::class, 'revokePermissions'])
-                ->name('roles.revoke-permissions');
-            Route::post('/roles/{role}/sync-users', [RoleController::class, 'syncUsers'])
-                ->name('roles.sync-users');
-        });
-
-        Route::middleware('permission.or.admin:roles.delete')->group(function () {
-            Route::delete('/roles/{role}', [RoleController::class, 'destroy'])->name('roles.destroy');
-        });
-
-        // 🔑 PERMISSÕES - Protegido por permissões específicas (Admins sempre têm acesso)
-        Route::middleware('permission.or.admin:permissions.view')->group(function () {
-            Route::get('/permissions', [PermissionController::class, 'index'])->name('permissions.index');
-            Route::get('/permissions/grouped', [PermissionController::class, 'grouped'])
-                ->name('permissions.grouped');
-            Route::get('/permissions/{permission}', [PermissionController::class, 'show'])->name('permissions.show');
-        });
-
-        Route::middleware('permission.or.admin:permissions.create')->group(function () {
-            Route::post('/permissions', [PermissionController::class, 'store'])->name('permissions.store');
-        });
-
-        Route::middleware('permission.or.admin:permissions.update')->group(function () {
-            Route::put('/permissions/{permission}', [PermissionController::class, 'update'])->name('permissions.update');
-        });
-
-        Route::middleware('permission.or.admin:permissions.delete')->group(function () {
-            Route::delete('/permissions/{permission}', [PermissionController::class, 'destroy'])->name('permissions.destroy');
-        });
-
-        // 👥 USUÁRIOS COM ROLES - Protegido por permissões específicas (Admins sempre têm acesso)
-        Route::middleware('permission.or.admin:users.view')->group(function () {
-            Route::get('/users/{user}/roles', [UserRoleController::class, 'getUserRoles'])
-                ->name('users.roles');
-            Route::get('/users/{user}/permissions', [UserRoleController::class, 'getUserPermissions'])
-                ->name('users.permissions');
-            Route::post('/users/{user}/permissions/check', [UserRoleController::class, 'checkPermission'])
-                ->name('users.check-permission');
-        });
-
-        Route::middleware('permission.or.admin:users.update')->group(function () {
-            Route::post('/users/{user}/roles', [UserRoleController::class, 'assignRoles'])
-                ->name('users.assign-roles');
-            Route::put('/users/{user}/roles', [UserRoleController::class, 'syncRoles'])
-                ->name('users.sync-roles');
-            Route::delete('/users/{user}/roles', [UserRoleController::class, 'removeRoles'])
-                ->name('users.remove-roles');
-        });
 
         // 🏆 EXECUTIVES - Gestão de executivos
         Route::get('/executives', [ExecutiveController::class, 'index'])->name('executives.index');

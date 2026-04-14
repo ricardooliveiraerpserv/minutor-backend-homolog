@@ -10,7 +10,7 @@ class TimesheetPolicy
     /** Admin passa direto */
     private function isAdmin(User $user): bool
     {
-        return $user->isAdmin() || $user->can('admin.full_access');
+        return $user->isAdmin() || $user->hasAccess('admin.full_access');
     }
 
     /** Consultor parceiro: só vê apontamentos do próprio partner_id */
@@ -65,7 +65,7 @@ class TimesheetPolicy
             return $this->samePartner($user, $ts);
 
         // Cliente: ver_project_summary → apenas se o projeto é da própria empresa
-        if ($user->isCliente() && $user->can('timesheets.view_project_summary'))
+        if ($user->isCliente() && $user->hasAccess('timesheets.view_project_summary'))
             return $ts->project?->customer_id === $user->customer_id;
 
         return false;
@@ -75,7 +75,7 @@ class TimesheetPolicy
 
     public function create(User $user): bool
     {
-        return $user->can('timesheets.manage');
+        return $user->hasAccess('timesheets.manage');
     }
 
     // ── update ────────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ class TimesheetPolicy
     public function update(User $user, Timesheet $ts): bool
     {
         if ($this->isAdmin($user)) return true;
-        if (!$user->can('timesheets.manage')) return false;
+        if (!$user->hasAccess('timesheets.manage')) return false;
 
         // Parceiro ADM pode editar apontamentos do parceiro
         if ($user->isParceiroAdmin()) return $this->isOwnPartnerScope($user, $ts);
@@ -104,7 +104,7 @@ class TimesheetPolicy
     public function approve(User $user, Timesheet $ts): bool
     {
         if ($this->isAdmin($user)) return true;
-        if (!$user->can('timesheets.approve')) return false;
+        if (!$user->hasAccess('timesheets.approve')) return false;
 
         // Coordenador aprova dos projetos que coordena
         if ($user->isCoordenador()) return $this->coordinatesProject($user, $ts);
@@ -120,15 +120,15 @@ class TimesheetPolicy
     public function viewFinancial(User $user, Timesheet $ts): bool
     {
         if ($this->isAdmin($user)) return true;
-        if ($user->can('financial.view_all')) return true;
-        if ($user->can('financial.view_project_cost') && $this->coordinatesProject($user, $ts)) return true;
+        if ($user->hasAccess('financial.view_all')) return true;
+        if ($user->hasAccess('financial.view_project_cost') && $this->coordinatesProject($user, $ts)) return true;
 
         // Consultor interno vê própria taxa
-        if ($user->can('financial.view_own_rate') && !$user->partner_id && $ts->user_id === $user->id)
+        if ($user->hasAccess('financial.view_own_rate') && !$user->partner_id && $ts->user_id === $user->id)
             return true;
 
         // Consultor parceiro vê própria taxa — mas não vê taxas internas
-        if ($user->can('financial.view_partner_rate') && $user->partner_id && $ts->user_id === $user->id)
+        if ($user->hasAccess('financial.view_partner_rate') && $user->partner_id && $ts->user_id === $user->id)
             return true;
 
         return false;

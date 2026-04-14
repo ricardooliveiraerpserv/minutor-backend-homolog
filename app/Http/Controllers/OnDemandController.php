@@ -92,7 +92,7 @@ class OnDemandController extends Controller
         }
 
         // Verificar se o usuário tem permissão de dashboard geral ou é admin
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -636,7 +636,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -823,7 +823,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1011,7 +1011,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1291,7 +1291,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1547,7 +1547,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1732,7 +1732,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -1935,7 +1935,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2114,7 +2114,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2302,7 +2302,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2490,7 +2490,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2685,7 +2685,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -2878,7 +2878,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3072,7 +3072,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3260,7 +3260,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3447,7 +3447,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3657,7 +3657,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3827,7 +3827,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -3991,7 +3991,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -4185,7 +4185,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',
@@ -4382,7 +4382,7 @@ class OnDemandController extends Controller
             ], 401);
         }
 
-        if (!$user->isAdmin() && !$user->can('dashboards.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado. Você precisa da permissão "dashboards.view" para acessar este dashboard.',

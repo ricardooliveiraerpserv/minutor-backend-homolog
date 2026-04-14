@@ -35,11 +35,13 @@ class PermissionService
     {
         return [
             'dashboard.view', 'dashboard.manager',
+            'dashboards.view', 'dashboards.bank_hours_fixed.view', 'dashboards.bank_hours_monthly.view',
             'customers.view',
-            'projects.view', 'projects.view_financial', 'projects.assign_consultants', 'projects.change_status',
+            'projects.view', 'projects.update', 'projects.view_financial', 'projects.assign_consultants', 'projects.change_status',
             'timesheets.view', 'timesheets.manage', 'timesheets.approve', 'timesheets.view_project_full',
-            'expenses.view', 'expenses.manage', 'expenses.approve',
-            'users.view', 'users.view_own_profile', 'users.view_team', 'users.reset_password',
+            'hours.view_all', 'hours.update_all', 'hours.delete_all',
+            'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.view_all',
+            'users.view', 'users.view_all', 'users.view_own_profile', 'users.update_own_profile', 'users.view_team', 'users.reset_password',
             'financial.view_own_rate', 'financial.view_project_cost',
             'reports.view', 'reports.export',
             'consultant_groups.view',
@@ -55,7 +57,7 @@ class PermissionService
             'projects.view',
             'timesheets.view', 'timesheets.manage',
             'expenses.view', 'expenses.manage',
-            'users.view_own_profile',
+            'users.view_own_profile', 'users.update_own_profile',
             'financial.view_own_rate', 'financial.view_partner_rate',
         ];
     }
@@ -67,7 +69,7 @@ class PermissionService
             'dashboard.view',
             'projects.view',
             'timesheets.view_project_summary',
-            'users.view_own_profile',
+            'users.view_own_profile', 'users.update_own_profile',
             'reports.view',
         ];
     }
@@ -76,12 +78,12 @@ class PermissionService
     private static function parceiroAdminPermissions(): array
     {
         return [
-            'dashboard.view',
+            'dashboard.view', 'dashboards.view',
             'projects.view',
             'timesheets.view', 'timesheets.manage', 'timesheets.approve',
             'timesheets.view_project_full',
             'expenses.view', 'expenses.manage',
-            'users.view_own_profile', 'users.view_team',
+            'users.view_own_profile', 'users.update_own_profile', 'users.view_team',
             'users.create', 'users.update', 'users.reset_password',
             'financial.view_partner_rate',
             'partners.view',

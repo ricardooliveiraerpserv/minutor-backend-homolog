@@ -67,9 +67,8 @@ class StoreConsultantGroupRequest extends FormRequest
     {
         // Garantir que apenas usuários com role Consultant são aceitos
         if ($this->has('consultant_ids') && is_array($this->consultant_ids)) {
-            $validConsultantIds = \App\Models\User::whereHas('roles', function ($query) {
-                $query->where('name', 'Consultant');
-            })->whereIn('id', $this->consultant_ids)->pluck('id')->toArray();
+            $validConsultantIds = \App\Models\User::where('type', 'consultor')
+                ->whereIn('id', $this->consultant_ids)->pluck('id')->toArray();
 
             $this->merge([
                 'consultant_ids' => $validConsultantIds,

@@ -14,7 +14,6 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
-use Spatie\Permission\Models\Role;
 use App\Notifications\TemporaryPasswordNotification;
 use App\Notifications\WelcomeNotification;
 
@@ -123,7 +122,7 @@ class UserController extends Controller
         $query = User::with(['roles', 'customer']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver próprio perfil
-        if (!$user->isAdmin() && !$user->can('users.view_all')) {
+        if (!$user->isAdmin() && !$user->hasAccess('users.view_all')) {
             $query->where('id', $user->id);
         }
 
@@ -137,9 +136,14 @@ class UserController extends Controller
         }
 
         if ($request->filled('role')) {
-            $query->whereHas('roles', function($q) use ($request) {
-                $q->where('name', $request->role);
-            });
+            // Aceita tanto type direto ('admin','consultor',...) quanto nome de role legado
+            $roleTypeMap = [
+                'Administrator' => 'admin', 'Coordenador' => 'coordenador',
+                'Consultor' => 'consultor', 'Consultant' => 'consultor',
+                'Cliente' => 'cliente', 'Parceiro ADM' => 'parceiro_admin',
+            ];
+            $typeFilter = $roleTypeMap[$request->role] ?? $request->role;
+            $query->where('type', $typeFilter);
         }
 
         if ($request->filled('is_executive')) {
@@ -237,8 +241,7 @@ class UserController extends Controller
             'is_executive' => 'sometimes|boolean',
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
-            'roles' => 'nullable|array',
-            'roles.*' => 'exists:roles,id',
+            'type' => 'nullable|in:admin,coordenador,consultor,cliente,parceiro_admin',
         ]);
 
         if ($validator->fails()) {
@@ -257,10 +260,9 @@ class UserController extends Controller
             // Gerar senha temporária automaticamente
             $temporaryPassword = $this->generateTemporaryPassword();
 
-            // Remover roles e dashboard_types dos dados do usuário
-            $roles = $userData['roles'] ?? [];
+            // Remover dashboard_types dos dados do usuário (campo auxiliar, não coluna)
             $dashboardTypes = $userData['dashboard_types'] ?? [];
-            unset($userData['roles'], $userData['dashboard_types']);
+            unset($userData['dashboard_types']);
 
             // Definir senha temporária nos dados do usuário
             $userData['password'] = Hash::make($temporaryPassword);
@@ -270,24 +272,6 @@ class UserController extends Controller
 
             // Marcar como senha temporária (expira em 24 horas)
             $user->setTemporaryPassword($temporaryPassword, 24);
-
-            // Atribuir papéis se fornecidos e se o usuário tem permissão
-            if (!empty($roles) && (Auth::user()->isAdmin() || Auth::user()->can('users.manage_roles'))) {
-                // Bypass Spatie guard logic — raw pivot manipulation
-                $roleRecords = Role::whereIn('id', $roles)->get();
-                foreach ($roleRecords as $role) {
-                    DB::table('model_has_roles')->insertOrIgnore([
-                        'role_id'    => $role->id,
-                        'model_type' => get_class($user),
-                        'model_id'   => $user->id,
-                    ]);
-                }
-                app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
-
-                // Derivar e persistir type a partir dos roles atribuídos
-                $roleNames = $roleRecords->pluck('name')->toArray();
-                $user->update(['type' => User::typeFromRoleNames($roleNames)]);
-            }
 
             // Sincronizar tipos de dashboard permitidos
             if (!empty($dashboardTypes)) {
@@ -299,7 +283,7 @@ class UserController extends Controller
 
             DB::commit();
 
-            $user->load(['roles', 'customer']);
+            $user->load(['customer']);
 
             // Adicionar tipos de dashboard permitidos na resposta
             $userData = $user->toArray();
@@ -360,7 +344,7 @@ class UserController extends Controller
 
         // Verificar se pode visualizar este usuário
         if (!$currentUser->isAdmin() &&
-            !$currentUser->can('users.view_all') &&
+            !$currentUser->hasAccess('users.view_all') &&
             $user->id !== $currentUser->id) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
         }
@@ -421,8 +405,8 @@ class UserController extends Controller
         }
 
         // Verificar permissões
-        $canUpdateAll = $currentUser->isAdmin() || $currentUser->can('users.update');
-        $canUpdateOwnProfile = $currentUser->can('users.update_own_profile') && $user->id === $currentUser->id;
+        $canUpdateAll = $currentUser->isAdmin() || $currentUser->hasAccess('users.update');
+        $canUpdateOwnProfile = $currentUser->hasAccess('users.update_own_profile') && $user->id === $currentUser->id;
 
         if (!$canUpdateAll && !$canUpdateOwnProfile) {
             return $this->accessDeniedResponse('Você não tem permissão para atualizar este usuário');
@@ -443,8 +427,7 @@ class UserController extends Controller
             'is_executive' => 'sometimes|boolean',
             'dashboard_types' => 'sometimes|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
-            'roles' => 'sometimes|array',
-            'roles.*' => 'exists:roles,id',
+            'type' => 'sometimes|nullable|in:admin,coordenador,consultor,cliente,parceiro_admin',
         ]);
 
         if ($validator->fails()) {
@@ -479,9 +462,8 @@ class UserController extends Controller
             }
 
             // Remover campos desnecessários
-            $roles = $updateData['roles'] ?? null;
             $dashboardTypes = $updateData['dashboard_types'] ?? null;
-            unset($updateData['roles'], $updateData['dashboard_types'], $updateData['password_confirmation']);
+            unset($updateData['dashboard_types'], $updateData['password_confirmation']);
 
             $user->update($updateData);
 
@@ -498,29 +480,6 @@ class UserController extends Controller
                 ]);
             }
 
-            // Atualizar papéis se fornecidos e se tem permissão
-            if (!is_null($roles) && ($currentUser->isAdmin() || $currentUser->can('users.manage_roles'))) {
-                // Bypass Spatie guard logic — raw pivot manipulation
-                DB::table('model_has_roles')
-                    ->where('model_type', get_class($user))
-                    ->where('model_id', $user->id)
-                    ->delete();
-
-                $roleRecords = Role::whereIn('id', $roles)->get();
-                foreach ($roleRecords as $role) {
-                    DB::table('model_has_roles')->insertOrIgnore([
-                        'role_id'    => $role->id,
-                        'model_type' => get_class($user),
-                        'model_id'   => $user->id,
-                    ]);
-                }
-                app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
-
-                // Derivar e persistir type a partir dos roles atribuídos
-                $roleNames = $roleRecords->pluck('name')->toArray();
-                $user->update(['type' => User::typeFromRoleNames($roleNames)]);
-            }
-
             // Sincronizar tipos de dashboard se fornecidos
             if (!is_null($dashboardTypes)) {
                 $user->syncDashboardTypes($dashboardTypes);
@@ -528,7 +487,7 @@ class UserController extends Controller
 
             DB::commit();
 
-            $user->load(['roles', 'customer']);
+            $user->load(['customer']);
 
             // Adicionar tipos de dashboard permitidos na resposta
             $userData = $user->toArray();
@@ -589,7 +548,7 @@ class UserController extends Controller
         }
 
         // Verificar permissões
-        if (!$currentUser->isAdmin() && !$currentUser->can('users.delete')) {
+        if (!$currentUser->isAdmin() && !$currentUser->hasAccess('users.delete')) {
             return $this->accessDeniedResponse('Você não tem permissão para excluir usuários');
         }
 
@@ -656,7 +615,7 @@ class UserController extends Controller
         }
 
         // Verificar permissões
-        if (!$currentUser->isAdmin() && !$currentUser->can('users.reset_password')) {
+        if (!$currentUser->isAdmin() && !$currentUser->hasAccess('users.reset_password')) {
             return $this->accessDeniedResponse('Você não tem permissão para resetar senhas');
         }
 
@@ -882,7 +841,7 @@ class UserController extends Controller
 
         // Verificar se pode visualizar este usuário
         if (!$currentUser->isAdmin() &&
-            !$currentUser->can('users.view_all') &&
+            !$currentUser->hasAccess('users.view_all') &&
             $user->id !== $currentUser->id) {
             return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
         }
@@ -963,7 +922,7 @@ class UserController extends Controller
         $user = Auth::user();
 
         // Verificar se o usuário tem permissão para ver usuários
-        if (!$user->isAdmin() && !$user->can('users.view')) {
+        if (!$user->isAdmin() && !$user->hasAccess('users.view')) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado'
@@ -972,20 +931,9 @@ class UserController extends Controller
 
         $search = $request->get('filter') ?? $request->get('search', '');
 
-        // Buscar usuários que podem aprovar (admin ou com permissões específicas)
+        // Buscar usuários que podem aprovar (admin, coordenador ou parceiro_admin)
         $query = User::where('enabled', true)
-            ->where(function ($q) {
-                $q->whereHas('roles', function ($roleQuery) {
-                    $roleQuery->where('name', 'Administrator');
-                })
-                ->orWhereHas('roles.permissions', function ($permissionQuery) {
-                    $permissionQuery->whereIn('name', [
-                        'hours.approve',
-                        'expenses.approve',
-                        'projects.assign_people'
-                    ]);
-                });
-            });
+            ->whereIn('type', ['admin', 'coordenador', 'parceiro_admin']);
 
         // Aplicar filtro de busca se fornecido
         if (!empty($search)) {
@@ -1052,7 +1000,7 @@ class UserController extends Controller
         $user = Auth::user();
 
         // Verificar se o usuário tem permissão admin.full_access
-        if (!$user->isAdmin() && !$user->can('admin.full_access')) {
+        if (!$user->isAdmin() && !$user->hasAccess('admin.full_access')) {
             return response()->json([
                 'code' => 'ACCESS_DENIED',
                 'type' => 'error',

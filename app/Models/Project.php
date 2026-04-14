@@ -473,15 +473,6 @@ class Project extends Model
         // Obter IDs dos coordenadores do projeto
         $coordinatorIds = $this->coordinators()->pluck('users.id')->toArray();
 
-        // Também incluir usuários com role 'Coordinator' se existir
-        if (class_exists(\Spatie\Permission\Models\Role::class)) {
-            $coordinatorRole = \Spatie\Permission\Models\Role::where('name', 'Coordinator')->first();
-            if ($coordinatorRole) {
-                $roleCoordinatorIds = $coordinatorRole->users()->pluck('users.id')->toArray();
-                $coordinatorIds = array_unique(array_merge($coordinatorIds, $roleCoordinatorIds));
-            }
-        }
-
         if (empty($coordinatorIds)) {
             return 0;
         }
@@ -974,12 +965,10 @@ class Project extends Model
             return true;
         }
 
-        // Verificar se tem role 'Coordinator'
-        if (class_exists(\Spatie\Permission\Models\Role::class)) {
-            $user = \App\Models\User::find($userId);
-            if ($user && $user->isCoordenador()) {
-                return true;
-            }
+        // Verificar se o usuário é do tipo coordenador
+        $user = \App\Models\User::find($userId);
+        if ($user && $user->isCoordenador()) {
+            return true;
         }
 
         return false;

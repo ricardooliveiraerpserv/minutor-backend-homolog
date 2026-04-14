@@ -171,7 +171,7 @@ class ExpenseController extends Controller
         $query = Expense::with(['user', 'project.customer', 'category', 'reviewedBy']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$user->isAdmin() && !$user->can('expenses.view_all')) {
+        if (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
             $query->where('user_id', $user->id);
         }
 
@@ -420,7 +420,7 @@ class ExpenseController extends Controller
 
         // Verificar se o usuário pode visualizar esta despesa
         $canView = $user->isAdmin() ||
-                   $user->can('expenses.view_all') ||
+                   $user->hasAccess('expenses.view_all') ||
                    $expense->user_id === $user->id;
 
         if (!$canView) {

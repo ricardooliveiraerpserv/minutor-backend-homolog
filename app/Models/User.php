@@ -11,20 +11,13 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Hash;
-use Spatie\Permission\Traits\HasRoles;
 use App\Notifications\ResetPasswordNotification;
 use App\Services\PermissionService;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable, HasApiTokens, HasRoles;
-
-    /**
-     * Força o guard 'web' para o Spatie Permission,
-     * independente de como o usuário é autenticado (Sanctum, etc.)
-     */
-    protected string $guard_name = 'web';
+    use HasFactory, Notifiable, HasApiTokens;
 
     /**
      * The attributes that are mass assignable.
@@ -131,8 +124,7 @@ class User extends Authenticatable
     }
 
     // ── Métodos semânticos de tipo ────────────────────────────────────────────
-    // Substituem hasRole('Administrator') etc. em todo o sistema.
-    // Fonte de verdade: users.type — nunca depende de seed.
+    // Fonte de verdade: users.type
 
     public function isAdmin(): bool         { return $this->type === 'admin'; }
     public function isCoordenador(): bool   { return $this->type === 'coordenador'; }
@@ -141,37 +133,13 @@ class User extends Authenticatable
     public function isParceiroAdmin(): bool { return $this->type === 'parceiro_admin'; }
 
     /**
-     * Verifica se o usuário tem acesso a uma permissão específica.
-     * Usa PermissionService (código PHP puro) quando type está preenchido;
-     * cai para Spatie can() como fallback para tipos ainda não migrados.
+     * Verifica se o usuário tem acesso a uma permissão específica via PermissionService.
      */
     public function hasAccess(string $permission): bool
     {
-        if ($this->type !== null) {
-            $permissions = PermissionService::for($this);
-            // wildcard: admin tem tudo
-            if (in_array('*', $permissions, true)) {
-                return true;
-            }
-            return in_array($permission, $permissions, true);
-        }
-
-        // Fallback: Spatie (para usuários sem type ainda preenchido)
-        return $this->can($permission);
-    }
-
-    /**
-     * Deriva o type a partir de um conjunto de nomes de roles.
-     * Prioridade: admin > coordenador > cliente > parceiro_admin > consultor.
-     */
-    public static function typeFromRoleNames(array $roleNames): string
-    {
-        $names = array_map('strtolower', $roleNames);
-        if (in_array('administrator', $names, true)) return 'admin';
-        if (in_array('coordenador', $names, true))   return 'coordenador';
-        if (in_array('cliente', $names, true))        return 'cliente';
-        if (in_array('parceiro adm', $names, true))   return 'parceiro_admin';
-        return 'consultor';
+        $permissions = PermissionService::for($this);
+        if (in_array('*', $permissions, true)) return true;
+        return in_array($permission, $permissions, true);
     }
 
     // ── Legado ────────────────────────────────────────────────────────────────

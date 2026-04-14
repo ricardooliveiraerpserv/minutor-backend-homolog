@@ -178,7 +178,7 @@ class ConsultantHourBankController extends Controller
      */
     public function consultants(Request $request): JsonResponse
     {
-        $users = User::whereHas('roles', fn ($q) => $q->whereIn('name', ['Consultor', 'Consultant']))
+        $users = User::where('type', 'consultor')
             ->where('enabled', true)
             ->select('id', 'name', 'email', 'daily_hours', 'bank_hours_start_date')
             ->orderBy('name')
