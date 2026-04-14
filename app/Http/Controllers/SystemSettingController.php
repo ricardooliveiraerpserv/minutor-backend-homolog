@@ -43,7 +43,7 @@ class SystemSettingController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('system_settings.view') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('system_settings.view')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -117,7 +117,7 @@ class SystemSettingController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('system_settings.view') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('system_settings.view')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -188,7 +188,7 @@ class SystemSettingController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('system_settings.update') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('system_settings.update')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',

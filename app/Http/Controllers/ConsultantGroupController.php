@@ -88,7 +88,7 @@ class ConsultantGroupController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('consultant_groups.view') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.view')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -282,7 +282,7 @@ class ConsultantGroupController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('consultant_groups.view') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.view')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -465,7 +465,7 @@ class ConsultantGroupController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('consultant_groups.delete') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.delete')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -531,7 +531,7 @@ class ConsultantGroupController extends Controller
             $user = $request->user();
 
             // Verificar permissões
-            if (!$user->hasPermissionTo('consultant_groups.view') && !$user->hasPermissionTo('admin.full_access')) {
+            if (!$user->isAdmin() && !$user->hasAccess('consultant_groups.view')) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
