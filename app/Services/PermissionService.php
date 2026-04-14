@@ -12,7 +12,7 @@ class PermissionService
 {
     public static function for(User $user): array
     {
-        return match ($user->type) {
+        $base = match ($user->type) {
             'admin'          => self::adminPermissions(),
             'coordenador'    => self::coordenadorPermissions(),
             'consultor'      => self::consultorPermissions(),
@@ -20,6 +20,29 @@ class PermissionService
             'parceiro_admin' => self::parceiroAdminPermissions(),
             default          => [],
         };
+
+        // Admin já tem tudo — extras são irrelevantes
+        if (in_array('*', $base, true)) {
+            return $base;
+        }
+
+        $extra = $user->extra_permissions ?? [];
+
+        return array_values(array_unique(array_merge($base, $extra)));
+    }
+
+    /**
+     * Retorna todas as permissões disponíveis para exibição na UI.
+     * Não inclui '*' (admin) — é usado apenas para selecionar extras.
+     */
+    public static function allPermissions(): array
+    {
+        return array_values(array_unique(array_merge(
+            self::coordenadorPermissions(),
+            self::consultorPermissions(),
+            self::clientePermissions(),
+            self::parceiroAdminPermissions(),
+        )));
     }
 
     // ── Administrator ────────────────────────────────────────────────────────

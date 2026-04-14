@@ -43,6 +43,7 @@ class User extends Authenticatable
         'partner_id',
         'is_executive',
         'type',
+        'extra_permissions',
     ];
 
     /**
@@ -82,6 +83,7 @@ class User extends Authenticatable
             'is_executive' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',
+            'extra_permissions'     => 'array',
         ];
     }
 
