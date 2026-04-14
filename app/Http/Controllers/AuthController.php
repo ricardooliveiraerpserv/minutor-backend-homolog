@@ -151,6 +151,7 @@ class AuthController extends Controller
                 'email_verified_at'       => $user->email_verified_at,
                 'has_temporary_password'  => false,
                 'roles'                   => $roles,
+                'type'                    => $user->type,
                 'consultant_type'         => $user->consultant_type,
                 'rate_type'               => $user->rate_type,
                 'hourly_rate'             => $user->hourly_rate,
@@ -268,6 +269,7 @@ class AuthController extends Controller
         return response()->json([
             'user' => array_merge($user->toArray(), [
                 'roles'                 => $user->roles->pluck('name')->values()->toArray(),
+                'type'                  => $user->type,
                 'consultant_type'       => $user->consultant_type,
                 'rate_type'             => $user->rate_type,
                 'hourly_rate'           => $user->hourly_rate,

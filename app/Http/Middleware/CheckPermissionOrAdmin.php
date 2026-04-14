@@ -25,12 +25,12 @@ class CheckPermissionOrAdmin
         }
 
         // Administradores têm acesso total
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin() || $user->hasRole('Administrator')) {
             return $next($request);
         }
 
-        // Verificar se tem a permissão específica
-        if ($user->can($permission)) {
+        // Verificar se tem a permissão específica (PermissionService ou Spatie fallback)
+        if ($user->hasAccess($permission)) {
             return $next($request);
         }
 
@@ -39,7 +39,7 @@ class CheckPermissionOrAdmin
             'success' => false,
             'message' => "Acesso negado. Você precisa da permissão '{$permission}' ou ser um Administrador para acessar este recurso.",
             'required_permission' => $permission,
-            'user_permissions' => $user->getAllPermissions()->pluck('name')->toArray(),
+            'user_type' => $user->type,
             'user_roles' => $user->getRoleNames()->toArray()
         ], 403);
     }

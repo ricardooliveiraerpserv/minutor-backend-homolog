@@ -283,6 +283,10 @@ class UserController extends Controller
                     ]);
                 }
                 app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+
+                // Derivar e persistir type a partir dos roles atribuídos
+                $roleNames = $roleRecords->pluck('name')->toArray();
+                $user->update(['type' => User::typeFromRoleNames($roleNames)]);
             }
 
             // Sincronizar tipos de dashboard permitidos
@@ -511,6 +515,10 @@ class UserController extends Controller
                     ]);
                 }
                 app(\Spatie\Permission\PermissionRegistrar::class)->forgetCachedPermissions();
+
+                // Derivar e persistir type a partir dos roles atribuídos
+                $roleNames = $roleRecords->pluck('name')->toArray();
+                $user->update(['type' => User::typeFromRoleNames($roleNames)]);
             }
 
             // Sincronizar tipos de dashboard se fornecidos
