@@ -202,7 +202,7 @@ class Expense extends Model
     public function canBeApprovedBy(User $user): bool
     {
         // Administradores podem aprovar qualquer despesa
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             return true;
         }
 
@@ -274,7 +274,7 @@ class Expense extends Model
         }
 
         // Administradores podem estornar qualquer aprovação
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             return true;
         }
 
@@ -327,7 +327,7 @@ class Expense extends Model
         }
 
         // Administradores podem estornar qualquer rejeição
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             return true;
         }
 

@@ -12,7 +12,7 @@ class UpdateCustomFieldRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        return $this->user()->hasRole('Administrator');
+        return $this->user()->isAdmin();
     }
 
     /**

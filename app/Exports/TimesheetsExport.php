@@ -28,7 +28,7 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
         $query = Timesheet::with(['user', 'customer', 'project', 'reviewedBy']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$this->user->hasRole('Administrator') && !$this->user->can('hours.view_all')) {
+        if (!$this->user->isAdmin() && !$this->user->can('hours.view_all')) {
             $query->forUser($this->user->id);
         }
 
@@ -43,7 +43,7 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
             });
         }
 
-        if ($this->request->filled('user_id') && ($this->user->hasRole('Administrator') || $this->user->can('hours.view_all'))) {
+        if ($this->request->filled('user_id') && ($this->user->isAdmin() || $this->user->can('hours.view_all'))) {
             $query->forUser($this->request->user_id);
         }
 

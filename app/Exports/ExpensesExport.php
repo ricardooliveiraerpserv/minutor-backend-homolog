@@ -28,7 +28,7 @@ class ExpensesExport implements FromCollection, WithHeadings, WithMapping
         $query = Expense::with(['user', 'project.customer', 'category', 'reviewedBy']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$this->user->hasRole('Administrator') && !$this->user->can('expenses.view_all')) {
+        if (!$this->user->isAdmin() && !$this->user->can('expenses.view_all')) {
             $query->where('user_id', $this->user->id);
         }
 

@@ -10,7 +10,7 @@ class TimesheetPolicy
     /** Admin passa direto */
     private function isAdmin(User $user): bool
     {
-        return $user->hasRole('Administrator') || $user->can('admin.full_access');
+        return $user->isAdmin() || $user->can('admin.full_access');
     }
 
     /** Consultor parceiro: só vê apontamentos do próprio partner_id */
@@ -56,17 +56,17 @@ class TimesheetPolicy
         if ($ts->user_id === $user->id) return true;
 
         // Coordenador vê equipe dos projetos que coordena
-        if ($user->hasRole('Coordenador') && $this->coordinatesProject($user, $ts)) return true;
+        if ($user->isCoordenador() && $this->coordinatesProject($user, $ts)) return true;
 
         // Parceiro ADM vê apenas apontamentos do próprio partner_id
-        if ($user->hasRole('Parceiro ADM')) return $this->isOwnPartnerScope($user, $ts);
+        if ($user->isParceiroAdmin()) return $this->isOwnPartnerScope($user, $ts);
 
         // Consultor parceiro vê colegas do mesmo parceiro
-        if ($user->hasRole('Consultor') && $user->partner_id)
+        if ($user->isConsultor() && $user->partner_id)
             return $this->samePartner($user, $ts);
 
         // Cliente: ver_project_summary → apenas se o projeto é da própria empresa
-        if ($user->hasRole('Cliente') && $user->can('timesheets.view_project_summary'))
+        if ($user->isCliente() && $user->can('timesheets.view_project_summary'))
             return $ts->project?->customer_id === $user->customer_id;
 
         return false;
@@ -87,7 +87,7 @@ class TimesheetPolicy
         if (!$user->can('timesheets.manage')) return false;
 
         // Parceiro ADM pode editar apontamentos do parceiro
-        if ($user->hasRole('Parceiro ADM')) return $this->isOwnPartnerScope($user, $ts);
+        if ($user->isParceiroAdmin()) return $this->isOwnPartnerScope($user, $ts);
 
         // Consultor/Coordenador: apenas próprios
         return $ts->user_id === $user->id;
@@ -108,10 +108,10 @@ class TimesheetPolicy
         if (!$user->can('timesheets.approve')) return false;
 
         // Coordenador aprova dos projetos que coordena
-        if ($user->hasRole('Coordenador')) return $this->coordinatesProject($user, $ts);
+        if ($user->isCoordenador()) return $this->coordinatesProject($user, $ts);
 
         // Parceiro ADM aprova apontamentos do próprio parceiro
-        if ($user->hasRole('Parceiro ADM')) return $this->isOwnPartnerScope($user, $ts);
+        if ($user->isParceiroAdmin()) return $this->isOwnPartnerScope($user, $ts);
 
         return false;
     }
