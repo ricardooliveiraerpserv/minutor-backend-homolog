@@ -42,6 +42,8 @@ class Timesheet extends Model
         'rejection_reason',
         'reviewed_by',
         'reviewed_at',
+        'attachment_path',
+        'attachment_original_name',
     ];
 
     /**
@@ -72,7 +74,7 @@ class Timesheet extends Model
      *
      * @var array<int, string>
      */
-    protected $appends = ['effort_hours', 'status_display'];
+    protected $appends = ['effort_hours', 'status_display', 'attachment_url'];
 
     /**
      * Boot method - define model events
@@ -150,6 +152,18 @@ class Timesheet extends Model
         $minutes = $this->effort_minutes % 60;
 
         return sprintf('%d:%02d', $hours, $minutes);
+    }
+
+    /**
+     * Accessor para URL do anexo
+     */
+    public function getAttachmentUrlAttribute(): ?string
+    {
+        if (!$this->attachment_path) {
+            return null;
+        }
+        $backendUrl = rtrim(config('app.url'), '/');
+        return $backendUrl . '/api/v1/timesheets/' . $this->id . '/attachment';
     }
 
     /**
