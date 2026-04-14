@@ -421,6 +421,7 @@ class TimesheetController extends Controller
             'total_hours' => 'nullable|string|regex:/^\d+:[0-5][0-9]$/',
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
+            'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
         ];
 
         // Se é administrador, pode especificar user_id
@@ -652,6 +653,14 @@ class TimesheetController extends Controller
             $timesheet->customer_id = $project->customer_id;
             $timesheet->status = Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
+
+            if ($request->hasFile('attachment')) {
+                $file = $request->file('attachment');
+                $filename = time() . '_' . $file->getClientOriginalName();
+                $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
+                $timesheet->attachment_path = $path;
+                $timesheet->attachment_original_name = $file->getClientOriginalName();
+            }
 
             $timesheet->save();
 
@@ -1139,6 +1148,18 @@ class TimesheetController extends Controller
             }
 
             $timesheet->fill($validatedData);
+
+            if ($request->hasFile('attachment')) {
+                if ($timesheet->attachment_path) {
+                    \Storage::disk('public')->delete($timesheet->attachment_path);
+                }
+                $file = $request->file('attachment');
+                $filename = time() . '_' . $file->getClientOriginalName();
+                $path = $file->storeAs('timesheets/' . date('Y/m'), $filename, 'public');
+                $timesheet->attachment_path = $path;
+                $timesheet->attachment_original_name = $file->getClientOriginalName();
+            }
+
             $timesheet->save();
 
             DB::commit();
@@ -1940,5 +1961,46 @@ class TimesheetController extends Controller
         ]);
 
         return null; // OK
+    }
+
+    /**
+     * Download do anexo de um apontamento
+     */
+    public function downloadAttachment(Request $request, int $id)
+    {
+        $user = Auth::user();
+        $timesheet = Timesheet::findOrFail($id);
+
+        if (!$user->hasRole('Administrator') && $timesheet->user_id !== $user->id) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        if (!$timesheet->attachment_path) {
+            return response()->json(['message' => 'Anexo não encontrado'], 404);
+        }
+
+        try {
+            $disk = \Storage::disk('public');
+
+            if (!$disk->exists($timesheet->attachment_path)) {
+                return response()->json(['message' => 'Arquivo não encontrado no servidor'], 404);
+            }
+
+            $mime = $disk->mimeType($timesheet->attachment_path) ?: 'application/octet-stream';
+            $name = $timesheet->attachment_original_name ?? basename($timesheet->attachment_path);
+
+            return response($disk->get($timesheet->attachment_path), 200, [
+                'Content-Type'        => $mime,
+                'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
+                'Cache-Control'       => 'no-cache',
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Erro ao servir anexo de apontamento', [
+                'timesheet_id'    => $id,
+                'attachment_path' => $timesheet->attachment_path,
+                'error'           => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Erro ao acessar o anexo.'], 503);
+        }
     }
 }
