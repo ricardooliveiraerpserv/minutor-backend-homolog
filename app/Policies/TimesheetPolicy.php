@@ -39,11 +39,10 @@ class TimesheetPolicy
 
     public function viewAny(User $user): bool
     {
-        return $user->hasAnyPermission([
-            'timesheets.view',
-            'timesheets.view_project_summary',
-            'timesheets.view_project_full',
-        ]);
+        return $user->isAdmin()
+            || $user->hasAccess('timesheets.view')
+            || $user->hasAccess('timesheets.view_project_summary')
+            || $user->hasAccess('timesheets.view_project_full');
     }
 
     // ── view: pode ver este registro específico? ──────────────────────────────
