@@ -119,7 +119,7 @@ class UserController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = User::with(['roles', 'customer']);
+        $query = User::with(['customer']);
 
         // Se não é admin nem tem permissão para ver todos, só pode ver próprio perfil
         if (!$user->isAdmin() && !$user->hasAccess('users.view_all')) {
@@ -336,7 +336,7 @@ class UserController extends Controller
     {
         $currentUser = Auth::user();
 
-        $user = User::with(['roles', 'customer'])->find($id);
+        $user = User::with(['customer'])->find($id);
 
         if (!$user) {
             return $this->notFoundResponse('Usuário não encontrado');
@@ -566,8 +566,6 @@ class UserController extends Controller
 
         DB::beginTransaction();
         try {
-            // Remover papéis antes de excluir
-            $user->roles()->detach();
             $user->delete();
 
             DB::commit();
@@ -696,7 +694,6 @@ class UserController extends Controller
     public function profile(): JsonResponse
     {
         $user = Auth::user();
-        $user->load(['roles']);
 
         return response()->json($user);
     }
@@ -761,7 +758,6 @@ class UserController extends Controller
 
         try {
             $user->update($updateData);
-            $user->load(['roles']);
 
             return response()->json($user);
 
