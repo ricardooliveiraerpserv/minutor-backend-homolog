@@ -8,6 +8,7 @@ use App\Models\ServiceType;
 use App\Models\ContractType;
 use App\Models\User;
 use App\Models\ProjectChangeLog;
+use App\Services\ProjectCodeService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -485,7 +486,7 @@ class ProjectController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255|min:2',
-            'code' => 'required|string|max:50|unique:projects,code',
+            'code' => 'nullable|string|max:50|unique:projects,code',
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'required|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
@@ -520,7 +521,6 @@ class ProjectController extends Controller
             'name.required' => 'O nome é obrigatório',
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
-            'code.required' => 'O código é obrigatório',
             'code.unique' => 'Este código já está sendo usado por outro projeto',
             'customer_id.required' => 'O cliente é obrigatório',
             'customer_id.exists' => 'Cliente não encontrado',
@@ -575,6 +575,15 @@ class ProjectController extends Controller
         if (!Schema::hasColumn('projects', 'allow_negative_balance')) {
             unset($validated['allow_negative_balance']);
         }
+
+        // Gerar ou validar código do projeto
+        $customer = Customer::findOrFail($validated['customer_id']);
+        $parent   = isset($validated['parent_project_id']) ? Project::find($validated['parent_project_id']) : null;
+
+        $codeService = new ProjectCodeService();
+        $codeData    = $codeService->resolveForStore($validated['code'] ?? null, $customer, $parent);
+
+        $validated = array_merge($validated, $codeData);
 
         $project = Project::create($validated);
 
@@ -803,6 +812,15 @@ class ProjectController extends Controller
             'timesheet_retroactive_limit_days.min' => 'O prazo não pode ser negativo',
             'timesheet_retroactive_limit_days.max' => 'O prazo não pode ser maior que 365 dias',
         ]);
+
+        // Tratar atualização de código manual
+        if (isset($validated['code']) && $validated['code'] !== $project->code) {
+            // Novo código enviado → marcar como manual
+            $validated['is_manual_code'] = true;
+        } elseif (!$project->is_manual_code) {
+            // Código automático não pode ser alterado pelo cliente sem enviar código novo
+            unset($validated['code']);
+        }
 
         // Validações de parent_project_id
         if (isset($validated['parent_project_id'])) {

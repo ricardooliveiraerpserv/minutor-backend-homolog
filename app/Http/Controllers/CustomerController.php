@@ -196,6 +196,11 @@ class CustomerController extends Controller
             'cgc' => 'required|string|unique:customers,cgc,NULL,id,deleted_at,NULL',
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
+            'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
+        ], [
+            'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
+            'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
+            'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
         ]);
 
         // Remove caracteres especiais do CGC
@@ -222,6 +227,11 @@ class CustomerController extends Controller
                 'message' => 'CGC inválido',
                 'detailMessage' => 'O CGC informado não passou na validação de algoritmo'
             ], 422);
+        }
+
+        // Normaliza o prefixo para maiúsculas
+        if (!empty($validated['code_prefix'])) {
+            $validated['code_prefix'] = strtoupper($validated['code_prefix']);
         }
 
         // Só agora cria no banco, pois sabemos que é válido
@@ -304,6 +314,11 @@ class CustomerController extends Controller
             'cgc' => 'sometimes|string|unique:customers,cgc,' . $customer->id . ',id,deleted_at,NULL',
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
+            'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix,' . $customer->id,
+        ], [
+            'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
+            'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
+            'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
         ]);
 
         if (isset($validated['cgc'])) {
@@ -333,6 +348,10 @@ class CustomerController extends Controller
                     'detailMessage' => 'O CGC informado não passou na validação de algoritmo'
                 ], 422);
             }
+        }
+
+        if (!empty($validated['code_prefix'])) {
+            $validated['code_prefix'] = strtoupper($validated['code_prefix']);
         }
 
         $customer->update($validated);
