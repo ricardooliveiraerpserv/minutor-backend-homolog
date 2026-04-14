@@ -958,20 +958,29 @@ class ExpenseController extends Controller
             return response()->json(['message' => 'Comprovante não encontrado'], 404);
         }
 
-        $disk = \Storage::disk('public');
+        try {
+            $disk = \Storage::disk('public');
 
-        if (!$disk->exists($expense->receipt_path)) {
-            return response()->json(['message' => 'Arquivo não encontrado no servidor'], 404);
+            if (!$disk->exists($expense->receipt_path)) {
+                return response()->json(['message' => 'Arquivo não encontrado no servidor. O comprovante pode ter sido perdido após uma atualização do servidor.'], 404);
+            }
+
+            $mime = $disk->mimeType($expense->receipt_path) ?: 'application/octet-stream';
+            $name = $expense->receipt_original_name ?? basename($expense->receipt_path);
+
+            return response($disk->get($expense->receipt_path), 200, [
+                'Content-Type'        => $mime,
+                'Content-Disposition' => 'inline; filename="' . addslashes($name) . '"',
+                'Cache-Control'       => 'no-cache',
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Erro ao servir comprovante de despesa', [
+                'expense_id'   => $id,
+                'receipt_path' => $expense->receipt_path,
+                'error'        => $e->getMessage(),
+            ]);
+            return response()->json(['message' => 'Erro ao acessar o comprovante. O arquivo pode não estar disponível neste servidor.'], 503);
         }
-
-        $mime = $disk->mimeType($expense->receipt_path);
-        $name = $expense->receipt_original_name ?? basename($expense->receipt_path);
-
-        return response($disk->get($expense->receipt_path), 200, [
-            'Content-Type'        => $mime,
-            'Content-Disposition' => 'inline; filename="' . $name . '"',
-            'Cache-Control'       => 'no-cache',
-        ]);
     }
 
     /**
