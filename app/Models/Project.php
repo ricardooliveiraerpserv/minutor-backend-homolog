@@ -977,7 +977,7 @@ class Project extends Model
         // Verificar se tem role 'Coordinator'
         if (class_exists(\Spatie\Permission\Models\Role::class)) {
             $user = \App\Models\User::find($userId);
-            if ($user && $user->hasRole('Coordinator')) {
+            if ($user && $user->isCoordenador()) {
                 return true;
             }
         }

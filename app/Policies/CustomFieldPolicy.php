@@ -31,7 +31,7 @@ class CustomFieldPolicy
     public function create(User $user): bool
     {
         // Apenas administradores podem criar campos customizados
-        return $user->hasRole('Administrator');
+        return $user->isAdmin();
     }
 
     /**
@@ -40,7 +40,7 @@ class CustomFieldPolicy
     public function update(User $user, CustomField $customField): bool
     {
         // Apenas administradores podem atualizar campos customizados
-        return $user->hasRole('Administrator');
+        return $user->isAdmin();
     }
 
     /**
@@ -49,7 +49,7 @@ class CustomFieldPolicy
     public function delete(User $user, CustomField $customField): bool
     {
         // Apenas administradores podem deletar campos customizados
-        return $user->hasRole('Administrator');
+        return $user->isAdmin();
     }
 }
 

@@ -10,7 +10,7 @@ class ProjectPolicy
     /** Admin passa direto */
     private function isAdmin(User $user): bool
     {
-        return $user->hasRole('Administrator') || $user->can('admin.full_access');
+        return $user->isAdmin() || $user->can('admin.full_access');
     }
 
     /** Verifica se o usuário coordena este projeto */
@@ -36,28 +36,28 @@ class ProjectPolicy
         if (!$user->can('projects.view')) return false;
 
         // Coordenador vê apenas projetos que coordena
-        if ($user->hasRole('Coordenador')) return $this->coordinatesProject($user, $project);
+        if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
 
         // Parceiro ADM vê apenas projetos do seu parceiro
         // (projetos em que pelo menos um consultor do parceiro está alocado)
-        if ($user->hasRole('Parceiro ADM') && $user->partner_id !== null) {
+        if ($user->isParceiroAdmin() && $user->partner_id !== null) {
             return $project->consultants()
                 ->where('users.partner_id', $user->partner_id)
                 ->exists();
         }
 
         // Consultor parceiro vê apenas projetos onde está alocado
-        if ($user->hasRole('Consultor') && $user->partner_id !== null) {
+        if ($user->isConsultor() && $user->partner_id !== null) {
             return $project->consultants()
                 ->where('users.id', $user->id)
                 ->exists();
         }
 
         // Consultor interno vê todos os projetos (filtro adicional pode ser feito no controller)
-        if ($user->hasRole('Consultor')) return true;
+        if ($user->isConsultor()) return true;
 
         // Cliente vê apenas projetos da própria empresa
-        if ($user->hasRole('Cliente') && $user->customer_id !== null) {
+        if ($user->isCliente() && $user->customer_id !== null) {
             return $project->customer_id === $user->customer_id;
         }
 
@@ -79,7 +79,7 @@ class ProjectPolicy
         if (!$user->can('projects.update')) return false;
 
         // Coordenador pode atualizar projetos que coordena
-        if ($user->hasRole('Coordenador')) return $this->coordinatesProject($user, $project);
+        if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
 
         return false;
     }
@@ -103,7 +103,7 @@ class ProjectPolicy
             return true;
 
         // Parceiro ADM vê dados financeiros do próprio parceiro (taxa parceiro)
-        if ($user->can('financial.view_partner_rate') && $user->hasRole('Parceiro ADM')
+        if ($user->can('financial.view_partner_rate') && $user->isParceiroAdmin()
             && $user->partner_id !== null) {
             return $project->consultants()
                 ->where('users.partner_id', $user->partner_id)
@@ -121,7 +121,7 @@ class ProjectPolicy
         if (!$user->can('projects.change_status')) return false;
 
         // Coordenador altera status dos projetos que coordena
-        if ($user->hasRole('Coordenador')) return $this->coordinatesProject($user, $project);
+        if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
 
         return false;
     }
@@ -134,7 +134,7 @@ class ProjectPolicy
         if (!$user->can('projects.assign_consultants')) return false;
 
         // Coordenador gerencia consultores dos próprios projetos
-        if ($user->hasRole('Coordenador')) return $this->coordinatesProject($user, $project);
+        if ($user->isCoordenador()) return $this->coordinatesProject($user, $project);
 
         return false;
     }

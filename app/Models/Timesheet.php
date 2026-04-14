@@ -308,7 +308,7 @@ class Timesheet extends Model
         }
 
         // Admin pode aprovar qualquer timesheet
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             return true;
         }
 
@@ -378,7 +378,7 @@ class Timesheet extends Model
         }
 
         // Administradores podem estornar qualquer aprovação
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             return true;
         }
 
@@ -430,7 +430,7 @@ class Timesheet extends Model
         }
 
         // Administradores podem estornar qualquer rejeição
-        if ($user->hasRole('Administrator')) {
+        if ($user->isAdmin()) {
             return true;
         }
 
