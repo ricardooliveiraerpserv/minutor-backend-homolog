@@ -145,12 +145,18 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Login realizado com sucesso',
             'user' => [
-                'id'                    => $user->id,
-                'name'                  => $user->name,
-                'email'                 => $user->email,
-                'email_verified_at'     => $user->email_verified_at,
-                'has_temporary_password' => false,
-                'roles'                 => $roles,
+                'id'                      => $user->id,
+                'name'                    => $user->name,
+                'email'                   => $user->email,
+                'email_verified_at'       => $user->email_verified_at,
+                'has_temporary_password'  => false,
+                'roles'                   => $roles,
+                'consultant_type'         => $user->consultant_type,
+                'rate_type'               => $user->rate_type,
+                'hourly_rate'             => $user->hourly_rate,
+                'daily_hours'             => $user->daily_hours,
+                'bank_hours_start_date'   => $user->bank_hours_start_date,
+                'guaranteed_hours'        => $user->guaranteed_hours,
             ],
             'token'                    => $token,
             'token_type'               => 'Bearer',
@@ -261,7 +267,13 @@ class AuthController extends Controller
 
         return response()->json([
             'user' => array_merge($user->toArray(), [
-                'roles' => $user->roles->pluck('name')->values()->toArray(),
+                'roles'                 => $user->roles->pluck('name')->values()->toArray(),
+                'consultant_type'       => $user->consultant_type,
+                'rate_type'             => $user->rate_type,
+                'hourly_rate'           => $user->hourly_rate,
+                'daily_hours'           => $user->daily_hours,
+                'bank_hours_start_date' => $user->bank_hours_start_date,
+                'guaranteed_hours'      => $user->guaranteed_hours,
             ])
         ], 200);
     }
