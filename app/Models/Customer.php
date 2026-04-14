@@ -23,6 +23,7 @@ class Customer extends Model
         'cgc',
         'active',
         'executive_id',
+        'code_prefix',
     ];
 
     /**

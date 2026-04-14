@@ -63,6 +63,10 @@ class Project extends Model
         'contract_type_id',
         'status',
         'allow_negative_balance',
+        'proj_sequence',
+        'proj_year',
+        'child_sequence',
+        'is_manual_code',
     ];
 
     /**
