@@ -170,15 +170,16 @@ class ProjectController extends Controller
             $withRelations[] = 'childProjects.contractType';
         }
 
+        // Subquery agregada: uma única query para somar minutos de TODOS os projetos
+        // Muito mais eficiente que subquery correlacionada (1 query total vs N queries)
+        $timesheetsSub = DB::table('timesheets')
+            ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
+            ->where('status', '!=', 'rejected')
+            ->groupBy('project_id');
+
         $query = Project::with($withRelations)
-        // Carrega a soma de minutos apontados junto com os projetos (evita N+1)
-        // IMPORTANTE: Exclui apontamentos rejeitados
-        ->addSelect([
-            'total_logged_minutes' => DB::table('timesheets')
-                ->selectRaw('COALESCE(SUM(effort_minutes), 0)')
-                ->whereColumn('timesheets.project_id', 'projects.id')
-                ->where('timesheets.status', '!=', 'rejected')
-        ]);
+            ->leftJoinSub($timesheetsSub, 'ts_sum', 'projects.id', '=', 'ts_sum.project_id')
+            ->addSelect('projects.*', DB::raw('COALESCE(ts_sum.total_logged_minutes, 0) as total_logged_minutes'));
 
         // Filtrar apenas projetos onde o usuário é consultor (exceto para Administrators)
         if ($consultantOnly === 'true') {
