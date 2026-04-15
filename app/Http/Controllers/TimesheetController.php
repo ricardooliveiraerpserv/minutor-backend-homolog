@@ -668,6 +668,13 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
+            // Auto-transição: se o projeto está "Aguardando início", marcar como "Iniciado"
+            if ($project->status === Project::STATUS_AWAITING_START) {
+                $project->status = Project::STATUS_STARTED;
+                $project->save();
+                $this->invalidateListCache('projects');
+            }
+
             DB::commit();
 
             $timesheet->load(['user', 'customer', 'project']);
