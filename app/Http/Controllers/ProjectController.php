@@ -165,6 +165,11 @@ class ProjectController extends Controller
             $withRelations[] = 'parentProject';
             $withRelations[] = 'hourContributions';
         }
+        // Em gestao simples (sem parentProjectsOnly), carrega equipe para indicadores
+        if ($gestaoMode && !$parentProjectsOnly) {
+            $withRelations[] = 'coordinators';
+            $withRelations[] = 'consultants';
+        }
         // childProjects: carrega no modo completo OU em gestao+multicontratual
         if (!$gestaoMode || $parentProjectsOnly) {
             $withRelations[] = 'childProjects.contractType';
