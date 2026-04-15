@@ -151,18 +151,26 @@ class ProjectController extends Controller
         $contractTypeName = $request->get('contract_type_name');
         $contractTypeId = $request->get('contract_type_id');
         $serviceTypeName = $request->get('service_type_name');
+        $parentProjectsOnly = $request->get('parent_projects_only') === 'true';
+
+        // Modo gestão: query leve para o dashboard /gestao-projetos
+        // Omite relações pesadas (hourContributions, serviceType, parentProject)
+        // e pula cálculos financeiros detalhados
+        $gestaoMode = $request->boolean('gestao');
 
         // Eager loading otimizado: carrega relacionamentos e soma de minutos apontados
-        $query = Project::with([
-            'customer',
-            'serviceType',
-            'contractType',
-            'parentProject',
-            // Carrega projetos filhos com contractType (necessário para cálculo de saldo)
-            'childProjects.contractType',
-            // Carrega aportes de horas para cálculos
-            'hourContributions'
-        ])
+        $withRelations = ['customer', 'contractType'];
+        if (!$gestaoMode) {
+            $withRelations[] = 'serviceType';
+            $withRelations[] = 'parentProject';
+            $withRelations[] = 'hourContributions';
+        }
+        // childProjects: carrega no modo completo OU em gestao+multicontratual
+        if (!$gestaoMode || $parentProjectsOnly) {
+            $withRelations[] = 'childProjects.contractType';
+        }
+
+        $query = Project::with($withRelations)
         // Carrega a soma de minutos apontados junto com os projetos (evita N+1)
         // IMPORTANTE: Exclui apontamentos rejeitados
         ->addSelect([
@@ -402,19 +410,32 @@ class ProjectController extends Controller
         }
 
         // Adicionar atributos computed aos itens
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap) {
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode) {
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
 
-            // Calcular saldo de horas de forma otimizada (sem queries adicionais)
-            $project->general_hours_balance = $this->calculateGeneralHoursBalance($project);
+            if ($gestaoMode) {
+                // Modo leve: usar apenas campos já presentes na query, sem relações extras
+                $consumed = ($project->total_logged_minutes ?? 0) / 60;
+                $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
+                $project->general_hours_balance = round($totalAvailable - $consumed, 2);
+                $project->consumed_hours = round($consumed, 2);
+                $project->balance_percentage = $totalAvailable > 0 ? round(($consumed / $totalAvailable) * 100, 2) : 0;
+                $project->total_available_hours = round($totalAvailable, 2);
+                $project->total_contributions_hours = 0;
+                $project->total_project_value = null;
+                $project->weighted_hourly_rate = null;
+            } else {
+                // Calcular saldo de horas de forma otimizada (sem queries adicionais)
+                $project->general_hours_balance = $this->calculateGeneralHoursBalance($project);
 
-            // Adicionar valores calculados de aportes de horas
-            // Usa a relação já eager-loaded (hourContributions sem parênteses = coleção em memória)
-            $project->total_available_hours = $project->getTotalAvailableHours();
-            $project->total_project_value = $project->calculateTotalProjectValue();
-            $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
-            $project->total_contributions_hours = $project->hourContributions->sum('contributed_hours');
+                // Adicionar valores calculados de aportes de horas
+                // Usa a relação já eager-loaded (hourContributions sem parênteses = coleção em memória)
+                $project->total_available_hours = $project->getTotalAvailableHours();
+                $project->total_project_value = $project->calculateTotalProjectValue();
+                $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
+                $project->total_contributions_hours = $project->hourContributions->sum('contributed_hours');
+            }
 
             // node_state: 'ACTIVE' | 'DISABLED' | null (sem filtro de status ativo)
             $project->node_state = $nodeStateMap->has($project->id)
