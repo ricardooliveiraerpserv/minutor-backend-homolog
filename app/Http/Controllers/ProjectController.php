@@ -170,16 +170,7 @@ class ProjectController extends Controller
             $withRelations[] = 'childProjects.contractType';
         }
 
-        // Subquery agregada: uma única query para somar minutos de TODOS os projetos
-        // Muito mais eficiente que subquery correlacionada (1 query total vs N queries)
-        $timesheetsSub = DB::table('timesheets')
-            ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
-            ->where('status', '!=', 'rejected')
-            ->groupBy('project_id');
-
-        $query = Project::with($withRelations)
-            ->leftJoinSub($timesheetsSub, 'ts_sum', 'projects.id', '=', 'ts_sum.project_id')
-            ->addSelect('projects.*', DB::raw('COALESCE(ts_sum.total_logged_minutes, 0) as total_logged_minutes'));
+        $query = Project::with($withRelations);
 
         // Filtrar apenas projetos onde o usuário é consultor (exceto para Administrators)
         if ($consultantOnly === 'true') {
@@ -370,8 +361,9 @@ class ProjectController extends Controller
         $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
-        // Carregar soma de minutos dos projetos filhos em lote (uma única query adicional)
-        // Isso é mais eficiente que fazer N queries individuais
+        // Carregar soma de timesheets em batch: apenas para os projetos desta página
+        // Evita JOIN na query principal (que agregaria TODA a tabela timesheets)
+        $parentIds = $projects->getCollection()->pluck('id')->toArray();
         $allChildProjectIds = $projects->getCollection()
             ->flatMap(function ($project) {
                 return $project->childProjects ? $project->childProjects->pluck('id') : collect();
@@ -379,27 +371,28 @@ class ProjectController extends Controller
             ->unique()
             ->values();
 
+        $allIdsToSum = array_unique(array_merge($parentIds, $allChildProjectIds->toArray()));
+
+        $timesheetsMap = [];
+        if (!empty($allIdsToSum)) {
+            $rows = DB::table('timesheets')
+                ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
+                ->whereIn('project_id', $allIdsToSum)
+                ->where('status', '!=', 'rejected')
+                ->groupBy('project_id')
+                ->pluck('total_logged_minutes', 'project_id');
+            $timesheetsMap = $rows->toArray();
+        }
+
+        // Atribuir total_logged_minutes aos projetos principais
+        $projects->getCollection()->each(function ($project) use ($timesheetsMap) {
+            $project->total_logged_minutes = $timesheetsMap[$project->id] ?? 0;
+        });
+
         // Mapa de ID do projeto filho para total_logged_minutes
-        $childProjectsMinutesMap = [];
+        $childProjectsMinutesMap = $timesheetsMap;
 
         if ($allChildProjectIds->isNotEmpty()) {
-            // Carrega a soma de minutos para todos os projetos filhos de uma vez
-            // IMPORTANTE: Exclui apontamentos rejeitados
-            $childProjectsWithSum = Project::query()
-                ->whereIn('id', $allChildProjectIds)
-                ->addSelect([
-                    'total_logged_minutes' => DB::table('timesheets')
-                        ->selectRaw('COALESCE(SUM(effort_minutes), 0)')
-                        ->whereColumn('timesheets.project_id', 'projects.id')
-                        ->where('timesheets.status', '!=', 'rejected')
-                ])
-                ->get();
-
-            // Criar mapa para acesso rápido
-            foreach ($childProjectsWithSum as $childProject) {
-                $childProjectsMinutesMap[$childProject->id] = $childProject->total_logged_minutes ?? 0;
-            }
-
             // Atribuir total_logged_minutes aos projetos filhos nos projetos principais
             $projects->getCollection()->each(function ($project) use ($childProjectsMinutesMap) {
                 if ($project->childProjects) {
