@@ -49,7 +49,13 @@ trait ListCacheable
     {
         try {
             $store = Cache::getStore();
-            return $store instanceof \Illuminate\Cache\TaggableStore;
+            if (!($store instanceof \Illuminate\Cache\TaggableStore)) {
+                return false;
+            }
+            // Testa conexão real com timeout curto para não travar a request
+            // se Redis estiver configurado mas inacessível
+            \Illuminate\Support\Facades\Redis::connection()->ping();
+            return true;
         } catch (\Throwable $e) {
             return false;
         }

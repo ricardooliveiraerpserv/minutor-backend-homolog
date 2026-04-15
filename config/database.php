@@ -160,6 +160,8 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_DB', '0'),
+            'timeout' => 1,       // 1s para conectar — falha rápido se Redis indisponível
+            'read_timeout' => 1,  // 1s para leitura
         ],
 
         'cache' => [
@@ -169,6 +171,8 @@ return [
             'password' => env('REDIS_PASSWORD'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_CACHE_DB', '1'),
+            'timeout' => 1,
+            'read_timeout' => 1,
         ],
 
     ],
