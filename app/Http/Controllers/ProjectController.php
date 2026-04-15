@@ -166,11 +166,13 @@ class ProjectController extends Controller
             $withRelations[] = 'hourContributions';
         }
         // Em gestao simples (sem parentProjectsOnly), carrega equipe para indicadores
-        // with_team=false permite pular consultants/coordinators para cargas rápidas (ex: indicadores)
+        // with_team=false pula apenas consultants (pesados); coordinators sempre são carregados
         $withTeam = $request->get('with_team', 'true') !== 'false';
-        if ($gestaoMode && !$parentProjectsOnly && $withTeam) {
+        if ($gestaoMode && !$parentProjectsOnly) {
             $withRelations[] = 'coordinators';
-            $withRelations[] = 'consultants';
+            if ($withTeam) {
+                $withRelations[] = 'consultants';
+            }
         }
         // childProjects: carrega no modo completo OU em gestao+multicontratual
         if (!$gestaoMode || $parentProjectsOnly) {
