@@ -370,7 +370,8 @@ class ProjectController extends Controller
         $page = (int) $request->get('page', 1);
 
         try {
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly) {
+        $currentUserForTransform = $request->user();
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -422,7 +423,6 @@ class ProjectController extends Controller
         }
 
         // Adicionar atributos computed aos itens
-        $currentUserForTransform = $request->user();
         $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform) {
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
