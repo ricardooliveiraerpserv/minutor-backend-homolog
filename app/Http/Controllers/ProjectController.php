@@ -364,12 +364,21 @@ class ProjectController extends Controller
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
         // Evita JOIN na query principal (que agregaria TODA a tabela timesheets)
         $parentIds = $projects->getCollection()->pluck('id')->toArray();
-        $allChildProjectIds = $projects->getCollection()
-            ->flatMap(function ($project) {
-                return $project->childProjects ? $project->childProjects->pluck('id') : collect();
-            })
-            ->unique()
-            ->values();
+
+        // childProjects só é eager-loaded quando NÃO estamos em gestaoMode puro
+        // (em gestaoMode sem parentProjectsOnly, childProjects NÃO está no with())
+        // Acessar ->childProjects sem eager load causaria N+1 queries
+        $allChildProjectIds = collect();
+        if (!$gestaoMode || $parentProjectsOnly) {
+            $allChildProjectIds = $projects->getCollection()
+                ->flatMap(function ($project) {
+                    return $project->relationLoaded('childProjects') && $project->childProjects
+                        ? $project->childProjects->pluck('id')
+                        : collect();
+                })
+                ->unique()
+                ->values();
+        }
 
         $allIdsToSum = array_unique(array_merge($parentIds, $allChildProjectIds->toArray()));
 
@@ -389,15 +398,12 @@ class ProjectController extends Controller
             $project->total_logged_minutes = $timesheetsMap[$project->id] ?? 0;
         });
 
-        // Mapa de ID do projeto filho para total_logged_minutes
-        $childProjectsMinutesMap = $timesheetsMap;
-
         if ($allChildProjectIds->isNotEmpty()) {
             // Atribuir total_logged_minutes aos projetos filhos nos projetos principais
-            $projects->getCollection()->each(function ($project) use ($childProjectsMinutesMap) {
-                if ($project->childProjects) {
-                    $project->childProjects->each(function ($childProject) use ($childProjectsMinutesMap) {
-                        $childProject->total_logged_minutes = $childProjectsMinutesMap[$childProject->id] ?? 0;
+            $projects->getCollection()->each(function ($project) use ($timesheetsMap) {
+                if ($project->relationLoaded('childProjects') && $project->childProjects) {
+                    $project->childProjects->each(function ($childProject) use ($timesheetsMap) {
+                        $childProject->total_logged_minutes = $timesheetsMap[$childProject->id] ?? 0;
                     });
                 }
             });
