@@ -264,6 +264,7 @@ class AuthController extends Controller
         return response()->json([
             'user' => array_merge($user->toArray(), [
                 'type'                  => $user->type,
+                'extra_permissions'     => $user->extra_permissions ?? [],
                 'consultant_type'       => $user->consultant_type,
                 'rate_type'             => $user->rate_type,
                 'hourly_rate'           => $user->hourly_rate,
