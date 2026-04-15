@@ -64,7 +64,7 @@ class PermissionService
             'timesheets.view', 'timesheets.manage', 'timesheets.approve', 'timesheets.view_project_full',
             'hours.view_all', 'hours.update_all', 'hours.delete_all',
             'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.view_all',
-            'users.view', 'users.view_all', 'users.view_own_profile', 'users.update_own_profile', 'users.view_team', 'users.reset_password',
+            'users.view', 'users.view_all', 'users.view_own_profile', 'users.update_own_profile', 'users.view_team',
             'financial.view_own_rate', 'financial.view_project_cost',
             'reports.view', 'reports.export',
             'consultant_groups.view',
