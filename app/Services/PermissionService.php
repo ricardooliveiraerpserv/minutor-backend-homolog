@@ -60,7 +60,7 @@ class PermissionService
             'dashboard.view', 'dashboard.manager',
             'dashboards.view', 'dashboards.bank_hours_fixed.view', 'dashboards.bank_hours_monthly.view',
             'customers.view',
-            'projects.assign_consultants', 'projects.change_status',
+            'projects.view', 'projects.assign_consultants', 'projects.change_status',
             'timesheets.view', 'timesheets.manage', 'timesheets.approve', 'timesheets.view_project_full',
             'hours.view_all', 'hours.update_all', 'hours.delete_all',
             'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.view_all',
