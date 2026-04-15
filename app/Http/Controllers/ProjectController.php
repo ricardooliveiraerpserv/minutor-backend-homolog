@@ -168,8 +168,9 @@ class ProjectController extends Controller
         // childProjects: carrega no modo completo OU em gestao+multicontratual
         if (!$gestaoMode || $parentProjectsOnly) {
             $withRelations[] = 'childProjects.contractType';
-            // Em modo pai/filho carrega também os coordenadores dos filhos para marcar node_state
+            // Em modo pai/filho carrega coordenadores dos pais e dos filhos para marcar node_state
             if ($parentProjectsOnly) {
+                $withRelations[] = 'coordinators';
                 $withRelations[] = 'childProjects.coordinators';
             }
         }
@@ -455,19 +456,29 @@ class ProjectController extends Controller
                 ? $nodeStateMap->get($project->id)->node_state
                 : null;
 
-            // Em modo pai/filho: marca node_state de cada filho conforme alocação do coordenador atual
-            if ($parentProjectsOnly && $currentUserForTransform && $project->relationLoaded('childProjects')) {
-                $userId = $currentUserForTransform->id;
+            // Em modo pai/filho: marca node_state dos filhos e coordinator_is_direct do pai
+            if ($parentProjectsOnly && $currentUserForTransform) {
+                $userId  = $currentUserForTransform->id;
                 $isAdmin = $currentUserForTransform->isAdmin();
-                $project->childProjects->each(function ($child) use ($userId, $isAdmin) {
-                    if ($isAdmin) {
-                        // Admin vê todos os filhos como ativos
-                        $child->node_state = 'ACTIVE';
-                    } elseif ($child->relationLoaded('coordinators')) {
-                        $isCoordinator = $child->coordinators->contains('id', $userId);
-                        $child->node_state = $isCoordinator ? 'ACTIVE' : 'DISABLED';
-                    }
-                });
+
+                // Verifica se o coordenador está DIRETAMENTE no pai
+                $directOnParent = $isAdmin || (
+                    $project->relationLoaded('coordinators') &&
+                    $project->coordinators->contains('id', $userId)
+                );
+                $project->coordinator_is_direct = $directOnParent;
+
+                // Marca node_state de cada filho
+                if ($project->relationLoaded('childProjects')) {
+                    $project->childProjects->each(function ($child) use ($userId, $isAdmin) {
+                        if ($isAdmin) {
+                            $child->node_state = 'ACTIVE';
+                        } elseif ($child->relationLoaded('coordinators')) {
+                            $child->node_state = $child->coordinators->contains('id', $userId)
+                                ? 'ACTIVE' : 'DISABLED';
+                        }
+                    });
+                }
             }
 
             return $project;
