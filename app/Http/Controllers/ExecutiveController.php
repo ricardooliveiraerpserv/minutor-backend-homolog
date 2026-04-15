@@ -18,7 +18,6 @@ class ExecutiveController extends Controller
 
         $query = User::where('is_executive', true)
             ->whereNull('customer_id')
-            ->with('roles')
             ->orderBy('name');
 
         if ($filter) {
