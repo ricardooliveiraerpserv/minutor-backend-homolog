@@ -210,7 +210,15 @@ class ProjectController extends Controller
         if ($consultantOnly !== 'true') {
             $currentUser = $request->user();
             if ($currentUser && $currentUser->isCoordenador()) {
-                $query->whereHas('coordinators', fn($q) => $q->where('users.id', $currentUser->id));
+                if ($parentProjectsOnly) {
+                    // No modo pai/filho: exibe o pai se o coordenador está no pai OU em algum filho
+                    $query->where(function ($q) use ($currentUser) {
+                        $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id))
+                          ->orWhereHas('childProjects.coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                    });
+                } else {
+                    $query->whereHas('coordinators', fn($q) => $q->where('users.id', $currentUser->id));
+                }
             }
         }
 
