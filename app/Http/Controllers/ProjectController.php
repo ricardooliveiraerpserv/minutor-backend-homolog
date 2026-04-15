@@ -168,6 +168,10 @@ class ProjectController extends Controller
         // childProjects: carrega no modo completo OU em gestao+multicontratual
         if (!$gestaoMode || $parentProjectsOnly) {
             $withRelations[] = 'childProjects.contractType';
+            // Em modo pai/filho carrega também os coordenadores dos filhos para marcar node_state
+            if ($parentProjectsOnly) {
+                $withRelations[] = 'childProjects.coordinators';
+            }
         }
 
         $query = Project::with($withRelations);
@@ -418,7 +422,8 @@ class ProjectController extends Controller
         }
 
         // Adicionar atributos computed aos itens
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode) {
+        $currentUserForTransform = $request->user();
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform) {
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
 
@@ -449,6 +454,21 @@ class ProjectController extends Controller
             $project->node_state = $nodeStateMap->has($project->id)
                 ? $nodeStateMap->get($project->id)->node_state
                 : null;
+
+            // Em modo pai/filho: marca node_state de cada filho conforme alocação do coordenador atual
+            if ($parentProjectsOnly && $currentUserForTransform && $project->relationLoaded('childProjects')) {
+                $userId = $currentUserForTransform->id;
+                $isAdmin = $currentUserForTransform->isAdmin();
+                $project->childProjects->each(function ($child) use ($userId, $isAdmin) {
+                    if ($isAdmin) {
+                        // Admin vê todos os filhos como ativos
+                        $child->node_state = 'ACTIVE';
+                    } elseif ($child->relationLoaded('coordinators')) {
+                        $isCoordinator = $child->coordinators->contains('id', $userId);
+                        $child->node_state = $isCoordinator ? 'ACTIVE' : 'DISABLED';
+                    }
+                });
+            }
 
             return $project;
         });
