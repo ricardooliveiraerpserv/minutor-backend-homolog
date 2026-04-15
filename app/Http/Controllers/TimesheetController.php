@@ -163,6 +163,10 @@ class TimesheetController extends Controller
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
         if (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
+        } elseif ($user->isCoordenador()) {
+            // Coordenador só vê apontamentos dos projetos que coordena
+            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            $query->whereIn('timesheets.project_id', $coordinatorProjectIds);
         }
 
         // Filtros PO-UI

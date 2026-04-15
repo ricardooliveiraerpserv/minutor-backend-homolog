@@ -173,6 +173,10 @@ class ExpenseController extends Controller
         // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
         if (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
             $query->where('user_id', $user->id);
+        } elseif ($user->isCoordenador()) {
+            // Coordenador só vê despesas dos projetos que coordena
+            $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
+            $query->whereIn('expenses.project_id', $coordinatorProjectIds);
         }
 
         // Filtros
