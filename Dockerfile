@@ -21,6 +21,17 @@ RUN docker-php-ext-install \
     pdo pdo_pgsql pdo_mysql \
     mbstring exif pcntl bcmath gd zip opcache
 
+# OPcache: compila e cacheia bytecode PHP em memória
+RUN printf 'opcache.enable=1\n\
+opcache.enable_cli=1\n\
+opcache.memory_consumption=256\n\
+opcache.interned_strings_buffer=16\n\
+opcache.max_accelerated_files=20000\n\
+opcache.revalidate_freq=0\n\
+opcache.validate_timestamps=0\n\
+opcache.save_comments=1\n\
+opcache.fast_shutdown=1\n' > /usr/local/etc/php/conf.d/opcache.ini
+
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
@@ -71,4 +82,4 @@ autorestart=true\n' > /etc/supervisord.conf
 
 EXPOSE 8080
 
-CMD sh -c "php artisan config:clear && php artisan storage:link --force 2>/dev/null || true && php artisan migrate --force && supervisord -c /etc/supervisord.conf"
+CMD sh -c "php artisan migrate --force && php artisan optimize && php artisan storage:link --force 2>/dev/null || true && supervisord -c /etc/supervisord.conf"
