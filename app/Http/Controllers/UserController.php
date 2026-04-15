@@ -121,8 +121,8 @@ class UserController extends Controller
 
         $query = User::with(['customer']);
 
-        // Se não é admin nem tem permissão para ver todos, só pode ver próprio perfil
-        if (!$user->isAdmin() && !$user->hasAccess('users.view_all')) {
+        // Se não é admin nem tem permissão para ver/resetar todos, só pode ver próprio perfil
+        if (!$user->isAdmin() && !$user->hasAccess('users.view_all') && !$user->hasAccess('users.reset_password')) {
             $query->where('id', $user->id);
         }
 
