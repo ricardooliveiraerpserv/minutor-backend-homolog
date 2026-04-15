@@ -7,7 +7,11 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Trait para cache de listagens com Redis Tags.
+ * Trait para cache de listagens.
+ *
+ * Estratégia em cascata:
+ *  1. Redis com tags (se Redis disponível) — invalida por resource/user
+ *  2. File cache simples (sempre disponível) — invalida por TTL ou chave
  *
  * Uso nos controllers:
  *   use ListCacheable;
@@ -20,57 +24,64 @@ use Illuminate\Support\Facades\Auth;
  */
 trait ListCacheable
 {
-    /**
-     * Executa a query e armazena o resultado em cache com Redis Tags.
-     *
-     * Tags geradas: ["{resource}", "user:{user_id}"]
-     * TTL: 60 segundos (ajustável via $ttl)
-     */
     protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60): mixed
     {
-        // Se o driver não suporta tags, executa a query diretamente sem cache
-        if (!($this->cacheStoreSupportsTagging())) {
-            return $query();
-        }
-
-        $userId = Auth::id() ?? 'guest';
+        $userId   = Auth::id() ?? 'guest';
         $cacheKey = "{$resource}:list:{$userId}:" . md5($request->getQueryString() ?? '');
 
+        // 1. Redis com tags (cache compartilhado e invalidável por resource)
+        if ($this->redisAvailable()) {
+            try {
+                return Cache::tags([$resource, "user:{$userId}"])
+                    ->remember($cacheKey, $ttl, $query);
+            } catch (\Throwable $e) {
+                // Redis falhou durante a operação — cai no file cache
+            }
+        }
+
+        // 2. File cache simples — sempre disponível, invalida por TTL ou chave versionada
         try {
-            return Cache::tags([$resource, "user:{$userId}"])
-                ->remember($cacheKey, $ttl, $query);
+            $versionKey  = "version:{$resource}";
+            $version     = Cache::store('file')->get($versionKey, 1);
+            $fileKey     = "{$cacheKey}:v{$version}";
+
+            return Cache::store('file')->remember($fileKey, $ttl, $query);
         } catch (\Throwable $e) {
-            // Fallback seguro: qualquer falha de cache não deve derrubar a request
+            // File cache indisponível (ex: permissões) — executa direto
             return $query();
         }
     }
 
-    private function cacheStoreSupportsTagging(): bool
+    protected function invalidateListCache(string $resource): void
     {
+        // Invalida Redis tags
+        try {
+            if ($this->redisAvailable()) {
+                Cache::tags([$resource])->flush();
+            }
+        } catch (\Throwable) {}
+
+        // Invalida file cache incrementando a versão do resource
+        try {
+            $versionKey = "version:{$resource}";
+            Cache::store('file')->increment($versionKey);
+        } catch (\Throwable) {}
+    }
+
+    private function redisAvailable(): bool
+    {
+        static $checked = null;
+        if ($checked !== null) return $checked;
+
         try {
             $store = Cache::getStore();
             if (!($store instanceof \Illuminate\Cache\TaggableStore)) {
-                return false;
+                return $checked = false;
             }
-            // Testa conexão real com timeout curto para não travar a request
-            // se Redis estiver configurado mas inacessível
             \Illuminate\Support\Facades\Redis::connection()->ping();
-            return true;
-        } catch (\Throwable $e) {
-            return false;
-        }
-    }
-
-    /**
-     * Invalida todo o cache de listagem de um resource.
-     * Chamado em store/update/destroy.
-     */
-    protected function invalidateListCache(string $resource): void
-    {
-        try {
-            Cache::tags([$resource])->flush();
-        } catch (\Exception $e) {
-            // Se Redis não disponível, ignora silenciosamente
+            return $checked = true;
+        } catch (\Throwable) {
+            return $checked = false;
         }
     }
 }
