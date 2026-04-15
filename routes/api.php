@@ -531,7 +531,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
-        Route::middleware('permission.or.admin:hours.approve,expenses.approve')->group(function () {
+        Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {
             Route::get('/approvals/pending', [ApprovalController::class, 'getPendingApprovals'])->name('approvals.pending');
             Route::get('/approvals/timesheets', [ApprovalController::class, 'getPendingTimesheets'])->name('approvals.timesheets');
             Route::get('/approvals/expenses', [ApprovalController::class, 'getPendingExpenses'])->name('approvals.expenses');

@@ -13,7 +13,7 @@ class CheckPermissionOrAdmin
      *
      * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
-    public function handle(Request $request, Closure $next, string $permission): Response
+    public function handle(Request $request, Closure $next, string ...$permissions): Response
     {
         $user = $request->user();
 
@@ -29,16 +29,20 @@ class CheckPermissionOrAdmin
             return $next($request);
         }
 
-        // Verificar se tem a permissão específica
-        if ($user->hasAccess($permission)) {
-            return $next($request);
+        // Verificar se tem qualquer uma das permissões (lógica OR)
+        foreach ($permissions as $permission) {
+            if ($user->hasAccess($permission)) {
+                return $next($request);
+            }
         }
 
-        // Se não tem nem role de admin nem a permissão específica
+        $required = implode(' ou ', $permissions);
+
+        // Se não tem nem role de admin nem nenhuma das permissões
         return response()->json([
             'success' => false,
-            'message' => "Acesso negado. Você precisa da permissão '{$permission}' ou ser um Administrador para acessar este recurso.",
-            'required_permission' => $permission,
+            'message' => "Acesso negado. Você precisa da permissão '{$required}' ou ser um Administrador para acessar este recurso.",
+            'required_permissions' => $permissions,
             'user_type' => $user->type,
         ], 403);
     }
