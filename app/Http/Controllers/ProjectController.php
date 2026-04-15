@@ -130,6 +130,9 @@ class ProjectController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $t0 = microtime(true);
+        \Log::info('[PROJECTS] start', ['gestao' => $request->boolean('gestao'), 'perPage' => $request->get('pageSize')]);
+
         $perPage = min($request->get('pageSize', $request->get('per_page', 15)), 200);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
@@ -357,9 +360,13 @@ class ProjectController extends Controller
         // Paginação PO-UI
         $page = (int) $request->get('page', 1);
 
+        \Log::info('[PROJECTS] pre-cachedList', ['elapsed_ms' => round((microtime(true) - $t0) * 1000)]);
+
         try {
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly) {
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $t0) {
+        \Log::info('[PROJECTS] inside cachedList, pre-paginate', ['elapsed_ms' => round((microtime(true) - $t0) * 1000)]);
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
+        \Log::info('[PROJECTS] post-paginate', ['elapsed_ms' => round((microtime(true) - $t0) * 1000), 'count' => $projects->count()]);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
         // Evita JOIN na query principal (que agregaria TODA a tabela timesheets)
@@ -445,6 +452,7 @@ class ProjectController extends Controller
             return $project;
         });
 
+        \Log::info('[PROJECTS] pre-return', ['elapsed_ms' => round((microtime(true) - $t0) * 1000)]);
         // Resposta PO-UI
         return [
             'hasNext' => $projects->hasMorePages(),
