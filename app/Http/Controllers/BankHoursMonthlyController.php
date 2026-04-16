@@ -511,11 +511,11 @@ class BankHoursMonthlyController extends Controller
                             ? (int) $log->new_value - (int) $log->old_value
                             : ($log->new_value ? (int) $log->new_value : 0),
                         'reason' => $log->reason,
-                        'changed_by' => [
+                        'changed_by' => $log->changedByUser ? [
                             'id' => $log->changedByUser->id,
                             'name' => $log->changedByUser->name,
                             'email' => $log->changedByUser->email,
-                        ],
+                        ] : null,
                         'created_at' => $log->created_at->toIso8601String(),
                     ];
                 })->toArray();
