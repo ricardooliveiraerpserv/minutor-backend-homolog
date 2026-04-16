@@ -786,6 +786,9 @@ class BankHoursFixedController extends Controller
         }
 
         $projectsData = $projects->map(function($project) {
+            $totalAvailable = $project->getTotalAvailableHours();
+            $balance        = round($project->getGeneralHoursBalance(), 2);
+            $consumed       = round(max(0, $totalAvailable - $balance), 2);
             return [
                 'id' => $project->id,
                 'name' => $project->name,
@@ -795,11 +798,12 @@ class BankHoursFixedController extends Controller
                 'status_display' => $project->getStatusDisplayAttribute(),
                 'sold_hours' => $project->sold_hours,
                 'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
-                'hours_balance' => round($project->getGeneralHoursBalance(), 2),
+                'consumed_hours' => $consumed,
+                'hours_balance' => $balance,
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
                 // ✨ Novos campos calculados usando hour_contributions table
-                'total_available_hours' => $project->getTotalAvailableHours(),
+                'total_available_hours' => $totalAvailable,
                 'total_contributions_hours' => $project->hourContributions()->sum('contributed_hours') ?? 0,
                 'weighted_hourly_rate' => $project->getWeightedAverageHourlyRate(),
             ];
