@@ -56,21 +56,63 @@ class ClientPortalController extends Controller
             ->pluck('total_minutes', 'project_id');
 
         // ── Consumo do mês filtrado (independente do period) ────────────────
-        $monthConsumed = 0;
-        if ($filterMonth && $filterYear) {
-            $monthMinutes = Timesheet::whereIn('project_id', $allProjectIds)
+        $now = Carbon::now();
+        $fMonth = $filterMonth ? (int)$filterMonth : $now->month;
+        $fYear  = $filterYear  ? (int)$filterYear  : $now->year;
+
+        $monthMinutes = Timesheet::whereIn('project_id', $allProjectIds)
+            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereMonth('date', $fMonth)->whereYear('date', $fYear)
+            ->sum('effort_minutes');
+        $monthConsumed = round($monthMinutes / 60, 1);
+
+        // Mês anterior para tendência
+        $prevDate = Carbon::create($fYear, $fMonth, 1)->subMonth();
+        $prevMinutes = Timesheet::whereIn('project_id', $allProjectIds)
+            ->where('status', '!=', Timesheet::STATUS_REJECTED)
+            ->whereMonth('date', $prevDate->month)->whereYear('date', $prevDate->year)
+            ->sum('effort_minutes');
+        $prevConsumed = round($prevMinutes / 60, 1);
+
+        $trendPct = $prevConsumed > 0
+            ? round((($monthConsumed - $prevConsumed) / $prevConsumed) * 100, 1)
+            : ($monthConsumed > 0 ? 100 : 0);
+        $trendDir = $trendPct > 5 ? 'up' : ($trendPct < -5 ? 'down' : 'stable');
+
+        // ── Gráfico mensal (últimos 6 meses) ────────────────────────────────
+        $monthlyChart = [];
+        for ($i = 5; $i >= 0; $i--) {
+            $d = Carbon::create($fYear, $fMonth, 1)->subMonths($i);
+            $mins = Timesheet::whereIn('project_id', $allProjectIds)
                 ->where('status', '!=', Timesheet::STATUS_REJECTED)
-                ->whereMonth('date', (int)$filterMonth)
-                ->whereYear('date', (int)$filterYear)
+                ->whereMonth('date', $d->month)->whereYear('date', $d->year)
                 ->sum('effort_minutes');
-            $monthConsumed = round($monthMinutes / 60, 1);
+            $monthlyChart[] = [
+                'month'          => $d->format('Y-m'),
+                'label'          => $d->locale('pt_BR')->isoFormat('MMM/YY'),
+                'consumed_hours' => round($mins / 60, 1),
+            ];
         }
+
+        // ── Projeção de esgotamento ──────────────────────────────────────────
+        $avgMonthly = collect($monthlyChart)->avg('consumed_hours');
+        $projection = null;
 
         // ── Overview ────────────────────────────────────────────────────────
         $overview = $this->buildOverview($projects, $loggedMinutesByProject);
-        $overview['month_consumed'] = $monthConsumed;
-        $overview['filter_month']   = $filterMonth ? (int)$filterMonth : null;
-        $overview['filter_year']    = $filterYear  ? (int)$filterYear  : null;
+        $overview['month_consumed']   = $monthConsumed;
+        $overview['prev_consumed']    = $prevConsumed;
+        $overview['trend_pct']        = $trendPct;
+        $overview['trend_dir']        = $trendDir;
+        $overview['avg_monthly']      = round($avgMonthly, 1);
+        $overview['filter_month']     = $fMonth;
+        $overview['filter_year']      = $fYear;
+        if ($overview['balance_hours'] > 0 && $avgMonthly > 0) {
+            $weeksLeft = round(($overview['balance_hours'] / $avgMonthly) * 4.3, 1);
+            $overview['weeks_remaining'] = $weeksLeft;
+        } else {
+            $overview['weeks_remaining'] = null;
+        }
 
         // ── Contratos agrupados ─────────────────────────────────────────────
         $contracts = $this->buildContracts($projects, $loggedMinutesByProject);
@@ -81,20 +123,18 @@ class ClientPortalController extends Controller
         // ── Sustentação ─────────────────────────────────────────────────────
         $support = $this->buildSupport($customerId, $period);
 
-        // ── Alertas ─────────────────────────────────────────────────────────
+        // ── Alertas melhorados ───────────────────────────────────────────────
         $alerts = $this->buildAlerts($projectsList, $overview);
 
         return response()->json([
-            'customer' => [
-                'id'   => $customer->id,
-                'name' => $customer->name,
-            ],
-            'period'    => $period,
-            'overview'  => $overview,
-            'contracts' => $contracts,
-            'projects'  => $projectsList,
-            'support'   => $support,
-            'alerts'    => $alerts,
+            'customer' => ['id' => $customer->id, 'name' => $customer->name],
+            'period'        => $period,
+            'overview'      => $overview,
+            'monthly_chart' => $monthlyChart,
+            'contracts'     => $contracts,
+            'projects'      => $projectsList,
+            'support'       => $support,
+            'alerts'        => $alerts,
         ]);
     }
 
@@ -381,12 +421,22 @@ class ClientPortalController extends Controller
         $alerts = [];
 
         foreach ($projects as $p) {
-            if ($p['consumption_pct'] >= 90) {
+            $over = $p['consumption_pct'] - 100;
+            if ($p['balance_hours'] < 0) {
+                $alerts[] = [
+                    'type'       => 'critical',
+                    'icon'       => 'negative',
+                    'title'      => $p['name'],
+                    'message'    => "Contrato ultrapassado em " . abs($p['balance_hours']) . "h (" . round($over, 1) . "% acima do limite)",
+                    'project_id' => $p['id'],
+                ];
+            } elseif ($p['consumption_pct'] >= 90) {
+                $remaining = round($p['balance_hours'], 1);
                 $alerts[] = [
                     'type'       => 'critical',
                     'icon'       => 'alert',
                     'title'      => $p['name'],
-                    'message'    => "{$p['consumption_pct']}% do contrato consumido",
+                    'message'    => round($p['consumption_pct'], 1) . "% consumido — apenas {$remaining}h restantes",
                     'project_id' => $p['id'],
                 ];
             } elseif ($p['balance_hours'] > 0 && $p['balance_hours'] < 10 && $p['sold_hours'] > 0) {
@@ -394,15 +444,7 @@ class ClientPortalController extends Controller
                     'type'       => 'warning',
                     'icon'       => 'low-balance',
                     'title'      => $p['name'],
-                    'message'    => "Saldo abaixo de 10h ({$p['balance_hours']}h restantes)",
-                    'project_id' => $p['id'],
-                ];
-            } elseif ($p['balance_hours'] < 0) {
-                $alerts[] = [
-                    'type'       => 'critical',
-                    'icon'       => 'negative',
-                    'title'      => $p['name'],
-                    'message'    => "Saldo negativo (" . abs($p['balance_hours']) . "h)",
+                    'message'    => "Saldo crítico: apenas {$p['balance_hours']}h disponíveis",
                     'project_id' => $p['id'],
                 ];
             } elseif ($p['consumption_pct'] >= 70) {
@@ -410,7 +452,7 @@ class ClientPortalController extends Controller
                     'type'       => 'warning',
                     'icon'       => 'warning',
                     'title'      => $p['name'],
-                    'message'    => "{$p['consumption_pct']}% consumido — atenção",
+                    'message'    => round($p['consumption_pct'], 1) . "% do contrato utilizado — monitore o ritmo de consumo",
                     'project_id' => $p['id'],
                 ];
             }
