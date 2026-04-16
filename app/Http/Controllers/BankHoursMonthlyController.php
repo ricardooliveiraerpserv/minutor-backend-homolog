@@ -175,9 +175,9 @@ class BankHoursMonthlyController extends Controller
         // Calcular horas contratadas (soma de sold_hours dos projetos pais)
         $contractedHours = (int) $query->sum('sold_hours') ?? 0;
 
-        // Buscar todos os projetos pais com seus relacionamentos necessários
-        // Carregar também serviceType dos filhos para filtrar corretamente
-        $parentProjects = $query->with(['contractType', 'childProjects.contractType', 'childProjects.serviceType'])->get();
+        // Buscar todos os projetos com seus relacionamentos necessários
+        // serviceType do próprio projeto + filhos (evita N+1)
+        $parentProjects = $query->with(['serviceType', 'contractType', 'childProjects.contractType', 'childProjects.serviceType'])->get();
 
         // Calcular horas acumuladas (mesma lógica de contracted_hours, mas usando accumulated_sold_hours quando disponível)
         // Para projetos "Banco de Horas Mensal": usa accumulated_sold_hours se existir, senão usa sold_hours
@@ -653,6 +653,15 @@ class BankHoursMonthlyController extends Controller
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null,
                 'start_date'  => $parentProjects->min('start_date'),
+                'has_support' => (function() use ($parentProjects): bool {
+                    foreach ($parentProjects as $proj) {
+                        if (str_contains(strtolower(trim($proj->serviceType->name ?? '')), 'sustenta')) return true;
+                        foreach ($proj->childProjects ?? [] as $child) {
+                            if (str_contains(strtolower(trim($child->serviceType->name ?? '')), 'sustenta')) return true;
+                        }
+                    }
+                    return false;
+                })(),
             ]
         ]);
     }
