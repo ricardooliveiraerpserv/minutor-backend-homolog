@@ -53,6 +53,59 @@ class ExpenseController extends Controller
     use \App\Http\Traits\ListCacheable;
 
     /**
+     * Retorna o limite diário efetivo de despesas para um projeto.
+     * Se o projeto não tiver limite próprio, sobe para o projeto pai.
+     * Retorna null se ilimitado.
+     */
+    private function getEffectiveDailyLimit(\App\Models\Project $project): ?float
+    {
+        if ($project->unlimited_expense) return null;
+        if ($project->max_expense_per_consultant !== null && (float) $project->max_expense_per_consultant > 0) {
+            return (float) $project->max_expense_per_consultant;
+        }
+        // Tenta o projeto pai
+        if ($project->parent_project_id) {
+            $parent = \App\Models\Project::find($project->parent_project_id);
+            if ($parent && !$parent->unlimited_expense && $parent->max_expense_per_consultant !== null && (float) $parent->max_expense_per_consultant > 0) {
+                return (float) $parent->max_expense_per_consultant;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Valida o limite diário de despesas de um usuário num projeto.
+     * Retorna null se OK, ou JsonResponse de erro se excedido.
+     */
+    private function checkDailyLimit(\App\Models\Project $project, int $userId, float $newAmount, string $expenseDate, ?int $excludeExpenseId = null): ?\Illuminate\Http\JsonResponse
+    {
+        $maxLimit = $this->getEffectiveDailyLimit($project);
+        if ($maxLimit === null) return null;
+
+        $query = Expense::where('project_id', $project->id)
+            ->where('user_id', $userId)
+            ->whereDate('expense_date', $expenseDate)
+            ->whereNotIn('status', ['rejected']);
+        if ($excludeExpenseId) $query->where('id', '!=', $excludeExpenseId);
+        $accumulated = (float) $query->sum('amount');
+        $totalAfter  = $accumulated + $newAmount;
+
+        if ($totalAfter > $maxLimit) {
+            return $this->businessRuleResponse(
+                'EXPENSE_AMOUNT_EXCEEDED',
+                'Limite diário de despesas excedido',
+                sprintf(
+                    'O limite diário de despesas neste projeto é R$ %s. Já registrado no dia: R$ %s. Disponível: R$ %s.',
+                    number_format($maxLimit, 2, ',', '.'),
+                    number_format($accumulated, 2, ',', '.'),
+                    number_format(max(0, $maxLimit - $accumulated), 2, ',', '.')
+                )
+            );
+        }
+        return null;
+    }
+
+    /**
      * @OA\Get(
      *     path="/api/v1/expenses",
      *     summary="Listar despesas",
@@ -341,31 +394,14 @@ class ExpenseController extends Controller
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 
-        // Validar valor máximo diário por consultor (apenas se não for despesa ilimitada)
-        $maxLimit = $project->max_expense_per_consultant;
-        if (!$project->unlimited_expense && $maxLimit) {
-            $newAmount   = (float) $validator->validated()['amount'];
-            $expenseDate = $validator->validated()['expense_date'];
-            $accumulated = Expense::where('project_id', $project->id)
-                ->where('user_id', $targetUserId)
-                ->whereDate('expense_date', $expenseDate)
-                ->whereNotIn('status', ['rejected'])
-                ->sum('amount');
-            $totalAfter  = $accumulated + $newAmount;
-
-            if ($totalAfter > (float) $maxLimit) {
-                return $this->businessRuleResponse(
-                    'EXPENSE_AMOUNT_EXCEEDED',
-                    'Limite diário de despesas excedido',
-                    sprintf(
-                        'O limite diário de despesas neste projeto é R$ %s. Já registrado no dia: R$ %s. Disponível: R$ %s.',
-                        number_format($maxLimit, 2, ',', '.'),
-                        number_format($accumulated, 2, ',', '.'),
-                        number_format(max(0, (float)$maxLimit - $accumulated), 2, ',', '.')
-                    )
-                );
-            }
-        }
+        // Validar limite diário por usuário (inclui fallback para projeto pai)
+        $limitError = $this->checkDailyLimit(
+            $project,
+            $targetUserId,
+            (float) $validator->validated()['amount'],
+            $validator->validated()['expense_date']
+        );
+        if ($limitError) return $limitError;
 
         $expenseData = $validator->validated();
 
@@ -531,34 +567,21 @@ class ExpenseController extends Controller
             $project = $expense->project;
         }
 
-        // Validar limite diário por consultor ao editar (se o valor está sendo alterado e não for despesa ilimitada)
+        // Validar limite diário ao editar (exclui a própria despesa do acumulado)
         if (isset($updateData['amount'])) {
-            $maxLimit = $project->max_expense_per_consultant;
-            if (!$project->unlimited_expense && $maxLimit) {
-                $editUserId  = $expense->user_id;
-                $newAmount   = (float) $updateData['amount'];
-                $expenseDate = $updateData['expense_date'] ?? $expense->expense_date;
-                // Exclui a própria despesa do acumulado do dia para recalcular com o novo valor
-                $accumulated = Expense::where('project_id', $project->id)
-                    ->where('user_id', $editUserId)
-                    ->whereDate('expense_date', $expenseDate)
-                    ->whereNotIn('status', ['rejected'])
-                    ->where('id', '!=', $expense->id)
-                    ->sum('amount');
-                $totalAfter  = $accumulated + $newAmount;
-
-                if ($totalAfter > (float) $maxLimit) {
-                    return $this->businessRuleResponse(
-                        'EXPENSE_AMOUNT_EXCEEDED',
-                        'Limite diário de despesas excedido',
-                        sprintf(
-                            'O limite diário de despesas neste projeto é R$ %s. Disponível no dia: R$ %s.',
-                            number_format($maxLimit, 2, ',', '.'),
-                            number_format(max(0, (float)$maxLimit - $accumulated), 2, ',', '.')
-                        )
-                    );
-                }
-            }
+            $expenseDate = $updateData['expense_date'] ?? (
+                $expense->expense_date instanceof \Carbon\Carbon
+                    ? $expense->expense_date->format('Y-m-d')
+                    : (string) $expense->expense_date
+            );
+            $limitError = $this->checkDailyLimit(
+                $project,
+                $expense->user_id,
+                (float) $updateData['amount'],
+                $expenseDate,
+                $expense->id
+            );
+            if ($limitError) return $limitError;
         }
 
         // Upload de novo comprovante se fornecido
