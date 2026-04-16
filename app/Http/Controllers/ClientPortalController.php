@@ -17,8 +17,10 @@ class ClientPortalController extends Controller
     public function portal(Request $request): JsonResponse
     {
         $user       = $request->user();
-        $customerId = $request->get('customer_id');
-        $period     = $request->get('period', 'all'); // all | month | quarter | year
+        $customerId  = $request->get('customer_id');
+        $period      = $request->get('period', 'all'); // all | month | quarter | year
+        $filterMonth = $request->get('filter_month'); // 1-12
+        $filterYear  = $request->get('filter_year');  // e.g. 2025
 
         // Admins podem passar customer_id livremente; coordenadores não têm customer_id;
         // clientes (futuramente) veriam apenas o próprio customer_id.
@@ -53,8 +55,22 @@ class ClientPortalController extends Controller
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
+        // ── Consumo do mês filtrado (independente do period) ────────────────
+        $monthConsumed = 0;
+        if ($filterMonth && $filterYear) {
+            $monthMinutes = Timesheet::whereIn('project_id', $allProjectIds)
+                ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                ->whereMonth('date', (int)$filterMonth)
+                ->whereYear('date', (int)$filterYear)
+                ->sum('effort_minutes');
+            $monthConsumed = round($monthMinutes / 60, 1);
+        }
+
         // ── Overview ────────────────────────────────────────────────────────
         $overview = $this->buildOverview($projects, $loggedMinutesByProject);
+        $overview['month_consumed'] = $monthConsumed;
+        $overview['filter_month']   = $filterMonth ? (int)$filterMonth : null;
+        $overview['filter_year']    = $filterYear  ? (int)$filterYear  : null;
 
         // ── Contratos agrupados ─────────────────────────────────────────────
         $contracts = $this->buildContracts($projects, $loggedMinutesByProject);
