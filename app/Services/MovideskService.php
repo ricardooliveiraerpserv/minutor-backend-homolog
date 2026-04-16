@@ -331,30 +331,59 @@ class MovideskService
                 ->first();
 
             if ($serviceType) {
-                $project = Project::active()
-                    ->where('customer_id', $customerId)
+                // Busca o projeto sem filtro de status para detectar projetos inativos
+                $project = Project::where('customer_id', $customerId)
                     ->where('service_type_id', $serviceType->id)
                     ->first();
 
                 if ($project) {
-                    return $project->id;
+                    if ($project->isActive()) {
+                        return $project->id;
+                    }
+
+                    // Projeto encontrado mas inativo → usa projeto padrão
+                    Log::warning('⚠️ [MOVIDESK] Projeto do cliente está inativo — usando projeto padrão', [
+                        'project_id'   => $project->id,
+                        'project_name' => $project->name,
+                        'status'       => $project->status,
+                        'customer_id'  => $customerId,
+                    ]);
                 }
             }
         }
 
+        return $this->resolveDefaultProject();
+    }
+
+    private function resolveDefaultProject(): ?int
+    {
         $defaultId = SystemSetting::get('movidesk_default_project_id');
 
         if (!$defaultId) {
-            Log::error('🚨 [MOVIDESK] movidesk_default_project_id não configurado');
+            Log::error('🚨 [MOVIDESK] movidesk_default_project_id não configurado — apontamento descartado');
             return null;
         }
 
         $project = Project::find($defaultId);
 
-        if (!$project || !$project->isActive()) {
-            Log::error('🚨 [MOVIDESK] Projeto padrão inativo ou inexistente', ['id' => $defaultId]);
+        if (!$project) {
+            Log::error('🚨 [MOVIDESK] Projeto padrão não encontrado', ['id' => $defaultId]);
             return null;
         }
+
+        if (!$project->isActive()) {
+            Log::error('🚨 [MOVIDESK] Projeto padrão está inativo — apontamento descartado', [
+                'project_id'   => $project->id,
+                'project_name' => $project->name,
+                'status'       => $project->status,
+            ]);
+            return null;
+        }
+
+        Log::info('ℹ️ [MOVIDESK] Usando projeto padrão', [
+            'project_id'   => $project->id,
+            'project_name' => $project->name,
+        ]);
 
         return $project->id;
     }
