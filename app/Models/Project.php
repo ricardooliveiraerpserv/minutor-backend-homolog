@@ -290,19 +290,19 @@ class Project extends Model
     }
 
     /**
-     * Scope para projetos ativos (não cancelados nem encerrados)
+     * Scope para projetos ativos (não cancelados, encerrados nem pausados)
      */
     public function scopeActive($query)
     {
-        return $query->whereNotIn('status', [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
+        return $query->whereNotIn('status', [self::STATUS_CANCELLED, self::STATUS_FINISHED, self::STATUS_PAUSED]);
     }
 
     /**
-     * Verifica se o projeto está ativo
+     * Verifica se o projeto está ativo (permite novos lançamentos)
      */
     public function isActive(): bool
     {
-        return !in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
+        return !in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_FINISHED, self::STATUS_PAUSED]);
     }
 
     /**

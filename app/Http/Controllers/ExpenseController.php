@@ -387,13 +387,20 @@ class ExpenseController extends Controller
             return $this->validationErrorResponse($validator->errors()->all());
         }
 
-        // Verificar se o usuário tem acesso ao projeto
         $project = Project::find($request->project_id);
         $user = Auth::user();
 
         // Clientes não podem registrar despesas
         if ($user->isCliente()) {
             return $this->accessDeniedResponse('Usuários com perfil Cliente não podem registrar despesas.');
+        }
+
+        // Verificar se o projeto existe e permite novos lançamentos
+        if (!$project || !$project->isActive()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Não é possível lançar despesas em projetos com status ' . ($project ? '"' . $project->status_display . '"' : 'inativo') . '.',
+            ], 422);
         }
 
         // Determinar o usuário alvo da despesa
@@ -570,6 +577,12 @@ class ExpenseController extends Controller
         // Verificar acesso ao novo projeto se alterado
         if (isset($updateData['project_id'])) {
             $project = Project::find($updateData['project_id']);
+            if (!$project || !$project->isActive()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Não é possível lançar despesas em projetos com status ' . ($project ? '"' . $project->status_display . '"' : 'inativo') . '.',
+                ], 422);
+            }
             if (!$user->isAdmin() && !$project->consultants()->where('user_id', $user->id)->exists()) {
                 return $this->accessDeniedResponse('Você não tem acesso ao projeto selecionado');
             }
