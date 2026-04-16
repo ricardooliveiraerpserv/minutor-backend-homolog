@@ -57,15 +57,14 @@ class ExpenseController extends Controller
      * Se o projeto não tiver limite próprio, sobe para o projeto pai.
      * Retorna null se ilimitado.
      */
-    private function getEffectiveDailyLimit(\App\Models\Project $project): ?float
+    private function getEffectiveDailyLimit(Project $project): ?float
     {
         if ($project->unlimited_expense) return null;
         if ($project->max_expense_per_consultant !== null && (float) $project->max_expense_per_consultant > 0) {
             return (float) $project->max_expense_per_consultant;
         }
-        // Tenta o projeto pai
         if ($project->parent_project_id) {
-            $parent = \App\Models\Project::find($project->parent_project_id);
+            $parent = Project::find($project->parent_project_id);
             if ($parent && !$parent->unlimited_expense && $parent->max_expense_per_consultant !== null && (float) $parent->max_expense_per_consultant > 0) {
                 return (float) $parent->max_expense_per_consultant;
             }
@@ -73,11 +72,7 @@ class ExpenseController extends Controller
         return null;
     }
 
-    /**
-     * Valida o limite diário de despesas de um usuário num projeto.
-     * Retorna null se OK, ou JsonResponse de erro se excedido.
-     */
-    private function checkDailyLimit(\App\Models\Project $project, int $userId, float $newAmount, string $expenseDate, ?int $excludeExpenseId = null): ?\Illuminate\Http\JsonResponse
+    private function checkDailyLimit(Project $project, int $userId, float $newAmount, string $expenseDate, ?int $excludeExpenseId = null): ?JsonResponse
     {
         $maxLimit = $this->getEffectiveDailyLimit($project);
         if ($maxLimit === null) return null;
