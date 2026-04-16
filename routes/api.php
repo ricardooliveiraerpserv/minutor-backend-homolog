@@ -28,6 +28,7 @@ use App\Http\Controllers\HourContributionController;
 use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
+use App\Http\Controllers\ClientPortalController;
 
 /*
 |--------------------------------------------------------------------------
@@ -256,6 +257,10 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:users.update')->group(function () {
             Route::patch('/executives/{user}', [ExecutiveController::class, 'toggle'])->name('executives.toggle');
         });
+
+        // 🏢 CLIENT PORTAL
+        Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
+        Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
