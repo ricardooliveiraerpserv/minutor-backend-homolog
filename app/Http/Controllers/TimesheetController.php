@@ -201,6 +201,14 @@ class TimesheetController extends Controller
             $query->where('ticket', 'ilike', "%{$request->ticket}%");
         }
 
+        if ($request->filled('requester')) {
+            $query->whereRaw("movidesk_tickets.solicitante::jsonb->>'name' = ?", [$request->requester]);
+        }
+
+        if ($request->filled('ticket_service')) {
+            $query->where('movidesk_tickets.servico', $request->ticket_service);
+        }
+
         if ($request->filled('origin')) {
             $originVal = $request->get('origin');
             if ($originVal === 'web') {
