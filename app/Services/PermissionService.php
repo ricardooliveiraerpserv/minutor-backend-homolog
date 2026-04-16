@@ -90,8 +90,13 @@ class PermissionService
     {
         return [
             'dashboard.view',
+            'dashboards.view',
+            'dashboards.bank_hours_fixed.view',
+            'dashboards.bank_hours_monthly.view',
+            'dashboards.on_demand.view',
             'projects.view',
-            'timesheets.view_project_summary',
+            'timesheets.view', 'timesheets.view_project_summary',
+            'expenses.view',
             'users.view_own_profile', 'users.update_own_profile',
             'reports.view',
         ];
