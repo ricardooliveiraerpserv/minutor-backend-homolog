@@ -706,6 +706,15 @@ class BankHoursFixedController extends Controller
                 });
             }
 
+            // Excluir projetos do tipo "Fechado" (eles têm seu próprio dashboard)
+            $fechadoType = \App\Models\ContractType::where('name', 'Fechado')->first();
+            if ($fechadoType) {
+                $query->where(function ($q) use ($fechadoType) {
+                    $q->where('contract_type_id', '!=', $fechadoType->id)
+                      ->orWhereNull('contract_type_id');
+                });
+            }
+
             $projects = $query->get();
         }
 
