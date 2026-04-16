@@ -510,13 +510,12 @@ class MovideskService
         $clients = $ticket['clients'] ?? [];
         if (empty($clients)) return null;
 
+        // Preferir pessoa (tem organization preenchida) sobre empresa
         $target = null;
-        if (count($clients) > 1) {
-            foreach ($clients as $c) {
-                if (strpos($c['email'] ?? '', '@erpserv') === false) {
-                    $target = $c;
-                    break;
-                }
+        foreach ($clients as $c) {
+            if (!empty($c['organization'])) {
+                $target = $c;
+                break;
             }
         }
         $target = $target ?? $clients[0];
