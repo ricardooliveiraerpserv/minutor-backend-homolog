@@ -207,6 +207,9 @@ class Expense extends Model
         }
 
         // Verifica se o usuário é coordenador do projeto
+        if (!$this->project) {
+            return false;
+        }
         return $this->project->coordinators()->where('users.id', $user->id)->exists();
     }
 
