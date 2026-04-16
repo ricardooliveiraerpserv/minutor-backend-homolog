@@ -148,6 +148,12 @@ class BankHoursMonthlyController extends Controller
         // Aplicar filtro de projeto específico
         if ($projectId) {
             $query->where('id', $projectId);
+        } else {
+            // Sem projeto específico: restringir ao tipo de contrato desta dashboard
+            $bhMonthlyType = \App\Models\ContractType::where('name', 'Banco de Horas Mensal')->first();
+            if ($bhMonthlyType) {
+                $query->where('contract_type_id', $bhMonthlyType->id);
+            }
         }
 
         // Aplicar filtro de tipo de serviço

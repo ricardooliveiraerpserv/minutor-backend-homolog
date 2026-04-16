@@ -146,6 +146,12 @@ class BankHoursFixedController extends Controller
         // Aplicar filtro de projeto específico
         if ($projectId) {
             $query->where('id', $projectId);
+        } else {
+            // Sem projeto específico: restringir ao tipo de contrato desta dashboard
+            $bhFixedType = \App\Models\ContractType::where('name', 'Banco de Horas Fixo')->first();
+            if ($bhFixedType) {
+                $query->where('contract_type_id', $bhFixedType->id);
+            }
         }
 
         // Aplicar filtro de tipo de serviço
