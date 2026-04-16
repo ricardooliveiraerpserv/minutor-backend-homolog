@@ -84,6 +84,20 @@ class BankHoursMonthlyController extends Controller
      */
     public function bankHoursMonthly(Request $request): JsonResponse
     {
+        try {
+            return $this->bankHoursMonthlyInternal($request);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Server Error',
+                'debug_error' => $e->getMessage(),
+                'debug_file' => $e->getFile() . ':' . $e->getLine(),
+            ], 500);
+        }
+    }
+
+    private function bankHoursMonthlyInternal(Request $request): JsonResponse
+    {
         $user = $request->user();
 
         if (!$user) {
