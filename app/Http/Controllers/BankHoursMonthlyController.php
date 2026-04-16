@@ -1707,6 +1707,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Buscar todos os timesheets que atendem aos critérios
@@ -1895,6 +1903,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -2090,6 +2106,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Buscar todos os timesheets que atendem aos critérios
@@ -2278,6 +2302,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Excluir projetos do tipo "Fechado"
@@ -2456,6 +2488,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -2654,6 +2694,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com o status específico
@@ -2839,6 +2887,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -3042,6 +3098,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com o nível específico
@@ -3226,6 +3290,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -3424,6 +3496,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com a categoria específica
@@ -3601,6 +3681,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -3826,6 +3914,14 @@ class BankHoursMonthlyController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
+            }
         }
 
         // Excluir projetos do tipo "Fechado"
@@ -3971,6 +4067,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -4183,6 +4287,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 
@@ -4568,6 +4680,14 @@ class BankHoursMonthlyController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Mensal
+            $bhMonthlyType = \App\Models\ContractType::where('code', 'monthly_hours')->first();
+            if ($bhMonthlyType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id);
+                });
             }
         }
 

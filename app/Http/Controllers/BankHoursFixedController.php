@@ -1682,6 +1682,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Buscar todos os timesheets que atendem aos critérios
@@ -1870,6 +1878,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -2065,6 +2081,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Buscar todos os timesheets que atendem aos critérios
@@ -2253,6 +2277,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Excluir projetos do tipo "Fechado"
@@ -2431,6 +2463,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -2629,6 +2669,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com o status específico
@@ -2814,6 +2862,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -3017,6 +3073,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com o nível específico
@@ -3201,6 +3265,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -3399,6 +3471,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com a categoria específica
@@ -3576,6 +3656,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -3801,6 +3889,14 @@ class BankHoursFixedController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
+            }
         }
 
         // Excluir projetos do tipo "Fechado"
@@ -3946,6 +4042,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -4158,6 +4262,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
@@ -4543,6 +4655,14 @@ class BankHoursFixedController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato BH Fixo
+            $bhFixedType = \App\Models\ContractType::where('code', 'fixed_hours')->first();
+            if ($bhFixedType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($bhFixedType) {
+                    $q->where('contract_type_id', $bhFixedType->id);
+                });
             }
         }
 
