@@ -10,73 +10,79 @@ use Illuminate\Http\JsonResponse;
 class FechadoController extends Controller
 {
     /**
-     * Dashboard de projetos do tipo "Fechado".
-     *
-     * Regras:
-     *  - Não há apontamentos — o consumo é baseado em sold_hours.
-     *  - consumed_hours  = soma de sold_hours de todos os projetos Fechado do cliente.
-     *  - month_consumed_hours = soma de sold_hours dos projetos cujo start_date cai no mês/ano filtrado.
+     * Resolve o ContractType "Fechado" de forma robusta (case-insensitive).
      */
-    public function fechado(Request $request): JsonResponse
+    private function fechadoContractType(): ?ContractType
     {
-        $user = $request->user();
+        return ContractType::whereRaw('LOWER(name) = ?', ['fechado'])->first()
+            ?? ContractType::where('name', 'like', '%echado%')->first();
+    }
 
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Usuário não autenticado'], 401);
+    /**
+     * Monta a query base de projetos Fechado.
+     * Quando project_id é informado, busca diretamente (pai ou filho).
+     * Quando não, busca todos os Fechado do cliente (incluindo filhos cujo pai não é Fechado).
+     */
+    private function buildQuery(Request $request, ?int $customerId, ContractType $fechadoType)
+    {
+        $projectId = $request->filled('project_id') ? (int) $request->get('project_id') : null;
+
+        if ($projectId) {
+            // Busca direta — sem restrição de hierarquia
+            return Project::where('id', $projectId)
+                ->where('contract_type_id', $fechadoType->id);
         }
 
-        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
-            return response()->json([
-                'success'             => false,
-                'message'             => 'Acesso negado.',
-                'required_permission' => 'dashboards.view',
-            ], 403);
-        }
-
-        // Determinar cliente
-        $customerId = null;
-        if ($user->customer_id) {
-            $customerId = $user->customer_id;
-        } elseif ($user->isAdmin() && $request->has('customer_id')) {
-            $customerId = $request->get('customer_id');
-        }
-
-        // Filtros de mês/ano
-        $month = (int) ($request->get('month') ?: now()->month);
-        $year  = (int) ($request->get('year')  ?: now()->year);
-
-        // Tipo de contrato Fechado
-        $fechadoType = ContractType::where('name', 'Fechado')->first();
-        if (!$fechadoType) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Tipo de contrato "Fechado" não encontrado no sistema.',
-            ], 404);
-        }
-
-        // Query base — apenas projetos raiz do tipo Fechado
-        $query = Project::whereNull('parent_project_id')
-            ->where('contract_type_id', $fechadoType->id);
+        // Sem projeto específico: todos os Fechado do cliente.
+        // Inclui: (1) projetos raiz Fechado, OU (2) filhos cujo pai não é Fechado.
+        $query = Project::where('contract_type_id', $fechadoType->id);
 
         if ($customerId) {
             $query->where('customer_id', $customerId);
         }
 
-        if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
+        if ($request->filled('executive_id')) {
             $executiveId = (int) $request->get('executive_id');
             $query->whereHas('customer', fn ($q) => $q->where('executive_id', $executiveId));
         }
 
-        if ($request->filled('project_id')) {
-            $query->where('id', $request->get('project_id'));
+        $query->where(function ($q) use ($fechadoType) {
+            $q->whereNull('parent_project_id')
+              ->orWhereDoesntHave('parentProject', fn ($pq) =>
+                  $pq->where('contract_type_id', $fechadoType->id)
+              );
+        });
+
+        return $query;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Dashboard principal — cards de visão geral
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function fechado(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) return response()->json(['success' => false, 'message' => 'Não autenticado'], 401);
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado.'], 403);
         }
 
-        $projects = $query->get();
+        $customerId = $user->customer_id
+            ?? ($user->isAdmin() && $request->has('customer_id') ? $request->get('customer_id') : null);
 
-        // consumed_hours = soma total de sold_hours
+        $month = (int) ($request->get('month') ?: now()->month);
+        $year  = (int) ($request->get('year')  ?: now()->year);
+
+        $fechadoType = $this->fechadoContractType();
+        if (!$fechadoType) {
+            return response()->json(['success' => false, 'message' => 'Tipo de contrato "Fechado" não encontrado.'], 404);
+        }
+
+        $projects = $this->buildQuery($request, $customerId, $fechadoType)->get();
+
         $consumedHours = $projects->sum(fn ($p) => (float) ($p->sold_hours ?? 0));
 
-        // month_consumed_hours = sold_hours de projetos cujo start_date cai no mês/ano filtrado
         $monthConsumedHours = $projects
             ->filter(function ($p) use ($month, $year) {
                 if (!$p->start_date) return false;
@@ -97,56 +103,37 @@ class FechadoController extends Controller
                     $d = \Carbon\Carbon::parse($p->start_date);
                     return $d->month === $month && $d->year === $year;
                 })->count(),
-                'customer_id'          => $customerId,
-                'month'                => $month,
-                'year'                 => $year,
+                'customer_id' => $customerId,
+                'month'       => $month,
+                'year'        => $year,
             ],
         ]);
     }
 
-    /**
-     * Lista os projetos Fechado do cliente para exibição na aba de projetos.
-     */
+    // ─────────────────────────────────────────────────────────────────────────
+    // Lista de projetos — aba Projetos
+    // ─────────────────────────────────────────────────────────────────────────
+
     public function fechadoProjects(Request $request): JsonResponse
     {
         $user = $request->user();
-
-        if (!$user) {
-            return response()->json(['success' => false, 'message' => 'Usuário não autenticado'], 401);
-        }
-
+        if (!$user) return response()->json(['success' => false, 'message' => 'Não autenticado'], 401);
         if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
             return response()->json(['success' => false, 'message' => 'Acesso negado.'], 403);
         }
 
-        $customerId = null;
-        if ($user->customer_id) {
-            $customerId = $user->customer_id;
-        } elseif ($user->isAdmin() && $request->has('customer_id')) {
-            $customerId = $request->get('customer_id');
-        }
+        $customerId = $user->customer_id
+            ?? ($user->isAdmin() && $request->has('customer_id') ? $request->get('customer_id') : null);
 
         $month = (int) ($request->get('month') ?: now()->month);
         $year  = (int) ($request->get('year')  ?: now()->year);
 
-        $fechadoType = ContractType::where('name', 'Fechado')->first();
+        $fechadoType = $this->fechadoContractType();
         if (!$fechadoType) {
             return response()->json(['success' => false, 'message' => 'Tipo "Fechado" não encontrado.'], 404);
         }
 
-        $query = Project::whereNull('parent_project_id')
-            ->where('contract_type_id', $fechadoType->id);
-
-        if ($customerId) {
-            $query->where('customer_id', $customerId);
-        }
-
-        if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
-            $executiveId = (int) $request->get('executive_id');
-            $query->whereHas('customer', fn ($q) => $q->where('executive_id', $executiveId));
-        }
-
-        $projects = $query->get();
+        $projects = $this->buildQuery($request, $customerId, $fechadoType)->get();
 
         $data = $projects->map(function ($p) use ($month, $year) {
             $inMonth = false;
@@ -155,13 +142,13 @@ class FechadoController extends Controller
                 $inMonth = $d->month === $month && $d->year === $year;
             }
             return [
-                'id'           => $p->id,
-                'name'         => $p->name,
-                'code'         => $p->code,
-                'status'       => $p->status,
-                'sold_hours'   => (float) ($p->sold_hours ?? 0),
-                'start_date'   => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : null,
-                'in_month'     => $inMonth,
+                'id'         => $p->id,
+                'name'       => $p->name,
+                'code'       => $p->code,
+                'status'     => $p->status,
+                'sold_hours' => (float) ($p->sold_hours ?? 0),
+                'start_date' => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : null,
+                'in_month'   => $inMonth,
             ];
         })->values();
 
