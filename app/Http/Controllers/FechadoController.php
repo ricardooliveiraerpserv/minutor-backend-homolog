@@ -72,9 +72,11 @@ class FechadoController extends Controller
             return response()->json(['success' => false, 'message' => 'Tipo de contrato "Fechado" não encontrado.'], 404);
         }
 
-        $projects = $this->buildQuery($request, $customerId, $fechadoType)->get();
+        $projects = $this->buildQuery($request, $customerId, $fechadoType)
+            ->with('hourContributions')
+            ->get();
 
-        $consumedHours = $projects->sum(fn ($p) => (float) ($p->sold_hours ?? 0));
+        $consumedHours = $projects->sum(fn ($p) => (float) $p->getTotalAvailableHours());
 
         $monthConsumedHours = $projects
             ->filter(function ($p) use ($month, $year) {
@@ -82,7 +84,7 @@ class FechadoController extends Controller
                 $d = \Carbon\Carbon::parse($p->start_date);
                 return $d->month === $month && $d->year === $year;
             })
-            ->sum(fn ($p) => (float) ($p->sold_hours ?? 0));
+            ->sum(fn ($p) => (float) $p->getTotalAvailableHours());
 
         return response()->json([
             'success' => true,
@@ -126,7 +128,9 @@ class FechadoController extends Controller
             return response()->json(['success' => false, 'message' => 'Tipo "Fechado" não encontrado.'], 404);
         }
 
-        $projects = $this->buildQuery($request, $customerId, $fechadoType)->get();
+        $projects = $this->buildQuery($request, $customerId, $fechadoType)
+            ->with('hourContributions')
+            ->get();
 
         $data = $projects->map(function ($p) use ($month, $year) {
             $inMonth = false;
@@ -139,7 +143,7 @@ class FechadoController extends Controller
                 'name'       => $p->name,
                 'code'       => $p->code,
                 'status'     => $p->status,
-                'sold_hours' => (float) ($p->sold_hours ?? 0),
+                'sold_hours' => (float) $p->getTotalAvailableHours(),
                 'start_date' => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : null,
                 'in_month'   => $inMonth,
             ];
