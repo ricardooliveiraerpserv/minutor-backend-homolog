@@ -86,21 +86,44 @@ class FechadoController extends Controller
             })
             ->sum(fn ($p) => (float) $p->getTotalAvailableHours());
 
+        // Histórico de aportes (novos) para os projetos encontrados
+        $projectIds = $projects->pluck('id')->toArray();
+        $contributionHistory = [];
+        if (!empty($projectIds)) {
+            $contributionHistory = \App\Models\HourContribution::whereIn('project_id', $projectIds)
+                ->with(['project:id,name,code', 'contributedBy:id,name,email'])
+                ->orderBy('contributed_at', 'desc')
+                ->get()
+                ->map(function ($c) {
+                    return [
+                        'id'                => 'contribution_' . $c->id,
+                        'project'           => $c->project ? ['id' => $c->project->id, 'name' => $c->project->name, 'code' => $c->project->code] : null,
+                        'contributed_hours' => $c->contributed_hours,
+                        'hourly_rate'       => (float) $c->hourly_rate,
+                        'total_value'       => $c->getTotalValue(),
+                        'description'       => $c->description,
+                        'changed_by'        => $c->contributedBy ? ['id' => $c->contributedBy->id, 'name' => $c->contributedBy->name] : null,
+                        'created_at'        => $c->contributed_at->toIso8601String(),
+                    ];
+                })->toArray();
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard Fechado obtidos com sucesso',
             'data'    => [
-                'consumed_hours'       => round($consumedHours, 1),
-                'month_consumed_hours' => round($monthConsumedHours, 1),
-                'project_count'        => $projects->count(),
-                'month_project_count'  => $projects->filter(function ($p) use ($month, $year) {
+                'consumed_hours'            => round($consumedHours, 1),
+                'month_consumed_hours'      => round($monthConsumedHours, 1),
+                'project_count'             => $projects->count(),
+                'month_project_count'       => $projects->filter(function ($p) use ($month, $year) {
                     if (!$p->start_date) return false;
                     $d = \Carbon\Carbon::parse($p->start_date);
                     return $d->month === $month && $d->year === $year;
                 })->count(),
-                'customer_id' => $customerId,
-                'month'       => $month,
-                'year'        => $year,
+                'contributed_hours_history' => $contributionHistory,
+                'customer_id'               => $customerId,
+                'month'                     => $month,
+                'year'                      => $year,
             ],
         ]);
     }
