@@ -157,7 +157,7 @@ class TimesheetController extends Controller
         $page = (int) $request->get('page', 1);
 
         $query = Timesheet::with(['user', 'customer', 'project.contractType', 'project.customer', 'reviewedBy'])
-            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
         // Controle de visibilidade por perfil
@@ -351,9 +351,17 @@ class TimesheetController extends Controller
 
                 $timesheets = $query->paginate($perPage, ['*'], 'page', $page);
 
+                $items = collect($timesheets->items())->map(function ($ts) {
+                    $arr = $ts->toArray();
+                    if (isset($arr['ticket_solicitante']) && is_string($arr['ticket_solicitante'])) {
+                        $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
+                    }
+                    return $arr;
+                })->all();
+
                 return [
                     'hasNext'            => $timesheets->hasMorePages(),
-                    'items'              => $timesheets->items(),
+                    'items'              => $items,
                     'totalEffortMinutes' => $totalEffortMinutes,
                     'totalEffortHours'   => sprintf('%d:%02d', $totalHours, $totalMinutes),
                 ];
