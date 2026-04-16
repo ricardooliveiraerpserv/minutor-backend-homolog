@@ -354,7 +354,7 @@ class ApprovalController extends Controller
         $request->validate([
             'timesheet_ids' => 'required|array|min:1',
             'timesheet_ids.*' => 'integer|exists:timesheets,id',
-            'reason' => 'nullable|string|max:1000',
+            'reason' => 'required|string|min:1|max:1000',
         ]);
 
         $user = Auth::user();
