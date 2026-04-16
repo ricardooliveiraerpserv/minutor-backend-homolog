@@ -149,6 +149,7 @@ class ProjectController extends Controller
         $executiveId = $request->get('executive_id');
         $consultantOnly = $request->get('consultant_only');
         $contractTypeName = $request->get('contract_type_name');
+        $contractTypeCode = $request->get('contract_type_code');
         $contractTypeId = $request->get('contract_type_id');
         $serviceTypeName = $request->get('service_type_name');
         $parentProjectsOnly = $request->get('parent_projects_only') === 'true';
@@ -318,12 +319,16 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro por tipo de contrato (por ID ou nome)
+        // Filtro por tipo de contrato (por ID, code ou nome)
         if ($contractTypeId) {
             $query->where('contract_type_id', $contractTypeId);
+        } elseif ($contractTypeCode) {
+            $query->whereHas('contractType', function ($q) use ($contractTypeCode) {
+                $q->where('code', $contractTypeCode);
+            });
         } elseif ($contractTypeName) {
             $query->whereHas('contractType', function ($q) use ($contractTypeName) {
-                $q->where('name', $contractTypeName);
+                $q->whereRaw('LOWER(name) = ?', [strtolower($contractTypeName)]);
             });
         }
 
