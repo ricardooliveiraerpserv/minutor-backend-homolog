@@ -115,6 +115,14 @@ class BankHoursFixedController extends Controller
         // Filtrar por projeto específico se fornecido
         $projectId = $request->get('project_id');
 
+        // Se o projeto informado for filho (tem parent_project_id), usar o pai como referência
+        if ($projectId) {
+            $proj = Project::select('id', 'parent_project_id')->find($projectId);
+            if ($proj && $proj->parent_project_id) {
+                $projectId = $proj->parent_project_id;
+            }
+        }
+
         // Filtrar por tipo de serviço se fornecido
         $serviceTypeName = $request->get('service_type_name');
         $serviceTypeId = null;
