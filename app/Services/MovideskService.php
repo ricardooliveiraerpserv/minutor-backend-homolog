@@ -510,14 +510,26 @@ class MovideskService
         $clients = $ticket['clients'] ?? [];
         if (empty($clients)) return null;
 
-        // Preferir pessoa (tem organization preenchida) sobre empresa
+        // 1. Preferir cliente com domínio diferente de @erpserv
         $target = null;
         foreach ($clients as $c) {
-            if (!empty($c['organization'])) {
+            if (strpos($c['email'] ?? '', '@erpserv') === false && !empty($c['email'])) {
                 $target = $c;
                 break;
             }
         }
+
+        // 2. Se todos forem @erpserv, preferir pessoa (tem organization preenchida)
+        if (!$target) {
+            foreach ($clients as $c) {
+                if (!empty($c['organization'])) {
+                    $target = $c;
+                    break;
+                }
+            }
+        }
+
+        // 3. Fallback: primeiro da lista
         $target = $target ?? $clients[0];
 
         return [
