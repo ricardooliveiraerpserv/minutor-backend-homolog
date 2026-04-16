@@ -129,11 +129,16 @@ class BankHoursFixedController extends Controller
 
         // Quando um projeto específico é informado, busca esse projeto diretamente
         // (pai ou filho) sem restrição de hierarquia.
-        // Quando nenhum projeto é informado, restringe a projetos raiz do tipo BH Fixo.
+        // Quando nenhum projeto é informado, busca todos os projetos BH Fixo do cliente —
+        // incluindo filhos cujo pai não é BH Fixo (ex.: projeto filho independente).
+        // Filhos cujo pai já é BH Fixo são excluídos para evitar dupla contagem,
+        // pois o pai os agrega via getGeneralHoursBalance().
+        $bhFixedType = \App\Models\ContractType::where('name', 'Banco de Horas Fixo')->first();
+
         if ($projectId) {
             $query = Project::where('id', $projectId);
         } else {
-            $query = Project::whereNull('parent_project_id');
+            $query = Project::where('contract_type_id', $bhFixedType?->id ?? 0);
 
             // Aplicar filtro de cliente
             if ($customerId) {
@@ -148,11 +153,14 @@ class BankHoursFixedController extends Controller
                 });
             }
 
-            // Restringir ao tipo de contrato desta dashboard
-            $bhFixedType = \App\Models\ContractType::where('name', 'Banco de Horas Fixo')->first();
-            if ($bhFixedType) {
-                $query->where('contract_type_id', $bhFixedType->id);
-            }
+            // Incluir: (1) projetos raiz, OU (2) projetos filho cujo pai NÃO é BH Fixo.
+            // Filhos cujo pai é BH Fixo são excluídos — o pai já os agrega.
+            $query->where(function ($q) use ($bhFixedType) {
+                $q->whereNull('parent_project_id')
+                  ->orWhereDoesntHave('parentProject', function ($pq) use ($bhFixedType) {
+                      $pq->where('contract_type_id', $bhFixedType?->id ?? 0);
+                  });
+            });
         }
 
         // Aplicar filtro de tipo de serviço
@@ -259,12 +267,9 @@ class BankHoursFixedController extends Controller
             // Projeto específico: busca diretamente (pai ou filho)
             $projectsForContribution = Project::where('id', $projectId);
         } else {
-            // Sem projeto específico: apenas projetos raiz já filtrados
-            $projectsForContribution = Project::query()->whereNull('parent_project_id');
-            if ($customerId) {
-                $projectsForContribution->where('customer_id', $customerId);
-            }
+            // Sem projeto específico: usar exatamente os mesmos IDs já filtrados em $query
             $parentProjectIds = $query->pluck('id')->toArray();
+            $projectsForContribution = Project::query();
             if (!empty($parentProjectIds)) {
                 $projectsForContribution->whereIn('id', $parentProjectIds);
             } else {
