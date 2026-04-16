@@ -148,6 +148,7 @@ class AuthController extends Controller
                 'email_verified_at'       => $user->email_verified_at,
                 'has_temporary_password'  => false,
                 'type'                    => $user->type,
+                'customer_id'             => $user->customer_id,
                 'consultant_type'         => $user->consultant_type,
                 'rate_type'               => $user->rate_type,
                 'hourly_rate'             => $user->hourly_rate,
