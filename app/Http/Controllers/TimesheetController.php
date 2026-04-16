@@ -162,8 +162,10 @@ class TimesheetController extends Controller
 
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
-            // Cliente vê todos os apontamentos do seu cliente (empresa)
-            $query->where('timesheets.customer_id', $user->customer_id);
+            // Cliente vê apenas apontamentos do seu cliente (empresa)
+            // Somente status pendente e aprovado — conflitante, rejeitado e ajustes são omitidos
+            $query->where('timesheets.customer_id', $user->customer_id)
+                  ->whereIn('timesheets.status', ['pending', 'approved']);
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
         } elseif ($user->isCoordenador()) {
