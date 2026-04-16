@@ -105,6 +105,7 @@ class ClientPortalController extends Controller
         $overview['trend_pct']        = $trendPct;
         $overview['trend_dir']        = $trendDir;
         $overview['avg_monthly']      = round($avgMonthly, 1);
+        $overview['avg_weekly']       = round($avgMonthly / 4.3, 1);
         $overview['filter_month']     = $fMonth;
         $overview['filter_year']      = $fYear;
         if ($overview['balance_hours'] > 0 && $avgMonthly > 0) {
@@ -421,13 +422,13 @@ class ClientPortalController extends Controller
         $alerts = [];
 
         foreach ($projects as $p) {
-            $over = $p['consumption_pct'] - 100;
             if ($p['balance_hours'] < 0) {
+                $exceeded = round(abs($p['balance_hours']), 1);
                 $alerts[] = [
                     'type'       => 'critical',
                     'icon'       => 'negative',
                     'title'      => $p['name'],
-                    'message'    => "Contrato ultrapassado em " . abs($p['balance_hours']) . "h (" . round($over, 1) . "% acima do limite)",
+                    'message'    => "Contrato excedido em {$exceeded}h — uso acima do contratado",
                     'project_id' => $p['id'],
                 ];
             } elseif ($p['consumption_pct'] >= 90) {
@@ -436,23 +437,25 @@ class ClientPortalController extends Controller
                     'type'       => 'critical',
                     'icon'       => 'alert',
                     'title'      => $p['name'],
-                    'message'    => round($p['consumption_pct'], 1) . "% consumido — apenas {$remaining}h restantes",
+                    'message'    => "Apenas {$remaining}h disponíveis — contrato quase esgotado",
                     'project_id' => $p['id'],
                 ];
             } elseif ($p['balance_hours'] > 0 && $p['balance_hours'] < 10 && $p['sold_hours'] > 0) {
+                $remaining = round($p['balance_hours'], 1);
                 $alerts[] = [
                     'type'       => 'warning',
                     'icon'       => 'low-balance',
                     'title'      => $p['name'],
-                    'message'    => "Saldo crítico: apenas {$p['balance_hours']}h disponíveis",
+                    'message'    => "Saldo baixo: {$remaining}h restantes",
                     'project_id' => $p['id'],
                 ];
             } elseif ($p['consumption_pct'] >= 70) {
+                $pct = round($p['consumption_pct'], 1);
                 $alerts[] = [
                     'type'       => 'warning',
                     'icon'       => 'warning',
                     'title'      => $p['name'],
-                    'message'    => round($p['consumption_pct'], 1) . "% do contrato utilizado — monitore o ritmo de consumo",
+                    'message'    => "{$pct}% utilizado — fique de olho no ritmo de consumo",
                     'project_id' => $p['id'],
                 ];
             }
