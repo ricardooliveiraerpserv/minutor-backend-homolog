@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProjectSoldHoursHistory extends Model
 {
+    protected $table = 'project_sold_hours_history';
+
     protected $fillable = [
         'project_id',
         'sold_hours',
