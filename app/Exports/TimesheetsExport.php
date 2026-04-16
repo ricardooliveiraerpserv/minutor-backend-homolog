@@ -20,19 +20,24 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
         $this->user = $user;
     }
 
-    /**
-     * @return \Illuminate\Support\Collection
-     */
     public function collection()
     {
-        $query = Timesheet::with(['user', 'customer', 'project', 'reviewedBy']);
+        $query = Timesheet::with(['user', 'customer', 'project'])
+            ->leftJoin('movidesk_tickets', 'timesheets.ticket', '=', 'movidesk_tickets.ticket_id')
+            ->select(
+                'timesheets.*',
+                'movidesk_tickets.titulo as ticket_titulo',
+                'movidesk_tickets.solicitante as ticket_solicitante'
+            );
 
-        // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$this->user->isAdmin() && !$this->user->hasAccess('hours.view_all')) {
-            $query->forUser($this->user->id);
+        if (!$this->user->isAdmin() && !$this->user->isCoordenador() && !$this->user->hasAccess('hours.view_all')) {
+            if ($this->user->isCliente() && $this->user->customer_id) {
+                $query->whereHas('project', fn($q) => $q->where('customer_id', $this->user->customer_id));
+            } else {
+                $query->forUser($this->user->id);
+            }
         }
 
-        // Aplicar os mesmos filtros da listagem
         if ($this->request->filled('project_id')) {
             $query->forProject($this->request->project_id);
         }
@@ -52,82 +57,78 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
         }
 
         if ($this->request->filled('ticket')) {
-            $query->where('ticket', 'like', "%{$this->request->ticket}%");
+            $query->where('timesheets.ticket', 'like', "%{$this->request->ticket}%");
         }
 
         if ($this->request->filled('start_date') && $this->request->filled('end_date')) {
             $query->inPeriod($this->request->start_date, $this->request->end_date);
         }
 
-        // Busca geral
+        if ($this->request->filled('requester')) {
+            $query->whereRaw("movidesk_tickets.solicitante::jsonb->>'name' = ?", [$this->request->requester]);
+        }
+
+        if ($this->request->filled('ticket_service')) {
+            $query->where('movidesk_tickets.servico', $this->request->ticket_service);
+        }
+
         if ($this->request->filled('search')) {
             $search = $this->request->get('search');
             $query->where(function ($q) use ($search) {
-                $q->where('observation', 'like', "%{$search}%")
-                  ->orWhere('ticket', 'like', "%{$search}%")
-                  ->orWhereHas('project', function ($pq) use ($search) {
-                      $pq->where('name', 'like', "%{$search}%");
-                  })
-                  ->orWhereHas('customer', function ($cq) use ($search) {
-                      $cq->where('name', 'like', "%{$search}%");
-                  });
+                $q->where('timesheets.observation', 'like', "%{$search}%")
+                  ->orWhere('timesheets.ticket', 'like', "%{$search}%")
+                  ->orWhereHas('project', fn($pq) => $pq->where('name', 'like', "%{$search}%"))
+                  ->orWhereHas('customer', fn($cq) => $cq->where('name', 'like', "%{$search}%"));
             });
         }
 
-        // Aplicar ordenação
-        if ($this->request->has('order')) {
-            $orderFields = explode(',', $this->request->get('order'));
-            foreach ($orderFields as $field) {
-                if (str_starts_with($field, '-')) {
-                    $query->orderBy(substr($field, 1), 'desc');
-                } else {
-                    $query->orderBy($field, 'asc');
-                }
-            }
-        } else {
-            $query->orderBy('date', 'desc')->orderBy('start_time', 'desc');
-        }
+        $query->orderBy('timesheets.date', 'desc')->orderBy('timesheets.start_time', 'desc');
 
         return $query->get();
     }
 
-    /**
-     * @return array
-     */
     public function headings(): array
     {
         return [
             'Data',
-            'Status',
+            'Ticket',
             'Colaborador',
             'Projeto',
-            'Cliente',
-            'Ticket',
-            'Início',
-            'Fim',
+            'Título',
+            'Descrição',
+            'Solicitante',
             'Horas',
-            'Observações'
+            'Status',
         ];
     }
 
-    /**
-     * @param $timesheet
-     * @return array
-     */
     public function map($timesheet): array
     {
+        $solicitante = null;
+        if ($timesheet->ticket_solicitante) {
+            $s = is_string($timesheet->ticket_solicitante)
+                ? json_decode($timesheet->ticket_solicitante, true)
+                : $timesheet->ticket_solicitante;
+            $solicitante = $s['name'] ?? null;
+            if ($solicitante && !empty($s['organization'])) {
+                $solicitante .= ' — ' . $s['organization'];
+            }
+        }
+
+        $descricao = $timesheet->observation
+            ? trim(preg_replace('/\s+/', ' ', strip_tags($timesheet->observation)))
+            : '';
+
         return [
             $timesheet->date ? $timesheet->date->format('d/m/Y') : '',
-            $timesheet->status_display,
+            $timesheet->ticket ?? '',
             $timesheet->user ? $timesheet->user->name : '',
             $timesheet->project ? $timesheet->project->name : '',
-            $timesheet->customer ? $timesheet->customer->name : '',
-            $timesheet->ticket ?? '',
-            $timesheet->start_time ? \Carbon\Carbon::parse($timesheet->start_time)->format('H:i') : '',
-            $timesheet->end_time ? \Carbon\Carbon::parse($timesheet->end_time)->format('H:i') : '',
-            $timesheet->effort_hours,
-            $timesheet->observation ?? ''
+            $timesheet->ticket_titulo ?? '',
+            $descricao,
+            $solicitante ?? '',
+            $timesheet->effort_hours ?? '',
+            $timesheet->status_display ?? $timesheet->status ?? '',
         ];
     }
-
 }
