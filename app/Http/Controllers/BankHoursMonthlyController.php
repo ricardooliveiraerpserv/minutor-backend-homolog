@@ -578,7 +578,8 @@ class BankHoursMonthlyController extends Controller
                 'weighted_hourly_rate' => $weightedHourlyRate,  // ✨ Média ponderada (usado no cálculo)
                 'contributed_hours_history' => $contributionHistory,
                 'customer_id' => $customerId,
-                'project_id' => $projectId ? (int) $projectId : null
+                'project_id' => $projectId ? (int) $projectId : null,
+                'start_date'  => $parentProjects->min('start_date'),
             ]
         ]);
     }
