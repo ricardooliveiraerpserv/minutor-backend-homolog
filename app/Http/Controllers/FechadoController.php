@@ -25,9 +25,13 @@ class FechadoController extends Controller
      */
     private function buildQuery(Request $request, ?int $customerId, ContractType $fechadoType)
     {
-        // Apenas projetos INDEPENDENTES (raiz) do tipo Fechado — nunca filhos.
-        $query = Project::whereNull('parent_project_id')
-            ->where('contract_type_id', $fechadoType->id);
+        $query = Project::where('contract_type_id', $fechadoType->id);
+
+        // Quando nenhum projeto específico é selecionado, exibe apenas raízes (independentes).
+        // Quando um project_id é fornecido explicitamente, respeita a seleção do usuário.
+        if (!$request->filled('project_id')) {
+            $query->whereNull('parent_project_id');
+        }
 
         if ($customerId) {
             $query->where('customer_id', $customerId);
@@ -38,7 +42,6 @@ class FechadoController extends Controller
             $query->whereHas('customer', fn ($q) => $q->where('executive_id', $executiveId));
         }
 
-        // Filtro por projeto específico: só aceita se for raiz (já garantido acima)
         if ($request->filled('project_id')) {
             $query->where('id', (int) $request->get('project_id'));
         }
