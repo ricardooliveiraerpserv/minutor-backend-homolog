@@ -34,17 +34,22 @@ class ClientPortalController extends Controller
         // ── Projetos do cliente ─────────────────────────────────────────────
         $projects = Project::with(['contractType', 'serviceType', 'childProjects.contractType', 'childProjects.serviceType'])
             ->where('customer_id', $customerId)
-            ->whereNull('parent_project_id') // apenas pais (estrutura pai/filho)
+            ->whereNull('parent_project_id')
             ->get();
 
+        // Coleta todos os IDs (pai + filho) para query de timesheets
+        $allProjectIds = $projects->flatMap(fn($p) => collect([$p->id])->merge(
+            $p->childProjects->pluck('id')
+        ))->unique()->values()->toArray();
+
         // Período para filtrar timesheets
-        $tsQuery = Timesheet::where('customer_id', $customerId)
+        $tsQuery = Timesheet::whereIn('project_id', $allProjectIds)
             ->where('status', '!=', Timesheet::STATUS_REJECTED);
 
         $this->applyPeriod($tsQuery, $period);
 
         $loggedMinutesByProject = $tsQuery
-            ->select('project_id', DB::raw('SUM(duration) as total_minutes'))
+            ->select('project_id', DB::raw('SUM(effort_minutes) as total_minutes'))
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
@@ -277,14 +282,14 @@ class ClientPortalController extends Controller
 
         $this->applyPeriod($tsBase, $period);
 
-        $timesheets = (clone $tsBase)->get(['project_id', 'ticket', 'duration', 'date']);
+        $timesheets = (clone $tsBase)->get(['project_id', 'ticket', 'effort_minutes', 'date']);
 
         // Chamados únicos (pelo número do ticket)
         $uniqueTickets = $timesheets->whereNotNull('ticket')->pluck('ticket')->unique();
         $totalChamados = $uniqueTickets->count();
 
         // Horas consumidas
-        $totalMinutes  = $timesheets->sum('duration');
+        $totalMinutes  = $timesheets->sum('effort_minutes');
         $totalHours    = round($totalMinutes / 60, 1);
 
         // Tempo médio por chamado
@@ -305,19 +310,33 @@ class ClientPortalController extends Controller
         ))->count();
 
         // Chamados por mês (últimos 6 meses)
-        $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED)
-            ->whereNotNull('ticket')
-            ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
-            ->select(
-                DB::raw("DATE_FORMAT(date, '%Y-%m') as month"),
-                DB::raw('COUNT(DISTINCT ticket) as count')
-            )
-            ->groupBy('month')
-            ->orderBy('month')
-            ->get()
-            ->map(fn($r) => ['month' => $r->month, 'count' => (int)$r->count])
-            ->values();
+        try {
+            $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
+                ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                ->whereNotNull('ticket')
+                ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
+                ->selectRaw("strftime('%Y-%m', date) as month, COUNT(DISTINCT ticket) as count")
+                ->groupBy('month')
+                ->orderBy('month')
+                ->get()
+                ->map(fn($r) => ['month' => $r->month, 'count' => (int)$r->count])
+                ->values();
+        } catch (\Throwable $e) {
+            try {
+                $monthlyData = Timesheet::whereIn('project_id', $sustProjectIds)
+                    ->where('status', '!=', Timesheet::STATUS_REJECTED)
+                    ->whereNotNull('ticket')
+                    ->where('date', '>=', Carbon::now()->subMonths(5)->startOfMonth())
+                    ->selectRaw("DATE_FORMAT(date, '%Y-%m') as month, COUNT(DISTINCT ticket) as count")
+                    ->groupBy('month')
+                    ->orderBy('month')
+                    ->get()
+                    ->map(fn($r) => ['month' => $r->month, 'count' => (int)$r->count])
+                    ->values();
+            } catch (\Throwable $e2) {
+                $monthlyData = collect();
+            }
+        }
 
         return [
             'open_tickets'      => $open,
