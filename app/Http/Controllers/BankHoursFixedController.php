@@ -295,9 +295,9 @@ class BankHoursFixedController extends Controller
         // Calcular consumo acumulado (horas apontadas, com regra especial para projetos fechados)
         $consumedHours = 0;
 
-        // Buscar todos os projetos pais com seus relacionamentos necessários
-        // Carregar também serviceType dos filhos para filtrar corretamente
-        $parentProjects = $query->with(['contractType', 'childProjects.contractType', 'childProjects.serviceType'])->get();
+        // Buscar todos os projetos com seus relacionamentos necessários
+        // serviceType do próprio projeto + filhos (evita N+1)
+        $parentProjects = $query->with(['serviceType', 'contractType', 'childProjects.contractType', 'childProjects.serviceType'])->get();
 
         foreach ($parentProjects as $parentProject) {
             // Se há filtro por tipo de serviço, só incluir o projeto pai se ele tiver o tipo especificado
@@ -531,6 +531,20 @@ class BankHoursFixedController extends Controller
             $contributionHistory = array_slice($contributionHistory, 0, 50);
         }
 
+        // ─── has_support ─────────────────────────────────────────────────────────
+        // true se algum projeto (ou filho) tem service_type = Sustentação
+        // Usa dados já carregados via eager loading — sem queries extras (N+1)
+        $hasSupport = false;
+        foreach ($parentProjects as $proj) {
+            $typeName = strtolower(trim($proj->serviceType->name ?? ''));
+            if (str_contains($typeName, 'sustenta')) { $hasSupport = true; break; }
+            foreach ($proj->childProjects ?? [] as $child) {
+                $childType = strtolower(trim($child->serviceType->name ?? ''));
+                if (str_contains($childType, 'sustenta')) { $hasSupport = true; break 2; }
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────────
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
@@ -545,6 +559,7 @@ class BankHoursFixedController extends Controller
                 'hourly_rate' => $hourlyRate,  // Valor/hora INICIAL (para card "Valor Hora")
                 'weighted_hourly_rate' => $weightedHourlyRate,  // ✨ Média ponderada (usado no cálculo)
                 'contributed_hours_history' => $contributionHistory,
+                'has_support' => $hasSupport,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null
             ]
