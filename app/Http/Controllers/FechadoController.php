@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\ContractType;
+use App\Models\Expense;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -122,6 +123,7 @@ class FechadoController extends Controller
                     $d = \Carbon\Carbon::parse($p->start_date);
                     return $d->month === $month && $d->year === $year;
                 })->count(),
+                'total_expenses'            => round(Expense::whereIn('project_id', $projectIds)->sum('amount'), 2),
                 'contributed_hours_history' => $contributionHistory,
                 'customer_id'               => $customerId,
                 'month'                     => $month,
@@ -187,6 +189,56 @@ class FechadoController extends Controller
             'success' => true,
             'message' => 'Projetos Fechado obtidos com sucesso',
             'data'    => $data,
+        ]);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Despesas dos projetos Fechado
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public function fechadoExpenses(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) return response()->json(['success' => false, 'message' => 'Não autenticado'], 401);
+        if (!$user->isAdmin() && !$user->hasAccess('dashboards.view')) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado.'], 403);
+        }
+
+        $customerId = $user->customer_id
+            ?? ($user->isAdmin() && $request->has('customer_id') ? $request->get('customer_id') : null);
+
+        $fechadoType = $this->fechadoContractType();
+        if (!$fechadoType) {
+            return response()->json(['success' => false, 'message' => 'Tipo "Fechado" não encontrado.'], 404);
+        }
+
+        $projectIds = $this->buildQuery($request, $customerId, $fechadoType)->pluck('id')->toArray();
+
+        if (empty($projectIds)) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $expenses = Expense::whereIn('project_id', $projectIds)
+            ->with(['project:id,name,code', 'user:id,name', 'category:id,name'])
+            ->orderBy('expense_date', 'desc')
+            ->get()
+            ->map(fn ($e) => [
+                'id'           => $e->id,
+                'project'      => $e->project ? ['id' => $e->project->id, 'name' => $e->project->name, 'code' => $e->project->code] : null,
+                'user'         => $e->user ? ['id' => $e->user->id, 'name' => $e->user->name] : null,
+                'category'     => $e->category?->name,
+                'description'  => $e->description,
+                'amount'       => (float) $e->amount,
+                'expense_date' => $e->expense_date instanceof \Carbon\Carbon
+                    ? $e->expense_date->format('Y-m-d')
+                    : (string) $e->expense_date,
+                'status'       => $e->status,
+            ])->values();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Despesas Fechado obtidas com sucesso',
+            'data'    => $expenses,
         ]);
     }
 }

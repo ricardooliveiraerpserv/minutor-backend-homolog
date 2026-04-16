@@ -252,6 +252,8 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.fechado');
             Route::get('/dashboards/fechado/projects', [FechadoController::class, 'fechadoProjects'])
                 ->name('dashboards.fechado.projects');
+            Route::get('/dashboards/fechado/expenses', [FechadoController::class, 'fechadoExpenses'])
+                ->name('dashboards.fechado.expenses');
         });
 
         // Alteração de senha
