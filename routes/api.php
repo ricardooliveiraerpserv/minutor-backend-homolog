@@ -29,6 +29,7 @@ use App\Http\Controllers\PartnerController;
 use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\ClientPortalController;
+use App\Http\Controllers\FechadoController;
 
 /*
 |--------------------------------------------------------------------------
@@ -243,6 +244,14 @@ Route::prefix('v1')->group(function () {
                 ->name('dashboards.on-demand.indicators.monthly-consumption');
             Route::get('/dashboards/on-demand/indicators/monthly-consumption-timesheets', [OnDemandController::class, 'onDemandMonthlyConsumptionTimesheets'])
                 ->name('dashboards.on-demand.indicators.monthly-consumption-timesheets');
+        });
+
+        // Dashboard de Projetos Fechados - Protegido por permissão dashboards.view
+        Route::middleware('permission.or.admin:dashboards.view')->group(function () {
+            Route::get('/dashboards/fechado', [FechadoController::class, 'fechado'])
+                ->name('dashboards.fechado');
+            Route::get('/dashboards/fechado/projects', [FechadoController::class, 'fechadoProjects'])
+                ->name('dashboards.fechado.projects');
         });
 
         // Alteração de senha
