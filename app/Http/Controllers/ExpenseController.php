@@ -222,18 +222,28 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'category', 'reviewedBy']);
 
-        // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
+        // Controle de visibilidade por perfil
+        if ($user->isCliente()) {
+            // Cliente vê apenas despesas do seu cliente, somente pendentes e aprovadas
+            $query->whereHas('project', function ($q) use ($user) {
+                $q->where('customer_id', $user->customer_id);
+            })->whereIn('expenses.status', ['pending', 'approved']);
+        } elseif (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
             $query->where('user_id', $user->id);
         } elseif ($user->isCoordenador()) {
-            // Coordenador só vê despesas dos projetos que coordena
             $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
             $query->whereIn('expenses.project_id', $coordinatorProjectIds);
         }
 
         // Filtros
+        if ($request->filled('contract_type_id')) {
+            $query->whereHas('project', function ($q) use ($request) {
+                $q->where('contract_type_id', $request->contract_type_id);
+            });
+        }
+
         if ($request->filled('search')) {
             $query->where('description', 'ilike', '%' . $request->search . '%');
         }
