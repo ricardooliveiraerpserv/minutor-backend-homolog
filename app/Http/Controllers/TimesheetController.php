@@ -795,7 +795,7 @@ class TimesheetController extends Controller
 
             // Verificar se pode visualizar este timesheet
             $step = 'auth_check';
-            if ($user && !$user->isAdmin() && !$user->hasAccess('hours.view_all') && $timesheet->user_id !== $user->id) {
+            if ($user && !$user->isAdmin() && !$user->isCoordenador() && !$user->hasAccess('hours.view_all') && $timesheet->user_id !== $user->id) {
                 return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
             }
 
