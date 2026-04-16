@@ -127,27 +127,28 @@ class BankHoursFixedController extends Controller
             }
         }
 
-        // Construir query para projetos pais
-        $query = Project::whereNull('parent_project_id');
-
-        // Aplicar filtro de cliente
-        if ($customerId) {
-            $query->where('customer_id', $customerId);
-        }
-
-        // Aplicar filtro de executivo (admin apenas, quando não há cliente específico)
-        if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
-            $executiveId = (int) $request->get('executive_id');
-            $query->whereHas('customer', function ($q) use ($executiveId) {
-                $q->where('executive_id', $executiveId);
-            });
-        }
-
-        // Aplicar filtro de projeto específico
+        // Quando um projeto específico é informado, busca esse projeto diretamente
+        // (pai ou filho) sem restrição de hierarquia.
+        // Quando nenhum projeto é informado, restringe a projetos raiz do tipo BH Fixo.
         if ($projectId) {
-            $query->where('id', $projectId);
+            $query = Project::where('id', $projectId);
         } else {
-            // Sem projeto específico: restringir ao tipo de contrato desta dashboard
+            $query = Project::whereNull('parent_project_id');
+
+            // Aplicar filtro de cliente
+            if ($customerId) {
+                $query->where('customer_id', $customerId);
+            }
+
+            // Aplicar filtro de executivo (admin apenas, quando não há cliente específico)
+            if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
+                $executiveId = (int) $request->get('executive_id');
+                $query->whereHas('customer', function ($q) use ($executiveId) {
+                    $q->where('executive_id', $executiveId);
+                });
+            }
+
+            // Restringir ao tipo de contrato desta dashboard
             $bhFixedType = \App\Models\ContractType::where('name', 'Banco de Horas Fixo')->first();
             if ($bhFixedType) {
                 $query->where('contract_type_id', $bhFixedType->id);
@@ -253,25 +254,21 @@ class BankHoursFixedController extends Controller
             $amountToPay = round($exceededHours * $rateForPayment, 2);
         }
 
-        // Buscar projetos para cálculo de aporte (apenas projetos pais, não filhos)
-        $projectsForContribution = Project::query()
-            ->whereNull('parent_project_id'); // Apenas projetos pais
-
-        if ($customerId) {
-            $projectsForContribution->where('customer_id', $customerId);
-        }
-
+        // Buscar projetos para cálculo de aporte
         if ($projectId) {
-            // Se filtrou por projeto específico, buscar apenas esse projeto (se for pai)
-            $projectsForContribution->where('id', $projectId);
+            // Projeto específico: busca diretamente (pai ou filho)
+            $projectsForContribution = Project::where('id', $projectId);
         } else {
-            // Se não filtrou por projeto, usar os mesmos IDs dos projetos pais já filtrados
+            // Sem projeto específico: apenas projetos raiz já filtrados
+            $projectsForContribution = Project::query()->whereNull('parent_project_id');
+            if ($customerId) {
+                $projectsForContribution->where('customer_id', $customerId);
+            }
             $parentProjectIds = $query->pluck('id')->toArray();
             if (!empty($parentProjectIds)) {
                 $projectsForContribution->whereIn('id', $parentProjectIds);
             } else {
-                // Se não há projetos pais, não há projetos para calcular
-                $projectsForContribution->whereRaw('1 = 0'); // Força query vazia
+                $projectsForContribution->whereRaw('1 = 0');
             }
         }
 
