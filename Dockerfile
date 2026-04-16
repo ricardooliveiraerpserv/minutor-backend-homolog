@@ -86,4 +86,4 @@ autorestart=true\n' > /etc/supervisord.conf
 
 EXPOSE 8080
 
-CMD sh -c "php artisan migrate --force && php artisan optimize && php artisan storage:link --force 2>/dev/null || true && supervisord -c /etc/supervisord.conf"
+CMD sh -c "php artisan migrate --force && php artisan optimize 2>/dev/null || true && php artisan storage:link --force 2>/dev/null || true && supervisord -c /etc/supervisord.conf"
