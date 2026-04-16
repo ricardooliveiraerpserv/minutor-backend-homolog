@@ -24,8 +24,8 @@ class CheckPermissionOrAdmin
             ], 401);
         }
 
-        // Administradores têm acesso total
-        if ($user->isAdmin()) {
+        // Administradores e coordenadores têm acesso total (autorização fina fica nos controllers/models)
+        if ($user->isAdmin() || $user->isCoordenador()) {
             return $next($request);
         }
 
