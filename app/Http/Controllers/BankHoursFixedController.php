@@ -531,6 +531,69 @@ class BankHoursFixedController extends Controller
             $contributionHistory = array_slice($contributionHistory, 0, 50);
         }
 
+        // ─── Consumo por tipo de serviço (Projeto / Sustentação) ─────────────────
+        // Calcula consumed_hours e month_consumed_hours separados por service_type
+        // para exibição nos cards das abas Projetos e Sustentação do frontend.
+
+        $serviceTypeProjetoId = ServiceType::where('code', 'projeto')->orWhere('name', 'Projeto')->value('id');
+        $serviceTypeManutId   = ServiceType::where('code', 'sustentação')->orWhere('name', 'Sustentação')->value('id');
+
+        $projectsConsumedHours         = 0.0;
+        $projectsMonthConsumedHours    = 0.0;
+        $maintenanceConsumedHours      = 0.0;
+        $maintenanceMonthConsumedHours = 0.0;
+
+        foreach ($parentProjects as $parentProject) {
+            $processProject = function ($proj, $stId, &$accum, &$accumMonth)
+                use ($targetDate, $monthStart, $monthEnd) {
+                if ($proj->service_type_id !== $stId) {
+                    return;
+                }
+                $isClosedContract = $proj->contractType &&
+                                    strtolower(trim($proj->contractType->name)) === 'fechado';
+
+                // Consumo acumulado
+                if ($isClosedContract) {
+                    $accum += $proj->getTotalAvailableHours();
+                } else {
+                    $mins = $proj->timesheets()->where('status', '!=', 'rejected')->sum('effort_minutes') ?? 0;
+                    $accum += round($mins / 60, 2);
+                }
+
+                // Consumo do mês
+                if ($isClosedContract) {
+                    if ($proj->start_date) {
+                        $sd = \Carbon\Carbon::parse($proj->start_date);
+                        if ($sd->year === $targetDate->year && $sd->month === $targetDate->month) {
+                            $accumMonth += $proj->sold_hours ?? 0;
+                        }
+                    }
+                } else {
+                    $mins = $proj->timesheets()
+                        ->where('status', '!=', 'rejected')
+                        ->whereBetween('date', [$monthStart, $monthEnd])
+                        ->sum('effort_minutes') ?? 0;
+                    $accumMonth += round($mins / 60, 2);
+                }
+            };
+
+            $processProject($parentProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
+            $processProject($parentProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+
+            if ($parentProject->hasChildProjects()) {
+                foreach ($parentProject->childProjects as $childProject) {
+                    $processProject($childProject, $serviceTypeProjetoId, $projectsConsumedHours, $projectsMonthConsumedHours);
+                    $processProject($childProject, $serviceTypeManutId,   $maintenanceConsumedHours, $maintenanceMonthConsumedHours);
+                }
+            }
+        }
+
+        $projectsConsumedHours         = round($projectsConsumedHours, 2);
+        $projectsMonthConsumedHours    = round($projectsMonthConsumedHours, 2);
+        $maintenanceConsumedHours      = round($maintenanceConsumedHours, 2);
+        $maintenanceMonthConsumedHours = round($maintenanceMonthConsumedHours, 2);
+        // ─────────────────────────────────────────────────────────────────────────
+
         // ─── has_support ─────────────────────────────────────────────────────────
         // true se algum projeto (ou filho) tem service_type = Sustentação
         // Usa dados já carregados via eager loading — sem queries extras (N+1)
@@ -553,6 +616,10 @@ class BankHoursFixedController extends Controller
                 'contributed_hours' => $contributedHours,
                 'consumed_hours' => $consumedHours,
                 'month_consumed_hours' => $monthConsumedHours,
+                'projects_consumed_hours' => $projectsConsumedHours,
+                'projects_month_consumed_hours' => $projectsMonthConsumedHours,
+                'maintenance_consumed_hours' => $maintenanceConsumedHours,
+                'maintenance_month_consumed_hours' => $maintenanceMonthConsumedHours,
                 'hours_balance' => $hoursBalance,
                 'exceeded_hours' => $exceededHours,
                 'amount_to_pay' => $amountToPay,
