@@ -160,8 +160,11 @@ class TimesheetController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_subject')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket');
 
-        // Se não é admin nem tem permissão para ver todos, só pode ver os próprios
-        if (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
+        // Controle de visibilidade por perfil
+        if ($user->isCliente()) {
+            // Cliente vê todos os apontamentos do seu cliente (empresa)
+            $query->where('timesheets.customer_id', $user->customer_id);
+        } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
         } elseif ($user->isCoordenador()) {
             // Coordenador só vê apontamentos dos projetos que coordena
