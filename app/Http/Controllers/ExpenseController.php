@@ -59,14 +59,20 @@ class ExpenseController extends Controller
      */
     private function getEffectiveDailyLimit(Project $project): ?float
     {
-        if ($project->unlimited_expense) return null;
+        // Se o projeto tem um limite explícito definido (> 0), ele tem prioridade sobre unlimited_expense
         if ($project->max_expense_per_consultant !== null && (float) $project->max_expense_per_consultant > 0) {
             return (float) $project->max_expense_per_consultant;
         }
+        // Sem limite explícito no projeto filho: checar se é ilimitado
+        if ($project->unlimited_expense) return null;
+        // Sem limite e não ilimitado: tentar herdar do projeto pai
         if ($project->parent_project_id) {
             $parent = Project::find($project->parent_project_id);
-            if ($parent && !$parent->unlimited_expense && $parent->max_expense_per_consultant !== null && (float) $parent->max_expense_per_consultant > 0) {
-                return (float) $parent->max_expense_per_consultant;
+            if ($parent) {
+                if ($parent->max_expense_per_consultant !== null && (float) $parent->max_expense_per_consultant > 0) {
+                    return (float) $parent->max_expense_per_consultant;
+                }
+                if ($parent->unlimited_expense) return null;
             }
         }
         return null;
