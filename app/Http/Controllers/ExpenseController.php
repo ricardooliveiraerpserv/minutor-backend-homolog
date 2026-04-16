@@ -404,11 +404,12 @@ class ExpenseController extends Controller
         }
 
         // Determinar o usuário alvo da despesa
-        $targetUserId = (!empty($request->user_id) && $user->isAdmin())
+        $canActAsUser = $user->isAdmin() || $user->isCoordenador();
+        $targetUserId = (!empty($request->user_id) && $canActAsUser)
             ? $request->user_id
             : $user->id;
 
-        if (!$user->isAdmin() && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
+        if (!$canActAsUser && !$project->consultants()->where('user_id', $targetUserId)->exists()) {
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 

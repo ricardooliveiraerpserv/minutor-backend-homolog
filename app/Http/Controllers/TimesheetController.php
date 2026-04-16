@@ -449,8 +449,8 @@ class TimesheetController extends Controller
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
         ];
 
-        // Se é administrador, pode especificar user_id
-        if ($user->isAdmin() || $user->hasAccess('admin.full_access')) {
+        // Se é administrador ou coordenador, pode especificar user_id
+        if ($user->isAdmin() || $user->isCoordenador() || $user->hasAccess('admin.full_access')) {
             $rules['user_id'] = 'nullable|exists:users,id';
         }
 
@@ -469,8 +469,8 @@ class TimesheetController extends Controller
         // Determinar o usuário do apontamento
         $timesheetUserId = Auth::id(); // Padrão: usuário logado
 
-        // Se é admin e especificou user_id, usar o usuário especificado
-        if (($user->isAdmin() || $user->hasAccess('admin.full_access')) && $request->filled('user_id')) {
+        // Se é admin ou coordenador e especificou user_id, usar o usuário especificado
+        if (($user->isAdmin() || $user->isCoordenador() || $user->hasAccess('admin.full_access')) && $request->filled('user_id')) {
             $timesheetUserId = $request->user_id;
 
             // Verificar se o usuário especificado existe e está ativo
