@@ -146,6 +146,10 @@ class UserController extends Controller
             $query->where('type', $typeFilter);
         }
 
+        if ($request->filled('exclude_type')) {
+            $query->where('type', '!=', $request->exclude_type);
+        }
+
         if ($request->filled('is_executive')) {
             $query->where('is_executive', true);
         }
