@@ -340,6 +340,11 @@ class ProjectController extends Controller
                   ->whereHas('childProjects');
         }
 
+        // Filtro para apenas projetos de nível raiz (sem pai), independente de ter filhos
+        if ($request->get('top_level_only') === 'true') {
+            $query->whereNull('parent_project_id');
+        }
+
         // Excluir projeto específico (útil na edição)
         if ($request->has('exclude_id')) {
             $query->where('id', '!=', $request->get('exclude_id'));
