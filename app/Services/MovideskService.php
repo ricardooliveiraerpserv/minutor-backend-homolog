@@ -493,7 +493,7 @@ class MovideskService
                 'urgencia'    => $ticket['urgency'] ?? null,
                 'responsavel' => $this->extractResponsavel($ticket),
                 'nivel'       => $this->extractNivel($ticket),
-                'servico'     => $ticket['serviceSecondLevel'] ?? $ticket['serviceFirstLevel'] ?? null,
+                'servico'     => $ticket['serviceFirstLevel'] ?? $ticket['serviceSecondLevel'] ?? null,
                 'titulo'      => $ticket['subject'] ?? null,
                 'status'      => $ticket['status'] ?? null,
             ]);
