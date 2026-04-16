@@ -1978,4 +1978,26 @@ class ProjectController extends Controller
 
         return round($balance, 2);
     }
+
+    public function updateStatus(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $validated = $request->validate([
+            'status' => ['required', Rule::in(array_keys(Project::getStatuses()))],
+        ]);
+
+        $project->status = $validated['status'];
+        $project->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Status atualizado com sucesso',
+            'status' => $project->status,
+            'status_display' => $project->status_display,
+        ]);
+    }
 }

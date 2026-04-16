@@ -373,6 +373,7 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware('permission.or.admin:projects.update')->group(function () {
+            Route::patch('/projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.update-status');
             Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
             Route::patch('/projects/{project}', [ProjectController::class, 'update'])->name('projects.patch');
             Route::put('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'updateSoldHoursHistory'])->name('projects.sold-hours-history.update');
