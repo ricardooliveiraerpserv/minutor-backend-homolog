@@ -395,16 +395,14 @@ class ExpenseController extends Controller
             return $this->accessDeniedResponse('O usuário não tem acesso a este projeto');
         }
 
-        // Admin não tem restrição de limite diário (pode lançar por qualquer usuário)
-        if (!$user->isAdmin()) {
-            $limitError = $this->checkDailyLimit(
-                $project,
-                $targetUserId,
-                (float) $validator->validated()['amount'],
-                $validator->validated()['expense_date']
-            );
-            if ($limitError) return $limitError;
-        }
+        // Validar limite diário do usuário alvo (admin pode selecionar qualquer usuário, mas o limite do usuário alvo ainda se aplica)
+        $limitError = $this->checkDailyLimit(
+            $project,
+            $targetUserId,
+            (float) $validator->validated()['amount'],
+            $validator->validated()['expense_date']
+        );
+        if ($limitError) return $limitError;
 
         $expenseData = $validator->validated();
 
@@ -570,8 +568,8 @@ class ExpenseController extends Controller
             $project = $expense->project;
         }
 
-        // Validar limite diário ao editar (admin não tem restrição)
-        if (!$user->isAdmin() && isset($updateData['amount'])) {
+        // Validar limite diário ao editar (aplica ao usuário alvo, independente de quem edita)
+        if (isset($updateData['amount'])) {
             $expenseDate = $updateData['expense_date'] ?? (
                 $expense->expense_date instanceof \Carbon\Carbon
                     ? $expense->expense_date->format('Y-m-d')
