@@ -552,6 +552,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/approvals/timesheets', [ApprovalController::class, 'getPendingTimesheets'])->name('approvals.timesheets');
             Route::get('/approvals/expenses', [ApprovalController::class, 'getPendingExpenses'])->name('approvals.expenses');
             Route::post('/approvals/timesheets/bulk-approve', [ApprovalController::class, 'bulkApproveTimesheets'])->name('approvals.timesheets.bulk-approve');
+            Route::post('/approvals/timesheets/bulk-reject', [ApprovalController::class, 'bulkRejectTimesheets'])->name('approvals.timesheets.bulk-reject');
+            Route::post('/approvals/timesheets/bulk-request-adjustment', [ApprovalController::class, 'bulkRequestAdjustmentTimesheets'])->name('approvals.timesheets.bulk-request-adjustment');
             Route::post('/approvals/expenses/bulk-approve', [ApprovalController::class, 'bulkApproveExpenses'])->name('approvals.expenses.bulk-approve');
         });
 

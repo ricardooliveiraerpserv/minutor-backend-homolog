@@ -349,6 +349,88 @@ class ApprovalController extends Controller
         }
     }
 
+    public function bulkRejectTimesheets(Request $request): JsonResponse
+    {
+        $request->validate([
+            'timesheet_ids' => 'required|array|min:1',
+            'timesheet_ids.*' => 'integer|exists:timesheets,id',
+            'reason' => 'nullable|string|max:1000',
+        ]);
+
+        $user = Auth::user();
+        $timesheetIds = $request->get('timesheet_ids');
+        $reason = $request->get('reason', '');
+        $results = ['rejected' => [], 'failed' => [], 'errors' => []];
+
+        DB::beginTransaction();
+        try {
+            foreach ($timesheetIds as $timesheetId) {
+                $timesheet = Timesheet::find($timesheetId);
+                if (!$timesheet) {
+                    $results['failed'][] = $timesheetId;
+                    $results['errors'][] = "Timesheet $timesheetId não encontrado";
+                    continue;
+                }
+                if ($timesheet->reject($user, $reason)) {
+                    $results['rejected'][] = $timesheetId;
+                } else {
+                    $results['failed'][] = $timesheetId;
+                    $results['errors'][] = "Sem permissão ou erro ao rejeitar timesheet $timesheetId";
+                }
+            }
+            DB::commit();
+            return response()->json([
+                'success' => true,
+                'message' => sprintf('%d rejeitados, %d falharam', count($results['rejected']), count($results['failed'])),
+                'data' => $results,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Erro ao rejeitar em lote', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function bulkRequestAdjustmentTimesheets(Request $request): JsonResponse
+    {
+        $request->validate([
+            'timesheet_ids' => 'required|array|min:1',
+            'timesheet_ids.*' => 'integer|exists:timesheets,id',
+            'reason' => 'nullable|string|max:1000',
+        ]);
+
+        $user = Auth::user();
+        $timesheetIds = $request->get('timesheet_ids');
+        $reason = $request->get('reason', '');
+        $results = ['requested' => [], 'failed' => [], 'errors' => []];
+
+        DB::beginTransaction();
+        try {
+            foreach ($timesheetIds as $timesheetId) {
+                $timesheet = Timesheet::find($timesheetId);
+                if (!$timesheet) {
+                    $results['failed'][] = $timesheetId;
+                    $results['errors'][] = "Timesheet $timesheetId não encontrado";
+                    continue;
+                }
+                if ($timesheet->requestAdjustment($user, $reason)) {
+                    $results['requested'][] = $timesheetId;
+                } else {
+                    $results['failed'][] = $timesheetId;
+                    $results['errors'][] = "Sem permissão ou erro ao solicitar ajuste no timesheet $timesheetId";
+                }
+            }
+            DB::commit();
+            return response()->json([
+                'success' => true,
+                'message' => sprintf('%d ajustes solicitados, %d falharam', count($results['requested']), count($results['failed'])),
+                'data' => $results,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Erro ao solicitar ajustes em lote', 'error' => $e->getMessage()], 500);
+        }
+    }
+
     /**
      * @OA\Post(
      *     path="/api/v1/approvals/expenses/bulk-approve",
