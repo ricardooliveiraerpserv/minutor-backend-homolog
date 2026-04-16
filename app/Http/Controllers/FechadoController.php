@@ -25,17 +25,9 @@ class FechadoController extends Controller
      */
     private function buildQuery(Request $request, ?int $customerId, ContractType $fechadoType)
     {
-        $projectId = $request->filled('project_id') ? (int) $request->get('project_id') : null;
-
-        if ($projectId) {
-            // Busca direta — sem restrição de hierarquia
-            return Project::where('id', $projectId)
-                ->where('contract_type_id', $fechadoType->id);
-        }
-
-        // Sem projeto específico: todos os Fechado do cliente.
-        // Inclui: (1) projetos raiz Fechado, OU (2) filhos cujo pai não é Fechado.
-        $query = Project::where('contract_type_id', $fechadoType->id);
+        // Apenas projetos INDEPENDENTES (raiz) do tipo Fechado — nunca filhos.
+        $query = Project::whereNull('parent_project_id')
+            ->where('contract_type_id', $fechadoType->id);
 
         if ($customerId) {
             $query->where('customer_id', $customerId);
@@ -46,12 +38,10 @@ class FechadoController extends Controller
             $query->whereHas('customer', fn ($q) => $q->where('executive_id', $executiveId));
         }
 
-        $query->where(function ($q) use ($fechadoType) {
-            $q->whereNull('parent_project_id')
-              ->orWhereDoesntHave('parentProject', fn ($pq) =>
-                  $pq->where('contract_type_id', $fechadoType->id)
-              );
-        });
+        // Filtro por projeto específico: só aceita se for raiz (já garantido acima)
+        if ($request->filled('project_id')) {
+            $query->where('id', (int) $request->get('project_id'));
+        }
 
         return $query;
     }
