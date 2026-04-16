@@ -138,14 +138,23 @@ class FechadoController extends Controller
                 $d = \Carbon\Carbon::parse($p->start_date);
                 $inMonth = $d->month === $month && $d->year === $year;
             }
+            $contributions = $p->relationLoaded('hourContributions')
+                ? $p->hourContributions
+                : $p->hourContributions()->get();
+            $contributionHours = (float) $contributions->sum('contributed_hours');
+            if ($contributionHours <= 0) {
+                $contributionHours = (float) ($p->hour_contribution ?? 0);
+            }
             return [
-                'id'         => $p->id,
-                'name'       => $p->name,
-                'code'       => $p->code,
-                'status'     => $p->status,
-                'sold_hours' => (float) $p->getTotalAvailableHours(),
-                'start_date' => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : null,
-                'in_month'   => $inMonth,
+                'id'                 => $p->id,
+                'name'               => $p->name,
+                'code'               => $p->code,
+                'status'             => $p->status,
+                'base_hours'         => (float) ($p->sold_hours ?? 0),
+                'contribution_hours' => $contributionHours,
+                'sold_hours'         => (float) $p->getTotalAvailableHours(),
+                'start_date'         => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : null,
+                'in_month'           => $inMonth,
             ];
         })->values();
 
