@@ -762,7 +762,10 @@ class BankHoursFixedController extends Controller
                 $projects = $projects->merge($filteredChildren);
             }
         } else {
-            // Buscar todos os projetos (pais e filhos) que atendem aos filtros e são do tipo "Projeto"
+            // Buscar projetos com o service_type solicitado, restritos ao contrato BH Fixo.
+            // Inclui: (1) projetos BH Fixo diretos, OU (2) filhos de projetos BH Fixo.
+            $bhFixedTypeForProjects = \App\Models\ContractType::where('name', 'Banco de Horas Fixo')->first();
+
             $query = Project::with(['contractType', 'parentProject'])
                 ->where('service_type_id', $projectServiceType->id);
 
@@ -778,12 +781,13 @@ class BankHoursFixedController extends Controller
                 });
             }
 
-            // Excluir projetos do tipo "Fechado" (eles têm seu próprio dashboard)
-            $fechadoType = \App\Models\ContractType::where('name', 'Fechado')->first();
-            if ($fechadoType) {
-                $query->where(function ($q) use ($fechadoType) {
-                    $q->where('contract_type_id', '!=', $fechadoType->id)
-                      ->orWhereNull('contract_type_id');
+            // Restringir ao universo BH Fixo: projetos diretos OU filhos de BH Fixo
+            if ($bhFixedTypeForProjects) {
+                $query->where(function ($q) use ($bhFixedTypeForProjects) {
+                    $q->where('contract_type_id', $bhFixedTypeForProjects->id)
+                      ->orWhereHas('parentProject', function ($pq) use ($bhFixedTypeForProjects) {
+                          $pq->where('contract_type_id', $bhFixedTypeForProjects->id);
+                      });
                 });
             }
 

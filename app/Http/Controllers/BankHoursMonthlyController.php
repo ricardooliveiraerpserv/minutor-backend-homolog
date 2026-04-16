@@ -791,7 +791,10 @@ class BankHoursMonthlyController extends Controller
                 $projects = $projects->merge($filteredChildren);
             }
         } else {
-            // Buscar todos os projetos (pais e filhos) que atendem aos filtros e são do tipo "Projeto"
+            // Buscar projetos com o service_type solicitado, restritos ao contrato BH Mensal.
+            // Inclui: (1) projetos BH Mensal diretos, OU (2) filhos de projetos BH Mensal.
+            $bhMonthlyType = \App\Models\ContractType::where('name', 'Banco de Horas Mensal')->first();
+
             $query = Project::with(['contractType', 'parentProject'])
                 ->where('service_type_id', $projectServiceType->id);
 
@@ -804,6 +807,16 @@ class BankHoursMonthlyController extends Controller
                 $executiveId = (int) $request->get('executive_id');
                 $query->whereHas('customer', function ($q) use ($executiveId) {
                     $q->where('executive_id', $executiveId);
+                });
+            }
+
+            // Restringir ao universo BH Mensal: projetos diretos OU filhos de BH Mensal
+            if ($bhMonthlyType) {
+                $query->where(function ($q) use ($bhMonthlyType) {
+                    $q->where('contract_type_id', $bhMonthlyType->id)
+                      ->orWhereHas('parentProject', function ($pq) use ($bhMonthlyType) {
+                          $pq->where('contract_type_id', $bhMonthlyType->id);
+                      });
                 });
             }
 
