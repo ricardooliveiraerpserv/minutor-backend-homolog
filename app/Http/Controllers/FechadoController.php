@@ -112,6 +112,8 @@ class FechadoController extends Controller
             'success' => true,
             'message' => 'Dados do dashboard Fechado obtidos com sucesso',
             'data'    => [
+                'base_hours'                => round($projects->sum(fn ($p) => (float) ($p->sold_hours ?? 0)), 1),
+                'contribution_hours'        => round($projects->sum(fn ($p) => (float) $p->getTotalAvailableHours() - (float) ($p->sold_hours ?? 0)), 1),
                 'consumed_hours'            => round($consumedHours, 1),
                 'month_consumed_hours'      => round($monthConsumedHours, 1),
                 'project_count'             => $projects->count(),
