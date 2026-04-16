@@ -1604,6 +1604,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Buscar todos os timesheets que atendem aos critérios
@@ -1792,6 +1800,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -1987,6 +2003,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Buscar todos os timesheets que atendem aos critérios
@@ -2175,6 +2199,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Excluir projetos do tipo "Fechado"
@@ -2353,6 +2385,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -2551,6 +2591,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com o status específico
@@ -2736,6 +2784,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -2939,6 +2995,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com o nível específico
@@ -3123,6 +3187,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -3321,6 +3393,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Buscar tickets do Movidesk com a categoria específica
@@ -3498,6 +3578,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -3723,6 +3811,14 @@ class OnDemandController extends Controller
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
             }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
+            }
         }
 
         // Excluir projetos do tipo "Fechado"
@@ -3868,6 +3964,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -4080,6 +4184,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
@@ -4465,6 +4577,14 @@ class OnDemandController extends Controller
                 $timesheetsQuery->whereIn('project_id', $projectIds);
             } else {
                 $timesheetsQuery->where('project_id', $projectId);
+            }
+        } else {
+            // Sem projeto específico: filtrar pelo tipo de contrato On Demand
+            $onDemandType = \App\Models\ContractType::where('code', 'on_demand')->first();
+            if ($onDemandType) {
+                $timesheetsQuery->whereHas('project', function ($q) use ($onDemandType) {
+                    $q->where('contract_type_id', $onDemandType->id);
+                });
             }
         }
 
