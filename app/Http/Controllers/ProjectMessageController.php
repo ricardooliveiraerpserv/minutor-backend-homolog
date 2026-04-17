@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\ProjectMessage;
 use App\Models\ProjectMessageMention;
 use App\Models\ProjectMessageRead;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -87,22 +88,59 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
-        $query = ProjectMessage::query();
-
-        // Scope to user's projects
-        if ($user->isCoordenador()) {
-            $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
-        } elseif (!$user->isAdmin()) {
-            $query->whereHas('project', fn($q) => $q->whereHas('consultants', fn($sq) => $sq->where('users.id', $user->id)));
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['count' => 0]);
         }
 
-        $count = $query->where(fn($q) => $q
-            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
-            ->orWhereHas('mentions', fn($r) => $r->where('mentioned_user_id', $user->id)
-                ->whereDoesntHave('message.reads', fn($rr) => $rr->where('user_id', $user->id)))
-        )->count();
+        $query = ProjectMessage::query();
+
+        if ($user->isCoordenador()) {
+            $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
+        }
+
+        $count = $query->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))->count();
 
         return response()->json(['count' => $count]);
+    }
+
+    public function unreadProjects(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['project_ids' => []]);
+        }
+
+        $query = ProjectMessage::query();
+
+        if ($user->isCoordenador()) {
+            $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
+        }
+
+        $projectIds = $query
+            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
+            ->pluck('project_id')
+            ->unique()
+            ->values();
+
+        return response()->json(['project_ids' => $projectIds]);
+    }
+
+    public function mentionableUsers(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json([], 403);
+        }
+
+        $users = User::whereIn('type', ['admin', 'coordenador'])
+            ->where('enabled', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json($users);
     }
 
     private function userCanAccessProject($user, Project $project): bool
