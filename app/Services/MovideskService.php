@@ -672,6 +672,14 @@ class MovideskService
         }
         $target = $target ?? $clients[0];
 
+        // 1. Tenta por CNPJ — chave única confiável entre Movidesk e Minutor
+        $cpfCnpj = preg_replace('/[^0-9]/', '', $target['organization']['cpfCnpj'] ?? '');
+        if (strlen($cpfCnpj) >= 11) {
+            $id = Customer::where('cgc', $cpfCnpj)->value('id');
+            if ($id) return $id;
+        }
+
+        // 2. Fallback: nome da organização
         $orgName = $target['organization']['businessName'] ?? $target['businessName'] ?? null;
         if (!$orgName) return null;
 
@@ -717,10 +725,13 @@ class MovideskService
         // 3. Fallback: primeiro da lista
         $target = $target ?? $clients[0];
 
+        $cpfCnpj = preg_replace('/[^0-9]/', '', $target['organization']['cpfCnpj'] ?? '');
+
         return [
             'name'         => $target['businessName'] ?? null,
             'email'        => $target['email'] ?? null,
             'organization' => $target['organization']['businessName'] ?? null,
+            'cpf_cnpj'     => $cpfCnpj ?: null,
         ];
     }
 
