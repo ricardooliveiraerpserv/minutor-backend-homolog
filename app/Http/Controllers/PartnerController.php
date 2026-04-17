@@ -64,19 +64,23 @@ class PartnerController extends Controller
     /** PUT /partners/{partner} */
     public function update(Request $request, Partner $partner): JsonResponse
     {
-        $data = $request->validate([
-            'name'         => 'sometimes|required|string|max:255',
-            'document'     => 'nullable|string|max:20',
-            'email'        => 'nullable|email|max:255',
-            'phone'        => 'nullable|string|max:20',
-            'active'       => 'boolean',
-            'pricing_type' => 'sometimes|required|in:fixed,variable',
-            'hourly_rate'  => 'required_if:pricing_type,fixed|nullable|numeric|min:0|max:999999.99',
-        ]);
+        try {
+            $data = $request->validate([
+                'name'         => 'sometimes|required|string|max:255',
+                'document'     => 'nullable|string|max:20',
+                'email'        => 'nullable|email|max:255',
+                'phone'        => 'nullable|string|max:20',
+                'active'       => 'boolean',
+                'pricing_type' => 'sometimes|required|in:fixed,variable',
+                'hourly_rate'  => 'required_if:pricing_type,fixed|nullable|numeric|min:0|max:999999.99',
+            ]);
 
-        $partner->update($data);
+            $partner->update($data);
 
-        return response()->json($partner);
+            return response()->json($partner);
+        } catch (\Throwable $e) {
+            return response()->json(['debug_error' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()], 500);
+        }
     }
 
     /** DELETE /partners/{partner} */
