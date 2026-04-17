@@ -48,3 +48,11 @@ Schedule::command('movidesk:sync')
   ->description('Sincroniza apontamentos do Movidesk via API')
   ->withoutOverlapping()
   ->runInBackground();
+
+// Sync do Portal de Sustentação (tickets dos últimos 90 dias com campos SLA)
+Schedule::command('movidesk:portal-sync')
+  ->everyThirtyMinutes()
+  ->name('movidesk-portal-sync')
+  ->description('Sincroniza tickets do Movidesk para o Portal de Sustentação')
+  ->withoutOverlapping()
+  ->runInBackground();

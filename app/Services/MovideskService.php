@@ -516,7 +516,7 @@ class MovideskService
             $id = $ticket['id'] ?? null;
             if (!$id) return;
 
-            MovideskTicket::updateOrCreate(['ticket_id' => $id], [
+            $data = [
                 'solicitante' => $this->extractSolicitante($ticket),
                 'categoria'   => $ticket['category'] ?? null,
                 'urgencia'    => $ticket['urgency'] ?? null,
@@ -525,12 +525,168 @@ class MovideskService
                 'servico'     => $ticket['serviceFirstLevel'] ?? $ticket['serviceSecondLevel'] ?? null,
                 'titulo'      => $ticket['subject'] ?? null,
                 'status'      => $ticket['status'] ?? null,
-            ]);
+            ];
+
+            // Save portal fields when present in the ticket data
+            if (array_key_exists('baseStatus', $ticket))         $data['base_status']            = $ticket['baseStatus'];
+            if (array_key_exists('origin', $ticket))             $data['origin']                  = $ticket['origin'];
+            if (isset($ticket['owner']['email']))                 $data['owner_email']             = $ticket['owner']['email'];
+            if (array_key_exists('ownerTeam', $ticket))          $data['owner_team']              = $ticket['ownerTeam'];
+            if (array_key_exists('createdDate', $ticket))        $data['created_date']            = $this->parseTimestamp($ticket['createdDate']);
+            if (array_key_exists('closedIn', $ticket))           $data['closed_in']               = $this->parseTimestamp($ticket['closedIn']);
+            if (array_key_exists('resolvedIn', $ticket))         $data['resolved_in']             = $this->parseTimestamp($ticket['resolvedIn']);
+            if (array_key_exists('slaResponseDate', $ticket))    $data['sla_response_date']       = $this->parseTimestamp($ticket['slaResponseDate']);
+            if (array_key_exists('slaRealResponseDate', $ticket)) $data['sla_real_response_date'] = $this->parseTimestamp($ticket['slaRealResponseDate']);
+            if (array_key_exists('slaSolutionDate', $ticket))    $data['sla_solution_date']       = $this->parseTimestamp($ticket['slaSolutionDate']);
+            if (array_key_exists('slaResponseTime', $ticket))    $data['sla_response_time']       = $ticket['slaResponseTime'];
+            if (array_key_exists('slaSolutionTime', $ticket))    $data['sla_solution_time']       = $ticket['slaSolutionTime'];
+
+            MovideskTicket::updateOrCreate(['ticket_id' => $id], $data);
         } catch (\Throwable $e) {
             Log::error('🚨 [MOVIDESK] Erro ao salvar dados do ticket', [
                 'error' => $e->getMessage(),
                 'id'    => $ticket['id'] ?? null,
             ]);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Portal de Sustentação
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Busca tickets dos últimos 90 dias para o Portal de Sustentação.
+     */
+    public function fetchPortalTickets(): array
+    {
+        $since  = now()->subDays(90)->utc()->format('Y-m-d\TH:i:s\Z');
+        $filter = "lastUpdate gt {$since}";
+        $select = 'id,subject,status,baseStatus,category,urgency,origin,serviceFirstLevel,serviceSecondLevel,'
+                . 'createdDate,closedIn,resolvedIn,slaSolutionDate,slaResponseDate,slaRealResponseDate,'
+                . 'slaResponseTime,slaSolutionTime,ownerTeam,lastUpdate';
+
+        $tickets = [];
+        $top     = 50;
+        $skip    = 0;
+
+        do {
+            try {
+                $url = "{$this->baseUrl()}/tickets"
+                    . '?token=' . urlencode($this->token())
+                    . '&$filter=' . urlencode($filter)
+                    . '&$select=' . urlencode($select)
+                    . '&$expand=clients,owner'
+                    . '&$top=' . $top
+                    . '&$skip=' . $skip;
+
+                $response = Http::timeout(60)->get($url);
+
+                if (!$response->successful()) {
+                    Log::warning('[MOVIDESK PORTAL] Erro na listagem', [
+                        'status' => $response->status(),
+                        'body'   => substr($response->body(), 0, 300),
+                    ]);
+                    break;
+                }
+
+                $page = $response->json();
+                if (empty($page)) break;
+                if (isset($page['id'])) $page = [$page];
+
+                $tickets = array_merge($tickets, $page);
+                $skip   += $top;
+
+                if (count($page) < $top) break;
+
+                // Rate limit: 10 req/min → sleep between pages
+                sleep(7);
+            } catch (\Throwable $e) {
+                Log::error('[MOVIDESK PORTAL] Exceção na listagem', ['error' => $e->getMessage()]);
+                break;
+            }
+        } while (true);
+
+        return $tickets;
+    }
+
+    /**
+     * Salva ticket com todos os campos do portal, resolvendo user_id e customer_id.
+     */
+    public function saveTicketForPortal(array $ticket): void
+    {
+        try {
+            $id = $ticket['id'] ?? null;
+            if (!$id) return;
+
+            MovideskTicket::updateOrCreate(['ticket_id' => $id], [
+                'solicitante'            => $this->extractSolicitante($ticket),
+                'categoria'              => $ticket['category'] ?? null,
+                'urgencia'               => $ticket['urgency'] ?? null,
+                'responsavel'            => $this->extractResponsavel($ticket),
+                'nivel'                  => $this->extractNivel($ticket),
+                'servico'                => $ticket['serviceFirstLevel'] ?? $ticket['serviceSecondLevel'] ?? null,
+                'titulo'                 => $ticket['subject'] ?? null,
+                'status'                 => $ticket['status'] ?? null,
+                'base_status'            => $ticket['baseStatus'] ?? null,
+                'origin'                 => $ticket['origin'] ?? null,
+                'owner_email'            => $ticket['owner']['email'] ?? null,
+                'owner_team'             => $ticket['ownerTeam'] ?? null,
+                'user_id'                => $this->resolveUserIdForPortal($ticket),
+                'customer_id'            => $this->resolveCustomerIdForPortal($ticket),
+                'created_date'           => $this->parseTimestamp($ticket['createdDate'] ?? null),
+                'closed_in'              => $this->parseTimestamp($ticket['closedIn'] ?? null),
+                'resolved_in'            => $this->parseTimestamp($ticket['resolvedIn'] ?? null),
+                'sla_response_date'      => $this->parseTimestamp($ticket['slaResponseDate'] ?? null),
+                'sla_real_response_date' => $this->parseTimestamp($ticket['slaRealResponseDate'] ?? null),
+                'sla_solution_date'      => $this->parseTimestamp($ticket['slaSolutionDate'] ?? null),
+                'sla_response_time'      => $ticket['slaResponseTime'] ?? null,
+                'sla_solution_time'      => $ticket['slaSolutionTime'] ?? null,
+                'portal_synced_at'       => now(),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('🚨 [MOVIDESK PORTAL] Erro ao salvar ticket', [
+                'error' => $e->getMessage(),
+                'id'    => $ticket['id'] ?? null,
+            ]);
+        }
+    }
+
+    private function resolveUserIdForPortal(array $ticket): ?int
+    {
+        $email = $ticket['owner']['email'] ?? null;
+        if (!$email) return null;
+        return User::where('email', $email)->value('id');
+    }
+
+    private function resolveCustomerIdForPortal(array $ticket): ?int
+    {
+        $clients = $ticket['clients'] ?? [];
+        if (empty($clients)) return null;
+
+        $target = null;
+        foreach ($clients as $c) {
+            if (strpos($c['email'] ?? '', '@erpserv') === false && !empty($c['email'])) {
+                $target = $c;
+                break;
+            }
+        }
+        $target = $target ?? $clients[0];
+
+        $orgName = $target['organization']['businessName'] ?? $target['businessName'] ?? null;
+        if (!$orgName) return null;
+
+        return Customer::where(function ($q) use ($orgName) {
+            $q->where('name', $orgName)->orWhere('company_name', $orgName);
+        })->value('id');
+    }
+
+    private function parseTimestamp(?string $value): ?string
+    {
+        if (!$value) return null;
+        try {
+            return Carbon::parse($value)->toDateTimeString();
+        } catch (\Throwable) {
+            return null;
         }
     }
 

@@ -32,6 +32,7 @@ use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\FechadoController;
 use App\Http\Controllers\ProjectMessageController;
+use App\Http\Controllers\SustentacaoController;
 
 /*
 |--------------------------------------------------------------------------
@@ -649,6 +650,18 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
+
+        // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
+        Route::prefix('sustentacao')->group(function () {
+            Route::get('/kpis',         [SustentacaoController::class, 'kpis'])->name('sustentacao.kpis');
+            Route::get('/queue',        [SustentacaoController::class, 'queue'])->name('sustentacao.queue');
+            Route::get('/sla',          [SustentacaoController::class, 'sla'])->name('sustentacao.sla');
+            Route::get('/productivity', [SustentacaoController::class, 'productivity'])->name('sustentacao.productivity');
+            Route::get('/financial',    [SustentacaoController::class, 'financial'])->name('sustentacao.financial');
+            Route::get('/clients',      [SustentacaoController::class, 'clients'])->name('sustentacao.clients');
+            Route::get('/distribution', [SustentacaoController::class, 'distribution'])->name('sustentacao.distribution');
+            Route::get('/evolution',    [SustentacaoController::class, 'evolution'])->name('sustentacao.evolution');
+        });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:system_settings.view')->group(function () {
