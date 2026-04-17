@@ -38,7 +38,7 @@ class PartnerReportController extends Controller
         // Timesheets aprovados dos consultores
         $query = DB::table('timesheets')
             ->whereIn('user_id', $consultantIds)
-            ->where('status', 'approved')
+            ->whereIn('status', ['approved', 'pending'])
             ->whereNull('deleted_at');
 
         if ($request->filled('start_date')) {
