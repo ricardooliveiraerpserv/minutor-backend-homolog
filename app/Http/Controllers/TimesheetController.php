@@ -566,34 +566,20 @@ class TimesheetController extends Controller
             ], 422);
         }
 
-        // Verificar se há sobreposição de horários no mesmo dia e projeto
-        $overlappingTimesheet = Timesheet::where('user_id', $timesheetUserId)
-            ->where('project_id', $request->project_id)
+        // Verificar sobreposição de horários no mesmo dia para o mesmo usuário (qualquer projeto)
+        $overlappingIds = Timesheet::where('user_id', $timesheetUserId)
             ->where('date', $request->date)
-            ->where('status', '!=', Timesheet::STATUS_REJECTED) // Ignorar apontamentos rejeitados
-            ->where(function ($query) use ($request) {
-                $query->where(function ($q) use ($request) {
-                    // Verificar se o novo horário se sobrepõe a um horário existente
-                    $q->where('start_time', '<', $request->end_time)
-                      ->where('end_time', '>', $request->start_time);
-                });
-            })
-            ->first();
+            ->whereNotIn('status', [Timesheet::STATUS_REJECTED])
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->where('start_time', '<', $request->end_time)
+            ->where('end_time', '>', $request->start_time)
+            ->pluck('id');
 
-        if ($overlappingTimesheet) {
-            $userName = $timesheetUserId === Auth::id() ? 'você' : User::find($timesheetUserId)->name;
-            return response()->json([
-                'code' => 'OVERLAPPING_TIMESHEET',
-                'type' => 'error',
-                'message' => 'Sobreposição de horários',
-                'detailMessage' => 'Existe sobreposição de horários com outro apontamento de ' . $userName . ' no mesmo dia e projeto.',
-                'details' => [
-                    'Há sobreposição com o apontamento das ' . $overlappingTimesheet->start_time .
-                    ' às ' . $overlappingTimesheet->end_time . ' no projeto "' . $project->name . '"'
-                ]
-            ], 422);
-        }
+        $hasConflict = $overlappingIds->isNotEmpty();
         } // fim do bloco: verificações de duplicado/sobreposição com horários
+
+        $hasConflict = $hasConflict ?? false;
 
         DB::beginTransaction();
         try {
@@ -676,7 +662,7 @@ class TimesheetController extends Controller
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
-            $timesheet->status = Timesheet::STATUS_PENDING;
+            $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
             $timesheet->origin = 'web'; // Origem: criação manual via webapp
 
             if ($request->hasFile('attachment')) {
@@ -694,6 +680,13 @@ class TimesheetController extends Controller
                 $project->status = Project::STATUS_STARTED;
                 $project->save();
                 $this->invalidateListCache('projects');
+            }
+
+            // Marcar apontamentos sobrepostos como conflitados
+            if ($hasConflict && isset($overlappingIds) && $overlappingIds->isNotEmpty()) {
+                Timesheet::whereIn('id', $overlappingIds)
+                    ->whereNotIn('status', [Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED])
+                    ->update(['status' => Timesheet::STATUS_CONFLICTED]);
             }
 
             DB::commit();
