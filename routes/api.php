@@ -26,6 +26,7 @@ use App\Http\Controllers\OnDemandController;
 use App\Http\Controllers\ExecutiveController;
 use App\Http\Controllers\HourContributionController;
 use App\Http\Controllers\PartnerController;
+use App\Http\Controllers\PartnerReportController;
 use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\ClientPortalController;
@@ -601,6 +602,8 @@ Route::prefix('v1')->group(function () {
         });
 
         // 🤝 PARCEIROS
+        Route::get('/partner/report', [PartnerReportController::class, 'index'])->name('partner.report');
+
         Route::middleware('permission.or.admin:partners.view')->group(function () {
             Route::get('/partners', [PartnerController::class, 'index'])->name('partners.index');
             Route::get('/partners/{partner}', [PartnerController::class, 'show'])->name('partners.show');
