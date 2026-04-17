@@ -141,6 +141,7 @@ class ProjectMessageController extends Controller
         }
 
         $rows = $query
+            ->where('user_id', '!=', $user->id)
             ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
             ->with(['project:id,name,code', 'author:id,name'])
             ->latest()
