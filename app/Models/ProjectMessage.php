@@ -1,0 +1,32 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class ProjectMessage extends Model
+{
+    protected $fillable = ['project_id', 'user_id', 'message', 'priority'];
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
+    }
+
+    public function author(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function mentions(): HasMany
+    {
+        return $this->hasMany(ProjectMessageMention::class, 'message_id');
+    }
+
+    public function reads(): HasMany
+    {
+        return $this->hasMany(ProjectMessageRead::class, 'message_id');
+    }
+}

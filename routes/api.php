@@ -31,6 +31,7 @@ use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\FechadoController;
+use App\Http\Controllers\ProjectMessageController;
 
 /*
 |--------------------------------------------------------------------------
@@ -639,6 +640,12 @@ Route::prefix('v1')->group(function () {
             Route::put('/holidays/{holiday}', [HolidayController::class, 'update']);
             Route::delete('/holidays/{holiday}', [HolidayController::class, 'destroy']);
         });
+
+        // 💬 MENSAGENS DE PROJETO
+        Route::get('/messages/unread-count', [ProjectMessageController::class, 'unreadCount'])->name('messages.unread-count');
+        Route::get('/projects/{project}/messages', [ProjectMessageController::class, 'index'])->name('project-messages.index');
+        Route::post('/projects/{project}/messages', [ProjectMessageController::class, 'store'])->name('project-messages.store');
+        Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:system_settings.view')->group(function () {
