@@ -33,11 +33,26 @@ class ClientPortalController extends Controller
             return response()->json(['message' => 'Cliente não encontrado'], 404);
         }
 
+        // Coordenador só pode ver clientes dos seus próprios projetos
+        if ($user->isCoordenador()) {
+            $hasAccess = Project::where('customer_id', $customerId)
+                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->exists();
+            if (!$hasAccess) {
+                return response()->json(['message' => 'Acesso negado'], 403);
+            }
+        }
+
         // ── Projetos do cliente ─────────────────────────────────────────────
-        $projects = Project::with(['contractType', 'serviceType', 'childProjects.contractType', 'childProjects.serviceType'])
+        $projectQuery = Project::with(['contractType', 'serviceType', 'childProjects.contractType', 'childProjects.serviceType'])
             ->where('customer_id', $customerId)
-            ->whereNull('parent_project_id')
-            ->get();
+            ->whereNull('parent_project_id');
+
+        if ($user->isCoordenador()) {
+            $projectQuery->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id));
+        }
+
+        $projects = $projectQuery->get();
 
         // Coleta todos os IDs (pai + filho) para query de timesheets
         $allProjectIds = $projects->flatMap(fn($p) => collect([$p->id])->merge(
@@ -142,7 +157,20 @@ class ClientPortalController extends Controller
     // ── Customers list (para o select do portal) ─────────────────────────────
     public function customers(Request $request): JsonResponse
     {
-        $customers = Customer::orderBy('name')->get(['id', 'name']);
+        $user = $request->user();
+
+        if ($user->isCoordenador()) {
+            // Retorna apenas clientes cujos projetos têm este coordenador
+            $customerIds = Project::whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->whereNotNull('customer_id')
+                ->pluck('customer_id')
+                ->unique();
+
+            $customers = Customer::whereIn('id', $customerIds)->orderBy('name')->get(['id', 'name']);
+        } else {
+            $customers = Customer::orderBy('name')->get(['id', 'name']);
+        }
+
         return response()->json($customers);
     }
 
