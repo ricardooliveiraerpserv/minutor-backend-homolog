@@ -32,13 +32,25 @@ class MovideskPortalBackfillCommand extends Command
 
         $this->info("user_id preenchidos: {$updatedUsers}");
 
-        $this->info('Backfill customer_id (solicitante.organization → customers)...');
+        $this->info('Backfill customer_id (CNPJ primeiro, depois nome)...');
         $updatedCustomers = 0;
 
         MovideskTicket::whereNull('customer_id')
             ->whereNotNull('solicitante')
             ->orderBy('id')
             ->each(function (MovideskTicket $ticket) use (&$updatedCustomers) {
+                // 1. Tenta por CNPJ (disponível após cadastrar no Movidesk + re-sync)
+                $cpfCnpj = preg_replace('/[^0-9]/', '', $ticket->solicitante['cpf_cnpj'] ?? '');
+                if (strlen($cpfCnpj) >= 11) {
+                    $customerId = Customer::where('cgc', $cpfCnpj)->value('id');
+                    if ($customerId) {
+                        $ticket->update(['customer_id' => $customerId]);
+                        $updatedCustomers++;
+                        return;
+                    }
+                }
+
+                // 2. Fallback: nome da organização
                 $orgName = $ticket->solicitante['organization'] ?? null;
                 if (!$orgName) return;
                 $customerId = Customer::where(function ($q) use ($orgName) {
