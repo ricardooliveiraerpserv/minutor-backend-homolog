@@ -43,6 +43,7 @@ class User extends Authenticatable
         'partner_id',
         'is_executive',
         'type',
+        'coordinator_type',
         'extra_permissions',
     ];
 
