@@ -2002,4 +2002,35 @@ class ProjectController extends Controller
             'status_display' => $project->status_display,
         ]);
     }
+
+    public function hoursPerConsultant(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        // Escopo de projetos acessíveis
+        $projectQuery = Project::query();
+        if ($user->isCoordenador()) {
+            $projectQuery->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id));
+        }
+        $projectIds = $projectQuery->pluck('id');
+
+        $rows = DB::table('timesheets')
+            ->join('users', 'users.id', '=', 'timesheets.user_id')
+            ->whereIn('timesheets.project_id', $projectIds)
+            ->whereIn('timesheets.status', ['approved', 'pending'])
+            ->select(
+                'users.id',
+                'users.name',
+                DB::raw('ROUND(SUM(timesheets.effort_minutes) / 60.0, 1) as total_hours')
+            )
+            ->groupBy('users.id', 'users.name')
+            ->orderByDesc('total_hours')
+            ->limit(30)
+            ->get();
+
+        return response()->json($rows);
+    }
 }

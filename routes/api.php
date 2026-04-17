@@ -367,6 +367,7 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects/{project}/available-hours', [ProjectController::class, 'availableHours'])->name('projects.available-hours');
+            Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
         });
 
         Route::middleware('permission.or.admin:projects.create')->group(function () {
