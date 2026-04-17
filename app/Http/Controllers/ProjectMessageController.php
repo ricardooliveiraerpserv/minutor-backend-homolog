@@ -167,10 +167,20 @@ class ProjectMessageController extends Controller
             return response()->json([], 403);
         }
 
-        $users = User::whereIn('type', ['admin', 'coordenador'])
-            ->select('id', 'name')
-            ->orderBy('name')
-            ->get();
+        $projectId = $request->query('project_id');
+
+        $users = User::where(function ($q) use ($projectId) {
+            $q->where('type', 'admin')
+              ->orWhere(function ($sq) use ($projectId) {
+                  $sq->where('type', 'coordenador');
+                  if ($projectId) {
+                      $sq->whereHas('coordinatorProjects', fn($p) => $p->where('projects.id', (int) $projectId));
+                  }
+              });
+        })
+        ->select('id', 'name')
+        ->orderBy('name')
+        ->get();
 
         return response()->json($users);
     }
