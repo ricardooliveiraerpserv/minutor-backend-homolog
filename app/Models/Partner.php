@@ -26,7 +26,7 @@ class Partner extends Model
 
     protected $casts = [
         'active'       => 'boolean',
-        'hourly_rate'  => 'decimal:2',
+        'hourly_rate'  => 'string',
         'created_at'   => 'datetime',
         'updated_at'   => 'datetime',
         'deleted_at'   => 'datetime',

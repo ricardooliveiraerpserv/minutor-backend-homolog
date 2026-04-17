@@ -28,14 +28,5 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        $exceptions->render(function (\Throwable $e, \Illuminate\Http\Request $request) {
-            if ($request->expectsJson() && !($e instanceof \Illuminate\Validation\ValidationException)) {
-                return response()->json([
-                    'message'   => $e->getMessage() ?: get_class($e),
-                    'exception' => get_class($e),
-                    'file'      => basename($e->getFile()),
-                    'line'      => $e->getLine(),
-                ], 422);
-            }
-        });
+        //
     })->create();
