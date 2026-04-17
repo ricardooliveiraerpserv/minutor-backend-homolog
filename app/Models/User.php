@@ -125,6 +125,21 @@ class User extends Authenticatable
         return $this->belongsTo(Partner::class);
     }
 
+    /**
+     * Valor hora efetivo: resolve dinamicamente conforme pricing_type do parceiro.
+     * fixed   → usa partner.hourly_rate (ignora user.hourly_rate)
+     * variable → usa user.hourly_rate
+     */
+    public function getEffectiveHourlyRateAttribute(): ?string
+    {
+        if ($this->partner_id && $this->relationLoaded('partner') && $this->partner) {
+            if ($this->partner->pricing_type === Partner::PRICING_FIXED) {
+                return $this->partner->hourly_rate;
+            }
+        }
+        return $this->hourly_rate;
+    }
+
     // ── Métodos semânticos de tipo ────────────────────────────────────────────
     // Fonte de verdade: users.type
 
