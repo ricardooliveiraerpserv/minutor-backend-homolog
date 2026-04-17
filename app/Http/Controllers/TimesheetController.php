@@ -166,6 +166,9 @@ class TimesheetController extends Controller
             // Somente status pendente e aprovado — conflitante, rejeitado e ajustes são omitidos
             $query->where('timesheets.customer_id', $user->customer_id)
                   ->whereIn('timesheets.status', ['pending', 'approved']);
+        } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
+            $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
+            $query->whereIn('timesheets.user_id', $partnerUserIds);
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
         } elseif ($user->isCoordenador()) {

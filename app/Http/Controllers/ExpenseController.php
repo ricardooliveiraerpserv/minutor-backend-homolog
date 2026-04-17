@@ -230,6 +230,9 @@ class ExpenseController extends Controller
             $query->whereHas('project', function ($q) use ($user) {
                 $q->where('customer_id', $user->customer_id);
             })->whereIn('expenses.status', ['pending', 'approved']);
+        } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
+            $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
+            $query->whereIn('expenses.user_id', $partnerUserIds);
         } elseif (!$user->isAdmin() && !$user->hasAccess('expenses.view_all')) {
             $query->where('user_id', $user->id);
         } elseif ($user->isCoordenador()) {
