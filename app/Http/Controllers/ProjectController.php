@@ -214,6 +214,8 @@ class ProjectController extends Controller
                         $subQ->where('user_id', $targetUserId);
                     })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
                         $subQ->where('users.id', $targetUserId);
+                    })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId);
                     });
                 });
             }
