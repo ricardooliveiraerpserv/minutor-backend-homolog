@@ -142,16 +142,19 @@ class ProjectMessageController extends Controller
 
         $rows = $query
             ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
-            ->with('project:id,name,code')
+            ->with(['project:id,name,code', 'author:id,name'])
+            ->latest()
+            ->limit(10)
             ->get()
-            ->groupBy('project_id')
-            ->map(fn($msgs, $projectId) => [
-                'project_id'   => $projectId,
-                'project_name' => $msgs->first()->project?->name ?? '—',
-                'project_code' => $msgs->first()->project?->code ?? '',
-                'unread_count' => $msgs->count(),
-            ])
-            ->values();
+            ->map(fn($msg) => [
+                'id'           => $msg->id,
+                'project_id'   => $msg->project_id,
+                'project_name' => $msg->project?->name ?? '—',
+                'project_code' => $msg->project?->code ?? '',
+                'author_name'  => $msg->author?->name ?? '—',
+                'preview'      => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message), 0, 80, '…'),
+                'created_at'   => $msg->created_at,
+            ]);
 
         return response()->json($rows);
     }
@@ -165,7 +168,6 @@ class ProjectMessageController extends Controller
         }
 
         $users = User::whereIn('type', ['admin', 'coordenador'])
-            ->where('enabled', true)
             ->select('id', 'name')
             ->orderBy('name')
             ->get();
