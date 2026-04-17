@@ -443,8 +443,8 @@ class CustomerController extends Controller
             $targetUser = \App\Models\User::find($targetUserId);
         }
 
-        // Se o usuário alvo é Admin ou Coordenador, retorna TODOS os clientes (sem filtro de vinculação)
-        if ($targetUser && ($targetUser->isAdmin() || $targetUser->isCoordenador())) {
+        // Apenas admin retorna TODOS os clientes; demais usuários (incluindo coordenador) são limitados à sua alocação
+        if ($targetUser && $targetUser->isAdmin()) {
             $query = Customer::query();
         } else {
             // Para usuários não-admin, busca apenas clientes onde o usuário é consultor ou aprovador
