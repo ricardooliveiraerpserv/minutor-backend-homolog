@@ -192,7 +192,9 @@ class TimesheetController extends Controller
             });
         }
 
-        if ($request->filled('user_id') && ($user->isAdmin() || $user->hasAccess('hours.view_all'))) {
+        $canFilterByUser = $user->isAdmin() || $user->hasAccess('hours.view_all')
+            || ($user->type === 'parceiro_admin' && $request->boolean('team_view'));
+        if ($request->filled('user_id') && $canFilterByUser) {
             $query->forUser($request->user_id);
         }
 
