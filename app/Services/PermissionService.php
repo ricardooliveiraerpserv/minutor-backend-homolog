@@ -111,6 +111,7 @@ class PermissionService
             'timesheets.view', 'timesheets.manage', 'timesheets.approve',
             'timesheets.view_project_full',
             'expenses.view', 'expenses.manage',
+            'customers.view',
             'users.view_own_profile', 'users.update_own_profile', 'users.view_team',
             'users.create', 'users.update', 'users.reset_password',
             'financial.view_partner_rate',
