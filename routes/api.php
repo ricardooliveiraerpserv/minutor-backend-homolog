@@ -644,6 +644,7 @@ Route::prefix('v1')->group(function () {
         // 💬 MENSAGENS DE PROJETO
         Route::get('/messages/unread-count',    [ProjectMessageController::class, 'unreadCount'])->name('messages.unread-count');
         Route::get('/messages/unread-projects', [ProjectMessageController::class, 'unreadProjects'])->name('messages.unread-projects');
+        Route::get('/messages/notifications',   [ProjectMessageController::class, 'notifications'])->name('messages.notifications');
         Route::get('/messages/mentionable-users', [ProjectMessageController::class, 'mentionableUsers'])->name('messages.mentionable-users');
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');

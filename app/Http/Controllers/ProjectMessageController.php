@@ -126,6 +126,36 @@ class ProjectMessageController extends Controller
         return response()->json(['project_ids' => $projectIds]);
     }
 
+    public function notifications(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json([]);
+        }
+
+        $query = ProjectMessage::query();
+
+        if ($user->isCoordenador()) {
+            $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
+        }
+
+        $rows = $query
+            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
+            ->with('project:id,name,code')
+            ->get()
+            ->groupBy('project_id')
+            ->map(fn($msgs, $projectId) => [
+                'project_id'   => $projectId,
+                'project_name' => $msgs->first()->project?->name ?? '—',
+                'project_code' => $msgs->first()->project?->code ?? '',
+                'unread_count' => $msgs->count(),
+            ])
+            ->values();
+
+        return response()->json($rows);
+    }
+
     public function mentionableUsers(Request $request): JsonResponse
     {
         $user = $request->user();
