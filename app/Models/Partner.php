@@ -11,19 +11,25 @@ class Partner extends Model
 {
     use HasFactory, SoftDeletes;
 
+    const PRICING_FIXED    = 'fixed';
+    const PRICING_VARIABLE = 'variable';
+
     protected $fillable = [
         'name',
         'document',
         'email',
         'phone',
         'active',
+        'pricing_type',
+        'hourly_rate',
     ];
 
     protected $casts = [
-        'active'     => 'boolean',
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
-        'deleted_at' => 'datetime',
+        'active'       => 'boolean',
+        'hourly_rate'  => 'decimal:2',
+        'created_at'   => 'datetime',
+        'updated_at'   => 'datetime',
+        'deleted_at'   => 'datetime',
     ];
 
     public function users(): HasMany

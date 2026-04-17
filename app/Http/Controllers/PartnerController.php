@@ -47,11 +47,13 @@ class PartnerController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'name'     => 'required|string|max:255',
-            'document' => 'nullable|string|max:20',
-            'email'    => 'nullable|email|max:255',
-            'phone'    => 'nullable|string|max:20',
-            'active'   => 'boolean',
+            'name'         => 'required|string|max:255',
+            'document'     => 'nullable|string|max:20',
+            'email'        => 'nullable|email|max:255',
+            'phone'        => 'nullable|string|max:20',
+            'active'       => 'boolean',
+            'pricing_type' => 'required|in:fixed,variable',
+            'hourly_rate'  => 'required_if:pricing_type,fixed|nullable|numeric|min:0|max:999999.99',
         ]);
 
         $partner = Partner::create($data);
@@ -63,11 +65,13 @@ class PartnerController extends Controller
     public function update(Request $request, Partner $partner): JsonResponse
     {
         $data = $request->validate([
-            'name'     => 'sometimes|required|string|max:255',
-            'document' => 'nullable|string|max:20',
-            'email'    => 'nullable|email|max:255',
-            'phone'    => 'nullable|string|max:20',
-            'active'   => 'boolean',
+            'name'         => 'sometimes|required|string|max:255',
+            'document'     => 'nullable|string|max:20',
+            'email'        => 'nullable|email|max:255',
+            'phone'        => 'nullable|string|max:20',
+            'active'       => 'boolean',
+            'pricing_type' => 'sometimes|required|in:fixed,variable',
+            'hourly_rate'  => 'required_if:pricing_type,fixed|nullable|numeric|min:0|max:999999.99',
         ]);
 
         $partner->update($data);
