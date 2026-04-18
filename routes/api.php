@@ -664,6 +664,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/contacts',  [ProjectContactController::class, 'index'])->name('project-contacts.index');
         Route::put('/projects/{project}/contacts',  [ProjectContactController::class, 'sync'])->name('project-contacts.sync');
 
+        // 📎 ANEXOS DE PROJETOS
+        Route::get('/projects/{project}/attachments',                    [ProjectController::class, 'listAttachments'])->name('project-attachments.index');
+        Route::post('/projects/{project}/attachments',                   [ProjectController::class, 'uploadAttachment'])->name('project-attachments.upload');
+        Route::get('/projects/{project}/attachments/{attachment}',       [ProjectController::class, 'downloadAttachment'])->name('project-attachments.download');
+        Route::delete('/projects/{project}/attachments/{attachment}',    [ProjectController::class, 'deleteAttachment'])->name('project-attachments.delete');
+
         // 📄 CONTRATOS
         Route::prefix('contracts')->group(function () {
             Route::get('/',                                         [ContractController::class, 'index'])->name('contracts.index');

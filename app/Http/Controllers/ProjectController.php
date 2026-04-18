@@ -8,7 +8,9 @@ use App\Models\ServiceType;
 use App\Models\ContractType;
 use App\Models\User;
 use App\Models\ProjectChangeLog;
+use App\Models\ProjectAttachment;
 use App\Services\ProjectCodeService;
+use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -607,6 +609,15 @@ class ProjectController extends Controller
             'coordinator_ids.*' => 'exists:users,id',
             'consultant_group_ids' => 'nullable|array',
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
+            // Contract-origin fields
+            'observacoes_contrato'  => 'nullable|string',
+            'condicao_pagamento'    => 'nullable|string',
+            'cobra_despesa_cliente' => 'nullable|boolean',
+            'tipo_faturamento'      => 'nullable|string',
+            'tipo_alocacao'         => 'nullable|in:remoto,presencial,ambos',
+            'vendedor_id'           => 'nullable|exists:users,id',
+            'architect_id'          => 'nullable|exists:users,id',
+            'executivo_conta_id'    => 'nullable|exists:users,id',
         ], [
             'name.required' => 'O nome é obrigatório',
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
@@ -891,6 +902,15 @@ class ProjectController extends Controller
             'coordinator_ids.*' => 'exists:users,id',
             'consultant_group_ids' => 'nullable|array',
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
+            // Contract-origin fields
+            'observacoes_contrato'  => 'nullable|string',
+            'condicao_pagamento'    => 'nullable|string',
+            'cobra_despesa_cliente' => 'nullable|boolean',
+            'tipo_faturamento'      => 'nullable|string',
+            'tipo_alocacao'         => 'nullable|in:remoto,presencial,ambos',
+            'vendedor_id'           => 'nullable|exists:users,id',
+            'architect_id'          => 'nullable|exists:users,id',
+            'executivo_conta_id'    => 'nullable|exists:users,id',
         ], [
             'name.max' => 'O nome não pode ter mais de 255 caracteres',
             'name.min' => 'O nome deve ter pelo menos 2 caracteres',
@@ -2032,5 +2052,64 @@ class ProjectController extends Controller
             ->get();
 
         return response()->json($rows);
+    }
+
+    // ─── Project Attachments ───────────────────────────────────────────────────
+
+    public function listAttachments(Project $project): \Illuminate\Http\JsonResponse
+    {
+        $attachments = $project->attachments()->with('contractAttachment')->get()->map(function ($a) {
+            return [
+                'id'            => $a->id,
+                'type'          => $a->type ?? $a->contractAttachment?->type,
+                'original_name' => $a->display_name,
+                'mime_type'     => $a->mime_type ?? $a->contractAttachment?->mime_type,
+                'size'          => $a->size ?? $a->contractAttachment?->size,
+                'source'        => $a->path ? 'project' : 'contract',
+                'created_at'    => $a->created_at,
+            ];
+        });
+        return response()->json($attachments);
+    }
+
+    public function uploadAttachment(Request $request, Project $project): \Illuminate\Http\JsonResponse
+    {
+        $request->validate([
+            'file' => 'required|file|max:20480',
+            'type' => 'required|in:proposta,contrato,logo,outro',
+        ]);
+
+        $file = $request->file('file');
+        $path = $file->store("projects/{$project->id}/attachments");
+
+        $attachment = ProjectAttachment::create([
+            'project_id'     => $project->id,
+            'uploaded_by_id' => auth()->id(),
+            'type'           => $request->input('type'),
+            'path'           => $path,
+            'original_name'  => $file->getClientOriginalName(),
+            'mime_type'      => $file->getMimeType(),
+            'size'           => $file->getSize(),
+        ]);
+
+        return response()->json($attachment, 201);
+    }
+
+    public function downloadAttachment(Project $project, ProjectAttachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        abort_if($attachment->project_id !== $project->id, 404);
+        $path = $attachment->effective_path;
+        abort_unless($path && Storage::exists($path), 404, 'Arquivo não encontrado.');
+        return Storage::download($path, $attachment->display_name);
+    }
+
+    public function deleteAttachment(Project $project, ProjectAttachment $attachment): \Illuminate\Http\JsonResponse
+    {
+        abort_if($attachment->project_id !== $project->id, 404);
+        if ($attachment->path) {
+            Storage::delete($attachment->path);
+        }
+        $attachment->delete();
+        return response()->json(null, 204);
     }
 }
