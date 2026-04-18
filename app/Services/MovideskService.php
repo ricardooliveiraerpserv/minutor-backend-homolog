@@ -673,6 +673,55 @@ class MovideskService
     }
 
     /**
+     * Busca mapa email → nome da organização via /persons (campo organizations[]).
+     * Usado para enriquecer solicitante.organization nos tickets.
+     */
+    public function fetchPersonOrgMap(): array
+    {
+        $map  = [];
+        $top  = 100;
+        $skip = 0;
+
+        do {
+            try {
+                $url = "{$this->baseUrl()}/persons"
+                    . '?token='   . urlencode($this->token())
+                    . '&$select=' . urlencode('id,businessName,userName,organizations')
+                    . '&$expand=' . urlencode('organizations($select=businessName)')
+                    . '&$top='    . $top
+                    . '&$skip='   . $skip;
+
+                $response = Http::timeout(30)->get($url);
+                if (!$response->successful()) break;
+
+                $data = $response->json();
+                if (empty($data)) break;
+                if (isset($data['id'])) $data = [$data];
+
+                foreach ($data as $person) {
+                    $email = strtolower(trim($person['userName'] ?? ''));
+                    if (!$email) continue;
+
+                    // organizations é array de objetos {businessName: ...}
+                    $orgs = $person['organizations'] ?? [];
+                    if (is_array($orgs) && !empty($orgs)) {
+                        $orgName = $orgs[0]['businessName'] ?? null;
+                        if ($orgName) $map[$email] = $orgName;
+                    }
+                }
+
+                $skip += $top;
+                if (count($data) < $top) break;
+            } catch (\Throwable $e) {
+                Log::error('[MOVIDESK] fetchPersonOrgMap erro: ' . $e->getMessage());
+                break;
+            }
+        } while (true);
+
+        return $map;
+    }
+
+    /**
      * Busca agentes (personType=1) do Movidesk via /persons.
      * Retorna array indexado por email (lowercase).
      */
