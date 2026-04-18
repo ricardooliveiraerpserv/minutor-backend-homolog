@@ -16,6 +16,12 @@ use Illuminate\Support\Facades\DB;
 
 class SustentacaoController extends Controller
 {
+    private function orgLookup(): \Illuminate\Support\Collection
+    {
+        return MovideskOrganization::all(['name'])
+            ->keyBy(fn($o) => strtolower(trim($o->name)));
+    }
+
     private function authorize(): void
     {
         $user = auth()->user();
@@ -86,21 +92,9 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $tickets = MovideskTicket::selectRaw("
-                movidesk_tickets.*,
-                COALESCE(
-                    (SELECT mo.name FROM movidesk_organizations mo
-                     WHERE length(regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')) = 14
-                       AND mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
-                     LIMIT 1),
-                    (SELECT mo.name FROM movidesk_organizations mo
-                     WHERE movidesk_tickets.solicitante->>'organization' IS NOT NULL
-                       AND LOWER(mo.name) = LOWER(movidesk_tickets.solicitante->>'organization')
-                     LIMIT 1),
-                    movidesk_tickets.solicitante->>'organization'
-                ) as org_name
-            ")
-            ->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $orgByName = $this->orgLookup();
+
+        $tickets = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
             ->orderByRaw("CASE urgencia
                 WHEN 'Urgente' THEN 1
@@ -112,6 +106,20 @@ class SustentacaoController extends Controller
             ->orderBy('sla_solution_date')
             ->orderBy('created_date')
             ->paginate($request->query('per_page', 50));
+
+        // Adiciona org_name por ticket: igual ao diagnóstico (match por nome)
+        $tickets->getCollection()->transform(function ($ticket) use ($orgByName) {
+            $sol  = $ticket->solicitante ?? [];
+            $orgKey  = strtolower(trim($sol['organization'] ?? ''));
+            $nameKey = strtolower(trim($sol['name'] ?? ''));
+
+            $ticket->org_name =
+                ($orgByName[$orgKey]->name ?? null)   // cliente é pessoa de uma empresa
+                ?? ($orgByName[$nameKey]->name ?? null) // cliente é a própria empresa
+                ?? ($sol['organization'] ?: null);       // fallback bruto
+
+            return $ticket;
+        });
 
         return response()->json($tickets);
     }
@@ -130,21 +138,9 @@ class SustentacaoController extends Controller
             ->orderByRaw("CASE urgencia WHEN 'Urgente' THEN 1 WHEN 'Alta' THEN 2 WHEN 'Normal' THEN 3 WHEN 'Baixa' THEN 4 ELSE 5 END")
             ->get();
 
-        $breachingNow = MovideskTicket::selectRaw("
-                movidesk_tickets.*,
-                COALESCE(
-                    (SELECT mo.name FROM movidesk_organizations mo
-                     WHERE length(regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')) = 14
-                       AND mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
-                     LIMIT 1),
-                    (SELECT mo.name FROM movidesk_organizations mo
-                     WHERE movidesk_tickets.solicitante->>'organization' IS NOT NULL
-                       AND LOWER(mo.name) = LOWER(movidesk_tickets.solicitante->>'organization')
-                     LIMIT 1),
-                    movidesk_tickets.solicitante->>'organization'
-                ) as org_name
-            ")
-            ->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $orgByNameSla = $this->orgLookup();
+
+        $breachingNow = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->where(function ($q) {
                 $q->where(function ($q2) {
                     $q2->whereNotNull('sla_response_date')
@@ -157,7 +153,16 @@ class SustentacaoController extends Controller
             })
             ->with(['user:id,name', 'customer:id,name'])
             ->orderBy('sla_solution_date')
-            ->get();
+            ->get()
+            ->each(function ($ticket) use ($orgByNameSla) {
+                $sol = $ticket->solicitante ?? [];
+                $orgKey  = strtolower(trim($sol['organization'] ?? ''));
+                $nameKey = strtolower(trim($sol['name'] ?? ''));
+                $ticket->org_name =
+                    ($orgByNameSla[$orgKey]->name ?? null)
+                    ?? ($orgByNameSla[$nameKey]->name ?? null)
+                    ?? ($sol['organization'] ?: null);
+            });
 
         $trend = MovideskTicket::selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
             ->selectRaw('COUNT(*) as total')
