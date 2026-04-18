@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
 use App\Models\MovideskTicket;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -273,5 +274,53 @@ class SustentacaoController extends Controller
             ->get();
 
         return response()->json(['monthly' => $monthly]);
+    }
+
+    public function debugClientes(): JsonResponse
+    {
+        $this->authorize();
+
+        $rows = MovideskTicket::whereNotNull('solicitante')
+            ->selectRaw("
+                solicitante->>'organization' as org,
+                solicitante->>'cpf_cnpj'     as cnpj_raw,
+                COUNT(*)                     as tickets,
+                SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados
+            ")
+            ->groupByRaw("solicitante->>'organization', solicitante->>'cpf_cnpj'")
+            ->orderByDesc('tickets')
+            ->get();
+
+        $customersByCnpj = Customer::whereNotNull('cgc')
+            ->get()
+            ->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
+
+        $result = $rows->map(function ($row) use ($customersByCnpj) {
+            $cnpjNorm = preg_replace('/[^0-9]/', '', $row->cnpj_raw ?? '');
+
+            if ($cnpjNorm && isset($customersByCnpj[$cnpjNorm])) {
+                $match       = 'cnpj';
+                $minutorName = $customersByCnpj[$cnpjNorm]->name ?? $customersByCnpj[$cnpjNorm]->company_name;
+                $minutorCgc  = $customersByCnpj[$cnpjNorm]->cgc;
+            } else {
+                $byName      = Customer::where('name', $row->org)->orWhere('company_name', $row->org)->first();
+                $match       = $byName ? 'nome' : 'nao';
+                $minutorName = $byName?->name ?? $byName?->company_name;
+                $minutorCgc  = $byName?->cgc;
+            }
+
+            return [
+                'org'          => $row->org,
+                'cnpj_raw'     => $row->cnpj_raw,
+                'cnpj_norm'    => $cnpjNorm ?: null,
+                'tickets'      => (int) $row->tickets,
+                'vinculados'   => (int) $row->vinculados,
+                'match'        => $match,
+                'minutor_name' => $minutorName,
+                'minutor_cgc'  => $minutorCgc,
+            ];
+        });
+
+        return response()->json(['rows' => $result]);
     }
 }
