@@ -211,7 +211,7 @@ class ContractController extends Controller
                 'project_value'         => $contract->valor_projeto,
                 'hourly_rate'           => $contract->valor_hora,
                 'additional_hourly_rate' => $contract->hora_adicional,
-                'coordinator_hours'     => $contract->pct_horas_coordenador,
+                'coordinator_hours'     => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
                 'consultant_hours'      => $contract->horas_consultor,
                 'start_date'            => $contract->expectativa_inicio,
                 'status'                => Project::STATUS_AWAITING_START,
