@@ -643,11 +643,13 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $p) {
-                    // Só indexa quem tem CNPJ preenchido (garante que é empresa, não depto ou pessoa física)
+                    // personType 2 = organização/empresa; 1 = pessoa física/contato
+                    if (($p['personType'] ?? 0) != 2) continue;
+
                     $cnpj = preg_replace('/[^0-9]/', '', $p['cpfCnpj'] ?? '');
                     if (strlen($cnpj) < 11) continue;
 
-                    $name = trim($p['businessName'] ?? '');
+                    $name = trim($p['businessName'] ?? $p['corporateName'] ?? '');
                     if (!$name) continue;
 
                     $orgs[strtolower($name)] = [
