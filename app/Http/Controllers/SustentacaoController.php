@@ -284,12 +284,12 @@ class SustentacaoController extends Controller
 
         $rows = MovideskTicket::whereNotNull('solicitante')
             ->selectRaw("
-                solicitante->>'organization' as org,
-                solicitante->>'cpf_cnpj'     as cnpj_movidesk,
-                COUNT(*)                     as tickets,
-                SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados
+                solicitante->>'organization'                                        as org,
+                MAX(solicitante->>'cpf_cnpj')                                       as cnpj_movidesk,
+                COUNT(*)                                                            as tickets,
+                SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END)           as vinculados
             ")
-            ->groupByRaw("solicitante->>'organization', solicitante->>'cpf_cnpj'")
+            ->groupByRaw("solicitante->>'organization'")
             ->orderByDesc('tickets')
             ->get();
 
