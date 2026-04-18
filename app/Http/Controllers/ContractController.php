@@ -181,8 +181,13 @@ class ContractController extends Controller
         return response()->json($contract->fresh());
     }
 
-    public function generateProject(Contract $contract): JsonResponse
+    public function generateProject(Request $request, Contract $contract): JsonResponse
     {
+        $request->validate([
+            'coordinator_ids'   => 'nullable|array',
+            'coordinator_ids.*' => 'integer|exists:users,id',
+        ]);
+
         if (!in_array($contract->status, [Contract::STATUS_INICIO_AUTORIZADO, Contract::STATUS_APROVADO])) {
             return response()->json(['message' => 'Contrato precisa estar Aprovado ou com Início Autorizado.'], 422);
         }
@@ -245,9 +250,13 @@ class ContractController extends Controller
                 ]);
             }
 
-            // Vincular arquiteto como coordenador do projeto
-            if ($contract->architect_id) {
-                $project->coordinators()->attach($contract->architect_id);
+            // Vincular coordenadores: usa os selecionados no modal; fallback para o arquiteto do contrato
+            $coordinatorIds = $request->input('coordinator_ids', []);
+            if (empty($coordinatorIds) && $contract->architect_id) {
+                $coordinatorIds = [$contract->architect_id];
+            }
+            if (!empty($coordinatorIds)) {
+                $project->coordinators()->attach($coordinatorIds);
             }
 
             // Atualizar contrato
