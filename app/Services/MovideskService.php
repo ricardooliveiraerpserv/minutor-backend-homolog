@@ -676,67 +676,65 @@ class MovideskService
      * Busca agentes (personType=1) do Movidesk via /persons.
      * Retorna array indexado por email (lowercase).
      */
-    public function fetchAgents(): array
+    /**
+     * Busca agentes do Movidesk por email (userName), um a um.
+     * Evita paginar milhares de contatos de clientes para achar ~20 agentes.
+     *
+     * @param  string[]  $emails  Emails dos owners vindos dos tickets
+     */
+    public function fetchAgents(array $emails = []): array
     {
         $agents = [];
-        $top    = 100;
-        $skip   = 0;
 
-        do {
+        foreach ($emails as $email) {
             try {
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='   . urlencode($this->token())
-                    . '&$top='    . $top
-                    . '&$skip='   . $skip;
+                    . '&$filter=' . urlencode("userName eq '{$email}'");
 
-                $response = Http::timeout(30)->get($url);
-                if (!$response->successful()) break;
+                $response = Http::timeout(15)->get($url);
+                if (!$response->successful()) {
+                    sleep(2);
+                    continue;
+                }
 
-                $page = $response->json();
-                if (empty($page)) break;
-                if (isset($page['id'])) $page = [$page];
+                $data = $response->json();
+                if (empty($data)) {
+                    sleep(2);
+                    continue;
+                }
 
-                foreach ($page as $p) {
-                    // profileType=1 = Agente; profileType=2 = Cliente
-                    if (($p['profileType'] ?? 0) != 1) continue;
+                if (isset($data['id'])) $data = [$data];
 
-                    // Email está em emails[].email ou userName
-                    $email = '';
-                    if (!empty($p['emails']) && is_array($p['emails'])) {
-                        foreach ($p['emails'] as $em) {
-                            if (!empty($em['email'])) {
-                                $email = strtolower(trim($em['email']));
-                                break;
-                            }
+                foreach ($data as $p) {
+                    $resolvedEmail = strtolower(trim($p['userName'] ?? ''));
+                    if (!$resolvedEmail) {
+                        foreach ($p['emails'] ?? [] as $em) {
+                            if (!empty($em['email'])) { $resolvedEmail = strtolower(trim($em['email'])); break; }
                         }
                     }
-                    if (!$email && !empty($p['userName'])) {
-                        $email = strtolower(trim($p['userName']));
-                    }
-                    if (!$email) continue;
+                    if (!$resolvedEmail) $resolvedEmail = $email;
 
                     $team = null;
                     if (!empty($p['teams']) && is_array($p['teams'])) {
                         $team = $p['teams'][0]['team']['name'] ?? $p['teams'][0]['name'] ?? null;
                     }
 
-                    $agents[$email] = [
+                    $agents[$resolvedEmail] = [
                         'id'       => $p['id'] ?? null,
                         'name'     => trim($p['businessName'] ?? ''),
-                        'email'    => $email,
+                        'email'    => $resolvedEmail,
                         'isActive' => (bool) ($p['isActive'] ?? true),
                         'team'     => $team,
                     ];
                 }
 
-                $skip += $top;
-                if (count($page) < $top) break;
+                // Movidesk: 10 req/min → ~6s entre chamadas
                 sleep(7);
             } catch (\Throwable $e) {
-                Log::error('[MOVIDESK] Exceção ao buscar agents', ['error' => $e->getMessage()]);
-                break;
+                Log::error('[MOVIDESK] Exceção ao buscar agente', ['email' => $email, 'error' => $e->getMessage()]);
             }
-        } while (true);
+        }
 
         return $agents;
     }

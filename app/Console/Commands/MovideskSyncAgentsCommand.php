@@ -24,13 +24,13 @@ class MovideskSyncAgentsCommand extends Command
             ->filter()
             ->values();
 
-        $this->info(count($emails) . ' emails únicos encontrados. Buscando no Movidesk...');
+        $this->info(count($emails) . ' emails únicos encontrados. Buscando no Movidesk (1 por vez)...');
 
         $usersByEmail = User::whereNotNull('email')
             ->get()
             ->keyBy(fn($u) => strtolower(trim($u->email)));
 
-        $agents = $service->fetchAgents();
+        $agents = $service->fetchAgents($emails->toArray());
         $this->info(count($agents) . ' agentes retornados pelo Movidesk.');
 
         $saved = 0;
