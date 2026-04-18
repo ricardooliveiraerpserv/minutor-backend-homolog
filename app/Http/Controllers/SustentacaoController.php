@@ -473,11 +473,12 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $exitCode = Artisan::call('movidesk:sync-agents');
+        $artisan = base_path('artisan');
+        exec("php {$artisan} movidesk:sync-agents > /dev/null 2>&1 &");
 
         return response()->json([
-            'success' => $exitCode === 0,
-            'output'  => Artisan::output(),
+            'success' => true,
+            'message' => 'Sincronização iniciada em background. Aguarde ~3 minutos e recarregue a aba.',
         ]);
     }
 }
