@@ -653,9 +653,10 @@ class MovideskService
                     if (!$name) continue;
 
                     $orgs[strtolower($name)] = [
-                        'id'      => $p['id'] ?? null,
-                        'name'    => $name,
-                        'cpfCnpj' => $cnpj,
+                        'id'       => $p['id'] ?? null,
+                        'name'     => $name,
+                        'cpfCnpj'  => $cnpj,
+                        'isActive' => (bool) ($p['isActive'] ?? true),
                     ];
                 }
 
@@ -669,6 +670,62 @@ class MovideskService
         } while (true);
 
         return $orgs;
+    }
+
+    /**
+     * Busca agentes (personType=1) do Movidesk via /persons.
+     * Retorna array indexado por email (lowercase).
+     */
+    public function fetchAgents(): array
+    {
+        $agents = [];
+        $top    = 100;
+        $skip   = 0;
+
+        do {
+            try {
+                $url = "{$this->baseUrl()}/persons"
+                    . '?token='   . urlencode($this->token())
+                    . '&$select=' . urlencode('id,businessName,email,isActive,personType,teams')
+                    . '&$top='    . $top
+                    . '&$skip='   . $skip;
+
+                $response = Http::timeout(30)->get($url);
+                if (!$response->successful()) break;
+
+                $page = $response->json();
+                if (empty($page)) break;
+                if (isset($page['id'])) $page = [$page];
+
+                foreach ($page as $p) {
+                    if (($p['personType'] ?? 0) != 1) continue;
+                    $email = strtolower(trim($p['email'] ?? ''));
+                    if (!$email) continue;
+
+                    $team = null;
+                    if (!empty($p['teams']) && is_array($p['teams'])) {
+                        $team = $p['teams'][0]['team']['name'] ?? null;
+                    }
+
+                    $agents[$email] = [
+                        'id'       => $p['id'] ?? null,
+                        'name'     => trim($p['businessName'] ?? ''),
+                        'email'    => $email,
+                        'isActive' => (bool) ($p['isActive'] ?? true),
+                        'team'     => $team,
+                    ];
+                }
+
+                $skip += $top;
+                if (count($page) < $top) break;
+                sleep(7);
+            } catch (\Throwable $e) {
+                Log::error('[MOVIDESK] Exceção ao buscar agents', ['error' => $e->getMessage()]);
+                break;
+            }
+        } while (true);
+
+        return $agents;
     }
 
     /**

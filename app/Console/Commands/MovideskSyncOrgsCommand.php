@@ -3,8 +3,10 @@
 namespace App\Console\Commands;
 
 use App\Models\Customer;
+use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
+use App\Models\User;
 use App\Services\MovideskService;
 use Illuminate\Console\Command;
 
@@ -52,9 +54,40 @@ class MovideskSyncOrgsCommand extends Command
 
             MovideskOrganization::updateOrCreate(
                 ['movidesk_id' => (string) $org['id']],
-                ['name' => $org['name'], 'cnpj' => $cnpj ?: null, 'customer_id' => $customerId]
+                [
+                    'name'        => $org['name'],
+                    'cnpj'        => $cnpj ?: null,
+                    'is_active'   => $org['isActive'] ?? true,
+                    'customer_id' => $customerId,
+                ]
             );
         }
+
+        // Sincroniza agentes (responsáveis pelos tickets)
+        $this->info('Buscando agentes no Movidesk...');
+        $agents = $service->fetchAgents();
+        $this->info(count($agents) . ' agentes encontrados.');
+
+        $usersByEmail = User::whereNotNull('email')
+            ->get()
+            ->keyBy(fn($u) => strtolower(trim($u->email)));
+
+        foreach ($agents as $agent) {
+            $userId = $usersByEmail[strtolower($agent['email'])]->id ?? null;
+
+            MovideskAgent::updateOrCreate(
+                ['movidesk_id' => (string) $agent['id']],
+                [
+                    'name'      => $agent['name'],
+                    'email'     => $agent['email'],
+                    'is_active' => $agent['isActive'],
+                    'team'      => $agent['team'],
+                    'user_id'   => $userId,
+                ]
+            );
+        }
+
+        $this->info(count($agents) . ' agentes sincronizados.');
 
         // Atualiza cpf_cnpj e customer_id nos tickets
         $this->info('Atualizando tickets...');

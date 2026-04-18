@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Services\MovideskService;
@@ -328,6 +329,7 @@ class SustentacaoController extends Controller
                 return [
                     'org'           => $org->name,
                     'cnpj_movidesk' => $cnpjNorm ?: null,
+                    'is_active'     => $org->is_active,
                     'tickets'       => (int) ($counts->tickets ?? 0),
                     'vinculados'    => (int) ($counts->vinculados ?? 0),
                     'match'         => $match,
@@ -383,37 +385,63 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $rows = MovideskTicket::whereNotNull('owner_email')
+        // Contagem de tickets por owner_email
+        $ticketCounts = MovideskTicket::whereNotNull('owner_email')
             ->selectRaw("
-                owner_email,
-                MAX(responsavel->>'name')                                       as owner_name,
+                LOWER(owner_email)                                              as email_key,
                 COUNT(*)                                                        as tickets,
                 SUM(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END)           as vinculados,
                 MAX(owner_team)                                                 as team
             ")
-            ->groupBy('owner_email')
-            ->orderByDesc('tickets')
-            ->get();
+            ->groupBy('email_key')
+            ->get()
+            ->keyBy('email_key');
 
         $usersByEmail = \App\Models\User::whereNotNull('email')
             ->get()
             ->keyBy(fn($u) => strtolower(trim($u->email)));
 
-        $result = $rows->map(function ($row) use ($usersByEmail) {
-            $emailKey    = strtolower(trim($row->owner_email));
-            $minutorUser = $usersByEmail[$emailKey] ?? null;
+        // Se já temos agentes sincronizados, usa a tabela (tem is_active)
+        $agents = MovideskAgent::count() > 0
+            ? MovideskAgent::all()
+            : null;
 
-            return [
-                'owner_email'   => $row->owner_email,
-                'owner_name'    => $row->owner_name,
-                'team'          => $row->team,
-                'tickets'       => (int) $row->tickets,
-                'vinculados'    => (int) $row->vinculados,
-                'match'         => $minutorUser ? 'encontrado' : 'nao',
-                'minutor_name'  => $minutorUser?->name,
-                'minutor_id'    => $minutorUser?->id,
-            ];
-        });
+        if ($agents) {
+            $result = $agents->map(function ($agent) use ($ticketCounts, $usersByEmail) {
+                $emailKey    = strtolower($agent->email ?? '');
+                $counts      = $ticketCounts[$emailKey] ?? null;
+                $minutorUser = $usersByEmail[$emailKey] ?? null;
+
+                return [
+                    'owner_email'   => $agent->email,
+                    'owner_name'    => $agent->name,
+                    'team'          => $counts->team ?? $agent->team,
+                    'is_active'     => $agent->is_active,
+                    'tickets'       => (int) ($counts->tickets ?? 0),
+                    'vinculados'    => (int) ($counts->vinculados ?? 0),
+                    'match'         => $minutorUser ? 'encontrado' : 'nao',
+                    'minutor_name'  => $minutorUser?->name,
+                    'minutor_id'    => $minutorUser?->id,
+                ];
+            })->sortByDesc('tickets')->values();
+        } else {
+            // Fallback: só tickets, sem is_active
+            $result = $ticketCounts->map(function ($row) use ($usersByEmail) {
+                $minutorUser = $usersByEmail[$row->email_key] ?? null;
+
+                return [
+                    'owner_email'   => $row->email_key,
+                    'owner_name'    => null,
+                    'team'          => $row->team,
+                    'is_active'     => null,
+                    'tickets'       => (int) $row->tickets,
+                    'vinculados'    => (int) $row->vinculados,
+                    'match'         => $minutorUser ? 'encontrado' : 'nao',
+                    'minutor_name'  => $minutorUser?->name,
+                    'minutor_id'    => $minutorUser?->id,
+                ];
+            })->sortByDesc('tickets')->values();
+        }
 
         return response()->json(['rows' => $result]);
     }
