@@ -621,10 +621,11 @@ class MovideskService
 
         do {
             try {
+                // personType eq 2 = Organização/Empresa (1 = Pessoa física)
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='    . urlencode($this->token())
-                    . '&$select='  . urlencode('id,businessName,cpfCnpj,isActive')
-                    . '&$filter='  . urlencode('isActive eq true')
+                    . '&$select='  . urlencode('id,businessName,cpfCnpj,isActive,personType')
+                    . '&$filter='  . urlencode('isActive eq true and personType eq 2')
                     . '&$top='     . $top
                     . '&$skip='    . $skip;
 
