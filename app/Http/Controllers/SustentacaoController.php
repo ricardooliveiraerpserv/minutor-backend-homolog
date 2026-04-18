@@ -241,14 +241,16 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        $byConsultant = MovideskTicket::select('user_id')
+        // Agrupa por owner_email (Movidesk) — inclui responsáveis sem vínculo no Minutor
+        $byConsultant = MovideskTicket::selectRaw("LOWER(owner_email) as owner_email")
+            ->selectRaw("MAX(responsavel->>'name') as owner_name")
+            ->selectRaw('MAX(user_id) as user_id')
             ->selectRaw('COUNT(*) as tickets_resolved')
             ->selectRaw('AVG(sla_solution_time) as avg_solution_minutes')
-            ->whereNotNull('user_id')
+            ->whereNotNull('owner_email')
             ->whereNotNull('resolved_in')
             ->whereBetween('resolved_in', [$from, $to])
-            ->groupBy('user_id')
-            ->with('user:id,name')
+            ->groupByRaw("LOWER(owner_email)")
             ->orderByDesc('tickets_resolved')
             ->get();
 
