@@ -14,9 +14,9 @@ class MovideskSyncOrgsCommand extends Command
 
     public function handle(MovideskService $service): int
     {
-        $this->info('Buscando organizações no Movidesk (/persons com CNPJ)...');
+        $this->info('Buscando organizações no Movidesk...');
         $orgs = $service->fetchOrganizations();
-        $this->info(count($orgs) . ' organizações com CNPJ encontradas.');
+        $this->info(count($orgs) . ' organizações encontradas.');
 
         if (empty($orgs)) {
             $this->warn('Nenhuma organização retornada. Verifique o token e o endpoint /persons.');

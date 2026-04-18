@@ -621,10 +621,11 @@ class MovideskService
 
         do {
             try {
+                // personType eq 2 = Organização/Empresa (1 = Pessoa física)
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='    . urlencode($this->token())
-                    . '&$select='  . urlencode('id,businessName,corporateName,cpfCnpj,isActive,personType')
-                    . '&$filter='  . urlencode('isActive eq true')
+                    . '&$select='  . urlencode('id,businessName,cpfCnpj,isActive,personType')
+                    . '&$filter='  . urlencode('isActive eq true and personType eq 2')
                     . '&$top='     . $top
                     . '&$skip='    . $skip;
 
@@ -640,18 +641,14 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $p) {
-                    $cnpj = preg_replace('/[^0-9]/', '', $p['cpfCnpj'] ?? '');
-                    // Só indexa quem tem CNPJ — isso garante que são empresas, não depart.
-                    if (!$cnpj) continue;
-
-                    $name = trim($p['businessName'] ?? $p['corporateName'] ?? '');
-                    if (!$name) continue;
-
-                    $orgs[strtolower($name)] = [
-                        'id'      => $p['id'] ?? null,
-                        'name'    => $name,
-                        'cpfCnpj' => $cnpj,
-                    ];
+                    $name = trim($p['businessName'] ?? '');
+                    if ($name) {
+                        $orgs[strtolower($name)] = [
+                            'id'      => $p['id'] ?? null,
+                            'name'    => $name,
+                            'cpfCnpj' => preg_replace('/[^0-9]/', '', $p['cpfCnpj'] ?? ''),
+                        ];
+                    }
                 }
 
                 $skip += $top;
