@@ -8,6 +8,7 @@ use App\Services\MovideskService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -323,5 +324,17 @@ class SustentacaoController extends Controller
         });
 
         return response()->json(['rows' => $result]);
+    }
+
+    public function syncOrgs(): JsonResponse
+    {
+        $this->authorize();
+
+        $exitCode = Artisan::call('movidesk:sync-orgs');
+
+        return response()->json([
+            'success' => $exitCode === 0,
+            'output'  => Artisan::output(),
+        ]);
     }
 }
