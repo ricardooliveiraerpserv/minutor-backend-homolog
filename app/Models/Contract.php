@@ -20,6 +20,7 @@ class Contract extends Model
         'executivo_conta_id', 'vendedor_id', 'observacoes', 'project_code_preview',
         'project_id', 'parent_project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
+        'kanban_status', 'kanban_coordinator_id', 'kanban_order',
     ];
 
     protected $casts = [
@@ -43,6 +44,11 @@ class Contract extends Model
     const STATUS_APROVADO          = 'aprovado';
     const STATUS_INICIO_AUTORIZADO = 'inicio_autorizado';
     const STATUS_ATIVO             = 'ativo';
+
+    const KANBAN_NOVO        = 'novo';
+    const KANBAN_EM_CADASTRO = 'em_cadastro';
+    const KANBAN_PRONTO      = 'pronto';
+    const KANBAN_ALOCADO     = 'alocado'; // coluna do coordenador — já é projeto
 
     public function customer(): BelongsTo
     {
@@ -102,5 +108,23 @@ class Contract extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(ContractAttachment::class);
+    }
+
+    public function kanbanLogs(): HasMany
+    {
+        return $this->hasMany(ContractKanbanLog::class);
+    }
+
+    public function kanbanCoordinator(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class, 'kanban_coordinator_id');
+    }
+
+    public function isKanbanComplete(): bool
+    {
+        return !empty($this->customer_id)
+            && $this->horas_contratadas > 0
+            && !empty($this->contract_type_id)
+            && !empty($this->tipo_faturamento);
     }
 }

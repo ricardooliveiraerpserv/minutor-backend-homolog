@@ -671,6 +671,9 @@ Route::prefix('v1')->group(function () {
         Route::delete('/projects/{project}/attachments/{attachment}',    [ProjectController::class, 'deleteAttachment'])->name('project-attachments.delete');
 
         // 📄 CONTRATOS
+        Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');
+        Route::patch('/contracts/{contract}/kanban-move',            [ContractController::class, 'kanbanMove'])->name('contracts.kanban-move');
+
         Route::prefix('contracts')->group(function () {
             Route::get('/',                                         [ContractController::class, 'index'])->name('contracts.index');
             Route::post('/',                                        [ContractController::class, 'store'])->name('contracts.store');

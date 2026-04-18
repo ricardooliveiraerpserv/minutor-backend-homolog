@@ -5,12 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\Contract;
 use App\Models\ContractAttachment;
 use App\Models\ContractContact;
+use App\Models\ContractKanbanLog;
 use App\Models\ContractType;
 use App\Models\Customer;
 use App\Models\Project;
 use App\Models\ProjectAttachment;
 use App\Models\ProjectContact;
 use App\Models\ServiceType;
+use App\Models\User;
 use App\Services\ProjectCodeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -317,5 +319,182 @@ class ContractController extends Controller
         $attachment->delete();
 
         return response()->json(null, 204);
+    }
+
+    // ─── Kanban ───────────────────────────────────────────────────────────────
+
+    public function kanban(Request $request): JsonResponse
+    {
+        $contracts = Contract::with([
+            'customer:id,name',
+            'contractType:id,name',
+            'serviceType:id,name',
+            'kanbanCoordinator:id,name',
+            'project:id,code,name,status',
+        ])->whereIn('kanban_status', ['novo', 'em_cadastro', 'pronto', 'alocado'])
+          ->orderBy('kanban_order')
+          ->get()
+          ->map(fn($c) => $this->formatKanbanCard($c));
+
+        $coordinators = User::where('type', 'coordenador')
+            ->where('enabled', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json([
+            'contracts'    => $contracts,
+            'coordinators' => $coordinators,
+        ]);
+    }
+
+    public function kanbanMove(Request $request, Contract $contract): JsonResponse
+    {
+        $request->validate([
+            'to_column'      => 'required|string',
+            'coordinator_id' => 'nullable|exists:users,id',
+            'order'          => 'nullable|integer',
+        ]);
+
+        $toColumn      = $request->input('to_column'); // 'novo'|'em_cadastro'|'pronto'|'coordinator:{id}'
+        $coordinatorId = $request->input('coordinator_id');
+        $fromColumn    = $this->resolveColumnName($contract);
+
+        // Mover para coluna de coordenador = gerar projeto automaticamente
+        if (str_starts_with($toColumn, 'coordinator:')) {
+            $coordinatorId = (int) str_replace('coordinator:', '', $toColumn);
+
+            // Validação de completude
+            if (!$contract->isKanbanComplete()) {
+                return response()->json([
+                    'message' => 'Contrato incompleto. Preencha: cliente, horas, tipo de contrato e faturamento.',
+                ], 422);
+            }
+
+            if ($contract->project_id) {
+                // Projeto já existe — apenas move o card
+                $contract->update([
+                    'kanban_status'         => Contract::KANBAN_ALOCADO,
+                    'kanban_coordinator_id' => $coordinatorId,
+                    'kanban_order'          => $request->input('order', 0),
+                ]);
+            } else {
+                // Gerar projeto automaticamente
+                if (!in_array($contract->status, [Contract::STATUS_INICIO_AUTORIZADO, Contract::STATUS_APROVADO])) {
+                    $contract->update(['status' => Contract::STATUS_APROVADO]);
+                }
+
+                $contract->load(['customer', 'contacts', 'attachments']);
+
+                DB::transaction(function () use ($contract, $coordinatorId, $request) {
+                    $codeService   = new ProjectCodeService();
+                    $parentProject = $contract->parent_project_id ? Project::find($contract->parent_project_id) : null;
+                    $codeData      = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
+                    $projectName   = $contract->project_name ?: ($contract->customer->name . ' — ' . now()->format('m/Y'));
+
+                    $project = Project::create(array_merge($codeData, [
+                        'name'                   => $projectName,
+                        'parent_project_id'      => $contract->parent_project_id,
+                        'customer_id'            => $contract->customer_id,
+                        'service_type_id'        => $contract->service_type_id,
+                        'contract_type_id'       => $contract->contract_type_id,
+                        'sold_hours'             => $contract->horas_contratadas,
+                        'project_value'          => $contract->valor_projeto,
+                        'hourly_rate'            => $contract->valor_hora,
+                        'additional_hourly_rate' => $contract->hora_adicional,
+                        'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
+                        'consultant_hours'       => $contract->horas_consultor,
+                        'start_date'             => $contract->expectativa_inicio,
+                        'status'                 => Project::STATUS_AWAITING_START,
+                        'contract_id'            => $contract->id,
+                        'tipo_alocacao'          => $contract->tipo_alocacao,
+                        'architect_id'           => $contract->architect_id,
+                        'condicao_pagamento'     => $contract->condicao_pagamento,
+                        'observacoes_contrato'   => $contract->observacoes,
+                        'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
+                        'executivo_conta_id'     => $contract->executivo_conta_id,
+                        'vendedor_id'            => $contract->vendedor_id,
+                    ]));
+
+                    foreach ($contract->contacts as $c) {
+                        ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
+                    }
+                    foreach ($contract->attachments as $a) {
+                        ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
+                    }
+
+                    $project->coordinators()->attach($coordinatorId);
+
+                    $contract->update([
+                        'project_id'            => $project->id,
+                        'generated_at'          => now(),
+                        'generated_by_id'       => auth()->id(),
+                        'status'                => Contract::STATUS_ATIVO,
+                        'kanban_status'         => Contract::KANBAN_ALOCADO,
+                        'kanban_coordinator_id' => $coordinatorId,
+                        'kanban_order'          => $request->input('order', 0),
+                    ]);
+                });
+            }
+        } else {
+            $kanbanStatus = match($toColumn) {
+                'novo'        => Contract::KANBAN_NOVO,
+                'em_cadastro' => Contract::KANBAN_EM_CADASTRO,
+                'pronto'      => Contract::KANBAN_PRONTO,
+                default       => $contract->kanban_status,
+            };
+
+            $contract->update([
+                'kanban_status'         => $kanbanStatus,
+                'kanban_coordinator_id' => null,
+                'kanban_order'          => $request->input('order', 0),
+            ]);
+        }
+
+        // Log de movimentação
+        ContractKanbanLog::create([
+            'contract_id'    => $contract->id,
+            'from_column'    => $fromColumn,
+            'to_column'      => $toColumn,
+            'moved_by_id'    => auth()->id(),
+            'coordinator_id' => $coordinatorId ?? null,
+        ]);
+
+        return response()->json($this->formatKanbanCard($contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project'])));
+    }
+
+    private function resolveColumnName(Contract $contract): string
+    {
+        if ($contract->kanban_status === Contract::KANBAN_ALOCADO && $contract->kanban_coordinator_id) {
+            return 'coordinator:' . $contract->kanban_coordinator_id;
+        }
+        return $contract->kanban_status ?? Contract::KANBAN_NOVO;
+    }
+
+    private function formatKanbanCard(Contract $contract): array
+    {
+        return [
+            'id'               => $contract->id,
+            'customer_name'    => $contract->customer?->name,
+            'customer_id'      => $contract->customer_id,
+            'project_name'     => $contract->project_name,
+            'categoria'        => $contract->categoria,
+            'contract_type'    => $contract->contractType?->name,
+            'contract_type_id' => $contract->contract_type_id,
+            'service_type'     => $contract->serviceType?->name,
+            'tipo_faturamento' => $contract->tipo_faturamento,
+            'horas_contratadas'=> $contract->horas_contratadas,
+            'valor_projeto'    => $contract->valor_projeto,
+            'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_NOVO,
+            'kanban_coordinator_id' => $contract->kanban_coordinator_id,
+            'kanban_coordinator'    => $contract->kanbanCoordinator?->name,
+            'kanban_order'     => $contract->kanban_order,
+            'status'           => $contract->status,
+            'project_id'       => $contract->project_id,
+            'project_code'     => $contract->project?->code,
+            'project_status'   => $contract->project?->status,
+            'is_complete'      => $contract->isKanbanComplete(),
+            'created_at'       => $contract->created_at,
+        ];
     }
 }
