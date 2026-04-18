@@ -660,7 +660,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/financial',    [SustentacaoController::class, 'financial'])->name('sustentacao.financial');
             Route::get('/clients',      [SustentacaoController::class, 'clients'])->name('sustentacao.clients');
             Route::get('/distribution', [SustentacaoController::class, 'distribution'])->name('sustentacao.distribution');
-            Route::get('/evolution',    [SustentacaoController::class, 'evolution'])->name('sustentacao.evolution');
+            Route::get('/evolution',       [SustentacaoController::class, 'evolution'])->name('sustentacao.evolution');
+            Route::get('/debug-clientes',  [SustentacaoController::class, 'debugClientes'])->name('sustentacao.debug-clientes');
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
