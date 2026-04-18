@@ -661,8 +661,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/clients',      [SustentacaoController::class, 'clients'])->name('sustentacao.clients');
             Route::get('/distribution', [SustentacaoController::class, 'distribution'])->name('sustentacao.distribution');
             Route::get('/evolution',       [SustentacaoController::class, 'evolution'])->name('sustentacao.evolution');
-            Route::get('/debug-clientes',  [SustentacaoController::class, 'debugClientes'])->name('sustentacao.debug-clientes');
-            Route::post('/sync-orgs',      [SustentacaoController::class, 'syncOrgs'])->name('sustentacao.sync-orgs');
+            Route::get('/debug-clientes',      [SustentacaoController::class, 'debugClientes'])->name('sustentacao.debug-clientes');
+            Route::get('/debug-responsaveis',  [SustentacaoController::class, 'debugResponsaveis'])->name('sustentacao.debug-responsaveis');
+            Route::post('/sync-orgs',          [SustentacaoController::class, 'syncOrgs'])->name('sustentacao.sync-orgs');
         });
 
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
