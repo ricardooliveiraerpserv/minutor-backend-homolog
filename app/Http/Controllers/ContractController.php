@@ -198,7 +198,9 @@ class ContractController extends Controller
 
         $contract->load(['customer', 'contacts', 'attachments']);
 
-        $project = DB::transaction(function () use ($contract) {
+        $coordinatorIds = $request->input('coordinator_ids', []);
+
+        $project = DB::transaction(function () use ($contract, $coordinatorIds) {
             $codeService = new ProjectCodeService();
             $parentProject = $contract->parent_project_id ? Project::find($contract->parent_project_id) : null;
             $codeData    = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
@@ -251,7 +253,6 @@ class ContractController extends Controller
             }
 
             // Vincular coordenadores: usa os selecionados no modal; fallback para o arquiteto do contrato
-            $coordinatorIds = $request->input('coordinator_ids', []);
             if (empty($coordinatorIds) && $contract->architect_id) {
                 $coordinatorIds = [$contract->architect_id];
             }
