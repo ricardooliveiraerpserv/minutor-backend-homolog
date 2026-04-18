@@ -248,6 +248,7 @@ class SustentacaoController extends Controller
             ->selectRaw('COUNT(*) as tickets_resolved')
             ->selectRaw('AVG(sla_solution_time) as avg_solution_minutes')
             ->whereNotNull('owner_email')
+            ->where('owner_email', 'not ilike', '%@promax.bardahl.com.br')
             ->whereNotNull('resolved_in')
             ->whereBetween('resolved_in', [$from, $to])
             ->groupByRaw("LOWER(owner_email)")
