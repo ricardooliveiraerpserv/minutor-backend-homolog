@@ -12,26 +12,31 @@ class Contract extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'customer_id', 'status', 'categoria', 'tipo_contrato', 'tipo_faturamento',
-        'cobra_despesa_cliente', 'permissoes_despesa', 'architect_id', 'tipo_alocacao',
-        'horas_contratadas', 'expectativa_inicio', 'condicao_pagamento',
-        'descontar_banco_horas', 'cobrar_a_parte', 'executivo_conta_id', 'vendedor_id',
-        'observacoes', 'project_id', 'generated_at', 'generated_by_id',
+        'customer_id', 'status', 'categoria', 'service_type_id', 'contract_type_id',
+        'tipo_faturamento', 'cobra_despesa_cliente', 'limite_despesa',
+        'architect_id', 'tipo_alocacao', 'horas_contratadas',
+        'valor_projeto', 'valor_hora', 'hora_adicional', 'pct_horas_coordenador', 'horas_consultor',
+        'expectativa_inicio', 'condicao_pagamento',
+        'executivo_conta_id', 'vendedor_id', 'observacoes',
+        'project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
     ];
 
     protected $casts = [
-        'cobra_despesa_cliente' => 'boolean',
-        'descontar_banco_horas' => 'boolean',
-        'cobrar_a_parte'        => 'boolean',
-        'permissoes_despesa'    => 'array',
-        'expectativa_inicio'    => 'date:Y-m-d',
-        'generated_at'          => 'datetime',
-        'approved_at'           => 'datetime',
-        'horas_contratadas'     => 'integer',
-        'created_at'            => 'datetime',
-        'updated_at'            => 'datetime',
-        'deleted_at'            => 'datetime',
+        'cobra_despesa_cliente'  => 'boolean',
+        'expectativa_inicio'     => 'date:Y-m-d',
+        'generated_at'           => 'datetime',
+        'approved_at'            => 'datetime',
+        'horas_contratadas'      => 'integer',
+        'horas_consultor'        => 'integer',
+        'valor_projeto'          => 'decimal:2',
+        'valor_hora'             => 'decimal:2',
+        'hora_adicional'         => 'decimal:2',
+        'pct_horas_coordenador'  => 'decimal:2',
+        'limite_despesa'         => 'decimal:2',
+        'created_at'             => 'datetime',
+        'updated_at'             => 'datetime',
+        'deleted_at'             => 'datetime',
     ];
 
     const STATUS_RASCUNHO          = 'rascunho';
@@ -42,6 +47,16 @@ class Contract extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function serviceType(): BelongsTo
+    {
+        return $this->belongsTo(ServiceType::class);
+    }
+
+    public function contractType(): BelongsTo
+    {
+        return $this->belongsTo(ContractType::class);
     }
 
     public function architect(): BelongsTo

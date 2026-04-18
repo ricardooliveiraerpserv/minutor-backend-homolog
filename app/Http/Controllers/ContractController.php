@@ -21,7 +21,7 @@ class ContractController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Contract::with(['customer:id,name', 'architect:id,name', 'project:id,code,name'])
+        $query = Contract::with(['customer:id,name', 'contractType:id,name', 'architect:id,name', 'project:id,code,name'])
             ->when($request->query('status'), fn($q) => $q->where('status', $request->query('status')))
             ->when($request->query('customer_id'), fn($q) => $q->where('customer_id', $request->query('customer_id')))
             ->when($request->query('search'), function ($q) use ($request) {
@@ -36,28 +36,31 @@ class ContractController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'customer_id'           => 'required|exists:customers,id',
-            'categoria'             => 'required|in:projeto,sustentacao',
-            'tipo_contrato'         => 'required|in:aberto,fechado',
-            'tipo_faturamento'      => 'required|in:on_demand,banco_horas_mensal,banco_horas_fixo,por_servico,saas',
-            'cobra_despesa_cliente' => 'boolean',
-            'permissoes_despesa'    => 'nullable|array',
-            'permissoes_despesa.*'  => 'string|in:executivo,coordenador,consultor',
-            'architect_id'          => 'nullable|exists:users,id',
-            'tipo_alocacao'         => 'nullable|in:remoto,presencial,ambos',
-            'horas_contratadas'     => 'required|integer|min:0',
-            'expectativa_inicio'    => 'nullable|date',
-            'condicao_pagamento'    => 'nullable|string',
-            'descontar_banco_horas' => 'boolean',
-            'cobrar_a_parte'        => 'boolean',
-            'executivo_conta_id'    => 'nullable|exists:users,id',
-            'vendedor_id'           => 'nullable|exists:users,id',
-            'observacoes'           => 'nullable|string',
-            'contacts'              => 'nullable|array',
-            'contacts.*.name'       => 'required|string',
-            'contacts.*.cargo'      => 'nullable|string',
-            'contacts.*.email'      => 'nullable|email',
-            'contacts.*.phone'      => 'nullable|string',
+            'customer_id'            => 'required|exists:customers,id',
+            'categoria'              => 'required|in:projeto,sustentacao',
+            'service_type_id'        => 'nullable|exists:service_types,id',
+            'contract_type_id'       => 'nullable|exists:contract_types,id',
+            'tipo_faturamento'       => 'nullable|in:on_demand,banco_horas_mensal,banco_horas_fixo,por_servico,saas',
+            'cobra_despesa_cliente'  => 'boolean',
+            'limite_despesa'         => 'nullable|numeric|min:0',
+            'architect_id'           => 'nullable|exists:users,id',
+            'tipo_alocacao'          => 'nullable|in:remoto,presencial,ambos',
+            'horas_contratadas'      => 'required|integer|min:0',
+            'valor_projeto'          => 'nullable|numeric|min:0',
+            'valor_hora'             => 'nullable|numeric|min:0',
+            'hora_adicional'         => 'nullable|numeric|min:0',
+            'pct_horas_coordenador'  => 'nullable|numeric|min:0|max:100',
+            'horas_consultor'        => 'nullable|integer|min:0',
+            'expectativa_inicio'     => 'nullable|date',
+            'condicao_pagamento'     => 'nullable|string',
+            'executivo_conta_id'     => 'nullable|exists:users,id',
+            'vendedor_id'            => 'nullable|exists:users,id',
+            'observacoes'            => 'nullable|string',
+            'contacts'               => 'nullable|array',
+            'contacts.*.name'        => 'required|string',
+            'contacts.*.cargo'       => 'nullable|string',
+            'contacts.*.email'       => 'nullable|email',
+            'contacts.*.phone'       => 'nullable|string',
         ]);
 
         $contract = DB::transaction(function () use ($validated, $request) {
@@ -81,7 +84,7 @@ class ContractController extends Controller
     public function show(Contract $contract): JsonResponse
     {
         return response()->json(
-            $contract->load(['customer:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status'])
+            $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status'])
         );
     }
 
@@ -92,29 +95,32 @@ class ContractController extends Controller
         }
 
         $validated = $request->validate([
-            'customer_id'           => 'sometimes|exists:customers,id',
-            'categoria'             => 'sometimes|in:projeto,sustentacao',
-            'tipo_contrato'         => 'sometimes|in:aberto,fechado',
-            'tipo_faturamento'      => 'sometimes|in:on_demand,banco_horas_mensal,banco_horas_fixo,por_servico,saas',
-            'cobra_despesa_cliente' => 'boolean',
-            'permissoes_despesa'    => 'nullable|array',
-            'permissoes_despesa.*'  => 'string|in:executivo,coordenador,consultor',
-            'architect_id'          => 'nullable|exists:users,id',
-            'tipo_alocacao'         => 'nullable|in:remoto,presencial,ambos',
-            'horas_contratadas'     => 'sometimes|integer|min:0',
-            'expectativa_inicio'    => 'nullable|date',
-            'condicao_pagamento'    => 'nullable|string',
-            'descontar_banco_horas' => 'boolean',
-            'cobrar_a_parte'        => 'boolean',
-            'executivo_conta_id'    => 'nullable|exists:users,id',
-            'vendedor_id'           => 'nullable|exists:users,id',
-            'observacoes'           => 'nullable|string',
-            'contacts'              => 'nullable|array',
-            'contacts.*.id'         => 'nullable|exists:contract_contacts,id',
-            'contacts.*.name'       => 'required|string',
-            'contacts.*.cargo'      => 'nullable|string',
-            'contacts.*.email'      => 'nullable|email',
-            'contacts.*.phone'      => 'nullable|string',
+            'customer_id'            => 'sometimes|exists:customers,id',
+            'categoria'              => 'sometimes|in:projeto,sustentacao',
+            'service_type_id'        => 'nullable|exists:service_types,id',
+            'contract_type_id'       => 'nullable|exists:contract_types,id',
+            'tipo_faturamento'       => 'nullable|in:on_demand,banco_horas_mensal,banco_horas_fixo,por_servico,saas',
+            'cobra_despesa_cliente'  => 'boolean',
+            'limite_despesa'         => 'nullable|numeric|min:0',
+            'architect_id'           => 'nullable|exists:users,id',
+            'tipo_alocacao'          => 'nullable|in:remoto,presencial,ambos',
+            'horas_contratadas'      => 'sometimes|integer|min:0',
+            'valor_projeto'          => 'nullable|numeric|min:0',
+            'valor_hora'             => 'nullable|numeric|min:0',
+            'hora_adicional'         => 'nullable|numeric|min:0',
+            'pct_horas_coordenador'  => 'nullable|numeric|min:0|max:100',
+            'horas_consultor'        => 'nullable|integer|min:0',
+            'expectativa_inicio'     => 'nullable|date',
+            'condicao_pagamento'     => 'nullable|string',
+            'executivo_conta_id'     => 'nullable|exists:users,id',
+            'vendedor_id'            => 'nullable|exists:users,id',
+            'observacoes'            => 'nullable|string',
+            'contacts'               => 'nullable|array',
+            'contacts.*.id'          => 'nullable|exists:contract_contacts,id',
+            'contacts.*.name'        => 'required|string',
+            'contacts.*.cargo'       => 'nullable|string',
+            'contacts.*.email'       => 'nullable|email',
+            'contacts.*.phone'       => 'nullable|string',
         ]);
 
         DB::transaction(function () use ($contract, $validated) {
@@ -182,14 +188,6 @@ class ContractController extends Controller
         $contract->load(['customer', 'contacts', 'attachments']);
 
         $project = DB::transaction(function () use ($contract) {
-            // Resolver service_type_id baseado na categoria
-            $serviceType = ServiceType::whereRaw('LOWER(code) = ?', [strtolower($contract->categoria)])->first()
-                ?? ServiceType::whereRaw('LOWER(name) ilike ?', ['%' . strtolower($contract->categoria) . '%'])->first();
-
-            // Resolver contract_type_id para retrocompatibilidade
-            $contractType = ContractType::whereRaw('LOWER(code) = ?', [strtolower($contract->tipo_faturamento)])->first()
-                ?? ContractType::whereRaw("REPLACE(LOWER(name), ' ', '_') = ?", [str_replace('-', '_', strtolower($contract->tipo_faturamento))])->first();
-
             // Gerar código do projeto
             $codeService = new ProjectCodeService();
             $codeData    = $codeService->generateParentCode($contract->customer);
@@ -197,19 +195,22 @@ class ContractController extends Controller
             $project = Project::create(array_merge($codeData, [
                 'name'                  => $contract->customer->name . ' — ' . now()->format('m/Y'),
                 'customer_id'           => $contract->customer_id,
-                'service_type_id'       => $serviceType?->id,
-                'contract_type_id'      => $contractType?->id,
+                'service_type_id'       => $contract->service_type_id,
+                'contract_type_id'      => $contract->contract_type_id,
                 'sold_hours'            => $contract->horas_contratadas,
+                'project_value'         => $contract->valor_projeto,
+                'hourly_rate'           => $contract->valor_hora,
+                'additional_hourly_rate' => $contract->hora_adicional,
+                'coordinator_hours'     => $contract->pct_horas_coordenador,
+                'consultant_hours'      => $contract->horas_consultor,
                 'start_date'            => $contract->expectativa_inicio,
                 'status'                => Project::STATUS_AWAITING_START,
                 'contract_id'           => $contract->id,
-                'tipo_faturamento'      => $contract->tipo_faturamento,
                 'tipo_alocacao'         => $contract->tipo_alocacao,
                 'architect_id'          => $contract->architect_id,
                 'condicao_pagamento'    => $contract->condicao_pagamento,
                 'observacoes_contrato'  => $contract->observacoes,
                 'cobra_despesa_cliente' => $contract->cobra_despesa_cliente,
-                'permissoes_despesa'    => $contract->permissoes_despesa,
                 'executivo_conta_id'    => $contract->executivo_conta_id,
                 'vendedor_id'           => $contract->vendedor_id,
             ]));
