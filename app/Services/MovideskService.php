@@ -559,7 +559,7 @@ class MovideskService
      */
     public function fetchPortalTickets(): array
     {
-        $since  = now()->subDays(90)->utc()->format('Y-m-d\TH:i:s\Z');
+        $since  = now()->subDays(30)->utc()->format('Y-m-d\TH:i:s\Z');
         $filter = "lastUpdate gt {$since}";
         $select = 'id,subject,status,baseStatus,category,urgency,origin,serviceFirstLevel,serviceSecondLevel,'
                 . 'createdDate,closedIn,resolvedIn,slaSolutionDate,slaResponseDate,slaRealResponseDate,'
