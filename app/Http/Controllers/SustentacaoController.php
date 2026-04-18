@@ -278,20 +278,18 @@ class SustentacaoController extends Controller
         return response()->json(['monthly' => $monthly]);
     }
 
-    public function debugClientes(MovideskService $service): JsonResponse
+    public function debugClientes(): JsonResponse
     {
         $this->authorize();
-
-        // Busca organizações do Movidesk com cache de 1h para não bater rate limit
-        $movideskOrgs = Cache::remember('movidesk_orgs_debug', 3600, fn() => $service->fetchOrganizations());
 
         $rows = MovideskTicket::whereNotNull('solicitante')
             ->selectRaw("
                 solicitante->>'organization' as org,
+                solicitante->>'cpf_cnpj'     as cnpj_movidesk,
                 COUNT(*)                     as tickets,
                 SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados
             ")
-            ->groupByRaw("solicitante->>'organization'")
+            ->groupByRaw("solicitante->>'organization', solicitante->>'cpf_cnpj'")
             ->orderByDesc('tickets')
             ->get();
 
@@ -299,10 +297,8 @@ class SustentacaoController extends Controller
             ->get()
             ->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
 
-        $result = $rows->map(function ($row) use ($movideskOrgs, $customersByCnpj) {
-            $orgKey      = strtolower(trim($row->org ?? ''));
-            $movideskOrg = $movideskOrgs[$orgKey] ?? null;
-            $cnpjNorm    = $movideskOrg['cpfCnpj'] ?? '';
+        $result = $rows->map(function ($row) use ($customersByCnpj) {
+            $cnpjNorm = preg_replace('/[^0-9]/', '', $row->cnpj_movidesk ?? '');
 
             if ($cnpjNorm && isset($customersByCnpj[$cnpjNorm])) {
                 $match       = 'cnpj';
