@@ -36,7 +36,7 @@ class MovideskService
             $response = Http::get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients,owner,actions($expand=timeAppointments)',
+                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments)',
             ]);
 
             if ($response->successful()) {
@@ -575,7 +575,7 @@ class MovideskService
                     . '?token=' . urlencode($this->token())
                     . '&$filter=' . urlencode($filter)
                     . '&$select=' . urlencode($select)
-                    . '&$expand=clients,owner'
+                    . '&$expand=clients($expand=organization),owner'
                     . '&$top=' . $top
                     . '&$skip=' . $skip;
 
