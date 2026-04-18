@@ -655,6 +655,7 @@ class SustentacaoController extends Controller
             ->get()
             ->map(fn($r) => [
                 'name'          => $r->owner_name ?? $r->owner_email,
+                'email'         => $r->owner_email,
                 'total_open'    => (int) $r->total_open,
                 'in_attendance' => (int) $r->in_attendance,
                 'sla_breached'  => (int) $r->sla_breached_count,
