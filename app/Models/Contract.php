@@ -122,9 +122,11 @@ class Contract extends Model
 
     public function isKanbanComplete(): bool
     {
+        $isOnDemand = $this->tipo_faturamento === 'on_demand';
+
         return !empty($this->customer_id)
-            && $this->horas_contratadas > 0
             && !empty($this->contract_type_id)
-            && !empty($this->tipo_faturamento);
+            && !empty($this->tipo_faturamento)
+            && ($isOnDemand || $this->horas_contratadas > 0);
     }
 }
