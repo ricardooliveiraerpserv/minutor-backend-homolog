@@ -115,7 +115,10 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $orgByName = $this->orgLookup();
+        $orgByName       = $this->orgLookup();
+        $orgByCustomerId = MovideskOrganization::whereNotNull('customer_id')
+            ->get(['name', 'customer_id'])
+            ->keyBy('customer_id');
 
         $tickets = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
@@ -130,9 +133,11 @@ class SustentacaoController extends Controller
             ->orderBy('created_date')
             ->paginate($request->query('per_page', 50));
 
-        // Adiciona org_name por ticket: igual ao diagnóstico (match por nome)
-        $tickets->getCollection()->transform(function ($ticket) use ($orgByName) {
-            $ticket->org_name = $this->resolveOrgName($ticket->solicitante ?? [], $orgByName);
+        $tickets->getCollection()->transform(function ($ticket) use ($orgByName, $orgByCustomerId) {
+            // Prioridade: customer_id direto → solicitante fields → heurístico
+            $ticket->org_name =
+                ($orgByCustomerId[$ticket->customer_id]->name ?? null)
+                ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByName);
             return $ticket;
         });
 
@@ -153,7 +158,10 @@ class SustentacaoController extends Controller
             ->orderByRaw("CASE urgencia WHEN 'Urgente' THEN 1 WHEN 'Alta' THEN 2 WHEN 'Normal' THEN 3 WHEN 'Baixa' THEN 4 ELSE 5 END")
             ->get();
 
-        $orgByNameSla = $this->orgLookup();
+        $orgByNameSla       = $this->orgLookup();
+        $orgByCustomerIdSla = MovideskOrganization::whereNotNull('customer_id')
+            ->get(['name', 'customer_id'])
+            ->keyBy('customer_id');
 
         $breachingNow = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->where(function ($q) {
@@ -169,8 +177,10 @@ class SustentacaoController extends Controller
             ->with(['user:id,name', 'customer:id,name'])
             ->orderBy('sla_solution_date')
             ->get()
-            ->each(function ($ticket) use ($orgByNameSla) {
-                $ticket->org_name = $this->resolveOrgName($ticket->solicitante ?? [], $orgByNameSla);
+            ->each(function ($ticket) use ($orgByNameSla, $orgByCustomerIdSla) {
+                $ticket->org_name =
+                    ($orgByCustomerIdSla[$ticket->customer_id]->name ?? null)
+                    ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByNameSla);
             });
 
         $trend = MovideskTicket::selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
