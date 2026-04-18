@@ -22,6 +22,29 @@ class SustentacaoController extends Controller
             ->keyBy(fn($o) => strtolower(trim($o->name)));
     }
 
+    private function resolveOrgName(array $sol, \Illuminate\Support\Collection $orgByName): ?string
+    {
+        // 1. Campo organization direto (pessoa de uma empresa)
+        $orgKey = strtolower(trim($sol['organization'] ?? ''));
+        if ($orgKey && isset($orgByName[$orgKey])) return $orgByName[$orgKey]->name;
+        if ($orgKey) return $sol['organization'];
+
+        // 2. Campo name: cliente é a própria empresa
+        $nameKey = strtolower(trim($sol['name'] ?? ''));
+        if ($nameKey && isset($orgByName[$nameKey])) return $orgByName[$nameKey]->name;
+
+        // 3. Heurístico "Nome | Empresa": extrai partes após " | " e busca na tabela
+        $name = $sol['name'] ?? '';
+        if (str_contains($name, ' | ')) {
+            foreach (array_reverse(explode(' | ', $name)) as $part) {
+                $key = strtolower(trim($part));
+                if ($key && isset($orgByName[$key])) return $orgByName[$key]->name;
+            }
+        }
+
+        return null;
+    }
+
     private function authorize(): void
     {
         $user = auth()->user();
@@ -109,15 +132,7 @@ class SustentacaoController extends Controller
 
         // Adiciona org_name por ticket: igual ao diagnóstico (match por nome)
         $tickets->getCollection()->transform(function ($ticket) use ($orgByName) {
-            $sol  = $ticket->solicitante ?? [];
-            $orgKey  = strtolower(trim($sol['organization'] ?? ''));
-            $nameKey = strtolower(trim($sol['name'] ?? ''));
-
-            $ticket->org_name =
-                ($orgByName[$orgKey]->name ?? null)   // cliente é pessoa de uma empresa
-                ?? ($orgByName[$nameKey]->name ?? null) // cliente é a própria empresa
-                ?? ($sol['organization'] ?: null);       // fallback bruto
-
+            $ticket->org_name = $this->resolveOrgName($ticket->solicitante ?? [], $orgByName);
             return $ticket;
         });
 
@@ -155,13 +170,7 @@ class SustentacaoController extends Controller
             ->orderBy('sla_solution_date')
             ->get()
             ->each(function ($ticket) use ($orgByNameSla) {
-                $sol = $ticket->solicitante ?? [];
-                $orgKey  = strtolower(trim($sol['organization'] ?? ''));
-                $nameKey = strtolower(trim($sol['name'] ?? ''));
-                $ticket->org_name =
-                    ($orgByNameSla[$orgKey]->name ?? null)
-                    ?? ($orgByNameSla[$nameKey]->name ?? null)
-                    ?? ($sol['organization'] ?: null);
+                $ticket->org_name = $this->resolveOrgName($ticket->solicitante ?? [], $orgByNameSla);
             });
 
         $trend = MovideskTicket::selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
