@@ -86,7 +86,17 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $tickets = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $tickets = MovideskTicket::selectRaw("
+                movidesk_tickets.*,
+                COALESCE(
+                    (SELECT mo.name FROM movidesk_organizations mo
+                     WHERE mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
+                       AND mo.cnpj <> ''
+                     LIMIT 1),
+                    movidesk_tickets.solicitante->>'organization'
+                ) as org_name
+            ")
+            ->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
             ->orderByRaw("CASE urgencia
                 WHEN 'Urgente' THEN 1
@@ -116,7 +126,17 @@ class SustentacaoController extends Controller
             ->orderByRaw("CASE urgencia WHEN 'Urgente' THEN 1 WHEN 'Alta' THEN 2 WHEN 'Normal' THEN 3 WHEN 'Baixa' THEN 4 ELSE 5 END")
             ->get();
 
-        $breachingNow = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $breachingNow = MovideskTicket::selectRaw("
+                movidesk_tickets.*,
+                COALESCE(
+                    (SELECT mo.name FROM movidesk_organizations mo
+                     WHERE mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
+                       AND mo.cnpj <> ''
+                     LIMIT 1),
+                    movidesk_tickets.solicitante->>'organization'
+                ) as org_name
+            ")
+            ->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->where(function ($q) {
                 $q->where(function ($q2) {
                     $q2->whereNotNull('sla_response_date')
