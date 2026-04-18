@@ -146,6 +146,8 @@ class SustentacaoController extends Controller
         $slaSolutionRate = $slaSolTotal > 0 ? round(($slaSolOnTime / $slaSolTotal) * 100, 1) : null;
 
         $openAtRisk = $this->applyOpen($this->tickets())
+            ->whereNull('resolved_in')
+            ->whereNull('closed_in')
             ->whereNotNull('sla_solution_date')
             ->where('sla_solution_date', '<', now())
             ->count();
@@ -242,6 +244,8 @@ class SustentacaoController extends Controller
         $domainMapSla       = $this->domainOrgMap($orgByNameSla);
 
         $breachingNow = $this->applyOpen($this->tickets())
+            ->whereNull('resolved_in')
+            ->whereNull('closed_in')
             ->where(function ($q) {
                 $q->where(function ($q2) {
                     $q2->whereNotNull('sla_response_date')
@@ -593,14 +597,16 @@ class SustentacaoController extends Controller
         // Tickets abertos agora
         $ticketsOpen = $this->applyOpen($base())->count();
 
-        // SLA violado agora (abertos com sla_solution_date no passado)
+        // SLA violado agora (abertos com sla_solution_date no passado, não resolvidos/fechados)
         $slaBreached = $this->applyOpen($base())
+            ->whereNull('resolved_in')->whereNull('closed_in')
             ->whereNotNull('sla_solution_date')
             ->where('sla_solution_date', '<', now())
             ->count();
 
-        // SLA em risco (abertos com sla_solution_date nas próximas 4h)
+        // SLA em risco (abertos com sla_solution_date nas próximas 4h, não resolvidos/fechados)
         $slaAtRisk = $this->applyOpen($base())
+            ->whereNull('resolved_in')->whereNull('closed_in')
             ->whereNotNull('sla_solution_date')
             ->whereBetween('sla_solution_date', [now(), now()->addHours(4)])
             ->count();
@@ -649,7 +655,7 @@ class SustentacaoController extends Controller
             ->selectRaw("LOWER(owner_email) as owner_email")
             ->selectRaw("COUNT(*) as total_open")
             ->selectRaw("SUM(CASE WHEN base_status = 'InAttendance' THEN 1 ELSE 0 END) as in_attendance")
-            ->selectRaw("SUM(CASE WHEN sla_solution_date IS NOT NULL AND sla_solution_date < NOW() THEN 1 ELSE 0 END) as sla_breached_count")
+            ->selectRaw("SUM(CASE WHEN sla_solution_date IS NOT NULL AND sla_solution_date < NOW() AND resolved_in IS NULL AND closed_in IS NULL THEN 1 ELSE 0 END) as sla_breached_count")
             ->groupByRaw("LOWER(owner_email)")
             ->orderByDesc('total_open')
             ->get()
@@ -671,7 +677,7 @@ class SustentacaoController extends Controller
             ->selectRaw("solicitante->>'organization' as org")
             ->selectRaw("COUNT(*) as total_open")
             ->selectRaw("SUM(CASE WHEN base_status = 'InAttendance' THEN 1 ELSE 0 END) as in_attendance")
-            ->selectRaw("SUM(CASE WHEN sla_solution_date IS NOT NULL AND sla_solution_date < NOW() THEN 1 ELSE 0 END) as sla_breached_count")
+            ->selectRaw("SUM(CASE WHEN sla_solution_date IS NOT NULL AND sla_solution_date < NOW() AND resolved_in IS NULL AND closed_in IS NULL THEN 1 ELSE 0 END) as sla_breached_count")
             ->groupByRaw("solicitante->>'organization'")
             ->orderByDesc('total_open')
             ->limit(15)
