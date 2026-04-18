@@ -165,8 +165,13 @@ class SustentacaoController extends Controller
             ->keyBy('customer_id');
         $domainMap       = $this->domainOrgMap($orgByName);
 
+        $responsavelFilter = $request->query('responsavel');
+        $clienteFilter     = $request->query('cliente');
+
         $tickets = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
+            ->when($responsavelFilter, fn($q) => $q->where('owner_email', 'ilike', "%{$responsavelFilter}%"))
+            ->when($clienteFilter, fn($q) => $q->whereRaw("solicitante->>'organization' ILIKE ?", ["%{$clienteFilter}%"]))
             ->orderByRaw("CASE urgencia
                 WHEN 'Urgente' THEN 1
                 WHEN 'Alta'    THEN 2
