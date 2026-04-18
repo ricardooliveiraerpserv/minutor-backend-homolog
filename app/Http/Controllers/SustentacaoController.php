@@ -167,11 +167,20 @@ class SustentacaoController extends Controller
 
         $responsavelFilter = $request->query('responsavel');
         $clienteFilter     = $request->query('cliente');
+        $urgenciaFilter    = $request->query('urgencia');
+        $statusFilter      = $request->query('status');
+        $searchFilter      = $request->query('search');
 
         $tickets = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
             ->when($responsavelFilter, fn($q) => $q->where('owner_email', 'ilike', "%{$responsavelFilter}%"))
             ->when($clienteFilter, fn($q) => $q->whereRaw("solicitante->>'organization' ILIKE ?", ["%{$clienteFilter}%"]))
+            ->when($urgenciaFilter, fn($q) => $q->where('urgencia', $urgenciaFilter))
+            ->when($statusFilter, fn($q) => $q->where('base_status', $statusFilter))
+            ->when($searchFilter, fn($q) => $q->where(function ($q2) use ($searchFilter) {
+                $q2->where('titulo', 'ilike', "%{$searchFilter}%")
+                   ->orWhere(DB::raw('ticket_id::text'), 'like', "%{$searchFilter}%");
+            }))
             ->orderByRaw("CASE urgencia
                 WHEN 'Urgente' THEN 1
                 WHEN 'Alta'    THEN 2
