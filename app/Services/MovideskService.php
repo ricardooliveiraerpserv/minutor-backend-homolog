@@ -686,7 +686,6 @@ class MovideskService
             try {
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='   . urlencode($this->token())
-                    . '&$select=' . urlencode('id,businessName,email,isActive,personType,teams')
                     . '&$top='    . $top
                     . '&$skip='   . $skip;
 
@@ -698,13 +697,27 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $p) {
-                    if (($p['personType'] ?? 0) != 1) continue;
-                    $email = strtolower(trim($p['email'] ?? ''));
+                    // profileType=1 = Agente; profileType=2 = Cliente
+                    if (($p['profileType'] ?? 0) != 1) continue;
+
+                    // Email está em emails[].email ou userName
+                    $email = '';
+                    if (!empty($p['emails']) && is_array($p['emails'])) {
+                        foreach ($p['emails'] as $em) {
+                            if (!empty($em['email'])) {
+                                $email = strtolower(trim($em['email']));
+                                break;
+                            }
+                        }
+                    }
+                    if (!$email && !empty($p['userName'])) {
+                        $email = strtolower(trim($p['userName']));
+                    }
                     if (!$email) continue;
 
                     $team = null;
                     if (!empty($p['teams']) && is_array($p['teams'])) {
-                        $team = $p['teams'][0]['team']['name'] ?? null;
+                        $team = $p['teams'][0]['team']['name'] ?? $p['teams'][0]['name'] ?? null;
                     }
 
                     $agents[$email] = [
