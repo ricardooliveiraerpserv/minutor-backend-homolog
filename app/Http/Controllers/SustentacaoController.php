@@ -468,4 +468,16 @@ class SustentacaoController extends Controller
             'output'  => Artisan::output(),
         ]);
     }
+
+    public function syncAgents(): JsonResponse
+    {
+        $this->authorize();
+
+        $exitCode = Artisan::call('movidesk:sync-agents');
+
+        return response()->json([
+            'success' => $exitCode === 0,
+            'output'  => Artisan::output(),
+        ]);
+    }
 }

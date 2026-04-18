@@ -63,32 +63,6 @@ class MovideskSyncOrgsCommand extends Command
             );
         }
 
-        // Sincroniza agentes (responsáveis pelos tickets)
-        $this->info('Buscando agentes no Movidesk...');
-        $agents = $service->fetchAgents();
-        $this->info(count($agents) . ' agentes encontrados.');
-
-        $usersByEmail = User::whereNotNull('email')
-            ->get()
-            ->keyBy(fn($u) => strtolower(trim($u->email)));
-
-        foreach ($agents as $agent) {
-            $userId = $usersByEmail[strtolower($agent['email'])]->id ?? null;
-
-            MovideskAgent::updateOrCreate(
-                ['movidesk_id' => (string) $agent['id']],
-                [
-                    'name'      => $agent['name'],
-                    'email'     => $agent['email'],
-                    'is_active' => $agent['isActive'],
-                    'team'      => $agent['team'],
-                    'user_id'   => $userId,
-                ]
-            );
-        }
-
-        $this->info(count($agents) . ' agentes sincronizados.');
-
         // Atualiza cpf_cnpj e customer_id nos tickets
         $this->info('Atualizando tickets...');
         $updated = 0;
