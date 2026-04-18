@@ -680,8 +680,26 @@ class MovideskService
             $id = $ticket['id'] ?? null;
             if (!$id) return;
 
+            $existing = MovideskTicket::where('ticket_id', $id)->first();
+
+            $newSolicitante = $this->extractSolicitante($ticket);
+
+            // Preserve cpf_cnpj populated by sync-orgs — the ticket API never returns org CNPJs
+            if ($newSolicitante && $existing?->solicitante) {
+                $existingCnpj = $existing->solicitante['cpf_cnpj'] ?? null;
+                if ($existingCnpj && !($newSolicitante['cpf_cnpj'] ?? null)) {
+                    $newSolicitante['cpf_cnpj'] = $existingCnpj;
+                }
+            }
+
+            // Preserve customer_id resolved by sync-orgs when the ticket API can't resolve it
+            $newCustomerId = $this->resolveCustomerIdForPortal($ticket);
+            if (!$newCustomerId && $existing?->customer_id) {
+                $newCustomerId = $existing->customer_id;
+            }
+
             MovideskTicket::updateOrCreate(['ticket_id' => $id], [
-                'solicitante'            => $this->extractSolicitante($ticket),
+                'solicitante'            => $newSolicitante,
                 'categoria'              => $ticket['category'] ?? null,
                 'urgencia'               => $ticket['urgency'] ?? null,
                 'responsavel'            => $this->extractResponsavel($ticket),
@@ -694,7 +712,7 @@ class MovideskService
                 'owner_email'            => $ticket['owner']['email'] ?? null,
                 'owner_team'             => $ticket['ownerTeam'] ?? null,
                 'user_id'                => $this->resolveUserIdForPortal($ticket),
-                'customer_id'            => $this->resolveCustomerIdForPortal($ticket),
+                'customer_id'            => $newCustomerId,
                 'created_date'           => $this->parseTimestamp($ticket['createdDate'] ?? null),
                 'closed_in'              => $this->parseTimestamp($ticket['closedIn'] ?? null),
                 'resolved_in'            => $this->parseTimestamp($ticket['resolvedIn'] ?? null),

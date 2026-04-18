@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Customer;
+use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Services\MovideskService;
 use Carbon\Carbon;
@@ -283,45 +284,53 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $rows = MovideskTicket::whereNotNull('solicitante')
-            ->selectRaw("
-                solicitante->>'organization'                                        as org,
-                MAX(solicitante->>'cpf_cnpj')                                       as cnpj_movidesk,
-                COUNT(*)                                                            as tickets,
-                SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END)           as vinculados
-            ")
-            ->groupByRaw("solicitante->>'organization'")
-            ->orderByDesc('tickets')
-            ->get();
+        // Busca todas as organizações conhecidas do Movidesk (tabela atualizada pelo sync-orgs)
+        $movideskOrgs = MovideskOrganization::with('customer')->get();
 
         $customersByCnpj = Customer::whereNotNull('cgc')
             ->get()
             ->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
 
-        $result = $rows->map(function ($row) use ($customersByCnpj) {
-            $cnpjNorm = preg_replace('/[^0-9]/', '', $row->cnpj_movidesk ?? '');
+        // Contagem de tickets agrupada por nome de organização
+        $ticketCounts = MovideskTicket::whereNotNull('solicitante')
+            ->selectRaw("
+                LOWER(solicitante->>'organization')                             as org_key,
+                COUNT(*)                                                        as tickets,
+                SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END)       as vinculados
+            ")
+            ->groupByRaw("LOWER(solicitante->>'organization')")
+            ->get()
+            ->keyBy('org_key');
+
+        $result = $movideskOrgs->map(function ($org) use ($customersByCnpj, $ticketCounts) {
+            $cnpjNorm = preg_replace('/[^0-9]/', '', $org->cnpj ?? '');
+            $counts   = $ticketCounts[strtolower($org->name)] ?? null;
 
             if ($cnpjNorm && isset($customersByCnpj[$cnpjNorm])) {
                 $match       = 'cnpj';
                 $minutorName = $customersByCnpj[$cnpjNorm]->name ?? $customersByCnpj[$cnpjNorm]->company_name;
                 $minutorCgc  = $customersByCnpj[$cnpjNorm]->cgc;
+            } elseif ($org->customer) {
+                $match       = 'nome';
+                $minutorName = $org->customer->name ?? $org->customer->company_name;
+                $minutorCgc  = $org->customer->cgc;
             } else {
-                $byName      = Customer::where('name', $row->org)->orWhere('company_name', $row->org)->first();
+                $byName      = Customer::where('name', $org->name)->orWhere('company_name', $org->name)->first();
                 $match       = $byName ? 'nome' : 'nao';
                 $minutorName = $byName?->name ?? $byName?->company_name;
                 $minutorCgc  = $byName?->cgc;
             }
 
             return [
-                'org'           => $row->org,
+                'org'           => $org->name,
                 'cnpj_movidesk' => $cnpjNorm ?: null,
-                'tickets'       => (int) $row->tickets,
-                'vinculados'    => (int) $row->vinculados,
+                'tickets'       => (int) ($counts->tickets ?? 0),
+                'vinculados'    => (int) ($counts->vinculados ?? 0),
                 'match'         => $match,
                 'minutor_name'  => $minutorName,
                 'minutor_cgc'   => $minutorCgc,
             ];
-        });
+        })->sortByDesc('tickets')->values();
 
         return response()->json(['rows' => $result]);
     }

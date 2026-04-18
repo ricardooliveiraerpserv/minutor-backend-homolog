@@ -2,8 +2,9 @@
 
 namespace App\Console\Commands;
 
-use App\Models\MovideskTicket;
 use App\Models\Customer;
+use App\Models\MovideskOrganization;
+use App\Models\MovideskTicket;
 use App\Services\MovideskService;
 use Illuminate\Console\Command;
 
@@ -23,13 +24,40 @@ class MovideskSyncOrgsCommand extends Command
             return self::FAILURE;
         }
 
-        // Mostra tabela das orgs com CNPJ
         $this->table(
             ['Organização', 'CNPJ'],
             collect($orgs)->map(fn($o) => [mb_substr($o['name'], 0, 40), $o['cpfCnpj'] ?: '(vazio)'])->values()->toArray()
         );
 
-        $this->info('Atualizando cpf_cnpj nos tickets...');
+        // Salva/atualiza tabela movidesk_organizations
+        $this->info('Sincronizando tabela de organizações...');
+        $customersByCnpj = Customer::whereNotNull('cgc')
+            ->get()
+            ->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
+
+        foreach ($orgs as $org) {
+            $cnpj       = $org['cpfCnpj'] ?? null;
+            $customerId = null;
+
+            if ($cnpj) {
+                $cnpjNorm   = preg_replace('/[^0-9]/', '', $cnpj);
+                $customerId = $customersByCnpj[$cnpjNorm]->id ?? null;
+
+                if (!$customerId) {
+                    $customerId = Customer::where('name', $org['name'])
+                        ->orWhere('company_name', $org['name'])
+                        ->value('id');
+                }
+            }
+
+            MovideskOrganization::updateOrCreate(
+                ['movidesk_id' => (string) $org['id']],
+                ['name' => $org['name'], 'cnpj' => $cnpj ?: null, 'customer_id' => $customerId]
+            );
+        }
+
+        // Atualiza cpf_cnpj e customer_id nos tickets
+        $this->info('Atualizando tickets...');
         $updated = 0;
 
         MovideskTicket::whereNotNull('solicitante')->orderBy('id')->each(function (MovideskTicket $ticket) use ($orgs, &$updated) {
@@ -40,20 +68,26 @@ class MovideskSyncOrgsCommand extends Command
             $org  = $orgs[$key] ?? null;
             $cnpj = $org['cpfCnpj'] ?? null;
 
-            if (!$cnpj) return;
+            $changed = false;
 
-            $solicitante              = $ticket->solicitante;
-            $solicitante['cpf_cnpj']  = $cnpj;
-            $ticket->solicitante      = $solicitante;
+            if ($cnpj) {
+                $solicitante             = $ticket->solicitante;
+                $solicitante['cpf_cnpj'] = $cnpj;
+                $ticket->solicitante     = $solicitante;
+                $changed = true;
 
-            // Resolve customer_id pelo CNPJ
-            if (!$ticket->customer_id) {
-                $customerId = Customer::where('cgc', $cnpj)->value('id');
-                if ($customerId) $ticket->customer_id = $customerId;
+                if (!$ticket->customer_id) {
+                    $customerId = Customer::where('cgc', $cnpj)->value('id');
+                    if ($customerId) {
+                        $ticket->customer_id = $customerId;
+                    }
+                }
             }
 
-            $ticket->save();
-            $updated++;
+            if ($changed) {
+                $ticket->save();
+                $updated++;
+            }
         });
 
         $this->info("{$updated} tickets atualizados com CNPJ.");
