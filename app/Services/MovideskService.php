@@ -725,15 +725,20 @@ class MovideskService
         }
         $target = $target ?? $clients[0];
 
+        $org = $target['organization'] ?? null;
+
         // 1. Tenta por CNPJ — chave única confiável entre Movidesk e Minutor
-        $cpfCnpj = preg_replace('/[^0-9]/', '', $target['organization']['cpfCnpj'] ?? '');
+        $cpfCnpj = preg_replace('/[^0-9]/', '', $target['cpfCnpj'] ?? '');
+        if (!$cpfCnpj && is_array($org)) {
+            $cpfCnpj = preg_replace('/[^0-9]/', '', $org['cpfCnpj'] ?? '');
+        }
         if (strlen($cpfCnpj) >= 11) {
             $id = Customer::where('cgc', $cpfCnpj)->value('id');
             if ($id) return $id;
         }
 
         // 2. Fallback: nome da organização
-        $orgName = $target['organization']['businessName'] ?? $target['businessName'] ?? null;
+        $orgName = is_array($org) ? ($org['businessName'] ?? null) : ($org ?: $target['businessName'] ?? null);
         if (!$orgName) return null;
 
         return Customer::where(function ($q) use ($orgName) {
@@ -778,12 +783,20 @@ class MovideskService
         // 3. Fallback: primeiro da lista
         $target = $target ?? $clients[0];
 
-        $cpfCnpj = preg_replace('/[^0-9]/', '', $target['organization']['cpfCnpj'] ?? '');
+        // organization pode ser string (nome) ou array (objeto expandido)
+        $org = $target['organization'] ?? null;
+        $orgName = is_array($org) ? ($org['businessName'] ?? null) : ($org ?: null);
+
+        // CNPJ: tenta no cliente direto, depois no objeto organization expandido
+        $cpfCnpj = preg_replace('/[^0-9]/', '', $target['cpfCnpj'] ?? '');
+        if (!$cpfCnpj && is_array($org)) {
+            $cpfCnpj = preg_replace('/[^0-9]/', '', $org['cpfCnpj'] ?? '');
+        }
 
         return [
             'name'         => $target['businessName'] ?? null,
             'email'        => $target['email'] ?? null,
-            'organization' => $target['organization']['businessName'] ?? null,
+            'organization' => $orgName,
             'cpf_cnpj'     => $cpfCnpj ?: null,
         ];
     }
