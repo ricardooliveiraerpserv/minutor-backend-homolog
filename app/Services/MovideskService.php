@@ -621,17 +621,20 @@ class MovideskService
 
         do {
             try {
+                // Sem $filter — alguns tenants do Movidesk rejeitam OData filter em /persons
                 $url = "{$this->baseUrl()}/persons"
-                    . '?token='    . urlencode($this->token())
-                    . '&$select='  . urlencode('id,businessName,cpfCnpj,isActive')
-                    . '&$filter='  . urlencode('isActive eq true')
-                    . '&$top='     . $top
-                    . '&$skip='    . $skip;
+                    . '?token='   . urlencode($this->token())
+                    . '&$select=' . urlencode('id,businessName,cpfCnpj,isActive,personType')
+                    . '&$top='    . $top
+                    . '&$skip='   . $skip;
 
                 $response = Http::timeout(30)->get($url);
 
                 if (!$response->successful()) {
-                    Log::warning('[MOVIDESK] Erro ao buscar persons/orgs', ['status' => $response->status()]);
+                    Log::warning('[MOVIDESK] Erro ao buscar persons', [
+                        'status' => $response->status(),
+                        'body'   => substr($response->body(), 0, 300),
+                    ]);
                     break;
                 }
 
@@ -640,14 +643,18 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $p) {
+                    // Só indexa quem tem CNPJ preenchido (garante que é empresa, não depto ou pessoa física)
+                    $cnpj = preg_replace('/[^0-9]/', '', $p['cpfCnpj'] ?? '');
+                    if (strlen($cnpj) < 11) continue;
+
                     $name = trim($p['businessName'] ?? '');
-                    if ($name) {
-                        $orgs[strtolower($name)] = [
-                            'id'      => $p['id'] ?? null,
-                            'name'    => $name,
-                            'cpfCnpj' => preg_replace('/[^0-9]/', '', $p['cpfCnpj'] ?? ''),
-                        ];
-                    }
+                    if (!$name) continue;
+
+                    $orgs[strtolower($name)] = [
+                        'id'      => $p['id'] ?? null,
+                        'name'    => $name,
+                        'cpfCnpj' => $cnpj,
+                    ];
                 }
 
                 $skip += $top;
