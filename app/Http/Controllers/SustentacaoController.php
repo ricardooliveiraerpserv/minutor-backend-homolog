@@ -559,6 +559,118 @@ class SustentacaoController extends Controller
         return response()->json(['rows' => $result]);
     }
 
+    public function contextStats(Request $request): JsonResponse
+    {
+        $this->authorize();
+        [$from, $to] = $this->dateRange($request);
+
+        $split = fn($v) => $v ? array_filter(array_map('trim', explode(',', $v))) : [];
+
+        $responsavelFilter = $split($request->query('responsavel'));
+        $clienteFilter     = $split($request->query('cliente'));
+
+        $openStatuses = ['New', 'InAttendance', 'Stopped'];
+
+        // Aplica os filtros de contexto
+        $base = fn() => $this->tickets()
+            ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
+            ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
+                foreach ($clienteFilter as $c) {
+                    $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
+                }
+            }));
+
+        // Tickets abertos agora
+        $ticketsOpen = $base()->whereIn('base_status', $openStatuses)->count();
+
+        // SLA violado agora (abertos com sla_solution_date no passado)
+        $slaBreached = $base()->whereIn('base_status', $openStatuses)
+            ->whereNotNull('sla_solution_date')
+            ->where('sla_solution_date', '<', now())
+            ->count();
+
+        // SLA em risco (abertos com sla_solution_date nas próximas 4h)
+        $slaAtRisk = $base()->whereIn('base_status', $openStatuses)
+            ->whereNotNull('sla_solution_date')
+            ->whereBetween('sla_solution_date', [now(), now()->addHours(4)])
+            ->count();
+
+        // Resolvidos no período
+        $ticketsResolved = $base()->whereNotNull('resolved_in')
+            ->whereBetween('resolved_in', [$from, $to])
+            ->count();
+
+        // Taxa SLA (resolvidos no prazo)
+        $slaTotalPeriod = $base()->whereNotNull('resolved_in')
+            ->whereBetween('resolved_in', [$from, $to])
+            ->whereNotNull('sla_solution_date')
+            ->count();
+        $slaOkPeriod = $base()->whereNotNull('resolved_in')
+            ->whereBetween('resolved_in', [$from, $to])
+            ->whereColumn('resolved_in', '<=', 'sla_solution_date')
+            ->count();
+        $slaRate = $slaTotalPeriod > 0 ? round(($slaOkPeriod / $slaTotalPeriod) * 100, 1) : null;
+
+        // Tempo médio de resolução (minutos)
+        $avgSolution = $base()->whereNotNull('resolved_in')
+            ->whereBetween('resolved_in', [$from, $to])
+            ->whereNotNull('sla_solution_time')
+            ->avg('sla_solution_time');
+
+        // Ticket mais antigo em aberto (dias)
+        $oldestDays = null;
+        $oldest = $base()->whereIn('base_status', $openStatuses)
+            ->whereNotNull('created_date')
+            ->orderBy('created_date')
+            ->value('created_date');
+        if ($oldest) {
+            $oldestDays = (int) now()->diffInDays(\Carbon\Carbon::parse($oldest));
+        }
+
+        // Horas apontadas no Minutor (só faz sentido quando filtra por responsável)
+        $hoursWorked = null;
+        if ($responsavelFilter) {
+            $userIds = \App\Models\User::whereIn(DB::raw('LOWER(email)'), array_map('strtolower', $responsavelFilter))
+                ->pluck('id');
+            if ($userIds->isNotEmpty()) {
+                $minutes = DB::table('timesheets')
+                    ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+                    ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+                    ->where(function ($q) {
+                        $q->where('service_types.code', 'sustentacao')
+                          ->orWhere('service_types.name', 'ilike', '%sustenta%');
+                    })
+                    ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
+                    ->whereIn('timesheets.status', ['approved', 'pending'])
+                    ->whereIn('timesheets.user_id', $userIds)
+                    ->sum('timesheets.effort_minutes');
+                $hoursWorked = (int) $minutes;
+            }
+        }
+
+        // Produtividade: tickets resolvidos / hora trabalhada
+        $productivity = ($hoursWorked && $hoursWorked > 0)
+            ? round($ticketsResolved / ($hoursWorked / 60), 2)
+            : null;
+
+        return response()->json([
+            'tickets_open'       => $ticketsOpen,
+            'tickets_resolved'   => $ticketsResolved,
+            'sla_breached'       => $slaBreached,
+            'sla_at_risk'        => $slaAtRisk,
+            'sla_rate'           => $slaRate,
+            'avg_solution_min'   => $avgSolution ? round($avgSolution) : null,
+            'oldest_open_days'   => $oldestDays,
+            'hours_worked_min'   => $hoursWorked,
+            'productivity'       => $productivity,
+            'period'             => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
+            'filter'             => [
+                'responsavel' => $responsavelFilter,
+                'cliente'     => $clienteFilter,
+            ],
+        ]);
+    }
+
     public function syncOrgs(): JsonResponse
     {
         $this->authorize();
