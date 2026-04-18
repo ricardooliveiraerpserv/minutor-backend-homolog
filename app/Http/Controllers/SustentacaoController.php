@@ -165,18 +165,24 @@ class SustentacaoController extends Controller
             ->keyBy('customer_id');
         $domainMap       = $this->domainOrgMap($orgByName);
 
-        $responsavelFilter = $request->query('responsavel');
-        $clienteFilter     = $request->query('cliente');
-        $urgenciaFilter    = $request->query('urgencia');
-        $statusFilter      = $request->query('status');
+        $split = fn($v) => $v ? array_filter(array_map('trim', explode(',', $v))) : [];
+
+        $responsavelFilter = $split($request->query('responsavel'));
+        $clienteFilter     = $split($request->query('cliente'));
+        $urgenciaFilter    = $split($request->query('urgencia'));
+        $statusFilter      = $split($request->query('status'));
         $searchFilter      = $request->query('search');
 
         $tickets = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
-            ->when($responsavelFilter, fn($q) => $q->where('owner_email', 'ilike', "%{$responsavelFilter}%"))
-            ->when($clienteFilter, fn($q) => $q->whereRaw("solicitante->>'organization' ILIKE ?", ["%{$clienteFilter}%"]))
-            ->when($urgenciaFilter, fn($q) => $q->where('urgencia', $urgenciaFilter))
-            ->when($statusFilter, fn($q) => $q->where('base_status', $statusFilter))
+            ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
+            ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
+                foreach ($clienteFilter as $c) {
+                    $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
+                }
+            }))
+            ->when($urgenciaFilter, fn($q) => $q->whereIn('urgencia', $urgenciaFilter))
+            ->when($statusFilter, fn($q) => $q->whereIn('base_status', $statusFilter))
             ->when($searchFilter, fn($q) => $q->where(function ($q2) use ($searchFilter) {
                 $q2->where('titulo', 'ilike', "%{$searchFilter}%")
                    ->orWhere(DB::raw('ticket_id::text'), 'like', "%{$searchFilter}%");
