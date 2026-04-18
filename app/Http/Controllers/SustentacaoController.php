@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\MovideskTicket;
+use App\Services\MovideskService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 class SustentacaoController extends Controller
@@ -276,18 +278,20 @@ class SustentacaoController extends Controller
         return response()->json(['monthly' => $monthly]);
     }
 
-    public function debugClientes(): JsonResponse
+    public function debugClientes(MovideskService $service): JsonResponse
     {
         $this->authorize();
+
+        // Busca organizações do Movidesk com cache de 1h para não bater rate limit
+        $movideskOrgs = Cache::remember('movidesk_orgs_debug', 3600, fn() => $service->fetchOrganizations());
 
         $rows = MovideskTicket::whereNotNull('solicitante')
             ->selectRaw("
                 solicitante->>'organization' as org,
-                solicitante->>'cpf_cnpj'     as cnpj_raw,
                 COUNT(*)                     as tickets,
                 SUM(CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados
             ")
-            ->groupByRaw("solicitante->>'organization', solicitante->>'cpf_cnpj'")
+            ->groupByRaw("solicitante->>'organization'")
             ->orderByDesc('tickets')
             ->get();
 
@@ -295,8 +299,10 @@ class SustentacaoController extends Controller
             ->get()
             ->keyBy(fn($c) => preg_replace('/[^0-9]/', '', $c->cgc));
 
-        $result = $rows->map(function ($row) use ($customersByCnpj) {
-            $cnpjNorm = preg_replace('/[^0-9]/', '', $row->cnpj_raw ?? '');
+        $result = $rows->map(function ($row) use ($movideskOrgs, $customersByCnpj) {
+            $orgKey      = strtolower(trim($row->org ?? ''));
+            $movideskOrg = $movideskOrgs[$orgKey] ?? null;
+            $cnpjNorm    = $movideskOrg['cpfCnpj'] ?? '';
 
             if ($cnpjNorm && isset($customersByCnpj[$cnpjNorm])) {
                 $match       = 'cnpj';
@@ -310,14 +316,13 @@ class SustentacaoController extends Controller
             }
 
             return [
-                'org'          => $row->org,
-                'cnpj_raw'     => $row->cnpj_raw,
-                'cnpj_norm'    => $cnpjNorm ?: null,
-                'tickets'      => (int) $row->tickets,
-                'vinculados'   => (int) $row->vinculados,
-                'match'        => $match,
-                'minutor_name' => $minutorName,
-                'minutor_cgc'  => $minutorCgc,
+                'org'           => $row->org,
+                'cnpj_movidesk' => $cnpjNorm ?: null,
+                'tickets'       => (int) $row->tickets,
+                'vinculados'    => (int) $row->vinculados,
+                'match'         => $match,
+                'minutor_name'  => $minutorName,
+                'minutor_cgc'   => $minutorCgc,
             ];
         });
 

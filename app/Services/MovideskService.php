@@ -610,6 +610,59 @@ class MovideskService
     }
 
     /**
+     * Busca organizações do Movidesk via /persons com businessName e cpfCnpj.
+     * Retorna array indexado por businessName (lowercase) => ['cpfCnpj' => ..., 'id' => ...]
+     */
+    public function fetchOrganizations(): array
+    {
+        $orgs = [];
+        $top  = 100;
+        $skip = 0;
+
+        do {
+            try {
+                $url = "{$this->baseUrl()}/persons"
+                    . '?token='    . urlencode($this->token())
+                    . '&$select='  . urlencode('id,businessName,cpfCnpj,isActive')
+                    . '&$filter='  . urlencode('isActive eq true')
+                    . '&$top='     . $top
+                    . '&$skip='    . $skip;
+
+                $response = Http::timeout(30)->get($url);
+
+                if (!$response->successful()) {
+                    Log::warning('[MOVIDESK] Erro ao buscar persons/orgs', ['status' => $response->status()]);
+                    break;
+                }
+
+                $page = $response->json();
+                if (empty($page)) break;
+                if (isset($page['id'])) $page = [$page];
+
+                foreach ($page as $p) {
+                    $name = trim($p['businessName'] ?? '');
+                    if ($name) {
+                        $orgs[strtolower($name)] = [
+                            'id'      => $p['id'] ?? null,
+                            'name'    => $name,
+                            'cpfCnpj' => preg_replace('/[^0-9]/', '', $p['cpfCnpj'] ?? ''),
+                        ];
+                    }
+                }
+
+                $skip += $top;
+                if (count($page) < $top) break;
+                sleep(7);
+            } catch (\Throwable $e) {
+                Log::error('[MOVIDESK] Exceção ao buscar orgs', ['error' => $e->getMessage()]);
+                break;
+            }
+        } while (true);
+
+        return $orgs;
+    }
+
+    /**
      * Salva ticket com todos os campos do portal, resolvendo user_id e customer_id.
      */
     public function saveTicketForPortal(array $ticket): void
