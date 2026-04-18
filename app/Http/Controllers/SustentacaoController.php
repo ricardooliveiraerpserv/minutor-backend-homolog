@@ -182,7 +182,7 @@ class SustentacaoController extends Controller
                 }
             }))
             ->when($urgenciaFilter, fn($q) => $q->whereIn('urgencia', $urgenciaFilter))
-            ->when($statusFilter, fn($q) => $q->whereIn('base_status', $statusFilter))
+            ->when($statusFilter, fn($q) => $q->whereIn('status', $statusFilter))
             ->when($searchFilter, fn($q) => $q->where(function ($q2) use ($searchFilter) {
                 $q2->where('titulo', 'ilike', "%{$searchFilter}%")
                    ->orWhere(DB::raw('ticket_id::text'), 'like', "%{$searchFilter}%");
@@ -717,6 +717,28 @@ class SustentacaoController extends Controller
                 'cliente'     => $clienteFilter,
             ],
         ]);
+    }
+
+    public function filterOptions(): JsonResponse
+    {
+        $this->authorize();
+
+        $statuses = $this->tickets()
+            ->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+            ->whereNotNull('status')
+            ->where('status', '!=', '')
+            ->select('status', 'base_status')
+            ->distinct()
+            ->orderBy('base_status')
+            ->orderBy('status')
+            ->get()
+            ->map(fn($r) => [
+                'value'       => $r->status,
+                'label'       => $r->status,
+                'base_status' => $r->base_status,
+            ]);
+
+        return response()->json(['statuses' => $statuses]);
     }
 
     public function syncOrgs(): JsonResponse
