@@ -12,13 +12,13 @@ class Contract extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'customer_id', 'status', 'categoria', 'service_type_id', 'contract_type_id',
+        'customer_id', 'project_name', 'status', 'categoria', 'service_type_id', 'contract_type_id',
         'tipo_faturamento', 'cobra_despesa_cliente', 'limite_despesa',
         'architect_id', 'tipo_alocacao', 'horas_contratadas',
         'valor_projeto', 'valor_hora', 'hora_adicional', 'pct_horas_coordenador', 'horas_consultor',
         'expectativa_inicio', 'condicao_pagamento',
         'executivo_conta_id', 'vendedor_id', 'observacoes', 'project_code_preview',
-        'project_id', 'generated_at', 'generated_by_id',
+        'project_id', 'parent_project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
     ];
 

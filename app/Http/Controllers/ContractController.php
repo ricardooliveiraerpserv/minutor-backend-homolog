@@ -37,6 +37,8 @@ class ContractController extends Controller
     {
         $validated = $request->validate([
             'customer_id'            => 'required|exists:customers,id',
+            'project_name'           => 'nullable|string|max:255',
+            'parent_project_id'      => 'nullable|exists:projects,id',
             'categoria'              => 'required|in:projeto,sustentacao',
             'service_type_id'        => 'nullable|exists:service_types,id',
             'contract_type_id'       => 'nullable|exists:contract_types,id',
@@ -97,6 +99,8 @@ class ContractController extends Controller
 
         $validated = $request->validate([
             'customer_id'            => 'sometimes|exists:customers,id',
+            'project_name'           => 'nullable|string|max:255',
+            'parent_project_id'      => 'nullable|exists:projects,id',
             'categoria'              => 'sometimes|in:projeto,sustentacao',
             'service_type_id'        => 'nullable|exists:service_types,id',
             'contract_type_id'       => 'nullable|exists:contract_types,id',
@@ -191,10 +195,15 @@ class ContractController extends Controller
 
         $project = DB::transaction(function () use ($contract) {
             $codeService = new ProjectCodeService();
-            $codeData    = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, null);
+            $parentProject = $contract->parent_project_id ? Project::find($contract->parent_project_id) : null;
+            $codeData    = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
+
+            $projectName = $contract->project_name
+                ?: ($contract->customer->name . ' — ' . now()->format('m/Y'));
 
             $project = Project::create(array_merge($codeData, [
-                'name'                  => $contract->customer->name . ' — ' . now()->format('m/Y'),
+                'name'                  => $projectName,
+                'parent_project_id'     => $contract->parent_project_id,
                 'customer_id'           => $contract->customer_id,
                 'service_type_id'       => $contract->service_type_id,
                 'contract_type_id'      => $contract->contract_type_id,
