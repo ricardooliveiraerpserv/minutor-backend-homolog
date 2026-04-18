@@ -379,6 +379,45 @@ class SustentacaoController extends Controller
         return response()->json(['rows' => $result, 'source' => 'tickets']);
     }
 
+    public function debugResponsaveis(): JsonResponse
+    {
+        $this->authorize();
+
+        $rows = MovideskTicket::whereNotNull('owner_email')
+            ->selectRaw("
+                owner_email,
+                MAX(responsavel->>'name')                                       as owner_name,
+                COUNT(*)                                                        as tickets,
+                SUM(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END)           as vinculados,
+                MAX(owner_team)                                                 as team
+            ")
+            ->groupBy('owner_email')
+            ->orderByDesc('tickets')
+            ->get();
+
+        $usersByEmail = \App\Models\User::whereNotNull('email')
+            ->get()
+            ->keyBy(fn($u) => strtolower(trim($u->email)));
+
+        $result = $rows->map(function ($row) use ($usersByEmail) {
+            $emailKey    = strtolower(trim($row->owner_email));
+            $minutorUser = $usersByEmail[$emailKey] ?? null;
+
+            return [
+                'owner_email'   => $row->owner_email,
+                'owner_name'    => $row->owner_name,
+                'team'          => $row->team,
+                'tickets'       => (int) $row->tickets,
+                'vinculados'    => (int) $row->vinculados,
+                'match'         => $minutorUser ? 'encontrado' : 'nao',
+                'minutor_name'  => $minutorUser?->name,
+                'minutor_id'    => $minutorUser?->id,
+            ];
+        });
+
+        return response()->json(['rows' => $result]);
+    }
+
     public function syncOrgs(): JsonResponse
     {
         $this->authorize();
