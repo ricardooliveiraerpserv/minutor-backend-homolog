@@ -617,15 +617,60 @@ class SustentacaoController extends Controller
             ->whereNotNull('sla_solution_time')
             ->avg('sla_solution_time');
 
-        // Ticket mais antigo em aberto (dias)
+        // Ticket mais antigo em aberto (dias) — fix: parse antes de diffInDays
         $oldestDays = null;
         $oldest = $base()->whereIn('base_status', $openStatuses)
             ->whereNotNull('created_date')
             ->orderBy('created_date')
             ->value('created_date');
         if ($oldest) {
-            $oldestDays = (int) now()->diffInDays(\Carbon\Carbon::parse($oldest));
+            $oldestDays = (int) \Carbon\Carbon::parse($oldest)->diffInDays(now());
         }
+
+        // Tickets abertos há mais de 4h
+        $over4h = $base()->whereIn('base_status', $openStatuses)
+            ->where('created_date', '<', now()->subHours(4))
+            ->count();
+
+        // Por consultor: abertos, em atendimento, SLA violado
+        $byConsultant = $base()->whereIn('base_status', $openStatuses)
+            ->whereNotNull('owner_email')
+            ->selectRaw("MAX(responsavel->>'name') as owner_name")
+            ->selectRaw("LOWER(owner_email) as owner_email")
+            ->selectRaw("COUNT(*) as total_open")
+            ->selectRaw("SUM(CASE WHEN base_status = 'InAttendance' THEN 1 ELSE 0 END) as in_attendance")
+            ->selectRaw("SUM(CASE WHEN sla_solution_date IS NOT NULL AND sla_solution_date < NOW() THEN 1 ELSE 0 END) as sla_breached_count")
+            ->groupByRaw("LOWER(owner_email)")
+            ->orderByDesc('total_open')
+            ->get()
+            ->map(fn($r) => [
+                'name'          => $r->owner_name ?? $r->owner_email,
+                'total_open'    => (int) $r->total_open,
+                'in_attendance' => (int) $r->in_attendance,
+                'sla_breached'  => (int) $r->sla_breached_count,
+                'sla_ok_pct'    => $r->total_open > 0
+                    ? round((1 - $r->sla_breached_count / $r->total_open) * 100)
+                    : 100,
+            ]);
+
+        // Por cliente: agrupa por organização do solicitante
+        $byClient = $base()->whereIn('base_status', $openStatuses)
+            ->whereNotNull('solicitante')
+            ->whereRaw("solicitante->>'organization' IS NOT NULL AND solicitante->>'organization' != ''")
+            ->selectRaw("solicitante->>'organization' as org")
+            ->selectRaw("COUNT(*) as total_open")
+            ->selectRaw("SUM(CASE WHEN base_status = 'InAttendance' THEN 1 ELSE 0 END) as in_attendance")
+            ->selectRaw("SUM(CASE WHEN sla_solution_date IS NOT NULL AND sla_solution_date < NOW() THEN 1 ELSE 0 END) as sla_breached_count")
+            ->groupByRaw("solicitante->>'organization'")
+            ->orderByDesc('total_open')
+            ->limit(15)
+            ->get()
+            ->map(fn($r) => [
+                'name'          => $r->org,
+                'total_open'    => (int) $r->total_open,
+                'in_attendance' => (int) $r->in_attendance,
+                'sla_breached'  => (int) $r->sla_breached_count,
+            ]);
 
         // Horas apontadas no Minutor (só faz sentido quando filtra por responsável)
         $hoursWorked = null;
@@ -661,8 +706,11 @@ class SustentacaoController extends Controller
             'sla_rate'           => $slaRate,
             'avg_solution_min'   => $avgSolution ? round($avgSolution) : null,
             'oldest_open_days'   => $oldestDays,
+            'over_4h'            => $over4h,
             'hours_worked_min'   => $hoursWorked,
             'productivity'       => $productivity,
+            'by_consultant'      => $byConsultant,
+            'by_client'          => $byClient,
             'period'             => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
             'filter'             => [
                 'responsavel' => $responsavelFilter,
