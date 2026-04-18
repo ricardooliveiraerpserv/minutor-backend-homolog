@@ -56,3 +56,11 @@ Schedule::command('movidesk:portal-sync')
   ->description('Sincroniza tickets do Movidesk para o Portal de Sustentação')
   ->withoutOverlapping()
   ->runInBackground();
+
+// Sync de organizações do Movidesk — popula CNPJ e customer_id nos tickets
+Schedule::command('movidesk:sync-orgs')
+  ->everyThirtyMinutes()
+  ->name('movidesk-sync-orgs')
+  ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
+  ->withoutOverlapping()
+  ->runInBackground();
