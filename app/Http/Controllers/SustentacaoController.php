@@ -25,6 +25,20 @@ class SustentacaoController extends Controller
         });
     }
 
+    /**
+     * Aplica o filtro de "tickets abertos":
+     *  - Novos (New) ou Em Atendimento (InAttendance)
+     *  - Parado (Stopped) apenas se sub-status for "Pendente Terceiros" ou "Pendente TOTVS"
+     */
+    private function applyOpen(\Illuminate\Database\Eloquent\Builder $q): \Illuminate\Database\Eloquent\Builder
+    {
+        return $q->where(function ($inner) {
+            $inner->whereIn('base_status', ['New', 'InAttendance'])
+                  ->orWhere(fn($s) => $s->where('base_status', 'Stopped')
+                                        ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS']));
+        });
+    }
+
     /** Apenas organizações reais (com CNPJ ou vinculadas ao Minutor) — exclui departamentos internos */
     private function orgLookup(): \Illuminate\Support\Collection
     {
@@ -109,9 +123,7 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        $openStatuses = ['New', 'InAttendance', 'Stopped'];
-
-        $totalOpen      = $this->tickets()->whereIn('base_status', $openStatuses)->count();
+        $totalOpen      = $this->applyOpen($this->tickets())->count();
         $newToday       = $this->tickets()->whereDate('created_date', today())->count();
         $resolvedPeriod = $this->tickets()->whereBetween('resolved_in', [$from, $to])->count();
         $closedPeriod   = $this->tickets()->whereBetween('closed_in',   [$from, $to])->count();
@@ -133,7 +145,7 @@ class SustentacaoController extends Controller
             ->count();
         $slaSolutionRate = $slaSolTotal > 0 ? round(($slaSolOnTime / $slaSolTotal) * 100, 1) : null;
 
-        $openAtRisk = $this->tickets()->whereIn('base_status', $openStatuses)
+        $openAtRisk = $this->applyOpen($this->tickets())
             ->whereNotNull('sla_solution_date')
             ->where('sla_solution_date', '<', now())
             ->count();
@@ -173,7 +185,7 @@ class SustentacaoController extends Controller
         $statusFilter      = $split($request->query('status'));
         $searchFilter      = $request->query('search');
 
-        $tickets = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $tickets = $this->applyOpen($this->tickets())
             ->with(['user:id,name', 'customer:id,name'])
             ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
             ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
@@ -229,7 +241,7 @@ class SustentacaoController extends Controller
             ->keyBy('customer_id');
         $domainMapSla       = $this->domainOrgMap($orgByNameSla);
 
-        $breachingNow = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $breachingNow = $this->applyOpen($this->tickets())
             ->where(function ($q) {
                 $q->where(function ($q2) {
                     $q2->whereNotNull('sla_response_date')
@@ -351,7 +363,7 @@ class SustentacaoController extends Controller
 
         $byClient = $this->tickets()->select('customer_id')
             ->selectRaw('COUNT(*) as total_period')
-            ->selectRaw("SUM(CASE WHEN base_status IN ('New','InAttendance','Stopped') THEN 1 ELSE 0 END) as open_now")
+            ->selectRaw("SUM(CASE WHEN base_status IN ('New','InAttendance') OR (base_status = 'Stopped' AND status IN ('Pendente Terceiros','Pendente TOTVS')) THEN 1 ELSE 0 END) as open_now")
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as sla_ok')
             ->selectRaw('ROUND(AVG(sla_solution_time)::numeric, 0) as avg_solution_minutes')
             ->whereNotNull('customer_id')
@@ -569,8 +581,6 @@ class SustentacaoController extends Controller
         $responsavelFilter = $split($request->query('responsavel'));
         $clienteFilter     = $split($request->query('cliente'));
 
-        $openStatuses = ['New', 'InAttendance', 'Stopped'];
-
         // Aplica os filtros de contexto
         $base = fn() => $this->tickets()
             ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
@@ -581,16 +591,16 @@ class SustentacaoController extends Controller
             }));
 
         // Tickets abertos agora
-        $ticketsOpen = $base()->whereIn('base_status', $openStatuses)->count();
+        $ticketsOpen = $this->applyOpen($base())->count();
 
         // SLA violado agora (abertos com sla_solution_date no passado)
-        $slaBreached = $base()->whereIn('base_status', $openStatuses)
+        $slaBreached = $this->applyOpen($base())
             ->whereNotNull('sla_solution_date')
             ->where('sla_solution_date', '<', now())
             ->count();
 
         // SLA em risco (abertos com sla_solution_date nas próximas 4h)
-        $slaAtRisk = $base()->whereIn('base_status', $openStatuses)
+        $slaAtRisk = $this->applyOpen($base())
             ->whereNotNull('sla_solution_date')
             ->whereBetween('sla_solution_date', [now(), now()->addHours(4)])
             ->count();
@@ -619,7 +629,7 @@ class SustentacaoController extends Controller
 
         // Ticket mais antigo em aberto (dias) — fix: parse antes de diffInDays
         $oldestDays = null;
-        $oldest = $base()->whereIn('base_status', $openStatuses)
+        $oldest = $this->applyOpen($base())
             ->whereNotNull('created_date')
             ->orderBy('created_date')
             ->value('created_date');
@@ -628,12 +638,12 @@ class SustentacaoController extends Controller
         }
 
         // Tickets abertos há mais de 4h
-        $over4h = $base()->whereIn('base_status', $openStatuses)
+        $over4h = $this->applyOpen($base())
             ->where('created_date', '<', now()->subHours(4))
             ->count();
 
         // Por consultor: abertos, em atendimento, SLA violado
-        $byConsultant = $base()->whereIn('base_status', $openStatuses)
+        $byConsultant = $this->applyOpen($base())
             ->whereNotNull('owner_email')
             ->selectRaw("MAX(responsavel->>'name') as owner_name")
             ->selectRaw("LOWER(owner_email) as owner_email")
@@ -654,7 +664,7 @@ class SustentacaoController extends Controller
             ]);
 
         // Por cliente: agrupa por organização do solicitante
-        $byClient = $base()->whereIn('base_status', $openStatuses)
+        $byClient = $this->applyOpen($base())
             ->whereNotNull('solicitante')
             ->whereRaw("solicitante->>'organization' IS NOT NULL AND solicitante->>'organization' != ''")
             ->selectRaw("solicitante->>'organization' as org")
@@ -723,8 +733,7 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $statuses = $this->tickets()
-            ->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $statuses = $this->applyOpen($this->tickets())
             ->whereNotNull('status')
             ->where('status', '!=', '')
             ->select('status', 'base_status')
