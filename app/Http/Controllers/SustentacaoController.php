@@ -90,8 +90,12 @@ class SustentacaoController extends Controller
                 movidesk_tickets.*,
                 COALESCE(
                     (SELECT mo.name FROM movidesk_organizations mo
-                     WHERE mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
-                       AND mo.cnpj <> ''
+                     WHERE length(regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')) = 14
+                       AND mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
+                     LIMIT 1),
+                    (SELECT mo.name FROM movidesk_organizations mo
+                     WHERE movidesk_tickets.solicitante->>'organization' IS NOT NULL
+                       AND LOWER(mo.name) = LOWER(movidesk_tickets.solicitante->>'organization')
                      LIMIT 1),
                     movidesk_tickets.solicitante->>'organization'
                 ) as org_name
@@ -130,8 +134,12 @@ class SustentacaoController extends Controller
                 movidesk_tickets.*,
                 COALESCE(
                     (SELECT mo.name FROM movidesk_organizations mo
-                     WHERE mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
-                       AND mo.cnpj <> ''
+                     WHERE length(regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')) = 14
+                       AND mo.cnpj = regexp_replace(movidesk_tickets.solicitante->>'cpf_cnpj', '[^0-9]', '', 'g')
+                     LIMIT 1),
+                    (SELECT mo.name FROM movidesk_organizations mo
+                     WHERE movidesk_tickets.solicitante->>'organization' IS NOT NULL
+                       AND LOWER(mo.name) = LOWER(movidesk_tickets.solicitante->>'organization')
                      LIMIT 1),
                     movidesk_tickets.solicitante->>'organization'
                 ) as org_name
