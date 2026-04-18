@@ -17,7 +17,7 @@ class Contract extends Model
         'architect_id', 'tipo_alocacao', 'horas_contratadas',
         'valor_projeto', 'valor_hora', 'hora_adicional', 'pct_horas_coordenador', 'horas_consultor',
         'expectativa_inicio', 'condicao_pagamento',
-        'executivo_conta_id', 'vendedor_id', 'observacoes',
+        'executivo_conta_id', 'vendedor_id', 'observacoes', 'project_code_preview',
         'project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
     ];

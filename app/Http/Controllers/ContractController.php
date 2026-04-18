@@ -56,6 +56,7 @@ class ContractController extends Controller
             'executivo_conta_id'     => 'nullable|exists:users,id',
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
+            'project_code_preview'   => 'nullable|string|max:20',
             'contacts'               => 'nullable|array',
             'contacts.*.name'        => 'required|string',
             'contacts.*.cargo'       => 'nullable|string',
@@ -115,6 +116,7 @@ class ContractController extends Controller
             'executivo_conta_id'     => 'nullable|exists:users,id',
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
+            'project_code_preview'   => 'nullable|string|max:20',
             'contacts'               => 'nullable|array',
             'contacts.*.id'          => 'nullable|exists:contract_contacts,id',
             'contacts.*.name'        => 'required|string',
@@ -188,9 +190,8 @@ class ContractController extends Controller
         $contract->load(['customer', 'contacts', 'attachments']);
 
         $project = DB::transaction(function () use ($contract) {
-            // Gerar código do projeto
             $codeService = new ProjectCodeService();
-            $codeData    = $codeService->generateParentCode($contract->customer);
+            $codeData    = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, null);
 
             $project = Project::create(array_merge($codeData, [
                 'name'                  => $contract->customer->name . ' — ' . now()->format('m/Y'),
