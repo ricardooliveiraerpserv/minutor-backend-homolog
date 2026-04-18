@@ -686,7 +686,8 @@ class MovideskService
             try {
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='   . urlencode($this->token())
-                    . '&$select=' . urlencode('id,businessName,userName,relationships')
+                    . '&$select=' . urlencode('id,businessName,userName')
+                    . '&$expand=' . urlencode('relationships($select=id,name)')
                     . '&$top='    . $top
                     . '&$skip='   . $skip;
 
