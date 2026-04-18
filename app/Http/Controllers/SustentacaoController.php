@@ -16,37 +16,65 @@ use Illuminate\Support\Facades\DB;
 
 class SustentacaoController extends Controller
 {
+    /** Apenas organizações reais (com CNPJ ou vinculadas ao Minutor) — exclui departamentos internos */
     private function orgLookup(): \Illuminate\Support\Collection
     {
-        return MovideskOrganization::all(['name'])
-            ->keyBy(fn($o) => strtolower(trim($o->name)));
+        return MovideskOrganization::where(function ($q) {
+            $q->whereNotNull('customer_id')->orWhere('cnpj', '!=', '')->whereNotNull('cnpj');
+        })->get(['name'])
+          ->keyBy(fn($o) => strtolower(trim($o->name)));
     }
 
-    private function resolveOrgName(array $sol, \Illuminate\Support\Collection $orgByName): ?string
+    /** Mapa domínio-de-email → org real, construído a partir dos tickets existentes */
+    private function domainOrgMap(\Illuminate\Support\Collection $orgByName): array
     {
-        // 1. Campo organization direto (pessoa de uma empresa)
+        $map = [];
+        MovideskTicket::whereNotNull('solicitante')
+            ->whereRaw("solicitante->>'email' IS NOT NULL")
+            ->whereRaw("solicitante->>'organization' IS NOT NULL")
+            ->get(['solicitante'])
+            ->each(function ($t) use ($orgByName, &$map) {
+                $sol    = $t->solicitante ?? [];
+                $email  = strtolower($sol['email'] ?? '');
+                $orgKey = strtolower(trim($sol['organization'] ?? ''));
+                if (!$email || !$orgKey || !isset($orgByName[$orgKey])) return;
+                $domain = substr($email, strrpos($email, '@') + 1);
+                if ($domain && !isset($map[$domain])) {
+                    $map[$domain] = $orgByName[$orgKey]->name;
+                }
+            });
+        return $map;
+    }
+
+    private function resolveOrgName(array $sol, \Illuminate\Support\Collection $orgByName, array $domainMap = []): ?string
+    {
+        // 1. Campo organization — só aceita se for uma org real (não departamento interno)
         $orgKey = strtolower(trim($sol['organization'] ?? ''));
         if ($orgKey && isset($orgByName[$orgKey])) return $orgByName[$orgKey]->name;
-        if ($orgKey) return $sol['organization'];
 
         // 2. Campo name: cliente é a própria empresa
         $nameKey = strtolower(trim($sol['name'] ?? ''));
         if ($nameKey && isset($orgByName[$nameKey])) return $orgByName[$nameKey]->name;
 
         // 3. Heurístico "Nome | Empresa": extrai partes após " | " e busca na tabela
-        $name = $sol['name'] ?? '';
+        $name  = $sol['name'] ?? '';
         $parts = str_contains($name, ' | ') ? explode(' | ', $name) : [$name];
         foreach (array_reverse($parts) as $part) {
             $partLower = strtolower(trim($part));
             if (!$partLower) continue;
-            // exact match first
             if (isset($orgByName[$partLower])) return $orgByName[$partLower]->name;
-            // partial: verifica se algum nome de org está contido na parte
-            foreach ($orgByName as $orgKey => $org) {
-                if (strlen($orgKey) >= 5 && str_contains($partLower, $orgKey)) {
+            foreach ($orgByName as $key => $org) {
+                if (strlen($key) >= 5 && str_contains($partLower, $key)) {
                     return $org->name;
                 }
             }
+        }
+
+        // 4. Fallback: domínio do e-mail → org conhecida
+        $email = strtolower(trim($sol['email'] ?? ''));
+        if ($email && str_contains($email, '@')) {
+            $domain = substr($email, strrpos($email, '@') + 1);
+            if ($domain && isset($domainMap[$domain])) return $domainMap[$domain];
         }
 
         return null;
@@ -126,6 +154,7 @@ class SustentacaoController extends Controller
         $orgByCustomerId = MovideskOrganization::whereNotNull('customer_id')
             ->get(['name', 'customer_id'])
             ->keyBy('customer_id');
+        $domainMap       = $this->domainOrgMap($orgByName);
 
         $tickets = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
@@ -140,11 +169,11 @@ class SustentacaoController extends Controller
             ->orderBy('created_date')
             ->paginate($request->query('per_page', 50));
 
-        $tickets->getCollection()->transform(function ($ticket) use ($orgByName, $orgByCustomerId) {
-            // Prioridade: customer_id direto → solicitante fields → heurístico
+        $tickets->getCollection()->transform(function ($ticket) use ($orgByName, $orgByCustomerId, $domainMap) {
+            // Prioridade: customer_id direto → solicitante fields → heurístico → domínio e-mail
             $ticket->org_name =
                 ($orgByCustomerId[$ticket->customer_id]->name ?? null)
-                ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByName);
+                ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByName, $domainMap);
             return $ticket;
         });
 
@@ -169,6 +198,7 @@ class SustentacaoController extends Controller
         $orgByCustomerIdSla = MovideskOrganization::whereNotNull('customer_id')
             ->get(['name', 'customer_id'])
             ->keyBy('customer_id');
+        $domainMapSla       = $this->domainOrgMap($orgByNameSla);
 
         $breachingNow = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->where(function ($q) {
@@ -184,10 +214,10 @@ class SustentacaoController extends Controller
             ->with(['user:id,name', 'customer:id,name'])
             ->orderBy('sla_solution_date')
             ->get()
-            ->each(function ($ticket) use ($orgByNameSla, $orgByCustomerIdSla) {
+            ->each(function ($ticket) use ($orgByNameSla, $orgByCustomerIdSla, $domainMapSla) {
                 $ticket->org_name =
                     ($orgByCustomerIdSla[$ticket->customer_id]->name ?? null)
-                    ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByNameSla);
+                    ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByNameSla, $domainMapSla);
             });
 
         $trend = MovideskTicket::selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
