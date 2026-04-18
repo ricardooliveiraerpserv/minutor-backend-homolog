@@ -35,7 +35,7 @@ class SustentacaoController extends Controller
         return $q->where(function ($inner) {
             $inner->whereIn('base_status', ['New', 'InAttendance'])
                   ->orWhere(fn($s) => $s->where('base_status', 'Stopped')
-                                        ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS']));
+                                        ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS', 'Agendado']));
         });
     }
 
@@ -363,7 +363,7 @@ class SustentacaoController extends Controller
 
         $byClient = $this->tickets()->select('customer_id')
             ->selectRaw('COUNT(*) as total_period')
-            ->selectRaw("SUM(CASE WHEN base_status IN ('New','InAttendance') OR (base_status = 'Stopped' AND status IN ('Pendente Terceiros','Pendente TOTVS')) THEN 1 ELSE 0 END) as open_now")
+            ->selectRaw("SUM(CASE WHEN base_status IN ('New','InAttendance') OR (base_status = 'Stopped' AND status IN ('Pendente Terceiros','Pendente TOTVS','Agendado')) THEN 1 ELSE 0 END) as open_now")
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as sla_ok')
             ->selectRaw('ROUND(AVG(sla_solution_time)::numeric, 0) as avg_solution_minutes')
             ->whereNotNull('customer_id')
