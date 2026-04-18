@@ -686,8 +686,8 @@ class MovideskService
             try {
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='   . urlencode($this->token())
-                    . '&$select=' . urlencode('id,businessName,userName,organizations')
-                    . '&$expand=' . urlencode('organizations($select=businessName)')
+                    . '&$select=' . urlencode('id,businessName,userName,organization,organizations')
+                    . '&$expand=' . urlencode('organization($select=businessName),organizations($select=businessName)')
                     . '&$top='    . $top
                     . '&$skip='   . $skip;
 
@@ -702,12 +702,22 @@ class MovideskService
                     $email = strtolower(trim($person['userName'] ?? ''));
                     if (!$email) continue;
 
-                    // organizations é array de objetos {businessName: ...}
+                    // Tenta organizations[] (array) e organization (objeto singular)
+                    $orgName = null;
                     $orgs = $person['organizations'] ?? [];
                     if (is_array($orgs) && !empty($orgs)) {
                         $orgName = $orgs[0]['businessName'] ?? null;
-                        if ($orgName) $map[$email] = $orgName;
                     }
+                    if (!$orgName) {
+                        $org = $person['organization'] ?? null;
+                        $orgName = is_array($org) ? ($org['businessName'] ?? null) : ($org ?: null);
+                    }
+                    if ($orgName) $map[$email] = $orgName;
+                }
+
+                // Log primeira pessoa para debug
+                if ($skip === 0 && !empty($data)) {
+                    Log::info('[MOVIDESK] fetchPersonOrgMap sample: ' . json_encode(array_slice($data, 0, 1)));
                 }
 
                 $skip += $top;
@@ -718,6 +728,7 @@ class MovideskService
             }
         } while (true);
 
+        Log::info('[MOVIDESK] fetchPersonOrgMap: ' . count($map) . ' pessoas com org.');
         return $map;
     }
 
