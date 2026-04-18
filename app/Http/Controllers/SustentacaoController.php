@@ -16,6 +16,15 @@ use Illuminate\Support\Facades\DB;
 
 class SustentacaoController extends Controller
 {
+    /** Query base que exclui tickets cujo responsável é @promax.bardahl.com.br */
+    private function tickets(): \Illuminate\Database\Eloquent\Builder
+    {
+        return MovideskTicket::where(function ($q) {
+            $q->whereNull('owner_email')
+              ->orWhere('owner_email', 'not ilike', '%@promax.bardahl.com.br');
+        });
+    }
+
     /** Apenas organizações reais (com CNPJ ou vinculadas ao Minutor) — exclui departamentos internos */
     private function orgLookup(): \Illuminate\Support\Collection
     {
@@ -29,7 +38,7 @@ class SustentacaoController extends Controller
     private function domainOrgMap(\Illuminate\Support\Collection $orgByName): array
     {
         $map = [];
-        MovideskTicket::whereNotNull('solicitante')
+        $this->tickets()->whereNotNull('solicitante')
             ->whereRaw("solicitante->>'email' IS NOT NULL")
             ->whereRaw("solicitante->>'organization' IS NOT NULL")
             ->get(['solicitante'])
@@ -102,34 +111,34 @@ class SustentacaoController extends Controller
 
         $openStatuses = ['New', 'InAttendance', 'Stopped'];
 
-        $totalOpen      = MovideskTicket::whereIn('base_status', $openStatuses)->count();
-        $newToday       = MovideskTicket::whereDate('created_date', today())->count();
-        $resolvedPeriod = MovideskTicket::whereBetween('resolved_in', [$from, $to])->count();
-        $closedPeriod   = MovideskTicket::whereBetween('closed_in',   [$from, $to])->count();
+        $totalOpen      = $this->tickets()->whereIn('base_status', $openStatuses)->count();
+        $newToday       = $this->tickets()->whereDate('created_date', today())->count();
+        $resolvedPeriod = $this->tickets()->whereBetween('resolved_in', [$from, $to])->count();
+        $closedPeriod   = $this->tickets()->whereBetween('closed_in',   [$from, $to])->count();
 
         // SLA response compliance
-        $slaRespTotal   = MovideskTicket::whereBetween('created_date', [$from, $to])->whereNotNull('sla_response_date')->count();
-        $slaRespOnTime  = MovideskTicket::whereBetween('created_date', [$from, $to])
+        $slaRespTotal   = $this->tickets()->whereBetween('created_date', [$from, $to])->whereNotNull('sla_response_date')->count();
+        $slaRespOnTime  = $this->tickets()->whereBetween('created_date', [$from, $to])
             ->whereNotNull('sla_real_response_date')
             ->whereColumn('sla_real_response_date', '<=', 'sla_response_date')
             ->count();
         $slaResponseRate = $slaRespTotal > 0 ? round(($slaRespOnTime / $slaRespTotal) * 100, 1) : null;
 
         // SLA solution compliance
-        $slaSolTotal  = MovideskTicket::whereBetween('created_date', [$from, $to])
+        $slaSolTotal  = $this->tickets()->whereBetween('created_date', [$from, $to])
             ->whereNotNull('sla_solution_date')->whereNotNull('resolved_in')->count();
-        $slaSolOnTime = MovideskTicket::whereBetween('created_date', [$from, $to])
+        $slaSolOnTime = $this->tickets()->whereBetween('created_date', [$from, $to])
             ->whereNotNull('sla_solution_date')->whereNotNull('resolved_in')
             ->whereColumn('resolved_in', '<=', 'sla_solution_date')
             ->count();
         $slaSolutionRate = $slaSolTotal > 0 ? round(($slaSolOnTime / $slaSolTotal) * 100, 1) : null;
 
-        $openAtRisk = MovideskTicket::whereIn('base_status', $openStatuses)
+        $openAtRisk = $this->tickets()->whereIn('base_status', $openStatuses)
             ->whereNotNull('sla_solution_date')
             ->where('sla_solution_date', '<', now())
             ->count();
 
-        $avgSolutionTime = MovideskTicket::whereBetween('resolved_in', [$from, $to])
+        $avgSolutionTime = $this->tickets()->whereBetween('resolved_in', [$from, $to])
             ->whereNotNull('sla_solution_time')
             ->avg('sla_solution_time');
 
@@ -156,7 +165,7 @@ class SustentacaoController extends Controller
             ->keyBy('customer_id');
         $domainMap       = $this->domainOrgMap($orgByName);
 
-        $tickets = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $tickets = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->with(['user:id,name', 'customer:id,name'])
             ->orderByRaw("CASE urgencia
                 WHEN 'Urgente' THEN 1
@@ -185,7 +194,7 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        $byUrgency = MovideskTicket::selectRaw('urgencia')
+        $byUrgency = $this->tickets()->selectRaw('urgencia')
             ->selectRaw('COUNT(*) as total')
             ->selectRaw('SUM(CASE WHEN sla_real_response_date IS NOT NULL AND sla_real_response_date <= sla_response_date THEN 1 ELSE 0 END) as on_time_response')
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as on_time_solution')
@@ -200,7 +209,7 @@ class SustentacaoController extends Controller
             ->keyBy('customer_id');
         $domainMapSla       = $this->domainOrgMap($orgByNameSla);
 
-        $breachingNow = MovideskTicket::whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
+        $breachingNow = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])
             ->where(function ($q) {
                 $q->where(function ($q2) {
                     $q2->whereNotNull('sla_response_date')
@@ -220,7 +229,7 @@ class SustentacaoController extends Controller
                     ?? $this->resolveOrgName($ticket->solicitante ?? [], $orgByNameSla, $domainMapSla);
             });
 
-        $trend = MovideskTicket::selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
+        $trend = $this->tickets()->selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
             ->selectRaw('COUNT(*) as total')
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as on_time')
             ->whereNotNull('created_date')
@@ -242,7 +251,7 @@ class SustentacaoController extends Controller
         [$from, $to] = $this->dateRange($request);
 
         // Agrupa por owner_email (Movidesk) — inclui responsáveis sem vínculo no Minutor
-        $byConsultant = MovideskTicket::selectRaw("LOWER(owner_email) as owner_email")
+        $byConsultant = $this->tickets()->selectRaw("LOWER(owner_email) as owner_email")
             ->selectRaw("MAX(responsavel->>'name') as owner_name")
             ->selectRaw('MAX(user_id) as user_id')
             ->selectRaw('COUNT(*) as tickets_resolved')
@@ -320,7 +329,7 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        $byClient = MovideskTicket::select('customer_id')
+        $byClient = $this->tickets()->select('customer_id')
             ->selectRaw('COUNT(*) as total_period')
             ->selectRaw("SUM(CASE WHEN base_status IN ('New','InAttendance','Stopped') THEN 1 ELSE 0 END) as open_now")
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as sla_ok')
@@ -343,7 +352,7 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        $base = fn() => MovideskTicket::whereBetween('created_date', [$from, $to]);
+        $base = fn() => $this->tickets()->whereBetween('created_date', [$from, $to]);
 
         return response()->json([
             'by_urgency'    => $base()->selectRaw('urgencia as label, COUNT(*) as count')->whereNotNull('urgencia')->groupBy('urgencia')->orderByDesc('count')->get(),
@@ -360,7 +369,7 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        $monthly = MovideskTicket::selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
+        $monthly = $this->tickets()->selectRaw("TO_CHAR(DATE_TRUNC('month', created_date), 'YYYY-MM') as month")
             ->selectRaw('COUNT(*) as total')
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL THEN 1 ELSE 0 END) as resolved')
             ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as sla_ok')
@@ -389,7 +398,7 @@ class SustentacaoController extends Controller
 
         if ($movideskOrgs) {
             // Contagem de tickets por nome de organização
-            $ticketCounts = MovideskTicket::whereNotNull('solicitante')
+            $ticketCounts = $this->tickets()->whereNotNull('solicitante')
                 ->selectRaw("
                     LOWER(solicitante->>'organization')                         as org_key,
                     COUNT(*)                                                    as tickets,
@@ -434,7 +443,7 @@ class SustentacaoController extends Controller
         }
 
         // Fallback: lê direto dos tickets (antes do primeiro sync-orgs)
-        $rows = MovideskTicket::whereNotNull('solicitante')
+        $rows = $this->tickets()->whereNotNull('solicitante')
             ->selectRaw("
                 solicitante->>'organization'                                    as org,
                 MAX(solicitante->>'cpf_cnpj')                                   as cnpj_movidesk,
@@ -478,7 +487,7 @@ class SustentacaoController extends Controller
         $this->authorize();
 
         // Contagem de tickets por owner_email + data do último ticket
-        $ticketCounts = MovideskTicket::whereNotNull('owner_email')
+        $ticketCounts = $this->tickets()->whereNotNull('owner_email')
             ->selectRaw("
                 LOWER(owner_email)                                              as email_key,
                 COUNT(*)                                                        as tickets,
@@ -496,7 +505,7 @@ class SustentacaoController extends Controller
 
         $cutoff90 = now()->subDays(90);
 
-        $result = MovideskTicket::whereNotNull('owner_email')
+        $result = $this->tickets()->whereNotNull('owner_email')
             ->selectRaw("
                 LOWER(owner_email)                          as email_key,
                 MAX(owner_email)                            as owner_email,
