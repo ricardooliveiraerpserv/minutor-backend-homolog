@@ -425,22 +425,33 @@ class SustentacaoController extends Controller
                 ];
             })->sortByDesc('tickets')->values();
         } else {
-            // Fallback: só tickets, sem is_active
-            $result = $ticketCounts->map(function ($row) use ($usersByEmail) {
-                $minutorUser = $usersByEmail[$row->email_key] ?? null;
-
-                return [
-                    'owner_email'   => $row->email_key,
-                    'owner_name'    => null,
-                    'team'          => $row->team,
-                    'is_active'     => null,
-                    'tickets'       => (int) $row->tickets,
-                    'vinculados'    => (int) $row->vinculados,
-                    'match'         => $minutorUser ? 'encontrado' : 'nao',
-                    'minutor_name'  => $minutorUser?->name,
-                    'minutor_id'    => $minutorUser?->id,
-                ];
-            })->sortByDesc('tickets')->values();
+            // Fallback: nome vem do JSON responsavel dos tickets (is_active indisponível)
+            $result = MovideskTicket::whereNotNull('owner_email')
+                ->selectRaw("
+                    LOWER(owner_email)              as email_key,
+                    MAX(owner_email)                as owner_email,
+                    MAX(responsavel->>'name')       as owner_name,
+                    COUNT(*)                        as tickets,
+                    SUM(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados,
+                    MAX(owner_team)                 as team
+                ")
+                ->groupBy('email_key')
+                ->orderByDesc(DB::raw('COUNT(*)'))
+                ->get()
+                ->map(function ($row) use ($usersByEmail) {
+                    $minutorUser = $usersByEmail[$row->email_key] ?? null;
+                    return [
+                        'owner_email'  => $row->owner_email,
+                        'owner_name'   => $row->owner_name,
+                        'team'         => $row->team,
+                        'is_active'    => null,
+                        'tickets'      => (int) $row->tickets,
+                        'vinculados'   => (int) $row->vinculados,
+                        'match'        => $minutorUser ? 'encontrado' : 'nao',
+                        'minutor_name' => $minutorUser?->name,
+                        'minutor_id'   => $minutorUser?->id,
+                    ];
+                })->values();
         }
 
         return response()->json(['rows' => $result]);
