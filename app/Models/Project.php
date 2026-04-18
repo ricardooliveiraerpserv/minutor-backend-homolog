@@ -41,6 +41,16 @@ class Project extends Model
         'description',
         'customer_id',
         'parent_project_id',
+        'contract_id',
+        'tipo_faturamento',
+        'tipo_alocacao',
+        'architect_id',
+        'condicao_pagamento',
+        'observacoes_contrato',
+        'cobra_despesa_cliente',
+        'permissoes_despesa',
+        'executivo_conta_id',
+        'vendedor_id',
         'project_value',
         'hourly_rate',
         'sold_hours',
@@ -96,7 +106,9 @@ class Project extends Model
         'allow_manual_timesheets' => 'boolean',
         'allow_negative_balance' => 'boolean',
         'save_erpserv' => 'decimal:2',
-        'start_date' => 'date:Y-m-d', // Retorna apenas a data sem horário
+        'start_date' => 'date:Y-m-d',
+        'cobra_despesa_cliente' => 'boolean',
+        'permissoes_despesa' => 'array',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
@@ -214,6 +226,36 @@ class Project extends Model
     public function soldHoursHistory(): HasMany
     {
         return $this->hasMany(ProjectSoldHoursHistory::class)->orderBy('effective_from');
+    }
+
+    public function contract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class);
+    }
+
+    public function architect(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'architect_id');
+    }
+
+    public function executivoConta(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'executivo_conta_id');
+    }
+
+    public function vendedor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'vendedor_id');
+    }
+
+    public function contacts(): HasMany
+    {
+        return $this->hasMany(ProjectContact::class);
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(ProjectAttachment::class);
     }
 
     /**

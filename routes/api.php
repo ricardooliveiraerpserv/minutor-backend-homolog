@@ -33,6 +33,7 @@ use App\Http\Controllers\ClientPortalController;
 use App\Http\Controllers\FechadoController;
 use App\Http\Controllers\ProjectMessageController;
 use App\Http\Controllers\SustentacaoController;
+use App\Http\Controllers\ContractController;
 
 /*
 |--------------------------------------------------------------------------
@@ -650,6 +651,20 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
+
+        // 📄 CONTRATOS
+        Route::prefix('contracts')->group(function () {
+            Route::get('/',                                         [ContractController::class, 'index'])->name('contracts.index');
+            Route::post('/',                                        [ContractController::class, 'store'])->name('contracts.store');
+            Route::get('/{contract}',                              [ContractController::class, 'show'])->name('contracts.show');
+            Route::put('/{contract}',                              [ContractController::class, 'update'])->name('contracts.update');
+            Route::delete('/{contract}',                           [ContractController::class, 'destroy'])->name('contracts.destroy');
+            Route::patch('/{contract}/status',                     [ContractController::class, 'updateStatus'])->name('contracts.update-status');
+            Route::post('/{contract}/generate-project',            [ContractController::class, 'generateProject'])->name('contracts.generate-project');
+            Route::post('/{contract}/attachments',                 [ContractController::class, 'uploadAttachment'])->name('contracts.upload-attachment');
+            Route::get('/{contract}/attachments/{attachment}',     [ContractController::class, 'downloadAttachment'])->name('contracts.download-attachment');
+            Route::delete('/{contract}/attachments/{attachment}',  [ContractController::class, 'deleteAttachment'])->name('contracts.delete-attachment');
+        });
 
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
         Route::prefix('sustentacao')->group(function () {
