@@ -191,4 +191,9 @@ class Customer extends Model
     {
         return $this->belongsTo(User::class, 'executive_id');
     }
+
+    public function contacts(): HasMany
+    {
+        return $this->hasMany(CustomerContact::class);
+    }
 } 

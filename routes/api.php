@@ -34,6 +34,8 @@ use App\Http\Controllers\FechadoController;
 use App\Http\Controllers\ProjectMessageController;
 use App\Http\Controllers\SustentacaoController;
 use App\Http\Controllers\ContractController;
+use App\Http\Controllers\CustomerContactController;
+use App\Http\Controllers\ProjectContactController;
 
 /*
 |--------------------------------------------------------------------------
@@ -651,6 +653,16 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
+
+        // 👤 CONTATOS DE CLIENTES
+        Route::get('/customer-contacts',                           [CustomerContactController::class, 'index'])->name('customer-contacts.index');
+        Route::post('/customer-contacts',                          [CustomerContactController::class, 'store'])->name('customer-contacts.store');
+        Route::put('/customer-contacts/{customerContact}',         [CustomerContactController::class, 'update'])->name('customer-contacts.update');
+        Route::delete('/customer-contacts/{customerContact}',      [CustomerContactController::class, 'destroy'])->name('customer-contacts.destroy');
+
+        // 👤 CONTATOS DE PROJETOS
+        Route::get('/projects/{project}/contacts',  [ProjectContactController::class, 'index'])->name('project-contacts.index');
+        Route::put('/projects/{project}/contacts',  [ProjectContactController::class, 'sync'])->name('project-contacts.sync');
 
         // 📄 CONTRATOS
         Route::prefix('contracts')->group(function () {
