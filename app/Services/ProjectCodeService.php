@@ -36,13 +36,17 @@ class ProjectCodeService
                 ]);
             }
 
-            $seq->last_sequence += 1;
-            $seq->save();
+            $year   = now()->format('y');
+            $prefix = strtoupper($customer->code_prefix);
 
+            do {
+                $seq->last_sequence += 1;
+                $padded = str_pad($seq->last_sequence, 3, '0', STR_PAD_LEFT);
+                $code   = $prefix . $padded . '-' . $year;
+            } while (Project::where('code', $code)->exists());
+
+            $seq->save();
             $sequence = $seq->last_sequence;
-            $year     = now()->format('y');
-            $padded   = str_pad($sequence, 3, '0', STR_PAD_LEFT);
-            $code     = strtoupper($customer->code_prefix) . $padded . '-' . $year;
         });
 
         return [
