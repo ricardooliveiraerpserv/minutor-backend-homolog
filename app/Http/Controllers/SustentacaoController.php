@@ -757,6 +757,128 @@ class SustentacaoController extends Controller
         return response()->json(['statuses' => $statuses]);
     }
 
+    public function executive(Request $request): JsonResponse
+    {
+        $this->authorize();
+        [$from, $to] = $this->dateRange($request);
+
+        // 1. % Críticos
+        $total    = $this->tickets()->whereBetween('created_date', [$from, $to])->count();
+        $critical = $this->tickets()->whereBetween('created_date', [$from, $to])
+            ->whereIn('urgencia', ['Alta', 'Urgente'])->count();
+        $pctCritical = $total > 0 ? round($critical / $total * 100, 1) : 0;
+
+        // 2. % Parados
+        $allActive  = $this->tickets()->whereIn('base_status', ['New', 'InAttendance', 'Stopped'])->count();
+        $stopped    = $this->tickets()->where('base_status', 'Stopped')->count();
+        $pctStopped = $allActive > 0 ? round($stopped / $allActive * 100, 1) : 0;
+
+        // 3. SLA Violado % (resolvidos fora do prazo)
+        $slaTotal = $this->tickets()->whereBetween('resolved_in', [$from, $to])
+            ->whereNotNull('sla_solution_date')->count();
+        $slaOk = $this->tickets()->whereBetween('resolved_in', [$from, $to])
+            ->whereNotNull('sla_solution_date')
+            ->whereColumn('resolved_in', '<=', 'sla_solution_date')->count();
+        $slaBreachPct = $slaTotal > 0 ? round((1 - $slaOk / $slaTotal) * 100, 1) : null;
+
+        // 4. Tempo médio resolução (horas)
+        $avgMin = $this->tickets()->whereBetween('resolved_in', [$from, $to])
+            ->whereNotNull('sla_solution_time')->avg('sla_solution_time');
+        $avgResolutionHours = $avgMin ? round($avgMin / 60, 1) : null;
+
+        // 5. Lead Time médio abertura→fechamento (horas)
+        $leadTimeHours = DB::table('movidesk_tickets')
+            ->whereRaw("owner_email NOT ILIKE '%@promax.bardahl.com.br'")
+            ->whereNotNull('created_date')
+            ->where(function ($q) use ($from, $to) {
+                $q->whereBetween('closed_in', [$from, $to])
+                  ->orWhereBetween('resolved_in', [$from, $to]);
+            })
+            ->selectRaw("AVG(EXTRACT(EPOCH FROM (COALESCE(closed_in, resolved_in) - created_date)) / 3600) as avg_h")
+            ->value('avg_h');
+
+        // 6. Aging buckets — tickets abertos agora
+        $aging = $this->applyOpen($this->tickets())
+            ->whereNotNull('created_date')
+            ->selectRaw("
+                SUM(CASE WHEN NOW() - created_date < INTERVAL '4 days'  THEN 1 ELSE 0 END) as d0_3,
+                SUM(CASE WHEN NOW() - created_date >= INTERVAL '4 days'  AND NOW() - created_date < INTERVAL '8 days'  THEN 1 ELSE 0 END) as d4_7,
+                SUM(CASE WHEN NOW() - created_date >= INTERVAL '8 days'  AND NOW() - created_date < INTERVAL '16 days' THEN 1 ELSE 0 END) as d8_15,
+                SUM(CASE WHEN NOW() - created_date >= INTERVAL '16 days' THEN 1 ELSE 0 END) as d15_plus
+            ")->first();
+
+        // 7. Financeiro por cliente
+        $clientHours = DB::table('timesheets')
+            ->join('projects',      'projects.id',      '=', 'timesheets.project_id')
+            ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+            ->join('customers',     'customers.id',     '=', 'projects.customer_id')
+            ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
+                                 ->orWhere('service_types.name', 'ilike', '%sustenta%'))
+            ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
+            ->whereIn('timesheets.status', ['approved', 'pending'])
+            ->select(
+                'customers.name as customer_name',
+                DB::raw('SUM(timesheets.effort_minutes) as used_min'),
+                DB::raw('SUM(projects.sold_hours * 60) as sold_min')
+            )
+            ->groupBy('customers.name', 'customers.id')
+            ->orderByDesc(DB::raw('SUM(timesheets.effort_minutes)'))
+            ->limit(12)
+            ->get();
+
+        $totalUsedMin = $clientHours->sum('used_min');
+        $totalSoldMin = $clientHours->sum('sold_min');
+        $pctConsumed  = $totalSoldMin > 0 ? round($totalUsedMin / $totalSoldMin * 100, 1) : null;
+
+        $resolvedCount  = $this->tickets()->whereBetween('resolved_in', [$from, $to])->count();
+        $hoursPerTicket = ($resolvedCount > 0 && $totalUsedMin > 0)
+            ? round(($totalUsedMin / 60) / $resolvedCount, 2) : null;
+
+        $topClients = $clientHours->map(fn($r) => [
+            'name'   => $r->customer_name,
+            'used_h' => round($r->used_min / 60, 1),
+            'sold_h' => round($r->sold_min / 60, 1),
+            'pct'    => $r->sold_min > 0 ? round($r->used_min / $r->sold_min * 100, 1) : null,
+        ])->values();
+
+        // 8. Distribuição
+        $byCategory = $this->tickets()->whereBetween('created_date', [$from, $to])
+            ->selectRaw('categoria as label, COUNT(*) as count')
+            ->whereNotNull('categoria')
+            ->groupBy('categoria')
+            ->orderByDesc('count')
+            ->get();
+
+        $byUrgency = $this->tickets()->whereBetween('created_date', [$from, $to])
+            ->selectRaw('urgencia as label, COUNT(*) as count')
+            ->whereNotNull('urgencia')
+            ->groupBy('urgencia')
+            ->orderByRaw("CASE urgencia WHEN 'Urgente' THEN 1 WHEN 'Alta' THEN 2 WHEN 'Normal' THEN 3 WHEN 'Baixa' THEN 4 ELSE 5 END")
+            ->get();
+
+        return response()->json([
+            'pct_critical'          => $pctCritical,
+            'pct_stopped'           => $pctStopped,
+            'sla_breach_pct'        => $slaBreachPct,
+            'avg_resolution_hours'  => $avgResolutionHours,
+            'lead_time_avg_hours'   => $leadTimeHours ? round($leadTimeHours, 1) : null,
+            'aging'                 => [
+                'd0_3'    => (int) ($aging->d0_3    ?? 0),
+                'd4_7'    => (int) ($aging->d4_7    ?? 0),
+                'd8_15'   => (int) ($aging->d8_15   ?? 0),
+                'd15_plus' => (int) ($aging->d15_plus ?? 0),
+            ],
+            'pct_hours_consumed'    => $pctConsumed,
+            'total_sold_h'          => round($totalSoldMin / 60, 1),
+            'total_used_h'          => round($totalUsedMin / 60, 1),
+            'hours_per_ticket'      => $hoursPerTicket,
+            'top_clients'           => $topClients,
+            'by_category'           => $byCategory,
+            'by_urgency'            => $byUrgency,
+            'period'                => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
+        ]);
+    }
+
     public function syncOrgs(): JsonResponse
     {
         $this->authorize();
