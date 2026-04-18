@@ -35,10 +35,17 @@ class SustentacaoController extends Controller
 
         // 3. Heurístico "Nome | Empresa": extrai partes após " | " e busca na tabela
         $name = $sol['name'] ?? '';
-        if (str_contains($name, ' | ')) {
-            foreach (array_reverse(explode(' | ', $name)) as $part) {
-                $key = strtolower(trim($part));
-                if ($key && isset($orgByName[$key])) return $orgByName[$key]->name;
+        $parts = str_contains($name, ' | ') ? explode(' | ', $name) : [$name];
+        foreach (array_reverse($parts) as $part) {
+            $partLower = strtolower(trim($part));
+            if (!$partLower) continue;
+            // exact match first
+            if (isset($orgByName[$partLower])) return $orgByName[$partLower]->name;
+            // partial: verifica se algum nome de org está contido na parte
+            foreach ($orgByName as $orgKey => $org) {
+                if (strlen($orgKey) >= 5 && str_contains($partLower, $orgKey)) {
+                    return $org->name;
+                }
             }
         }
 
