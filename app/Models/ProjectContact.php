@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProjectContact extends Model
 {
-    protected $fillable = ['project_id', 'contract_contact_id', 'name', 'cargo', 'email', 'phone'];
+    protected $fillable = ['project_id', 'contract_contact_id', 'customer_contact_id', 'name', 'cargo', 'email', 'phone'];
 
     public function project(): BelongsTo
     {
