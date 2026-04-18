@@ -385,13 +385,14 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
-        // Contagem de tickets por owner_email
+        // Contagem de tickets por owner_email + data do último ticket
         $ticketCounts = MovideskTicket::whereNotNull('owner_email')
             ->selectRaw("
                 LOWER(owner_email)                                              as email_key,
                 COUNT(*)                                                        as tickets,
                 SUM(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END)           as vinculados,
-                MAX(owner_team)                                                 as team
+                MAX(owner_team)                                                 as team,
+                MAX(created_date)                                               as last_ticket_at
             ")
             ->groupBy('email_key')
             ->get()
@@ -401,58 +402,38 @@ class SustentacaoController extends Controller
             ->get()
             ->keyBy(fn($u) => strtolower(trim($u->email)));
 
-        // Se já temos agentes sincronizados, usa a tabela (tem is_active)
-        $agents = MovideskAgent::count() > 0
-            ? MovideskAgent::all()
-            : null;
+        $cutoff90 = now()->subDays(90);
 
-        if ($agents) {
-            $result = $agents->map(function ($agent) use ($ticketCounts, $usersByEmail) {
-                $emailKey    = strtolower($agent->email ?? '');
-                $counts      = $ticketCounts[$emailKey] ?? null;
-                $minutorUser = $usersByEmail[$emailKey] ?? null;
-
+        $result = MovideskTicket::whereNotNull('owner_email')
+            ->selectRaw("
+                LOWER(owner_email)                          as email_key,
+                MAX(owner_email)                            as owner_email,
+                MAX(responsavel->>'name')                   as owner_name,
+                COUNT(*)                                    as tickets,
+                SUM(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados,
+                MAX(owner_team)                             as team,
+                MAX(created_date)                           as last_ticket_at
+            ")
+            ->groupBy('email_key')
+            ->orderByDesc(DB::raw('COUNT(*)'))
+            ->get()
+            ->map(function ($row) use ($usersByEmail, $cutoff90) {
+                $minutorUser   = $usersByEmail[$row->email_key] ?? null;
+                $lastTicket    = $row->last_ticket_at ? \Carbon\Carbon::parse($row->last_ticket_at) : null;
+                $activeRecent  = $lastTicket && $lastTicket->gte($cutoff90);
                 return [
-                    'owner_email'   => $agent->email,
-                    'owner_name'    => $agent->name,
-                    'team'          => $counts->team ?? $agent->team,
-                    'is_active'     => $agent->is_active,
-                    'tickets'       => (int) ($counts->tickets ?? 0),
-                    'vinculados'    => (int) ($counts->vinculados ?? 0),
-                    'match'         => $minutorUser ? 'encontrado' : 'nao',
-                    'minutor_name'  => $minutorUser?->name,
-                    'minutor_id'    => $minutorUser?->id,
+                    'owner_email'    => $row->owner_email,
+                    'owner_name'     => $row->owner_name,
+                    'team'           => $row->team,
+                    'last_ticket_at' => $lastTicket?->toDateString(),
+                    'is_active'      => $activeRecent,
+                    'tickets'        => (int) $row->tickets,
+                    'vinculados'     => (int) $row->vinculados,
+                    'match'          => $minutorUser ? 'encontrado' : 'nao',
+                    'minutor_name'   => $minutorUser?->name,
+                    'minutor_id'     => $minutorUser?->id,
                 ];
-            })->sortByDesc('tickets')->values();
-        } else {
-            // Fallback: nome vem do JSON responsavel dos tickets (is_active indisponível)
-            $result = MovideskTicket::whereNotNull('owner_email')
-                ->selectRaw("
-                    LOWER(owner_email)              as email_key,
-                    MAX(owner_email)                as owner_email,
-                    MAX(responsavel->>'name')       as owner_name,
-                    COUNT(*)                        as tickets,
-                    SUM(CASE WHEN user_id IS NOT NULL THEN 1 ELSE 0 END) as vinculados,
-                    MAX(owner_team)                 as team
-                ")
-                ->groupBy('email_key')
-                ->orderByDesc(DB::raw('COUNT(*)'))
-                ->get()
-                ->map(function ($row) use ($usersByEmail) {
-                    $minutorUser = $usersByEmail[$row->email_key] ?? null;
-                    return [
-                        'owner_email'  => $row->owner_email,
-                        'owner_name'   => $row->owner_name,
-                        'team'         => $row->team,
-                        'is_active'    => null,
-                        'tickets'      => (int) $row->tickets,
-                        'vinculados'   => (int) $row->vinculados,
-                        'match'        => $minutorUser ? 'encontrado' : 'nao',
-                        'minutor_name' => $minutorUser?->name,
-                        'minutor_id'   => $minutorUser?->id,
-                    ];
-                })->values();
-        }
+            })->values();
 
         return response()->json(['rows' => $result]);
     }
