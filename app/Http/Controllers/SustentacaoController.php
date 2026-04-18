@@ -473,8 +473,11 @@ class SustentacaoController extends Controller
     {
         $this->authorize();
 
+        $php     = PHP_BINARY;
         $artisan = base_path('artisan');
-        exec("php {$artisan} movidesk:sync-agents > /dev/null 2>&1 &");
+        $log     = storage_path('logs/sync-agents.log');
+
+        exec("{$php} {$artisan} movidesk:sync-agents >> {$log} 2>&1 &");
 
         return response()->json([
             'success' => true,

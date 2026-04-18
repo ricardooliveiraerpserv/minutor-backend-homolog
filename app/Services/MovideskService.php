@@ -677,66 +677,131 @@ class MovideskService
      * Retorna array indexado por email (lowercase).
      */
     /**
-     * Busca agentes do Movidesk por email (userName), um a um.
-     * Evita paginar milhares de contatos de clientes para achar ~20 agentes.
+     * Busca agentes do Movidesk via /persons.
+     * Tenta filtro profileType eq 1 primeiro; se não funcionar, pagina tudo (máx 10 páginas).
      *
-     * @param  string[]  $emails  Emails dos owners vindos dos tickets
+     * @param  string[]  $knownEmails  Emails dos owners vindos dos tickets (para validar matches)
      */
-    public function fetchAgents(array $emails = []): array
+    public function fetchAgents(array $knownEmails = []): array
     {
-        $agents = [];
+        $knownSet = array_flip(array_map('strtolower', $knownEmails));
+        $agents   = [];
+        $top      = 100;
 
-        foreach ($emails as $email) {
+        // Tenta primeiro com filtro profileType eq 1 (agentes)
+        $filterUrl = "{$this->baseUrl()}/persons"
+            . '?token='   . urlencode($this->token())
+            . '&$filter=' . urlencode('profileType eq 1')
+            . '&$top='    . $top;
+
+        try {
+            $response = Http::timeout(30)->get($filterUrl);
+            if ($response->successful()) {
+                $data = $response->json();
+                if (!empty($data)) {
+                    if (isset($data['id'])) $data = [$data];
+                    foreach ($data as $p) {
+                        $email = $this->extractPersonEmail($p);
+                        if ($email) {
+                            $agents[$email] = $this->buildAgentRecord($p, $email);
+                        }
+                    }
+                    // Se filtro funcionou e retornou resultados, faz paginação completa
+                    if (!empty($agents)) {
+                        $skip = $top;
+                        while (count($data) === $top) {
+                            sleep(7);
+                            $url = $filterUrl . '&$skip=' . $skip;
+                            $response = Http::timeout(30)->get($url);
+                            if (!$response->successful()) break;
+                            $data = $response->json();
+                            if (empty($data)) break;
+                            if (isset($data['id'])) $data = [$data];
+                            foreach ($data as $p) {
+                                $email = $this->extractPersonEmail($p);
+                                if ($email) $agents[$email] = $this->buildAgentRecord($p, $email);
+                            }
+                            $skip += $top;
+                        }
+                        Log::info('[MOVIDESK] fetchAgents via filtro profileType=1: ' . count($agents) . ' agentes');
+                        return $agents;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('[MOVIDESK] Filtro profileType falhou, tentando paginação', ['error' => $e->getMessage()]);
+        }
+
+        // Fallback: pagina tudo mas só guarda emails conhecidos (dos tickets)
+        Log::info('[MOVIDESK] fetchAgents fallback: paginando /persons e filtrando por emails conhecidos');
+        $skip     = 0;
+        $maxPages = 20;
+        $page     = 0;
+
+        do {
             try {
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='   . urlencode($this->token())
-                    . '&$filter=' . urlencode("userName eq '{$email}'");
+                    . '&$top='    . $top
+                    . '&$skip='   . $skip;
 
-                $response = Http::timeout(15)->get($url);
-                if (!$response->successful()) {
-                    sleep(2);
-                    continue;
-                }
+                $response = Http::timeout(30)->get($url);
+                if (!$response->successful()) break;
 
                 $data = $response->json();
-                if (empty($data)) {
-                    sleep(2);
-                    continue;
-                }
-
+                if (empty($data)) break;
                 if (isset($data['id'])) $data = [$data];
 
                 foreach ($data as $p) {
-                    $resolvedEmail = strtolower(trim($p['userName'] ?? ''));
-                    if (!$resolvedEmail) {
-                        foreach ($p['emails'] ?? [] as $em) {
-                            if (!empty($em['email'])) { $resolvedEmail = strtolower(trim($em['email'])); break; }
-                        }
+                    $email = $this->extractPersonEmail($p);
+                    if (!$email) continue;
+                    // Só guarda se for email de um responsável conhecido nos tickets
+                    if (empty($knownSet) || isset($knownSet[$email])) {
+                        $agents[$email] = $this->buildAgentRecord($p, $email);
                     }
-                    if (!$resolvedEmail) $resolvedEmail = $email;
-
-                    $team = null;
-                    if (!empty($p['teams']) && is_array($p['teams'])) {
-                        $team = $p['teams'][0]['team']['name'] ?? $p['teams'][0]['name'] ?? null;
-                    }
-
-                    $agents[$resolvedEmail] = [
-                        'id'       => $p['id'] ?? null,
-                        'name'     => trim($p['businessName'] ?? ''),
-                        'email'    => $resolvedEmail,
-                        'isActive' => (bool) ($p['isActive'] ?? true),
-                        'team'     => $team,
-                    ];
                 }
 
-                // Movidesk: 10 req/min → ~6s entre chamadas
+                $skip += $top;
+                $page++;
+                if (count($data) < $top || $page >= $maxPages) break;
                 sleep(7);
             } catch (\Throwable $e) {
-                Log::error('[MOVIDESK] Exceção ao buscar agente', ['email' => $email, 'error' => $e->getMessage()]);
+                Log::error('[MOVIDESK] Exceção paginando persons', ['error' => $e->getMessage()]);
+                break;
+            }
+        } while (true);
+
+        Log::info('[MOVIDESK] fetchAgents paginação: ' . count($agents) . ' agentes em ' . $page . ' páginas');
+        return $agents;
+    }
+
+    private function extractPersonEmail(array $p): string
+    {
+        $email = strtolower(trim($p['userName'] ?? ''));
+        if (!$email) {
+            foreach ($p['emails'] ?? [] as $em) {
+                if (!empty($em['email'])) {
+                    $email = strtolower(trim($em['email']));
+                    break;
+                }
             }
         }
+        return $email;
+    }
 
-        return $agents;
+    private function buildAgentRecord(array $p, string $email): array
+    {
+        $team = null;
+        if (!empty($p['teams']) && is_array($p['teams'])) {
+            $team = $p['teams'][0]['team']['name'] ?? $p['teams'][0]['name'] ?? null;
+        }
+        return [
+            'id'       => $p['id'] ?? null,
+            'name'     => trim($p['businessName'] ?? ''),
+            'email'    => $email,
+            'isActive' => (bool) ($p['isActive'] ?? true),
+            'team'     => $team,
+        ];
     }
 
     /**
