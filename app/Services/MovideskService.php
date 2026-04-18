@@ -686,8 +686,7 @@ class MovideskService
             try {
                 $url = "{$this->baseUrl()}/persons"
                     . '?token='   . urlencode($this->token())
-                    . '&$select=' . urlencode('id,businessName,userName,organization,organizations')
-                    . '&$expand=' . urlencode('organization($select=businessName),organizations($select=businessName)')
+                    . '&$select=' . urlencode('id,businessName,userName,relationships')
                     . '&$top='    . $top
                     . '&$skip='   . $skip;
 
@@ -702,15 +701,13 @@ class MovideskService
                     $email = strtolower(trim($person['userName'] ?? ''));
                     if (!$email) continue;
 
-                    // Tenta organizations[] (array) e organization (objeto singular)
+                    // Organização vem em relationships[].name (onde id não é null)
                     $orgName = null;
-                    $orgs = $person['organizations'] ?? [];
-                    if (is_array($orgs) && !empty($orgs)) {
-                        $orgName = $orgs[0]['businessName'] ?? null;
-                    }
-                    if (!$orgName) {
-                        $org = $person['organization'] ?? null;
-                        $orgName = is_array($org) ? ($org['businessName'] ?? null) : ($org ?: null);
+                    foreach ($person['relationships'] ?? [] as $rel) {
+                        if (!empty($rel['id']) && !empty($rel['name'])) {
+                            $orgName = trim($rel['name']);
+                            break;
+                        }
                     }
                     if ($orgName) $map[$email] = $orgName;
                 }
