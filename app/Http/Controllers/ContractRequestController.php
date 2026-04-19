@@ -68,6 +68,13 @@ class ContractRequestController extends Controller
             'status'         => ContractRequest::STATUS_PENDENTE,
         ]));
 
+        \App\Models\ContractRequestKanbanLog::create([
+            'contract_request_id' => $req->id,
+            'from_column'         => null,
+            'to_column'           => $req->kanban_column ?? 'backlog',
+            'moved_by_id'         => $user->id,
+        ]);
+
         return response()->json($req->load(['customer:id,name', 'createdBy:id,name']), 201);
     }
 
