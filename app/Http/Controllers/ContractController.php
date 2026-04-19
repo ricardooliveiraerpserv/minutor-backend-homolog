@@ -413,7 +413,7 @@ class ContractController extends Controller
             $reqQuery = \App\Models\ContractRequest::with(['customer:id,name', 'createdBy:id,name'])
                 ->where(function ($q) {
                     $q->whereNull('contract_id')
-                      ->orWhereIn('kanban_column', ['req_planejamento', 'req_inicio_autorizado', 'req_em_andamento']);
+                      ->orWhereIn('kanban_column', ['req_planejamento', 'req_inicio_autorizado', 'req_autorizado', 'req_em_andamento']);
                 })
                 ->whereIn('status', [\App\Models\ContractRequest::STATUS_PENDENTE, \App\Models\ContractRequest::STATUS_EM_ANALISE, \App\Models\ContractRequest::STATUS_APROVADO]);
 
@@ -604,11 +604,14 @@ class ContractController extends Controller
     public function requestPlanDecision(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
     {
         $data = $request->validate([
-            'decision'       => 'required|in:novo_projeto,subprojeto',
-            'project_id'     => 'nullable|exists:projects,id',
-            'coordinator_id' => 'nullable|exists:users,id',
-            // campos para criar novo projeto (contrato)
+            'decision'          => 'required|in:novo_projeto,subprojeto',
+            'project_id'        => 'nullable|exists:projects,id',
+            'coordinator_id'    => 'nullable|exists:users,id',
+            // campos para criar novo contrato
+            'project_name'      => 'nullable|string|max:255',
             'categoria'         => 'nullable|in:projeto,sustentacao',
+            'service_type_id'   => 'nullable|exists:service_types,id',
+            'contract_type_id'  => 'nullable|exists:contract_types,id',
             'horas_contratadas' => 'nullable|integer|min:0',
             'tipo_faturamento'  => 'nullable|string',
             'valor_projeto'     => 'nullable|numeric|min:0',
@@ -618,22 +621,36 @@ class ContractController extends Controller
         $linkedContractId    = null;
         $linkedProjectId     = null;
         $linkedCoordinatorId = $data['coordinator_id'] ?? null;
+        $toColumn            = 'req_inicio_autorizado';
 
         if ($decision === 'novo_projeto') {
             $contract = \App\Models\Contract::create([
                 'customer_id'       => $contractRequest->customer_id,
                 'created_by_id'     => auth()->id(),
                 'status'            => \App\Models\Contract::STATUS_APROVADO,
-                'kanban_status'     => \App\Models\Contract::KANBAN_BACKLOG,
+                'kanban_status'     => \App\Models\Contract::KANBAN_NOVO_PROJETO,
+                'project_name'      => $data['project_name'] ?? null,
                 'categoria'         => $data['categoria'] ?? 'projeto',
+                'service_type_id'   => $data['service_type_id'] ?? null,
+                'contract_type_id'  => $data['contract_type_id'] ?? null,
                 'horas_contratadas' => $data['horas_contratadas'] ?? 0,
                 'tipo_faturamento'  => $data['tipo_faturamento'] ?? null,
                 'valor_projeto'     => $data['valor_projeto'] ?? null,
             ]);
             $linkedContractId = $contract->id;
+            // req fica em "Aguardando Início" aguardando setup do projeto
+            $toColumn = 'req_inicio_autorizado';
         } else {
-            // subprojeto: vincula a um projeto existente
+            // subprojeto: vincula a projeto existente, move contrato do projeto para início_autorizado
             $linkedProjectId = $data['project_id'];
+            $project = \App\Models\Project::find($linkedProjectId);
+            if ($project && $project->contract_id) {
+                \App\Models\Contract::where('id', $project->contract_id)
+                    ->update(['kanban_status' => \App\Models\Contract::KANBAN_INICIO_AUTORIZADO]);
+                $linkedContractId = $project->contract_id;
+            }
+            // req avança direto para "Início Autorizado"
+            $toColumn = 'req_autorizado';
         }
 
         $contractRequest->update([
@@ -641,13 +658,13 @@ class ContractController extends Controller
             'linked_contract_id'   => $linkedContractId,
             'linked_project_id'    => $linkedProjectId,
             'linked_coordinator_id'=> $linkedCoordinatorId,
-            'kanban_column'        => 'req_inicio_autorizado',
+            'kanban_column'        => $toColumn,
         ]);
 
         \App\Models\ContractRequestKanbanLog::create([
             'contract_request_id' => $contractRequest->id,
-            'from_column'         => $contractRequest->getOriginal('kanban_column') ?? 'req_planejamento',
-            'to_column'           => 'req_inicio_autorizado',
+            'from_column'         => $contractRequest->getOriginal('kanban_column') ?? 'req_inicio_autorizado',
+            'to_column'           => $toColumn,
             'moved_by_id'         => auth()->id(),
         ]);
 
