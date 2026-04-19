@@ -413,7 +413,7 @@ class ContractController extends Controller
             $reqQuery = \App\Models\ContractRequest::with(['customer:id,name', 'createdBy:id,name'])
                 ->where(function ($q) {
                     $q->whereNull('contract_id')
-                      ->orWhereIn('kanban_column', ['req_planejamento', 'req_inicio_autorizado', 'req_autorizado', 'req_em_andamento']);
+                      ->orWhereIn('kanban_column', ['req_planejamento', 'req_inicio_autorizado', 'inicio_autorizado', 'req_em_andamento']);
                 })
                 ->whereIn('status', [\App\Models\ContractRequest::STATUS_PENDENTE, \App\Models\ContractRequest::STATUS_EM_ANALISE, \App\Models\ContractRequest::STATUS_APROVADO]);
 
@@ -621,7 +621,8 @@ class ContractController extends Controller
         $linkedContractId    = null;
         $linkedProjectId     = null;
         $linkedCoordinatorId = $data['coordinator_id'] ?? null;
-        $toColumn            = 'req_inicio_autorizado';
+        // Ambas as decisões levam a req para o "Início Autorizado" (coluna amarela)
+        $toColumn = 'inicio_autorizado';
 
         if ($decision === 'novo_projeto') {
             $contract = \App\Models\Contract::create([
@@ -638,10 +639,8 @@ class ContractController extends Controller
                 'valor_projeto'     => $data['valor_projeto'] ?? null,
             ]);
             $linkedContractId = $contract->id;
-            // req fica em "Aguardando Início" aguardando setup do projeto
-            $toColumn = 'req_inicio_autorizado';
         } else {
-            // subprojeto: vincula a projeto existente, move contrato do projeto para início_autorizado
+            // subprojeto: vincula a projeto existente, move contrato do projeto para inicio_autorizado
             $linkedProjectId = $data['project_id'];
             $project = \App\Models\Project::find($linkedProjectId);
             if ($project && $project->contract_id) {
@@ -649,8 +648,6 @@ class ContractController extends Controller
                     ->update(['kanban_status' => \App\Models\Contract::KANBAN_INICIO_AUTORIZADO]);
                 $linkedContractId = $project->contract_id;
             }
-            // req avança direto para "Início Autorizado"
-            $toColumn = 'req_autorizado';
         }
 
         $contractRequest->update([
