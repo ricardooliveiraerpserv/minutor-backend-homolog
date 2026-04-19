@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\ProjectMessage;
+use App\Models\ProjectMessageAttachment;
 use App\Models\ProjectMessageMention;
 use App\Models\ProjectMessageRead;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class ProjectMessageController extends Controller
 {
@@ -21,8 +23,14 @@ class ProjectMessageController extends Controller
         }
 
         $messages = ProjectMessage::where('project_id', $project->id)
-            ->with(['author:id,name,profile_photo', 'reads' => fn($q) => $q->where('user_id', $user->id)])
+            ->with([
+                'author:id,name,profile_photo',
+                'attachments',
+                'reads' => fn($q) => $q->where('user_id', $user->id),
+            ])
             ->withExists(['mentions as is_mentioned' => fn($q) => $q->where('mentioned_user_id', $user->id)])
+            // Clientes só veem mensagens marcadas como visíveis
+            ->when($user->isCliente(), fn($q) => $q->where('visibility', 'client'))
             ->latest()
             ->paginate(50);
 
@@ -38,19 +46,31 @@ class ProjectMessageController extends Controller
         }
 
         $request->validate([
-            'message'  => 'required|string|max:2000',
-            'priority' => 'in:normal,high',
+            'message'    => 'nullable|string|max:5000',
+            'priority'   => 'nullable|in:normal,high',
+            'visibility' => 'nullable|in:internal,client',
+            'files'      => 'nullable|array|max:10',
+            'files.*'    => 'file|max:20480', // 20 MB por arquivo
         ]);
+
+        $text = $request->input('message', '');
+        if (!$text && !$request->hasFile('files')) {
+            return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
+        }
+
+        // Clientes só podem enviar mensagens visíveis ao cliente
+        $visibility = $user->isCliente() ? 'client' : ($request->input('visibility', 'internal'));
 
         $msg = ProjectMessage::create([
             'project_id' => $project->id,
             'user_id'    => $user->id,
-            'message'    => $request->message,
+            'message'    => $text,
             'priority'   => $request->input('priority', 'normal'),
+            'visibility' => $visibility,
         ]);
 
         // Parse mention tokens @[id:Name]
-        preg_match_all('/@\[(\d+):([^\]]+)\]/', $request->message, $matches);
+        preg_match_all('/@\[(\d+):([^\]]+)\]/', $text, $matches);
         foreach (array_unique($matches[1]) as $mentionedId) {
             ProjectMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
@@ -58,10 +78,39 @@ class ProjectMessageController extends Controller
             ]);
         }
 
-        $msg->load('author:id,name,profile_photo');
+        // Upload de anexos
+        if ($request->hasFile('files')) {
+            foreach ($request->file('files') as $file) {
+                $path = $file->store('message-attachments', 'public');
+                ProjectMessageAttachment::create([
+                    'message_id'    => $msg->id,
+                    'original_name' => $file->getClientOriginalName(),
+                    'file_path'     => $path,
+                    'file_size'     => $file->getSize(),
+                    'mime_type'     => $file->getMimeType(),
+                ]);
+            }
+        }
+
+        $msg->load(['author:id,name,profile_photo', 'attachments']);
         $msg->is_mentioned = false;
 
         return response()->json($msg, 201);
+    }
+
+    public function downloadAttachment(Request $request, ProjectMessage $message, ProjectMessageAttachment $attachment): mixed
+    {
+        $user = $request->user();
+
+        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $message->project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        if ($user->isCliente() && $message->visibility !== 'client') {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
     }
 
     public function markRead(Request $request, Project $project): JsonResponse
@@ -72,9 +121,14 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        $unreadIds = ProjectMessage::where('project_id', $project->id)
-            ->whereDoesntHave('reads', fn($q) => $q->where('user_id', $user->id))
-            ->pluck('id');
+        $query = ProjectMessage::where('project_id', $project->id)
+            ->whereDoesntHave('reads', fn($q) => $q->where('user_id', $user->id));
+
+        if ($user->isCliente()) {
+            $query->where('visibility', 'client');
+        }
+
+        $unreadIds = $query->pluck('id');
 
         if ($unreadIds->isNotEmpty()) {
             $rows = $unreadIds->map(fn($id) => ['message_id' => $id, 'user_id' => $user->id])->toArray();
@@ -190,6 +244,9 @@ class ProjectMessageController extends Controller
     {
         if ($user->isCoordenador()) {
             return $project->coordinators()->where('users.id', $user->id)->exists();
+        }
+        if ($user->isCliente() && $user->customer_id) {
+            return $project->customer_id === $user->customer_id;
         }
         return $project->consultants()->where('users.id', $user->id)->exists();
     }

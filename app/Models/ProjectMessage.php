@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ProjectMessage extends Model
 {
-    protected $fillable = ['project_id', 'user_id', 'message', 'priority'];
+    protected $fillable = ['project_id', 'user_id', 'message', 'priority', 'visibility'];
 
     public function project(): BelongsTo
     {
@@ -28,5 +28,10 @@ class ProjectMessage extends Model
     public function reads(): HasMany
     {
         return $this->hasMany(ProjectMessageRead::class, 'message_id');
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(ProjectMessageAttachment::class, 'message_id');
     }
 }
