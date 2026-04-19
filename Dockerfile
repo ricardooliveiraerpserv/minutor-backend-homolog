@@ -54,7 +54,7 @@ RUN printf 'server {\n\
     root /var/www/public;\n\
     index index.php;\n\
     disable_symlinks off;\n\
-    client_max_body_size 20M;\n\
+    client_max_body_size 55M;\n\
     location /storage/ {\n\
         alias /var/www/storage/app/public/;\n\
         try_files $uri =404;\n\
@@ -70,7 +70,7 @@ RUN printf 'server {\n\
 }\n' > /etc/nginx/http.d/default.conf
 
 # Limite de upload PHP
-RUN printf 'upload_max_filesize=20M\npost_max_size=20M\n' > /usr/local/etc/php/conf.d/uploads.ini
+RUN printf 'upload_max_filesize=50M\npost_max_size=55M\nmemory_limit=256M\n' > /usr/local/etc/php/conf.d/uploads.ini
 
 # Supervisor para rodar nginx + php-fpm juntos
 RUN printf '[supervisord]\n\
