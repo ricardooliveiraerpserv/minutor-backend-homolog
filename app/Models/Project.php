@@ -18,11 +18,12 @@ class Project extends Model
     /**
      * Status constants
      */
-    public const STATUS_AWAITING_START = 'awaiting_start';
-    public const STATUS_STARTED = 'started';
-    public const STATUS_PAUSED = 'paused';
-    public const STATUS_CANCELLED = 'cancelled';
-    public const STATUS_FINISHED = 'finished';
+    public const STATUS_AWAITING_START       = 'awaiting_start';
+    public const STATUS_STARTED              = 'started';
+    public const STATUS_LIBERADO_PARA_TESTES = 'liberado_para_testes';
+    public const STATUS_PAUSED               = 'paused';
+    public const STATUS_CANCELLED            = 'cancelled';
+    public const STATUS_FINISHED             = 'finished';
 
     /**
      * Expense responsible party constants
