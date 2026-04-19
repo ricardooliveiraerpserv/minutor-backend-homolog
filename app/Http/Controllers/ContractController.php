@@ -342,8 +342,7 @@ class ContractController extends Controller
               ->orderBy('kanban_order');
 
             if ($isCliente && $user->customer_id) {
-                $demandQuery->where('customer_id', $user->customer_id)
-                    ->whereIn('kanban_status', Contract::DEMAND_CLIENT_COLUMNS);
+                $demandQuery->where('customer_id', $user->customer_id);
             }
 
             $demandCards = $demandQuery->get()->map(fn($c) => $this->formatKanbanCard($c));
