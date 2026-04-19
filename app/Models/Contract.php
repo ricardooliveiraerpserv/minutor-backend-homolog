@@ -45,10 +45,34 @@ class Contract extends Model
     const STATUS_INICIO_AUTORIZADO = 'inicio_autorizado';
     const STATUS_ATIVO             = 'ativo';
 
-    const KANBAN_NOVO        = 'novo';
-    const KANBAN_EM_CADASTRO = 'em_cadastro';
-    const KANBAN_PRONTO      = 'pronto';
-    const KANBAN_ALOCADO     = 'alocado'; // coluna do coordenador — já é projeto
+    // Colunas Fase Demanda
+    const KANBAN_BACKLOG         = 'backlog';
+    const KANBAN_NOVO_PROJETO    = 'novo_projeto';
+    const KANBAN_EM_PLANEJAMENTO = 'em_planejamento';
+    const KANBAN_EM_VALIDACAO    = 'em_validacao';
+    const KANBAN_EM_REVISAO      = 'em_revisao';
+    const KANBAN_APROVADO        = 'aprovado';
+    // Transição → gera projeto
+    const KANBAN_INICIO_AUTORIZADO = 'inicio_autorizado';
+    // Colunas Fase Projeto (card fica em alocado + project.status controla sub-coluna)
+    const KANBAN_ALOCADO         = 'alocado';
+
+    const DEMAND_COLUMNS = [
+        self::KANBAN_BACKLOG,
+        self::KANBAN_NOVO_PROJETO,
+        self::KANBAN_EM_PLANEJAMENTO,
+        self::KANBAN_EM_VALIDACAO,
+        self::KANBAN_EM_REVISAO,
+        self::KANBAN_APROVADO,
+    ];
+
+    // Colunas visíveis para cada perfil (demanda)
+    const DEMAND_CLIENT_COLUMNS = [
+        self::KANBAN_BACKLOG,
+        self::KANBAN_NOVO_PROJETO,
+        self::KANBAN_EM_VALIDACAO,
+        self::KANBAN_APROVADO,
+    ];
 
     public function customer(): BelongsTo
     {

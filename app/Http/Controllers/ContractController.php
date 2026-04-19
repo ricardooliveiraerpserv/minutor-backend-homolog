@@ -321,21 +321,68 @@ class ContractController extends Controller
         return response()->json(null, 204);
     }
 
-    // ─── Kanban ───────────────────────────────────────────────────────────────
+    // ─── Kanban Unificado ────────────────────────────────────────────────────
 
     public function kanban(Request $request): JsonResponse
     {
-        $contracts = Contract::with([
-            'customer:id,name',
-            'contractType:id,name',
-            'serviceType:id,name',
-            'kanbanCoordinator:id,name',
-            'project:id,code,name,status',
-        ])->whereIn('kanban_status', ['novo', 'em_cadastro', 'pronto', 'alocado'])
-          ->orderBy('kanban_order')
-          ->get()
-          ->map(fn($c) => $this->formatKanbanCard($c));
+        $user      = auth()->user();
+        $isConsultor = $user?->isConsultor();
+        $isCliente   = $user?->isCliente();
 
+        // ── Fase Demanda: contratos (admin/coordenador vê todos; cliente vê subset)
+        $demandCards = collect();
+        if (!$isConsultor) {
+            $demandQuery = Contract::with([
+                'customer:id,name',
+                'contractType:id,name',
+                'serviceType:id,name',
+                'kanbanCoordinator:id,name',
+                'project:id,code,name,status',
+            ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
+              ->orderBy('kanban_order');
+
+            if ($isCliente && $user->customer_id) {
+                $demandQuery->where('customer_id', $user->customer_id)
+                    ->whereIn('kanban_status', Contract::DEMAND_CLIENT_COLUMNS);
+            }
+
+            $demandCards = $demandQuery->get()->map(fn($c) => $this->formatKanbanCard($c));
+        }
+
+        // ── Fase Transição: contratos status=inicio_autorizado sem projeto gerado
+        $transitionCards = collect();
+        if (!$isConsultor && !$isCliente) {
+            $transitionCards = Contract::with([
+                'customer:id,name',
+                'contractType:id,name',
+                'serviceType:id,name',
+                'project:id,code,name,status',
+            ])->where('status', Contract::STATUS_INICIO_AUTORIZADO)
+              ->whereNull('project_id')
+              ->orderBy('kanban_order')
+              ->get()
+              ->map(fn($c) => $this->formatKanbanCard($c));
+        }
+
+        // ── Fase Projeto: projetos gerados a partir de contratos
+        $projectQuery = \App\Models\Project::with([
+            'customer:id,name',
+            'contract:id,project_name',
+            'coordinators:id,name',
+            'consultants:id,name',
+        ])->whereNotNull('contract_id')
+          ->whereNotIn('status', [\App\Models\Project::STATUS_CANCELLED])
+          ->orderBy('updated_at', 'desc');
+
+        if ($isConsultor) {
+            $projectQuery->whereHas('consultants', fn($q) => $q->where('users.id', $user->id));
+        } elseif ($isCliente && $user->customer_id) {
+            $projectQuery->where('customer_id', $user->customer_id);
+        }
+
+        $projectCards = $projectQuery->get()->map(fn($p) => $this->formatProjectCard($p));
+
+        // ── Coordenadores ativos
         $coordinators = User::where('type', 'coordenador')
             ->where('enabled', true)
             ->select('id', 'name')
@@ -343,8 +390,13 @@ class ContractController extends Controller
             ->get();
 
         return response()->json([
-            'contracts'    => $contracts,
-            'coordinators' => $coordinators,
+            'demand_cards'     => $demandCards,
+            'transition_cards' => $transitionCards,
+            'project_cards'    => $projectCards,
+            'coordinators'     => $coordinators,
+            'user_role'        => $user?->type ?? 'admin',
+            // legado — mantém compatibilidade com frontend antigo
+            'contracts'        => $demandCards,
         ]);
     }
 
@@ -356,30 +408,31 @@ class ContractController extends Controller
             'order'          => 'nullable|integer',
         ]);
 
-        $toColumn      = $request->input('to_column'); // 'novo'|'em_cadastro'|'pronto'|'coordinator:{id}'
+        $toColumn      = $request->input('to_column');
         $coordinatorId = $request->input('coordinator_id');
         $fromColumn    = $this->resolveColumnName($contract);
 
-        // Mover para coluna de coordenador = gerar projeto automaticamente
-        if (str_starts_with($toColumn, 'coordinator:')) {
-            $coordinatorId = (int) str_replace('coordinator:', '', $toColumn);
+        $validDemandColumns = array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_ALOCADO]);
 
-            // Validação de completude
+        // Mover para coluna de coordenador (legado) ou para "alocado" = gerar projeto
+        if (str_starts_with($toColumn, 'coordinator:') || $toColumn === Contract::KANBAN_ALOCADO) {
+            if (str_starts_with($toColumn, 'coordinator:')) {
+                $coordinatorId = (int) str_replace('coordinator:', '', $toColumn);
+            }
+
             if (!$contract->isKanbanComplete()) {
                 return response()->json([
-                    'message' => 'Contrato incompleto. Preencha: cliente, horas, tipo de contrato e faturamento.',
+                    'message' => 'Contrato incompleto. Preencha: cliente, tipo de contrato e faturamento.',
                 ], 422);
             }
 
             if ($contract->project_id) {
-                // Projeto já existe — apenas move o card
                 $contract->update([
                     'kanban_status'         => Contract::KANBAN_ALOCADO,
                     'kanban_coordinator_id' => $coordinatorId,
                     'kanban_order'          => $request->input('order', 0),
                 ]);
             } else {
-                // Gerar projeto automaticamente
                 if (!in_array($contract->status, [Contract::STATUS_INICIO_AUTORIZADO, Contract::STATUS_APROVADO])) {
                     $contract->update(['status' => Contract::STATUS_APROVADO]);
                 }
@@ -423,7 +476,9 @@ class ContractController extends Controller
                         ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
                     }
 
-                    $project->coordinators()->attach($coordinatorId);
+                    if ($coordinatorId) {
+                        $project->coordinators()->attach($coordinatorId);
+                    }
 
                     $contract->update([
                         'project_id'            => $project->id,
@@ -436,22 +491,25 @@ class ContractController extends Controller
                     ]);
                 });
             }
-        } else {
-            $kanbanStatus = match($toColumn) {
-                'novo'        => Contract::KANBAN_NOVO,
-                'em_cadastro' => Contract::KANBAN_EM_CADASTRO,
-                'pronto'      => Contract::KANBAN_PRONTO,
-                default       => $contract->kanban_status,
-            };
-
+        } elseif ($toColumn === Contract::KANBAN_INICIO_AUTORIZADO) {
+            if (!$contract->isKanbanComplete()) {
+                return response()->json([
+                    'message' => 'Contrato incompleto. Preencha: cliente, tipo de contrato e faturamento.',
+                ], 422);
+            }
             $contract->update([
-                'kanban_status'         => $kanbanStatus,
+                'kanban_status' => Contract::KANBAN_INICIO_AUTORIZADO,
+                'status'        => Contract::STATUS_INICIO_AUTORIZADO,
+                'kanban_order'  => $request->input('order', 0),
+            ]);
+        } elseif (in_array($toColumn, $validDemandColumns)) {
+            $contract->update([
+                'kanban_status'         => $toColumn,
                 'kanban_coordinator_id' => null,
                 'kanban_order'          => $request->input('order', 0),
             ]);
         }
 
-        // Log de movimentação
         ContractKanbanLog::create([
             'contract_id'    => $contract->id,
             'from_column'    => $fromColumn,
@@ -463,17 +521,33 @@ class ContractController extends Controller
         return response()->json($this->formatKanbanCard($contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project'])));
     }
 
+    // Mover projeto de fase de execução (em_andamento → liberado_para_testes → encerrado)
+    public function projectMove(Request $request, \App\Models\Project $project): JsonResponse
+    {
+        $request->validate(['status' => 'required|string|in:awaiting_start,started,liberado_para_testes,paused,finished']);
+
+        $user = auth()->user();
+        if ($user?->isConsultor()) {
+            return response()->json(['message' => 'Sem permissão para mover projetos.'], 403);
+        }
+
+        $project->update(['status' => $request->input('status')]);
+
+        return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+    }
+
     private function resolveColumnName(Contract $contract): string
     {
         if ($contract->kanban_status === Contract::KANBAN_ALOCADO && $contract->kanban_coordinator_id) {
             return 'coordinator:' . $contract->kanban_coordinator_id;
         }
-        return $contract->kanban_status ?? Contract::KANBAN_NOVO;
+        return $contract->kanban_status ?? Contract::KANBAN_BACKLOG;
     }
 
     private function formatKanbanCard(Contract $contract): array
     {
         return [
+            'card_type'        => 'contract',
             'id'               => $contract->id,
             'customer_name'    => $contract->customer?->name,
             'customer_id'      => $contract->customer_id,
@@ -485,7 +559,7 @@ class ContractController extends Controller
             'tipo_faturamento' => $contract->tipo_faturamento,
             'horas_contratadas'=> $contract->horas_contratadas,
             'valor_projeto'    => $contract->valor_projeto,
-            'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_NOVO,
+            'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_BACKLOG,
             'kanban_coordinator_id' => $contract->kanban_coordinator_id,
             'kanban_coordinator'    => $contract->kanbanCoordinator?->name,
             'kanban_order'     => $contract->kanban_order,
@@ -495,6 +569,27 @@ class ContractController extends Controller
             'project_status'   => $contract->project?->status,
             'is_complete'      => $contract->isKanbanComplete(),
             'created_at'       => $contract->created_at,
+        ];
+    }
+
+    private function formatProjectCard(\App\Models\Project $project): array
+    {
+        return [
+            'card_type'        => 'project',
+            'id'               => $project->id,
+            'contract_id'      => $project->contract_id,
+            'customer_name'    => $project->customer?->name,
+            'customer_id'      => $project->customer_id,
+            'project_name'     => $project->name,
+            'code'             => $project->code,
+            'status'           => $project->status,
+            'sold_hours'       => $project->sold_hours,
+            'project_value'    => $project->project_value,
+            'start_date'       => $project->start_date,
+            'coordinators'     => $project->coordinators->pluck('name'),
+            'consultants'      => $project->consultants->pluck('name'),
+            'is_complete'      => true,
+            'created_at'       => $project->created_at,
         ];
     }
 }
