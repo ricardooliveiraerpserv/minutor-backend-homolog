@@ -599,7 +599,17 @@ class ContractController extends Controller
     {
         $request->validate(['kanban_column' => 'required|string']);
 
-        $contractRequest->update(['kanban_column' => $request->input('kanban_column')]);
+        $fromColumn = $contractRequest->kanban_column ?? 'backlog';
+        $toColumn   = $request->input('kanban_column');
+
+        $contractRequest->update(['kanban_column' => $toColumn]);
+
+        \App\Models\ContractRequestKanbanLog::create([
+            'contract_request_id' => $contractRequest->id,
+            'from_column'         => $fromColumn,
+            'to_column'           => $toColumn,
+            'moved_by_id'         => auth()->id(),
+        ]);
 
         return response()->json(['ok' => true]);
     }
