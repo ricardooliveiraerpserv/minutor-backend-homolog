@@ -697,6 +697,8 @@ Route::prefix('v1')->group(function () {
         Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review');
         Route::get('/contract-requests/{contractRequest}/messages',  [\App\Http\Controllers\ContractRequestMessageController::class, 'index'])->name('contract-request-messages.index');
         Route::post('/contract-requests/{contractRequest}/messages', [\App\Http\Controllers\ContractRequestMessageController::class, 'store'])->name('contract-request-messages.store');
+        Route::get('/contract-requests/{contractRequest}/mentionable-users', [\App\Http\Controllers\ContractRequestMessageController::class, 'mentionableUsers'])->name('contract-request-messages.mentionable-users');
+        Route::get('/req-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractRequestMessageController::class, 'downloadAttachment'])->name('contract-request-messages.attachment-download');
 
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
         Route::prefix('sustentacao')->group(function () {
