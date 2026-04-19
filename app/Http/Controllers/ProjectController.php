@@ -152,6 +152,7 @@ class ProjectController extends Controller
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
             elseif ($status) $q->where('status', $status);
+            if ($request->get('customer_id')) $q->where('customer_id', $request->get('customer_id'));
             $items = $q->orderBy('name')->limit($perPage)->get();
             return response()->json(['hasNext' => false, 'items' => $items]);
         }
