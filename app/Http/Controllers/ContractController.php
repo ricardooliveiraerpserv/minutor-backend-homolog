@@ -406,11 +406,37 @@ class ContractController extends Controller
             ->map(fn($c) => $this->formatKanbanCard($c));
         }
 
+        // ── Requisições pendentes (contract_requests sem contrato gerado)
+        $requestCards = collect();
+        if (!$isConsultor) {
+            $reqQuery = \App\Models\ContractRequest::with(['customer:id,name', 'createdBy:id,name'])
+                ->whereNull('contract_id')
+                ->whereIn('status', [\App\Models\ContractRequest::STATUS_PENDENTE, \App\Models\ContractRequest::STATUS_EM_ANALISE]);
+
+            if ($isCliente && $user->customer_id) {
+                $reqQuery->where('customer_id', $user->customer_id);
+            }
+
+            $requestCards = $reqQuery->orderBy('created_at', 'desc')->get()->map(fn($r) => [
+                'card_type'              => 'request',
+                'id'                     => $r->id,
+                'customer_name'          => $r->customer?->name ?? '—',
+                'customer_id'            => $r->customer_id,
+                'area_requisitante'      => $r->area_requisitante,
+                'tipo_necessidade'       => $r->tipo_necessidade,
+                'tipo_necessidade_outro' => $r->tipo_necessidade_outro,
+                'nivel_urgencia'         => $r->nivel_urgencia,
+                'status'                 => $r->status,
+                'created_at'             => $r->created_at?->toISOString(),
+            ]);
+        }
+
         return response()->json([
             'demand_cards'          => $demandCards,
             'transition_cards'      => $transitionCards,
             'project_cards'         => $projectCards,
             'sustentacao_auto_cards'=> $sustentacaoAutoCards,
+            'request_cards'         => $requestCards,
             'coordinators'          => $coordinators,
             'user_role'             => $user?->type ?? 'admin',
             // legado — mantém compatibilidade com frontend antigo
