@@ -411,8 +411,11 @@ class ContractController extends Controller
         $requestCards = collect();
         if (!$isConsultor) {
             $reqQuery = \App\Models\ContractRequest::with(['customer:id,name', 'createdBy:id,name'])
-                ->whereNull('contract_id')
-                ->whereIn('status', [\App\Models\ContractRequest::STATUS_PENDENTE, \App\Models\ContractRequest::STATUS_EM_ANALISE]);
+                ->where(function ($q) {
+                    $q->whereNull('contract_id')
+                      ->orWhereIn('kanban_column', ['req_planejamento', 'req_inicio_autorizado', 'req_em_andamento']);
+                })
+                ->whereIn('status', [\App\Models\ContractRequest::STATUS_PENDENTE, \App\Models\ContractRequest::STATUS_EM_ANALISE, \App\Models\ContractRequest::STATUS_APROVADO]);
 
             if ($isCliente && $user->customer_id) {
                 $reqQuery->where('customer_id', $user->customer_id);
@@ -434,6 +437,9 @@ class ContractController extends Controller
                 'cenario_desejado'       => $r->cenario_desejado,
                 'status'                 => $r->status,
                 'kanban_column'          => $r->kanban_column ?? 'backlog',
+                'req_decision'           => $r->req_decision,
+                'linked_contract_id'     => $r->linked_contract_id,
+                'linked_coordinator_id'  => $r->linked_coordinator_id,
                 'created_at'             => $r->created_at?->toISOString(),
             ]);
         }
@@ -593,6 +599,94 @@ class ContractController extends Controller
         ]);
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+    }
+
+    public function requestPlanDecision(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
+    {
+        $data = $request->validate([
+            'decision'       => 'required|in:novo_contrato,contrato_existente',
+            'contract_id'    => 'nullable|exists:contracts,id',
+            'coordinator_id' => 'nullable|exists:users,id',
+            // campos para criar novo contrato
+            'categoria'         => 'nullable|in:projeto,sustentacao',
+            'horas_contratadas' => 'nullable|integer|min:0',
+            'tipo_faturamento'  => 'nullable|string',
+            'valor_projeto'     => 'nullable|numeric|min:0',
+        ]);
+
+        $decision    = $data['decision'];
+        $linkedContractId   = null;
+        $linkedCoordinatorId = $data['coordinator_id'] ?? null;
+
+        if ($decision === 'novo_contrato') {
+            // Cria novo contrato com os dados mínimos e o customer da requisição
+            $contract = \App\Models\Contract::create([
+                'customer_id'       => $contractRequest->customer_id,
+                'created_by_id'     => auth()->id(),
+                'status'            => \App\Models\Contract::STATUS_APROVADO,
+                'kanban_status'     => \App\Models\Contract::KANBAN_BACKLOG,
+                'categoria'         => $data['categoria'] ?? 'projeto',
+                'horas_contratadas' => $data['horas_contratadas'] ?? 0,
+                'tipo_faturamento'  => $data['tipo_faturamento'] ?? null,
+                'valor_projeto'     => $data['valor_projeto'] ?? null,
+            ]);
+            $linkedContractId = $contract->id;
+        } else {
+            $linkedContractId = $data['contract_id'];
+        }
+
+        $contractRequest->update([
+            'req_decision'         => $decision,
+            'linked_contract_id'   => $linkedContractId,
+            'linked_coordinator_id'=> $linkedCoordinatorId,
+            'kanban_column'        => 'req_inicio_autorizado',
+        ]);
+
+        \App\Models\ContractRequestKanbanLog::create([
+            'contract_request_id' => $contractRequest->id,
+            'from_column'         => $contractRequest->getOriginal('kanban_column') ?? 'req_planejamento',
+            'to_column'           => 'req_inicio_autorizado',
+            'moved_by_id'         => auth()->id(),
+        ]);
+
+        return response()->json(['ok' => true, 'linked_contract_id' => $linkedContractId]);
+    }
+
+    public function requestFinalize(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
+    {
+        $data = $request->validate([
+            'coordinator_id' => 'nullable|exists:users,id',
+        ]);
+
+        $linkedContractId    = $contractRequest->linked_contract_id;
+        $coordinatorId = $data['coordinator_id'] ?? $contractRequest->linked_coordinator_id;
+
+        if (!$linkedContractId) {
+            return response()->json(['message' => 'Requisição sem contrato vinculado.'], 422);
+        }
+
+        $contract = \App\Models\Contract::findOrFail($linkedContractId);
+
+        // Move contrato para coluna do coordenador
+        $contract->update([
+            'kanban_status'        => \App\Models\Contract::KANBAN_ALOCADO,
+            'kanban_coordinator_id'=> $coordinatorId,
+        ]);
+
+        // Fecha a requisição
+        $contractRequest->update([
+            'contract_id'   => $linkedContractId,
+            'kanban_column' => 'req_em_andamento',
+        ]);
+
+        \App\Models\ContractRequestKanbanLog::create([
+            'contract_request_id' => $contractRequest->id,
+            'from_column'         => 'req_inicio_autorizado',
+            'to_column'           => 'req_em_andamento',
+            'moved_by_id'         => auth()->id(),
+        ]);
+
+        return response()->json(['ok' => true]);
     }
 
     public function requestKanbanMove(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse

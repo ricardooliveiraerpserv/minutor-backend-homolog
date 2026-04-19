@@ -16,6 +16,7 @@ class ContractRequest extends Model
         'tipo_necessidade', 'tipo_necessidade_outro', 'nivel_urgencia',
         'descricao', 'cenario_atual', 'cenario_desejado',
         'status', 'kanban_column', 'reviewed_by_id', 'reviewed_at', 'notas_revisao', 'contract_id',
+        'linked_contract_id', 'linked_coordinator_id', 'req_decision',
     ];
 
     protected $casts = [
@@ -74,10 +75,9 @@ class ContractRequest extends Model
         return $this->belongsTo(User::class, 'reviewed_by_id');
     }
 
-    public function contract(): BelongsTo
-    {
-        return $this->belongsTo(Contract::class);
-    }
+    public function contract(): BelongsTo         { return $this->belongsTo(Contract::class); }
+    public function linkedContract(): BelongsTo   { return $this->belongsTo(Contract::class, 'linked_contract_id'); }
+    public function linkedCoordinator(): BelongsTo{ return $this->belongsTo(User::class, 'linked_coordinator_id'); }
 
     public function messages(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
