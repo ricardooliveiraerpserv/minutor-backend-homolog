@@ -6,6 +6,7 @@ use App\Models\Contract;
 use App\Models\ContractAttachment;
 use App\Models\ContractContact;
 use App\Models\ContractKanbanLog;
+use App\Models\ProjectKanbanLog;
 use App\Models\ContractType;
 use App\Models\Customer;
 use App\Models\Project;
@@ -575,7 +576,15 @@ class ContractController extends Controller
             return response()->json(['message' => 'Sem permissão para mover projetos.'], 403);
         }
 
+        $fromStatus = $project->status;
         $project->update(['status' => $request->input('status')]);
+
+        ProjectKanbanLog::create([
+            'project_id'  => $project->id,
+            'from_status' => $fromStatus,
+            'to_status'   => $request->input('status'),
+            'moved_by_id' => auth()->id(),
+        ]);
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
     }
