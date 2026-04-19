@@ -688,6 +688,13 @@ Route::prefix('v1')->group(function () {
             Route::delete('/{contract}/attachments/{attachment}',  [ContractController::class, 'deleteAttachment'])->name('contracts.delete-attachment');
         });
 
+        // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)
+        Route::get('/contract-requests/options',              [\App\Http\Controllers\ContractRequestController::class, 'options'])->name('contract-requests.options');
+        Route::get('/contract-requests',                      [\App\Http\Controllers\ContractRequestController::class, 'index'])->name('contract-requests.index');
+        Route::post('/contract-requests',                     [\App\Http\Controllers\ContractRequestController::class, 'store'])->name('contract-requests.store');
+        Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');
+        Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review');
+
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
         Route::prefix('sustentacao')->group(function () {
             Route::get('/kpis',         [SustentacaoController::class, 'kpis'])->name('sustentacao.kpis');
