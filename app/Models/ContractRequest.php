@@ -13,7 +13,7 @@ class ContractRequest extends Model
     protected $fillable = [
         'customer_id', 'created_by_id',
         'area_requisitante', 'product_owner', 'modulo_tecnologia',
-        'tipo_necessidade', 'nivel_urgencia',
+        'tipo_necessidade', 'tipo_necessidade_outro', 'nivel_urgencia',
         'descricao', 'cenario_atual', 'cenario_desejado',
         'status', 'reviewed_by_id', 'reviewed_at', 'notas_revisao', 'contract_id',
     ];
@@ -40,6 +40,7 @@ class ContractRequest extends Model
         'desenvolvimento_web_app'   => 'Desenvolvimento Web/App',
         'customizacao_erp_protheus' => 'Customização ERP Protheus',
         'integracao_erp_protheus'   => 'Integração com ERP Protheus',
+        'outro'                     => 'Outro',
     ];
 
     const URGENCIAS = [
