@@ -388,14 +388,33 @@ class ContractController extends Controller
             ->orderBy('name')
             ->get();
 
+        // ── Sustentação / Cloud auto-cards (aparecem automaticamente sem alocação manual)
+        $sustentacaoAutoCards = collect();
+        if (!$isConsultor && !$isCliente) {
+            $sustentacaoAutoCards = Contract::with([
+                'customer:id,name',
+                'contractType:id,name',
+                'serviceType:id,name',
+            ])->where(function ($q) {
+                $q->where('categoria', 'sustentacao')
+                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'));
+            })
+            ->whereNull('kanban_coordinator_id')
+            ->where('kanban_status', '!=', Contract::KANBAN_ALOCADO)
+            ->orderBy('kanban_order')
+            ->get()
+            ->map(fn($c) => $this->formatKanbanCard($c));
+        }
+
         return response()->json([
-            'demand_cards'     => $demandCards,
-            'transition_cards' => $transitionCards,
-            'project_cards'    => $projectCards,
-            'coordinators'     => $coordinators,
-            'user_role'        => $user?->type ?? 'admin',
+            'demand_cards'          => $demandCards,
+            'transition_cards'      => $transitionCards,
+            'project_cards'         => $projectCards,
+            'sustentacao_auto_cards'=> $sustentacaoAutoCards,
+            'coordinators'          => $coordinators,
+            'user_role'             => $user?->type ?? 'admin',
             // legado — mantém compatibilidade com frontend antigo
-            'contracts'        => $demandCards,
+            'contracts'             => $demandCards,
         ]);
     }
 
