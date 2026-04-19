@@ -136,6 +136,15 @@ class ProjectController extends Controller
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
         $status = $request->get('status');
+        $codeExact = $request->get('code');
+
+        // Validação exata de código (usado pelo frontend para checar unicidade antes de salvar)
+        if ($codeExact) {
+            $excludeId = $request->get('exclude_id');
+            $query2 = Project::where('code', $codeExact);
+            if ($excludeId) $query2->where('id', '!=', $excludeId);
+            return response()->json(['total' => $query2->exists() ? 1 : 0, 'data' => []]);
+        }
 
         // Modo minimal: retorna apenas id, name, code (para dropdowns)
         if ($minimal) {
