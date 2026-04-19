@@ -523,7 +523,7 @@ class ContractController extends Controller
     // Mover projeto de fase de execução (em_andamento → liberado_para_testes → encerrado)
     public function projectMove(Request $request, \App\Models\Project $project): JsonResponse
     {
-        $request->validate(['status' => 'required|string|in:awaiting_start,started,liberado_para_testes,paused,finished']);
+        $request->validate(['status' => 'required|string|in:awaiting_start,started,liberado_para_testes,paused,cancelled,finished']);
 
         $user = auth()->user();
         if ($user?->isConsultor()) {
@@ -585,6 +585,7 @@ class ContractController extends Controller
             'sold_hours'       => $project->sold_hours,
             'project_value'    => $project->project_value,
             'start_date'       => $project->start_date,
+            'coordinator_ids'  => $project->coordinators->pluck('id'),
             'coordinators'     => $project->coordinators->pluck('name'),
             'consultants'      => $project->consultants->pluck('name'),
             'is_complete'      => true,
