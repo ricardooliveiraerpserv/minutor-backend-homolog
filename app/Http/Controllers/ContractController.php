@@ -433,6 +433,7 @@ class ContractController extends Controller
                 'cenario_atual'          => $r->cenario_atual,
                 'cenario_desejado'       => $r->cenario_desejado,
                 'status'                 => $r->status,
+                'kanban_column'          => $r->kanban_column ?? 'backlog',
                 'created_at'             => $r->created_at?->toISOString(),
             ]);
         }
@@ -592,6 +593,15 @@ class ContractController extends Controller
         ]);
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+    }
+
+    public function requestKanbanMove(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
+    {
+        $request->validate(['kanban_column' => 'required|string']);
+
+        $contractRequest->update(['kanban_column' => $request->input('kanban_column')]);
+
+        return response()->json(['ok' => true]);
     }
 
     private function resolveColumnName(Contract $contract): string

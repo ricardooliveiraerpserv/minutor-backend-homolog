@@ -15,7 +15,7 @@ class ContractRequest extends Model
         'area_requisitante', 'product_owner', 'modulo_tecnologia',
         'tipo_necessidade', 'tipo_necessidade_outro', 'nivel_urgencia',
         'descricao', 'cenario_atual', 'cenario_desejado',
-        'status', 'reviewed_by_id', 'reviewed_at', 'notas_revisao', 'contract_id',
+        'status', 'kanban_column', 'reviewed_by_id', 'reviewed_at', 'notas_revisao', 'contract_id',
     ];
 
     protected $casts = [
