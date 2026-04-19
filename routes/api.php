@@ -653,6 +653,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
+        Route::get('/messages/{message}/attachments/{attachment}/download', [ProjectMessageController::class, 'downloadAttachment'])->name('project-messages.attachment-download');
 
         // 👤 CONTATOS DE CLIENTES
         Route::get('/customer-contacts',                           [CustomerContactController::class, 'index'])->name('customer-contacts.index');
