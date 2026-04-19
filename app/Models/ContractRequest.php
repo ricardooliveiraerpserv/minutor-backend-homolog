@@ -12,7 +12,7 @@ class ContractRequest extends Model
 
     protected $fillable = [
         'customer_id', 'created_by_id',
-        'area_requisitante', 'product_owner', 'modulo_tecnologia',
+        'area_requisitante', 'project_name', 'product_owner', 'modulo_tecnologia',
         'tipo_necessidade', 'tipo_necessidade_outro', 'nivel_urgencia',
         'descricao', 'cenario_atual', 'cenario_desejado',
         'status', 'kanban_column', 'reviewed_by_id', 'reviewed_at', 'notas_revisao', 'contract_id',

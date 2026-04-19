@@ -43,6 +43,7 @@ class ContractRequestController extends Controller
 
         $validated = $request->validate([
             'area_requisitante'      => 'required|string|max:255',
+            'project_name'           => 'nullable|string|max:255',
             'product_owner'          => 'nullable|string|max:255',
             'modulo_tecnologia'      => 'nullable|string|max:255',
             'tipo_necessidade'       => 'required|string|in:' . implode(',', array_keys(ContractRequest::TIPOS)),

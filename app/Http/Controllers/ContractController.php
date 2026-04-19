@@ -427,6 +427,7 @@ class ContractController extends Controller
                 'customer_name'          => $r->customer?->name ?? '—',
                 'customer_id'            => $r->customer_id,
                 'area_requisitante'      => $r->area_requisitante,
+                'project_name'           => $r->project_name,
                 'product_owner'          => $r->product_owner,
                 'modulo_tecnologia'      => $r->modulo_tecnologia,
                 'tipo_necessidade'       => $r->tipo_necessidade,
