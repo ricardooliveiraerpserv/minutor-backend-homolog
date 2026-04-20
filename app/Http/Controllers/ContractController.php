@@ -848,6 +848,7 @@ class ContractController extends Controller
             'sold_hours'           => $project->sold_hours,
             'project_value'        => $project->project_value,
             'start_date'           => $project->start_date,
+            'expected_end_date'    => $project->expected_end_date,
             'coordinator_ids'      => $project->coordinators->pluck('id'),
             'coordinators'         => $project->coordinators->pluck('name'),
             'consultants'          => $project->consultants->pluck('name'),
