@@ -146,6 +146,15 @@ class UserController extends Controller
             $query->where('type', $typeFilter);
         }
 
+        // Aceita ?type= como alias de ?role=
+        if ($request->filled('type') && !$request->filled('role')) {
+            $query->where('type', $request->type);
+        }
+
+        if ($request->filled('coordinator_type')) {
+            $query->where('coordinator_type', $request->coordinator_type);
+        }
+
         if ($request->filled('exclude_type')) {
             $query->where('type', '!=', $request->exclude_type);
         }
