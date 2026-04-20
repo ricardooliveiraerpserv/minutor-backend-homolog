@@ -78,6 +78,7 @@ class Project extends Model
         'proj_year',
         'child_sequence',
         'is_manual_code',
+        'contract_request_id',
     ];
 
     /**
@@ -232,6 +233,11 @@ class Project extends Model
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);
+    }
+
+    public function contractRequest(): BelongsTo
+    {
+        return $this->belongsTo(ContractRequest::class);
     }
 
     public function architect(): BelongsTo

@@ -1886,6 +1886,22 @@ class ProjectController extends Controller
      *     @OA\Response(response=404, description="Projeto não encontrado")
      * )
      */
+    public function contractRequest(Project $project): JsonResponse
+    {
+        if (!$project->contract_request_id) {
+            return response()->json(null);
+        }
+
+        $req = \App\Models\ContractRequest::with([
+            'customer:id,name',
+            'createdBy:id,name',
+            'messages.author:id,name',
+            'messages.attachments',
+        ])->find($project->contract_request_id);
+
+        return response()->json($req);
+    }
+
     public function changeHistory(Request $request, Project $project): JsonResponse
     {
         // Preparar query base
