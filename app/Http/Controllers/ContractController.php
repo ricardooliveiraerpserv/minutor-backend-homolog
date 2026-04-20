@@ -389,9 +389,10 @@ class ContractController extends Controller
 
         $projectCards = $projectQuery->get()->map(fn($p) => $this->formatProjectCard($p));
 
-        // ── Coordenadores ativos
+        // ── Coordenadores ativos (apenas projetos — sustentação tem colunas próprias)
         $coordinators = User::where('type', 'coordenador')
             ->where('enabled', true)
+            ->where('coordinator_type', 'projetos')
             ->select('id', 'name')
             ->orderBy('name')
             ->get();
