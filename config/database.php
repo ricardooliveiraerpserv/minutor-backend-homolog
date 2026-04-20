@@ -98,12 +98,6 @@ return [
             'search_path' => 'public',
             'sslmode' => 'prefer',
             'options' => [
-                // Reutiliza conexão TCP entre requests do mesmo worker PHP-FPM
-                // Elimina handshake TCP (~150ms) por request em setups cross-region
-                PDO::ATTR_PERSISTENT => true,
-                // Evita "prepared statement does not exist" com conexões persistentes:
-                // o PDO emula os prepares no lado PHP em vez de usar os nativos do PG,
-                // que desaparecem quando a conexão é reciclada pelo pool do PHP-FPM.
                 PDO::ATTR_EMULATE_PREPARES => true,
             ],
         ],
