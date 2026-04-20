@@ -650,13 +650,19 @@ class ContractController extends Controller
                 $linkedContractId = $contract->id;
             }
         } else {
-            // subprojeto: vincula a projeto existente, move contrato do projeto para inicio_autorizado
-            $linkedProjectId = $data['project_id'];
-            $project = \App\Models\Project::find($linkedProjectId);
-            if ($project && $project->contract_id) {
-                \App\Models\Contract::where('id', $project->contract_id)
-                    ->update(['kanban_status' => \App\Models\Contract::KANBAN_INICIO_AUTORIZADO]);
-                $linkedContractId = $project->contract_id;
+            // subprojeto: contrato criado externamente + vincula a projeto existente
+            $linkedProjectId = $data['project_id'] ?? null;
+            if (!empty($data['contract_id'])) {
+                $contract = \App\Models\Contract::findOrFail($data['contract_id']);
+                $contract->update(['kanban_status' => \App\Models\Contract::KANBAN_INICIO_AUTORIZADO]);
+                $linkedContractId = $contract->id;
+            } elseif ($linkedProjectId) {
+                $project = \App\Models\Project::find($linkedProjectId);
+                if ($project && $project->contract_id) {
+                    \App\Models\Contract::where('id', $project->contract_id)
+                        ->update(['kanban_status' => \App\Models\Contract::KANBAN_INICIO_AUTORIZADO]);
+                    $linkedContractId = $project->contract_id;
+                }
             }
         }
 
