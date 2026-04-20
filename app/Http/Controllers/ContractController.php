@@ -694,7 +694,7 @@ class ContractController extends Controller
         $coordinatorId    = $data['coordinator_id'] ?? $contractRequest->linked_coordinator_id;
 
         if ($contractRequest->req_decision === 'subprojeto') {
-            // Subprojeto: apenas fecha a requisição sem criar/alterar contrato
+            // Subprojeto: apenas fecha a requisição; o projeto já existe
             $contractRequest->update(['kanban_column' => 'req_em_andamento']);
         } else {
             if (!$linkedContractId) {
@@ -702,16 +702,69 @@ class ContractController extends Controller
             }
 
             $contract = \App\Models\Contract::findOrFail($linkedContractId);
+            $contract->load(['customer', 'contacts', 'attachments']);
 
-            $contract->update([
-                'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
-                'kanban_coordinator_id' => $coordinatorId,
-            ]);
+            DB::transaction(function () use ($contract, $coordinatorId, $linkedContractId, $contractRequest) {
+                if (!$contract->project_id) {
+                    $codeService   = new \App\Services\ProjectCodeService();
+                    $parentProject = $contract->parent_project_id ? \App\Models\Project::find($contract->parent_project_id) : null;
+                    $codeData      = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
+                    $projectName   = $contract->project_name ?: ($contract->customer->name . ' — ' . now()->format('m/Y'));
 
-            $contractRequest->update([
-                'contract_id'   => $linkedContractId,
-                'kanban_column' => 'req_em_andamento',
-            ]);
+                    $project = \App\Models\Project::create(array_merge($codeData, [
+                        'name'                   => $projectName,
+                        'parent_project_id'      => $contract->parent_project_id,
+                        'customer_id'            => $contract->customer_id,
+                        'service_type_id'        => $contract->service_type_id,
+                        'contract_type_id'       => $contract->contract_type_id,
+                        'sold_hours'             => $contract->horas_contratadas,
+                        'project_value'          => $contract->valor_projeto,
+                        'hourly_rate'            => $contract->valor_hora,
+                        'additional_hourly_rate' => $contract->hora_adicional,
+                        'coordinator_hours'      => $contract->pct_horas_coordenador !== null ? (int) $contract->pct_horas_coordenador : null,
+                        'consultant_hours'       => $contract->horas_consultor,
+                        'start_date'             => $contract->expectativa_inicio,
+                        'status'                 => \App\Models\Project::STATUS_AWAITING_START,
+                        'contract_id'            => $contract->id,
+                        'tipo_alocacao'          => $contract->tipo_alocacao,
+                        'architect_id'           => $contract->architect_id,
+                        'condicao_pagamento'     => $contract->condicao_pagamento,
+                        'observacoes_contrato'   => $contract->observacoes,
+                        'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
+                        'executivo_conta_id'     => $contract->executivo_conta_id,
+                        'vendedor_id'            => $contract->vendedor_id,
+                    ]));
+
+                    foreach ($contract->contacts as $c) {
+                        \App\Models\ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
+                    }
+                    foreach ($contract->attachments as $a) {
+                        \App\Models\ProjectAttachment::create(['project_id' => $project->id, 'contract_attachment_id' => $a->id]);
+                    }
+                    if ($coordinatorId) {
+                        $project->coordinators()->attach($coordinatorId);
+                    }
+
+                    $contract->update([
+                        'project_id'            => $project->id,
+                        'generated_at'          => now(),
+                        'generated_by_id'       => auth()->id(),
+                        'status'                => \App\Models\Contract::STATUS_ATIVO,
+                        'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
+                        'kanban_coordinator_id' => $coordinatorId,
+                    ]);
+                } else {
+                    $contract->update([
+                        'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
+                        'kanban_coordinator_id' => $coordinatorId,
+                    ]);
+                }
+
+                $contractRequest->update([
+                    'contract_id'   => $linkedContractId,
+                    'kanban_column' => 'req_em_andamento',
+                ]);
+            });
         }
 
         \App\Models\ContractRequestKanbanLog::create([
