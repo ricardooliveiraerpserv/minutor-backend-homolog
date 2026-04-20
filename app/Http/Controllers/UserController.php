@@ -122,7 +122,8 @@ class UserController extends Controller
         $query = User::with(['customer']);
 
         // Se não é admin nem tem permissão para ver/resetar todos, só pode ver próprio perfil
-        if (!$user->isAdmin() && !$user->hasAccess('users.view_all') && !$user->hasAccess('users.reset_password')) {
+        // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
+        if (!$user->isAdmin() && !$user->hasAccess('users.view_all') && !$user->hasAccess('users.reset_password') && !$user->isCoordenador()) {
             $query->where('id', $user->id);
         }
 
