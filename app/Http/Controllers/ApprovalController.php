@@ -561,8 +561,12 @@ class ApprovalController extends Controller
 
         // Se não é admin, filtrar apenas timesheets dos projetos que pode aprovar
         if (!$user->isAdmin()) {
-            $query->whereHas('project.coordinators', function ($q) use ($user) {
-                $q->where('users.id', $user->id);
+            $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
+            $query->whereHas('project', function ($q) use ($user, $isSustentacao) {
+                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                if ($isSustentacao) {
+                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                }
             });
         }
 
@@ -591,8 +595,12 @@ class ApprovalController extends Controller
 
         // Se não é admin, filtrar apenas despesas dos projetos que pode aprovar
         if (!$user->isAdmin()) {
-            $query->whereHas('project.coordinators', function ($q) use ($user) {
-                $q->where('users.id', $user->id);
+            $isSustentacao = $user->isCoordenador() && $user->coordinator_type === 'sustentacao';
+            $query->whereHas('project', function ($q) use ($user, $isSustentacao) {
+                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                if ($isSustentacao) {
+                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                }
             });
         }
 
