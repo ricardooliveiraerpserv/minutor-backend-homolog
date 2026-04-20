@@ -20,7 +20,7 @@ class Contract extends Model
         'executivo_conta_id', 'vendedor_id', 'observacoes', 'project_code_preview',
         'project_id', 'parent_project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
-        'kanban_status', 'kanban_coordinator_id', 'kanban_order',
+        'kanban_status', 'kanban_coordinator_id', 'kanban_order', 'sustentacao_column',
     ];
 
     protected $casts = [

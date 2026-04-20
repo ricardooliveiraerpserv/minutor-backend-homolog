@@ -330,7 +330,7 @@ class ContractController extends Controller
         $isConsultor = $user?->isConsultor();
         $isCliente   = $user?->isCliente();
 
-        // ── Fase Demanda: contratos (admin/coordenador vê todos; cliente vê subset)
+        // ── Fase Demanda: contratos NÃO-sustentação (admin/coordenador vê todos; cliente vê subset)
         $demandCards = collect();
         if (!$isConsultor) {
             $demandQuery = Contract::with([
@@ -340,6 +340,12 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
+              // Exclude sustentação contracts — they live in sustentacao_groups
+              ->where(function ($q) {
+                  $q->where('categoria', '!=', 'sustentacao')
+                    ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
+                    ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
+              })
               ->orderBy('kanban_order');
 
             if ($isCliente && $user->customer_id) {
@@ -389,22 +395,48 @@ class ContractController extends Controller
             ->orderBy('name')
             ->get();
 
-        // ── Sustentação / Cloud auto-cards (aparecem automaticamente sem alocação manual)
-        $sustentacaoAutoCards = collect();
+        // ── Sustentação / Cloud — 4 colunas agrupadas
+        $sustentacaoGroups = [
+            'sust_bh_fixo'   => [],
+            'sust_bh_mensal' => [],
+            'sust_cloud'     => [],
+            'sust_bizify'    => [],
+        ];
+        $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
-            $sustentacaoAutoCards = Contract::with([
+            $sustCards = Contract::with([
                 'customer:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
             ])->where(function ($q) {
                 $q->where('categoria', 'sustentacao')
-                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'));
+                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
+                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
             ->whereNull('kanban_coordinator_id')
             ->where('kanban_status', '!=', Contract::KANBAN_ALOCADO)
             ->orderBy('kanban_order')
-            ->get()
-            ->map(fn($c) => $this->formatKanbanCard($c));
+            ->get();
+
+            foreach ($sustCards as $c) {
+                $col = $c->sustentacao_column;
+                if (!$col) {
+                    $svcName = strtolower($c->serviceType?->name ?? '');
+                    if (str_contains($svcName, 'cloud')) {
+                        $col = 'sust_cloud';
+                    } elseif (str_contains($svcName, 'bizify')) {
+                        $col = 'sust_bizify';
+                    } elseif ($c->tipo_faturamento === 'banco_horas_mensal') {
+                        $col = 'sust_bh_mensal';
+                    } else {
+                        $col = 'sust_bh_fixo';
+                    }
+                }
+                $formatted = $this->formatKanbanCard($c);
+                $formatted['sustentacao_column'] = $col;
+                $sustentacaoGroups[$col][] = $formatted;
+                $sustentacaoAutoCards[] = $formatted;
+            }
         }
 
         // ── Requisições pendentes (contract_requests sem contrato gerado)
@@ -450,10 +482,10 @@ class ContractController extends Controller
             'transition_cards'      => $transitionCards,
             'project_cards'         => $projectCards,
             'sustentacao_auto_cards'=> $sustentacaoAutoCards,
+            'sustentacao_groups'    => $sustentacaoGroups,
             'request_cards'         => $requestCards,
             'coordinators'          => $coordinators,
             'user_role'             => $user?->type ?? 'admin',
-            // legado — mantém compatibilidade com frontend antigo
             'contracts'             => $demandCards,
         ]);
     }
@@ -600,6 +632,41 @@ class ContractController extends Controller
         ]);
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+    }
+
+    public function sustentacaoMove(Request $request, Contract $contract): JsonResponse
+    {
+        $request->validate([
+            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_cloud,sust_bizify',
+        ]);
+
+        $user = auth()->user();
+        if (!$user?->isAdmin() && !($user?->isCoordenador() && $user?->coordinator_type === 'sustentacao')) {
+            return response()->json(['message' => 'Apenas admin ou coordenador de sustentação pode mover este card.'], 403);
+        }
+
+        $toColumn = $request->input('to_column');
+
+        // Validate type compatibility
+        $svcName  = strtolower($contract->serviceType?->name ?? '');
+        $fatur    = $contract->tipo_faturamento;
+        $categ    = $contract->categoria;
+
+        $valid = match ($toColumn) {
+            'sust_bh_fixo'   => $categ === 'sustentacao' && $fatur === 'banco_horas_fixo',
+            'sust_bh_mensal' => $categ === 'sustentacao' && $fatur === 'banco_horas_mensal',
+            'sust_cloud'     => str_contains($svcName, 'cloud'),
+            'sust_bizify'    => $categ === 'sustentacao',
+            default          => false,
+        };
+
+        if (!$valid) {
+            return response()->json(['message' => 'Tipo de contrato incompatível com esta coluna de sustentação.'], 422);
+        }
+
+        $contract->update(['sustentacao_column' => $toColumn]);
+
+        return response()->json(['ok' => true, 'sustentacao_column' => $toColumn]);
     }
 
     public function requestPlanDecision(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
