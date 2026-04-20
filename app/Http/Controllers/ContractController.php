@@ -340,11 +340,10 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
-              // Exclude sustentação contracts — they live in sustentacao_groups
+              // Exclude sustentação/bizify — they live in sustentacao_groups
               ->where(function ($q) {
-                  $q->where('categoria', '!=', 'sustentacao')
+                  $q->whereDoesntHave('serviceType', fn($sq) => $sq->whereIn('code', ['sustentacao', 'bizify']))
                     ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
-                    ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'))
                     ->whereDoesntHave('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
               })
               ->orderBy('kanban_order');
@@ -412,9 +411,8 @@ class ContractController extends Controller
                 'contractType:id,name',
                 'serviceType:id,name',
             ])->where(function ($q) {
-                $q->where('categoria', 'sustentacao')
+                $q->whereHas('serviceType', fn($sq) => $sq->whereIn('code', ['sustentacao', 'bizify']))
                   ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
-                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'))
                   ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
             ->orderBy('kanban_order')
@@ -423,12 +421,13 @@ class ContractController extends Controller
             foreach ($sustCards as $c) {
                 $col = $c->sustentacao_column;
                 if (!$col) {
+                    $svcCode      = $c->serviceType?->code ?? '';
                     $svcName      = strtolower($c->serviceType?->name ?? '');
                     $contractName = strtolower($c->contractType?->name ?? '');
-                    if (str_contains($svcName, 'cloud')) {
-                        $col = 'sust_cloud';
-                    } elseif (str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify')) {
+                    if ($svcCode === 'bizify' || str_contains($contractName, 'bizify')) {
                         $col = 'sust_bizify';
+                    } elseif (str_contains($svcName, 'cloud')) {
+                        $col = 'sust_cloud';
                     } elseif ($c->tipo_faturamento === 'banco_horas_mensal') {
                         $col = 'sust_bh_mensal';
                     } elseif ($c->tipo_faturamento === 'on_demand') {
