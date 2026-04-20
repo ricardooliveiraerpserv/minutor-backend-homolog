@@ -172,9 +172,8 @@ class ProjectController extends Controller
         $gestaoMode = $request->boolean('gestao');
 
         // Eager loading otimizado: carrega relacionamentos e soma de minutos apontados
-        $withRelations = ['customer', 'contractType'];
+        $withRelations = ['customer', 'contractType', 'serviceType'];
         if (!$gestaoMode) {
-            $withRelations[] = 'serviceType';
             $withRelations[] = 'parentProject';
             $withRelations[] = 'hourContributions';
         }
