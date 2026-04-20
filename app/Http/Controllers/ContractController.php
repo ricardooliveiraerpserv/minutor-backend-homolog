@@ -344,7 +344,8 @@ class ContractController extends Controller
               ->where(function ($q) {
                   $q->where('categoria', '!=', 'sustentacao')
                     ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
-                    ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
+                    ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'))
+                    ->whereDoesntHave('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
               })
               ->orderBy('kanban_order');
 
@@ -399,6 +400,7 @@ class ContractController extends Controller
         $sustentacaoGroups = [
             'sust_bh_fixo'   => [],
             'sust_bh_mensal' => [],
+            'sust_on_demand' => [],
             'sust_cloud'     => [],
             'sust_bizify'    => [],
         ];
@@ -411,7 +413,8 @@ class ContractController extends Controller
             ])->where(function ($q) {
                 $q->where('categoria', 'sustentacao')
                   ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
-                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
+                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'))
+                  ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
             ->whereNull('kanban_coordinator_id')
             ->where('kanban_status', '!=', Contract::KANBAN_ALOCADO)
@@ -421,13 +424,16 @@ class ContractController extends Controller
             foreach ($sustCards as $c) {
                 $col = $c->sustentacao_column;
                 if (!$col) {
-                    $svcName = strtolower($c->serviceType?->name ?? '');
+                    $svcName      = strtolower($c->serviceType?->name ?? '');
+                    $contractName = strtolower($c->contractType?->name ?? '');
                     if (str_contains($svcName, 'cloud')) {
                         $col = 'sust_cloud';
-                    } elseif (str_contains($svcName, 'bizify')) {
+                    } elseif (str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify')) {
                         $col = 'sust_bizify';
                     } elseif ($c->tipo_faturamento === 'banco_horas_mensal') {
                         $col = 'sust_bh_mensal';
+                    } elseif ($c->tipo_faturamento === 'on_demand') {
+                        $col = 'sust_on_demand';
                     } else {
                         $col = 'sust_bh_fixo';
                     }
@@ -637,7 +643,7 @@ class ContractController extends Controller
     public function sustentacaoMove(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_cloud,sust_bizify',
+            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud,sust_bizify',
         ]);
 
         $user = auth()->user();
@@ -652,11 +658,13 @@ class ContractController extends Controller
         $fatur    = $contract->tipo_faturamento;
         $categ    = $contract->categoria;
 
+        $contractName = strtolower($contract->contractType?->name ?? '');
         $valid = match ($toColumn) {
             'sust_bh_fixo'   => $categ === 'sustentacao' && $fatur === 'banco_horas_fixo',
             'sust_bh_mensal' => $categ === 'sustentacao' && $fatur === 'banco_horas_mensal',
+            'sust_on_demand' => $categ === 'sustentacao' && $fatur === 'on_demand',
             'sust_cloud'     => str_contains($svcName, 'cloud'),
-            'sust_bizify'    => $categ === 'sustentacao',
+            'sust_bizify'    => str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify'),
             default          => false,
         };
 
