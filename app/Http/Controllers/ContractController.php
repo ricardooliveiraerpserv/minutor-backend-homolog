@@ -608,7 +608,9 @@ class ContractController extends Controller
             'decision'          => 'required|in:novo_projeto,subprojeto',
             'project_id'        => 'nullable|exists:projects,id',
             'coordinator_id'    => 'nullable|exists:users,id',
-            // campos para criar novo contrato
+            // contrato já criado externamente (via modal completo)
+            'contract_id'       => 'nullable|exists:contracts,id',
+            // campos para criar novo contrato (usado se contract_id não fornecido)
             'project_name'      => 'nullable|string|max:255',
             'categoria'         => 'nullable|in:projeto,sustentacao',
             'service_type_id'   => 'nullable|exists:service_types,id',
@@ -626,20 +628,27 @@ class ContractController extends Controller
         $toColumn = 'inicio_autorizado';
 
         if ($decision === 'novo_projeto') {
-            $contract = \App\Models\Contract::create([
-                'customer_id'       => $contractRequest->customer_id,
-                'created_by_id'     => auth()->id(),
-                'status'            => \App\Models\Contract::STATUS_APROVADO,
-                'kanban_status'     => \App\Models\Contract::KANBAN_NOVO_PROJETO,
-                'project_name'      => $data['project_name'] ?? null,
-                'categoria'         => $data['categoria'] ?? 'projeto',
-                'service_type_id'   => $data['service_type_id'] ?? null,
-                'contract_type_id'  => $data['contract_type_id'] ?? null,
-                'horas_contratadas' => $data['horas_contratadas'] ?? 0,
-                'tipo_faturamento'  => $data['tipo_faturamento'] ?? null,
-                'valor_projeto'     => $data['valor_projeto'] ?? null,
-            ]);
-            $linkedContractId = $contract->id;
+            if (!empty($data['contract_id'])) {
+                // Contrato já criado pelo modal completo — apenas vincular
+                $contract = \App\Models\Contract::findOrFail($data['contract_id']);
+                $contract->update(['kanban_status' => \App\Models\Contract::KANBAN_NOVO_PROJETO]);
+                $linkedContractId = $contract->id;
+            } else {
+                $contract = \App\Models\Contract::create([
+                    'customer_id'       => $contractRequest->customer_id,
+                    'created_by_id'     => auth()->id(),
+                    'status'            => \App\Models\Contract::STATUS_APROVADO,
+                    'kanban_status'     => \App\Models\Contract::KANBAN_NOVO_PROJETO,
+                    'project_name'      => $data['project_name'] ?? null,
+                    'categoria'         => $data['categoria'] ?? 'projeto',
+                    'service_type_id'   => $data['service_type_id'] ?? null,
+                    'contract_type_id'  => $data['contract_type_id'] ?? null,
+                    'horas_contratadas' => $data['horas_contratadas'] ?? 0,
+                    'tipo_faturamento'  => $data['tipo_faturamento'] ?? null,
+                    'valor_projeto'     => $data['valor_projeto'] ?? null,
+                ]);
+                $linkedContractId = $contract->id;
+            }
         } else {
             // subprojeto: vincula a projeto existente, move contrato do projeto para inicio_autorizado
             $linkedProjectId = $data['project_id'];
