@@ -552,8 +552,9 @@ class ApprovalController extends Controller
         $query = Timesheet::with([
             'user:id,name,email',
             'customer:id,name',
-            'project:id,name,customer_id',
-            'project.customer:id,name'
+            'project:id,name,customer_id,service_type_id',
+            'project.customer:id,name',
+            'project.serviceType:id,name'
         ])
         ->where('status', Timesheet::STATUS_PENDING)
         ->orderBy('date', 'desc')
@@ -585,8 +586,9 @@ class ApprovalController extends Controller
     {
         $query = Expense::with([
             'user:id,name,email',
-            'project:id,name,customer_id',
+            'project:id,name,customer_id,service_type_id',
             'project.customer:id,name',
+            'project.serviceType:id,name',
             'category:id,name,parent_id'
         ])
         ->whereIn('status', [Expense::STATUS_PENDING, Expense::STATUS_ADJUSTMENT_REQUESTED])

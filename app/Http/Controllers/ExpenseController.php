@@ -222,7 +222,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.contractType', 'project.serviceType', 'category', 'reviewedBy']);
 
         // Controle de visibilidade por perfil
         if ($user->isCliente()) {
