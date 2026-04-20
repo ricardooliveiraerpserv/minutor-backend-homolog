@@ -35,8 +35,14 @@ class ClientPortalController extends Controller
 
         // Coordenador só pode ver clientes dos seus próprios projetos
         if ($user->isCoordenador()) {
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
             $hasAccess = Project::where('customer_id', $customerId)
-                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+                ->where(function ($q) use ($user, $isSustentacao) {
+                    $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                    if ($isSustentacao) {
+                        $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                    }
+                })
                 ->exists();
             if (!$hasAccess) {
                 return response()->json(['message' => 'Acesso negado'], 403);
@@ -49,7 +55,13 @@ class ClientPortalController extends Controller
             ->whereNull('parent_project_id');
 
         if ($user->isCoordenador()) {
-            $projectQuery->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id));
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
+            $projectQuery->where(function ($q) use ($user, $isSustentacao) {
+                $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                if ($isSustentacao) {
+                    $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                }
+            });
         }
 
         $projects = $projectQuery->get();
@@ -160,8 +172,13 @@ class ClientPortalController extends Controller
         $user = $request->user();
 
         if ($user->isCoordenador()) {
-            // Retorna apenas clientes cujos projetos têm este coordenador
-            $customerIds = Project::whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
+            $customerIds = Project::where(function ($q) use ($user, $isSustentacao) {
+                    $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id));
+                    if ($isSustentacao) {
+                        $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                    }
+                })
                 ->whereNotNull('customer_id')
                 ->pluck('customer_id')
                 ->unique();
