@@ -172,9 +172,16 @@ class TimesheetController extends Controller
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
             $query->forUser($user->id);
         } elseif ($user->isCoordenador()) {
-            // Coordenador só vê apontamentos dos projetos que coordena
             $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
-            $query->whereIn('timesheets.project_id', $coordinatorProjectIds);
+            if ($user->coordinator_type === 'sustentacao') {
+                $sustentacaoProjectIds = \App\Models\Project::whereHas(
+                    'contract', fn($q) => $q->where('categoria', 'sustentacao')
+                )->pluck('id');
+                $allIds = $coordinatorProjectIds->merge($sustentacaoProjectIds)->unique();
+                $query->whereIn('timesheets.project_id', $allIds);
+            } else {
+                $query->whereIn('timesheets.project_id', $coordinatorProjectIds);
+            }
         }
 
         // Filtros PO-UI

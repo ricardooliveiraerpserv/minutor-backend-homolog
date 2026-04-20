@@ -237,7 +237,15 @@ class ExpenseController extends Controller
             $query->where('user_id', $user->id);
         } elseif ($user->isCoordenador()) {
             $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
-            $query->whereIn('expenses.project_id', $coordinatorProjectIds);
+            if ($user->coordinator_type === 'sustentacao') {
+                $sustentacaoProjectIds = \App\Models\Project::whereHas(
+                    'contract', fn($q) => $q->where('categoria', 'sustentacao')
+                )->pluck('id');
+                $allIds = $coordinatorProjectIds->merge($sustentacaoProjectIds)->unique();
+                $query->whereIn('expenses.project_id', $allIds);
+            } else {
+                $query->whereIn('expenses.project_id', $coordinatorProjectIds);
+            }
         }
 
         // Filtros

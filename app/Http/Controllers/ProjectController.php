@@ -239,14 +239,22 @@ class ProjectController extends Controller
         if ($consultantOnly !== 'true') {
             $currentUser = $request->user();
             if ($currentUser && $currentUser->isCoordenador()) {
+                $isSustentacao = $currentUser->coordinator_type === 'sustentacao';
                 if ($parentProjectsOnly) {
-                    // No modo pai/filho: exibe o pai se o coordenador está no pai OU em algum filho
-                    $query->where(function ($q) use ($currentUser) {
+                    $query->where(function ($q) use ($currentUser, $isSustentacao) {
                         $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id))
                           ->orWhereHas('childProjects.coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                        if ($isSustentacao) {
+                            $q->orWhereHas('contract', fn($sq) => $sq->where('categoria', 'sustentacao'));
+                        }
                     });
                 } else {
-                    $query->whereHas('coordinators', fn($q) => $q->where('users.id', $currentUser->id));
+                    $query->where(function ($q) use ($currentUser, $isSustentacao) {
+                        $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                        if ($isSustentacao) {
+                            $q->orWhereHas('contract', fn($sq) => $sq->where('categoria', 'sustentacao'));
+                        }
+                    });
                 }
             }
         }
