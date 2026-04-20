@@ -340,12 +340,8 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
-              // Exclude sustentação/bizify — they live in sustentacao_groups
-              ->where(function ($q) {
-                  $q->whereDoesntHave('serviceType', fn($sq) => $sq->whereIn('code', ['sustentacao', 'bizify']))
-                    ->whereDoesntHave('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
-                    ->whereDoesntHave('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
-              })
+              // Excluir contratos já alocados em fila de sustentação
+              ->whereNull('sustentacao_column')
               ->orderBy('kanban_order');
 
             if ($isCliente && $user->customer_id) {
@@ -415,6 +411,7 @@ class ContractController extends Controller
                   ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
                   ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
+            ->whereNotNull('sustentacao_column')
             ->orderBy('kanban_order')
             ->get();
 
@@ -585,6 +582,12 @@ class ContractController extends Controller
                     ]);
                 });
             }
+        } elseif (str_starts_with($toColumn, 'sust_')) {
+            // Mover para fila de sustentação — define sustentacao_column
+            $contract->update([
+                'sustentacao_column' => $toColumn,
+                'kanban_order'       => $request->input('order', 0),
+            ]);
         } elseif ($toColumn === Contract::KANBAN_INICIO_AUTORIZADO) {
             if (!$contract->isKanbanComplete()) {
                 return response()->json([
