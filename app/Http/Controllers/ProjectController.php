@@ -244,14 +244,14 @@ class ProjectController extends Controller
                         $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id))
                           ->orWhereHas('childProjects.coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
                         if ($isSustentacao) {
-                            $q->orWhereHas('contract', fn($sq) => $sq->where('categoria', 'sustentacao'));
+                            $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
                         }
                     });
                 } else {
                     $query->where(function ($q) use ($currentUser, $isSustentacao) {
                         $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
                         if ($isSustentacao) {
-                            $q->orWhereHas('contract', fn($sq) => $sq->where('categoria', 'sustentacao'));
+                            $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
                         }
                     });
                 }

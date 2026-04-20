@@ -175,7 +175,7 @@ class TimesheetController extends Controller
             $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
             if ($user->coordinator_type === 'sustentacao') {
                 $sustentacaoProjectIds = \App\Models\Project::whereHas(
-                    'contract', fn($q) => $q->where('categoria', 'sustentacao')
+                    'serviceType', fn($q) => $q->where('code', 'sustentacao')
                 )->pluck('id');
                 $allIds = $coordinatorProjectIds->merge($sustentacaoProjectIds)->unique();
                 $query->whereIn('timesheets.project_id', $allIds);
