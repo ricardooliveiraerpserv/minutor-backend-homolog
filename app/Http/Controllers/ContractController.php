@@ -417,8 +417,6 @@ class ContractController extends Controller
                   ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'))
                   ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
-            ->whereNull('kanban_coordinator_id')
-            ->where('kanban_status', '!=', Contract::KANBAN_ALOCADO)
             ->orderBy('kanban_order')
             ->get();
 
