@@ -73,6 +73,7 @@ class ContractController extends Controller
             $data = collect($validated)->except('contacts')->merge([
                 'created_by_id' => auth()->id(),
                 'status'        => Contract::STATUS_RASCUNHO,
+                'kanban_status' => Contract::KANBAN_BACKLOG,
             ])->toArray();
 
             $contract = Contract::create($data);
@@ -340,7 +341,6 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
-              ->where('categoria', '!=', 'sustentacao')
               ->whereNull('sustentacao_column')
               ->orderBy('kanban_order');
 
@@ -412,7 +412,7 @@ class ContractController extends Controller
                   ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
                   ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
-            ->whereNull('project_id')
+            ->whereNotNull('sustentacao_column')
             ->orderBy('kanban_order')
             ->get();
 
