@@ -348,7 +348,7 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->where(function ($q) {
-                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, ['novo', 'novo_contrato']))
+                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, 'novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
               })
               ->whereNull('sustentacao_column')
@@ -665,24 +665,11 @@ class ContractController extends Controller
 
         $toColumn = $request->input('to_column');
 
-        // Validate type compatibility by contract_type name and service_type name
-        $svcName      = strtolower($contract->serviceType?->name ?? '');
-        $contractName = strtolower($contract->contractType?->name ?? '');
-
-        $valid = match ($toColumn) {
-            'sust_bh_fixo'   => str_contains($contractName, 'banco de horas fixo') || str_contains($contractName, 'banco horas fixo'),
-            'sust_bh_mensal' => str_contains($contractName, 'banco de horas mensal') || str_contains($contractName, 'banco horas mensal'),
-            'sust_on_demand' => str_contains($contractName, 'on demand'),
-            'sust_cloud'     => str_contains($contractName, 'cloud') || str_contains($svcName, 'cloud'),
-            'sust_bizify'    => str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify'),
-            default          => false,
-        };
-
-        if (!$valid) {
-            return response()->json(['message' => 'Tipo de contrato incompatível com esta coluna de sustentação.'], 422);
-        }
-
-        $contract->update(['sustentacao_column' => $toColumn]);
+        $contract->update([
+            'sustentacao_column'     => $toColumn,
+            'kanban_coordinator_id'  => null,
+            'kanban_status'          => Contract::KANBAN_INICIO_AUTORIZADO,
+        ]);
 
         return response()->json(['ok' => true, 'sustentacao_column' => $toColumn]);
     }
