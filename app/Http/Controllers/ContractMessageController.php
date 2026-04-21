@@ -101,9 +101,14 @@ class ContractMessageController extends Controller
 
         $ids = collect();
 
-        // Executivo de conta do contrato
+        // Executivo de conta: primeiro do contrato, depois do cliente
         if ($contract->executivo_conta_id) {
             $ids->push($contract->executivo_conta_id);
+        } elseif ($contract->customer_id) {
+            $customer = \App\Models\Customer::select('id', 'executive_id')->find($contract->customer_id);
+            if ($customer?->executive_id) {
+                $ids->push($customer->executive_id);
+            }
         }
 
         // Coordenador kanban do contrato
