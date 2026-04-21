@@ -412,16 +412,12 @@ class ContractController extends Controller
         ];
         $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
+            // Todos contratos alocados numa fila de sustentação aparecem na coluna correta
             $sustCards = Contract::with([
                 'customer:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
-            ])->where(function ($q) {
-                $q->where('categoria', 'sustentacao')
-                  ->orWhereHas('serviceType', fn($sq) => $sq->whereIn('code', ['sustentacao', 'bizify']))
-                  ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
-                  ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
-            })
+            ])
             ->whereNotNull('sustentacao_column')
             ->orderBy('kanban_order')
             ->get();
