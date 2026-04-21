@@ -340,7 +340,10 @@ class ContractController extends Controller
                 'serviceType:id,name',
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
-            ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
+            ])->where(function ($q) {
+                $q->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
+                  ->orWhereNull('kanban_status');
+              })
               ->whereNull('sustentacao_column')
               ->orderBy('kanban_order');
 
