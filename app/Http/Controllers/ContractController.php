@@ -76,6 +76,13 @@ class ContractController extends Controller
                 'kanban_status' => Contract::KANBAN_BACKLOG,
             ])->toArray();
 
+            if (empty($data['executivo_conta_id'])) {
+                $customer = Customer::find($data['customer_id']);
+                if ($customer?->executive_id) {
+                    $data['executivo_conta_id'] = $customer->executive_id;
+                }
+            }
+
             $contract = Contract::create($data);
 
             foreach ($validated['contacts'] ?? [] as $c) {
