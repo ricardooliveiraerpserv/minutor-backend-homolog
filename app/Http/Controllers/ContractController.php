@@ -340,7 +340,7 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
-              // Excluir contratos já alocados em fila de sustentação
+              ->where('categoria', '!=', 'sustentacao')
               ->whereNull('sustentacao_column')
               ->orderBy('kanban_order');
 
@@ -407,11 +407,12 @@ class ContractController extends Controller
                 'contractType:id,name',
                 'serviceType:id,name',
             ])->where(function ($q) {
-                $q->whereHas('serviceType', fn($sq) => $sq->whereIn('code', ['sustentacao', 'bizify']))
+                $q->where('categoria', 'sustentacao')
+                  ->orWhereHas('serviceType', fn($sq) => $sq->whereIn('code', ['sustentacao', 'bizify']))
                   ->orWhereHas('serviceType', fn($sq) => $sq->where('name', 'ilike', '%cloud%'))
                   ->orWhereHas('contractType', fn($sq) => $sq->where('name', 'ilike', '%bizify%'));
             })
-            ->whereNotNull('sustentacao_column')
+            ->whereNull('project_id')
             ->orderBy('kanban_order')
             ->get();
 
