@@ -199,10 +199,8 @@ class FechamentoClienteController extends Controller
         $despesas  = $this->despesasData((int) $customerId, $yearMonth);
         $pagamento = $this->pagamentoData((int) $customerId, $yearMonth);
 
-        $totalServicos = ($porTipo['on_demand']['total'] ?? 0)
-            + ($porTipo['banco_horas']['total'] ?? 0)
-            + ($porTipo['fechado']['total'] ?? 0)
-            + ($porTipo['outros']['total'] ?? 0);
+        // Apuração somente On Demand
+        $totalServicos = $porTipo['on_demand']['total'] ?? 0;
         $totalDespesas = round(collect($despesas)->sum('valor'), 2);
 
         $fechamento->fill([
