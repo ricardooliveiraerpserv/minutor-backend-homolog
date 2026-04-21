@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\Expense;
 use App\Models\FechamentoCliente;
+use App\Models\Partner;
 use App\Models\Project;
 use App\Models\Timesheet;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +24,13 @@ class FechamentoClienteController extends Controller
         return [$from, $to];
     }
 
+    private function effectiveHourlyRate(float $hourlyRate, string $rateType): float
+    {
+        return ($rateType === 'monthly' && $hourlyRate > 0)
+            ? round($hourlyRate / 180, 4)
+            : $hourlyRate;
+    }
+
     // ─── Index ────────────────────────────────────────────────────────────────
 
     public function index(Request $request): JsonResponse
@@ -32,7 +41,6 @@ class FechamentoClienteController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'company_name']);
 
-        // Carrega fechamentos existentes para o mês consultado
         $fechamentos = $yearMonth
             ? FechamentoCliente::where('year_month', $yearMonth)
                 ->with('closedByUser:id,name')
@@ -57,7 +65,7 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data]);
     }
 
-    // ─── Contratos e Horas ────────────────────────────────────────────────────
+    // ─── Contratos (endpoint legado — mantido para compatibilidade) ───────────
 
     public function contratos(string $customerId, string $yearMonth): JsonResponse
     {
@@ -70,6 +78,23 @@ class FechamentoClienteController extends Controller
         }
 
         $data = $this->contratosData((int) $customerId, $yearMonth);
+        return response()->json(['data' => $data, 'from_snapshot' => false]);
+    }
+
+    // ─── Por Tipo (novo — dados agrupados por tipo_faturamento) ──────────────
+
+    public function porTipo(Request $request, string $customerId, string $yearMonth): JsonResponse
+    {
+        $fechamento = FechamentoCliente::where('customer_id', $customerId)
+            ->where('year_month', $yearMonth)
+            ->first();
+
+        if ($fechamento?->isClosed() && $fechamento->snapshot_contratos) {
+            return response()->json(['data' => $fechamento->snapshot_contratos, 'from_snapshot' => true]);
+        }
+
+        $includeTimesheets = $request->boolean('include_timesheets', false);
+        $data = $this->porTipoData((int) $customerId, $yearMonth, $includeTimesheets);
         return response()->json(['data' => $data, 'from_snapshot' => false]);
     }
 
@@ -89,6 +114,74 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data, 'from_snapshot' => false]);
     }
 
+    // ─── Pendências ──────────────────────────────────────────────────────────
+
+    public function pendencias(string $customerId, string $yearMonth): JsonResponse
+    {
+        [$from, $to] = $this->period($yearMonth);
+
+        $timesheets = Timesheet::with(['user:id,name', 'project:id,name,code'])
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereBetween('date', [$from, $to])
+            ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
+            ->whereNull('deleted_at')
+            ->orderBy('date')
+            ->get()
+            ->map(fn ($t) => [
+                'id'          => $t->id,
+                'tipo'        => 'timesheet',
+                'data'        => $t->date->format('Y-m-d'),
+                'colaborador' => $t->user?->name ?? '—',
+                'projeto'     => $t->project?->name ?? '—',
+                'projeto_codigo' => $t->project?->code ?? '—',
+                'horas'       => round($t->effort_minutes / 60, 2),
+                'status'      => $t->status,
+                'ticket'      => $t->ticket,
+                'observacao'  => $t->observation,
+            ]);
+
+        $despesas = Expense::with(['user:id,name', 'project:id,name,code', 'category:id,name'])
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereBetween('expense_date', [$from, $to])
+            ->whereIn('status', ['pending', 'adjustment_requested'])
+            ->orderBy('expense_date')
+            ->get()
+            ->map(fn ($e) => [
+                'id'          => $e->id,
+                'tipo'        => 'expense',
+                'data'        => $e->expense_date->format('Y-m-d'),
+                'colaborador' => $e->user?->name ?? '—',
+                'projeto'     => $e->project?->name ?? '—',
+                'projeto_codigo' => $e->project?->code ?? '—',
+                'descricao'   => $e->description,
+                'categoria'   => $e->category?->name ?? '—',
+                'valor'       => (float) $e->amount,
+                'status'      => $e->status,
+            ]);
+
+        return response()->json([
+            'timesheets'        => $timesheets,
+            'despesas'          => $despesas,
+            'total_pendencias'  => count($timesheets) + count($despesas),
+        ]);
+    }
+
+    // ─── Pagamento ───────────────────────────────────────────────────────────
+
+    public function pagamento(string $customerId, string $yearMonth): JsonResponse
+    {
+        $fechamento = FechamentoCliente::where('customer_id', $customerId)
+            ->where('year_month', $yearMonth)
+            ->first();
+
+        if ($fechamento?->isClosed() && $fechamento->snapshot_pagamento) {
+            return response()->json(['data' => $fechamento->snapshot_pagamento, 'from_snapshot' => true]);
+        }
+
+        $data = $this->pagamentoData((int) $customerId, $yearMonth);
+        return response()->json(['data' => $data, 'from_snapshot' => false]);
+    }
+
     // ─── Fechar ──────────────────────────────────────────────────────────────
 
     public function fechar(Request $request, string $customerId, string $yearMonth): JsonResponse
@@ -102,17 +195,22 @@ class FechamentoClienteController extends Controller
             return response()->json(['message' => 'Fechamento já está encerrado.'], 422);
         }
 
-        $contratos = $this->contratosData((int) $customerId, $yearMonth);
+        $porTipo   = $this->porTipoData((int) $customerId, $yearMonth, false);
         $despesas  = $this->despesasData((int) $customerId, $yearMonth);
+        $pagamento = $this->pagamentoData((int) $customerId, $yearMonth);
 
-        $totalServicos = round(collect($contratos)->sum('total_receita'), 2);
+        $totalServicos = ($porTipo['on_demand']['total'] ?? 0)
+            + ($porTipo['banco_horas']['total'] ?? 0)
+            + ($porTipo['fechado']['total'] ?? 0)
+            + ($porTipo['outros']['total'] ?? 0);
         $totalDespesas = round(collect($despesas)->sum('valor'), 2);
 
         $fechamento->fill([
             'status'             => 'closed',
-            'snapshot_contratos' => $contratos,
+            'snapshot_contratos' => $porTipo,
             'snapshot_despesas'  => $despesas,
-            'total_servicos'     => $totalServicos,
+            'snapshot_pagamento' => $pagamento,
+            'total_servicos'     => round($totalServicos, 2),
             'total_despesas'     => $totalDespesas,
             'total_geral'        => round($totalServicos + $totalDespesas, 2),
             'closed_at'          => now(),
@@ -141,6 +239,7 @@ class FechamentoClienteController extends Controller
             'closed_by'          => null,
             'snapshot_contratos' => null,
             'snapshot_despesas'  => null,
+            'snapshot_pagamento' => null,
         ]);
 
         return response()->json(['message' => "Fechamento do cliente reaberto para {$yearMonth}."]);
@@ -148,11 +247,33 @@ class FechamentoClienteController extends Controller
 
     // ─── Helpers privados ────────────────────────────────────────────────────
 
-    private function contratosData(int $customerId, string $yearMonth): array
+    private function porTipoData(int $customerId, string $yearMonth, bool $includeTimesheets): array
+    {
+        $rows = $this->contratosData($customerId, $yearMonth, $includeTimesheets);
+
+        $byTipo = [
+            'on_demand'   => ['projetos' => [], 'total' => 0.0],
+            'banco_horas' => ['projetos' => [], 'total' => 0.0],
+            'fechado'     => ['projetos' => [], 'total' => 0.0],
+            'outros'      => ['projetos' => [], 'total' => 0.0],
+        ];
+
+        foreach ($rows as $row) {
+            $tipo = $row['tipo_faturamento'] ?? 'outros';
+            if (!isset($byTipo[$tipo])) {
+                $tipo = 'outros';
+            }
+            $byTipo[$tipo]['projetos'][] = $row;
+            $byTipo[$tipo]['total']      = round($byTipo[$tipo]['total'] + ($row['total_receita'] ?? 0), 2);
+        }
+
+        return $byTipo;
+    }
+
+    private function contratosData(int $customerId, string $yearMonth, bool $includeTimesheets = false): array
     {
         [$from, $to] = $this->period($yearMonth);
 
-        // Projetos do cliente com apontamentos aprovados no período
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
             ->where('status', Timesheet::STATUS_APPROVED)
             ->whereNull('deleted_at')
@@ -176,7 +297,6 @@ class FechamentoClienteController extends Controller
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
-        // Horas consumidas totais (acumulado) por projeto para banco de horas
         $totalConsumedByProject = Timesheet::where('status', Timesheet::STATUS_APPROVED)
             ->whereNull('deleted_at')
             ->whereIn('project_id', $projectIds)
@@ -184,45 +304,91 @@ class FechamentoClienteController extends Controller
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
+        // Apontamentos detalhados por projeto (se solicitado)
+        $timesheetsByProject = [];
+        if ($includeTimesheets) {
+            $allTs = Timesheet::with('user:id,name')
+                ->whereBetween('date', [$from, $to])
+                ->where('status', Timesheet::STATUS_APPROVED)
+                ->whereNull('deleted_at')
+                ->whereIn('project_id', $projectIds)
+                ->orderBy('date')
+                ->get();
+
+            foreach ($allTs->groupBy('project_id') as $pid => $pts) {
+                $timesheetsByProject[$pid] = $pts->map(fn ($t) => [
+                    'id'          => $t->id,
+                    'data'        => $t->date->format('Y-m-d'),
+                    'colaborador' => $t->user?->name ?? '—',
+                    'horas'       => round($t->effort_minutes / 60, 2),
+                    'ticket'      => $t->ticket,
+                    'observacao'  => $t->observation,
+                ])->values()->toArray();
+            }
+        }
+
         $rows = [];
         foreach ($projects as $project) {
             $totalHours   = round((int) ($hoursByProject[$project->id] ?? 0) / 60, 2);
+            $consumedAll  = round((int) ($totalConsumedByProject[$project->id] ?? 0) / 60, 2);
             $contractCode = strtolower($project->contractType->code ?? '');
             $hourlyRate   = (float) ($project->hourly_rate ?? 0);
             $projectValue = (float) ($project->project_value ?? 0);
             $soldHours    = (float) ($project->sold_hours ?? 0);
-            $consumedAll  = round((int) ($totalConsumedByProject[$project->id] ?? 0) / 60, 2);
 
             if (str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand')) {
-                $totalReceita    = round($totalHours * $hourlyRate, 2);
                 $tipoFaturamento = 'on_demand';
+                $totalReceita    = round($totalHours * $hourlyRate, 2);
                 $valorBase       = $hourlyRate;
+                $excessHoras     = 0.0;
+                $excessValor     = 0.0;
+                $valorMensal     = 0.0;
             } elseif (str_contains($contractCode, 'banco_horas') || str_contains($contractCode, 'bank_hours')) {
-                $totalReceita    = round($soldHours * $hourlyRate, 2);
                 $tipoFaturamento = 'banco_horas';
+                $excessHoras     = round(max(0, $consumedAll - $soldHours), 2);
+                $excessValor     = round($excessHoras * $hourlyRate, 2);
+                $valorMensal     = round($soldHours * $hourlyRate, 2);
+                $totalReceita    = round($valorMensal + $excessValor, 2);
                 $valorBase       = $hourlyRate;
             } elseif (str_contains($contractCode, 'fechado')) {
-                $totalReceita    = $projectValue;
                 $tipoFaturamento = 'fechado';
+                $totalReceita    = $projectValue;
                 $valorBase       = $projectValue;
+                $excessHoras     = 0.0;
+                $excessValor     = 0.0;
+                $valorMensal     = 0.0;
             } else {
-                $totalReceita    = round($totalHours * $hourlyRate, 2);
                 $tipoFaturamento = $contractCode ?: 'outros';
+                $totalReceita    = round($totalHours * $hourlyRate, 2);
                 $valorBase       = $hourlyRate;
+                $excessHoras     = 0.0;
+                $excessValor     = 0.0;
+                $valorMensal     = 0.0;
             }
 
-            $rows[] = [
+            $row = [
                 'projeto_id'          => $project->id,
                 'projeto_nome'        => $project->name,
                 'projeto_codigo'      => $project->code ?? '—',
                 'tipo_contrato'       => $project->contractType->name ?? '—',
                 'tipo_faturamento'    => $tipoFaturamento,
                 'horas_aprovadas'     => $totalHours,
+                'horas_aprovadas_no_mes' => $totalHours,
                 'horas_contratadas'   => $soldHours,
                 'horas_consumidas'    => $consumedAll,
+                'horas_consumidas_total' => $consumedAll,
+                'excedente_horas'     => $excessHoras,
+                'excedente_valor'     => $excessValor,
+                'valor_mensal'        => $valorMensal,
                 'valor_base'          => $valorBase,
                 'total_receita'       => $totalReceita,
             ];
+
+            if ($includeTimesheets) {
+                $row['apontamentos'] = $timesheetsByProject[$project->id] ?? [];
+            }
+
+            $rows[] = $row;
         }
 
         return $rows;
@@ -246,11 +412,86 @@ class FechamentoClienteController extends Controller
                 'id'          => $e->id,
                 'data'        => $e->expense_date->format('Y-m-d'),
                 'descricao'   => $e->description,
-                'categoria'   => $e->category->name ?? '—',
-                'colaborador' => $e->user->name ?? '—',
-                'projeto'     => $e->project->name ?? '—',
+                'categoria'   => $e->category?->name ?? '—',
+                'colaborador' => $e->user?->name ?? '—',
+                'projeto'     => $e->project?->name ?? '—',
                 'valor'       => (float) $e->amount,
             ])
             ->toArray();
+    }
+
+    private function pagamentoData(int $customerId, string $yearMonth): array
+    {
+        [$from, $to] = $this->period($yearMonth);
+
+        $timesheets = Timesheet::with([
+            'user:id,name,type,hourly_rate,rate_type,partner_id,consultant_type',
+            'user.partner:id,name,pricing_type,hourly_rate',
+        ])
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNull('deleted_at')
+            ->get();
+
+        $internos  = [];
+        $parceiros = [];
+
+        foreach ($timesheets->groupBy('user_id') as $userId => $userTs) {
+            $user       = $userTs->first()->user;
+            $totalHoras = round($userTs->sum('effort_minutes') / 60, 2);
+
+            if ($user->type === 'parceiro_admin') {
+                // Agrupa parceiros por partner_id
+                $partnerId    = $user->partner_id;
+                $partner      = $user->partner;
+                $isFixed      = $partner?->pricing_type === Partner::PRICING_FIXED;
+                $partnerRate  = (float) ($partner?->hourly_rate ?? 0);
+
+                $taxaHora = $isFixed
+                    ? $partnerRate
+                    : $this->effectiveHourlyRate((float) ($user->hourly_rate ?? 0), $user->rate_type ?? 'hourly');
+
+                if (!isset($parceiros[$partnerId])) {
+                    $parceiros[$partnerId] = [
+                        'partner_id'   => $partnerId,
+                        'partner_nome' => $partner?->name ?? '—',
+                        'pricing_type' => $partner?->pricing_type ?? 'variable',
+                        'horas_total'  => 0.0,
+                        'total_a_pagar'=> 0.0,
+                    ];
+                }
+                $parceiros[$partnerId]['horas_total']   = round($parceiros[$partnerId]['horas_total'] + $totalHoras, 2);
+                $parceiros[$partnerId]['total_a_pagar'] = round($parceiros[$partnerId]['total_a_pagar'] + ($totalHoras * $taxaHora), 2);
+            } else {
+                $hourlyRate    = (float) ($user->hourly_rate ?? 0);
+                $rateType      = $user->rate_type ?? 'hourly';
+                $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
+
+                $internos[] = [
+                    'user_id'         => $userId,
+                    'nome'            => $user->name ?? '—',
+                    'consultant_type' => $user->consultant_type ?? $user->type ?? '—',
+                    'horas'           => $totalHoras,
+                    'valor_hora'      => $hourlyRate,
+                    'rate_type'       => $rateType,
+                    'effective_rate'  => $effectiveRate,
+                    'total'           => round($totalHoras * $effectiveRate, 2),
+                ];
+            }
+        }
+
+        $parceirosArr = array_values($parceiros);
+
+        return [
+            'internos'        => $internos,
+            'parceiros'       => $parceirosArr,
+            'total_internos'  => round(collect($internos)->sum('total'), 2),
+            'total_parceiros' => round(collect($parceirosArr)->sum('total_a_pagar'), 2),
+            'total_geral'     => round(
+                collect($internos)->sum('total') + collect($parceirosArr)->sum('total_a_pagar'),
+                2
+            ),
+        ];
     }
 }

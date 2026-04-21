@@ -654,7 +654,10 @@ Route::prefix('v1')->group(function () {
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-cliente',                                                      [\App\Http\Controllers\FechamentoClienteController::class, 'index']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/contratos',                   [\App\Http\Controllers\FechamentoClienteController::class, 'contratos']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/por-tipo',                    [\App\Http\Controllers\FechamentoClienteController::class, 'porTipo']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoClienteController::class, 'despesas']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pendencias',                  [\App\Http\Controllers\FechamentoClienteController::class, 'pendencias']);
+            Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/fechar',                     [\App\Http\Controllers\FechamentoClienteController::class, 'fechar']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoClienteController::class, 'reabrir']);
         });

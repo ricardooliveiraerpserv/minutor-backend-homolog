@@ -18,6 +18,7 @@ class FechamentoCliente extends Model
         'total_geral',
         'snapshot_contratos',
         'snapshot_despesas',
+        'snapshot_pagamento',
         'closed_at',
         'closed_by',
         'notes',
@@ -27,9 +28,10 @@ class FechamentoCliente extends Model
         'total_servicos'     => 'decimal:2',
         'total_despesas'     => 'decimal:2',
         'total_geral'        => 'decimal:2',
-        'snapshot_contratos' => 'array',
-        'snapshot_despesas'  => 'array',
-        'closed_at'          => 'datetime',
+        'snapshot_contratos'  => 'array',
+        'snapshot_despesas'   => 'array',
+        'snapshot_pagamento'  => 'array',
+        'closed_at'           => 'datetime',
     ];
 
     public function customer(): BelongsTo
