@@ -114,6 +114,99 @@ class FechamentoClienteController extends Controller
         return response()->json(['data' => $data, 'from_snapshot' => false]);
     }
 
+    // ─── Apontamentos On Demand (todos os TS aprovados × taxa do projeto) ────
+
+    public function apontamentos(string $customerId, string $yearMonth): JsonResponse
+    {
+        $fechamento = FechamentoCliente::where('customer_id', $customerId)
+            ->where('year_month', $yearMonth)
+            ->first();
+
+        if ($fechamento?->isClosed() && $fechamento->snapshot_contratos) {
+            $snap = $fechamento->snapshot_contratos;
+            return response()->json(['data' => $snap, 'from_snapshot' => true]);
+        }
+
+        $data = $this->apontamentosData((int) $customerId, $yearMonth);
+        return response()->json(['data' => $data, 'from_snapshot' => false]);
+    }
+
+    private function apontamentosData(int $customerId, string $yearMonth): array
+    {
+        [$from, $to] = $this->period($yearMonth);
+
+        // Todos os projetos do cliente com apontamentos aprovados no mês
+        $projectIds = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNull('deleted_at')
+            ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
+            ->distinct()
+            ->pluck('project_id');
+
+        if ($projectIds->isEmpty()) {
+            return ['projetos' => [], 'total_horas' => 0.0, 'total_geral' => 0.0];
+        }
+
+        $projects = Project::with(['contractType:id,name,code'])
+            ->whereIn('id', $projectIds)
+            ->get()
+            ->keyBy('id');
+
+        // Busca todos os apontamentos do mês para esses projetos
+        $timesheets = Timesheet::with('user:id,name')
+            ->whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNull('deleted_at')
+            ->whereIn('project_id', $projectIds)
+            ->orderBy('project_id')
+            ->orderBy('date')
+            ->get();
+
+        // Agrupa por projeto
+        $byProject = $timesheets->groupBy('project_id');
+
+        $projetos    = [];
+        $totalHoras  = 0.0;
+        $totalGeral  = 0.0;
+
+        foreach ($byProject as $projId => $pts) {
+            $project     = $projects[$projId] ?? null;
+            $hourlyRate  = (float) ($project?->hourly_rate ?? 0);
+            $horasProjeto = round($pts->sum('effort_minutes') / 60, 2);
+
+            $apontamentos = $pts->map(fn ($t) => [
+                'id'          => $t->id,
+                'data'        => $t->date->format('Y-m-d'),
+                'colaborador' => $t->user?->name ?? '—',
+                'horas'       => round($t->effort_minutes / 60, 2),
+                'ticket'      => $t->ticket,
+                'observacao'  => $t->observation,
+            ])->values()->toArray();
+
+            $totalProjeto = round($horasProjeto * $hourlyRate, 2);
+
+            $projetos[] = [
+                'projeto_id'    => $projId,
+                'projeto_nome'  => $project?->name ?? '—',
+                'projeto_codigo'=> $project?->code ?? '—',
+                'tipo_contrato' => $project?->contractType?->name ?? '—',
+                'horas'         => $horasProjeto,
+                'valor_hora'    => $hourlyRate,
+                'total_receita' => $totalProjeto,
+                'apontamentos'  => $apontamentos,
+            ];
+
+            $totalHoras += $horasProjeto;
+            $totalGeral += $totalProjeto;
+        }
+
+        return [
+            'projetos'    => $projetos,
+            'total_horas' => round($totalHoras, 2),
+            'total_geral' => round($totalGeral, 2),
+        ];
+    }
+
     // ─── Pendências ──────────────────────────────────────────────────────────
 
     public function pendencias(string $customerId, string $yearMonth): JsonResponse
@@ -195,17 +288,16 @@ class FechamentoClienteController extends Controller
             return response()->json(['message' => 'Fechamento já está encerrado.'], 422);
         }
 
-        $porTipo   = $this->porTipoData((int) $customerId, $yearMonth, false);
-        $despesas  = $this->despesasData((int) $customerId, $yearMonth);
-        $pagamento = $this->pagamentoData((int) $customerId, $yearMonth);
+        $apontamentos = $this->apontamentosData((int) $customerId, $yearMonth);
+        $despesas     = $this->despesasData((int) $customerId, $yearMonth);
+        $pagamento    = $this->pagamentoData((int) $customerId, $yearMonth);
 
-        // Apuração somente On Demand
-        $totalServicos = $porTipo['on_demand']['total'] ?? 0;
+        $totalServicos = $apontamentos['total_geral'] ?? 0;
         $totalDespesas = round(collect($despesas)->sum('valor'), 2);
 
         $fechamento->fill([
             'status'             => 'closed',
-            'snapshot_contratos' => $porTipo,
+            'snapshot_contratos' => $apontamentos,
             'snapshot_despesas'  => $despesas,
             'snapshot_pagamento' => $pagamento,
             'total_servicos'     => round($totalServicos, 2),
