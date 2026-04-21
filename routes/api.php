@@ -638,6 +638,18 @@ Route::prefix('v1')->group(function () {
             Route::post('/consultant-hour-bank/{userId}/reopen', [ConsultantHourBankController::class, 'reopen']);
         });
 
+        // 💰 FECHAMENTO ADMINISTRATIVO
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::get('/fechamento',                                  [\App\Http\Controllers\FechamentoController::class, 'index']);
+            Route::get('/fechamento/{yearMonth}/producao',             [\App\Http\Controllers\FechamentoController::class, 'producao']);
+            Route::get('/fechamento/{yearMonth}/custo',                [\App\Http\Controllers\FechamentoController::class, 'custo']);
+            Route::get('/fechamento/{yearMonth}/receita',              [\App\Http\Controllers\FechamentoController::class, 'receita']);
+            Route::get('/fechamento/{yearMonth}/consolidado',          [\App\Http\Controllers\FechamentoController::class, 'consolidado']);
+            Route::get('/fechamento/{yearMonth}/validar',              [\App\Http\Controllers\FechamentoController::class, 'validar']);
+            Route::post('/fechamento/{yearMonth}/fechar',              [\App\Http\Controllers\FechamentoController::class, 'fechar']);
+            Route::post('/fechamento/{yearMonth}/reabrir',             [\App\Http\Controllers\FechamentoController::class, 'reabrir']);
+        });
+
         // 📅 FERIADOS
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/holidays', [HolidayController::class, 'index']);
