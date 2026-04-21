@@ -708,6 +708,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-requests/{contractRequest}/mentionable-users', [\App\Http\Controllers\ContractRequestMessageController::class, 'mentionableUsers'])->name('contract-request-messages.mentionable-users');
         Route::get('/req-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractRequestMessageController::class, 'downloadAttachment'])->name('contract-request-messages.attachment-download');
 
+        // 💬 CHAT DE CONTRATOS
+        Route::get('/contracts/{contract}/messages',              [\App\Http\Controllers\ContractMessageController::class, 'index'])->name('contract-messages.index');
+        Route::post('/contracts/{contract}/messages',             [\App\Http\Controllers\ContractMessageController::class, 'store'])->name('contract-messages.store');
+        Route::get('/contracts/{contract}/mentionable-users',     [\App\Http\Controllers\ContractMessageController::class, 'mentionableUsers'])->name('contract-messages.mentionable-users');
+        Route::get('/contract-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractMessageController::class, 'downloadAttachment'])->name('contract-messages.attachment-download');
+
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
         Route::prefix('sustentacao')->group(function () {
             Route::get('/kpis',         [SustentacaoController::class, 'kpis'])->name('sustentacao.kpis');

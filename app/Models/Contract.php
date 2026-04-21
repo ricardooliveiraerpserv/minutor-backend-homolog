@@ -99,6 +99,11 @@ class Contract extends Model
         return $this->belongsTo(User::class, 'executivo_conta_id');
     }
 
+    public function messages(): HasMany
+    {
+        return $this->hasMany(ContractMessage::class);
+    }
+
     public function vendedor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'vendedor_id');

@@ -1,0 +1,142 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Contract;
+use App\Models\ContractMessage;
+use App\Models\ContractMessageAttachment;
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+
+class ContractMessageController extends Controller
+{
+    public function index(Request $request, Contract $contract): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$this->canAccess($user, $contract)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $query = $contract->messages()->with(['author:id,name', 'attachments'])->orderBy('created_at');
+
+        if ($user->isCliente()) {
+            $query->where('visibility', 'client');
+        }
+
+        return response()->json(['data' => $query->get()]);
+    }
+
+    public function store(Request $request, Contract $contract): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$this->canAccess($user, $contract)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $request->validate([
+            'message' => 'nullable|string|max:5000',
+            'files'   => 'nullable|array|max:10',
+            'files.*' => 'file|max:20480',
+        ]);
+
+        $text = $request->input('message', '');
+
+        if (!$text && !$request->hasFile('files')) {
+            return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
+        }
+
+        $visibility = $user->isCliente() ? 'client' : $request->input('visibility', 'internal');
+
+        $msg = ContractMessage::create([
+            'contract_id' => $contract->id,
+            'user_id'     => $user->id,
+            'message'     => $text,
+            'visibility'  => $visibility,
+        ]);
+
+        if ($request->hasFile('files')) {
+            foreach ($request->file('files') as $file) {
+                $path = $file->store('contract-message-attachments', 'public');
+                ContractMessageAttachment::create([
+                    'message_id'    => $msg->id,
+                    'original_name' => $file->getClientOriginalName(),
+                    'file_path'     => $path,
+                    'file_size'     => $file->getSize(),
+                    'mime_type'     => $file->getMimeType(),
+                ]);
+            }
+        }
+
+        $msg->load(['author:id,name', 'attachments']);
+
+        return response()->json($msg, 201);
+    }
+
+    public function downloadAttachment(Request $request, ContractMessage $message, ContractMessageAttachment $attachment): mixed
+    {
+        $user = $request->user();
+
+        if (!$this->canAccess($user, $message->contract)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        if ($user->isCliente() && $message->visibility !== 'client') {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
+    }
+
+    public function mentionableUsers(Request $request, Contract $contract): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$this->canAccess($user, $contract)) {
+            return response()->json([], 403);
+        }
+
+        $ids = collect();
+
+        // Executivo de conta do contrato
+        if ($contract->executivo_conta_id) {
+            $ids->push($contract->executivo_conta_id);
+        }
+
+        // Coordenador kanban do contrato
+        if ($contract->kanban_coordinator_id) {
+            $ids->push($contract->kanban_coordinator_id);
+        }
+
+        // Usuários cliente vinculados ao cliente do contrato
+        if ($contract->customer_id) {
+            $clientUserIds = User::where('type', 'cliente')
+                ->where('customer_id', $contract->customer_id)
+                ->where('enabled', true)
+                ->pluck('id');
+            $ids = $ids->merge($clientUserIds);
+        }
+
+        // Exclui o próprio usuário da lista
+        $ids = $ids->unique()->reject(fn($id) => $id === $user->id)->values();
+
+        $users = User::whereIn('id', $ids)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json($users);
+    }
+
+    private function canAccess(User $user, ?Contract $contract): bool
+    {
+        if (!$contract) return false;
+        if ($user->isAdmin()) return true;
+        if ($user->isCoordenador()) return true;
+        if ($user->isCliente() && $user->customer_id === $contract->customer_id) return true;
+        return false;
+    }
+}
