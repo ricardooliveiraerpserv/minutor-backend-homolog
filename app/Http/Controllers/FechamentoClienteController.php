@@ -336,21 +336,28 @@ class FechamentoClienteController extends Controller
             $projectValue = (float) ($project->project_value ?? 0);
             $soldHours    = (float) ($project->sold_hours ?? 0);
 
-            if (str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand')) {
+            $isBancoHoras = in_array($contractCode, ['fixed_hours', 'monthly_hours', 'banco_horas', 'bank_hours'])
+                || str_contains($contractCode, 'hours') || str_contains($contractCode, 'banco');
+            $isFechado    = in_array($contractCode, ['closed', 'fechado'])
+                || str_contains($contractCode, 'closed') || str_contains($contractCode, 'fechado');
+            $isOnDemand   = in_array($contractCode, ['on_demand', 'ondemand'])
+                || str_contains($contractCode, 'on_demand') || str_contains($contractCode, 'ondemand');
+
+            if ($isOnDemand) {
                 $tipoFaturamento = 'on_demand';
                 $totalReceita    = round($totalHours * $hourlyRate, 2);
                 $valorBase       = $hourlyRate;
                 $excessHoras     = 0.0;
                 $excessValor     = 0.0;
                 $valorMensal     = 0.0;
-            } elseif (str_contains($contractCode, 'banco_horas') || str_contains($contractCode, 'bank_hours')) {
+            } elseif ($isBancoHoras) {
                 $tipoFaturamento = 'banco_horas';
                 $excessHoras     = round(max(0, $consumedAll - $soldHours), 2);
                 $excessValor     = round($excessHoras * $hourlyRate, 2);
                 $valorMensal     = round($soldHours * $hourlyRate, 2);
                 $totalReceita    = round($valorMensal + $excessValor, 2);
                 $valorBase       = $hourlyRate;
-            } elseif (str_contains($contractCode, 'fechado')) {
+            } elseif ($isFechado) {
                 $tipoFaturamento = 'fechado';
                 $totalReceita    = $projectValue;
                 $valorBase       = $projectValue;
@@ -358,7 +365,7 @@ class FechamentoClienteController extends Controller
                 $excessValor     = 0.0;
                 $valorMensal     = 0.0;
             } else {
-                $tipoFaturamento = $contractCode ?: 'outros';
+                $tipoFaturamento = 'outros';
                 $totalReceita    = round($totalHours * $hourlyRate, 2);
                 $valorBase       = $hourlyRate;
                 $excessHoras     = 0.0;
