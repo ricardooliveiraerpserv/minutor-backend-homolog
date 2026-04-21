@@ -650,6 +650,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento/{yearMonth}/reabrir',             [\App\Http\Controllers\FechamentoController::class, 'reabrir']);
         });
 
+        // 📋 FECHAMENTO POR CONTRATO
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::get('/fechamento-contrato', [\App\Http\Controllers\FechamentoContratoController::class, 'index']);
+        });
+
         // 🧾 FECHAMENTO CLIENTE
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-cliente',                                                      [\App\Http\Controllers\FechamentoClienteController::class, 'index']);
