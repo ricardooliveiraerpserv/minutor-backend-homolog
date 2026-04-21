@@ -341,7 +341,7 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'project:id,code,name,status',
             ])->where(function ($q) {
-                $q->whereIn('kanban_status', Contract::DEMAND_COLUMNS)
+                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, ['novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
               })
               ->whereNull('sustentacao_column')
