@@ -672,9 +672,9 @@ class ContractController extends Controller
 
         $contractName = strtolower($contract->contractType?->name ?? '');
         $valid = match ($toColumn) {
-            'sust_bh_fixo'   => $categ === 'sustentacao' && $fatur === 'banco_horas_fixo',
-            'sust_bh_mensal' => $categ === 'sustentacao' && $fatur === 'banco_horas_mensal',
-            'sust_on_demand' => $categ === 'sustentacao' && $fatur === 'on_demand',
+            'sust_bh_fixo'   => $fatur === 'banco_horas_fixo',
+            'sust_bh_mensal' => $fatur === 'banco_horas_mensal',
+            'sust_on_demand' => $fatur === 'on_demand',
             'sust_cloud'     => str_contains($svcName, 'cloud'),
             'sust_bizify'    => str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify'),
             default          => false,
