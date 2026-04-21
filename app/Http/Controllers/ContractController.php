@@ -663,12 +663,31 @@ class ContractController extends Controller
             return response()->json(['message' => 'Apenas admin ou coordenador de sustentação pode mover este card.'], 403);
         }
 
-        $toColumn = $request->input('to_column');
+        $toColumn     = $request->input('to_column');
+        $contract->load(['contractType', 'serviceType']);
+        $svcName      = strtolower($contract->serviceType?->name ?? '');
+        $contractName = strtolower($contract->contractType?->name ?? '');
+        $tipoFat      = $contract->tipo_faturamento ?? '';
+
+        $valid = match ($toColumn) {
+            'sust_bh_fixo'   => str_contains($contractName, 'banco de horas fixo') || str_contains($contractName, 'banco horas fixo') || $tipoFat === 'banco_horas_fixo',
+            'sust_bh_mensal' => str_contains($contractName, 'banco de horas mensal') || str_contains($contractName, 'banco horas mensal') || $tipoFat === 'banco_horas_mensal',
+            'sust_on_demand' => str_contains($contractName, 'on demand') || $tipoFat === 'on_demand',
+            'sust_cloud'     => str_contains($contractName, 'cloud') || str_contains($svcName, 'cloud'),
+            'sust_bizify'    => str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify'),
+            default          => false,
+        };
+
+        if (!$valid) {
+            return response()->json([
+                'message' => "Tipo de contrato incompatível com esta fila. Tipo: '{$contract->contractType?->name}', Serviço: '{$contract->serviceType?->name}'.",
+            ], 422);
+        }
 
         $contract->update([
-            'sustentacao_column'     => $toColumn,
-            'kanban_coordinator_id'  => null,
-            'kanban_status'          => Contract::KANBAN_INICIO_AUTORIZADO,
+            'sustentacao_column'    => $toColumn,
+            'kanban_coordinator_id' => null,
+            'kanban_status'         => Contract::KANBAN_INICIO_AUTORIZADO,
         ]);
 
         return response()->json(['ok' => true, 'sustentacao_column' => $toColumn]);
