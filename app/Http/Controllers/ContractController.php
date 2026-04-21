@@ -665,17 +665,15 @@ class ContractController extends Controller
 
         $toColumn = $request->input('to_column');
 
-        // Validate type compatibility
-        $svcName  = strtolower($contract->serviceType?->name ?? '');
-        $fatur    = $contract->tipo_faturamento;
-        $categ    = $contract->categoria;
-
+        // Validate type compatibility by contract_type name and service_type name
+        $svcName      = strtolower($contract->serviceType?->name ?? '');
         $contractName = strtolower($contract->contractType?->name ?? '');
+
         $valid = match ($toColumn) {
-            'sust_bh_fixo'   => $fatur === 'banco_horas_fixo',
-            'sust_bh_mensal' => $fatur === 'banco_horas_mensal',
-            'sust_on_demand' => $fatur === 'on_demand',
-            'sust_cloud'     => str_contains($svcName, 'cloud'),
+            'sust_bh_fixo'   => str_contains($contractName, 'banco de horas fixo') || str_contains($contractName, 'banco horas fixo'),
+            'sust_bh_mensal' => str_contains($contractName, 'banco de horas mensal') || str_contains($contractName, 'banco horas mensal'),
+            'sust_on_demand' => str_contains($contractName, 'on demand'),
+            'sust_cloud'     => str_contains($contractName, 'cloud') || str_contains($svcName, 'cloud'),
             'sust_bizify'    => str_contains($svcName, 'bizify') || str_contains($contractName, 'bizify'),
             default          => false,
         };
