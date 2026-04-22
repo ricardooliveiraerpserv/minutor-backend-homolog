@@ -601,16 +601,22 @@ class ContractController extends Controller
                 'kanban_order'  => $request->input('order', 0),
             ]);
         } elseif ($toColumn === Contract::KANBAN_INICIO_AUTORIZADO) {
-            if (!$contract->isKanbanComplete()) {
+            $parentProjectId = $request->input('parent_project_id');
+            // Projeto filho não exige completude pois herda do projeto pai
+            if (!$parentProjectId && !$contract->isKanbanComplete()) {
                 return response()->json([
                     'message' => 'Contrato incompleto. Preencha: cliente, tipo de contrato e faturamento.',
                 ], 422);
             }
-            $contract->update([
+            $updateData = [
                 'kanban_status' => Contract::KANBAN_INICIO_AUTORIZADO,
                 'status'        => Contract::STATUS_INICIO_AUTORIZADO,
                 'kanban_order'  => $request->input('order', 0),
-            ]);
+            ];
+            if ($parentProjectId) {
+                $updateData['parent_project_id'] = $parentProjectId;
+            }
+            $contract->update($updateData);
         } elseif (in_array($toColumn, $validDemandColumns)) {
             $contract->update([
                 'kanban_status'         => $toColumn,
