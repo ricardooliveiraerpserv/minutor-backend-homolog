@@ -213,6 +213,11 @@ class User extends Authenticatable
                     ->withTimestamps();
     }
 
+    public function permissionGroups(): BelongsToMany
+    {
+        return $this->belongsToMany(PermissionGroup::class, 'permission_group_user');
+    }
+
     /**
      * Todos os projetos do usuário (consultor ou aprovador)
      */

@@ -17,6 +17,7 @@ use App\Http\Controllers\UserController;
 use App\Http\Controllers\ApprovalController;
 use App\Http\Controllers\CustomFieldController;
 use App\Http\Controllers\ConsultantGroupController;
+use App\Http\Controllers\PermissionGroupController;
 use App\Http\Controllers\SystemSettingController;
 use App\Http\Controllers\MovideskWebhookController;
 use App\Http\Controllers\ProjectStatusController;
@@ -609,6 +610,18 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:consultant_groups.delete')->group(function () {
             Route::delete('/consultant-groups/{consultant_group}', [ConsultantGroupController::class, 'destroy'])->name('consultant-groups.destroy');
         });
+
+        // 🔐 GRUPOS DE PERMISSÕES
+        Route::get('/permission-groups/available-permissions', [PermissionGroupController::class, 'availablePermissions'])
+            ->name('permission-groups.available-permissions');
+        Route::get('/permission-groups', [PermissionGroupController::class, 'index'])->name('permission-groups.index');
+        Route::get('/permission-groups/{permissionGroup}', [PermissionGroupController::class, 'show'])->name('permission-groups.show');
+        Route::get('/permission-groups/{permissionGroup}/users', [PermissionGroupController::class, 'users'])->name('permission-groups.users');
+        Route::post('/permission-groups', [PermissionGroupController::class, 'store'])->name('permission-groups.store');
+        Route::put('/permission-groups/{permissionGroup}', [PermissionGroupController::class, 'update'])->name('permission-groups.update');
+        Route::post('/permission-groups/{permissionGroup}/users', [PermissionGroupController::class, 'addUser'])->name('permission-groups.add-user');
+        Route::delete('/permission-groups/{permissionGroup}/users/{user}', [PermissionGroupController::class, 'removeUser'])->name('permission-groups.remove-user');
+        Route::delete('/permission-groups/{permissionGroup}', [PermissionGroupController::class, 'destroy'])->name('permission-groups.destroy');
 
         // 🤝 PARCEIROS
         Route::get('/partner/report', [PartnerReportController::class, 'index'])->name('partner.report');

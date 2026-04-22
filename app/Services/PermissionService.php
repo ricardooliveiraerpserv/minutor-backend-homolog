@@ -28,7 +28,20 @@ class PermissionService
 
         $extra = $user->extra_permissions ?? [];
 
-        return array_values(array_unique(array_merge($base, $extra)));
+        // Permissões dos grupos vinculados ao usuário
+        $groupPermissions = [];
+        if ($user->relationLoaded('permissionGroups')) {
+            foreach ($user->permissionGroups as $group) {
+                $groupPermissions = array_merge($groupPermissions, $group->permissions ?? []);
+            }
+        } else {
+            $groupPermissions = $user->permissionGroups()
+                ->pluck('permissions')
+                ->flatten()
+                ->all();
+        }
+
+        return array_values(array_unique(array_merge($base, $extra, $groupPermissions)));
     }
 
     /**
