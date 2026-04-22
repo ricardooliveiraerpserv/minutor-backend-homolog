@@ -91,6 +91,15 @@ class FechamentoConsultorController extends Controller
                         (float) ($user->daily_hours ?? 8.0),
                         $startDate
                     );
+                    // Regra: hourly_rate = salário mensal fixo (sempre pago)
+                    // Horas extras = accumulated_balance > 0 (paid_hours do HourBankService)
+                    // Taxa hora extra = hourly_rate ÷ 180
+                    $fixedSalary      = $hourlyRate;
+                    $valorHoraExtra   = $hourlyRate > 0 ? round($hourlyRate / 180, 4) : 0;
+                    $horasExtras      = $calc['paid_hours']; // accumulated > 0, senão 0
+                    $totalExtra       = round($horasExtras * $valorHoraExtra, 2);
+                    $total            = round($fixedSalary + $totalExtra, 2);
+
                     $bancoHoras[] = array_merge($base, [
                         'daily_hours'         => (float) ($user->daily_hours ?? 8.0),
                         'working_days'        => $calc['working_days'],
@@ -100,8 +109,12 @@ class FechamentoConsultorController extends Controller
                         'accumulated_balance' => $calc['accumulated_balance'],
                         'paid_hours'          => $calc['paid_hours'],
                         'final_balance'       => $calc['final_balance'],
-                        'horas_a_pagar'       => $calc['paid_hours'],
-                        'total'               => round($calc['paid_hours'] * $effectiveRate, 2),
+                        'fixed_salary'        => $fixedSalary,
+                        'valor_hora_extra'    => $valorHoraExtra,
+                        'horas_extras'        => $horasExtras,
+                        'total_extra'         => $totalExtra,
+                        'horas_a_pagar'       => $horasExtras,
+                        'total'               => $total,
                     ]);
                     break;
 
@@ -202,16 +215,18 @@ class FechamentoConsultorController extends Controller
             $startDate
         );
 
-        $effectiveRate = $this->effectiveHourlyRate(
-            (float) ($user->hourly_rate ?? 0),
-            $user->rate_type ?? 'hourly'
-        );
+        $fixedSalary    = (float) ($user->hourly_rate ?? 0);
+        $valorHoraExtra = $fixedSalary > 0 ? round($fixedSalary / 180, 4) : 0;
+        $horasExtras    = $calc['paid_hours'];
+        $totalExtra     = round($horasExtras * $valorHoraExtra, 2);
 
         return response()->json([
             'data' => array_merge($calc, [
-                'valor_hora'     => (float) ($user->hourly_rate ?? 0),
-                'effective_rate' => $effectiveRate,
-                'total'          => round($calc['paid_hours'] * $effectiveRate, 2),
+                'fixed_salary'     => $fixedSalary,
+                'valor_hora_extra' => $valorHoraExtra,
+                'horas_extras'     => $horasExtras,
+                'total_extra'      => $totalExtra,
+                'total'            => round($fixedSalary + $totalExtra, 2),
             ]),
         ]);
     }
