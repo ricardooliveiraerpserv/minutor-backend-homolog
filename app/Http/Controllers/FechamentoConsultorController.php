@@ -37,7 +37,7 @@ class FechamentoConsultorController extends Controller
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
             ->whereNotNull('consultant_type')
             ->orderBy('name')
-            ->get(['id', 'name', 'type', 'consultant_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date']);
+            ->get(['id', 'name', 'type', 'consultant_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
 
@@ -50,6 +50,10 @@ class FechamentoConsultorController extends Controller
             ->pluck('total_minutes', 'user_id');
 
         $hourBankService = app(HourBankService::class);
+
+        // Dias úteis do mês cheio — calculado uma vez, compartilhado por todos
+        $workingDaysFull = $hourBankService->calculateWorkingDays($year, $month);
+        $totalWorkingDays = $workingDaysFull['working_days'];
 
         $horistas   = [];
         $bancoHoras = [];
@@ -72,11 +76,41 @@ class FechamentoConsultorController extends Controller
                 'effective_rate'    => $effectiveRate,
             ];
 
+            // Proporcionalidade: se data_inicio cai no mês atual
+            $startDate = $user->bank_hours_start_date
+                ? $user->bank_hours_start_date->format('Y-m-d')
+                : null;
+
+            $startIsInMonth = $startDate
+                && Carbon::parse($startDate)->year  === $year
+                && Carbon::parse($startDate)->month === $month;
+
+            if ($startIsInMonth) {
+                $workingDaysPeriod = $hourBankService->calculateWorkingDays($year, $month, $startDate);
+                $periodDays        = $workingDaysPeriod['working_days'];
+                $ratio             = $totalWorkingDays > 0 ? round($periodDays / $totalWorkingDays, 6) : 1;
+            } else {
+                $periodDays = $totalWorkingDays;
+                $ratio      = 1;
+            }
+
             switch ($user->consultant_type) {
                 case 'horista':
+                    $guaranteedHours         = (float) ($user->guaranteed_hours ?? 0);
+                    $guaranteedProrated      = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
+                    $horasMinimas            = $guaranteedProrated > 0
+                        ? max($horasTrabalhadas, $guaranteedProrated)
+                        : $horasTrabalhadas;
                     $horistas[] = array_merge($base, [
-                        'horas_a_pagar' => $horasTrabalhadas,
-                        'total'         => round($horasTrabalhadas * $effectiveRate, 2),
+                        'guaranteed_hours'   => $guaranteedHours,
+                        'guaranteed_prorated'=> $guaranteedProrated,
+                        'proporcional'       => $startIsInMonth,
+                        'ratio'              => $ratio,
+                        'dias_uteis_periodo' => $periodDays,
+                        'dias_uteis_cheio'   => $totalWorkingDays,
+                        'data_inicio'        => $startDate,
+                        'horas_a_pagar'      => $horasMinimas,
+                        'total'              => round($horasMinimas * $effectiveRate, 2),
                     ]);
                     break;
 
@@ -119,11 +153,17 @@ class FechamentoConsultorController extends Controller
                     break;
 
                 case 'fixo':
-                    // hourly_rate armazena o salário mensal para consultores fixos
+                    // hourly_rate = salário mensal; proporcional se entrou no meio do mês
+                    $salarioProportional = round($hourlyRate * $ratio, 2);
                     $fixos[] = array_merge($base, [
-                        'horas_a_pagar'  => $horasTrabalhadas,
-                        'salario_mensal' => $hourlyRate,
-                        'total'          => $hourlyRate,
+                        'horas_a_pagar'      => $horasTrabalhadas,
+                        'salario_mensal'     => $hourlyRate,
+                        'proporcional'       => $startIsInMonth,
+                        'ratio'              => $ratio,
+                        'dias_uteis_periodo' => $periodDays,
+                        'dias_uteis_cheio'   => $totalWorkingDays,
+                        'data_inicio'        => $startDate,
+                        'total'              => $salarioProportional,
                     ]);
                     break;
             }
