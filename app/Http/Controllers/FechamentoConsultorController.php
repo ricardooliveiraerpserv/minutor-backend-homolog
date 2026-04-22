@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Timesheet;
 use App\Models\User;
+use App\Models\UserHourlyRateLog;
 use App\Services\HourBankService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -60,8 +61,9 @@ class FechamentoConsultorController extends Controller
         $fixos      = [];
 
         foreach ($users as $user) {
-            $hourlyRate       = (float) ($user->hourly_rate ?? 0);
-            $rateType         = $user->rate_type ?? 'hourly';
+            $hist             = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
+            $hourlyRate       = (float) ($hist['hourly_rate'] ?? 0);
+            $rateType         = $hist['rate_type'] ?? 'hourly';
             $effectiveRate    = $this->effectiveHourlyRate($hourlyRate, $rateType);
             $horasTrabalhadas = round((int) ($hoursByUser[$user->id] ?? 0) / 60, 2);
 

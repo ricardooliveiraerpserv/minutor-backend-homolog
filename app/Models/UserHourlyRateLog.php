@@ -23,7 +23,27 @@ class UserHourlyRateLog extends Model
         'old_rate_type',
         'new_rate_type',
         'reason',
+        'old_consultant_type',
+        'new_consultant_type',
     ];
+
+    /**
+     * Retorna os valores (hourly_rate, rate_type, consultant_type) em vigor no 1º dia do mês informado.
+     * Regra: mudanças feitas DURANTE o mês só valem a partir do mês seguinte.
+     */
+    public static function effectiveValuesAt(int $userId, \App\Models\User $user, string $firstDayOfMonth): array
+    {
+        $log = static::where('user_id', $userId)
+            ->whereDate('created_at', '<', $firstDayOfMonth)
+            ->orderBy('created_at', 'desc')
+            ->first();
+
+        return [
+            'hourly_rate'     => $log?->new_hourly_rate    ?? $user->hourly_rate,
+            'rate_type'       => $log?->new_rate_type       ?? $user->rate_type,
+            'consultant_type' => $log?->new_consultant_type ?? $user->consultant_type,
+        ];
+    }
 
     /**
      * The attributes that should be cast.
