@@ -6,6 +6,7 @@ use App\Models\Expense;
 use App\Models\FechamentoAdministrativo;
 use App\Models\Project;
 use App\Models\Timesheet;
+use App\Models\UserHourlyRateLog;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -134,8 +135,9 @@ class FechamentoController extends Controller
 
         foreach ($timesheets->groupBy('user_id') as $userId => $userTs) {
             $user          = $userTs->first()->user;
-            $hourlyRate    = (float) ($user->hourly_rate ?? 0);
-            $rateType      = $user->rate_type ?? 'hourly';
+            $hist          = UserHourlyRateLog::effectiveValuesAt((int) $userId, $user, $from);
+            $hourlyRate    = (float) ($hist['hourly_rate'] ?? 0);
+            $rateType      = $hist['rate_type'] ?? 'hourly';
             $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
             $totalHours    = round($userTs->sum('effort_minutes') / 60, 2);
             $totalCost     = round($totalHours * $effectiveRate, 2);
@@ -493,8 +495,9 @@ class FechamentoController extends Controller
 
         foreach ($timesheets->groupBy('user_id') as $userId => $userTs) {
             $user          = $userTs->first()->user;
-            $hourlyRate    = (float) ($user->hourly_rate ?? 0);
-            $rateType      = $user->rate_type ?? 'hourly';
+            $hist          = UserHourlyRateLog::effectiveValuesAt((int) $userId, $user, $from);
+            $hourlyRate    = (float) ($hist['hourly_rate'] ?? 0);
+            $rateType      = $hist['rate_type'] ?? 'hourly';
             $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
             $totalHours    = round($userTs->sum('effort_minutes') / 60, 2);
             $totalCost     = round($totalHours * $effectiveRate, 2);

@@ -466,18 +466,16 @@ class UserController extends Controller
                 $updateData['email'] = strtolower(trim($updateData['email']));
             }
 
-            // Verificar se houve alteração no valor hora para criar log
-            $hourlyRateChanged = false;
-            $oldHourlyRate = $user->hourly_rate;
-            $oldRateType = $user->rate_type;
+            // Capturar valores anteriores para log
+            $oldHourlyRate     = $user->hourly_rate;
+            $oldRateType       = $user->rate_type;
+            $oldConsultantType = $user->consultant_type;
 
-            if (isset($updateData['hourly_rate']) && $updateData['hourly_rate'] != $oldHourlyRate) {
-                $hourlyRateChanged = true;
-            }
+            $hourlyRateChanged     = isset($updateData['hourly_rate'])     && $updateData['hourly_rate']     != $oldHourlyRate;
+            $rateTypeChanged       = isset($updateData['rate_type'])        && $updateData['rate_type']        != $oldRateType;
+            $consultantTypeChanged = isset($updateData['consultant_type'])  && $updateData['consultant_type']  != $oldConsultantType;
 
-            if (isset($updateData['rate_type']) && $updateData['rate_type'] != $oldRateType) {
-                $hourlyRateChanged = true;
-            }
+            $shouldLog = $hourlyRateChanged || $rateTypeChanged || $consultantTypeChanged;
 
             // Hash da senha se fornecida
             if (isset($updateData['password'])) {
@@ -490,16 +488,18 @@ class UserController extends Controller
 
             $user->update($updateData);
 
-            // Criar log se houve alteração no valor hora
-            if ($hourlyRateChanged) {
+            // Registrar log de alteração de valor ou tipo de contrato
+            if ($shouldLog) {
                 UserHourlyRateLog::create([
-                    'user_id' => $user->id,
-                    'changed_by' => $currentUser->id,
-                    'old_hourly_rate' => $oldHourlyRate,
-                    'new_hourly_rate' => $updateData['hourly_rate'] ?? null,
-                    'old_rate_type' => $oldRateType,
-                    'new_rate_type' => $updateData['rate_type'] ?? null,
-                    'reason' => $request->input('rate_change_reason'),
+                    'user_id'              => $user->id,
+                    'changed_by'           => $currentUser->id,
+                    'old_hourly_rate'      => $oldHourlyRate,
+                    'new_hourly_rate'      => $user->fresh()->hourly_rate,
+                    'old_rate_type'        => $oldRateType,
+                    'new_rate_type'        => $user->fresh()->rate_type,
+                    'old_consultant_type'  => $oldConsultantType,
+                    'new_consultant_type'  => $user->fresh()->consultant_type,
+                    'reason'               => $request->input('rate_change_reason'),
                 ]);
             }
 
