@@ -144,8 +144,9 @@ class User extends Authenticatable
     // ── Métodos semânticos de tipo ────────────────────────────────────────────
     // Fonte de verdade: users.type
 
-    public function isAdmin(): bool         { return $this->type === 'admin'; }
-    public function isCoordenador(): bool   { return $this->type === 'coordenador'; }
+    public function isAdmin(): bool            { return $this->type === 'admin'; }
+    public function isAdministrativo(): bool   { return $this->type === 'administrativo'; }
+    public function isCoordenador(): bool      { return $this->type === 'coordenador'; }
     public function isConsultor(): bool     { return $this->type === 'consultor'; }
     public function isCliente(): bool       { return $this->type === 'cliente'; }
     public function isParceiroAdmin(): bool { return $this->type === 'parceiro_admin'; }

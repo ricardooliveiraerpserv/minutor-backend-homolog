@@ -14,6 +14,7 @@ class PermissionService
     {
         $base = match ($user->type) {
             'admin'          => self::adminPermissions(),
+            'administrativo' => self::administrativoPermissions(),
             'coordenador'    => self::coordenadorPermissions(),
             'consultor'      => self::consultorPermissions(),
             'cliente'        => self::clientePermissions(),
@@ -51,6 +52,7 @@ class PermissionService
     public static function allPermissions(): array
     {
         return array_values(array_unique(array_merge(
+            self::administrativoPermissions(),
             self::coordenadorPermissions(),
             self::consultorPermissions(),
             self::clientePermissions(),
@@ -59,11 +61,39 @@ class PermissionService
     }
 
     // ── Administrator ────────────────────────────────────────────────────────
-    // Acesso total — sem restrições de escopo
     private static function adminPermissions(): array
     {
-        // Admin tem tudo — retornar wildcard sinaliza acesso irrestrito
         return ['*'];
+    }
+
+    // ── Administrativo ───────────────────────────────────────────────────────
+    private static function administrativoPermissions(): array
+    {
+        return [
+            'dashboard.view',
+            // Contratos / Kanban
+            'contracts.view', 'contracts.manage',
+            'projects.view', 'projects.assign_consultants', 'projects.change_status',
+            // Fechamento completo
+            'fechamento.view', 'fechamento.manage', 'fechamento.fechar', 'fechamento.reabrir',
+            // Apontamentos
+            'timesheets.view', 'timesheets.manage', 'timesheets.approve', 'timesheets.view_project_full',
+            'hours.view_all', 'hours.update_all', 'hours.delete_all',
+            // Despesas — incluindo pagamento
+            'expenses.view', 'expenses.manage', 'expenses.approve', 'expenses.view_all', 'expenses.pay',
+            // Clientes — acesso total
+            'customers.view', 'customers.create', 'customers.update', 'customers.delete',
+            'customers.manage',
+            // Usuários — acesso total
+            'users.view', 'users.view_all', 'users.create', 'users.update', 'users.delete',
+            'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',
+            // Aprovações
+            'approvals.view', 'approvals.manage',
+            // Relatórios
+            'reports.view', 'reports.export',
+            // Configurações
+            'settings.view',
+        ];
     }
 
     // ── Coordenador ──────────────────────────────────────────────────────────
