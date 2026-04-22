@@ -37,7 +37,7 @@ class FechamentoClienteController extends Controller
     {
         $yearMonth = $request->query('year_month');
 
-        $customers = Customer::where('active', true)
+        $customers = Customer::whereRaw('"active" = true')
             ->whereHas('projects', function ($q) {
                 $q->whereHas('contractType', fn ($q2) => $q2->where('code', 'on_demand'));
             })

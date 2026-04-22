@@ -219,7 +219,7 @@ class Timesheet extends Model
      */
     public function scopeForUser($query, int $userId)
     {
-        return $query->where('user_id', $userId);
+        return $query->where('timesheets.user_id', $userId);
     }
 
     /**
@@ -227,7 +227,7 @@ class Timesheet extends Model
      */
     public function scopeForProject($query, int $projectId)
     {
-        return $query->where('project_id', $projectId);
+        return $query->where('timesheets.project_id', $projectId);
     }
 
     /**

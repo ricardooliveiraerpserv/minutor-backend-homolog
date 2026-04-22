@@ -34,7 +34,7 @@ class HourBankService
         // Busca feriados ativos do mês
         $holidayDates = Holiday::whereYear('date', $year)
             ->whereMonth('date', $month)
-            ->where('active', true)
+            ->whereRaw('"active" = true')
             ->pluck('date')
             ->map(fn ($d) => Carbon::parse($d)->format('Y-m-d'))
             ->toArray();

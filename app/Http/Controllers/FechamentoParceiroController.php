@@ -35,7 +35,7 @@ class FechamentoParceiroController extends Controller
     {
         $yearMonth = $request->query('year_month');
 
-        $partners = Partner::where('active', true)
+        $partners = Partner::whereRaw('"active" = true')
             ->orderBy('name')
             ->get(['id', 'name', 'pricing_type', 'hourly_rate']);
 
