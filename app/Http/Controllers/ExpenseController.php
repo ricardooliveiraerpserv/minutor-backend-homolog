@@ -238,11 +238,8 @@ class ExpenseController extends Controller
         } elseif ($user->isCoordenador()) {
             $coordinatorProjectIds = $user->coordinatorProjects()->pluck('projects.id');
             if ($user->coordinator_type === 'sustentacao') {
-                $sustentacaoProjectIds = \App\Models\Project::whereHas(
-                    'serviceType', fn($q) => $q->where('code', 'sustentacao')
-                )->pluck('id');
-                $allIds = $coordinatorProjectIds->merge($sustentacaoProjectIds)->unique();
-                $query->whereIn('expenses.project_id', $allIds);
+                // Sustentação: apenas despesas de projetos com tipo sustentacao ou cloud
+                $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
             } else {
                 $query->whereIn('expenses.project_id', $coordinatorProjectIds);
             }
