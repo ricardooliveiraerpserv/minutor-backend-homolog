@@ -595,6 +595,11 @@ class ContractController extends Controller
                 'sustentacao_column' => $toColumn,
                 'kanban_order'       => $request->input('order', 0),
             ]);
+        } elseif ($toColumn === 'req_inicio_autorizado') {
+            $contract->update([
+                'kanban_status' => 'req_inicio_autorizado',
+                'kanban_order'  => $request->input('order', 0),
+            ]);
         } elseif ($toColumn === Contract::KANBAN_INICIO_AUTORIZADO) {
             if (!$contract->isKanbanComplete()) {
                 return response()->json([
