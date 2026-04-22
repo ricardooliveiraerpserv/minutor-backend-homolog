@@ -1179,6 +1179,10 @@ class ExpenseController extends Controller
 
         $isPaid = $request->boolean('is_paid', true);
 
+        if ($isPaid && $expense->status !== Expense::STATUS_APPROVED) {
+            return response()->json(['message' => 'Apenas despesas aprovadas podem ser marcadas como pagas.'], 422);
+        }
+
         $expense->update([
             'is_paid' => $isPaid,
             'paid_by' => $isPaid ? $user->id : null,
