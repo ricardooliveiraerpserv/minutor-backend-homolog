@@ -458,6 +458,8 @@ Route::prefix('v1')->group(function () {
         Route::post('/expenses/{expense}/upload-receipt', [ExpenseController::class, 'uploadReceipt'])->name('expenses.upload-receipt');
         Route::get('/expenses/{expense}/receipt', [ExpenseController::class, 'downloadReceipt'])->name('expenses.download-receipt');
 
+        Route::post('/expenses/{expense}/set-paid', [ExpenseController::class, 'setPaid'])->name('expenses.set-paid');
+
         Route::get('/timesheets/{id}/attachment', [TimesheetController::class, 'downloadAttachment'])->name('timesheets.download-attachment');
 
         // 📝 CATEGORIAS DE DESPESAS

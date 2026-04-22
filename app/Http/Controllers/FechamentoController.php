@@ -78,6 +78,7 @@ class FechamentoController extends Controller
         ])
             ->whereBetween('expense_date', [$from, $to])
             ->whereIn('status', ['approved', 'pending'])
+            ->where('is_paid', false)
             ->get()
             ->groupBy('project_id');
 
@@ -444,6 +445,7 @@ class FechamentoController extends Controller
         $expenses = Expense::with(['project:id,name,code'])
             ->whereBetween('expense_date', [$from, $to])
             ->whereIn('status', ['approved', 'pending'])
+            ->where('is_paid', false)
             ->get()
             ->groupBy('project_id');
 

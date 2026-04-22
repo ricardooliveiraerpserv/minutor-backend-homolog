@@ -226,6 +226,7 @@ class FechamentoParceiroController extends Controller
         ])
             ->whereIn('user_id', $userIds)
             ->whereNotIn('status', $excludeStatuses)
+            ->where('is_paid', false)
             ->whereBetween('expense_date', [$from, $to])
             ->get()
             ->map(fn ($e) => [

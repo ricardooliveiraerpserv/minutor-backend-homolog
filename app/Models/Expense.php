@@ -46,6 +46,9 @@ class Expense extends Model
         'status',
         'rejection_reason',
         'charge_client',
+        'is_paid',
+        'paid_by',
+        'paid_at',
         'reviewed_by',
         'reviewed_at',
     ];
@@ -54,6 +57,8 @@ class Expense extends Model
         'expense_date' => 'date:Y-m-d', // Retorna apenas a data sem horário
         'amount' => 'decimal:2',
         'charge_client' => 'boolean',
+        'is_paid' => 'boolean',
+        'paid_at' => 'datetime',
         'reviewed_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
@@ -73,6 +78,14 @@ class Expense extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Quem marcou como paga
+     */
+    public function paidByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'paid_by');
     }
 
     /**

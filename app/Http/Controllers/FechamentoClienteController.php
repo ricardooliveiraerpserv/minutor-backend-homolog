@@ -532,6 +532,7 @@ class FechamentoClienteController extends Controller
         ])
             ->where('charge_client', true)
             ->where('status', 'approved')
+            ->where('is_paid', false)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
             ->get()

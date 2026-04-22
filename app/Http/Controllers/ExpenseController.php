@@ -305,6 +305,10 @@ class ExpenseController extends Controller
             $query->where('expense_category_id', $request->category_id);
         }
 
+        if ($request->has('is_paid') && $request->input('is_paid') !== '') {
+            $query->where('is_paid', filter_var($request->input('is_paid'), FILTER_VALIDATE_BOOLEAN));
+        }
+
         if ($request->filled('start_date') && $request->filled('end_date')) {
             $query->whereBetween('expense_date', [$request->start_date, $request->end_date]);
         }
@@ -1155,6 +1159,38 @@ class ExpenseController extends Controller
             'success' => false,
             'message' => 'Erro ao estornar rejeição'
         ], 500);
+    }
+
+    // ─── Set Paid ─────────────────────────────────────────────────────────────
+
+    public function setPaid(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+
+        if (!$user->isAdmin()) {
+            return $this->accessDeniedResponse('Apenas administradores podem marcar despesas como pagas.');
+        }
+
+        $expense = Expense::find($id);
+
+        if (!$expense) {
+            return $this->notFoundResponse('Despesa não encontrada');
+        }
+
+        $isPaid = $request->boolean('is_paid', true);
+
+        $expense->update([
+            'is_paid' => $isPaid,
+            'paid_by' => $isPaid ? $user->id : null,
+            'paid_at' => $isPaid ? now() : null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $isPaid ? 'Despesa marcada como paga.' : 'Marcação de pago removida.',
+            'is_paid' => $expense->is_paid,
+            'paid_at' => $expense->paid_at?->toISOString(),
+        ]);
     }
 
     /**
