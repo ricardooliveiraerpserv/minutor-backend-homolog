@@ -267,24 +267,34 @@ class FechamentoParceiroController extends Controller
             'user:id,name',
             'project:id,name,code',
         ])
-            ->whereIn('user_id', $userIds)
-            ->whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
-            ->whereNull('deleted_at')
-            ->orderBy('date')
-            ->orderBy('user_id')
+            ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
+            ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
+            ->whereIn('timesheets.user_id', $userIds)
+            ->whereBetween('timesheets.date', [$from, $to])
+            ->whereNotIn('timesheets.status', $excludeStatuses)
+            ->whereNull('timesheets.deleted_at')
+            ->orderBy('timesheets.user_id')
+            ->orderBy('timesheets.date')
             ->get()
-            ->map(fn ($t) => [
-                'id'         => $t->id,
-                'data'       => $t->date->format('Y-m-d'),
-                'user_id'    => $t->user_id,
-                'consultor'  => $t->user->name ?? '—',
-                'projeto'    => $t->project->name ?? '—',
-                'horas'      => round($t->effort_minutes / 60, 2),
-                'status'     => $t->status,
-                'ticket'     => $t->ticket,
-                'observacao' => $t->observation,
-            ]);
+            ->map(function ($t) {
+                $solicitanteRaw = $t->ticket_solicitante;
+                if (is_string($solicitanteRaw)) $solicitanteRaw = json_decode($solicitanteRaw, true);
+                $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
+
+                return [
+                    'id'         => $t->id,
+                    'data'       => $t->date->format('Y-m-d'),
+                    'user_id'    => $t->user_id,
+                    'consultor'  => $t->user->name ?? '—',
+                    'projeto'    => $t->project->name ?? '—',
+                    'horas'      => round($t->effort_minutes / 60, 2),
+                    'status'     => $t->status,
+                    'ticket'     => $t->ticket,
+                    'titulo'     => $t->ticket_titulo,
+                    'solicitante'=> $solicitante,
+                    'observacao' => $t->observation,
+                ];
+            });
 
         return response()->json(['data' => $rows]);
     }
