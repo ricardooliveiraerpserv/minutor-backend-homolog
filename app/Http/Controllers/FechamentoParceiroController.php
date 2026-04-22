@@ -217,13 +217,15 @@ class FechamentoParceiroController extends Controller
             return [];
         }
 
+        $excludeStatuses = [Expense::STATUS_ADJUSTMENT_REQUESTED, Expense::STATUS_REJECTED];
+
         return Expense::with([
             'user:id,name',
             'project:id,name,code',
             'category:id,name',
         ])
             ->whereIn('user_id', $userIds)
-            ->where('status', 'approved')
+            ->whereNotIn('status', $excludeStatuses)
             ->whereBetween('expense_date', [$from, $to])
             ->get()
             ->map(fn ($e) => [
@@ -234,7 +236,56 @@ class FechamentoParceiroController extends Controller
                 'colaborador' => $e->user->name ?? '—',
                 'projeto'     => $e->project->name ?? '—',
                 'valor'       => (float) $e->amount,
+                'status'      => $e->status,
             ])
             ->toArray();
+    }
+
+    // ─── Apontamentos ─────────────────────────────────────────────────────────
+
+    public function apontamentos(string $partnerId, string $yearMonth): JsonResponse
+    {
+        $fechamento = FechamentoParceiro::where('partner_id', $partnerId)
+            ->where('year_month', $yearMonth)
+            ->first();
+
+        // Snapshots não guardam apontamentos — sempre busca ao vivo
+        [$from, $to] = $this->period($yearMonth);
+
+        $userIds = User::where('partner_id', $partnerId)
+            ->where('type', 'parceiro_admin')
+            ->where('enabled', true)
+            ->pluck('id');
+
+        if ($userIds->isEmpty()) {
+            return response()->json(['data' => []]);
+        }
+
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+
+        $rows = Timesheet::with([
+            'user:id,name',
+            'project:id,name,code',
+        ])
+            ->whereIn('user_id', $userIds)
+            ->whereBetween('date', [$from, $to])
+            ->whereNotIn('status', $excludeStatuses)
+            ->whereNull('deleted_at')
+            ->orderBy('date')
+            ->orderBy('user_id')
+            ->get()
+            ->map(fn ($t) => [
+                'id'         => $t->id,
+                'data'       => $t->date->format('Y-m-d'),
+                'user_id'    => $t->user_id,
+                'consultor'  => $t->user->name ?? '—',
+                'projeto'    => $t->project->name ?? '—',
+                'horas'      => round($t->effort_minutes / 60, 2),
+                'status'     => $t->status,
+                'ticket'     => $t->ticket,
+                'observacao' => $t->observation,
+            ]);
+
+        return response()->json(['data' => $rows]);
     }
 }
