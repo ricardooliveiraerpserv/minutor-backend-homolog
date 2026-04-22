@@ -244,6 +244,7 @@ class UserController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'nullable|string|min:6',
             'enabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'rate_type' => 'nullable|in:hourly,monthly',
@@ -274,20 +275,21 @@ class UserController extends Controller
                 $userData['email'] = strtolower(trim($userData['email']));
             }
 
-            // Gerar senha temporária automaticamente
-            $temporaryPassword = $this->generateTemporaryPassword();
+            // Usar senha fornecida pelo admin ou gerar automaticamente
+            $adminProvidedPassword = !empty($userData['password']) ? $userData['password'] : null;
+            $temporaryPassword = $adminProvidedPassword ?? $this->generateTemporaryPassword();
 
             // Remover dashboard_types dos dados do usuário (campo auxiliar, não coluna)
             $dashboardTypes = $userData['dashboard_types'] ?? [];
-            unset($userData['dashboard_types']);
+            unset($userData['dashboard_types'], $userData['password']);
 
-            // Definir senha temporária nos dados do usuário
-            $userData['password'] = Hash::make($temporaryPassword);
+            // Criar usuário com senha placeholder (setTemporaryPassword irá sobrescrever com hash correto)
+            $userData['password'] = 'placeholder';
 
             // Criar usuário
             $user = User::create($userData);
 
-            // Marcar como senha temporária (expira em 24 horas)
+            // Definir senha com hash correto via DB direto (evita duplo hash pelo cast 'hashed')
             $user->setTemporaryPassword($temporaryPassword, 24);
 
             // Sincronizar tipos de dashboard permitidos
@@ -295,7 +297,7 @@ class UserController extends Controller
                 $user->syncDashboardTypes($dashboardTypes);
             }
 
-            // Enviar email de boas-vindas com a senha temporária
+            // Enviar email de boas-vindas com a senha (definida pelo admin ou gerada)
             $user->notify(new WelcomeNotification($temporaryPassword));
 
             DB::commit();
@@ -311,7 +313,8 @@ class UserController extends Controller
                 'user_email' => $user->email,
                 'customer_id' => $user->customer_id,
                 'dashboard_types' => $userData['dashboard_types'],
-                'temporary_password_sent' => true
+                'password_source' => $adminProvidedPassword ? 'admin_defined' : 'auto_generated',
+                'welcome_email_sent' => true,
             ]);
 
             return response()->json($userData, 201);
