@@ -678,6 +678,13 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/reabrir',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'reabrir']);
         });
 
+        // 👤 FECHAMENTO CONSULTOR
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
+        });
+
         // 📅 FERIADOS
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/holidays', [HolidayController::class, 'index']);
