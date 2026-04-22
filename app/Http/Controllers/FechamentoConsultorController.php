@@ -37,7 +37,7 @@ class FechamentoConsultorController extends Controller
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
             ->whereNotNull('consultant_type')
             ->orderBy('name')
-            ->get(['id', 'name', 'type', 'consultant_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
+            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours']);
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
 
@@ -68,6 +68,7 @@ class FechamentoConsultorController extends Controller
             $base = [
                 'user_id'           => $user->id,
                 'nome'              => $user->name,
+                'email'             => $user->email,
                 'type'              => $user->type,
                 'consultant_type'   => $user->consultant_type,
                 'horas_trabalhadas' => $horasTrabalhadas,
