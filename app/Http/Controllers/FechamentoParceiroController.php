@@ -265,7 +265,8 @@ class FechamentoParceiroController extends Controller
 
         $rows = Timesheet::with([
             'user:id,name',
-            'project:id,name,code',
+            'project:id,name,code,contract_type_id',
+            'project.contractType:id,name,code',
         ])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
@@ -281,18 +282,23 @@ class FechamentoParceiroController extends Controller
                 if (is_string($solicitanteRaw)) $solicitanteRaw = json_decode($solicitanteRaw, true);
                 $solicitante = is_array($solicitanteRaw) ? ($solicitanteRaw['name'] ?? null) : null;
 
+                $ct = $t->project?->contractType;
+
                 return [
-                    'id'         => $t->id,
-                    'data'       => $t->date->format('Y-m-d'),
-                    'user_id'    => $t->user_id,
-                    'consultor'  => $t->user->name ?? '—',
-                    'projeto'    => $t->project->name ?? '—',
-                    'horas'      => round($t->effort_minutes / 60, 2),
-                    'status'     => $t->status,
-                    'ticket'     => $t->ticket,
-                    'titulo'     => $t->ticket_titulo,
-                    'solicitante'=> $solicitante,
-                    'observacao' => $t->observation,
+                    'id'                   => $t->id,
+                    'data'                 => $t->date->format('Y-m-d'),
+                    'user_id'              => $t->user_id,
+                    'consultor'            => $t->user->name ?? '—',
+                    'projeto'              => $t->project->name ?? '—',
+                    'projeto_codigo'       => $t->project->code ?? '—',
+                    'tipo_contrato_code'   => $ct?->code ?? 'outros',
+                    'tipo_contrato_nome'   => $ct?->name ?? 'Outros',
+                    'horas'                => round($t->effort_minutes / 60, 2),
+                    'status'               => $t->status,
+                    'ticket'               => $t->ticket,
+                    'titulo'               => $t->ticket_titulo,
+                    'solicitante'          => $solicitante,
+                    'observacao'           => $t->observation,
                 ];
             });
 
