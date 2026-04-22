@@ -341,6 +341,10 @@ class ContractController extends Controller
         // ── Fase Demanda: contratos NÃO-sustentação (admin/coordenador vê todos; cliente vê subset)
         $demandCards = collect();
         if (!$isConsultor) {
+            // IDs de contratos vinculados a requisições (gerenciados pelo card de req no pipeline)
+            $linkedContractIds = \App\Models\ContractRequest::whereNotNull('linked_contract_id')
+                ->pluck('linked_contract_id');
+
             $demandQuery = Contract::with([
                 'customer:id,name',
                 'contractType:id,name',
@@ -352,6 +356,7 @@ class ContractController extends Controller
                   ->orWhereNull('kanban_status');
               })
               ->whereNull('sustentacao_column')
+              ->when($linkedContractIds->isNotEmpty(), fn($q) => $q->whereNotIn('id', $linkedContractIds))
               ->orderBy('kanban_order');
 
             if ($isCliente && $user->customer_id) {
@@ -703,12 +708,12 @@ class ContractController extends Controller
         $linkedContractId    = null;
         $linkedProjectId     = null;
         $linkedCoordinatorId = $data['coordinator_id'] ?? null;
-        // Ambas as decisões levam a req para o "Início Autorizado" (coluna amarela)
-        $toColumn = 'inicio_autorizado';
+        // novo_projeto: req aguarda em req_inicio_autorizado; subprojeto: vai direto para inicio_autorizado
+        $toColumn = $decision === 'novo_projeto' ? 'req_inicio_autorizado' : 'inicio_autorizado';
 
         if ($decision === 'novo_projeto') {
             if (!empty($data['contract_id'])) {
-                // Contrato já criado pelo modal completo — apenas vincular
+                // Contrato já criado pelo modal completo — apenas vincular; mantém no kanban de contratos
                 $contract = \App\Models\Contract::findOrFail($data['contract_id']);
                 $contract->update(['kanban_status' => \App\Models\Contract::KANBAN_NOVO_PROJETO]);
                 $linkedContractId = $contract->id;
