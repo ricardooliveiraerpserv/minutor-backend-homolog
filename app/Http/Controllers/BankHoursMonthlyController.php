@@ -652,7 +652,7 @@ class BankHoursMonthlyController extends Controller
                 'contributed_hours_history' => $contributionHistory,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null,
-                'start_date'  => $parentProjects->min('start_date'),
+                'start_date'  => $parentProjects->min('start_date')?->format('Y-m-d'),
                 'has_support' => (function() use ($parentProjects): bool {
                     foreach ($parentProjects as $proj) {
                         if (str_contains(strtolower(trim($proj->serviceType->name ?? '')), 'sustenta')) return true;
