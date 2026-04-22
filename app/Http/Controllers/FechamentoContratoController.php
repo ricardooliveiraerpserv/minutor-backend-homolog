@@ -40,7 +40,7 @@ class FechamentoContratoController extends Controller
             'project.parentProject.customer:id,name,company_name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->get();
 
@@ -101,7 +101,7 @@ class FechamentoContratoController extends Controller
 
         $allTimeMinutes = [];
         if ($bhProjectIds->isNotEmpty()) {
-            $allTimeMinutes = Timesheet::where('status', Timesheet::STATUS_APPROVED)
+            $allTimeMinutes = Timesheet::whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
                 ->whereNull('deleted_at')
                 ->whereIn('project_id', $bhProjectIds)
                 ->selectRaw('project_id, SUM(effort_minutes) as total')

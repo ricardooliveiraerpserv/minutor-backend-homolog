@@ -150,7 +150,7 @@ class FechamentoClienteController extends Controller
         $to   = Carbon::parse("{$toMonth}-01")->endOfMonth()->toDateString();
 
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->whereHas('project', function ($q) use ($customerId, $contractCode) {
                 $q->where('customer_id', $customerId);
@@ -174,7 +174,7 @@ class FechamentoClienteController extends Controller
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereBetween('timesheets.date', [$from, $to])
-            ->where('timesheets.status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('timesheets.status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.project_id', $projectIds)
             ->orderBy('timesheets.project_id')
@@ -391,8 +391,10 @@ class FechamentoClienteController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
             ->distinct()
@@ -407,14 +409,14 @@ class FechamentoClienteController extends Controller
             ->get();
 
         $hoursByProject = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
-        $totalConsumedByProject = Timesheet::where('status', Timesheet::STATUS_APPROVED)
+        $totalConsumedByProject = Timesheet::whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
@@ -426,7 +428,7 @@ class FechamentoClienteController extends Controller
         if ($includeTimesheets) {
             $allTs = Timesheet::with('user:id,name')
                 ->whereBetween('date', [$from, $to])
-                ->where('status', Timesheet::STATUS_APPROVED)
+                ->whereNotIn('status', $excludeStatuses)
                 ->whereNull('deleted_at')
                 ->whereIn('project_id', $projectIds)
                 ->orderBy('date')
@@ -555,7 +557,7 @@ class FechamentoClienteController extends Controller
         ])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId))
             ->whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->get();
 

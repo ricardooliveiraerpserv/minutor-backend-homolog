@@ -68,7 +68,7 @@ class FechamentoController extends Controller
             'project.customer:id,name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_PENDING])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->get();
 
@@ -88,7 +88,7 @@ class FechamentoController extends Controller
             foreach ($userTs->groupBy('project_id') as $projectId => $projTs) {
                 $project = $projTs->first()->project;
                 $approved = round($projTs->where('status', Timesheet::STATUS_APPROVED)->sum('effort_minutes') / 60, 2);
-                $pending  = round($projTs->where('status', Timesheet::STATUS_PENDING)->sum('effort_minutes') / 60, 2);
+                $pending  = round($projTs->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_CONFLICTED])->sum('effort_minutes') / 60, 2);
                 $projExpenses = $expenses->get($projectId, collect());
                 $rows[] = [
                     'consultor_id'       => $userId,
@@ -124,7 +124,7 @@ class FechamentoController extends Controller
 
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->get();
 
@@ -178,9 +178,11 @@ class FechamentoController extends Controller
 
         [$from, $to] = $this->period($yearMonth);
 
-        // Projetos que tiveram apontamentos aprovados no período
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+
+        // Projetos que tiveram apontamentos no período (exceto ajuste/rejeitado)
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->distinct()
             ->pluck('project_id');
@@ -192,9 +194,9 @@ class FechamentoController extends Controller
             ->whereIn('id', $projectIds)
             ->get();
 
-        // Horas aprovadas por projeto no mês
+        // Horas por projeto no mês
         $hoursByProject = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
@@ -435,7 +437,7 @@ class FechamentoController extends Controller
             'project.customer:id,name',
         ])
             ->whereBetween('date', [$from, $to])
-            ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_PENDING])
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->get();
 
@@ -451,7 +453,7 @@ class FechamentoController extends Controller
             foreach ($userTs->groupBy('project_id') as $projectId => $projTs) {
                 $project      = $projTs->first()->project;
                 $approved     = round($projTs->where('status', Timesheet::STATUS_APPROVED)->sum('effort_minutes') / 60, 2);
-                $pending      = round($projTs->where('status', Timesheet::STATUS_PENDING)->sum('effort_minutes') / 60, 2);
+                $pending      = round($projTs->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_CONFLICTED])->sum('effort_minutes') / 60, 2);
                 $projExpenses = $expenses->get($projectId, collect());
                 $rows[] = [
                     'consultor_id'       => $userId,
@@ -480,7 +482,7 @@ class FechamentoController extends Controller
 
         $timesheets = Timesheet::with('user:id,name,type,hourly_rate,rate_type')
             ->whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
             ->whereNull('deleted_at')
             ->get();
 
@@ -525,8 +527,10 @@ class FechamentoController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
 
+        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED];
+
         $projectIds = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->distinct()->pluck('project_id');
 
@@ -534,7 +538,7 @@ class FechamentoController extends Controller
             ->whereIn('id', $projectIds)->get();
 
         $hoursByProject = Timesheet::whereBetween('date', [$from, $to])
-            ->where('status', Timesheet::STATUS_APPROVED)
+            ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->whereIn('project_id', $projectIds)
             ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')

@@ -176,7 +176,7 @@ class FechamentoParceiroController extends Controller
         foreach ($users as $user) {
             $minutos = Timesheet::where('user_id', $user->id)
                 ->whereBetween('date', [$from, $to])
-                ->where('status', Timesheet::STATUS_APPROVED)
+                ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED])
                 ->whereNull('deleted_at')
                 ->sum('effort_minutes');
 
