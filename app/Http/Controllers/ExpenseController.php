@@ -1164,8 +1164,8 @@ class ExpenseController extends Controller
     {
         $user = Auth::user();
 
-        if (!$user->isAdmin()) {
-            return $this->accessDeniedResponse('Apenas administradores podem marcar despesas como pagas.');
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->hasAccess('expenses.pay')) {
+            return $this->accessDeniedResponse('Sem permissão para marcar despesas como pagas.');
         }
 
         $expense = Expense::find($id);
