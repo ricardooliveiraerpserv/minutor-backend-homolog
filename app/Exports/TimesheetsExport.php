@@ -30,7 +30,9 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
                 'movidesk_tickets.solicitante as ticket_solicitante'
             );
 
-        if (!$this->user->isAdmin() && !$this->user->isCoordenador() && !$this->user->hasAccess('hours.view_all')) {
+        if ($this->user->isCoordenador() && $this->user->coordinator_type === 'sustentacao') {
+            $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+        } elseif (!$this->user->isAdmin() && !$this->user->isCoordenador() && !$this->user->hasAccess('hours.view_all')) {
             if ($this->user->isCliente() && $this->user->customer_id) {
                 $query->whereHas('project', fn($q) => $q->where('customer_id', $this->user->customer_id));
             } else {
