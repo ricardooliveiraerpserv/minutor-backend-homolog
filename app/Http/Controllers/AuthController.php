@@ -700,27 +700,8 @@ class AuthController extends Controller
             ], 401);
         }
 
-        // Buscar permissões dos roles
-        $rolePermissions = $user->getAllPermissions()->pluck('name')->toArray();
-
-        // Buscar tipos de dashboard permitidos para o usuário
-        $dashboardTypes = $user->getAllowedDashboardTypes();
-
-        // Adicionar permissões de dashboard baseadas nos tipos permitidos
-        $dashboardPermissions = [];
-
-        // Se o usuário tem acesso a algum dashboard, adiciona permissão geral
-        if (!empty($dashboardTypes)) {
-            $dashboardPermissions[] = 'dashboards.view';
-
-            // Adiciona permissão específica para cada tipo de dashboard
-            foreach ($dashboardTypes as $dashboardType) {
-                $dashboardPermissions[] = "dashboards.{$dashboardType}.view";
-            }
-        }
-
-        // Combinar todas as permissões (roles + dashboards)
-        $allPermissions = array_unique(array_merge($rolePermissions, $dashboardPermissions));
+        // Buscar permissões via PermissionService
+        $allPermissions = \App\Services\PermissionService::for($user);
 
         return response()->json([
             'success' => true,

@@ -574,7 +574,7 @@ class UserController extends Controller
 
         // Não pode excluir último administrador
         if ($user->isAdmin()) {
-            $adminCount = User::role('Administrator')->count();
+            $adminCount = User::where('type', 'admin')->count();
             if ($adminCount <= 1) {
                 return $this->businessRuleResponse(
                     'CANNOT_DELETE_LAST_ADMIN',
@@ -582,6 +582,18 @@ class UserController extends Controller
                     'Deve existir pelo menos um administrador no sistema'
                 );
             }
+        }
+
+        // Não pode excluir usuário com movimentações
+        $hasTimesheets = \App\Models\Timesheet::where('user_id', $user->id)->exists();
+        $hasExpenses   = \App\Models\Expense::where('user_id', $user->id)->exists();
+
+        if ($hasTimesheets || $hasExpenses) {
+            return $this->businessRuleResponse(
+                'USER_HAS_MOVEMENTS',
+                'Usuário possui movimentações',
+                'Não é possível excluir um usuário que possui apontamentos ou despesas registrados. Desative o usuário em vez de excluí-lo.'
+            );
         }
 
         DB::beginTransaction();
