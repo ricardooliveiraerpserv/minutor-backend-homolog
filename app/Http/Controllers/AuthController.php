@@ -268,6 +268,7 @@ class AuthController extends Controller
                 'type'                  => $user->type,
                 'coordinator_type'      => $user->coordinator_type,
                 'extra_permissions'     => $user->extra_permissions ?? [],
+                'permissions'           => \App\Services\PermissionService::for($user),
                 'consultant_type'       => $user->consultant_type,
                 'rate_type'             => $user->rate_type,
                 'hourly_rate'           => $user->hourly_rate,
