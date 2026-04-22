@@ -37,6 +37,7 @@ class PermissionService
             }
         } else {
             $groupPermissions = $user->permissionGroups()
+                ->get()
                 ->pluck('permissions')
                 ->flatten()
                 ->all();
