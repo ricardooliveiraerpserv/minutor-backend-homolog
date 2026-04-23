@@ -160,6 +160,10 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contrato com projeto gerado não pode ser excluído.'], 422);
         }
 
+        if ($contract->kanbanLogs()->exists()) {
+            return response()->json(['message' => 'Contrato com movimentação registrada não pode ser excluído.'], 422);
+        }
+
         foreach ($contract->attachments as $att) {
             Storage::delete($att->path);
         }
