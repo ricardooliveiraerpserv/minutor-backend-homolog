@@ -627,6 +627,13 @@ class ContractController extends Controller
                 $updateData['parent_project_id'] = $parentProjectId;
             }
             $contract->update($updateData);
+
+            // Quando um contrato novo_projeto chega em inicio_autorizado, avança a requisição vinculada
+            if ($contract->getOriginal('kanban_status') === 'novo_projeto') {
+                \App\Models\ContractRequest::where('linked_contract_id', $contract->id)
+                    ->where('kanban_column', 'req_inicio_autorizado')
+                    ->update(['kanban_column' => 'inicio_autorizado']);
+            }
         } elseif (in_array($toColumn, $validDemandColumns)) {
             $contract->update([
                 'kanban_status'         => $toColumn,
