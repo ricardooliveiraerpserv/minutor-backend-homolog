@@ -5,16 +5,14 @@ use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
-    public $withinTransaction = false;
-
     public function up(): void
     {
         $driver = DB::getDriverName();
 
         if ($driver === 'pgsql') {
-            // No PostgreSQL, enum é um tipo nomeado — precisamos recriar com ALTER TYPE
-            DB::statement("ALTER TYPE timesheets_status ADD VALUE IF NOT EXISTS 'conflicted'");
-            DB::statement("ALTER TYPE timesheets_status ADD VALUE IF NOT EXISTS 'adjustment_requested'");
+            // timesheets.status usa VARCHAR + CHECK constraint (não ENUM nativo)
+            DB::statement("ALTER TABLE timesheets DROP CONSTRAINT IF EXISTS timesheets_status_check");
+            DB::statement("ALTER TABLE timesheets ADD CONSTRAINT timesheets_status_check CHECK (status IN ('pending','approved','rejected','conflicted','adjustment_requested'))");
         } elseif ($driver === 'mysql') {
             DB::statement("ALTER TABLE timesheets MODIFY COLUMN status ENUM('pending','approved','rejected','conflicted','adjustment_requested') DEFAULT 'pending'");
         }
@@ -22,10 +20,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        // PostgreSQL não suporta remoção de valores de enum sem recriar o tipo
-        // Apenas atualizamos os registros para um status válido
-        DB::table('timesheets')
-            ->where('status', 'adjustment_requested')
-            ->update(['status' => 'pending']);
+        DB::table('timesheets')->whereIn('status', ['conflicted', 'adjustment_requested'])->update(['status' => 'pending']);
+        DB::statement("ALTER TABLE timesheets DROP CONSTRAINT IF EXISTS timesheets_status_check");
+        DB::statement("ALTER TABLE timesheets ADD CONSTRAINT timesheets_status_check CHECK (status IN ('pending','approved','rejected'))");
     }
 };
