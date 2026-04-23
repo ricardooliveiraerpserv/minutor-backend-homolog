@@ -425,6 +425,7 @@ class ContractController extends Controller
                 'serviceType:id,name',
             ])
             ->whereNotNull('sustentacao_column')
+            ->whereNull('project_id')
             ->orderBy('kanban_order')
             ->get();
 
@@ -535,6 +536,7 @@ class ContractController extends Controller
                     'kanban_status'         => Contract::KANBAN_ALOCADO,
                     'kanban_coordinator_id' => $coordinatorId,
                     'kanban_order'          => $request->input('order', 0),
+                    'sustentacao_column'    => null,
                 ]);
             } else {
                 if (!in_array($contract->status, [Contract::STATUS_INICIO_AUTORIZADO, Contract::STATUS_APROVADO])) {
@@ -592,6 +594,7 @@ class ContractController extends Controller
                         'kanban_status'         => Contract::KANBAN_ALOCADO,
                         'kanban_coordinator_id' => $coordinatorId,
                         'kanban_order'          => $request->input('order', 0),
+                        'sustentacao_column'    => null,
                     ]);
                 });
             }
