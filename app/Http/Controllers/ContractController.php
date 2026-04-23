@@ -6,6 +6,8 @@ use App\Models\Contract;
 use App\Models\ContractAttachment;
 use App\Models\ContractContact;
 use App\Models\ContractKanbanLog;
+use App\Models\Expense;
+use App\Models\Timesheet;
 use App\Models\ProjectKanbanLog;
 use App\Models\ContractType;
 use App\Models\Customer;
@@ -157,11 +159,12 @@ class ContractController extends Controller
     public function destroy(Contract $contract): JsonResponse
     {
         if ($contract->project_id) {
-            return response()->json(['message' => 'Contrato com projeto gerado não pode ser excluído.'], 422);
-        }
-
-        if ($contract->kanbanLogs()->exists()) {
-            return response()->json(['message' => 'Contrato com movimentação registrada não pode ser excluído.'], 422);
+            if (Expense::where('project_id', $contract->project_id)->exists()) {
+                return response()->json(['message' => 'Contrato com despesas registradas não pode ser excluído.'], 422);
+            }
+            if (Timesheet::where('project_id', $contract->project_id)->exists()) {
+                return response()->json(['message' => 'Contrato com apontamentos registrados não pode ser excluído.'], 422);
+            }
         }
 
         foreach ($contract->attachments as $att) {
