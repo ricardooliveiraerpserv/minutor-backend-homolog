@@ -739,25 +739,16 @@ class ContractController extends Controller
                 $linkedContractId = $contract->id;
             }
         } else {
-            // subprojeto: contrato criado externamente + vincula DIRETAMENTE ao projeto pai existente
-            // Não gera projeto novo — o projeto pai já existe.
+            // subprojeto: contrato aguarda em inicio_autorizado (igual ao novo_projeto)
+            // O coordenador aloca no Kanban de Contratos; project_id é setado quando o projeto pai é gerado.
             $linkedProjectId = $data['project_id'] ?? null;
             if (!empty($data['contract_id'])) {
                 $contract = \App\Models\Contract::findOrFail($data['contract_id']);
-                $updateData = [
-                    'kanban_status' => \App\Models\Contract::KANBAN_ALOCADO,
-                    'status'        => \App\Models\Contract::STATUS_ATIVO,
-                ];
-                if ($linkedProjectId) {
-                    $parentProject = \App\Models\Project::with('coordinators:id')->find($linkedProjectId);
-                    $updateData['project_id'] = $linkedProjectId;
-                    // Herda primeiro coordenador do projeto pai para aparecer na fila correta no kanban
-                    $firstCoord = $parentProject?->coordinators->first();
-                    if ($firstCoord) {
-                        $updateData['kanban_coordinator_id'] = $firstCoord->id;
-                    }
-                }
-                $contract->update($updateData);
+                $contract->update([
+                    'kanban_status' => \App\Models\Contract::KANBAN_INICIO_AUTORIZADO,
+                    'status'        => \App\Models\Contract::STATUS_INICIO_AUTORIZADO,
+                    'parent_project_id' => $linkedProjectId,
+                ]);
                 $linkedContractId = $contract->id;
             }
         }
