@@ -390,7 +390,6 @@ class ContractController extends Controller
             'coordinators:id,name',
             'consultants:id,name',
         ])->whereNotNull('contract_id')
-          ->whereNotIn('status', [\App\Models\Project::STATUS_CANCELLED])
           ->orderBy('updated_at', 'desc');
 
         if ($isConsultor) {
