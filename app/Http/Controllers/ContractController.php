@@ -457,7 +457,7 @@ class ContractController extends Controller
         // ── Requisições pendentes (contract_requests sem contrato gerado)
         $requestCards = collect();
         if (!$isConsultor) {
-            $reqQuery = \App\Models\ContractRequest::with(['customer:id,name', 'createdBy:id,name', 'linkedContract:id,code,project_name'])
+            $reqQuery = \App\Models\ContractRequest::with(['customer:id,name', 'createdBy:id,name', 'linkedContract:id,project_id,project_name', 'linkedContract.project:id,code'])
                 ->where(function ($q) {
                     $q->whereNull('contract_id')
                       ->orWhereIn('kanban_column', ['req_planejamento', 'req_inicio_autorizado', 'inicio_autorizado', 'req_em_andamento']);
@@ -487,7 +487,7 @@ class ContractController extends Controller
                 'kanban_column'          => $r->kanban_column ?? 'backlog',
                 'req_decision'           => $r->req_decision,
                 'linked_contract_id'     => $r->linked_contract_id,
-                'linked_contract_code'   => $r->linkedContract?->code,
+                'linked_contract_code'   => $r->linkedContract?->project?->code,
                 'linked_coordinator_id'  => $r->linked_coordinator_id,
                 'created_at'             => $r->created_at?->toISOString(),
             ]);
