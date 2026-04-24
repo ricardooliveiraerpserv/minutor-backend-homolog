@@ -116,7 +116,7 @@ class UserController extends Controller
     public function index(Request $request): JsonResponse
     {
         $user = Auth::user();
-        $pageSize = min((int) $request->get('pageSize', 20), 100);
+        $pageSize = min((int) $request->get('pageSize', 20), 500);
         $page = (int) $request->get('page', 1);
 
         $query = User::with(['customer']);
