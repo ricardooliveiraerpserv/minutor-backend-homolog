@@ -349,11 +349,29 @@ class Project extends Model
     }
 
     /**
+     * Scope para projetos que aceitam novos lançamentos (despesas e apontamentos).
+     * Projetos pausados permitem registro de lançamentos pendentes — apenas cancelados e encerrados bloqueiam.
+     */
+    public function scopeOpen($query)
+    {
+        return $query->whereNotIn('status', [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
+    }
+
+    /**
      * Verifica se o projeto está ativo (permite novos lançamentos)
      */
     public function isActive(): bool
     {
         return !in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_FINISHED, self::STATUS_PAUSED]);
+    }
+
+    /**
+     * Verifica se o projeto aceita novos lançamentos (despesas e apontamentos).
+     * Projetos pausados ainda permitem lançamentos — apenas cancelados e encerrados bloqueiam.
+     */
+    public function isOpen(): bool
+    {
+        return !in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
     }
 
     /**

@@ -420,8 +420,8 @@ class ExpenseController extends Controller
             return $this->accessDeniedResponse('Usuários com perfil Cliente não podem registrar despesas.');
         }
 
-        // Verificar se o projeto existe e permite novos lançamentos
-        if (!$project || !$project->isActive()) {
+        // Verificar se o projeto existe e permite novos lançamentos (paused ainda permite)
+        if (!$project || !$project->isOpen()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Não é possível lançar despesas em projetos com status ' . ($project ? '"' . $project->status_display . '"' : 'inativo') . '.',
@@ -603,7 +603,7 @@ class ExpenseController extends Controller
         // Verificar acesso ao novo projeto se alterado
         if (isset($updateData['project_id'])) {
             $project = Project::find($updateData['project_id']);
-            if (!$project || !$project->isActive()) {
+            if (!$project || !$project->isOpen()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Não é possível lançar despesas em projetos com status ' . ($project ? '"' . $project->status_display . '"' : 'inativo') . '.',

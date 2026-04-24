@@ -151,6 +151,7 @@ class ProjectController extends Controller
             $q = Project::select('id', 'name', 'code', 'status');
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
+            elseif ($status === 'open') $q->open();
             elseif ($status) $q->where('status', $status);
             if ($request->get('customer_id')) $q->where('customer_id', $request->get('customer_id'));
             $items = $q->orderBy('name')->limit($perPage)->get();
@@ -271,8 +272,10 @@ class ProjectController extends Controller
         $nodeStateMap = collect(); // id => node_state ('ACTIVE' | 'DISABLED')
 
         if ($status) {
-            if ($status === 'active') {
-                $query->active(); // Scope: exclui cancelled e finished
+            if ($status === 'open') {
+                $query->open(); // Scope: exclui apenas cancelled e finished (permite paused)
+            } elseif ($status === 'active') {
+                $query->active(); // Scope: exclui cancelled, finished e paused
             } else {
                 // CTE recursiva: sobe a árvore a partir dos nós que batem,
                 // depois expande para mostrar todos os filhos de cada ancestral.

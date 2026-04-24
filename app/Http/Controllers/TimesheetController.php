@@ -494,14 +494,14 @@ class TimesheetController extends Controller
             }
         }
 
-        // Verificar se o projeto existe e está ativo
+        // Verificar se o projeto existe e está aberto para lançamentos (paused ainda permite)
         $project = Project::find($request->project_id);
-        if (!$project || !$project->isActive()) {
+        if (!$project || !$project->isOpen()) {
             return response()->json([
                 'code' => 'INACTIVE_PROJECT',
                 'type' => 'error',
                 'message' => 'Projeto inativo ou não encontrado',
-                'detailMessage' => 'Não é possível apontar horas em projetos inativos ou inexistentes'
+                'detailMessage' => 'Não é possível apontar horas em projetos cancelados ou encerrados'
             ], 422);
         }
 
@@ -934,12 +934,12 @@ class TimesheetController extends Controller
         // Validar customer_id e project_id quando fornecidos
         if (isset($validatedData['project_id'])) {
             $project = Project::find($validatedData['project_id']);
-            if (!$project || !$project->isActive()) {
+            if (!$project || !$project->isOpen()) {
                 return response()->json([
                     'code' => 'INACTIVE_PROJECT',
                     'type' => 'error',
                     'message' => 'Projeto inativo ou não encontrado',
-                    'detailMessage' => 'Não é possível apontar horas em projetos inativos ou inexistentes'
+                    'detailMessage' => 'Não é possível apontar horas em projetos cancelados ou encerrados'
                 ], 422);
             }
 
