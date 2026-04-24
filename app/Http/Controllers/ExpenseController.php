@@ -54,18 +54,25 @@ class ExpenseController extends Controller
 
     /**
      * Retorna o limite diário efetivo de despesas para um projeto.
-     * Se o projeto não tiver limite próprio, sobe para o projeto pai.
+     * Prioridade: project.max_expense_per_consultant > contract.limite_despesa > parent.max_expense_per_consultant > parent.contract.limite_despesa
      * Retorna null se ilimitado.
      */
     private function getEffectiveDailyLimit(Project $project): ?float
     {
-        // Se o projeto tem um limite explícito definido (> 0), ele tem prioridade sobre unlimited_expense
+        // 1. Limite explícito no projeto tem prioridade máxima
         if ($project->max_expense_per_consultant !== null && (float) $project->max_expense_per_consultant > 0) {
             return (float) $project->max_expense_per_consultant;
         }
-        // Sem limite explícito no projeto filho: checar se é ilimitado
+        // 2. Checar se é explicitamente ilimitado
         if ($project->unlimited_expense) return null;
-        // Sem limite e não ilimitado: tentar herdar do projeto pai
+        // 3. Limite definido no contrato vinculado ao projeto
+        if ($project->contract_id) {
+            $contract = $project->contract ?? \App\Models\Contract::find($project->contract_id);
+            if ($contract && $contract->limite_despesa !== null && (float) $contract->limite_despesa > 0) {
+                return (float) $contract->limite_despesa;
+            }
+        }
+        // 4. Herdar do projeto pai
         if ($project->parent_project_id) {
             $parent = Project::find($project->parent_project_id);
             if ($parent) {
@@ -73,6 +80,12 @@ class ExpenseController extends Controller
                     return (float) $parent->max_expense_per_consultant;
                 }
                 if ($parent->unlimited_expense) return null;
+                if ($parent->contract_id) {
+                    $parentContract = $parent->contract ?? \App\Models\Contract::find($parent->contract_id);
+                    if ($parentContract && $parentContract->limite_despesa !== null && (float) $parentContract->limite_despesa > 0) {
+                        return (float) $parentContract->limite_despesa;
+                    }
+                }
             }
         }
         return null;
