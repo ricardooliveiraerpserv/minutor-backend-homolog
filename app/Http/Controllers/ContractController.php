@@ -384,13 +384,20 @@ class ContractController extends Controller
         }
 
         // ── Fase Projeto: projetos gerados a partir de contratos
+        // Inclui também projetos referenciados por contract.project_id (contratos 'alocado')
+        $demandProjectIds = $demandCards->pluck('project_id')->filter()->unique()->values()->toArray();
+
         $projectQuery = \App\Models\Project::with([
             'customer:id,name',
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
-        ])->whereNotNull('contract_id')
-          ->orderBy('updated_at', 'desc');
+        ])->where(function ($q) use ($demandProjectIds) {
+            $q->whereNotNull('contract_id');
+            if (!empty($demandProjectIds)) {
+                $q->orWhereIn('id', $demandProjectIds);
+            }
+        })->orderBy('updated_at', 'desc');
 
         if ($isConsultor) {
             $projectQuery->whereHas('consultants', fn($q) => $q->where('users.id', $user->id));
