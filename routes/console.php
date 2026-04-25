@@ -43,7 +43,7 @@ Schedule::command('projects:ensure-monthly-update')
 
 // Sync de apontamentos Movidesk (fallback do webhook — garante que nenhum apontamento seja perdido)
 Schedule::command('movidesk:sync')
-  ->everyTwentyMinutes()
+  ->cron('*/20 * * * *')
   ->name('movidesk-sync')
   ->description('Sincroniza apontamentos do Movidesk via API')
   ->withoutOverlapping()
