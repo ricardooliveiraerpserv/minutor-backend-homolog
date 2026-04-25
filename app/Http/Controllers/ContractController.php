@@ -389,7 +389,7 @@ class ContractController extends Controller
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
-        ])->withSum(['timesheets as total_logged_minutes' => fn($q) => $q->where('status', '!=', 'rejected')], 'duration_minutes')
+        ])->withSum('timesheets', 'duration_minutes')
           ->whereNotNull('contract_id')
           ->orderBy('updated_at', 'desc');
 
@@ -930,7 +930,7 @@ class ContractController extends Controller
 
     private function formatProjectCard(\App\Models\Project $project): array
     {
-        $totalLogged    = (float) ($project->total_logged_minutes ?? 0);
+        $totalLogged    = (float) ($project->timesheets_sum_duration_minutes ?? 0);
         $consumed       = round($totalLogged / 60, 1);
         $totalAvailable = ($project->sold_hours ?? 0) + ($project->hour_contribution ?? 0);
 
