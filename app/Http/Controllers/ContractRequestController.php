@@ -43,15 +43,15 @@ class ContractRequestController extends Controller
 
         $validated = $request->validate([
             'area_requisitante'      => 'required|string|max:255',
-            'project_name'           => 'nullable|string|max:255',
-            'product_owner'          => 'nullable|string|max:255',
-            'modulo_tecnologia'      => 'nullable|string|max:255',
+            'project_name'           => 'required|string|max:255',
+            'product_owner'          => 'required|string|max:255',
+            'modulo_tecnologia'      => 'required|string|max:255',
             'tipo_necessidade'       => 'required|string|in:' . implode(',', array_keys(ContractRequest::TIPOS)),
             'tipo_necessidade_outro' => 'nullable|string|max:255',
             'nivel_urgencia'         => 'required|string|in:' . implode(',', array_keys(ContractRequest::URGENCIAS)),
-            'descricao'              => 'nullable|string',
-            'cenario_atual'          => 'nullable|string',
-            'cenario_desejado'       => 'nullable|string',
+            'descricao'              => 'required|string',
+            'cenario_atual'          => 'required|string',
+            'cenario_desejado'       => 'required|string',
         ]);
 
         // Resolve customer_id: cliente usa o próprio, admin pode passar
