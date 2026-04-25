@@ -398,7 +398,19 @@ class ContractController extends Controller
             $projectQuery->where('customer_id', $user->customer_id);
         }
 
-        $projectCards = $projectQuery->get()->map(fn($p) => $this->formatProjectCard($p));
+        $projects    = $projectQuery->get();
+        $projectIds  = $projects->pluck('id')->toArray();
+        $timesheetSums = count($projectIds) > 0
+            ? DB::table('timesheets')
+                ->whereIn('project_id', $projectIds)
+                ->where('status', '!=', 'rejected')
+                ->groupBy('project_id')
+                ->selectRaw('project_id, SUM(duration_minutes) as total_minutes')
+                ->pluck('total_minutes', 'project_id')
+                ->toArray()
+            : [];
+
+        $projectCards = $projects->map(fn($p) => $this->formatProjectCard($p, (float) ($timesheetSums[$p->id] ?? 0)));
 
         // ── Coordenadores ativos (apenas projetos — sustentação tem colunas próprias)
         $coordinators = User::where('type', 'coordenador')
@@ -927,27 +939,32 @@ class ContractController extends Controller
         ];
     }
 
-    private function formatProjectCard(\App\Models\Project $project): array
+    private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
     {
+        $consumed = round($loggedMinutes / 60, 1);
+        $saldo    = round(($project->sold_hours ?? 0) - $consumed, 1);
+
         return [
-            'card_type'            => 'project',
-            'id'                   => $project->id,
-            'contract_id'         => $project->contract_id,
-            'contract_request_id' => $project->contract_request_id,
-            'customer_name'       => $project->customer?->name,
-            'customer_id'         => $project->customer_id,
-            'project_name'        => $project->name,
-            'code'                => $project->code,
-            'status'              => $project->status,
-            'sold_hours'          => $project->sold_hours,
-            'project_value'       => $project->project_value,
-            'start_date'          => $project->start_date,
-            'expected_end_date'   => $project->expected_end_date,
-            'coordinator_ids'     => $project->coordinators->pluck('id'),
-            'coordinators'        => $project->coordinators->pluck('name'),
-            'consultants'         => $project->consultants->pluck('name'),
-            'is_complete'         => true,
-            'created_at'          => $project->created_at,
+            'card_type'             => 'project',
+            'id'                    => $project->id,
+            'contract_id'           => $project->contract_id,
+            'contract_request_id'   => $project->contract_request_id,
+            'customer_name'         => $project->customer?->name,
+            'customer_id'           => $project->customer_id,
+            'project_name'          => $project->name,
+            'code'                  => $project->code,
+            'status'                => $project->status,
+            'sold_hours'            => $project->sold_hours,
+            'consumed_hours'        => $consumed,
+            'general_hours_balance' => $saldo,
+            'project_value'         => $project->project_value,
+            'start_date'            => $project->start_date,
+            'expected_end_date'     => $project->expected_end_date,
+            'coordinator_ids'       => $project->coordinators->pluck('id'),
+            'coordinators'          => $project->coordinators->pluck('name'),
+            'consultants'           => $project->consultants->pluck('name'),
+            'is_complete'           => true,
+            'created_at'            => $project->created_at,
         ];
     }
 }
