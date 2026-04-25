@@ -405,7 +405,7 @@ class ContractController extends Controller
                 ->whereIn('project_id', $projectIds)
                 ->where('status', '!=', 'rejected')
                 ->groupBy('project_id')
-                ->selectRaw('project_id, SUM(duration_minutes) as total_minutes')
+                ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
                 ->pluck('total_minutes', 'project_id')
                 ->toArray()
             : [];
