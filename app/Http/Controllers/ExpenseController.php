@@ -273,20 +273,23 @@ class ExpenseController extends Controller
             $query->where('project_id', $request->project_id);
         }
 
-        if ($request->filled('customer_id')) {
-            $query->whereHas('project', function ($q) use ($request) {
-                $q->where('customer_id', $request->customer_id);
+        $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));
+        if (!empty($customerIds)) {
+            $query->whereHas('project', function ($q) use ($customerIds) {
+                $q->whereIn('customer_id', $customerIds);
             });
         }
 
-        if ($request->filled('executive_id')) {
-            $query->whereHas('project.customer', function ($q) use ($request) {
-                $q->where('executive_id', $request->executive_id);
+        $executiveIds = array_values(array_filter((array) $request->input('executive_id', [])));
+        if (!empty($executiveIds)) {
+            $query->whereHas('project.customer', function ($q) use ($executiveIds) {
+                $q->whereIn('executive_id', $executiveIds);
             });
         }
 
-        if ($request->filled('user_id')) {
-            $query->where('user_id', $request->user_id);
+        $filterUserIds = array_values(array_filter((array) $request->input('user_id', [])));
+        if (!empty($filterUserIds)) {
+            $query->whereIn('user_id', $filterUserIds);
         }
 
         if ($request->filled('status')) {

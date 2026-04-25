@@ -186,20 +186,23 @@ class TimesheetController extends Controller
             $query->forProject($request->project_id);
         }
 
-        if ($request->filled('customer_id')) {
-            $query->where('timesheets.customer_id', $request->customer_id);
+        $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));
+        if (!empty($customerIds)) {
+            $query->whereIn('timesheets.customer_id', $customerIds);
         }
 
-        if ($request->filled('executive_id')) {
-            $query->whereHas('customer', function ($q) use ($request) {
-                $q->where('executive_id', $request->executive_id);
+        $executiveIds = array_values(array_filter((array) $request->input('executive_id', [])));
+        if (!empty($executiveIds)) {
+            $query->whereHas('customer', function ($q) use ($executiveIds) {
+                $q->whereIn('executive_id', $executiveIds);
             });
         }
 
         $canFilterByUser = $user->isAdmin() || $user->hasAccess('hours.view_all')
             || ($user->type === 'parceiro_admin' && $request->boolean('team_view'));
-        if ($request->filled('user_id') && $canFilterByUser) {
-            $query->forUser($request->user_id);
+        $userIds = array_values(array_filter((array) $request->input('user_id', [])));
+        if (!empty($userIds) && $canFilterByUser) {
+            $query->whereIn('timesheets.user_id', $userIds);
         }
 
         if ($request->filled('status')) {
@@ -218,26 +221,32 @@ class TimesheetController extends Controller
             $query->where('movidesk_tickets.servico', $request->ticket_service);
         }
 
-        if ($request->filled('origin')) {
-            $originVal = $request->get('origin');
-            if ($originVal === 'web') {
-                $query->where(function ($q) {
-                    $q->whereNull('timesheets.origin')->orWhere('timesheets.origin', 'web');
-                });
-            } else {
-                $query->where('timesheets.origin', $originVal);
-            }
-        }
-
-        if ($request->filled('service_type_id')) {
-            $query->whereHas('project', function ($q) use ($request) {
-                $q->where('service_type_id', $request->service_type_id);
+        $originVals = array_values(array_filter((array) $request->input('origin', [])));
+        if (!empty($originVals)) {
+            $query->where(function ($q) use ($originVals) {
+                foreach ($originVals as $originVal) {
+                    if ($originVal === 'web') {
+                        $q->orWhere(function ($inner) {
+                            $inner->whereNull('timesheets.origin')->orWhere('timesheets.origin', 'web');
+                        });
+                    } else {
+                        $q->orWhere('timesheets.origin', $originVal);
+                    }
+                }
             });
         }
 
-        if ($request->filled('contract_type_id')) {
-            $query->whereHas('project', function ($q) use ($request) {
-                $q->where('contract_type_id', $request->contract_type_id);
+        $serviceTypeIds = array_values(array_filter((array) $request->input('service_type_id', [])));
+        if (!empty($serviceTypeIds)) {
+            $query->whereHas('project', function ($q) use ($serviceTypeIds) {
+                $q->whereIn('service_type_id', $serviceTypeIds);
+            });
+        }
+
+        $contractTypeIds = array_values(array_filter((array) $request->input('contract_type_id', [])));
+        if (!empty($contractTypeIds)) {
+            $query->whereHas('project', function ($q) use ($contractTypeIds) {
+                $q->whereIn('contract_type_id', $contractTypeIds);
             });
         }
 
