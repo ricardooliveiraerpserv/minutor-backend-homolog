@@ -218,10 +218,6 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
-        if (!$user->isAdmin() && !$user->isCoordenador()) {
-            return response()->json([], 403);
-        }
-
         $projectId = $request->query('project_id');
 
         $users = User::where(function ($q) use ($projectId) {
