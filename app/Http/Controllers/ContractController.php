@@ -392,6 +392,8 @@ class ContractController extends Controller
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
+            'contractType:id,name',
+            'serviceType:id,name',
         ])->where(function ($q) use ($demandProjectIds) {
             $q->whereNotNull('contract_id');
             if (!empty($demandProjectIds)) {
@@ -970,6 +972,8 @@ class ContractController extends Controller
             'coordinator_ids'       => $project->coordinators->pluck('id'),
             'coordinators'          => $project->coordinators->pluck('name'),
             'consultants'           => $project->consultants->pluck('name'),
+            'contract_type'         => $project->contractType?->name,
+            'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,
             'created_at'            => $project->created_at,
         ];
