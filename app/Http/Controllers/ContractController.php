@@ -26,7 +26,13 @@ class ContractController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Contract::with(['customer:id,name', 'contractType:id,name', 'architect:id,name', 'project:id,code,name'])
+        $query = Contract::with([
+            'customer:id,name',
+            'contractType:id,name',
+            'serviceType:id,name',
+            'architect:id,name',
+            'project:id,code,name,sold_hours,hour_contribution,status',
+        ])
             ->when($request->query('status'), fn($q) => $q->where('status', $request->query('status')))
             ->when($request->query('customer_id'), fn($q) => $q->where('customer_id', $request->query('customer_id')))
             ->when($request->query('search'), function ($q) use ($request) {
@@ -35,7 +41,31 @@ class ContractController extends Controller
             })
             ->orderBy('created_at', 'desc');
 
-        return response()->json($query->paginate($request->query('per_page', 20)));
+        $paginated = $query->paginate($request->query('per_page', 20));
+
+        $projectIds = collect($paginated->items())->pluck('project_id')->filter()->values()->all();
+        if (!empty($projectIds)) {
+            $timesheetSums = Timesheet::whereIn('project_id', $projectIds)
+                ->where('status', 'approved')
+                ->groupBy('project_id')
+                ->selectRaw('project_id, SUM(minutes) as total_minutes')
+                ->pluck('total_minutes', 'project_id');
+
+            $paginated->through(function (Contract $contract) use ($timesheetSums) {
+                if ($contract->project) {
+                    $logged  = (float) ($timesheetSums[$contract->project_id] ?? 0);
+                    $consumed = round($logged / 60, 1);
+                    $contract->project->setAttribute('consumed_hours', $consumed);
+                    $contract->project->setAttribute('general_hours_balance', round(
+                        ($contract->project->sold_hours ?? 0) + ($contract->project->hour_contribution ?? 0) - $consumed,
+                        1
+                    ));
+                }
+                return $contract;
+            });
+        }
+
+        return response()->json($paginated);
     }
 
     public function store(Request $request): JsonResponse
