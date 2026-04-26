@@ -242,7 +242,7 @@ class ExpenseController extends Controller
             // Cliente vê apenas despesas do seu cliente, somente pendentes e aprovadas
             $query->whereHas('project', function ($q) use ($user) {
                 $q->where('customer_id', $user->customer_id);
-            })->whereIn('expenses.status', ['pending', 'approved']);
+            })->whereNotIn('expenses.status', ['rejected', 'adjustment_requested']);
         } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
             $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
             $query->whereIn('expenses.user_id', $partnerUserIds);
