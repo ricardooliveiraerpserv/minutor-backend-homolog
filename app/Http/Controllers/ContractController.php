@@ -48,10 +48,10 @@ class ContractController extends Controller
             $timesheetSums = Timesheet::whereIn('project_id', $projectIds)
                 ->where('status', 'approved')
                 ->groupBy('project_id')
-                ->selectRaw('project_id, SUM(minutes) as total_minutes')
+                ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
                 ->pluck('total_minutes', 'project_id');
 
-            $paginated->through(function (Contract $contract) use ($timesheetSums) {
+            foreach ($paginated->items() as $contract) {
                 if ($contract->project) {
                     $logged  = (float) ($timesheetSums[$contract->project_id] ?? 0);
                     $consumed = round($logged / 60, 1);
@@ -61,8 +61,7 @@ class ContractController extends Controller
                         1
                     ));
                 }
-                return $contract;
-            });
+            }
         }
 
         return response()->json($paginated);
