@@ -24,4 +24,9 @@ class ContractMessage extends Model
     {
         return $this->hasMany(ContractMessageAttachment::class, 'message_id');
     }
+
+    public function reads(): HasMany
+    {
+        return $this->hasMany(ContractMessageRead::class, 'message_id');
+    }
 }

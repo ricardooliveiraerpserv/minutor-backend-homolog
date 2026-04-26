@@ -5,9 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Contract;
 use App\Models\ContractMessage;
 use App\Models\ContractMessageAttachment;
+use App\Models\ContractMessageRead;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class ContractMessageController extends Controller
@@ -134,6 +136,87 @@ class ContractMessageController extends Controller
             ->get();
 
         return response()->json($users);
+    }
+
+    public function markRead(Request $request, Contract $contract): JsonResponse
+    {
+        $user = $request->user();
+
+        if (!$this->canAccess($user, $contract)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $visibilityFilter = $user->isCliente() ? ['client'] : ['internal', 'client'];
+
+        $unreadIds = ContractMessage::where('contract_id', $contract->id)
+            ->where('user_id', '!=', $user->id)
+            ->whereIn('visibility', $visibilityFilter)
+            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id))
+            ->pluck('id');
+
+        if ($unreadIds->isNotEmpty()) {
+            $rows = $unreadIds->map(fn($id) => ['message_id' => $id, 'user_id' => $user->id])->toArray();
+            DB::table('contract_message_reads')->insertOrIgnore($rows);
+        }
+
+        return response()->json(['marked' => $unreadIds->count()]);
+    }
+
+    public function notifications(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $query = ContractMessage::query()
+            ->where('user_id', '!=', $user->id)
+            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id));
+
+        if ($user->isCliente()) {
+            $query->where('visibility', 'client')
+                  ->whereHas('contract', fn($q) => $q->where('customer_id', $user->customer_id));
+        } elseif ($user->isCoordenador()) {
+            $query->whereHas('contract', fn($q) =>
+                $q->where('kanban_coordinator_id', $user->id)
+            );
+        }
+
+        $rows = $query
+            ->with(['contract:id,project_name,customer_id', 'contract.customer:id,name', 'author:id,name'])
+            ->latest()
+            ->limit(10)
+            ->get()
+            ->map(fn($msg) => [
+                'id'            => $msg->id,
+                'contract_id'   => $msg->contract_id,
+                'project_name'  => $msg->contract?->project_name ?? '—',
+                'customer_name' => $msg->contract?->customer?->name ?? '—',
+                'author_name'   => $msg->author?->name ?? '—',
+                'preview'       => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message ?? ''), 0, 80, '…'),
+                'created_at'    => $msg->created_at,
+            ]);
+
+        return response()->json($rows);
+    }
+
+    public function unreadContracts(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $query = ContractMessage::query()
+            ->where('user_id', '!=', $user->id)
+            ->whereDoesntHave('reads', fn($r) => $r->where('user_id', $user->id));
+
+        if ($user->isCliente()) {
+            $query->where('visibility', 'client')
+                  ->whereHas('contract', fn($q) => $q->where('customer_id', $user->customer_id));
+        } elseif ($user->isCoordenador()) {
+            $query->whereHas('contract', fn($q) =>
+                $q->where('kanban_coordinator_id', $user->id)
+            );
+        }
+
+        $contractIds = $query->pluck('contract_id')->unique()->values();
+
+        return response()->json(['contract_ids' => $contractIds]);
     }
 
     private function canAccess(User $user, ?Contract $contract): bool

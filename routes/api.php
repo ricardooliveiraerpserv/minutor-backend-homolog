@@ -773,7 +773,10 @@ Route::prefix('v1')->group(function () {
         // 💬 CHAT DE CONTRATOS
         Route::get('/contracts/{contract}/messages',              [\App\Http\Controllers\ContractMessageController::class, 'index'])->name('contract-messages.index');
         Route::post('/contracts/{contract}/messages',             [\App\Http\Controllers\ContractMessageController::class, 'store'])->name('contract-messages.store');
+        Route::post('/contracts/{contract}/messages/mark-read',   [\App\Http\Controllers\ContractMessageController::class, 'markRead'])->name('contract-messages.mark-read');
         Route::get('/contracts/{contract}/mentionable-users',     [\App\Http\Controllers\ContractMessageController::class, 'mentionableUsers'])->name('contract-messages.mentionable-users');
+        Route::get('/contract-messages/notifications',            [\App\Http\Controllers\ContractMessageController::class, 'notifications'])->name('contract-messages.notifications');
+        Route::get('/contract-messages/unread-contracts',         [\App\Http\Controllers\ContractMessageController::class, 'unreadContracts'])->name('contract-messages.unread-contracts');
         Route::get('/contract-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractMessageController::class, 'downloadAttachment'])->name('contract-messages.attachment-download');
 
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
