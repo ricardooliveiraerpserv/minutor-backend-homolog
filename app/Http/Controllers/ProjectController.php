@@ -29,6 +29,7 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
+    use \App\Attachments\Concerns\DualWritesEntityAttachments;
     /**
      * @OA\Get(
      *     path="/api/v1/projects",
@@ -3718,6 +3719,9 @@ class ProjectController extends Controller
             'size'           => $file->getSize(),
         ]);
 
+        // FASE 11.2 — dual-write (não-fatal).
+        $this->dualWriteEntityAttachment('PROJECT', $project->id, $request->input('type'), $file, $path);
+
         return response()->json($attachment, 201);
     }
 
@@ -3732,7 +3736,9 @@ class ProjectController extends Controller
     public function deleteAttachment(Project $project, ProjectAttachment $attachment): \Illuminate\Http\JsonResponse
     {
         abort_if($attachment->project_id !== $project->id, 404);
+        // FASE 11.2 — soft-delete attachment paralelo ANTES de apagar legado.
         if ($attachment->path) {
+            $this->dualSoftDeleteEntityAttachmentByPath('PROJECT', $project->id, $attachment->path);
             Storage::delete($attachment->path);
         }
         $attachment->delete();
