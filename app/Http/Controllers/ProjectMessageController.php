@@ -20,6 +20,8 @@ use Illuminate\Support\Str;
 
 class ProjectMessageController extends Controller
 {
+    use \App\Attachments\Concerns\DualWritesMessageAttachments;
+
     public function index(Request $request, Project $project): JsonResponse
     {
         $user = $request->user();
@@ -107,6 +109,8 @@ class ProjectMessageController extends Controller
                     'file_size'     => $file->getSize(),
                     'mime_type'     => $file->getMimeType(),
                 ]);
+                // FASE 11 — dual-write (não-fatal).
+                $this->dualWriteMessageAttachment('PROJECT_MESSAGE', $msg->id, $file, $path);
             }
         }
 

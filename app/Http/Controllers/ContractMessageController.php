@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\Storage;
 
 class ContractMessageController extends Controller
 {
+    use \App\Attachments\Concerns\DualWritesMessageAttachments;
+
     public function index(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
@@ -78,6 +80,8 @@ class ContractMessageController extends Controller
                     'file_size'     => $file->getSize(),
                     'mime_type'     => $file->getMimeType(),
                 ]);
+                // FASE 11 — dual-write (não-fatal).
+                $this->dualWriteMessageAttachment('CONTRACT_MESSAGE', $msg->id, $file, $path);
             }
         }
 
