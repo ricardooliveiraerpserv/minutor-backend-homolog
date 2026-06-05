@@ -154,7 +154,82 @@ class ContractController extends Controller
             return $contract;
         });
 
+        // Notifica área administrativa + criador. Cliente ainda NÃO recebe nessa fase.
+        $this->notifyContractCreated($contract);
+
         return response()->json($contract->load(['customer:id,name', 'contacts', 'attachments']), 201);
+    }
+
+    private function notifyContractCreated(Contract $contract): void
+    {
+        try {
+            $recipients = \App\Models\User::query()
+                ->where('enabled', true)
+                ->where(function ($q) use ($contract) {
+                    $q->where('type', 'administrativo');
+                    if ($contract->created_by_id) {
+                        $q->orWhere('id', $contract->created_by_id);
+                    }
+                })
+                ->get();
+
+            foreach ($recipients as $user) {
+                $user->notify(new \App\Notifications\ContractCreatedNotification($contract));
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('ContractCreated notification falhou', [
+                'contract_id' => $contract->id,
+                'err'         => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function notifyInicioAutorizado(Contract $contract): void
+    {
+        try {
+            $executiveId = $contract->executivo_conta_id
+                ?: optional($contract->customer)->executive_id;
+
+            $recipientIds = collect([$executiveId, $this->projectDirectorUserId()])
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            if (empty($recipientIds)) {
+                \Log::info('InicioAutorizado: nenhum destinatário', ['contract_id' => $contract->id]);
+                return;
+            }
+
+            $recipients = \App\Models\User::query()
+                ->whereIn('id', $recipientIds)
+                ->where('enabled', true)
+                ->get();
+
+            foreach ($recipients as $user) {
+                $user->notify(new \App\Notifications\ContractInicioAutorizadoNotification($contract));
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('ContractInicioAutorizado notification falhou', [
+                'contract_id' => $contract->id,
+                'err'         => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Diretor de Projetos — recebe e-mail em TODA fase pós-Novo Contrato
+     * (Início Autorizado, Projeto Gerado). Hoje: Ricardo Badawi.
+     * Em Novo Contrato só recebe se for o executivo do cliente.
+     */
+    private function projectDirectorUserId(): ?int
+    {
+        $email = 'ricardo.badawi@erpserv.com.br';
+        $id = \App\Models\User::query()
+            ->where('email', $email)
+            ->where('enabled', true)
+            ->value('id');
+        return $id ? (int) $id : null;
     }
 
     public function show(Contract $contract): JsonResponse
@@ -369,11 +444,52 @@ class ContractController extends Controller
             return $project;
         });
 
+        // Notifica executivo da conta + coordenadores atribuídos + contatos do cliente.
+        $this->notifyProjectGenerated($contract->fresh(['customer', 'contacts']), $project, $coordinatorIds);
+
         return response()->json([
             'project_id'   => $project->id,
             'project_code' => $project->code,
             'message'      => 'Projeto gerado com sucesso.',
         ]);
+    }
+
+    private function notifyProjectGenerated(Contract $contract, Project $project, array $coordinatorIds): void
+    {
+        try {
+            // Internos: executivo da conta + coordenadores selecionados + diretor de projetos.
+            $internalIds = collect([$contract->executivo_conta_id, $this->projectDirectorUserId()])
+                ->merge($coordinatorIds)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            if (!empty($internalIds)) {
+                $internals = \App\Models\User::query()
+                    ->whereIn('id', $internalIds)
+                    ->where('enabled', true)
+                    ->get();
+
+                foreach ($internals as $user) {
+                    $user->notify(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
+                }
+            }
+
+            // Cliente: contatos do contrato com e-mail preenchido.
+            foreach ($contract->contacts as $contact) {
+                if (!empty($contact->email)) {
+                    \Illuminate\Support\Facades\Notification::route('mail', $contact->email)
+                        ->notify(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('ProjectFromContractGenerated notification falhou', [
+                'contract_id' => $contract->id,
+                'project_id'  => $project->id,
+                'err'         => $e->getMessage(),
+            ]);
+        }
     }
 
     public function uploadAttachment(Request $request, Contract $contract): JsonResponse
@@ -809,6 +925,22 @@ class ContractController extends Controller
                     ]);
                 });
             }
+
+            // Card entrou em "Alocado" (qualquer coordenador) vindo de fora →
+            // notifica executivo + coordenador + diretor + contatos. Skip se já
+            // estava em alocado (reatribuição de coordenador não re-dispara).
+            $wasAlocado = $fromColumn === Contract::KANBAN_ALOCADO
+                || str_starts_with($fromColumn, 'coordinator:');
+            if (!$wasAlocado) {
+                $freshContract = $contract->fresh(['customer', 'contacts']);
+                if ($freshContract && $freshContract->project_id) {
+                    $project = \App\Models\Project::find($freshContract->project_id);
+                    if ($project) {
+                        $coordIds = $coordinatorId ? [$coordinatorId] : [];
+                        $this->notifyProjectGenerated($freshContract, $project, $coordIds);
+                    }
+                }
+            }
         } elseif (str_starts_with($toColumn, 'sust_')) {
             if ($err = $this->validateSustentacaoContractType($contract, $toColumn)) {
                 return $err;
@@ -846,6 +978,11 @@ class ContractController extends Controller
             \App\Models\ContractRequest::where('linked_contract_id', $contract->id)
                 ->where('kanban_column', 'req_inicio_autorizado')
                 ->update(['kanban_column' => 'inicio_autorizado']);
+
+            // Notifica executivo da conta (entrou em "Início Autorizado").
+            if ($fromColumn !== Contract::KANBAN_INICIO_AUTORIZADO) {
+                $this->notifyInicioAutorizado($contract->fresh(['customer']));
+            }
         } elseif (in_array($toColumn, ['cancelado', 'pausado'])) {
             // Contrato sem projeto: cancelar ou pausar remove do kanban ativo
             $contract->update([
@@ -859,6 +996,12 @@ class ContractController extends Controller
                 'kanban_coordinator_id' => null,
                 'kanban_order'          => $request->input('order', 0),
             ]);
+
+            // Card caiu em "Novo Contrato" (backlog) vindo de outra coluna →
+            // re-notifica administrativos (mesmo template da criação inicial).
+            if ($toColumn === Contract::KANBAN_BACKLOG && $fromColumn !== Contract::KANBAN_BACKLOG) {
+                $this->notifyContractCreated($contract->fresh(['customer']));
+            }
         }
 
         ContractKanbanLog::create([
@@ -869,7 +1012,58 @@ class ContractController extends Controller
             'coordinator_id' => $coordinatorId ?? null,
         ]);
 
-        return response()->json($this->formatKanbanCard($contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project'])));
+        // Fase card-envolvidos: notifica envolvidos do projeto vinculado quando contrato
+        // já tem project_id (movimentação visível pro time/cliente).
+        $freshContract = $contract->fresh(['customer', 'contractType', 'serviceType', 'kanbanCoordinator', 'project']);
+        if ($freshContract && $freshContract->project_id) {
+            try {
+                app(\App\Services\CardPhaseMovementDispatcher::class)->dispatch(
+                    cardType:   \App\Models\CardEnvolvido::TYPE_PROJECT,
+                    cardId:     $freshContract->project_id,
+                    fromColumn: $this->prettyKanbanColumn($fromColumn),
+                    toColumn:   $this->prettyKanbanColumn($toColumn),
+                    movedBy:    auth()->user(),
+                    note:       null,
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('phase notif kanbanMove falhou', ['contract_id' => $contract->id, 'err' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json($this->formatKanbanCard($freshContract));
+    }
+
+    /**
+     * Converte slug interno do kanban em label legível para emails.
+     */
+    private function prettyKanbanColumn(string $col): string
+    {
+        return match ($col) {
+            'backlog'                 => 'Backlog',
+            'em_planejamento'         => 'Em planejamento',
+            'inicio_autorizado'       => 'Início autorizado',
+            'req_inicio_autorizado'   => 'Início autorizado',
+            'em_execucao'             => 'Em execução',
+            'em_entrega'              => 'Em entrega',
+            'em_homologacao'          => 'Em homologação',
+            'concluido'               => 'Concluído',
+            'cancelado'               => 'Cancelado',
+            'pausado'                 => 'Pausado',
+            'alocado'                 => 'Alocado',
+            'planning'                => 'Em planejamento',
+            'awaiting_start'          => 'Aguardando início',
+            'started'                 => 'Em execução',
+            'liberado_para_testes'    => 'Liberado para testes',
+            'finished'                => 'Concluído',
+            'paused'                  => 'Pausado',
+            'cancelled'               => 'Cancelado',
+            'sust_bh_fixo'            => 'Sustentação · Banco de Horas Fixo',
+            'sust_bh_mensal'          => 'Sustentação · Banco de Horas Mensal',
+            'sust_on_demand'          => 'Sustentação · On Demand',
+            'sust_cloud'              => 'Sustentação · Cloud',
+            'sust_bizify'             => 'Sustentação · Bizify',
+            default => ucfirst(str_replace('_', ' ', $col)),
+        };
     }
 
     // Mover projeto de fase de execução (em_andamento → liberado_para_testes → encerrado)
@@ -940,6 +1134,20 @@ class ContractController extends Controller
             \App\Models\Contract::where('id', $project->contract_id)
                 ->whereNotNull('sustentacao_column')
                 ->update(['sustentacao_column' => null]);
+        }
+
+        // Fase card-envolvidos: notifica envolvidos da movimentação de fase do projeto.
+        try {
+            app(\App\Services\CardPhaseMovementDispatcher::class)->dispatch(
+                cardType:   \App\Models\CardEnvolvido::TYPE_PROJECT,
+                cardId:     $project->id,
+                fromColumn: $this->prettyKanbanColumn((string) $fromStatus),
+                toColumn:   $this->prettyKanbanColumn((string) $newStatus),
+                movedBy:    auth()->user(),
+                note:       null,
+            );
+        } catch (\Throwable $e) {
+            \Log::warning('phase notif projectMove falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
         }
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
@@ -1180,6 +1388,15 @@ class ContractController extends Controller
             'to_column'           => $toColumn,
             'moved_by_id'         => auth()->id(),
         ]);
+
+        // Notifica cliente + executivo da conta + watchers a cada movimentação,
+        // até a requisição virar projeto/contrato (req_decided_at preenchido).
+        try {
+            app(\App\Services\ContractRequestNotifier::class)
+                ->moved($contractRequest->fresh(['customer', 'createdBy', 'watchers.user']), $fromColumn, $toColumn);
+        } catch (\Throwable $e) {
+            \Log::warning('req lifecycle (moved) falhou', ['req_id' => $contractRequest->id, 'err' => $e->getMessage()]);
+        }
 
         return response()->json(['ok' => true]);
     }
