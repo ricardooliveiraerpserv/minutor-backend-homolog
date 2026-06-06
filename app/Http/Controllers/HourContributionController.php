@@ -175,7 +175,38 @@ class HourContributionController extends Controller
             $contribution->refresh();
         }
 
+        // Comunica o CLIENTE: novo aporte de horas em contrato existente.
+        // Só para motivo 'aporte' (excedentes/absorvidas são ajustes internos).
+        if (($validated['motivo'] ?? 'aporte') === 'aporte') {
+            $this->notifyClientNewAporte($project, $contribution);
+        }
+
         return response()->json($contribution, 201);
+    }
+
+    /**
+     * Notifica os usuários CLIENTE do customer do projeto sobre um novo aporte.
+     * Síncrono + best-effort: falha de e-mail não bloqueia o lançamento do aporte.
+     */
+    private function notifyClientNewAporte(Project $project, HourContribution $contribution): void
+    {
+        try {
+            $clients = \App\Models\User::query()
+                ->where('type', 'cliente')
+                ->where('customer_id', $project->customer_id)
+                ->where('enabled', true)
+                ->get();
+
+            foreach ($clients as $client) {
+                $client->notify(new \App\Notifications\ContractAporteNotification($contribution, $project));
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Aporte client notification falhou', [
+                'project_id'      => $project->id,
+                'contribution_id' => $contribution->id ?? null,
+                'err'             => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
