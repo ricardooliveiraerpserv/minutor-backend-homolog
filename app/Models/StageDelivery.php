@@ -57,6 +57,7 @@ class StageDelivery extends Model
         'client_user_id',
         'client_email',
         'client_involved',
+        'extra_clients',
     ];
 
     public const DEPENDENCY_TYPES = ['FS'];
@@ -69,6 +70,7 @@ class StageDelivery extends Model
         'planned_start_at' => 'date:Y-m-d',
         'actual_start_at'  => 'datetime',
         'client_involved'  => 'boolean',
+        'extra_clients'    => 'array',
     ];
 
     public function stage(): BelongsTo

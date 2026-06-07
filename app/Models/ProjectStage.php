@@ -24,6 +24,7 @@ class ProjectStage extends Model
 
     protected $fillable = [
         'project_id',
+        'parent_stage_id',
         'name',
         'responsible_user_id',
         'hours_planned',
@@ -48,6 +49,18 @@ class ProjectStage extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** Etapa-mãe (null = etapa de topo). Sub-etapa quando setado. */
+    public function parentStage(): BelongsTo
+    {
+        return $this->belongsTo(ProjectStage::class, 'parent_stage_id');
+    }
+
+    /** Sub-etapas filhas desta etapa. */
+    public function subStages(): HasMany
+    {
+        return $this->hasMany(ProjectStage::class, 'parent_stage_id')->orderBy('order_index');
     }
 
     public function responsible(): BelongsTo

@@ -339,7 +339,20 @@ class ProjectStageController extends Controller
             'status'              => ['nullable', Rule::in(ProjectStage::STATUSES)],
             'expected_end_date'   => 'nullable|date',
             'stage_start_at'      => 'nullable|date',
+            'parent_stage_id'     => 'nullable|integer|exists:project_stages,id',
         ]);
+
+        // Sub-etapa: valida que a etapa-mãe é do mesmo projeto e é de TOPO (máx. 2
+        // níveis de etapa → não permite sub-sub-etapa).
+        if (!empty($data['parent_stage_id'])) {
+            $parent = ProjectStage::find($data['parent_stage_id']);
+            if (!$parent || $parent->project_id !== $project->id) {
+                return response()->json(['message' => 'Etapa-mãe inválida.'], 422);
+            }
+            if ($parent->parent_stage_id !== null) {
+                return response()->json(['message' => 'Sub-etapa não pode ter sub-etapa (máximo 2 níveis).'], 422);
+            }
+        }
 
         // Bloqueia se a nova etapa fizer SUM(stages.planned) > pool liberado à gestão
         $project->loadMissing('serviceType');
@@ -349,9 +362,15 @@ class ProjectStageController extends Controller
         }
 
         $data['project_id'] = $project->id;
-        $data['order_index'] = (int) $project->stages()->max('order_index') + 1;
+        // order_index dentro do mesmo nível (entre as sub-etapas da mãe, ou entre as de topo).
+        $data['order_index'] = (int) $project->stages()
+            ->where('parent_stage_id', $data['parent_stage_id'] ?? null)
+            ->max('order_index') + 1;
 
         $stage = ProjectStage::create($data);
+
+        // Prazo de entrega do projeto deriva sempre da última data do cronograma.
+        $project->recalcExpectedEndFromSchedule();
 
         return response()->json($stage->load('responsible:id,name,email'), 201);
     }
@@ -406,6 +425,9 @@ class ProjectStageController extends Controller
             }
         }
 
+        // Prazo de entrega do projeto deriva sempre da última data do cronograma.
+        $stage->project?->recalcExpectedEndFromSchedule();
+
         return response()->json($stage->fresh()->load('responsible:id,name,email'));
     }
 
@@ -417,8 +439,11 @@ class ProjectStageController extends Controller
      */
     private function guardProjectCapacity(Project $project, float $delta): ?JsonResponse
     {
-        $pool      = $project->cronogramaPoolHours();
-        $allocated = (float) $project->stages()->sum('hours_planned');
+        $pool = $project->cronogramaPoolHours();
+        // Soma só etapas-folha (sem sub-etapas) pra não contar duas vezes as horas
+        // de uma etapa-mãe e das suas sub-etapas.
+        $parentIds = $project->stages()->whereNotNull('parent_stage_id')->pluck('parent_stage_id')->unique()->all();
+        $allocated = (float) $project->stages()->whereNotIn('id', $parentIds ?: [0])->sum('hours_planned');
         $available = $pool - $allocated;
 
         if ($delta > $available + 0.001) {
@@ -435,7 +460,11 @@ class ProjectStageController extends Controller
 
     public function destroy(ProjectStage $stage): JsonResponse
     {
+        $project = $stage->project;
         $stage->delete();
+
+        // Remover a última etapa pode antecipar o prazo — recalcula.
+        $project?->recalcExpectedEndFromSchedule();
 
         return response()->json(['deleted' => true]);
     }

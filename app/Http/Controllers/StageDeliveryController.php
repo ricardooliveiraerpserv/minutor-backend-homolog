@@ -56,6 +56,10 @@ class StageDeliveryController extends Controller
             'client_user_id'         => 'nullable|integer|exists:users,id',
             'client_email'           => 'nullable|email|max:180',
             'client_involved'        => 'nullable|boolean',
+            'extra_clients'                => 'nullable|array',
+            'extra_clients.*.user_id'      => 'nullable|integer|exists:users,id',
+            'extra_clients.*.email'        => 'nullable|email|max:180',
+            'extra_clients.*.name'         => 'nullable|string|max:180',
         ]);
 
         $data['stage_id'] = $stage->id;
@@ -74,6 +78,9 @@ class StageDeliveryController extends Controller
         }
 
         $delivery = StageDelivery::create($data);
+
+        // Prazo de entrega do projeto deriva sempre da última data do cronograma.
+        $stage->project?->recalcExpectedEndFromSchedule();
 
         $payload = $delivery->load('responsible:id,name,email')->toArray();
         if ($suggested = $this->suggestedDueDate($delivery)) {
@@ -99,6 +106,10 @@ class StageDeliveryController extends Controller
             'client_user_id'         => 'nullable|integer|exists:users,id',
             'client_email'           => 'nullable|email|max:180',
             'client_involved'        => 'nullable|boolean',
+            'extra_clients'                => 'nullable|array',
+            'extra_clients.*.user_id'      => 'nullable|integer|exists:users,id',
+            'extra_clients.*.email'        => 'nullable|email|max:180',
+            'extra_clients.*.name'         => 'nullable|string|max:180',
         ]);
 
         // Guard contra ciclo: atividade não pode depender de si mesma
@@ -121,6 +132,9 @@ class StageDeliveryController extends Controller
 
         $delivery->update($data);
 
+        // Prazo de entrega do projeto deriva sempre da última data do cronograma.
+        $delivery->stage?->project?->recalcExpectedEndFromSchedule();
+
         $payload = $delivery->fresh()->load('responsible:id,name,email')->toArray();
         if ($suggested = $this->suggestedDueDate($delivery->fresh())) {
             $payload['suggested_due_date'] = $suggested;
@@ -137,6 +151,9 @@ class StageDeliveryController extends Controller
             ->update(['depends_on_delivery_id' => null, 'dependency_type' => null]);
 
         $delivery->delete();
+
+        // Remover a última atividade pode antecipar o prazo — recalcula.
+        $delivery->stage?->project?->recalcExpectedEndFromSchedule();
 
         return response()->json(['deleted' => true]);
     }

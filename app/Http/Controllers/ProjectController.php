@@ -2284,8 +2284,9 @@ class ProjectController extends Controller
         $stages = $project->stages()
             ->with([
                 'responsible:id,name,email',
-                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type',
+                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type,client_involved,client_user_id,client_email,extra_clients',
                 'deliveries.responsible:id,name,email',
+                'deliveries.client:id,name,email',
             ])
             ->orderBy('order_index')
             ->get();
@@ -2481,12 +2482,22 @@ class ProjectController extends Controller
             }
             $st->setAttribute('derived_status', $derivedStatus);
             // Fase 10: alinhamento com /stages — earned value se houver horas, senão contagem.
-            $totalHours = (float) $st->deliveries->sum('hours_planned');
-            $doneHours  = (float) $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_DONE)->sum('hours_planned');
+            // Atividades de responsabilidade do CLIENTE são medidas em dias, não horas:
+            // não entram na soma de horas planejadas da etapa nem do progresso.
+            $billableDeliveries = $st->deliveries->reject(fn ($d) => $d->client_involved);
+            $totalHours = (float) $billableDeliveries->sum('hours_planned');
+            $doneHours  = (float) $billableDeliveries->where('status', \App\Models\StageDelivery::STATUS_DONE)->sum('hours_planned');
             $progressPct = $totalHours > 0
                 ? round(($doneHours / $totalHours) * 100, 2)
                 : ($total > 0 ? round(($done / $total) * 100, 2) : 0.0);
             $st->setAttribute('progress_pct', $progressPct);
+
+            // Horas da etapa: soma das atividades + valor "efetivo" (hours_planned da
+            // etapa se preenchido, senão a soma das atividades). A UI mostra o efetivo
+            // pra que as Horas Previstas informadas na criação da etapa apareçam.
+            $stagePlanned = (float) ($st->hours_planned ?? 0);
+            $st->setAttribute('deliveries_hours_planned_sum', $totalHours);
+            $st->setAttribute('effective_hours_planned', $stagePlanned > 0 ? $stagePlanned : $totalHours);
 
             $lastActAt = $st->deliveries->pluck('updated_at')->filter()->max();
             $daysSince = $lastActAt
@@ -2522,7 +2533,8 @@ class ProjectController extends Controller
                 if ($d->status === \App\Models\StageDelivery::STATUS_WAITING_CLIENT) $waitingClientCount++;
                 if ($d->predecessor_state === 'pending')                            $blockedCount++;
                 if ($d->is_late)                                                    $lateCount++;
-                $hoursPlannedTotal += (float) ($d->hours_planned ?? 0);
+                // Atividade do cliente é medida em dias — não soma horas planejadas.
+                if (!$d->client_involved) $hoursPlannedTotal += (float) ($d->hours_planned ?? 0);
                 if ($d->responsible_user_id) $userIdsInvolved[$d->responsible_user_id] = true;
 
                 // Alertas leves por delivery
@@ -2658,6 +2670,9 @@ class ProjectController extends Controller
             'hours_planned'        => round($hoursPlannedTotal, 2),
             'hours_actual'         => round($hoursActualTotal, 2),
             'hours_balance'        => round($hoursPlannedTotal - $hoursActualTotal, 2),
+            // Horas disponibilizadas à gestão (pool do cronograma): coordination_hours
+            // se preenchido, senão 100% das vendidas. Saldo a alocar = disponibilizadas − planejadas.
+            'hours_available'      => round($project->cronogramaPoolHours(), 2),
             'overall_risk'         => $overallRisk,
             'high_risk_stages'     => $highStages,
             'medium_risk_stages'   => $medStages,
@@ -2670,11 +2685,13 @@ class ProjectController extends Controller
 
         // Feriados ativos dentro da janela do cronograma — frontend usa pra replicar
         // BusinessCalendarService::addBusinessHours client-side (sugestão de fim).
+        // Todos os feriados ativos do cadastro (com nome) — o date picker do cronograma
+        // marca/exibe e o BusinessCalendar usa as datas pro cálculo de dias úteis.
+        // Dataset pequeno (~13/ano), então não filtra por janela (picker navega livre).
         $holidays = \App\Models\Holiday::active()
-            ->when($minDate, fn ($q) => $q->whereDate('date', '>=', $minDate->copy()->subMonths(1)))
-            ->when($maxDate, fn ($q) => $q->whereDate('date', '<=', $maxDate->copy()->addMonths(6)))
-            ->pluck('date')
-            ->map(fn ($d) => \Carbon\Carbon::parse($d)->toDateString())
+            ->orderBy('date')
+            ->get(['date', 'name'])
+            ->map(fn ($h) => ['date' => $h->date->toDateString(), 'name' => $h->name])
             ->values();
 
         return response()->json([

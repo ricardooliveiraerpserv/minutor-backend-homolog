@@ -176,6 +176,8 @@ class PermissionService
             'financial.view_own_rate', 'financial.view_project_cost',
             'reports.view', 'reports.export',
             'consultant_groups.view',
+            // Cadastro de feriados: alimenta o calendário do cronograma (rotina do coordenador).
+            'holidays.manage',
         ];
     }
 

@@ -798,6 +798,47 @@ class Project extends Model
     }
 
     /**
+     * Deriva o "Prazo de entrega" (expected_end_date) da última data do cronograma:
+     * o maior entre o fim das etapas (project_stages.expected_end_date) e o prazo das
+     * atividades (stage_deliveries.due_date). Persiste no projeto.
+     *
+     * Regra de negócio (escolha do produto): o prazo SEMPRE segue o cronograma.
+     * Só sincroniza se houver alguma data no cronograma — nunca apaga o prazo de um
+     * projeto sem etapas/atividades datadas.
+     *
+     * @return string|null Nova data (Y-m-d) ou null se o cronograma não tem datas.
+     */
+    public function recalcExpectedEndFromSchedule(): ?string
+    {
+        $latestStage = $this->stages()
+            ->whereNotNull('expected_end_date')
+            ->max('expected_end_date');
+
+        $latestDelivery = \App\Models\StageDelivery::whereHas('stage', fn ($q) =>
+                $q->where('project_id', $this->id))
+            ->whereNotNull('due_date')
+            ->max('due_date');
+
+        $latest = null;
+        foreach ([$latestStage, $latestDelivery] as $d) {
+            if (!$d) continue;
+            $c = \Carbon\Carbon::parse($d)->startOfDay();
+            if (!$latest || $c->gt($latest)) $latest = $c;
+        }
+
+        if (!$latest) {
+            return null;
+        }
+
+        $new = $latest->toDateString();
+        if ($this->expected_end_date?->toDateString() !== $new) {
+            $this->expected_end_date = $new;
+            $this->saveQuietly();
+        }
+        return $new;
+    }
+
+    /**
      * Verificar se o projeto é do tipo On Demand
      */
     public function isOnDemand(): bool

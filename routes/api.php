@@ -539,6 +539,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
             Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
             Route::post('/projects/{project}/cronograma/recalc-preview', [ProjectController::class, 'recalcPreview'])->name('projects.cronograma.recalc-preview');
+
+            // Modelos de cronograma (salvar/aplicar) + copiar de outro projeto
+            Route::get('/cronograma-templates', [\App\Http\Controllers\CronogramaTemplateController::class, 'index'])->name('cronograma-templates.index');
+            Route::post('/cronograma-templates', [\App\Http\Controllers\CronogramaTemplateController::class, 'storeFromProject'])->name('cronograma-templates.store');
+            Route::delete('/cronograma-templates/{template}', [\App\Http\Controllers\CronogramaTemplateController::class, 'destroy'])->name('cronograma-templates.destroy');
+            Route::post('/projects/{project}/cronograma/apply-template', [\App\Http\Controllers\CronogramaTemplateController::class, 'apply'])->name('projects.cronograma.apply-template');
+            Route::post('/projects/{project}/cronograma/copy-from', [\App\Http\Controllers\CronogramaTemplateController::class, 'copyFromProject'])->name('projects.cronograma.copy-from');
             Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
             Route::get('/stages/{stage}/activity', [ProjectStageController::class, 'activity'])->name('stages.activity');
             Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');
