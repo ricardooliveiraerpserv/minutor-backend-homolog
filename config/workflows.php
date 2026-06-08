@@ -40,6 +40,42 @@ return [
         'financeiro'           => 'Financeiro (e-mail fixo)',
     ],
 
+    // O que cada audiência PRECISA do contexto pra resolver (any-of). [] = sempre aplicável.
+    'audience_requires' => [
+        'cliente'              => ['customer'],
+        'contatos_do_contrato' => ['contract'],
+        'executivo_de_contas'  => ['contract', 'customer'],
+        'coordenador'          => ['project'],
+        'administrativo'       => [],
+        'diretor'              => [],
+        'envolvidos_internos'  => ['card'],
+        'envolvidos_cliente'   => ['card'],
+        'watchers'             => ['request'],
+        'autor'                => ['actor'],
+        'consultor'            => ['consultant'],
+        'parceiro'             => ['partner'],
+        'responsavel'          => ['followup'],
+        'financeiro'           => [],
+    ],
+
+    // Capacidades que CADA workflow fornece no contexto (define o que faz sentido nele).
+    'context' => [
+        'contract.created'             => ['contract', 'customer', 'actor'],
+        'contract.project_generated'   => ['contract', 'project', 'customer', 'actor'],
+        'contract.inicio_autorizado'   => ['contract', 'customer', 'actor'],
+        'contract.aporte'              => ['contract', 'project', 'customer', 'actor'],
+        'contract.reajuste'            => ['contract', 'customer', 'actor'],
+        'contract.reajustes_pendentes' => [],
+        'request.lifecycle'            => ['request', 'customer', 'actor'],
+        'card.chat_message'            => ['card', 'actor'],
+        'card.phase_movement'          => ['card', 'actor'],
+        'fechamento.cliente'           => ['contract', 'customer', 'actor'],
+        'fechamento.consultor'         => ['consultant', 'actor'],
+        'fechamento.parceiro'          => ['partner', 'actor'],
+        'timesheet.status'             => ['project', 'actor'],
+        'followup.reminder'            => ['followup', 'actor'],
+    ],
+
     // Workflows agrupados por domínio.
     'workflows' => [
 

@@ -20,6 +20,27 @@ class WorkflowConfigService
     }
 
     /**
+     * Audiências aplicáveis a um workflow: o requisito (any-of) é satisfeito pelo
+     * contexto que o workflow fornece. Audiência sem requisito é sempre aplicável.
+     *
+     * @return array<int, string>
+     */
+    public function availableAudiences(string $key): array
+    {
+        $context  = (array) (config('workflows.context', [])[$key] ?? []);
+        $requires = (array) config('workflows.audience_requires', []);
+
+        $out = [];
+        foreach (array_keys($this->audiences()) as $aud) {
+            $need = (array) ($requires[$aud] ?? []);
+            if (empty($need) || array_intersect($need, $context)) {
+                $out[] = $aud;
+            }
+        }
+        return $out;
+    }
+
+    /**
      * Lista todos os workflows do registry com a config EFETIVA (override ou default)
      * + e-mails extras, agrupável por domínio no FE.
      */
@@ -54,12 +75,19 @@ class WorkflowConfigService
                 ];
             }
 
+            // Audiências que FAZEM SENTIDO neste workflow (contexto satisfaz o requisito).
+            $available = [];
+            foreach ($this->availableAudiences($key) as $aud) {
+                $available[] = ['audience' => $aud, 'label' => $audienceLabels[$aud] ?? $aud];
+            }
+
             $out[] = [
                 'key'         => $key,
                 'label'       => $meta['label'] ?? $key,
                 'domain'      => $meta['domain'] ?? 'Outros',
                 'description' => $meta['description'] ?? null,
                 'audiences'   => $audiences,
+                'available'   => $available,
                 'extra_emails' => ($extras[$key] ?? collect())
                     ->map(fn ($x) => ['email' => $x->email, 'channel' => $x->channel])
                     ->values()->all(),
