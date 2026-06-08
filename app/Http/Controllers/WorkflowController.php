@@ -52,6 +52,20 @@ class WorkflowController extends Controller
         ]);
     }
 
+    public function test(Request $request, string $key, \App\Workflows\WorkflowTestSender $sender): JsonResponse
+    {
+        $this->ensureAdmin($request);
+        $data = $request->validate(['email' => 'required|email']);
+
+        try {
+            $sender->send($key, $data['email']);
+        } catch (\Throwable $e) {
+            return response()->json(['ok' => false, 'message' => 'Falha ao enviar: ' . $e->getMessage()], 422);
+        }
+
+        return response()->json(['ok' => true, 'message' => "E-mail de teste enviado para {$data['email']}."]);
+    }
+
     private function ensureAdmin(Request $request): void
     {
         if (!optional($request->user())->isAdmin()) {

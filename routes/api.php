@@ -345,6 +345,7 @@ Route::prefix('v1')->group(function () {
         // ⚙️ CENTRAL DE WORKFLOWS — quem recebe cada e-mail (admin-only, guard no controller)
         Route::get('/workflows', [\App\Http\Controllers\WorkflowController::class, 'index'])->name('workflows.index');
         Route::put('/workflows/{key}', [\App\Http\Controllers\WorkflowController::class, 'update'])->name('workflows.update');
+        Route::post('/workflows/{key}/test', [\App\Http\Controllers\WorkflowController::class, 'test'])->name('workflows.test');
 
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {
