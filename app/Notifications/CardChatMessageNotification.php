@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -14,6 +15,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class CardChatMessageNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use HasWorkflowCc;
 
     public function __construct(
         public string $cardType,          // 'contract_request' | 'project'
@@ -40,8 +42,8 @@ class CardChatMessageNotification extends Notification implements ShouldQueue
         $subjectNoun  = $isRequest ? 'requisição' : 'projeto';
         $subject = "{$subjectPrefix} Nova mensagem na {$subjectNoun} {$this->cardCode} — {$this->cardTitle}";
 
-        return (new MailMessage)
-            ->subject($subject)
+        return $this->applyCc((new MailMessage)
+            ->subject($subject))
             ->view('emails.cards.chat-message', [
                 'eyebrow'       => $eyebrow,
                 'cardType'      => $this->cardType,

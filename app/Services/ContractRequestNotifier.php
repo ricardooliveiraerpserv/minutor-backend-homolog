@@ -37,13 +37,16 @@ class ContractRequestNotifier
     private function dispatch(ContractRequest $req, string $stage, ?string $fromColumn, string $toColumn): void
     {
         try {
-            // Após req_decided_at (virou projeto/contrato), cliente sai do loop.
-            // Mas o executivo continua recebendo? Decisão: para com tudo aqui
-            // — depois é o pipeline de movimentação de card que assume.
+            // Após req_decided_at (virou projeto/contrato), para o lifecycle.
             if ($req->req_decided_at) return;
 
-            $recipients = $this->resolveRecipients($req);
-            if (empty($recipients)) return;
+            $req->loadMissing(['customer', 'createdBy', 'watchers.user']);
+
+            // Destinatários pela Central de Workflows (papéis configuráveis).
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('request.lifecycle', [
+                'request' => $req,
+            ]);
+            if (empty($rcpt['to'])) return;
 
             $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
             $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
@@ -51,8 +54,8 @@ class ContractRequestNotifier
             $title = $req->title ?? ($req->descricao ? \Str::limit($req->descricao, 80) : ($req->area_requisitante ?? 'Requisição'));
             $customerName = $req->customer?->name ?? 'Cliente';
 
-            foreach ($recipients as $r) {
-                Notification::route('mail', $r['email'])->notify(new ContractRequestLifecycleNotification(
+            Notification::route('mail', $rcpt['to'])->notify(
+                (new ContractRequestLifecycleNotification(
                     stage:          $stage,
                     reqCode:        $code,
                     reqTitle:       $title,
@@ -60,10 +63,10 @@ class ContractRequestNotifier
                     fromColumn:     $fromColumn,
                     toColumn:       $toColumn,
                     cardUrl:        $cardUrl,
-                    recipientName:  $r['display_name'],
-                    recipientRole:  $r['role'],
-                ));
-            }
+                    recipientName:  'você',
+                    recipientRole:  '—',
+                ))->withCc($rcpt['cc'])
+            );
         } catch (\Throwable $e) {
             Log::warning('contract_request lifecycle notif falhou', [
                 'req_id' => $req->id, 'stage' => $stage, 'err' => $e->getMessage(),

@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Bus\Queueable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -14,6 +15,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 class CardPhaseMovementNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use HasWorkflowCc;
 
     public function __construct(
         public string $cardType,       // 'contract_request' | 'project'
@@ -38,8 +40,8 @@ class CardPhaseMovementNotification extends Notification implements ShouldQueue
         $subjectNoun = $this->cardType === 'contract_request' ? 'Requisição' : 'Projeto';
         $subject = "[Minutor] {$subjectNoun} {$this->cardCode} avançou para {$this->toColumn}";
 
-        return (new MailMessage)
-            ->subject($subject)
+        return $this->applyCc((new MailMessage)
+            ->subject($subject))
             ->view('emails.cards.phase-movement', [
                 'cardType'      => $this->cardType,
                 'cardCode'      => $this->cardCode,

@@ -33,6 +33,7 @@ return [
         'envolvidos_internos'  => 'Envolvidos internos (time)',
         'envolvidos_cliente'   => 'Cliente (envolvido no card)',
         'watchers'             => 'Em cópia (watchers)',
+        'solicitante'          => 'Solicitante (criador da requisição)',
         'autor'                => 'Autor da ação',
         'consultor'            => 'Consultor',
         'parceiro'             => 'Parceiro',
@@ -51,6 +52,7 @@ return [
         'envolvidos_internos'  => ['card'],
         'envolvidos_cliente'   => ['card'],
         'watchers'             => ['request'],
+        'solicitante'          => ['request'],
         'autor'                => ['actor'],
         'consultor'            => ['consultant'],
         'parceiro'             => ['partner'],
@@ -223,10 +225,10 @@ return [
             'domain'      => 'Triagem',
             'description' => 'A cada movimentação da requisição no kanban, até virar contrato/projeto.',
             'audiences'   => [
-                'cliente'             => 'to',
+                'solicitante'         => 'to',
                 'executivo_de_contas' => 'to',
                 'watchers'            => 'cc',
-                'autor'               => 'off',
+                'cliente'             => 'off',
             ],
         ],
         'card.chat_message' => [

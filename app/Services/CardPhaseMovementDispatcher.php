@@ -28,13 +28,17 @@ class CardPhaseMovementDispatcher
         // Se from == to, nada a notificar
         if ($fromColumn === $toColumn) return;
 
-        $recipients = $this->envolvidoSvc->recipientsForMovement($cardType, $cardId, $movedBy->id);
-        if ($recipients->isEmpty()) return;
+        // Destinatários pela Central de Workflows (envolvidos internos/cliente, etc.).
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.phase_movement', [
+            'card'  => ['type' => $cardType, 'id' => $cardId],
+            'actor' => $movedBy,
+        ]);
+        if (empty($rcpt['to'])) return;
 
         [$code, $title, $cardUrl] = $this->resolveCardInfo($cardType, $cardId);
 
-        foreach ($recipients as $r) {
-            Notification::route('mail', $r['email'])->notify(new CardPhaseMovementNotification(
+        Notification::route('mail', $rcpt['to'])->notify(
+            (new CardPhaseMovementNotification(
                 cardType:       $cardType,
                 cardCode:       $code,
                 cardTitle:      $title,
@@ -44,9 +48,9 @@ class CardPhaseMovementDispatcher
                 movedByRole:    $this->userRoleLabel($movedBy),
                 note:           $note,
                 cardUrl:        $cardUrl,
-                recipientName:  $r['display_name'],
-            ));
-        }
+                recipientName:  'você',
+            ))->withCc($rcpt['cc'])
+        );
     }
 
     /**

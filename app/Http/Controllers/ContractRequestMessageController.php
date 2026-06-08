@@ -135,10 +135,11 @@ class ContractRequestMessageController extends Controller
 
     private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author): void
     {
-        $recipients = app(CardEnvolvidoService::class)
-            ->recipientsForChat(CardEnvolvido::TYPE_REQUEST, $req->id, $author->id);
-
-        if ($recipients->isEmpty()) return;
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message', [
+            'card'  => ['type' => CardEnvolvido::TYPE_REQUEST, 'id' => $req->id],
+            'actor' => $author,
+        ]);
+        if (empty($rcpt['to'])) return;
 
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
@@ -148,8 +149,8 @@ class ContractRequestMessageController extends Controller
         $title = $req->title ?? ($req->subject ?? 'Requisição');
         $excerpt = Str::limit($msg->message ?? '', 280);
 
-        foreach ($recipients as $r) {
-            Notification::route('mail', $r['email'])->notify(new CardChatMessageNotification(
+        Notification::route('mail', $rcpt['to'])->notify(
+            (new CardChatMessageNotification(
                 cardType:       CardEnvolvido::TYPE_REQUEST,
                 cardCode:       $code,
                 cardTitle:      $title,
@@ -158,9 +159,9 @@ class ContractRequestMessageController extends Controller
                 messageExcerpt: $excerpt,
                 openUrl:        $openUrl,
                 cardUrl:        $cardUrl,
-                recipientName:  $r['display_name'],
-            ));
-        }
+                recipientName:  'você',
+            ))->withCc($rcpt['cc'])
+        );
     }
 
     private function userRoleLabel(User $u): string

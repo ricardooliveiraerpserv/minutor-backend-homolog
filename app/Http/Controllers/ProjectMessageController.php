@@ -128,10 +128,11 @@ class ProjectMessageController extends Controller
 
     private function dispatchChatNotification(Project $project, ProjectMessage $msg, User $author): void
     {
-        $recipients = app(CardEnvolvidoService::class)
-            ->recipientsForChat(CardEnvolvido::TYPE_PROJECT, $project->id, $author->id);
-
-        if ($recipients->isEmpty()) return;
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message', [
+            'card'  => ['type' => CardEnvolvido::TYPE_PROJECT, 'id' => $project->id],
+            'actor' => $author,
+        ]);
+        if (empty($rcpt['to'])) return;
 
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?project=' . $project->id;
@@ -146,8 +147,8 @@ class ProjectMessageController extends Controller
             default => 'Equipe',
         };
 
-        foreach ($recipients as $r) {
-            Notification::route('mail', $r['email'])->notify(new CardChatMessageNotification(
+        Notification::route('mail', $rcpt['to'])->notify(
+            (new CardChatMessageNotification(
                 cardType:       CardEnvolvido::TYPE_PROJECT,
                 cardCode:       $code,
                 cardTitle:      $title,
@@ -156,9 +157,9 @@ class ProjectMessageController extends Controller
                 messageExcerpt: $excerpt,
                 openUrl:        $openUrl,
                 cardUrl:        $cardUrl,
-                recipientName:  $r['display_name'],
-            ));
-        }
+                recipientName:  'você',
+            ))->withCc($rcpt['cc'])
+        );
     }
 
     public function downloadAttachment(Request $request, ProjectMessage $message, Attachment $attachment): mixed
