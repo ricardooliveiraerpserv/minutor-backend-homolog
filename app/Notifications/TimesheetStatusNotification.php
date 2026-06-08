@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Timesheet;
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -16,6 +17,7 @@ use Illuminate\Notifications\Notification;
 class TimesheetStatusNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use HasWorkflowCc;
 
     public Timesheet $timesheet;
     public string $statusKey; // REJEITADO | AJUSTE | CONFLITO
@@ -82,6 +84,8 @@ class TimesheetStatusNotification extends Notification implements ShouldQueue
 
         $mail->action('Abrir Apontamentos', config('app.frontend_url', 'https://app.minutor.com.br') . '/timesheets')
              ->line('Em caso de dúvida, fale com seu coordenador.');
+
+        $this->applyCc($mail);
 
         return $mail;
     }
