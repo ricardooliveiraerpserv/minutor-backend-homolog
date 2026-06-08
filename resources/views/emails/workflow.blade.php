@@ -11,7 +11,7 @@
 
     <tr>
       <td style="padding:32px 40px 4px;background:#000000;">
-        <div style="font-size:11px;letter-spacing:.22em;color:#22C55E;font-weight:800;text-transform:uppercase;">{{ $eyebrow }}</div>
+        <div style="font-size:11px;letter-spacing:.22em;color:{{ $accent ?? '#22C55E' }};font-weight:800;text-transform:uppercase;">{{ $eyebrow }}</div>
         <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">{{ $titulo }}</h1>
         <p style="margin:8px 0 0;color:#D4D4D8;font-size:14px;line-height:1.55;">{{ $corpo }}</p>
       </td>
@@ -21,7 +21,7 @@
     <tr>
       <td style="padding:18px 40px 0;background:#000000;">
         <div style="background-color:#15151A;border:1px solid #3F3F46;border-radius:12px;padding:22px;">
-          <div style="font-size:10px;letter-spacing:.24em;color:#86EFAC;font-weight:800;text-transform:uppercase;margin-bottom:14px;">Variáveis de exemplo</div>
+          <div style="font-size:10px;letter-spacing:.24em;color:{{ $accent ?? '#22C55E' }};font-weight:800;text-transform:uppercase;margin-bottom:14px;">Variáveis de exemplo</div>
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
             @foreach($dados as $label => $valor)
             <tr>
@@ -37,7 +37,7 @@
 
     <tr>
       <td style="padding:24px 40px 8px;background:#000000;">
-        <a href="{{ $cardUrl }}" style="display:inline-block;background:#22C55E;color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Acessar o Minutor</a>
+        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $accent ?? '#22C55E' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Acessar o Minutor</a>
       </td>
     </tr>
 

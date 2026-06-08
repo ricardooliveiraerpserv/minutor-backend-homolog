@@ -39,6 +39,17 @@ class WorkflowConfigService
         ];
     }
 
+    /** Cor de destaque (hex) de um workflow, conforme o domínio. */
+    public function accent(string $key): string
+    {
+        $perWorkflow = config('workflows.workflow_accents', [])[$key] ?? null;
+        if ($perWorkflow) {
+            return $perWorkflow;
+        }
+        $domain = config('workflows.workflows', [])[$key]['domain'] ?? 'Outros';
+        return config('workflows.domain_accents', [])[$domain] ?? '#22C55E';
+    }
+
     /** Substitui {var} pelos valores. */
     public static function render(string $text, array $vars): string
     {
