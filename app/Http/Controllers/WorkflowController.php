@@ -52,6 +52,19 @@ class WorkflowController extends Controller
         ]);
     }
 
+    public function preview(Request $request, string $key, \App\Workflows\WorkflowTestSender $sender): JsonResponse
+    {
+        $this->ensureAdmin($request);
+        $data = $request->validate([
+            'subject' => 'nullable|string|max:255',
+            'body'    => 'nullable|string|max:5000',
+        ]);
+
+        $r = $sender->renderHtml($key, $data['subject'] ?? null, $data['body'] ?? null);
+
+        return response()->json(['subject' => $r['subject'], 'html' => $r['html']]);
+    }
+
     public function test(Request $request, string $key, \App\Workflows\WorkflowTestSender $sender): JsonResponse
     {
         $this->ensureAdmin($request);

@@ -24,8 +24,22 @@ class WorkflowTestSender
 
     public function send(string $key, string $email): void
     {
+        ['subject' => $subject, 'html' => $html] = $this->renderHtml($key);
+        $this->dispatch($email, "[Minutor • TESTE] {$subject}", $html);
+    }
+
+    /**
+     * Renderiza o e-mail COMPLETO (layout + variáveis de exemplo) de um workflow.
+     * subject/body opcionais sobrepõem o modelo salvo (pré-visualização ao vivo da edição).
+     *
+     * @return array{subject:string, html:string}
+     */
+    public function renderHtml(string $key, ?string $subjectTpl = null, ?string $bodyTpl = null): array
+    {
         $meta = (array) (config('workflows.workflows', [])[$key] ?? []);
         $tpl  = $this->config->template($key);
+        $subjectTpl = $subjectTpl ?? $tpl['subject'];
+        $bodyTpl    = $bodyTpl ?? $tpl['body'];
 
         // Variáveis de exemplo a partir do que o modelo declara.
         $vars = [];
@@ -38,19 +52,19 @@ class WorkflowTestSender
             $dados[$desc] = $sample;
         }
 
-        $subject = WorkflowConfigService::render($tpl['subject'], $vars) ?: ($meta['label'] ?? $key);
-        $corpo   = WorkflowConfigService::render($tpl['body'], $vars);
+        $subject = WorkflowConfigService::render($subjectTpl, $vars) ?: ($meta['label'] ?? $key);
+        $corpo   = WorkflowConfigService::render($bodyTpl, $vars);
 
         $html = view('emails.workflow', [
             'titulo'  => $meta['label'] ?? $key,
-            'eyebrow' => 'TESTE • ' . ($meta['domain'] ?? 'Workflow'),
+            'eyebrow' => ($meta['domain'] ?? 'Workflow'),
             'corpo'   => $corpo,
             'dados'   => $dados,
             'cardUrl' => rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/'),
-            'rodape'  => "E-mail de TESTE do workflow \"{$subject}\". Os dados acima são apenas exemplos.",
+            'rodape'  => 'Pré-visualização — os dados acima são apenas exemplos.',
         ])->render();
 
-        $this->dispatch($email, "[Minutor • TESTE] {$subject}", $html);
+        return ['subject' => $subject, 'html' => $html];
     }
 
     /**
