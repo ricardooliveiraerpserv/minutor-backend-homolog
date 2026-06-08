@@ -70,7 +70,7 @@
 
     <tr>
       <td style="padding:24px 40px 32px;background:#000000;color:#D4D4D8;font-size:12px;line-height:1.7;border-top:1px solid #3F3F46;">
-        Comunicado automático do Minutor referente ao aporte registrado no contrato {{ $codigo }}. As horas já estão disponíveis para uso. O executivo de contas e o responsável pelo lançamento recebem este e-mail em cópia.
+        Comunicado automático do Minutor referente ao aporte registrado no contrato {{ $codigo }}. As horas já estão disponíveis para uso.
         <br><br>
         <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
       </td>

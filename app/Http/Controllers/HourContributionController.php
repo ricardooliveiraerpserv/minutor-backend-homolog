@@ -175,64 +175,65 @@ class HourContributionController extends Controller
             $contribution->refresh();
         }
 
-        // Comunica o CLIENTE: novo aporte de horas em contrato existente.
+        // Comunica novo aporte de horas em contrato existente.
         // Só para motivo 'aporte' (excedentes/absorvidas são ajustes internos).
         if (($validated['motivo'] ?? 'aporte') === 'aporte') {
-            $this->notifyClientNewAporte($project, $contribution);
+            $this->notifyNewAporte($project, $contribution);
         }
 
         return response()->json($contribution, 201);
     }
 
     /**
-     * Comunica o CLIENTE sobre um novo aporte, com CÓPIA (Cc) para o executivo
-     * de contas e para quem incluiu o aporte.
+     * Comunica um novo aporte de horas.
      *
-     * Regra: aporte em contrato FILHO (subprojeto) NÃO gera workflow pro cliente.
+     * - Contrato PAI: To = cliente(s) do customer, Cc = envolvidos internos
+     *   (executivo de contas + quem incluiu o aporte).
+     * - Contrato FILHO (subprojeto): NÃO comunica o cliente — vai só para os
+     *   envolvidos internos (executivo de contas + autor) no To.
+     *
      * Síncrono + best-effort: falha de e-mail não bloqueia o lançamento do aporte.
      */
-    private function notifyClientNewAporte(Project $project, HourContribution $contribution): void
+    private function notifyNewAporte(Project $project, HourContribution $contribution): void
     {
         try {
-            // Subprojeto (aporte em contrato filho) não comunica o cliente.
-            if ($project->parent_project_id !== null) {
-                return;
-            }
-
-            // Destinatários (To): usuários cliente do customer.
-            $clientEmails = \App\Models\User::query()
-                ->where('type', 'cliente')
-                ->where('customer_id', $project->customer_id)
-                ->where('enabled', true)
-                ->pluck('email')
-                ->filter()
-                ->unique()
-                ->values();
-
-            if ($clientEmails->isEmpty()) {
-                return;
-            }
-
-            // Cópia (Cc): executivo de contas + quem incluiu o aporte.
+            // Envolvidos internos: executivo de contas + quem incluiu o aporte.
             $project->loadMissing('contract', 'customer');
             $execId = $project->contract->executivo_conta_id
                 ?? optional($project->customer)->executive_id;
 
-            $ccEmails = \App\Models\User::query()
+            $internalEmails = \App\Models\User::query()
                 ->whereIn('id', array_filter([$execId, $contribution->contributed_by]))
                 ->where('enabled', true)
                 ->pluck('email')
                 ->filter()
-                ->unique()
-                ->diff($clientEmails) // não duplicar quem já está no To
-                ->values()
-                ->all();
+                ->unique();
 
-            // Um único comunicado: To = cliente(s), Cc = executivo + contribuidor.
-            \Illuminate\Support\Facades\Notification::route('mail', $clientEmails->all())
+            if ($project->parent_project_id !== null) {
+                // Subprojeto: cliente fora. Só os envolvidos internos (no To).
+                $toEmails = $internalEmails->values();
+                $ccEmails = [];
+            } else {
+                // Pai: cliente(s) no To, envolvidos internos em cópia.
+                $toEmails = \App\Models\User::query()
+                    ->where('type', 'cliente')
+                    ->where('customer_id', $project->customer_id)
+                    ->where('enabled', true)
+                    ->pluck('email')
+                    ->filter()
+                    ->unique()
+                    ->values();
+                $ccEmails = $internalEmails->diff($toEmails)->values()->all();
+            }
+
+            if ($toEmails->isEmpty()) {
+                return;
+            }
+
+            \Illuminate\Support\Facades\Notification::route('mail', $toEmails->all())
                 ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $ccEmails));
         } catch (\Throwable $e) {
-            \Log::warning('Aporte client notification falhou', [
+            \Log::warning('Aporte notification falhou', [
                 'project_id'      => $project->id,
                 'contribution_id' => $contribution->id ?? null,
                 'err'             => $e->getMessage(),
