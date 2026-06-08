@@ -19,11 +19,14 @@ class ContractAporteNotification extends Notification
 {
     public HourContribution $contribution;
     public Project $project;
+    /** @var array<int, string> Cópia (Cc): executivo de contas + quem incluiu o aporte. */
+    public array $cc;
 
-    public function __construct(HourContribution $contribution, Project $project)
+    public function __construct(HourContribution $contribution, Project $project, array $cc = [])
     {
         $this->contribution = $contribution;
         $this->project      = $project;
+        $this->cc           = $cc;
     }
 
     public function via($notifiable): array
@@ -56,8 +59,15 @@ class ContractAporteNotification extends Notification
 
         $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
 
-        return (new MailMessage)
-            ->subject("[Minutor] Novo aporte de horas no contrato — {$codigo}")
+        $mail = (new MailMessage)
+            ->subject("[Minutor] Novo aporte de horas no contrato — {$codigo}");
+
+        // Cópia: executivo de contas + quem incluiu o aporte.
+        if (!empty($this->cc)) {
+            $mail->cc($this->cc);
+        }
+
+        return $mail
             ->view('emails.contracts.aporte', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,

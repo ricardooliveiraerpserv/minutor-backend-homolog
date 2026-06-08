@@ -185,21 +185,52 @@ class HourContributionController extends Controller
     }
 
     /**
-     * Notifica os usuários CLIENTE do customer do projeto sobre um novo aporte.
+     * Comunica o CLIENTE sobre um novo aporte, com CÓPIA (Cc) para o executivo
+     * de contas e para quem incluiu o aporte.
+     *
+     * Regra: aporte em contrato FILHO (subprojeto) NÃO gera workflow pro cliente.
      * Síncrono + best-effort: falha de e-mail não bloqueia o lançamento do aporte.
      */
     private function notifyClientNewAporte(Project $project, HourContribution $contribution): void
     {
         try {
-            $clients = \App\Models\User::query()
+            // Subprojeto (aporte em contrato filho) não comunica o cliente.
+            if ($project->parent_project_id !== null) {
+                return;
+            }
+
+            // Destinatários (To): usuários cliente do customer.
+            $clientEmails = \App\Models\User::query()
                 ->where('type', 'cliente')
                 ->where('customer_id', $project->customer_id)
                 ->where('enabled', true)
-                ->get();
+                ->pluck('email')
+                ->filter()
+                ->unique()
+                ->values();
 
-            foreach ($clients as $client) {
-                $client->notify(new \App\Notifications\ContractAporteNotification($contribution, $project));
+            if ($clientEmails->isEmpty()) {
+                return;
             }
+
+            // Cópia (Cc): executivo de contas + quem incluiu o aporte.
+            $project->loadMissing('contract', 'customer');
+            $execId = $project->contract->executivo_conta_id
+                ?? optional($project->customer)->executive_id;
+
+            $ccEmails = \App\Models\User::query()
+                ->whereIn('id', array_filter([$execId, $contribution->contributed_by]))
+                ->where('enabled', true)
+                ->pluck('email')
+                ->filter()
+                ->unique()
+                ->diff($clientEmails) // não duplicar quem já está no To
+                ->values()
+                ->all();
+
+            // Um único comunicado: To = cliente(s), Cc = executivo + contribuidor.
+            \Illuminate\Support\Facades\Notification::route('mail', $clientEmails->all())
+                ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $ccEmails));
         } catch (\Throwable $e) {
             \Log::warning('Aporte client notification falhou', [
                 'project_id'      => $project->id,
