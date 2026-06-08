@@ -4,6 +4,7 @@ namespace App\Workflows;
 
 use App\Models\WorkflowExtraEmail;
 use App\Models\WorkflowRecipient;
+use App\Models\WorkflowTemplate;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -17,6 +18,35 @@ class WorkflowConfigService
     public function audiences(): array
     {
         return (array) config('workflows.audiences', []);
+    }
+
+    /**
+     * Modelo EFETIVO (override do banco OU default do registry) de um workflow.
+     *
+     * @return array{subject:string, body:string, variables:array, default_subject:string, default_body:string}
+     */
+    public function template(string $key): array
+    {
+        $defaults = (array) (config('workflows.templates', [])[$key] ?? []);
+        $row = WorkflowTemplate::where('workflow_key', $key)->first();
+
+        return [
+            'subject'         => $row->subject ?? ($defaults['subject'] ?? ''),
+            'body'            => $row->body ?? ($defaults['body'] ?? ''),
+            'variables'       => $defaults['variables'] ?? [],
+            'default_subject' => $defaults['subject'] ?? '',
+            'default_body'    => $defaults['body'] ?? '',
+        ];
+    }
+
+    /** Substitui {var} pelos valores. */
+    public static function render(string $text, array $vars): string
+    {
+        foreach ($vars as $k => $v) {
+            $text = str_replace('{' . $k . '}', (string) $v, $text);
+        }
+        // Remove placeholders não preenchidos.
+        return trim(preg_replace('/\{[a-z_]+\}/', '', $text));
     }
 
     /**
@@ -88,6 +118,7 @@ class WorkflowConfigService
                 'description' => $meta['description'] ?? null,
                 'audiences'   => $audiences,
                 'available'   => $available,
+                'template'    => $this->template($key),
                 'extra_emails' => ($extras[$key] ?? collect())
                     ->map(fn ($x) => ['email' => $x->email, 'channel' => $x->channel])
                     ->values()->all(),
@@ -102,12 +133,20 @@ class WorkflowConfigService
      * @param array<string,string> $audiences audience => off|to|cc
      * @param array<int,array{email:string,channel:string}> $extraEmails
      */
-    public function save(string $key, array $audiences, array $extraEmails): void
+    public function save(string $key, array $audiences, array $extraEmails, ?string $subject = null, ?string $body = null): void
     {
         $workflows = (array) config('workflows.workflows', []);
         $meta = $workflows[$key] ?? null;
         if (!$meta) {
             abort(404, 'Workflow desconhecido.');
+        }
+
+        // Modelo (título + texto) — grava override quando enviado.
+        if ($subject !== null || $body !== null) {
+            WorkflowTemplate::updateOrCreate(
+                ['workflow_key' => $key],
+                ['subject' => $subject, 'body' => $body],
+            );
         }
         // Qualquer audiência do catálogo global pode ser incluída em qualquer
         // workflow pela Central — sem depender de código.

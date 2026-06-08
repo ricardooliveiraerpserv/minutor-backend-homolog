@@ -16,7 +16,7 @@
           Novo aporte no seu contrato
         </h1>
         <p style="margin:0;color:#D4D4D8;font-size:14px;line-height:1.55;">
-          Foi registrado um novo aporte de horas no contrato <b style="color:#FFFFFF;">{{ $codigo }}</b>.
+          {{ $bodyText ?? "Foi registrado um novo aporte de horas no contrato {$codigo}." }}
         </p>
       </td>
     </tr>

@@ -34,12 +34,16 @@ class WorkflowController extends Controller
             'extra_emails'           => 'array',
             'extra_emails.*.email'   => 'required|email',
             'extra_emails.*.channel' => 'required|in:to,cc',
+            'subject'                => 'nullable|string|max:255',
+            'body'                   => 'nullable|string|max:5000',
         ]);
 
         $this->config->save(
             $key,
             $data['audiences'] ?? [],
             $data['extra_emails'] ?? [],
+            $data['subject'] ?? null,
+            $data['body'] ?? null,
         );
 
         return response()->json([
