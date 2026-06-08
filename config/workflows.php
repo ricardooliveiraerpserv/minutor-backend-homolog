@@ -76,6 +76,81 @@ return [
         'followup.reminder'            => ['followup', 'actor'],
     ],
 
+    // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
+    // Editável na Central; o layout/branding (logo, card de dados, botão) é automático.
+    'templates' => [
+        'contract.created' => [
+            'subject'   => 'Novo contrato cadastrado — {codigo}',
+            'body'      => 'O contrato {codigo} do cliente {cliente} foi cadastrado e está em Novo Contrato.',
+            'variables' => ['codigo' => 'Código do contrato', 'cliente' => 'Cliente'],
+        ],
+        'contract.project_generated' => [
+            'subject'   => 'Projeto criado — {codigo}',
+            'body'      => 'O contrato {codigo} ({cliente}) virou projeto e está pronto para iniciar.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente', 'projeto' => 'Projeto'],
+        ],
+        'contract.inicio_autorizado' => [
+            'subject'   => 'Contrato com início autorizado — {codigo}',
+            'body'      => 'O contrato {codigo} ({cliente}) entrou na fase Início Autorizado.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
+        ],
+        'contract.aporte' => [
+            'subject'   => 'Novo aporte de horas no contrato — {codigo}',
+            'body'      => 'Foi registrado um novo aporte de horas no contrato {codigo}.',
+            'variables' => ['codigo' => 'Código do contrato', 'projeto' => 'Projeto', 'cliente' => 'Cliente', 'horas' => 'Horas aportadas', 'saldo' => 'Saldo total', 'data' => 'Data'],
+        ],
+        'contract.reajuste' => [
+            'subject'   => 'Reajuste do contrato — {codigo}',
+            'body'      => 'O contrato {codigo} ({cliente}) teve um reajuste de valor aplicado.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
+        ],
+        'contract.reajustes_pendentes' => [
+            'subject'   => 'Reajustes de contrato pendentes',
+            'body'      => 'Há contratos com reajuste vencido/pendente aguardando ação.',
+            'variables' => [],
+        ],
+        'request.lifecycle' => [
+            'subject'   => 'Requisição {codigo} avançou para {para}',
+            'body'      => 'A requisição {codigo} do cliente {cliente} foi movida de {de} para {para}.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente', 'de' => 'Fase anterior', 'para' => 'Nova fase'],
+        ],
+        'card.chat_message' => [
+            'subject'   => 'Nova mensagem em {codigo} — {titulo}',
+            'body'      => '{autor} enviou uma nova mensagem no chat de {titulo}.',
+            'variables' => ['codigo' => 'Código do card', 'titulo' => 'Título do card', 'autor' => 'Autor da mensagem'],
+        ],
+        'card.phase_movement' => [
+            'subject'   => '{codigo} avançou para {para}',
+            'body'      => 'O card {titulo} foi movido de {de} para {para} por {autor}.',
+            'variables' => ['codigo' => 'Código', 'titulo' => 'Título', 'de' => 'Fase anterior', 'para' => 'Nova fase', 'autor' => 'Responsável'],
+        ],
+        'fechamento.cliente' => [
+            'subject'   => 'Fechamento {periodo} — {cliente}',
+            'body'      => 'Segue o relatório de fechamento referente a {periodo}.',
+            'variables' => ['periodo' => 'Competência', 'cliente' => 'Cliente'],
+        ],
+        'fechamento.consultor' => [
+            'subject'   => 'Seu fechamento {periodo}',
+            'body'      => 'Segue o relatório de fechamento referente a {periodo}.',
+            'variables' => ['periodo' => 'Competência', 'consultor' => 'Consultor'],
+        ],
+        'fechamento.parceiro' => [
+            'subject'   => 'Fechamento {periodo} — {parceiro}',
+            'body'      => 'Segue o relatório de fechamento referente a {periodo}.',
+            'variables' => ['periodo' => 'Competência', 'parceiro' => 'Parceiro'],
+        ],
+        'timesheet.status' => [
+            'subject'   => 'Apontamento {status}',
+            'body'      => 'Seu apontamento de {data} foi marcado como {status}. {motivo}',
+            'variables' => ['data' => 'Data do apontamento', 'status' => 'Novo status', 'motivo' => 'Motivo/observação'],
+        ],
+        'followup.reminder' => [
+            'subject'   => 'Lembrete de follow-up — {assunto}',
+            'body'      => 'Você tem um follow-up pendente: {assunto}.',
+            'variables' => ['assunto' => 'Assunto', 'data' => 'Data'],
+        ],
+    ],
+
     // Workflows agrupados por domínio.
     'workflows' => [
 

@@ -59,8 +59,13 @@ class ContractAporteNotification extends Notification
 
         $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
 
-        $mail = (new MailMessage)
-            ->subject("[Minutor] Novo aporte de horas no contrato — {$codigo}");
+        // Modelo editável (título + texto) da Central, com variáveis substituídas.
+        $vars = compact('codigo', 'projeto', 'cliente', 'horas', 'data') + ['saldo' => $saldoFmt ?? '—'];
+        $tpl  = app(\App\Workflows\WorkflowConfigService::class)->template('contract.aporte');
+        $subject  = \App\Workflows\WorkflowConfigService::render($tpl['subject'], $vars) ?: "Novo aporte de horas no contrato — {$codigo}";
+        $bodyText = \App\Workflows\WorkflowConfigService::render($tpl['body'], $vars) ?: "Foi registrado um novo aporte de horas no contrato {$codigo}.";
+
+        $mail = (new MailMessage)->subject("[Minutor] {$subject}");
 
         // Cópia: executivo de contas + quem incluiu o aporte.
         if (!empty($this->cc)) {
@@ -75,6 +80,7 @@ class ContractAporteNotification extends Notification
                 'horas'         => $horas,
                 'saldo'         => $saldoFmt,
                 'data'          => $data,
+                'bodyText'      => $bodyText,
                 'cardUrl'       => $base,
                 'recipientName' => $notifiable->name ?? 'cliente',
             ]);
