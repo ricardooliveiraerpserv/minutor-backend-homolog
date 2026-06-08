@@ -18,6 +18,32 @@
 
 return [
 
+    // Cor de destaque — uma por workflow, pra cada e-mail ser distinguível à primeira vista.
+    'workflow_accents' => [
+        'contract.created'             => '#FBBF24', // amarelo
+        'contract.project_generated'   => '#22C55E', // verde
+        'contract.inicio_autorizado'   => '#22D3EE', // ciano
+        'contract.aporte'              => '#34D399', // esmeralda
+        'contract.reajuste'            => '#F472B6', // pink
+        'contract.reajustes_pendentes' => '#FB923C', // laranja
+        'request.lifecycle'            => '#38BDF8', // azul
+        'card.chat_message'            => '#818CF8', // índigo
+        'card.phase_movement'          => '#A78BFA', // roxo
+        'fechamento.cliente'           => '#F59E0B', // âmbar
+        'fechamento.consultor'         => '#2DD4BF', // teal
+        'fechamento.parceiro'          => '#FACC15', // dourado
+        'timesheet.status'             => '#FB7185', // rosa
+        'followup.reminder'            => '#C084FC', // lilás
+    ],
+    // Fallback por domínio (workflow novo sem cor própria).
+    'domain_accents' => [
+        'Contratos'   => '#22C55E',
+        'Triagem'     => '#38BDF8',
+        'Fechamento'  => '#F59E0B',
+        'Apontamento' => '#A78BFA',
+        'Outros'      => '#FB7185',
+    ],
+
     // E-mails de papéis "fixos" (resolvidos por config, não por relação).
     'diretor_email'   => env('WORKFLOW_DIRETOR_EMAIL', 'ricardo.badawi@erpserv.com.br'),
     'financeiro_email' => env('MAIL_REAJUSTES_ALERTA_TO', 'financeiro@erpserv.com.br'),

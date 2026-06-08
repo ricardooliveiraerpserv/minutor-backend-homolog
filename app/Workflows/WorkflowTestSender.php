@@ -58,6 +58,7 @@ class WorkflowTestSender
         $html = view('emails.workflow', [
             'titulo'  => $meta['label'] ?? $key,
             'eyebrow' => ($meta['domain'] ?? 'Workflow'),
+            'accent'  => $this->config->accent($key),
             'corpo'   => $corpo,
             'dados'   => $dados,
             'cardUrl' => rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/'),
