@@ -342,6 +342,10 @@ Route::prefix('v1')->group(function () {
         Route::put('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'update']);
         Route::delete('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'destroy']);
 
+        // ⚙️ CENTRAL DE WORKFLOWS — quem recebe cada e-mail (admin-only, guard no controller)
+        Route::get('/workflows', [\App\Http\Controllers\WorkflowController::class, 'index'])->name('workflows.index');
+        Route::put('/workflows/{key}', [\App\Http\Controllers\WorkflowController::class, 'update'])->name('workflows.update');
+
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {
             Route::post('/service-types', [ServiceTypeController::class, 'store'])->name('service-types.store');
