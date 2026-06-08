@@ -30,7 +30,8 @@ return [
         'coordenador'          => 'Coordenador(es) do projeto',
         'administrativo'       => 'Administrativo',
         'diretor'              => 'Diretor de projetos',
-        'envolvidos_do_card'   => 'Envolvidos do card',
+        'envolvidos_internos'  => 'Envolvidos internos (time)',
+        'envolvidos_cliente'   => 'Cliente (envolvido no card)',
         'watchers'             => 'Em cópia (watchers)',
         'autor'                => 'Autor da ação',
         'consultor'            => 'Consultor',
@@ -121,7 +122,8 @@ return [
             'domain'      => 'Triagem',
             'description' => 'Nova mensagem no chat de uma requisição/projeto.',
             'audiences'   => [
-                'envolvidos_do_card' => 'to',
+                'envolvidos_internos' => 'to',
+                'envolvidos_cliente'  => 'to',
             ],
         ],
         'card.phase_movement' => [
@@ -129,7 +131,8 @@ return [
             'domain'      => 'Triagem',
             'description' => 'Quando um card de requisição/projeto muda de fase.',
             'audiences'   => [
-                'envolvidos_do_card' => 'to',
+                'envolvidos_internos' => 'to',
+                'envolvidos_cliente'  => 'to',
             ],
         ],
 
