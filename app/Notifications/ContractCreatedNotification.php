@@ -49,6 +49,7 @@ class ContractCreatedNotification extends Notification
         return $this->applyCc((new MailMessage)
             ->subject("[Minutor] Novo contrato cadastrado — {$codigo}"))
             ->view('emails.contracts.created', [
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('contract.created'),
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,
                 'cliente'       => $cliente,

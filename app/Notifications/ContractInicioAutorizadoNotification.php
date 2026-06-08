@@ -46,6 +46,7 @@ class ContractInicioAutorizadoNotification extends Notification
         return $this->applyCc((new MailMessage)
             ->subject("[Minutor] Contrato com início autorizado — {$codigo}"))
             ->view('emails.contracts.inicio-autorizado', [
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('contract.inicio_autorizado'),
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,
                 'cliente'       => $cliente,

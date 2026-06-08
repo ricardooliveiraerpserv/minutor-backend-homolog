@@ -11,7 +11,7 @@
 
     <tr>
       <td style="padding:32px 40px 4px;background:#000000;">
-        <div style="font-size:11px;letter-spacing:.22em;color:#22C55E;font-weight:800;text-transform:uppercase;">Aporte de horas</div>
+        <div style="font-size:11px;letter-spacing:.22em;color:{{ $accent ?? '#22C55E' }};font-weight:800;text-transform:uppercase;">Aporte de horas</div>
         <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">
           Novo aporte no seu contrato
         </h1>
@@ -24,7 +24,7 @@
     <tr>
       <td style="padding:18px 40px 0;background:#000000;">
         <div style="background-color:#15151A;border:1px solid #3F3F46;border-radius:12px;padding:22px;">
-          <div style="font-size:10px;letter-spacing:.24em;color:#86EFAC;font-weight:800;text-transform:uppercase;margin-bottom:14px;">Dados do aporte</div>
+          <div style="font-size:10px;letter-spacing:.24em;color:{{ $accent ?? '#86EFAC' }};font-weight:800;text-transform:uppercase;margin-bottom:14px;">Dados do aporte</div>
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
             <tr>
               <td style="color:#D4D4D8;width:34%;padding:5px 0;font-weight:600;">Contrato</td>
@@ -41,7 +41,7 @@
             <tr>
               <td style="color:#D4D4D8;padding:5px 0;font-weight:600;">Horas aportadas</td>
               <td style="color:#FFFFFF;padding:5px 0;font-weight:700;">
-                <span style="display:inline-block;background-color:#22C55E;color:#000000;font-size:12px;font-weight:800;padding:6px 12px;border-radius:999px;letter-spacing:.04em;">+{{ $horas }} h</span>
+                <span style="display:inline-block;background-color:{{ $accent ?? '#22C55E' }};color:#000000;font-size:12px;font-weight:800;padding:6px 12px;border-radius:999px;letter-spacing:.04em;">+{{ $horas }} h</span>
               </td>
             </tr>
             <tr>
@@ -53,7 +53,7 @@
               <td colspan="2" style="padding:10px 0 2px;"><div style="border-top:1px solid #3F3F46;"></div></td>
             </tr>
             <tr>
-              <td style="color:#86EFAC;padding:7px 0;font-weight:700;">Saldo total do contrato</td>
+              <td style="color:{{ $accent ?? '#86EFAC' }};padding:7px 0;font-weight:700;">Saldo total do contrato</td>
               <td style="color:#FFFFFF;padding:7px 0;font-weight:800;font-size:16px;">{{ $saldo }}</td>
             </tr>
             @endif
@@ -64,7 +64,7 @@
 
     <tr>
       <td style="padding:24px 40px 8px;background:#000000;">
-        <a href="{{ $cardUrl }}" style="display:inline-block;background:#22C55E;color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Acessar o Minutor</a>
+        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $accent ?? '#22C55E' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Acessar o Minutor</a>
       </td>
     </tr>
 
