@@ -201,10 +201,11 @@ return [
         'contract.reajuste' => [
             'label'       => 'Reajuste de contrato',
             'domain'      => 'Contratos',
-            'description' => 'Ao aplicar reajuste de valor no contrato.',
+            'description' => 'Ao aplicar reajuste. Os destinatários escolhidos no envio entram sempre; a Central adiciona papéis em cópia.',
             'audiences'   => [
-                'cliente'             => 'to',
-                'executivo_de_contas' => 'off',
+                'contatos_do_contrato' => 'off',
+                'executivo_de_contas'  => 'off',
+                'cliente'              => 'off',
             ],
         ],
         'contract.reajustes_pendentes' => [

@@ -163,19 +163,13 @@ class ContractController extends Controller
     private function notifyContractCreated(Contract $contract): void
     {
         try {
-            $recipients = \App\Models\User::query()
-                ->where('enabled', true)
-                ->where(function ($q) use ($contract) {
-                    $q->where('type', 'administrativo');
-                    if ($contract->created_by_id) {
-                        $q->orWhere('id', $contract->created_by_id);
-                    }
-                })
-                ->get();
-
-            foreach ($recipients as $user) {
-                $user->notify(new \App\Notifications\ContractCreatedNotification($contract));
-            }
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.created', [
+                'contract' => $contract,
+                'actor'    => $contract->created_by_id ? \App\Models\User::find($contract->created_by_id) : null,
+            ]);
+            if (empty($rcpt['to'])) return;
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify((new \App\Notifications\ContractCreatedNotification($contract))->withCc($rcpt['cc']));
         } catch (\Throwable $e) {
             \Log::warning('ContractCreated notification falhou', [
                 'contract_id' => $contract->id,
@@ -187,28 +181,12 @@ class ContractController extends Controller
     private function notifyInicioAutorizado(Contract $contract): void
     {
         try {
-            $executiveId = $contract->executivo_conta_id
-                ?: optional($contract->customer)->executive_id;
-
-            $recipientIds = collect([$executiveId, $this->projectDirectorUserId()])
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
-
-            if (empty($recipientIds)) {
-                \Log::info('InicioAutorizado: nenhum destinatário', ['contract_id' => $contract->id]);
-                return;
-            }
-
-            $recipients = \App\Models\User::query()
-                ->whereIn('id', $recipientIds)
-                ->where('enabled', true)
-                ->get();
-
-            foreach ($recipients as $user) {
-                $user->notify(new \App\Notifications\ContractInicioAutorizadoNotification($contract));
-            }
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.inicio_autorizado', [
+                'contract' => $contract,
+            ]);
+            if (empty($rcpt['to'])) return;
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify((new \App\Notifications\ContractInicioAutorizadoNotification($contract))->withCc($rcpt['cc']));
         } catch (\Throwable $e) {
             \Log::warning('ContractInicioAutorizado notification falhou', [
                 'contract_id' => $contract->id,
@@ -457,32 +435,19 @@ class ContractController extends Controller
     private function notifyProjectGenerated(Contract $contract, Project $project, array $coordinatorIds): void
     {
         try {
-            // Internos: executivo da conta + coordenadores selecionados + diretor de projetos.
-            $internalIds = collect([$contract->executivo_conta_id, $this->projectDirectorUserId()])
-                ->merge($coordinatorIds)
-                ->filter()
-                ->unique()
-                ->values()
-                ->all();
-
-            if (!empty($internalIds)) {
-                $internals = \App\Models\User::query()
-                    ->whereIn('id', $internalIds)
-                    ->where('enabled', true)
-                    ->get();
-
-                foreach ($internals as $user) {
-                    $user->notify(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
-                }
+            // Coordenadores selecionados no modal podem ainda não estar na relação
+            // do projeto — garante que o resolver (audiência coordenador) os enxergue.
+            if (!empty($coordinatorIds)) {
+                $project->setRelation('coordinators', \App\Models\User::whereIn('id', $coordinatorIds)->where('enabled', true)->get());
             }
 
-            // Cliente: contatos do contrato com e-mail preenchido.
-            foreach ($contract->contacts as $contact) {
-                if (!empty($contact->email)) {
-                    \Illuminate\Support\Facades\Notification::route('mail', $contact->email)
-                        ->notify(new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project));
-                }
-            }
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.project_generated', [
+                'contract' => $contract,
+                'project'  => $project,
+            ]);
+            if (empty($rcpt['to'])) return;
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify((new \App\Notifications\ProjectFromContractGeneratedNotification($contract, $project))->withCc($rcpt['cc']));
         } catch (\Throwable $e) {
             \Log::warning('ProjectFromContractGenerated notification falhou', [
                 'contract_id' => $contract->id,
@@ -2109,13 +2074,18 @@ class ContractController extends Controller
             vigencia: optional($change->created_at)->format('d/m/Y') ?? now()->format('d/m/Y'),
         );
 
+        // Destinatários escolhidos no envio + papéis configurados na Central (cópia/extra).
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste', ['contract' => $contract]);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to'])));
+        $cc = array_values(array_diff($rcpt['cc'], $to));
+
         // Envia pelo Microsoft Graph (canal que entrega de fato, igual ao fechamento);
         // fallback p/ o mailer default só se o Graph não estiver configurado.
         $graphFrom = config('services.graph.mailbox');
         if (\App\Services\GraphMailer::enabled() && $graphFrom) {
-            \App\Services\GraphMailer::sendAs($graphFrom, $emails, [], $mail->envelope()->subject, $mail->render());
+            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
         } else {
-            Mail::to($emails)->send($mail);
+            Mail::to($to)->cc($cc)->send($mail);
         }
 
         return response()->json(['ok' => true, 'emails' => $emails, 'salvos' => !empty($validated['salvar'])]);

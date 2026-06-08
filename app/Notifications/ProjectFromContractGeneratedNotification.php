@@ -4,6 +4,7 @@ namespace App\Notifications;
 
 use App\Models\Contract;
 use App\Models\Project;
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 use Illuminate\Notifications\AnonymousNotifiable;
@@ -17,6 +18,8 @@ use Illuminate\Notifications\AnonymousNotifiable;
  */
 class ProjectFromContractGeneratedNotification extends Notification
 {
+    use HasWorkflowCc;
+
     public Contract $contract;
     public Project $project;
 
@@ -46,8 +49,8 @@ class ProjectFromContractGeneratedNotification extends Notification
             ? 'contato do cliente'
             : ($notifiable->name ?? 'time interno');
 
-        return (new MailMessage)
-            ->subject("[Minutor] Projeto criado — {$codigo}")
+        return $this->applyCc((new MailMessage)
+            ->subject("[Minutor] Projeto criado — {$codigo}"))
             ->view('emails.contracts.project-generated', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,

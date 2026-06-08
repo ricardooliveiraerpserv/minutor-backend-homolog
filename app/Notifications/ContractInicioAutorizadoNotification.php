@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Contract;
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -14,6 +15,8 @@ use Illuminate\Notifications\Notification;
  */
 class ContractInicioAutorizadoNotification extends Notification
 {
+    use HasWorkflowCc;
+
     public Contract $contract;
 
     public function __construct(Contract $contract)
@@ -40,8 +43,8 @@ class ContractInicioAutorizadoNotification extends Notification
             ? 'executivo da conta'
             : ($notifiable->name ?? 'executivo da conta');
 
-        return (new MailMessage)
-            ->subject("[Minutor] Contrato com início autorizado — {$codigo}")
+        return $this->applyCc((new MailMessage)
+            ->subject("[Minutor] Contrato com início autorizado — {$codigo}"))
             ->view('emails.contracts.inicio-autorizado', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,

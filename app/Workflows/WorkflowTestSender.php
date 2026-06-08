@@ -59,33 +59,14 @@ class WorkflowTestSender
      */
     private function dispatch(string $to, string $subject, string $html): void
     {
-        $tenant = config('workflows.graph.tenant', env('GRAPH_TENANT_ID'));
-        $client = config('workflows.graph.client', env('GRAPH_CLIENT_ID'));
-        $secret = env('GRAPH_CLIENT_SECRET');
-        $mailbox = env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS'));
-
-        if ($tenant && $client && $secret && $mailbox) {
-            $token = Http::asForm()->post("https://login.microsoftonline.com/{$tenant}/oauth2/v2.0/token", [
-                'client_id' => $client, 'client_secret' => $secret,
-                'scope' => 'https://graph.microsoft.com/.default', 'grant_type' => 'client_credentials',
-            ])->json('access_token');
-
-            if ($token) {
-                $resp = Http::withToken($token)->post("https://graph.microsoft.com/v1.0/users/{$mailbox}/sendMail", [
-                    'message' => [
-                        'subject' => $subject,
-                        'body' => ['contentType' => 'HTML', 'content' => $html],
-                        'toRecipients' => [['emailAddress' => ['address' => $to]]],
-                    ],
-                    'saveToSentItems' => false,
-                ]);
-                if ($resp->successful()) {
-                    return;
-                }
-            }
+        // Microsoft Graph é o canal que entrega de fato (igual reajuste/fechamento).
+        $graphFrom = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')));
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+            \App\Services\GraphMailer::sendAs($graphFrom, [$to], [], $subject, $html);
+            return;
         }
 
-        // Fallback: mailer padrão (em prod, Graph; em dev sem creds, log).
+        // Fallback: mailer padrão da aplicação.
         Mail::html($html, fn ($m) => $m->to($to)->subject($subject));
     }
 }

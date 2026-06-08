@@ -3,6 +3,7 @@
 namespace App\Notifications;
 
 use App\Models\Contract;
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Notifications\AnonymousNotifiable;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
@@ -17,6 +18,8 @@ use Illuminate\Notifications\Notification;
  */
 class ContractCreatedNotification extends Notification
 {
+    use HasWorkflowCc;
+
     public Contract $contract;
 
     public function __construct(Contract $contract)
@@ -43,8 +46,8 @@ class ContractCreatedNotification extends Notification
             ? 'equipe administrativa'
             : ($notifiable->name ?? 'equipe administrativa');
 
-        return (new MailMessage)
-            ->subject("[Minutor] Novo contrato cadastrado — {$codigo}")
+        return $this->applyCc((new MailMessage)
+            ->subject("[Minutor] Novo contrato cadastrado — {$codigo}"))
             ->view('emails.contracts.created', [
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,
