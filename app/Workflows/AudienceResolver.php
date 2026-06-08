@@ -33,6 +33,7 @@ class AudienceResolver
             'envolvidos_internos'  => $this->envolvidos($ctx, 'internal'),
             'envolvidos_cliente'   => $this->envolvidos($ctx, 'client'),
             'watchers'             => $this->watchers($ctx),
+            'solicitante'          => $this->oneEmail(optional($ctx['request'] ?? null)->createdBy),
             'autor'                => $this->autor($ctx),
             'consultor'            => $this->oneEmail($ctx['consultant'] ?? null),
             'parceiro'             => $this->oneEmail($ctx['partner'] ?? null),

@@ -2,6 +2,7 @@
 
 namespace App\Notifications;
 
+use App\Notifications\Concerns\HasWorkflowCc;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Notifications\Messages\MailMessage;
@@ -19,6 +20,7 @@ use Illuminate\Notifications\Notification;
 class ContractRequestLifecycleNotification extends Notification implements ShouldQueue
 {
     use Queueable;
+    use HasWorkflowCc;
 
     public function __construct(
         public string $stage,            // 'created' | 'moved'
@@ -43,8 +45,8 @@ class ContractRequestLifecycleNotification extends Notification implements Shoul
             ? "[Minutor] Requisição {$this->reqCode} criada — próximos passos"
             : "[Minutor] Requisição {$this->reqCode} avançou para " . $this->prettyColumn($this->toColumn);
 
-        return (new MailMessage)
-            ->subject($subject)
+        return $this->applyCc((new MailMessage)
+            ->subject($subject))
             ->view('emails.requests.lifecycle', [
                 'stage'         => $this->stage,
                 'reqCode'       => $this->reqCode,
