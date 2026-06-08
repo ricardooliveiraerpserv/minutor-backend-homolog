@@ -197,41 +197,21 @@ class HourContributionController extends Controller
     private function notifyNewAporte(Project $project, HourContribution $contribution): void
     {
         try {
-            // Envolvidos internos: executivo de contas + quem incluiu o aporte.
-            $project->loadMissing('contract', 'customer');
-            $execId = $project->contract->executivo_conta_id
-                ?? optional($project->customer)->executive_id;
+            // Destinatários definidos na Central de Workflows (papéis configuráveis).
+            // Contrato filho: cliente sai (is_child) — os envolvidos internos viram To.
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.aporte', [
+                'project'      => $project,
+                'contribution' => $contribution,
+                'actor'        => \App\Models\User::find($contribution->contributed_by),
+                'is_child'     => $project->parent_project_id !== null,
+            ]);
 
-            $internalEmails = \App\Models\User::query()
-                ->whereIn('id', array_filter([$execId, $contribution->contributed_by]))
-                ->where('enabled', true)
-                ->pluck('email')
-                ->filter()
-                ->unique();
-
-            if ($project->parent_project_id !== null) {
-                // Subprojeto: cliente fora. Só os envolvidos internos (no To).
-                $toEmails = $internalEmails->values();
-                $ccEmails = [];
-            } else {
-                // Pai: cliente(s) no To, envolvidos internos em cópia.
-                $toEmails = \App\Models\User::query()
-                    ->where('type', 'cliente')
-                    ->where('customer_id', $project->customer_id)
-                    ->where('enabled', true)
-                    ->pluck('email')
-                    ->filter()
-                    ->unique()
-                    ->values();
-                $ccEmails = $internalEmails->diff($toEmails)->values()->all();
-            }
-
-            if ($toEmails->isEmpty()) {
+            if (empty($rcpt['to'])) {
                 return;
             }
 
-            \Illuminate\Support\Facades\Notification::route('mail', $toEmails->all())
-                ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $ccEmails));
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $rcpt['cc']));
         } catch (\Throwable $e) {
             \Log::warning('Aporte notification falhou', [
                 'project_id'      => $project->id,
