@@ -254,11 +254,11 @@ return [
         'fechamento.cliente' => [
             'label'       => 'Fechamento do cliente',
             'domain'      => 'Fechamento',
-            'description' => 'Envio do relatório de fechamento ao cliente (From = usuário logado).',
+            'description' => 'Envio do fechamento ao cliente. Os e-mails escolhidos na tela são sempre o destinatário; a Central adiciona papéis (ex.: executivo em cópia).',
             'audiences'   => [
-                'cliente'             => 'to',
                 'executivo_de_contas' => 'cc',
                 'coordenador'         => 'off',
+                'cliente'             => 'off',
             ],
         ],
         'fechamento.consultor' => [

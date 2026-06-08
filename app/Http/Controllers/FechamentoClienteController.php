@@ -1609,8 +1609,13 @@ class FechamentoClienteController extends Controller
             ], 422);
         }
 
-        // CC: só o financeiro (não-vazio), sem duplicar quem já está no To.
-        $cc = array_values(array_diff(array_filter([$financeiroCc]), $to));
+        // CC: financeiro + papéis configurados na Central (executivo, etc.), sem
+        // duplicar quem já está no To (que continua sendo a escolha da tela).
+        $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('fechamento.cliente', ['customer' => $customer]);
+        $cc = array_values(array_diff(
+            array_unique(array_merge(array_filter([$financeiroCc]), $wf['to'], $wf['cc'])),
+            $to,
+        ));
 
         $subject = $mode === 'despesa'
             ? 'Despesas ' . $this->periodoMMAAAA($yearMonth) . ' | Reembolso - ' . $customer->name
