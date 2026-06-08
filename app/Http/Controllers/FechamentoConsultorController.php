@@ -23,6 +23,17 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class FechamentoConsultorController extends Controller
 {
+    /**
+     * Cc do fechamento: e-mails fixos + papéis configurados na Central, sem
+     * duplicar o destinatário principal ($toEmail, que continua no To).
+     */
+    private function workflowCc(string $key, array $ctx, string $toEmail, array $extra = []): array
+    {
+        $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($key, $ctx);
+        $all = array_map(fn ($e) => strtolower(trim((string) $e)), array_merge(array_filter($extra), $wf['to'], $wf['cc']));
+        return array_values(array_diff(array_unique($all), [strtolower(trim($toEmail))]));
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private function period(string $yearMonth): array
@@ -760,13 +771,13 @@ class FechamentoConsultorController extends Controller
                 \App\Services\GraphMailer::sendAs(
                     $sender->email,
                     [$consultant->email],
-                    array_filter([$financeiroCc]),
+                    $this->workflowCc('fechamento.consultor', ['consultant' => $consultant], $consultant->email, [$financeiroCc]),
                     $subject,
                     $mailable->render(),
                     [$files['pdf_full'], $files['xlsx_full']],
                 );
             } else {
-                Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
+                Mail::mailer($mc['mailer'])->to($consultant->email)->cc($this->workflowCc('fechamento.consultor', ['consultant' => $consultant], $consultant->email, [$financeiroCc]))->send($mailable);
             }
 
             $log->fill([
@@ -1109,13 +1120,13 @@ class FechamentoConsultorController extends Controller
                 \App\Services\GraphMailer::sendAs(
                     $sender->email,
                     [$consultant->email],
-                    array_filter([$financeiroCc]),
+                    $this->workflowCc('fechamento.consultor', ['consultant' => $consultant], $consultant->email, [$financeiroCc]),
                     $subject,
                     $mailable->render(),
                     $attachmentPaths,
                 );
             } else {
-                Mail::mailer($mc['mailer'])->to($consultant->email)->send($mailable);
+                Mail::mailer($mc['mailer'])->to($consultant->email)->cc($this->workflowCc('fechamento.consultor', ['consultant' => $consultant], $consultant->email, [$financeiroCc]))->send($mailable);
             }
 
             $log->fill([

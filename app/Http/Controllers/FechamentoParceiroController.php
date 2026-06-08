@@ -739,10 +739,14 @@ class FechamentoParceiroController extends Controller
         $customEmails = $request->input('emails') ?: [];
         $to = !empty($customEmails) ? $customEmails : $this->parceiroAdminEmails($partnerId);
 
-        // CC: quando o To é custom, os parceiro_admin entram em cópia; + financeiro. Único, não-vazio.
+        // CC: parceiro_admin (quando To é custom) + financeiro + papéis configurados
+        // na Central de Workflows. Único, não-vazio.
+        $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('fechamento.parceiro', ['partner' => $partner]);
         $cc = array_values(array_unique(array_filter(array_merge(
             !empty($customEmails) ? $this->parceiroAdminEmails($partnerId) : [],
-            [$financeiroCc]
+            [$financeiroCc],
+            $wf['to'],
+            $wf['cc']
         ))));
 
         // Não duplica em CC o que já está em To.
