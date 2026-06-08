@@ -29,7 +29,9 @@ class AudienceResolver
             'coordenador'          => $this->coordenador($ctx),
             'administrativo'       => $this->administrativo(),
             'diretor'              => $this->diretor(),
-            'envolvidos_do_card'   => $this->envolvidos($ctx),
+            'envolvidos_do_card'   => $this->envolvidos($ctx, null),
+            'envolvidos_internos'  => $this->envolvidos($ctx, 'internal'),
+            'envolvidos_cliente'   => $this->envolvidos($ctx, 'client'),
             'watchers'             => $this->watchers($ctx),
             'autor'                => $this->autor($ctx),
             'consultor'            => $this->oneEmail($ctx['consultant'] ?? null),
@@ -110,7 +112,8 @@ class AudienceResolver
         return $exists ? [$email] : [];
     }
 
-    private function envolvidos(array $ctx): array
+    /** @param string|null $side null = todos | 'internal' = só time | 'client' = só cliente */
+    private function envolvidos(array $ctx, ?string $side = null): array
     {
         $card = $ctx['card'] ?? null;
         if (!$card || empty($card['type']) || empty($card['id'])) {
@@ -120,6 +123,7 @@ class AudienceResolver
         return CardEnvolvido::query()
             ->where('card_type', $card['type'])
             ->where('card_id', $card['id'])
+            ->when($side, fn ($q) => $q->where('side', $side))
             ->get()
             ->reject(fn ($e) => $actorId && $e->user_id === $actorId)
             ->map(fn ($e) => $e->notification_email)
