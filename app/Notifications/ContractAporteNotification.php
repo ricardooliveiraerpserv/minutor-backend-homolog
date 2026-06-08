@@ -41,6 +41,19 @@ class ContractAporteNotification extends Notification
         $horas = number_format((float) $this->contribution->contributed_hours, 2, ',', '.');
         $data  = optional($this->contribution->contributed_at)->format('d/m/Y') ?? now()->format('d/m/Y');
 
+        // Saldo total de horas do contrato APÓS o aporte (já reflete a contribuição recém-criada).
+        // Recarrega do banco pra não usar relação de aportes em cache (saldo inflado/defasado).
+        // On Demand não controla saldo → getGeneralHoursBalance devolve 0; nesse caso oculta a linha.
+        $saldoFmt = null;
+        try {
+            $fresh = Project::find($p->id) ?? $p;
+            if (!$fresh->isOnDemand()) {
+                $saldoFmt = number_format($fresh->getGeneralHoursBalance(), 2, ',', '.') . ' h';
+            }
+        } catch (\Throwable $e) {
+            $saldoFmt = null;
+        }
+
         $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
 
         return (new MailMessage)
@@ -50,6 +63,7 @@ class ContractAporteNotification extends Notification
                 'projeto'       => $projeto,
                 'cliente'       => $cliente,
                 'horas'         => $horas,
+                'saldo'         => $saldoFmt,
                 'data'          => $data,
                 'cardUrl'       => $base,
                 'recipientName' => $notifiable->name ?? 'cliente',

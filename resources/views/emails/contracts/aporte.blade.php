@@ -48,6 +48,15 @@
               <td style="color:#D4D4D8;padding:5px 0;font-weight:600;">Data</td>
               <td style="color:#FFFFFF;padding:5px 0;font-weight:700;">{{ $data }}</td>
             </tr>
+            @if(!empty($saldo))
+            <tr>
+              <td colspan="2" style="padding:10px 0 2px;"><div style="border-top:1px solid #3F3F46;"></div></td>
+            </tr>
+            <tr>
+              <td style="color:#86EFAC;padding:7px 0;font-weight:700;">Saldo total do contrato</td>
+              <td style="color:#FFFFFF;padding:7px 0;font-weight:800;font-size:16px;">{{ $saldo }}</td>
+            </tr>
+            @endif
           </table>
         </div>
       </td>
