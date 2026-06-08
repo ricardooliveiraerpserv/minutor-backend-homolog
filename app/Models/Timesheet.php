@@ -532,7 +532,16 @@ class Timesheet extends Model
             return;
         }
         try {
-            $owner->notify(new TimesheetStatusNotification($this, $statusKey, $reason));
+            // Dono é o destinatário; a Central pode adicionar papéis (ex.: coordenador) em cópia.
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('timesheet.status', [
+                'actor'   => $owner,
+                'project' => $this->project,
+            ]);
+            $cc = array_values(array_diff(
+                array_merge($rcpt['to'], $rcpt['cc']),
+                [strtolower(trim((string) $owner->email))],
+            ));
+            $owner->notify((new TimesheetStatusNotification($this, $statusKey, $reason))->withCc($cc));
         } catch (\Throwable $e) {
             \Log::warning('notifyOwnerOfStatus: falha ao enviar', [
                 'timesheet_id' => $this->id,
