@@ -422,9 +422,15 @@ class FechamentoConsultorController extends Controller
     private function buildConsultorReportView(int $userId, string $yearMonth, string $mode = 'ambos'): array
     {
         [$from, $to] = $this->period($yearMonth);
-        $consultor = collect($this->buildConsultoresData($yearMonth))
+        $dataConsultores = $this->buildConsultoresData($yearMonth);
+        $bizPools        = $dataConsultores['bizify'] ?? [];
+        $consultor = collect($dataConsultores)
             ->only(['horistas', 'banco_horas', 'fixos'])
             ->flatMap(fn ($g) => $g)
+            // Consultores Bizify são particionados para um bloco aninhado próprio em
+            // buildConsultoresData; sem incluí-lo aqui o relatório do Bizify vinha SEM os
+            // ajustes (desconto/adiantamento/adicional) e zerado — $consultor caía em [].
+            ->merge(collect($bizPools)->only(['horistas', 'banco_horas', 'fixos'])->flatMap(fn ($g) => $g))
             ->firstWhere('user_id', $userId) ?? [];
 
         $user     = User::find($userId);
@@ -1222,9 +1228,14 @@ class FechamentoConsultorController extends Controller
 
         // ── CONSULTOR: acha a própria linha em buildConsultoresData (horistas+banco+fixos) ──
         $data = $this->buildConsultoresData($yearMonth);
+        $biz  = $data['bizify'] ?? [];
         $row  = collect($data['horistas'])
             ->merge($data['banco_horas'])
             ->merge($data['fixos'])
+            // Bizify vive num bloco aninhado próprio (partição em buildConsultoresData).
+            ->merge($biz['horistas'] ?? [])
+            ->merge($biz['banco_horas'] ?? [])
+            ->merge($biz['fixos'] ?? [])
             ->firstWhere('user_id', $user->id);
 
         if ($row) {
