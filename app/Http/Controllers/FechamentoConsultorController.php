@@ -614,7 +614,10 @@ class FechamentoConsultorController extends Controller
             'xlsx_full'   => $xlsxFullPath,
             'pdf_name'    => $pdfFileName,
             'xlsx_name'   => $xlsxFileName,
-            'total_value' => $totalValue,
+            // Recebimento final (já com desconto/adiantamento/adicional) — é o valor que
+            // o consultor recebe e o que o e-mail/PDF comunicam. Antes devolvia $totalValue
+            // (base, sem ajustes), fazendo o e-mail ignorar o desconto digitado.
+            'total_value' => $recebimento,
         ];
     }
 
