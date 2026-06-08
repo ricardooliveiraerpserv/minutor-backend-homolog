@@ -30,15 +30,27 @@ class WorkflowConfigService
 
         $out = [];
         foreach ((array) config('workflows.workflows', []) as $key => $meta) {
-            $channels = $this->resolver->channels($key);
+            $channels = $this->resolver->channels($key);          // efetivo (override ou default)
+            $registryDefaults = (array) ($meta['audiences'] ?? []); // recomendados do registry
+
+            // Mostra os recomendados + qualquer audiência adicionada via Central (override).
+            $audienceKeys = array_values(array_unique(array_merge(
+                array_keys($registryDefaults),
+                array_keys($channels),
+            )));
 
             $audiences = [];
-            foreach (($meta['audiences'] ?? []) as $aud => $default) {
+            foreach ($audienceKeys as $aud) {
+                if (!isset($audienceLabels[$aud])) {
+                    continue; // audiência fora do catálogo global
+                }
+                $default = $registryDefaults[$aud] ?? 'off';
                 $audiences[] = [
-                    'audience' => $aud,
-                    'label'    => $audienceLabels[$aud] ?? $aud,
-                    'channel'  => $channels[$aud] ?? $default, // efetivo
-                    'default'  => $default,
+                    'audience'    => $aud,
+                    'label'       => $audienceLabels[$aud],
+                    'channel'     => $channels[$aud] ?? $default,
+                    'default'     => $default,
+                    'recommended' => array_key_exists($aud, $registryDefaults),
                 ];
             }
 
@@ -69,7 +81,9 @@ class WorkflowConfigService
         if (!$meta) {
             abort(404, 'Workflow desconhecido.');
         }
-        $validAudiences = array_keys($meta['audiences'] ?? []);
+        // Qualquer audiência do catálogo global pode ser incluída em qualquer
+        // workflow pela Central — sem depender de código.
+        $validAudiences = array_keys($this->audiences());
 
         DB::transaction(function () use ($key, $audiences, $extraEmails, $validAudiences) {
             WorkflowRecipient::where('workflow_key', $key)->delete();
