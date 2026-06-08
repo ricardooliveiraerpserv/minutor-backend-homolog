@@ -11,7 +11,7 @@
 
     <tr>
       <td style="padding:32px 40px 4px;background:#000000;">
-        <div style="font-size:11px;letter-spacing:.22em;color:#22D3EE;font-weight:800;text-transform:uppercase;">Movimentação no Kanban</div>
+        <div style="font-size:11px;letter-spacing:.22em;color:{{ $accent ?? '#22D3EE' }};font-weight:800;text-transform:uppercase;">Movimentação no Kanban</div>
         <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">
           Contrato aguardando início do projeto
         </h1>
@@ -31,7 +31,7 @@
           <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
             <tr>
               <td valign="middle" align="center">
-                <div style="display:inline-block;background-color:#22D3EE;color:#000000;font-size:11px;font-weight:800;padding:8px 16px;border-radius:999px;letter-spacing:.06em;">INÍCIO AUTORIZADO</div>
+                <div style="display:inline-block;background-color:{{ $accent ?? '#22D3EE' }};color:#000000;font-size:11px;font-weight:800;padding:8px 16px;border-radius:999px;letter-spacing:.06em;">INÍCIO AUTORIZADO</div>
               </td>
             </tr>
           </table>

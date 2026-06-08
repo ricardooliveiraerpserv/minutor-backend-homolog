@@ -16,7 +16,7 @@
     <tr>
       <td style="padding:32px 40px 4px;background:#000000;">
         @if($stage === 'created')
-          <div style="font-size:11px;letter-spacing:.22em;color:#22D3EE;font-weight:800;text-transform:uppercase;">Requisição criada com sucesso</div>
+          <div style="font-size:11px;letter-spacing:.22em;color:{{ $accent ?? '#22D3EE' }};font-weight:800;text-transform:uppercase;">Requisição criada com sucesso</div>
           <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">
             Recebemos sua requisição
           </h1>
@@ -42,7 +42,7 @@
             <div style="color:#FFFFFF;font-size:14px;line-height:1.7;">
               Sua requisição foi registrada com sucesso e está no <b>Backlog</b> do pipeline.
               <br><br>
-              Quando estiver pronta pra iniciar, <b style="color:#22D3EE;">arraste o card para a coluna "Novo Projeto"</b>
+              Quando estiver pronta pra iniciar, <b style="color:{{ $accent ?? '#22D3EE' }};">arraste o card para a coluna "Novo Projeto"</b>
               no seu painel. A partir daí o time da <b style="color:#FFFFFF;">ERPServ</b> inicia o levantamento
               e segue com a análise técnica.
               <br><br>
@@ -72,26 +72,26 @@
               @switch($toColumnLabel)
                 @case('Backlog')
                   Sua requisição voltou pro <b>Backlog</b>. Quando achar que está pronta pra iniciar,
-                  arraste o card pra coluna <b style="color:#22D3EE;">"Novo Projeto"</b> — a ERPServ inicia o levantamento.
+                  arraste o card pra coluna <b style="color:{{ $accent ?? '#22D3EE' }};">"Novo Projeto"</b> — a ERPServ inicia o levantamento.
                 @break
                 @case('Novo Projeto')
-                  A requisição entrou em <b style="color:#22D3EE;">"Novo Projeto"</b>. A ERPServ inicia
+                  A requisição entrou em <b style="color:{{ $accent ?? '#22D3EE' }};">"Novo Projeto"</b>. A ERPServ inicia
                   agora o <b>levantamento e a análise técnica</b>. Acompanhe os próximos avanços por este canal.
                 @break
                 @case('Em Planejamento')
                   A ERPServ está <b>definindo o escopo, esforço e cronograma</b> da requisição. Em breve o card
-                  avança pra <b style="color:#22D3EE;">"Em Validação"</b>, onde você revisa o que foi planejado.
+                  avança pra <b style="color:{{ $accent ?? '#22D3EE' }};">"Em Validação"</b>, onde você revisa o que foi planejado.
                 @break
                 @case('Em Validação')
                   O planejamento ficou pronto e está aguardando sua validação. Abra a requisição,
-                  revise as informações e <b style="color:#22D3EE;">aprove ou solicite ajustes</b>.
+                  revise as informações e <b style="color:{{ $accent ?? '#22D3EE' }};">aprove ou solicite ajustes</b>.
                 @break
                 @case('Em Revisão')
                   Você solicitou ajustes — a equipe da ERPServ está atualizando o planejamento.
-                  Em breve o card volta pra <b style="color:#22D3EE;">"Em Validação"</b>.
+                  Em breve o card volta pra <b style="color:{{ $accent ?? '#22D3EE' }};">"Em Validação"</b>.
                 @break
                 @case('Aprovado')
-                  A requisição foi <b style="color:#22D3EE;">aprovada</b>. A ERPServ vai gerar o contrato e
+                  A requisição foi <b style="color:{{ $accent ?? '#22D3EE' }};">aprovada</b>. A ERPServ vai gerar o contrato e
                   iniciar o projeto. Você receberá atualizações conforme as próximas fases.
                 @break
                 @case('Aguardando Início (Req.)')
@@ -110,7 +110,7 @@
     {{-- CTA --}}
     <tr>
       <td style="padding:24px 40px 8px;background:#000000;">
-        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $stage === 'created' ? '#22D3EE' : '#FBBF24' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Abrir requisição</a>
+        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $stage === 'created' ? '{{ $accent ?? '#22D3EE' }}' : '#FBBF24' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Abrir requisição</a>
       </td>
     </tr>
 

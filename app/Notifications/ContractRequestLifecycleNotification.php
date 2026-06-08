@@ -48,6 +48,7 @@ class ContractRequestLifecycleNotification extends Notification implements Shoul
         return $this->applyCc((new MailMessage)
             ->subject($subject))
             ->view('emails.requests.lifecycle', [
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('request.lifecycle'),
                 'stage'         => $this->stage,
                 'reqCode'       => $this->reqCode,
                 'reqTitle'      => $this->reqTitle,

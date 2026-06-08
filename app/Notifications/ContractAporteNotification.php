@@ -74,6 +74,7 @@ class ContractAporteNotification extends Notification
 
         return $mail
             ->view('emails.contracts.aporte', [
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('contract.aporte'),
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,
                 'cliente'       => $cliente,

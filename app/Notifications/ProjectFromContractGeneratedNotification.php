@@ -52,6 +52,7 @@ class ProjectFromContractGeneratedNotification extends Notification
         return $this->applyCc((new MailMessage)
             ->subject("[Minutor] Projeto criado — {$codigo}"))
             ->view('emails.contracts.project-generated', [
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('contract.project_generated'),
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,
                 'cliente'       => $cliente,

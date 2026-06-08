@@ -11,7 +11,7 @@
 
     <tr>
       <td style="padding:32px 40px 4px;background:#000000;">
-        <div style="font-size:11px;letter-spacing:.22em;color:#FBBF24;font-weight:800;text-transform:uppercase;">Movimentação de fase</div>
+        <div style="font-size:11px;letter-spacing:.22em;color:{{ $accent ?? '#FBBF24' }};font-weight:800;text-transform:uppercase;">Movimentação de fase</div>
         <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">
           {{ $cardType === 'contract_request' ? 'A requisição' : 'O projeto' }} avançou de fase
         </h1>
@@ -62,7 +62,7 @@
 
     <tr>
       <td style="padding:24px 40px 8px;background:#000000;">
-        <a href="{{ $cardUrl }}" style="display:inline-block;background:#FBBF24;color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Ver {{ $cardType === 'contract_request' ? 'requisição' : 'projeto' }}</a>
+        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $accent ?? '#FBBF24' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Ver {{ $cardType === 'contract_request' ? 'requisição' : 'projeto' }}</a>
       </td>
     </tr>
 

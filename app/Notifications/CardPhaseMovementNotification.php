@@ -43,6 +43,7 @@ class CardPhaseMovementNotification extends Notification implements ShouldQueue
         return $this->applyCc((new MailMessage)
             ->subject($subject))
             ->view('emails.cards.phase-movement', [
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('card.phase_movement'),
                 'cardType'      => $this->cardType,
                 'cardCode'      => $this->cardCode,
                 'cardTitle'     => $this->cardTitle,
