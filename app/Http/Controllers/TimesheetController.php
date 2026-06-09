@@ -220,6 +220,14 @@ class TimesheetController extends Controller
             $query->whereIn('timesheets.project_id', $projectIds);
         }
 
+        // Filtro por etapa/atividade (apontamentos embutidos no cronograma).
+        if ($request->filled('stage_id')) {
+            $query->where('timesheets.stage_id', $request->input('stage_id'));
+        }
+        if ($request->filled('stage_delivery_id')) {
+            $query->where('timesheets.stage_delivery_id', $request->input('stage_delivery_id'));
+        }
+
         $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));
         if (!empty($customerIds)) {
             $query->whereIn('timesheets.customer_id', $customerIds);
@@ -1063,6 +1071,16 @@ class TimesheetController extends Controller
                 ]);
             }
 
+            // Teto por ATIVIDADE: o apontamento não pode passar das HORAS PREVISTAS da
+            // atividade (disponibilizado ao consultor), salvo allow_negative_balance.
+            if (!empty($validatedData['stage_delivery_id']) && !$project->allow_negative_balance) {
+                $deliveryGuard = $this->validateDeliveryHours((int) $validatedData['stage_delivery_id'], $hoursToAdd, null);
+                if ($deliveryGuard) {
+                    DB::rollBack();
+                    return $deliveryGuard;
+                }
+            }
+
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
@@ -1372,8 +1390,11 @@ class TimesheetController extends Controller
             \App\Models\User::where('id', $timesheet->user_id)
                 ->where('partner_id', $user->partner_id)
                 ->exists();
+        // Apontamento de ATIVIDADE do cronograma: qualquer coordenador pode editar.
+        $isCronogramaCoord = $timesheet->stage_delivery_id
+            && method_exists($user, 'isCoordenador') && $user->isCoordenador();
 
-        if (!$user->isAdmin() && !$user->hasAccess('hours.update_all') && !$isOwnTimesheet && !$isTeamTimesheet) {
+        if (!$user->isAdmin() && !$user->hasAccess('hours.update_all') && !$isOwnTimesheet && !$isTeamTimesheet && !$isCronogramaCoord) {
             return response()->json([
                 'success' => false,
                 'message' => 'Acesso negado'
@@ -1418,8 +1439,12 @@ class TimesheetController extends Controller
         // Processar user_id se fornecido (apenas para administradores)
         $validatedData = $validator->validated();
         if (isset($validatedData['user_id'])) {
-            // Verificar se o usuário atual tem permissão para alterar o usuário do apontamento
-            if (!($user->isAdmin() || $user->hasAccess('admin.full_access'))) {
+            $isUserChange = (int) $validatedData['user_id'] !== (int) $timesheet->user_id;
+            // Apont de ATIVIDADE do cronograma: coordenador pode definir/trocar o usuário.
+            $isCronogramaCoord = $timesheet->stage_delivery_id
+                && method_exists($user, 'isCoordenador') && $user->isCoordenador();
+            // Só exige admin quando o usuário REALMENTE muda (mandar o mesmo user não é alteração).
+            if ($isUserChange && !($user->isAdmin() || $user->hasAccess('admin.full_access') || $isCronogramaCoord)) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -1698,6 +1723,18 @@ class TimesheetController extends Controller
                         'hours_difference' => $hoursDifference,
                         'project_id' => $projectForValidation?->id,
                     ]);
+                }
+            }
+
+            // Teto por ATIVIDADE na edição (só quando AUMENTA as horas) — não burlar o
+            // limite das horas previstas da atividade editando o apontamento.
+            if (($hoursDifference ?? 0) > 0) {
+                $editDelivId = $validatedData['stage_delivery_id'] ?? $timesheet->stage_delivery_id;
+                $editProjId  = $validatedData['project_id'] ?? $timesheet->project_id;
+                $editProj    = $editProjId ? Project::find($editProjId) : null;
+                if ($editDelivId && $editProj && !$editProj->allow_negative_balance) {
+                    $deliveryGuard = $this->validateDeliveryHours((int) $editDelivId, $newHours, $timesheet->id);
+                    if ($deliveryGuard) { DB::rollBack(); return $deliveryGuard; }
                 }
             }
 
@@ -2744,6 +2781,42 @@ class TimesheetController extends Controller
     private function resolveStaleConflicts(int $userId, string $date): void
     {
         Timesheet::resolveStaleConflicts($userId, $date);
+    }
+
+    /**
+     * Teto por ATIVIDADE: o apontamento não pode passar das HORAS PREVISTAS da atividade
+     * (stage_deliveries.hours_planned), descontando o que já foi apontado (status não
+     * rejeitado/ajuste/interno). Sem previstas → sem teto. Retorna 422 ou null.
+     */
+    private function validateDeliveryHours(int $deliveryId, float $hoursToAdd, ?int $excludeTimesheetId = null): ?JsonResponse
+    {
+        $delivery = \App\Models\StageDelivery::find($deliveryId);
+        if (!$delivery) return null;
+        $previstas = (float) ($delivery->hours_planned ?? 0);
+        if ($previstas <= 0) return null;
+
+        // Consomem as horas da atividade: pendente + aprovado (released = aprovado).
+        $consumidoMin = (int) Timesheet::where('stage_delivery_id', $deliveryId)
+            ->whereNull('deleted_at')
+            ->when($excludeTimesheetId, fn ($q) => $q->where('id', '!=', $excludeTimesheetId))
+            ->whereIn('status', [
+                Timesheet::STATUS_PENDING,
+                Timesheet::STATUS_APPROVED,
+                Timesheet::STATUS_RELEASED,
+            ])
+            ->sum('effort_minutes');
+        $consumido  = round($consumidoMin / 60, 2);
+        $disponivel = round($previstas - $consumido, 2);
+
+        if ($hoursToAdd > $disponivel + 0.001) {
+            return response()->json([
+                'message' => sprintf(
+                    'Apontamento excede as horas previstas da atividade (%.1fh). Já apontado: %.1fh · disponível: %.1fh.',
+                    $previstas, $consumido, max(0.0, $disponivel)
+                ),
+            ], 422);
+        }
+        return null;
     }
 
     private function validateHoursBalance(Project $project, int $userId, float $hoursToAdd, ?int $excludeTimesheetId = null): ?JsonResponse

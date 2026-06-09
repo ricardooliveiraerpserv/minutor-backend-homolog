@@ -99,6 +99,24 @@ class AttachableEntitiesRegistry
         };
 
         self::$entities = [
+            // ── FOLLOW_UP ─────────────────────────────────────────────────────
+            'FOLLOW_UP' => [
+                'model' => \App\Models\FollowUp::class,
+                'categories' => ['attachment', 'approval', 'evidence', 'document'],
+                'default_visibility' => 'internal',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalStaff) {
+                    if ($internalStaff($user)) return true;
+                    // Regra: cliente só vê/anexa se estiver ENVOLVIDO no Follow Up.
+                    if ($entity !== null && $user->type === 'cliente') {
+                        return method_exists($entity, 'clientCanSee') ? $entity->clientCanSee($user) : false;
+                    }
+                    return false;
+                },
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','docx','doc','xlsx','xls','csv','txt','png','jpg','jpeg','webp','gif','zip'],
+                'max_size_mb' => 25,
+            ],
+
             // ── PROJECT ───────────────────────────────────────────────────────
             'PROJECT' => [
                 'model' => Project::class,

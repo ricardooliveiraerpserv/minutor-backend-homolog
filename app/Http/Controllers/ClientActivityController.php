@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Controllers\ClientProjectController;
 use App\Models\StageActivityEvent;
 use App\Models\StageDelivery;
+use App\Services\DeliveryApprovalService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -27,8 +29,10 @@ class ClientActivityController extends Controller
         }
 
         $items = StageDelivery::query()
-            ->where('client_user_id', $user->id)
-            ->where('client_involved', true)
+            ->where(function ($q) use ($user) {
+                $q->where(fn ($w) => $w->where('client_involved', true)->where('client_user_id', $user->id))
+                  ->orWhere('responsible_user_id', $user->id);
+            })
             ->with([
                 'stage:id,project_id,name',
                 'stage.project:id,name,customer_id',
@@ -45,7 +49,7 @@ class ClientActivityController extends Controller
     {
         if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
 
-        $delivery->load(['responsible:id,name,email', 'stage:id,project_id,name', 'stage.project:id,name']);
+        $delivery->load(['responsible:id,name,email', 'stage:id,project_id,name', 'stage.project:id,name', 'approvalDecider:id,name']);
 
         return response()->json($this->summarize($delivery, full: true));
     }
@@ -54,23 +58,27 @@ class ClientActivityController extends Controller
     {
         if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
 
+        $user = $request->user();
+
+        // Eventos de status/aprovação são sempre visíveis; comentário só se marcado
+        // para o público "cliente" (visibleTo). Admin/coord veem tudo (não é o caso aqui).
+        // Cliente NÃO vê o "log" de status (criação/movimentação). Só a conversa
+        // (comentários direcionados a ele) + as aprovações/rejeições.
         $events = StageActivityEvent::query()
             ->where('delivery_id', $delivery->id)
             ->whereIn('type', [
-                // Eventos que o cliente PODE ver na sua atividade
-                StageActivityEvent::TYPE_DELIVERY_CREATED,
-                StageActivityEvent::TYPE_DELIVERY_MOVED,
-                StageActivityEvent::TYPE_DELIVERY_COMPLETED,
+                StageActivityEvent::TYPE_APPROVAL_APPROVED,
+                StageActivityEvent::TYPE_APPROVAL_REJECTED,
                 StageActivityEvent::TYPE_COMMENT,
-                StageActivityEvent::TYPE_CLIENT_INVOLVED,
-                StageActivityEvent::TYPE_CLIENT_REMOVED,
             ])
             ->with('actor:id,name,email')
             ->orderByDesc('created_at')
             ->limit(100)
-            ->get();
+            ->get()
+            ->filter(fn ($e) => $e->visibleTo($user))
+            ->values();
 
-        return response()->json(['items' => $events]);
+        return response()->json(['items' => $events, 'can_converse' => true]);
     }
 
     public function storeComment(StageDelivery $delivery, Request $request): JsonResponse
@@ -101,11 +109,13 @@ class ClientActivityController extends Controller
             ];
         }
 
+        // Mensagem do cliente: visível pra ele mesmo + equipe (consultor); admin/coord sempre.
         $event = StageActivityEvent::create(array_merge([
             'stage_id'      => $delivery->stage_id,
             'delivery_id'   => $delivery->id,
             'actor_user_id' => $request->user()->id,
             'type'          => StageActivityEvent::TYPE_COMMENT,
+            'audiences'     => [StageActivityEvent::AUDIENCE_CLIENTE, StageActivityEvent::AUDIENCE_CONSULTOR],
             'payload'       => array_filter([
                 'text'         => $text !== '' ? $text : null,
                 'from_client'  => true,
@@ -113,6 +123,42 @@ class ClientActivityController extends Controller
         ], $attachmentData));
 
         return response()->json($event->load('actor:id,name,email'), 201);
+    }
+
+    /**
+     * Aprova a atividade (cliente envolvido). Move pra Homologação.
+     */
+    public function approve(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
+    {
+        if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
+        if (($err = $this->ensurePending($delivery)) !== null) return $err;
+
+        $data = $request->validate(['note' => 'nullable|string|max:5000']);
+        $service->decide($delivery, $request->user(), true, $data['note'] ?? null, fromClient: true);
+
+        return response()->json($this->summarize($delivery->fresh()->load(['responsible:id,name,email', 'stage:id,project_id,name', 'stage.project:id,name', 'approvalDecider:id,name']), full: true));
+    }
+
+    /**
+     * Reprova / solicita ajustes (cliente envolvido). Volta pra Em andamento.
+     */
+    public function reject(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
+    {
+        if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
+        if (($err = $this->ensurePending($delivery)) !== null) return $err;
+
+        $data = $request->validate(['note' => 'nullable|string|max:5000']);
+        $service->decide($delivery, $request->user(), false, $data['note'] ?? null, fromClient: true);
+
+        return response()->json($this->summarize($delivery->fresh()->load(['responsible:id,name,email', 'stage:id,project_id,name', 'stage.project:id,name', 'approvalDecider:id,name']), full: true));
+    }
+
+    private function ensurePending(StageDelivery $delivery): ?JsonResponse
+    {
+        if ($delivery->approval_status !== StageDelivery::APPROVAL_PENDING) {
+            return response()->json(['message' => 'Esta atividade não está aguardando sua aprovação.'], 422);
+        }
+        return null;
     }
 
     /**
@@ -132,10 +178,16 @@ class ClientActivityController extends Controller
             'responsible_name'  => $d->responsible?->name,
             'stage_name'        => $d->stage?->name,
             'project_name'      => $d->stage?->project?->name,
+            'approval_status'   => $d->approval_status,
+            'approval_note'     => $d->approval_note,
+            'approval_decided_at' => $d->approval_decided_at?->toIso8601String(),
+            'approval_decided_by_name' => $d->approvalDecider?->name,
         ];
 
         if ($full) {
             $base['client_involved'] = (bool) $d->client_involved;
+            // Conversa/anexos só pro responsável — o FE usa isto pra mostrar ou esconder.
+            $base['is_responsible'] = (int) $d->responsible_user_id === (int) request()->user()?->id;
         }
 
         return $base;
@@ -150,9 +202,19 @@ class ClientActivityController extends Controller
         if (!$user->isCliente()) {
             return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
         }
-        if ((int) $delivery->client_user_id !== (int) $user->id || !$delivery->client_involved) {
-            return response()->json(['message' => 'Você não está envolvido nesta atividade.'], 403);
-        }
-        return null;
+        $uid = (int) $user->id;
+        // Pode abrir: envolvido (aprovação) OU responsável pela atividade.
+        if (ClientProjectController::canOpen($delivery, $uid)) return null;
+        // OU é uma aprovação "aguardando cliente" que ele, como cliente do projeto, pode dar.
+        $delivery->loadMissing('stage.project');
+        $project = $delivery->stage?->project;
+        if ($project && ClientProjectController::canApprove($delivery, $uid, $project)) return null;
+        return response()->json(['message' => 'Você não está envolvido nesta atividade.'], 403);
+    }
+
+    /** Conversa e anexos: SÓ se o cliente for o responsável da atividade. */
+    private function isResponsible(StageDelivery $delivery, Request $request): bool
+    {
+        return (int) $delivery->responsible_user_id === (int) $request->user()?->id;
     }
 }

@@ -340,7 +340,7 @@ class ContractController extends Controller
     public function generateProject(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'coordinator_ids'   => 'nullable|array',
+            'coordinator_ids'   => 'nullable|array|max:1',
             'coordinator_ids.*' => 'integer|exists:users,id',
         ]);
 

@@ -44,7 +44,12 @@ return [
     'n8n' => [
         'timesheet_webhook_url'     => env('N8N_TIMESHEET_WEBHOOK_URL', 'https://erpserv.app.n8n.cloud/webhook/apontamento-status'),
         'timesheet_webhook_enabled' => filter_var(env('N8N_TIMESHEET_WEBHOOK_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'followup_webhook_url'      => env('N8N_FOLLOWUP_WEBHOOK_URL', 'https://erpserv.app.n8n.cloud/webhook/followup-cobranca'),
+        'followup_webhook_enabled'  => filter_var(env('N8N_FOLLOWUP_WEBHOOK_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
     ],
+
+    // Diretor de projetos — recebe o e-mail de Saving (finalização antecipada).
+    'diretor_projetos_email' => env('DIRETOR_PROJETOS_EMAIL', 'ricardo.badawi@erpserv.com.br'),
 
     'anthropic' => [
         'api_key'   => env('ANTHROPIC_API_KEY'),

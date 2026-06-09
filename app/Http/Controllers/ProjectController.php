@@ -870,7 +870,7 @@ class ProjectController extends Controller
             'status' => ['nullable', Rule::in(array_keys(Project::getStatuses()))],
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
-            'coordinator_ids' => 'nullable|array',
+            'coordinator_ids' => 'nullable|array|max:1',
             'coordinator_ids.*' => 'exists:users,id',
             'consultant_group_ids' => 'nullable|array',
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
@@ -1140,6 +1140,13 @@ class ProjectController extends Controller
      */
     public function show(Project $project): JsonResponse
     {
+        // Cliente: visão em DIAS, sem horas/valores. Curto-circuita a montagem interna.
+        $reqUser = request()->user();
+        if ($reqUser && method_exists($reqUser, 'isCliente') && $reqUser->isCliente()) {
+            return app(\App\Http\Controllers\ClientProjectController::class)->summary($project, $reqUser);
+        }
+        // Coordenador tem ACESSO FULL ao detalhe de qualquer projeto (sem gate aqui).
+
         // Carregar relacionamentos essenciais
         $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups.consultants', 'parentProject', 'childProjects', 'hourContributions']);
 
@@ -1319,7 +1326,7 @@ class ProjectController extends Controller
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
-            'coordinator_ids' => 'nullable|array',
+            'coordinator_ids' => 'nullable|array|max:1',
             'coordinator_ids.*' => 'exists:users,id',
             'consultant_group_ids' => 'nullable|array',
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
@@ -2284,12 +2291,32 @@ class ProjectController extends Controller
         $stages = $project->stages()
             ->with([
                 'responsible:id,name,email',
-                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type,client_involved,client_user_id,client_email,extra_clients',
+                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type,client_involved,client_user_id,client_email,extra_clients,approval_status,approval_requested_at,approval_decided_at,approval_decided_by,approval_note',
                 'deliveries.responsible:id,name,email',
                 'deliveries.client:id,name,email',
+                'deliveries.approvalDecider:id,name',
             ])
             ->orderBy('order_index')
             ->get();
+
+        // Follow Ups vinculados (denormalizados em project_id/stage_id/delivery_id):
+        // contadores por atividade + agregados por etapa pra exibir no cronograma.
+        $fuByDelivery = [];
+        $fuByStage = [];
+        $todayFu = \Carbon\Carbon::now()->startOfDay();
+        foreach (\App\Models\FollowUp::where('project_id', $project->id)->where('status', '!=', \App\Models\FollowUp::STATUS_CANCELLED)
+                     ->get(['id', 'delivery_id', 'stage_id', 'status', 'waiting_subtype', 'due_date']) as $r) {
+            if ($r->delivery_id) $fuByDelivery[$r->delivery_id] = ($fuByDelivery[$r->delivery_id] ?? 0) + 1;
+            if ($r->stage_id) {
+                $fuByStage[$r->stage_id] ??= ['count' => 0, 'overdue' => 0, 'waiting_client' => 0, 'done' => 0];
+                $fuByStage[$r->stage_id]['count']++;
+                if ($r->status === 'completed') $fuByStage[$r->stage_id]['done']++;
+                if (in_array($r->status, ['pending', 'in_progress'], true) && $r->due_date && \Carbon\Carbon::parse($r->due_date)->lt($todayFu)) {
+                    $fuByStage[$r->stage_id]['overdue']++;
+                }
+                if ($r->status === 'waiting_third' && $r->waiting_subtype === 'client') $fuByStage[$r->stage_id]['waiting_client']++;
+            }
+        }
 
         // Estado do predecessor (FS) por atividade — usado pelo cronograma e board.
         // O frontend renderiza 🔒 Bloqueada por quando state === 'pending'.
@@ -2498,6 +2525,12 @@ class ProjectController extends Controller
             $stagePlanned = (float) ($st->hours_planned ?? 0);
             $st->setAttribute('deliveries_hours_planned_sum', $totalHours);
             $st->setAttribute('effective_hours_planned', $stagePlanned > 0 ? $stagePlanned : $totalHours);
+
+            // Follow Ups: agregado da etapa + contador por atividade.
+            $st->setAttribute('followups', $fuByStage[$st->id] ?? ['count' => 0, 'overdue' => 0, 'waiting_client' => 0, 'done' => 0]);
+            foreach ($st->deliveries as $d) {
+                $d->setAttribute('followups_count', $fuByDelivery[$d->id] ?? 0);
+            }
 
             $lastActAt = $st->deliveries->pluck('updated_at')->filter()->max();
             $daysSince = $lastActAt
@@ -2740,7 +2773,7 @@ class ProjectController extends Controller
         $trigger = $request->input('trigger');
         $simulate = $request->input('simulate', []);
 
-        if (!in_array($trigger, ['delivery_field', 'project_calendar'], true)) {
+        if (!in_array($trigger, ['delivery_field', 'stage_field', 'project_calendar'], true)) {
             return response()->json(['message' => 'trigger inválido'], 422);
         }
 
@@ -2788,39 +2821,125 @@ class ProjectController extends Controller
                 $changes[] = "Predecessor: {$oldPredTitle} → {$newPredTitle}";
             }
 
-            // Calcula novo project_end estimado a partir das suggested_end da chain
-            $newMaxEnd = $currentEnd;
-            $stageIds = [];
+            // Mapa das atividades que se moveram (cadeia + a editada) → novo fim.
+            $movedEnds = [];
             foreach ($chain as $c) {
-                if (!empty($c['suggested_end']) && (!$newMaxEnd || $c['suggested_end'] > $newMaxEnd)) {
-                    $newMaxEnd = $c['suggested_end'];
-                }
-                $dep = \App\Models\StageDelivery::find($c['id']);
-                if ($dep) $stageIds[$dep->stage_id] = true;
+                if (!empty($c['id'])) $movedEnds[(int) $c['id']] = $c['suggested_end'] ?? null;
             }
-            // Se a própria delivery editada empurra prazo, considera due_date simulado
-            $ownSimulatedEnd = $simulate['due_date'] ?? null;
-            if ($ownSimulatedEnd && (!$newMaxEnd || $ownSimulatedEnd > $newMaxEnd)) {
-                $newMaxEnd = $ownSimulatedEnd;
+            $movedEnds[$delivery->id] = $simulate['due_date'] ?? $origDue;
+
+            // Novo prazo do projeto = MAX de todas as deliveries (com o fim movido onde
+            // aplicável) + as etapas. Funciona empurrando E puxando o prazo.
+            $newMaxEnd = null;
+            $allDeliv = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+                ->get(['id', 'due_date']);
+            foreach ($allDeliv as $ad) {
+                $e = array_key_exists($ad->id, $movedEnds) ? $movedEnds[$ad->id] : $ad->due_date?->toDateString();
+                if ($e && (!$newMaxEnd || $e > $newMaxEnd)) $newMaxEnd = $e;
             }
+            $maxStage = $project->stages()->max('expected_end_date');
+            $maxStageStr = $maxStage instanceof \Carbon\Carbon ? $maxStage->toDateString() : (is_string($maxStage) ? substr($maxStage, 0, 10) : null);
+            if ($maxStageStr && (!$newMaxEnd || $maxStageStr > $newMaxEnd)) $newMaxEnd = $maxStageStr;
 
             $daysDiff = $this->datesDiff($currentEnd, $newMaxEnd);
+
+            // Resumo executivo estruturado (campo primário alterado).
+            [$fieldLabel, $oldVal, $newVal] = $this->primaryChangedField($simulate, [
+                'hours' => $origHours, 'start' => $origStart, 'due' => $origDue, 'pred_id' => $origPredId,
+            ]);
+
+            // Impacto por etapa: a etapa editada (com datas simuladas) + as etapas da cadeia.
+            $suggestions = $chain;
+            $suggestions[] = [
+                'id' => $delivery->id,
+                'suggested_start' => $simulate['planned_start_at'] ?? $origStart,
+                'suggested_end'   => $simulate['due_date'] ?? $origDue,
+            ];
+            $affectedStages = $this->buildAffectedStages($suggestions);
 
             return response()->json([
                 'summary' => [
                     'change_description' => implode(' · ', $changes) ?: 'Sem mudanças detectadas',
                     'trigger_label' => "Alteração em '{$origTitle}'",
+                    'item_title'    => $origTitle,
+                    'item_kind'     => 'atividade',
+                    'field_label'   => $fieldLabel,
+                    'old_value'     => $oldVal,
+                    'new_value'     => $newVal,
                 ],
                 'impact' => [
                     'affected_deliveries_count' => count($chain),
-                    'affected_stages_count'     => count($stageIds),
+                    'affected_stages_count'     => count($affectedStages),
                     'project_end_current'       => $currentEnd,
                     'project_end_new'           => $newMaxEnd,
                     'days_diff'                 => $daysDiff,
                     'has_conflicts'             => false,
                 ],
-                'affected' => $chain,
-                'conflicts' => [],
+                'affected'        => $chain,
+                'affected_stages' => $affectedStages,
+                'conflicts'       => [],
+            ]);
+        }
+
+        // trigger=stage_field — etapa não cascateia (sem FS entre etapas); só pode
+        // mover o prazo do projeto se a etapa for a mais distante.
+        if ($trigger === 'stage_field') {
+            $stage = \App\Models\ProjectStage::find((int) $request->input('stage_id'));
+            if (!$stage || $stage->project_id !== $project->id) {
+                return response()->json(['message' => 'etapa inválida'], 422);
+            }
+            $origStageStart = $stage->stage_start_at?->toDateString();
+            $origStageEnd   = $stage->expected_end_date?->toDateString();
+            $origStageHours = $stage->hours_planned;
+
+            $newStageEnd = array_key_exists('expected_end_date', $simulate) ? $simulate['expected_end_date'] : $origStageEnd;
+            $newStageStart = array_key_exists('stage_start_at', $simulate) ? $simulate['stage_start_at'] : $origStageStart;
+
+            // Novo prazo do projeto: maior entre as OUTRAS etapas, todas as deliveries e o novo fim da etapa.
+            $otherStagesMax = $project->stages()->where('id', '!=', $stage->id)->max('expected_end_date');
+            $delivMax = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))->max('due_date');
+            $newMaxEnd = null;
+            foreach ([$otherStagesMax, $delivMax, $newStageEnd] as $d) {
+                $ds = $d instanceof \Carbon\Carbon ? $d->toDateString() : (is_string($d) ? substr($d, 0, 10) : null);
+                if ($ds && (!$newMaxEnd || $ds > $newMaxEnd)) $newMaxEnd = $ds;
+            }
+            $daysDiff = $this->datesDiff($currentEnd, $newMaxEnd);
+
+            [$fieldLabel, $oldVal, $newVal] = $this->primaryChangedStageField($simulate, [
+                'hours' => $origStageHours, 'start' => $origStageStart, 'end' => $origStageEnd,
+            ]);
+
+            $affectedStages = [[
+                'stage_id'      => $stage->id,
+                'name'          => $stage->name,
+                'current_start' => $origStageStart,
+                'current_end'   => $origStageEnd,
+                'new_start'     => $newStageStart,
+                'new_end'       => $newStageEnd,
+                'days_diff'     => $this->datesDiff($origStageEnd, $newStageEnd),
+            ]];
+
+            return response()->json([
+                'summary' => [
+                    'change_description' => trim(($fieldLabel ?? 'Etapa') . ": " . ($oldVal ?? '—') . " → " . ($newVal ?? '—')),
+                    'trigger_label' => "Alteração na etapa '{$stage->name}'",
+                    'item_title'    => $stage->name,
+                    'item_kind'     => 'etapa',
+                    'field_label'   => $fieldLabel,
+                    'old_value'     => $oldVal,
+                    'new_value'     => $newVal,
+                ],
+                'impact' => [
+                    'affected_deliveries_count' => 0,
+                    'affected_stages_count'     => 1,
+                    'project_end_current'       => $currentEnd,
+                    'project_end_new'           => $newMaxEnd,
+                    'days_diff'                 => $daysDiff,
+                    'has_conflicts'             => false,
+                ],
+                'affected'        => [],
+                'affected_stages' => $affectedStages,
+                'conflicts'       => [],
             ]);
         }
 
@@ -2879,9 +2998,93 @@ class ProjectController extends Controller
                 'days_diff'                 => 0,
                 'has_conflicts'             => false,
             ],
-            'affected'  => $affected,
-            'conflicts' => [],
+            'affected'        => $affected,
+            'affected_stages' => [],
+            'conflicts'       => [],
         ]);
+    }
+
+    /** Campo primário alterado numa atividade → [label, old, new] p/ resumo executivo. */
+    private function primaryChangedField(array $simulate, array $orig): array
+    {
+        if (array_key_exists('hours_planned', $simulate)) {
+            return ['Horas planejadas', $orig['hours'] . 'h', $simulate['hours_planned'] . 'h'];
+        }
+        if (array_key_exists('due_date', $simulate)) {
+            return ['Data de entrega', $orig['due'] ?? '—', $simulate['due_date'] ?? '—'];
+        }
+        if (array_key_exists('planned_start_at', $simulate)) {
+            return ['Data de início', $orig['start'] ?? '—', $simulate['planned_start_at'] ?? '—'];
+        }
+        if (array_key_exists('depends_on_delivery_id', $simulate)) {
+            $oldT = $orig['pred_id'] ? (\App\Models\StageDelivery::find($orig['pred_id'])?->title ?? '?') : 'sem predecessor';
+            $newT = $simulate['depends_on_delivery_id'] ? (\App\Models\StageDelivery::find($simulate['depends_on_delivery_id'])?->title ?? '?') : 'sem predecessor';
+            return ['Predecessora', $oldT, $newT];
+        }
+        return [null, null, null];
+    }
+
+    /** Campo primário alterado numa etapa → [label, old, new]. */
+    private function primaryChangedStageField(array $simulate, array $orig): array
+    {
+        if (array_key_exists('hours_planned', $simulate)) {
+            return ['Horas da etapa', $orig['hours'] . 'h', $simulate['hours_planned'] . 'h'];
+        }
+        if (array_key_exists('expected_end_date', $simulate)) {
+            return ['Data de fim', $orig['end'] ?? '—', $simulate['expected_end_date'] ?? '—'];
+        }
+        if (array_key_exists('stage_start_at', $simulate)) {
+            return ['Data de início', $orig['start'] ?? '—', $simulate['stage_start_at'] ?? '—'];
+        }
+        return [null, null, null];
+    }
+
+    /**
+     * Impacto por etapa: dadas as sugestões {id, suggested_start/end} das atividades
+     * que se moveram, agrupa por etapa e calcula o prazo atual (min/max das deliveries
+     * de cada etapa hoje) vs o novo (aplicando as sugestões). Fase 10.1+.
+     */
+    private function buildAffectedStages(array $suggestions): array
+    {
+        if (empty($suggestions)) return [];
+        $suggById = [];
+        foreach ($suggestions as $s) {
+            if (!empty($s['id'])) $suggById[(int) $s['id']] = $s;
+        }
+        $stageIds = \App\Models\StageDelivery::whereIn('id', array_keys($suggById))
+            ->pluck('stage_id')->unique()->values()->all();
+
+        $out = [];
+        foreach ($stageIds as $sid) {
+            $stage = \App\Models\ProjectStage::find($sid);
+            if (!$stage) continue;
+            $deliveries = \App\Models\StageDelivery::where('stage_id', $sid)
+                ->where('client_involved', false)
+                ->whereNotNull('planned_start_at')->whereNotNull('due_date')
+                ->get(['id', 'planned_start_at', 'due_date']);
+
+            $curStart = $curEnd = $newStart = $newEnd = null;
+            foreach ($deliveries as $d) {
+                $cs = $d->planned_start_at->toDateString();
+                $ce = $d->due_date->toDateString();
+                $ns = isset($suggById[$d->id]) ? ($suggById[$d->id]['suggested_start'] ?? $cs) : $cs;
+                $ne = isset($suggById[$d->id]) ? ($suggById[$d->id]['suggested_end'] ?? $ce) : $ce;
+                if ($curStart === null || $cs < $curStart) $curStart = $cs;
+                if ($curEnd === null   || $ce > $curEnd)   $curEnd = $ce;
+                if ($newStart === null || $ns < $newStart) $newStart = $ns;
+                if ($newEnd === null   || $ne > $newEnd)   $newEnd = $ne;
+            }
+            $out[] = [
+                'stage_id'      => $sid,
+                'name'          => $stage->name,
+                'current_start' => $curStart,
+                'current_end'   => $curEnd,
+                'new_start'     => $newStart,
+                'new_end'       => $newEnd,
+                'days_diff'     => $this->datesDiff($curEnd, $newEnd),
+            ];
+        }
+        return $out;
     }
 
     /** Maior due_date / expected_end_date do projeto operacional. Fase 10.1. */
@@ -3628,6 +3831,42 @@ class ProjectController extends Controller
             'message' => 'Status atualizado com sucesso',
             'status' => $project->status,
             'status_display' => $project->status_display,
+        ]);
+    }
+
+    /** Dados do Saving (finalização antecipada) pra exibir na tela. {early:false} se não houver. */
+    public function saving(Request $request, Project $project): JsonResponse
+    {
+        $data = app(\App\Services\ProjectEarlyFinishNotifier::class)->earlyFinishData($project);
+        if (!$data) return response()->json(['early' => false]);
+
+        return response()->json([
+            'early'        => true,
+            'days_early'   => $data['days_early'],
+            'hours_saved'  => $data['hours_saved'],
+            'prazo'        => $data['prazo'],
+            'encerramento' => $data['encerramento'],
+            'notified_at'  => $project->saving_notified_at,
+        ]);
+    }
+
+    /** Reenvia (manual) o e-mail de Saving de finalização antecipada. */
+    public function sendSaving(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $result = app(\App\Services\ProjectEarlyFinishNotifier::class)->send($project, true);
+        if (empty($result['sent'])) {
+            return response()->json(['message' => $result['reason'] ?? 'Não foi possível enviar.'], 422);
+        }
+
+        return response()->json([
+            'message'     => 'Saving enviado para: ' . implode(', ', $result['to']),
+            'days_early'  => $result['days_early'],
+            'hours_saved' => $result['hours_saved'],
         ]);
     }
 

@@ -100,6 +100,8 @@ class PermissionService
         'services.manage', 'executives.manage', 'groups.manage', 'holidays.manage',
         'expense_categories.manage', 'expense_types.manage', 'payment_methods.manage',
         'consultant_groups.view',
+        // Follow Up (pendências/compromissos)
+        'followups.view', 'followups.view_all', 'followups.manage',
         // Parceiros
         'partners.view', 'partners.manage',
         // Usuários
@@ -178,6 +180,8 @@ class PermissionService
             'consultant_groups.view',
             // Cadastro de feriados: alimenta o calendário do cronograma (rotina do coordenador).
             'holidays.manage',
+            // Follow Up: coordenador vê/gerencia os do seu contexto.
+            'followups.view', 'followups.manage',
         ];
     }
 
@@ -192,6 +196,8 @@ class PermissionService
             'expenses.view', 'expenses.manage',
             'users.view_own_profile', 'users.update_own_profile',
             'financial.view_own_rate', 'financial.view_partner_rate',
+            // Follow Up: consultor vê/gerencia os atribuídos a ele.
+            'followups.view', 'followups.manage',
         ];
     }
 

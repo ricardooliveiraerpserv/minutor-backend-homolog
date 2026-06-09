@@ -127,6 +127,13 @@ Schedule::command('reajustes:alerta-vencidos')
   ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
   ->withoutOverlapping();
 
+// Follow Up — cobranças diárias (5/3/1 dias antes, no vencimento e em atraso).
+Schedule::command('followups:send-reminders')
+  ->dailyAt('08:00')
+  ->name('followups-send-reminders')
+  ->description('Lembretes/cobranças dos Follow Ups com prazo (pula waiting_third)')
+  ->withoutOverlapping();
+
 // FASE 11.1 — Integrity sweep diário dos anexos (verifica entidade-dona, arquivo
 // físico, checksum e provider). Default incremental (últimos 7 dias) pra não
 // pesar; varredura completa pode ser disparada manualmente com --all.

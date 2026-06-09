@@ -46,6 +46,7 @@ class AppServiceProvider extends ServiceProvider
         // Registrar observers
         Project::observe(ProjectObserver::class);
         Contract::observe(ContractObserver::class);
+        \App\Models\FollowUp::observe(\App\Observers\FollowUpObserver::class);
 
         // Registrar Policies
         Gate::policy(Timesheet::class, TimesheetPolicy::class);

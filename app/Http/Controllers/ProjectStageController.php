@@ -342,6 +342,12 @@ class ProjectStageController extends Controller
             'parent_stage_id'     => 'nullable|integer|exists:project_stages,id',
         ]);
 
+        // Fim não pode ser anterior ao início.
+        if (!empty($data['stage_start_at']) && !empty($data['expected_end_date'])
+            && substr((string) $data['expected_end_date'], 0, 10) < substr((string) $data['stage_start_at'], 0, 10)) {
+            return response()->json(['message' => 'A data de fim não pode ser anterior ao início.'], 422);
+        }
+
         // Sub-etapa: valida que a etapa-mãe é do mesmo projeto e é de TOPO (máx. 2
         // níveis de etapa → não permite sub-sub-etapa).
         if (!empty($data['parent_stage_id'])) {
@@ -354,10 +360,10 @@ class ProjectStageController extends Controller
             }
         }
 
-        // Bloqueia se a nova etapa fizer SUM(stages.planned) > pool liberado à gestão
+        // Bloqueia se a nova etapa fizer o uso do pool passar do liberado à gestão.
         $project->loadMissing('serviceType');
-        if ($project->isOperational() && isset($data['hours_planned']) && $data['hours_planned'] > 0) {
-            $err = $this->guardProjectCapacity($project, (float) $data['hours_planned']);
+        if ($project->isOperational() && isset($data['hours_planned'])) {
+            $err = $this->guardProjectCapacity($project, (float) $data['hours_planned'], null);
             if ($err !== null) return $err;
         }
 
@@ -387,15 +393,18 @@ class ProjectStageController extends Controller
             'stage_start_at'      => 'nullable|date',
         ]);
 
-        // Se está aumentando hours_planned em projeto operacional, valida saldo
+        // Fim não pode ser anterior ao início (datas efetivas após a edição).
+        $effStart = array_key_exists('stage_start_at', $data) ? $data['stage_start_at'] : optional($stage->stage_start_at)->toDateString();
+        $effEnd   = array_key_exists('expected_end_date', $data) ? $data['expected_end_date'] : optional($stage->expected_end_date)->toDateString();
+        if (!empty($effStart) && !empty($effEnd)
+            && substr((string) $effEnd, 0, 10) < substr((string) $effStart, 0, 10)) {
+            return response()->json(['message' => 'A data de fim não pode ser anterior ao início.'], 422);
+        }
+
+        // Se está definindo hours_planned em projeto operacional, valida o pool.
         $stage->loadMissing('project.serviceType');
-        if (
-            $stage->project?->isOperational()
-            && isset($data['hours_planned'])
-            && (float) $data['hours_planned'] > (float) $stage->hours_planned
-        ) {
-            $delta = (float) $data['hours_planned'] - (float) $stage->hours_planned;
-            $err = $this->guardProjectCapacity($stage->project, $delta);
+        if ($stage->project?->isOperational() && isset($data['hours_planned'])) {
+            $err = $this->guardProjectCapacity($stage->project, (float) $data['hours_planned'], $stage);
             if ($err !== null) return $err;
         }
 
@@ -432,26 +441,34 @@ class ProjectStageController extends Controller
     }
 
     /**
-     * Bloqueia se SUM(stages.planned_hours) + $delta > pool do cronograma.
-     * Pool = horas liberadas à gestão (coordination_hours); 100% das vendidas
-     * só quando coordination_hours está zerado/não preenchido.
-     * Retorna 422 com mensagem padrão; ou null se está OK.
+     * Bloqueia se o planejamento da etapa fizer o USO DO POOL passar do liberado à
+     * gestão. Usa horas EFETIVAS (Project::plannedPoolUsage): etapa com horas próprias
+     * conta as dela; etapa em rollup conta a soma das atividades não-cliente.
+     * Pool = coordination_hours (ou 100% das vendidas se não preenchido).
+     * NÃO é afrouxado por allow_negative_balance (planejamento sempre dentro do pool).
+     *
+     * @param float $newStageHours novo hours_planned da etapa.
+     * @param ProjectStage|null $editingStage etapa existente em edição (null = nova).
      */
-    private function guardProjectCapacity(Project $project, float $delta): ?JsonResponse
+    private function guardProjectCapacity(Project $project, float $newStageHours, ?ProjectStage $editingStage = null): ?JsonResponse
     {
         $pool = $project->cronogramaPoolHours();
-        // Soma só etapas-folha (sem sub-etapas) pra não contar duas vezes as horas
-        // de uma etapa-mãe e das suas sub-etapas.
-        $parentIds = $project->stages()->whereNotNull('parent_stage_id')->pluck('parent_stage_id')->unique()->all();
-        $allocated = (float) $project->stages()->whereNotIn('id', $parentIds ?: [0])->sum('hours_planned');
-        $available = $pool - $allocated;
+        $used = $project->plannedPoolUsage($editingStage?->id);
+        // Contribuição efetiva da etapa: horas próprias se >0; senão suas atividades.
+        $effectiveNew = $newStageHours > 0
+            ? $newStageHours
+            : ($editingStage
+                ? (float) \App\Models\StageDelivery::where('stage_id', $editingStage->id)
+                    ->where('client_involved', false)->sum('hours_planned')
+                : 0.0);
 
-        if ($delta > $available + 0.001) {
+        if ($used + $effectiveNew > $pool + 0.001) {
+            $available = max(0.0, $pool - $used);
             return response()->json([
-                'message' => 'Sem saldo disponível. Verifique com o coordenador.',
+                'message' => 'Sem saldo no cronograma. O planejamento não pode passar das horas liberadas à gestão.',
                 'detail'  => sprintf(
-                    'Tentativa de alocar %.1fh. Saldo liberado à gestão: %.1fh (liberadas %.1fh, alocadas %.1fh).',
-                    $delta, $available, $pool, $allocated
+                    'Tentativa de planejar %.1fh nesta etapa. Liberado à gestão: %.1fh · já planejado (outras etapas): %.1fh · disponível: %.1fh.',
+                    $effectiveNew, $pool, $used, $available
                 ),
             ], 422);
         }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\ProjectStage;
 use App\Models\StageDelivery;
 use App\Services\BusinessCalendarService;
+use App\Services\DeliveryApprovalService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -62,6 +63,18 @@ class StageDeliveryController extends Controller
             'extra_clients.*.name'         => 'nullable|string|max:180',
         ]);
 
+        // Fim não pode ser anterior ao início.
+        if (!empty($data['planned_start_at']) && !empty($data['due_date'])
+            && substr((string) $data['due_date'], 0, 10) < substr((string) $data['planned_start_at'], 0, 10)) {
+            return response()->json(['message' => 'A data de fim não pode ser anterior ao início.'], 422);
+        }
+
+        // Planejamento dentro do pool liberado à gestão (não afrouxa com allow_negative_balance).
+        if (($data['hours_planned'] ?? 0) > 0) {
+            $err = $this->guardDeliveryPoolCapacity($stage, (float) $data['hours_planned'], (bool) ($data['client_involved'] ?? false), null);
+            if ($err !== null) return $err;
+        }
+
         $data['stage_id'] = $stage->id;
         $data['order_index'] = (int) $stage->deliveries()
             ->where('status', $data['status'] ?? StageDelivery::STATUS_BACKLOG)
@@ -88,6 +101,39 @@ class StageDeliveryController extends Controller
         }
 
         return response()->json($payload, 201);
+    }
+
+    /**
+     * Bloqueia se as horas planejadas da atividade fizerem o uso do pool passar do
+     * liberado à gestão (Project::cronogramaPoolHours). Só vale para etapa em ROLLUP
+     * (hours_planned próprio = 0); etapa com horas próprias já é capada pelo guard de
+     * etapa. Atividade de cliente não ocupa o pool. NÃO afrouxa com allow_negative_balance.
+     */
+    private function guardDeliveryPoolCapacity(?ProjectStage $stage, float $newHours, bool $clientInvolved, ?int $excludeDeliveryId): ?JsonResponse
+    {
+        if ($clientInvolved || !$stage) return null;
+        $project = $stage->project;
+        if (!$project || !$project->isOperational()) return null;
+        if ((float) ($stage->hours_planned ?? 0) > 0) return null; // teto da etapa já controla
+
+        $pool = $project->cronogramaPoolHours();
+        $used = $project->plannedPoolUsage($stage->id); // outras etapas (efetivo)
+        $sumOther = (float) StageDelivery::where('stage_id', $stage->id)
+            ->where('client_involved', false)
+            ->where('id', '!=', $excludeDeliveryId ?? 0)
+            ->sum('hours_planned');
+
+        if ($used + $sumOther + $newHours > $pool + 0.001) {
+            $available = max(0.0, $pool - $used - $sumOther);
+            return response()->json([
+                'message' => 'Sem saldo no cronograma. O planejamento não pode passar das horas liberadas à gestão.',
+                'detail'  => sprintf(
+                    'Tentativa de planejar %.1fh nesta atividade. Liberado à gestão: %.1fh · disponível: %.1fh.',
+                    $newHours, $pool, $available
+                ),
+            ], 422);
+        }
+        return null;
     }
 
     public function update(Request $request, StageDelivery $delivery): JsonResponse
@@ -130,12 +176,37 @@ class StageDeliveryController extends Controller
             ], 422);
         }
 
+        // Fim não pode ser anterior ao início (considera datas efetivas após a edição).
+        $effStart = array_key_exists('planned_start_at', $data) ? $data['planned_start_at'] : optional($delivery->planned_start_at)->toDateString();
+        $effEnd   = array_key_exists('due_date', $data) ? $data['due_date'] : optional($delivery->due_date)->toDateString();
+        if (!empty($effStart) && !empty($effEnd)
+            && substr((string) $effEnd, 0, 10) < substr((string) $effStart, 0, 10)) {
+            return response()->json(['message' => 'A data de fim não pode ser anterior ao início.'], 422);
+        }
+
+        // Só valida o pool quando AUMENTA as horas planejadas (nunca trava edição/redução).
+        if (array_key_exists('hours_planned', $data)
+            && (float) $data['hours_planned'] > (float) $delivery->hours_planned) {
+            $clientInv = array_key_exists('client_involved', $data)
+                ? (bool) $data['client_involved'] : (bool) $delivery->client_involved;
+            $err = $this->guardDeliveryPoolCapacity($delivery->stage, (float) $data['hours_planned'], $clientInv, $delivery->id);
+            if ($err !== null) return $err;
+        }
+
         $delivery->update($data);
+
+        // Um consultor por atividade: ao trocar o responsável, remove a alocação de
+        // qualquer outro consultor (mantém só o do responsável atual).
+        if (array_key_exists('responsible_user_id', $data) && $data['responsible_user_id']) {
+            \App\Models\StageAllocation::where('delivery_id', $delivery->id)
+                ->where('user_id', '!=', (int) $data['responsible_user_id'])
+                ->delete();
+        }
 
         // Prazo de entrega do projeto deriva sempre da última data do cronograma.
         $delivery->stage?->project?->recalcExpectedEndFromSchedule();
 
-        $payload = $delivery->fresh()->load('responsible:id,name,email')->toArray();
+        $payload = $delivery->fresh()->load(['responsible:id,name,email', 'approvalDecider:id,name'])->toArray();
         if ($suggested = $this->suggestedDueDate($delivery->fresh())) {
             $payload['suggested_due_date'] = $suggested;
         }
@@ -206,19 +277,96 @@ class StageDeliveryController extends Controller
     }
 
     /**
+     * Solicita (ou reenvia) a aprovação do cliente. Interno: coordenador/admin.
+     */
+    public function requestApproval(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
+    {
+        // Qualquer perfil interno pode solicitar aprovação (mover p/ aguardando cliente).
+        // Cliente já é bloqueado pelo middleware do grupo de rotas.
+
+        // Mover p/ "Aguardando cliente" exige mensagem; anexo/print opcional.
+        $data = $request->validate([
+            'message'     => 'required|string|max:5000',
+            'attachment'  => 'nullable|file|max:20480|mimes:jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip',
+            'audiences'   => 'nullable|array',
+            'audiences.*' => 'in:cliente,consultor',
+        ]);
+
+        // Entra em "Aguardando cliente" (observer cria a aprovação pendente) ou,
+        // se já estiver, reabre/garante a pendência (reenvio).
+        if ($delivery->status !== StageDelivery::STATUS_WAITING_CLIENT) {
+            $delivery->update(['status' => StageDelivery::STATUS_WAITING_CLIENT]);
+        } else {
+            $service->requestApproval($delivery, $request->user());
+        }
+
+        // Mensagem obrigatória na conversa, visível ao cliente.
+        $service->postApprovalMessage(
+            $delivery, $request->user(), $data['message'], $request->file('attachment'),
+            array_values(array_diff($data['audiences'] ?? [], ['cliente'])) // 'cliente' já entra por padrão
+        );
+
+        return response()->json($delivery->fresh()->load(['responsible:id,name,email', 'approvalDecider:id,name']));
+    }
+
+    /**
+     * Aprova a atividade em nome do cliente (interno). Move pra Homologação.
+     */
+    public function approve(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
+    {
+        if (($err = $this->ensureCanManageApproval($request)) !== null) return $err;
+
+        $data = $request->validate(['note' => 'nullable|string|max:5000']);
+        $service->decide($delivery, $request->user(), true, $data['note'] ?? null, fromClient: false);
+
+        return response()->json($delivery->fresh()->load(['responsible:id,name,email', 'approvalDecider:id,name']));
+    }
+
+    /**
+     * Reprova / solicita ajustes (interno). Volta pra Em andamento.
+     */
+    public function reject(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
+    {
+        if (($err = $this->ensureCanManageApproval($request)) !== null) return $err;
+
+        $data = $request->validate(['note' => 'nullable|string|max:5000']);
+        $service->decide($delivery, $request->user(), false, $data['note'] ?? null, fromClient: false);
+
+        return response()->json($delivery->fresh()->load(['responsible:id,name,email', 'approvalDecider:id,name']));
+    }
+
+    private function ensureCanManageApproval(Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+        $can = $user && (
+            (method_exists($user, 'isAdmin') && $user->isAdmin())
+            || (method_exists($user, 'isCoordenador') && $user->isCoordenador())
+        );
+        if (!$can) {
+            return response()->json(['message' => 'Apenas coordenador ou admin podem gerir a aprovação.'], 403);
+        }
+        return null;
+    }
+
+    /**
      * Timeline da atividade — eventos com delivery_id=X. Mais recentes primeiro.
      * Reaproveita a tabela stage_activity_events (ADR 0005 + 0010).
      */
     public function activity(StageDelivery $delivery, Request $request): JsonResponse
     {
         $limit = min((int) $request->get('limit', 50), 200);
+        $user = $request->user();
 
         $events = \App\Models\StageActivityEvent::query()
             ->where('delivery_id', $delivery->id)
             ->with('actor:id,name,email')
             ->orderByDesc('created_at')
             ->limit($limit)
-            ->get();
+            ->get()
+            // Filtra comentários pelo público (admin/coord veem tudo; consultor vê
+            // o que for marcado p/ consultor ou que ele próprio escreveu).
+            ->filter(fn ($e) => $e->visibleTo($user))
+            ->values();
 
         return response()->json(['items' => $events]);
     }
@@ -261,11 +409,14 @@ class StageDeliveryController extends Controller
             'attachment'           => 'nullable|file|max:20480|mimes:jpg,jpeg,png,gif,webp,pdf,doc,docx,xls,xlsx,ppt,pptx,txt,csv,zip',
             'mentioned_user_ids'   => 'nullable|array',
             'mentioned_user_ids.*' => 'integer|exists:users,id',
+            'audiences'            => 'nullable|array',
+            'audiences.*'          => 'in:cliente,consultor',
         ]);
 
         $text       = trim((string) ($data['text'] ?? ''));
         $hasAttach  = $request->hasFile('attachment');
         $mentioned  = array_map('intval', $data['mentioned_user_ids'] ?? []);
+        $audiences  = array_values(array_unique($data['audiences'] ?? []));
 
         if ($text === '' && !$hasAttach) {
             return response()->json([
@@ -290,6 +441,7 @@ class StageDeliveryController extends Controller
             'delivery_id'   => $delivery->id,
             'actor_user_id' => $user?->id,
             'type'          => \App\Models\StageActivityEvent::TYPE_COMMENT,
+            'audiences'     => $audiences,
             'payload'       => array_filter([
                 'text'               => $text !== '' ? $text : null,
                 'mentioned_user_ids' => !empty($mentioned) ? $mentioned : null,
@@ -330,8 +482,10 @@ class StageDeliveryController extends Controller
         $visited = [];
 
         $walk = function (StageDelivery $node, ?Carbon $newEnd) use (&$walk, &$chain, &$visited, $calendar) {
+            // FS é o único tipo de dependência hoje; trata null como FS (a coluna
+            // "Depende de" seta só o depends_on_delivery_id, sem o dependency_type).
             $deps = StageDelivery::where('depends_on_delivery_id', $node->id)
-                ->where('dependency_type', 'FS')
+                ->where(fn ($q) => $q->where('dependency_type', 'FS')->orWhereNull('dependency_type'))
                 ->get();
 
             foreach ($deps as $dep) {

@@ -54,6 +54,15 @@ class ProjectObserver
      */
     public function updated(Project $project): void
     {
+        // Saving: ao finalizar ANTES do prazo, notifica (1x) coordenador/executivo/diretor.
+        if ($project->wasChanged('status') && $project->status === Project::STATUS_FINISHED && !$project->saving_notified_at) {
+            try {
+                app(\App\Services\ProjectEarlyFinishNotifier::class)->send($project);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Saving auto-notify falhou', ['project_id' => $project->id, 'error' => $e->getMessage()]);
+            }
+        }
+
         // Obter usuário autenticado
         $userId = Auth::id();
 

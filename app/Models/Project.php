@@ -98,6 +98,7 @@ class Project extends Model
         'start_date',
         'expected_end_date',
         'encerramento_date',
+        'saving_notified_at',
         'save_erpserv',
         'max_expense_per_consultant',
         'unlimited_expense',
@@ -168,6 +169,7 @@ class Project extends Model
         'start_date' => 'date:Y-m-d',
         'expected_end_date' => 'date:Y-m-d',
         'encerramento_date' => 'date:Y-m-d',
+        'saving_notified_at' => 'datetime',
         'cobra_despesa_cliente' => 'boolean',
         'permissoes_despesa' => 'array',
         'created_at' => 'datetime',
@@ -279,6 +281,16 @@ class Project extends Model
     public function coordinators(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'project_coordinators')
+                    ->withTimestamps();
+    }
+
+    /**
+     * Clientes com VISÃO GLOBAL do projeto (nível projeto). Enxergam o projeto
+     * inteiro em dias; restrições de card continuam por atividade.
+     */
+    public function clientViewers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'project_client_viewers')
                     ->withTimestamps();
     }
 
@@ -795,6 +807,39 @@ class Project extends Model
     {
         $coord = (float) ($this->coordination_hours ?? 0);
         return $coord > 0 ? $coord : (float) ($this->sold_hours ?? 0);
+    }
+
+    /**
+     * Horas PLANEJADAS que ocupam o pool do cronograma ("Liberado à gestão").
+     * Por etapa-FOLHA (sub-etapas, ou etapas de topo sem filhas): usa hours_planned
+     * próprio da etapa se > 0; senão a soma das horas das atividades NÃO-cliente.
+     * Etapas-mãe não entram (evita contar duas vezes mãe + sub-etapas).
+     *
+     * É a base do teto: planejamento (etapa + atividade) nunca pode passar do pool.
+     * Independe de allow_negative_balance (essa flag só libera APONTAMENTO negativo).
+     *
+     * @param int|null $excludeStageId etapa em edição (some do total; o chamador soma o novo valor).
+     */
+    public function plannedPoolUsage(?int $excludeStageId = null): float
+    {
+        // Contribuição EFETIVA de CADA etapa (mãe e filha): horas próprias se >0;
+        // senão a soma das atividades diretas não-cliente. Como `hours_planned` de uma
+        // etapa-mãe guarda só as horas das atividades DIRETAS dela (não da subárvore),
+        // somar todas as etapas não conta em dobro — cada atividade pertence a 1 etapa.
+        $stages = $this->stages()
+            ->when($excludeStageId, fn ($q) => $q->where('id', '!=', $excludeStageId))
+            ->get(['id', 'hours_planned']);
+
+        $total = 0.0;
+        foreach ($stages as $st) {
+            $own = (float) ($st->hours_planned ?? 0);
+            $total += $own > 0
+                ? $own
+                : (float) \App\Models\StageDelivery::where('stage_id', $st->id)
+                    ->where('client_involved', false)
+                    ->sum('hours_planned');
+        }
+        return $total;
     }
 
     /**

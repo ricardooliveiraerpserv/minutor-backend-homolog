@@ -410,6 +410,13 @@ class Timesheet extends Model
             return true;
         }
 
+        // Apontamento de ATIVIDADE do cronograma: qualquer coordenador pode aprovar/
+        // ajustar/rejeitar (coordenador tem acesso full ao projeto/cronograma). Não afeta
+        // apontamento tradicional (sem stage_delivery_id), que segue a regra do projeto.
+        if ($this->stage_delivery_id && method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
+            return true;
+        }
+
         if (!$this->project) {
             return false;
         }
@@ -584,6 +591,11 @@ class Timesheet extends Model
             return true;
         }
 
+        // Apontamento de ATIVIDADE do cronograma: qualquer coordenador pode estornar.
+        if ($this->stage_delivery_id && method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
+            return true;
+        }
+
         // Quem aprovou pode estornar dentro do período permitido
         if ($this->reviewed_by === $user->id) {
             $reversalPeriod = config('timesheets.reversal_period_hours', 24);
@@ -633,6 +645,11 @@ class Timesheet extends Model
 
         // Administradores podem estornar qualquer rejeição
         if ($user->isAdmin()) {
+            return true;
+        }
+
+        // Apontamento de ATIVIDADE do cronograma: qualquer coordenador pode estornar.
+        if ($this->stage_delivery_id && method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
             return true;
         }
 

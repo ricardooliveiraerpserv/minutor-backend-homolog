@@ -39,6 +39,13 @@ class StageDelivery extends Model
         self::PRIORITY_HIGH,
     ];
 
+    // Workflow de aprovação do cliente (status "Aguardando cliente").
+    public const APPROVAL_NONE     = 'none';
+    public const APPROVAL_PENDING  = 'pending';
+    public const APPROVAL_APPROVED = 'approved';
+    public const APPROVAL_REJECTED = 'rejected';
+    public const APPROVAL_CHANGES  = 'changes_requested';
+
     protected $fillable = [
         'stage_id',
         'title',
@@ -58,6 +65,12 @@ class StageDelivery extends Model
         'client_email',
         'client_involved',
         'extra_clients',
+        'approval_status',
+        'approval_requested_at',
+        'approval_requested_by',
+        'approval_decided_at',
+        'approval_decided_by',
+        'approval_note',
     ];
 
     public const DEPENDENCY_TYPES = ['FS'];
@@ -71,6 +84,8 @@ class StageDelivery extends Model
         'actual_start_at'  => 'datetime',
         'client_involved'  => 'boolean',
         'extra_clients'    => 'array',
+        'approval_requested_at' => 'datetime',
+        'approval_decided_at'   => 'datetime',
     ];
 
     public function stage(): BelongsTo
@@ -89,9 +104,24 @@ class StageDelivery extends Model
         return $this->belongsTo(User::class, 'client_user_id');
     }
 
+    public function approvalRequester(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approval_requested_by');
+    }
+
+    public function approvalDecider(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approval_decided_by');
+    }
+
     public function timesheets(): HasMany
     {
         return $this->hasMany(Timesheet::class, 'stage_delivery_id');
+    }
+
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(StageAllocation::class, 'delivery_id');
     }
 
     public function events(): HasMany

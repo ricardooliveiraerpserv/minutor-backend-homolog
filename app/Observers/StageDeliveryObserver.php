@@ -6,6 +6,7 @@ use App\Models\DeliveryEvent;
 use App\Models\ProjectStage;
 use App\Models\StageActivityEvent;
 use App\Models\StageDelivery;
+use App\Services\DeliveryApprovalService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
@@ -63,6 +64,19 @@ class StageDeliveryObserver
                     'title'        => $delivery->title,
                     'completed_at' => $delivery->completed_at?->toIso8601String(),
                 ]);
+            }
+
+            // Workflow de aprovação do cliente: ao entrar em "Aguardando cliente",
+            // abre aprovação pendente (automático). Ao sair ainda pendente, cancela.
+            $from = $original['status'] ?? null;
+            $to   = $delivery->status;
+            if ($to === StageDelivery::STATUS_WAITING_CLIENT
+                && $delivery->approval_status !== StageDelivery::APPROVAL_PENDING) {
+                app(DeliveryApprovalService::class)->requestApproval($delivery, Auth::user());
+            } elseif ($from === StageDelivery::STATUS_WAITING_CLIENT
+                && $to !== StageDelivery::STATUS_WAITING_CLIENT
+                && $delivery->approval_status === StageDelivery::APPROVAL_PENDING) {
+                $delivery->forceFill(['approval_status' => StageDelivery::APPROVAL_NONE])->saveQuietly();
             }
         }
 

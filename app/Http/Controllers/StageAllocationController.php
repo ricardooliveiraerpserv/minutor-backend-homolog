@@ -271,46 +271,68 @@ class StageAllocationController extends Controller
             ], 422);
         }
 
-        $err = $this->guardActivityCapacity($delivery, (float) $data['planned_hours']);
+        // Só 1 consultor por atividade: a capacidade considera só ele (os demais saem).
+        $err = $this->guardActivityCapacity($delivery, (float) $data['planned_hours'], (int) $data['user_id']);
         if ($err !== null) return $err;
 
-        $isPrimary = (bool) ($data['is_primary'] ?? false);
+        $allocation = DB::transaction(function () use ($delivery, $data) {
+            // Regra: a atividade tem SOMENTE UM consultor. Ao alocar este, remove a
+            // alocação de qualquer outro consultor (troca de responsável = substitui).
+            StageAllocation::where('delivery_id', $delivery->id)
+                ->where('user_id', '!=', $data['user_id'])
+                ->delete();
 
-        $allocation = DB::transaction(function () use ($delivery, $data, $isPrimary) {
-            // Apenas 1 primary por delivery — desmarca outros antes de criar primary
-            if ($isPrimary) {
-                StageAllocation::where('delivery_id', $delivery->id)
-                    ->where('is_primary', true)
-                    ->update(['is_primary' => false]);
-                // Sincroniza responsible_user_id na delivery
-                if ((int) $delivery->responsible_user_id !== (int) $data['user_id']) {
-                    $delivery->update(['responsible_user_id' => $data['user_id']]);
-                }
+            // O único consultor é sempre o primary + responsável da atividade.
+            if ((int) $delivery->responsible_user_id !== (int) $data['user_id']) {
+                $delivery->update(['responsible_user_id' => $data['user_id']]);
             }
 
-            return StageAllocation::create([
+            $created = StageAllocation::create([
                 'stage_id'            => $delivery->stage_id,
                 'delivery_id'         => $delivery->id,
                 'user_id'             => $data['user_id'],
                 'planned_hours'       => $data['planned_hours'],
                 'allocation_start_at' => $data['allocation_start_at'] ?? null,
                 'allocation_end_at'   => $data['allocation_end_at'] ?? null,
-                'is_primary'          => $isPrimary,
+                'is_primary'          => true,
             ]);
+
+            // Quem é alocado numa atividade entra automaticamente em "Consultores do
+            // projeto" (Visão Geral), pra alimentar os seletores de Responsável/alocação.
+            $this->ensureProjectConsultant($delivery, (int) $data['user_id']);
+
+            return $created;
         });
 
         return response()->json($allocation->load('user:id,name,email'), 201);
     }
 
+    /** Vincula o usuário a project_consultants se for consultor/parceiro ativo. */
+    private function ensureProjectConsultant(StageDelivery $delivery, int $userId): void
+    {
+        $projectId = optional($delivery->stage)->project_id
+            ?? \App\Models\ProjectStage::whereKey($delivery->stage_id)->value('project_id');
+        if (!$projectId) return;
+
+        $u = \App\Models\User::find($userId);
+        if (!$u || !in_array($u->type, ['consultor', 'parceiro_admin'], true)) return;
+
+        \App\Models\Project::find($projectId)?->consultants()->syncWithoutDetaching([$userId]);
+    }
+
     /**
      * Bloqueia se SUM(allocations WHERE delivery_id=X) + $delta > delivery.hours_planned.
+     * Com $onlyUserId, soma só a alocação desse consultor (regra de 1 consultor por
+     * atividade: ao alocar/trocar, os demais serão removidos, então não contam).
      */
-    private function guardActivityCapacity(StageDelivery $delivery, float $delta): ?JsonResponse
+    private function guardActivityCapacity(StageDelivery $delivery, float $delta, ?int $onlyUserId = null): ?JsonResponse
     {
         $deliveryPlanned = (float) ($delivery->hours_planned ?? 0);
         if ($deliveryPlanned <= 0) return null;
 
-        $allocated = (float) StageAllocation::where('delivery_id', $delivery->id)->sum('planned_hours');
+        $q = StageAllocation::where('delivery_id', $delivery->id);
+        if ($onlyUserId !== null) $q->where('user_id', $onlyUserId);
+        $allocated = (float) $q->sum('planned_hours');
         $available = $deliveryPlanned - $allocated;
 
         if ($delta > $available + 0.001) {
