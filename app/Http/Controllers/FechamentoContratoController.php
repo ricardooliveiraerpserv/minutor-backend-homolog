@@ -32,9 +32,9 @@ class FechamentoContratoController extends Controller
 
         // Busca todos os apontamentos aprovados do mês com dados do projeto e pai
         $timesheets = Timesheet::with([
-            'project:id,name,code,customer_id,parent_project_id,contract_type_id,hourly_rate,project_value,sold_hours',
+            'project:id,name,code,customer_id,parent_project_id,contract_type_id,hourly_rate,project_value,sold_hours,is_investimento_comercial',
             'project.contractType:id,name,code',
-            'project.parentProject:id,name,code,customer_id,contract_type_id,hourly_rate,project_value,sold_hours',
+            'project.parentProject:id,name,code,customer_id,contract_type_id,hourly_rate,project_value,sold_hours,is_investimento_comercial',
             'project.parentProject.contractType:id,name,code',
             'project.customer:id,name,company_name',
             'project.parentProject.customer:id,name,company_name',
@@ -87,6 +87,7 @@ class FechamentoContratoController extends Controller
                 'sold_hours'    => (float) ($root->sold_hours ?? 0),
                 'project_value' => (float) ($root->project_value ?? 0),
                 'type_code'     => $typeCode,
+                'is_investimento' => (bool) ($root->is_investimento_comercial ?? false),
             ];
 
             $minutesMap[$typeCode][$custId][$rootId] =
@@ -171,6 +172,7 @@ class FechamentoContratoController extends Controller
                         'valor_mensal'    => $mensal,
                         'total_receita'   => $receita,
                         'invoiced'        => isset($invoicedSet[$projId]),
+                        'is_investimento' => (bool) ($p['is_investimento'] ?? false),
                     ];
 
                     $custHoras   += $horas;
