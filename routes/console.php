@@ -43,6 +43,14 @@ Schedule::command('projects:ensure-monthly-update')
   ->name('ensure-monthly-accumulated-hours-update')
   ->description('Verifica se accumulated_sold_hours foi atualizado no mês atual');
 
+// Encerra os MESES ABERTOS (ProjectOpenPeriod) de competências anteriores à vigente, às 06h.
+// Mês imediatamente anterior só fecha APÓS o 2º dia útil (carência); meses mais antigos sempre.
+Schedule::command('projects:close-stale-periods')
+  ->dailyAt('06:00')
+  ->name('projects-close-stale-periods')
+  ->description('Encerra meses abertos de projetos de competências anteriores (mês anterior só após o 2º dia útil)')
+  ->withoutOverlapping();
+
 // Rede de segurança pro reset de conflitos órfãos (observer já cobre saves/deletes
 // via Eloquent; este sweep cobre mudanças via SQL bruto e legado pré-observer).
 Schedule::command('timesheets:resolve-stale-conflicts')
