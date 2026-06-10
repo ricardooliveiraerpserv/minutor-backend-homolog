@@ -302,6 +302,34 @@ class Project extends Model
             : (float) ($changes->first()->old_value ?? $this->hourly_rate ?? 0);
     }
 
+    /**
+     * Horas vendidas vigentes numa competência (YYYY-MM): o registro de
+     * project_sold_hours_history mais recente com effective_from <= competência;
+     * antes da 1ª vigência usa o 1º registro (bootstrap = valor inicial); sem
+     * histórico, cai no sold_hours atual. Garante que alterar a quantidade de horas
+     * NÃO mude os meses anteriores no dashboard ("legado intacto").
+     */
+    public function soldHoursForCompetencia(string $yearMonth): float
+    {
+        $history = $this->relationLoaded('soldHoursHistory')
+            ? $this->soldHoursHistory
+            : $this->soldHoursHistory()->get();
+
+        if ($history->isEmpty()) {
+            return (float) ($this->sold_hours ?? 0);
+        }
+
+        $sorted = $history->sortBy('effective_from')->values();
+        $comp   = \Carbon\Carbon::parse($yearMonth . '-01')->startOfMonth();
+        $aplicavel = $sorted->last(
+            fn ($h) => \Carbon\Carbon::parse($h->effective_from)->startOfMonth()->lessThanOrEqualTo($comp)
+        );
+
+        return $aplicavel
+            ? (float) $aplicavel->sold_hours
+            : (float) ($sorted->first()->sold_hours ?? $this->sold_hours ?? 0);
+    }
+
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);
@@ -1313,10 +1341,16 @@ class Project extends Model
      *
      * @return float Valor total do projeto
      */
-    public function calculateTotalProjectValue(): float
+    public function calculateTotalProjectValue(?string $competencia = null): float
     {
+        // Valor-hora vigente na competência (mantém legado intacto); sem competência,
+        // usa o valor atual (comportamento original).
+        $rate = $competencia !== null
+            ? $this->hourlyRateForCompetencia($competencia)
+            : (float) ($this->hourly_rate ?? 0);
+
         // Valor das horas vendidas inicialmente
-        $baseSoldHoursValue = ($this->sold_hours ?? 0) * ($this->hourly_rate ?? 0);
+        $baseSoldHoursValue = ($this->sold_hours ?? 0) * $rate;
 
         // Usa relação já carregada em memória (evita N+1)
         $contributions = $this->relationLoaded('hourContributions')
@@ -1330,7 +1364,7 @@ class Project extends Model
         }
 
         // Fallback: usar aporte legado (para projetos antigos)
-        $legacyContributionValue = ($this->hour_contribution ?? 0) * ($this->hourly_rate ?? 0);
+        $legacyContributionValue = ($this->hour_contribution ?? 0) * $rate;
 
         return round($baseSoldHoursValue + $legacyContributionValue, 2);
     }
@@ -1341,8 +1375,14 @@ class Project extends Model
      *
      * @return float Valor médio ponderado por hora
      */
-    public function getWeightedAverageHourlyRate(): float
+    public function getWeightedAverageHourlyRate(?string $competencia = null): float
     {
+        // Valor-hora vigente na competência (mantém legado intacto); sem competência,
+        // usa o valor atual (comportamento original).
+        $rate = $competencia !== null
+            ? $this->hourlyRateForCompetencia($competencia)
+            : (float) ($this->hourly_rate ?? 0);
+
         // Usa relação já carregada em memória (evita N+1)
         $contributions = $this->relationLoaded('hourContributions')
             ? $this->hourContributions
@@ -1350,7 +1390,7 @@ class Project extends Model
 
         if ($contributions->count() > 0) {
             $totalHours = $this->sold_hours ?? 0;
-            $totalValue = ($this->sold_hours ?? 0) * ($this->hourly_rate ?? 0);
+            $totalValue = ($this->sold_hours ?? 0) * $rate;
 
             foreach ($contributions as $contribution) {
                 $totalHours += $contribution->contributed_hours;
@@ -1362,8 +1402,8 @@ class Project extends Model
 
         // Fallback: usar aporte legado (para projetos antigos)
         $totalHours = ($this->sold_hours ?? 0) + ($this->hour_contribution ?? 0);
-        $totalValue = $totalHours * ($this->hourly_rate ?? 0);
+        $totalValue = $totalHours * $rate;
 
-        return $totalHours > 0 ? round($totalValue / $totalHours, 2) : ($this->hourly_rate ?? 0);
+        return $totalHours > 0 ? round($totalValue / $totalHours, 2) : $rate;
     }
 }
