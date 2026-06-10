@@ -157,10 +157,211 @@ class ContractController extends Controller
         return response()->json($contract->load(['customer:id,name', 'contacts', 'attachments']), 201);
     }
 
+    /**
+     * Projetos elegíveis para um aditivo: pai ou independente (parent_project_id null)
+     * dos tipos On Demand / Cloud / Banco de Horas Mensal. Devolve o que cada tipo
+     * permite alterar e os valores atuais (pra prefill no modal).
+     */
+    public function aditivoEligibleProjects(Request $request): JsonResponse
+    {
+        $allowedByCode = [
+            'on_demand'     => ['valor_hora'],
+            'cloud'         => ['valor_projeto'],
+            'monthly_hours' => ['valor_hora', 'horas_contratadas'],
+        ];
+
+        $projects = Project::query()
+            ->whereNull('parent_project_id')
+            // Buckets internos de investimento (Comercial/Suporte/Projeto) não entram.
+            ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+            ->whereHas('contractType', fn ($q) => $q->whereIn('code', array_keys($allowedByCode)))
+            ->with('contractType:id,name,code')
+            ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->get('customer_id')))
+            ->orderBy('name')
+            ->get(['id', 'code', 'name', 'customer_id', 'contract_type_id', 'hourly_rate', 'sold_hours', 'project_value']);
+
+        $data = $projects->map(function (Project $p) use ($allowedByCode) {
+            $code = (string) ($p->contractType->code ?? '');
+            return [
+                'id'             => $p->id,
+                'code'           => $p->code,
+                'name'           => $p->name,
+                'customer_id'    => $p->customer_id,
+                'type_code'      => $code,
+                'type_name'      => $p->contractType->name ?? null,
+                'allowed_fields' => $allowedByCode[$code] ?? [],
+                'hourly_rate'    => $p->hourly_rate !== null ? (float) $p->hourly_rate : null,
+                'sold_hours'     => $p->sold_hours !== null ? (float) $p->sold_hours : null,
+                'project_value'  => $p->project_value !== null ? (float) $p->project_value : null,
+            ];
+        });
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Cria um contrato ADITIVO: altera (na hora) um projeto pai/independente reusando a
+     * vigência (valor-hora/horas) ou direto (valor do contrato, Cloud). O card nasce em
+     * "Novo Contrato" e só pode ir para a coluna "Aditivos".
+     */
+    public function storeAditivo(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'aditivo_project_id'     => 'required|exists:projects,id',
+            'aditivo_field'          => 'required|in:valor_hora,horas_contratadas,valor_projeto',
+            'aditivo_value'          => 'required|numeric|min:0',
+            'aditivo_effective_from' => 'nullable|date',
+            'condicao_pagamento'     => 'nullable|string',
+            'observacoes'            => 'required|string',
+        ]);
+
+        $project = Project::with('contractType')->find($validated['aditivo_project_id']);
+
+        if ($project->parent_project_id !== null) {
+            return response()->json(['message' => 'Aditivo só pode alterar projeto pai ou independente (projeto-filho não entra).'], 422);
+        }
+        if ($project->is_investimento_comercial) {
+            return response()->json(['message' => 'Projetos de investimento (buckets internos) não recebem aditivo.'], 422);
+        }
+
+        $code = (string) ($project->contractType->code ?? '');
+        $allowed = match ($code) {
+            'on_demand'     => ['valor_hora'],
+            'cloud'         => ['valor_projeto'],
+            'monthly_hours' => ['valor_hora', 'horas_contratadas'],
+            default         => [],
+        };
+        if (empty($allowed)) {
+            return response()->json(['message' => 'Aditivo só se aplica a projetos On Demand, Cloud ou Banco de Horas Mensal.'], 422);
+        }
+        if (!in_array($validated['aditivo_field'], $allowed, true)) {
+            return response()->json(['message' => 'Esse campo não pode ser alterado para o tipo deste projeto.'], 422);
+        }
+
+        // valor_projeto (Cloud) não tem vigência mensal; demais usam o mês escolhido (ou atual).
+        $eff = $validated['aditivo_field'] === 'valor_projeto'
+            ? null
+            : ($validated['aditivo_effective_from'] ?? null);
+
+        // Valor ANTES do aditivo (pra exibir "antes → depois" no card).
+        $oldValue = match ($validated['aditivo_field']) {
+            'valor_hora'        => (float) ($project->hourly_rate ?? 0),
+            'horas_contratadas' => (float) ($project->sold_hours ?? 0),
+            'valor_projeto'     => (float) ($project->project_value ?? 0),
+            default             => null,
+        };
+
+        $contract = DB::transaction(function () use ($validated, $project, $eff, $oldValue) {
+            $this->applyAditivoToProject($project, $validated['aditivo_field'], $validated['aditivo_value'], $eff);
+
+            return Contract::create([
+                'aditivo_old_value'      => $oldValue,
+                'customer_id'            => $project->customer_id,
+                'project_name'           => $project->name,
+                'categoria'              => 'projeto',
+                'contract_type_id'       => $project->contract_type_id,
+                'service_type_id'        => $project->service_type_id,
+                'horas_contratadas'      => $validated['aditivo_field'] === 'horas_contratadas' ? (int) $validated['aditivo_value'] : 0,
+                'valor_hora'             => $validated['aditivo_field'] === 'valor_hora' ? $validated['aditivo_value'] : null,
+                'valor_projeto'          => $validated['aditivo_field'] === 'valor_projeto' ? $validated['aditivo_value'] : null,
+                'is_aditivo'             => true,
+                'aditivo_project_id'     => $project->id,
+                'aditivo_field'          => $validated['aditivo_field'],
+                'aditivo_effective_from' => $eff ? \Carbon\Carbon::parse($eff)->startOfMonth()->toDateString() : null,
+                'condicao_pagamento'     => $validated['condicao_pagamento'] ?? null,
+                'observacoes'            => $validated['observacoes'] ?? null,
+                'created_by_id'          => auth()->id(),
+                'status'                 => Contract::STATUS_ATIVO,
+                'kanban_status'          => Contract::KANBAN_NOVO_PROJETO,
+            ]);
+        });
+
+        return response()->json($contract->load(['customer:id,name', 'aditivoProject:id,name,code']), 201);
+    }
+
+    /**
+     * Aplica a alteração de um aditivo no projeto alvo, reusando a MESMA mecânica de
+     * vigência do ProjectController@update (project_change_logs.effective_from p/ valor-hora,
+     * project_sold_hours_history p/ horas vendidas; project_value direto p/ Cloud).
+     */
+    private function applyAditivoToProject(Project $project, string $field, $value, ?string $effectiveFrom): void
+    {
+        $eff = $effectiveFrom
+            ? \Carbon\Carbon::parse($effectiveFrom)->startOfMonth()->toDateString()
+            : \Carbon\Carbon::now()->startOfMonth()->toDateString();
+
+        if ($field === 'valor_hora') {
+            $project->update(['hourly_rate' => $value]);
+            if ($project->wasChanged('hourly_rate')) {
+                // Dedup mesmo-dia + grava effective_from (espelha ProjectController@update).
+                $todayLogs = \App\Models\ProjectChangeLog::where('project_id', $project->id)
+                    ->where('field_name', 'hourly_rate')
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderBy('id')->get();
+                if ($todayLogs->isNotEmpty()) {
+                    $survivor = $todayLogs->first();
+                    $survivor->new_value = (string) $project->hourly_rate;
+                    $survivor->effective_from = $eff;
+                    $survivor->save();
+                    $dups = $todayLogs->slice(1)->pluck('id');
+                    if ($dups->isNotEmpty()) {
+                        \App\Models\ProjectChangeLog::whereIn('id', $dups)->delete();
+                    }
+                }
+            }
+            // Mensal: valor do contrato = horas × valor-hora — atualiza junto (só se tem horas).
+            if ($project->isBankHoursMonthly() && (float) ($project->sold_hours ?? 0) > 0) {
+                $project->update(['project_value' => round((float) $project->sold_hours * (float) ($project->hourly_rate ?? 0), 2)]);
+            }
+            return;
+        }
+
+        if ($field === 'horas_contratadas') {
+            $previous = (float) ($project->sold_hours ?? 0);
+            $new      = (float) $value;
+            $project->update(['sold_hours' => $new]);
+            if ($previous !== $new && $project->isBankHoursMonthly()) {
+                if ($project->soldHoursHistory()->count() === 0 && $project->start_date) {
+                    \App\Models\ProjectSoldHoursHistory::create([
+                        'project_id'     => $project->id,
+                        'sold_hours'     => $previous,
+                        'effective_from' => \Carbon\Carbon::parse($project->start_date)->startOfMonth()->toDateString(),
+                        'changed_by'     => null,
+                    ]);
+                }
+                $exists = $project->soldHoursHistory()->where('effective_from', $eff)->exists();
+                if (!$exists) {
+                    \App\Models\ProjectSoldHoursHistory::create([
+                        'project_id'     => $project->id,
+                        'sold_hours'     => $new,
+                        'effective_from' => $eff,
+                        'changed_by'     => auth()->id(),
+                    ]);
+                } else {
+                    $project->soldHoursHistory()->where('effective_from', $eff)
+                        ->update(['sold_hours' => $new, 'changed_by' => auth()->id()]);
+                }
+                // Recalcula o acumulado DEPOIS de gravar a vigência (evita stale).
+                $project->updateAccumulatedSoldHours(null, true);
+                // Valor do contrato = horas × valor-hora — atualiza junto (só se tem rate,
+                // pra não ZERAR o project_value de projetos sem valor-hora configurado).
+                if ((float) ($project->hourly_rate ?? 0) > 0) {
+                    $project->update(['project_value' => round($new * (float) $project->hourly_rate, 2)]);
+                }
+            }
+            return;
+        }
+
+        if ($field === 'valor_projeto') {
+            // Cloud: valor do contrato, sem vigência mensal (Observer loga a mudança).
+            $project->update(['project_value' => $value]);
+        }
+    }
+
     public function show(Contract $contract): JsonResponse
     {
         return response()->json(
-            $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status'])
+            $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name'])
         );
     }
 
@@ -444,8 +645,10 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'executivoConta:id,name',
                 'project:id,code,name,status',
+                'aditivoProject:id,code,name,hourly_rate,sold_hours,contract_type_id',
+                'aditivoProject.contractType:id,code',
             ])->where(function ($q) {
-                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, 'novo', 'novo_contrato']))
+                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, Contract::KANBAN_ADITIVO, 'novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
               })
               ->whereNull('sustentacao_column')
@@ -765,6 +968,22 @@ class ContractController extends Controller
         $toColumn      = $request->input('to_column');
         $coordinatorId = $request->input('coordinator_id');
         $fromColumn    = $this->resolveColumnName($contract);
+
+        // Aditivo: card só transita entre "Novo Contrato" (demanda) e a coluna "Aditivos".
+        if ($contract->is_aditivo) {
+            if ($toColumn !== Contract::KANBAN_ADITIVO && !in_array($toColumn, Contract::DEMAND_COLUMNS, true)) {
+                return response()->json(['message' => 'Aditivo só pode ir para a coluna Aditivos.'], 422);
+            }
+            $contract->update([
+                'kanban_status' => $toColumn === Contract::KANBAN_ADITIVO ? Contract::KANBAN_ADITIVO : Contract::KANBAN_NOVO_PROJETO,
+                'kanban_order'  => $request->input('order', 0),
+            ]);
+            return response()->json($contract->fresh());
+        }
+        // Não-aditivo não pode entrar na coluna Aditivos.
+        if ($toColumn === Contract::KANBAN_ADITIVO) {
+            return response()->json(['message' => 'Apenas contratos aditivos vão para a coluna Aditivos.'], 422);
+        }
 
         $validDemandColumns = array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_ALOCADO]);
 
@@ -1271,7 +1490,52 @@ class ContractController extends Controller
             'project_status'   => $contract->project?->status,
             'is_complete'      => $contract->isKanbanComplete(),
             'created_at'       => $contract->created_at,
+            'is_aditivo'       => (bool) $contract->is_aditivo,
+            'aditivo_field'    => $contract->aditivo_field,
+            'aditivo_old_value'   => $contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null,
+            'aditivo_new_value'   => $contract->is_aditivo ? (float) match ($contract->aditivo_field) {
+                'valor_hora'        => $contract->valor_hora,
+                'horas_contratadas' => $contract->horas_contratadas,
+                'valor_projeto'     => $contract->valor_projeto,
+                default             => 0,
+            } : null,
+            'aditivo_project_code' => $contract->aditivoProject?->code,
+            'aditivo_project_name' => $contract->aditivoProject?->name ?? $contract->project_name,
+            'aditivo_contract_old' => $this->aditivoContractValue($contract, 'old'),
+            'aditivo_contract_new' => $this->aditivoContractValue($contract, 'new'),
+            'aditivo_effective_from' => $contract->aditivo_effective_from?->format('Y-m-d') ?? (is_string($contract->aditivo_effective_from) ? $contract->aditivo_effective_from : null),
+            'aditivo_cond_pagamento' => $contract->condicao_pagamento,
+            'aditivo_obs'            => $contract->observacoes,
         ];
+    }
+
+    /**
+     * Valor do CONTRATO (Mensal = horas × valor-hora) antes/depois do aditivo. Só faz
+     * sentido pra Banco de Horas Mensal; On Demand/Cloud retornam null (não é horas×hora).
+     */
+    private function aditivoContractValue(Contract $contract, string $which): ?float
+    {
+        if (!$contract->is_aditivo) return null;
+        $ap = $contract->aditivoProject;
+        if (!$ap || strtolower($ap->contractType->code ?? '') !== 'monthly_hours') return null;
+
+        if ($contract->aditivo_field === 'horas_contratadas') {
+            $rate = (float) ($ap->hourly_rate ?? 0);
+            if ($rate <= 0) return null;
+            $hours = $which === 'old'
+                ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
+                : (float) $contract->horas_contratadas;
+            return $hours === null ? null : round($hours * $rate, 2);
+        }
+        if ($contract->aditivo_field === 'valor_hora') {
+            $hours = (float) ($ap->sold_hours ?? 0);
+            if ($hours <= 0) return null;
+            $rate  = $which === 'old'
+                ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
+                : (float) $contract->valor_hora;
+            return $rate === null ? null : round($hours * $rate, 2);
+        }
+        return null;
     }
 
     private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array

@@ -23,6 +23,8 @@ class Contract extends Model
         'project_id', 'parent_project_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
         'kanban_status', 'kanban_coordinator_id', 'kanban_order', 'sustentacao_column',
+        // Aditivo: altera um projeto pai/independente (não gera projeto novo)
+        'is_aditivo', 'aditivo_project_id', 'aditivo_field', 'aditivo_effective_from', 'aditivo_old_value',
     ];
 
     protected $casts = [
@@ -46,6 +48,8 @@ class Contract extends Model
         'created_at'             => 'datetime',
         'updated_at'             => 'datetime',
         'deleted_at'             => 'datetime',
+        'is_aditivo'             => 'boolean',
+        'aditivo_effective_from' => 'date:Y-m-d',
     ];
 
     const STATUS_RASCUNHO          = 'rascunho';
@@ -64,6 +68,10 @@ class Contract extends Model
     const KANBAN_INICIO_AUTORIZADO = 'inicio_autorizado';
     // Colunas Fase Projeto (card fica em alocado + project.status controla sub-coluna)
     const KANBAN_ALOCADO         = 'alocado';
+    // Aditivo: card nasce em "Novo Contrato" e só pode ir para a coluna "Aditivos"
+    const KANBAN_ADITIVO         = 'aditivo';
+    // Campos que um aditivo pode alterar no projeto alvo
+    const ADITIVO_FIELDS         = ['valor_hora', 'horas_contratadas', 'valor_projeto'];
 
     const DEMAND_COLUMNS = [
         self::KANBAN_BACKLOG,
@@ -140,6 +148,12 @@ class Contract extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** Projeto alvo de um contrato aditivo (pai ou independente). */
+    public function aditivoProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'aditivo_project_id');
     }
 
     public function contacts(): HasMany
