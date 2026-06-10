@@ -409,9 +409,12 @@ class TimesheetController extends Controller
             $needsUserJoin = false;
             $needsProjectJoin = false;
             $needsCustomerJoin = false;
+            $needsServiceTypeJoin = false;
+            $needsContractTypeJoin = false;
 
             $relationOrders = [];
             $scalarOrders = [];
+            $rawOrders = []; // ordenações por expressão (ex.: solicitante JSON, título)
 
             foreach ($orderFields as $field) {
                 $direction = 'asc';
@@ -424,6 +427,25 @@ class TimesheetController extends Controller
                 // Mapear campos calculados/virtuais para colunas reais
                 if ($field === 'effort_hours') {
                     $field = 'effort_minutes';
+                }
+
+                // Colunas relacionais específicas: Tipo de Serviço / Contrato (via project),
+                // Solicitante (JSON do movidesk, já left-joined) e Título (movidesk).
+                if (in_array($field, ['service_type', 'contract', 'solicitante', 'titulo'], true)) {
+                    if ($field === 'service_type') {
+                        $needsProjectJoin = true;
+                        $needsServiceTypeJoin = true;
+                        $relationOrders[] = ['table' => 'service_types', 'column' => 'name', 'direction' => $direction];
+                    } elseif ($field === 'contract') {
+                        $needsProjectJoin = true;
+                        $needsContractTypeJoin = true;
+                        $relationOrders[] = ['table' => 'contract_types', 'column' => 'name', 'direction' => $direction];
+                    } elseif ($field === 'solicitante') {
+                        $rawOrders[] = "movidesk_tickets.solicitante->>'name' " . $direction;
+                    } else { // titulo
+                        $rawOrders[] = "movidesk_tickets.titulo " . $direction;
+                    }
+                    continue;
                 }
 
                 // Ordenação por relacionamentos, ex: user.name, project.name, customer.name
@@ -484,6 +506,14 @@ class TimesheetController extends Controller
                 $query->leftJoin('customers', 'customers.id', '=', 'timesheets.customer_id');
             }
 
+            // Joins de Tipo de Serviço / Contrato (dependem do join de projects acima).
+            if ($needsServiceTypeJoin) {
+                $query->leftJoin('service_types', 'service_types.id', '=', 'projects.service_type_id');
+            }
+            if ($needsContractTypeJoin) {
+                $query->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id');
+            }
+
             // Ordenação por campos da própria tabela (prefixo para evitar ambiguidade com JOINs)
             foreach ($scalarOrders as $order) {
                 $query->orderBy('timesheets.' . $order['column'], $order['direction']);
@@ -492,6 +522,11 @@ class TimesheetController extends Controller
             // Ordenação por campos de relacionamentos
             foreach ($relationOrders as $order) {
                 $query->orderBy($order['table'] . '.' . $order['column'], $order['direction']);
+            }
+
+            // Ordenação por expressões (solicitante JSON do movidesk, título do movidesk)
+            foreach ($rawOrders as $raw) {
+                $query->orderByRaw($raw);
             }
         } else {
             $query->orderBy('timesheets.date', 'desc')->orderBy('timesheets.start_time', 'desc');
