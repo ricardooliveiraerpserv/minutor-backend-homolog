@@ -166,7 +166,10 @@ class ProjectController extends Controller
         // Cap maior para listagem de Investimento Interno: cada cliente tem ~3 projetos
         // (Comercial/Suporte/Projetos) + manuais → o cap padrão de 200 cortava a página
         // e clientes sumiam da tela /investimento-comercial.
-        $maxPerPage = $request->boolean('only_investimento_comercial') ? 2000 : 200;
+        // Idem para o dashboard /gestao-projetos (modo gestao): a tela carrega TODOS os
+        // projetos pra filtrar/ordenar no client; o cap de 200 cortava os últimos (ex.:
+        // projetos "[SUPORTE]..." que ordenam por nome depois do Z e caíam fora da página).
+        $maxPerPage = ($request->boolean('only_investimento_comercial') || $request->boolean('gestao')) ? 2000 : 200;
         $perPage = min($request->get('pageSize', $request->get('per_page', 15)), $maxPerPage);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
