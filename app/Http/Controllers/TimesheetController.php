@@ -1996,6 +1996,10 @@ class TimesheetController extends Controller
             }
         }
 
+        // Sem invalidar o cache da lista, o refetch do front trazia dados stale
+        // (projeto/cliente antigos) → a alteração em massa "às vezes não atualizava".
+        $this->invalidateListCache('timesheets');
+
         return response()->json(['success' => true, 'updated' => $updated]);
     }
 

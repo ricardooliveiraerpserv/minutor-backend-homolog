@@ -190,6 +190,12 @@ class ProjectController extends Controller
             elseif ($status === 'open') $q->open();
             elseif ($status) $q->where('status', $status);
             if ($request->get('customer_id')) $q->where('customer_id', $request->get('customer_id'));
+            // Filtra por consultor ALOCADO (project_consultants) — usado p/ só oferecer,
+            // na realocação de apontamento, projetos em que o consultor está alocado.
+            if ($request->get('consultant_user_id')) {
+                $cuid = (int) $request->get('consultant_user_id');
+                $q->whereHas('consultants', fn ($c) => $c->where('users.id', $cuid));
+            }
             $items = $q->orderBy('name')->limit($perPage)->get();
             return response()->json(['hasNext' => false, 'items' => $items]);
         }
