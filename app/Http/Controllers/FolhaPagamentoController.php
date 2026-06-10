@@ -151,6 +151,8 @@ class FolhaPagamentoController extends Controller
             $rows[] = [
                 'row_key'            => 'u:' . $uid,
                 'is_socio'           => false,
+                'is_cooperado'       => true, // linha de cooperado real (User contract_type=cooperado, sem parceiro)
+                'is_bizify'          => (bool) ($u->is_bizify ?? false), // distinção Bizify (cadastro do usuário)
                 'inativo'            => false,
                 'cancelado'          => $f ? (bool) $f->cancelado : false,
                 'user_id'            => $uid,
@@ -235,6 +237,8 @@ class FolhaPagamentoController extends Controller
                     'row_key'            => 'u:' . $uid,
                     'is_socio'           => false, // identidade (cpf/nome/status) vem do usuário (read-only); VALORES editáveis via is_raho
                     'is_raho'            => true,
+                    'is_cooperado'       => $isCoop, // Raho é linha-por-usuário; cooperado entra no filtro
+                    'is_bizify'          => (bool) ($u->is_bizify ?? false),
                     'partner_label'      => 'Raho',
                     'inativo'            => !$u->enabled, // desativado => "em afastamento"
                     'cancelado'          => $f ? (bool) $f->cancelado : false,
@@ -284,8 +288,11 @@ class FolhaPagamentoController extends Controller
             $admin = User::where('partner_id', $partner->id)
                 ->where('is_executive', true)
                 ->orderBy('id')->first();
-            if (!$admin) {
-                continue; // sem parceiro admin (is_executive) → parceiro fora da folha
+            // Folha COOPERATIVA: só entra parceiro cujo admin é COOPERADO (a apuração do
+            // parceiro cooperado consolida nele). Parceiro PJ é pago no Fechamento Parceiros,
+            // não nesta folha.
+            if (!$admin || $admin->contract_type !== 'cooperado') {
+                continue; // sem admin is_executive OU admin não-cooperado → fora da folha
             }
 
             $parceiroCtrl  = app(FechamentoParceiroController::class);
@@ -316,6 +323,10 @@ class FolhaPagamentoController extends Controller
                 'is_socio'           => false,
                 'is_raho'            => false,
                 'is_parceiro_total'  => true,
+                // Parceiro cooperado é apurado 100% no admin → se o admin é cooperado,
+                // esta linha consolidada representa o cooperado e entra no filtro.
+                'is_cooperado'       => $admin->contract_type === 'cooperado',
+                'is_bizify'          => (bool) ($admin->is_bizify ?? false),
                 'partner_label'      => $partner->name,
                 'inativo'            => !$admin->enabled,
                 'cancelado'          => $f ? (bool) $f->cancelado : false,
