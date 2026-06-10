@@ -1745,6 +1745,18 @@ class ProjectController extends Controller
             }
         }
 
+        // Recalcular accumulated_sold_hours DEPOIS de gravar o histórico de sold_hours:
+        // o Observer já recalculou durante $project->update() (acima), mas as vigências
+        // novas só nascem no bloco anterior — sem isto o acumulado fica stale e diverge
+        // do extrato (ex.: 3840 em vez de 3850 ao mudar 320→330 com vigência futura).
+        if ($previousSoldHours !== $newSoldHours && $project->isBankHoursMonthly()) {
+            try {
+                $project->updateAccumulatedSoldHours(null, true);
+            } catch (\Throwable $e) {
+                \Log::warning('ProjectController@update: falha ao recalcular accumulated_sold_hours pós-histórico', ['error' => $e->getMessage()]);
+            }
+        }
+
         // Dedup mesmo-dia do change log de hourly_rate: o Observer cria uma nova linha a cada
         // alteração. Se hourly_rate mudou, colapsamos as linhas de HOJE deste projeto numa só —
         // mantendo a MAIS ANTIGA (que tem o old_value do início do dia), atualizando seu new_value
@@ -1897,6 +1909,17 @@ class ProjectController extends Controller
         $log->delete();
 
         return response()->json(null, 204);
+    }
+
+    /**
+     * Lista o histórico de horas vendidas (vigências) de um projeto, ordenado por
+     * mês de vigência. Espelha o histórico de valor-hora (change-history) na tela.
+     */
+    public function soldHoursHistoryIndex(Project $project): JsonResponse
+    {
+        $project->load('soldHoursHistory.changer');
+
+        return response()->json($project->soldHoursHistory->sortBy('effective_from')->values());
     }
 
     /**
@@ -4364,7 +4387,7 @@ class ProjectController extends Controller
         //  • monthly  (BH Mensal): vendidas acumulam mês a mês.
         //  • fixed    (BH Fixo / Fechado): vendidas = total fixo constante.
         //  • on_demand: sem vendidas/saldo — só consumo.
-        $project->loadMissing(['contractType', 'hourContributions']);
+        $project->loadMissing(['contractType', 'hourContributions', 'soldHoursHistory']);
         $ctName = strtolower((string) ($project->contractType->name ?? ''));
         $isOnDemand = str_contains($ctName, 'on demand') || $project->tipo_faturamento === 'on_demand';
         $isMonthly  = !$isOnDemand && str_contains($ctName, 'mensal');
@@ -4400,20 +4423,17 @@ class ProjectController extends Controller
         }
         $startDate = Carbon::parse($startStr)->startOfMonth();
 
-        // Nº de meses. BH Mensal: acumulado/horas-mês (congela no encerramento);
-        // demais tipos: do início até hoje (ou encerramento).
-        $accumulatedSold = (int) ($project->accumulated_sold_hours ?? 0);
-        if ($isMonthly && $accumulatedSold > 0 && $hoursPerMonth > 0) {
-            $months = (int) round($accumulatedSold / $hoursPerMonth);
-        } else {
-            $endDate = $project->encerramento_date
-                ? Carbon::parse($project->encerramento_date)->startOfMonth()
-                : Carbon::now()->startOfMonth();
-            if ($endDate->lt($startDate)) {
-                $endDate = $startDate->copy();
-            }
-            $months = $startDate->diffInMonths($endDate) + 1;
+        // Nº de meses: do início até o encerramento (ou mês atual se ativo). Para BH
+        // Mensal cada mês incrementa o valor VIGENTE naquele mês (soldHoursForCompetencia),
+        // então o total não depende mais do accumulated_sold_hours (que podia ficar stale e
+        // não respeitava a vigência — meses anteriores apareciam com a quantidade nova).
+        $endDate = $project->encerramento_date
+            ? Carbon::parse($project->encerramento_date)->startOfMonth()
+            : Carbon::now()->startOfMonth();
+        if ($endDate->lt($startDate)) {
+            $endDate = $startDate->copy();
         }
+        $months = $startDate->diffInMonths($endDate) + 1;
 
         if ($months < 1) {
             return response()->json($empty);
@@ -4490,8 +4510,12 @@ class ProjectController extends Controller
             $monthAporte = round($accumAporte - $prevAccumAporte, 2);
             $prevAccumAporte = $accumAporte;
 
+            $monthlyHours = 0.0;
             if ($isMonthly) {
-                $accumulatedHours += $hoursPerMonth;
+                // Incremento do mês = horas vendidas VIGENTES nessa competência (não o
+                // sold_hours atual) — preserva os meses anteriores ao alterar a quantidade.
+                $monthlyHours = $project->soldHoursForCompetencia($ym);
+                $accumulatedHours += $monthlyHours;
                 $vendidasHours = $accumulatedHours + $accumAporte;
             } elseif ($isFixed) {
                 $vendidasHours = (float) $hoursPerMonth + $accumAporte;
@@ -4517,6 +4541,7 @@ class ProjectController extends Controller
             $rows[] = [
                 'year_month' => $ym,
                 'vendidas_hours' => $vendidasHours,
+                'monthly_hours' => $isMonthly ? round($monthlyHours, 2) : null,
                 'aporte_hours' => $monthAporte,
                 'consumption_hours' => $consumptionHours,
                 'child_block_hours' => $childBlock,
