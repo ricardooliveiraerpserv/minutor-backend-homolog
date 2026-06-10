@@ -194,26 +194,33 @@ class OnDemandController extends Controller
         // Calcular horas excedentes (valor absoluto do saldo quando negativo, ou 0 quando positivo/zero)
         $exceededHours = $hoursBalance < 0 ? abs($hoursBalance) : 0;
 
-        // Calcular valor hora PADRÃO (média do campo hourly_rate dos projetos pais)
+        // Competência selecionada (Mês/Ano) → resolve o valor-hora VIGENTE no mês via
+        // project_change_logs (effective_from). Sem mês/ano (modo Período), cai no valor
+        // atual. Garante que alterar o valor NÃO mude os meses anteriores na visão do cliente.
+        $competencia = ($month && $year) ? sprintf('%04d-%02d', (int) $year, (int) $month) : null;
+        $rateNaComp = fn (Project $p) => $competencia !== null
+            ? round($p->hourlyRateForCompetencia($competencia), 2)
+            : (float) ($p->hourly_rate ?? 0);
+
+        // Calcular valor hora PADRÃO (média do valor-hora vigente dos projetos pais)
         // Este é o valor/hora INICIAL mostrado no card (valor hora do projeto)
         $hourlyRate = null;
 
         if ($projectId) {
             // Se filtrou por projeto específico, retornar apenas o valor desse projeto
             $specificProject = Project::find($projectId);
-            if ($specificProject && $specificProject->hourly_rate !== null) {
-                $hourlyRate = round((float) $specificProject->hourly_rate, 2);
+            if ($specificProject) {
+                $rate = $rateNaComp($specificProject);
+                if ($rate > 0) {
+                    $hourlyRate = $rate;
+                }
             }
         } else {
-            // Calcular média dos projetos pais que têm hourly_rate preenchido
-            $parentProjectsWithRate = $parentProjects->filter(function($project) {
-                return $project->hourly_rate !== null && $project->hourly_rate > 0;
-            });
+            // Média do valor-hora vigente dos projetos pais que têm rate > 0
+            $rates = $parentProjects->map($rateNaComp)->filter(fn ($r) => $r > 0);
 
-            if ($parentProjectsWithRate->count() > 0) {
-                $totalRate = $parentProjectsWithRate->sum('hourly_rate');
-                $averageRate = $totalRate / $parentProjectsWithRate->count();
-                $hourlyRate = round($averageRate, 2);
+            if ($rates->count() > 0) {
+                $hourlyRate = round($rates->sum() / $rates->count(), 2);
             }
         }
 
@@ -222,21 +229,21 @@ class OnDemandController extends Controller
         $weightedHourlyRate = null;
         
         if ($projectId) {
-            // Se filtrou por projeto específico, usar a média ponderada dele
+            // Se filtrou por projeto específico, usar a média ponderada dele (na competência)
             $specificProject = Project::find($projectId);
             if ($specificProject) {
-                $weighted = $specificProject->getWeightedAverageHourlyRate();
+                $weighted = $specificProject->getWeightedAverageHourlyRate($competencia);
                 if ($weighted > 0) {
                     $weightedHourlyRate = round($weighted, 2);
                 }
             }
         } else {
-            // Calcular média ponderada de todos os projetos pais
+            // Calcular média ponderada de todos os projetos pais (na competência)
             $totalValue = 0;
             $totalHours = 0;
-            
+
             foreach ($parentProjects as $project) {
-                $projectTotalValue = $project->calculateTotalProjectValue();
+                $projectTotalValue = $project->calculateTotalProjectValue($competencia);
                 $projectTotalHours = $project->getTotalAvailableHours();
                 
                 if ($projectTotalHours > 0) {
