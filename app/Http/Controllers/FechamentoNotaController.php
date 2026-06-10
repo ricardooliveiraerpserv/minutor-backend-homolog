@@ -39,7 +39,7 @@ class FechamentoNotaController extends Controller
     {
         $user = Auth::user();
         if (!$user) return false;
-        if ($user->isAdmin()) return true;
+        if ($user->isAdmin() || $user->isAdministrativo()) return true;
         if ($type === 'consultor') return (int) $user->id === (int) $model->id;
         if ($type === 'parceiro')  return (int) ($user->partner_id ?? 0) === (int) $model->id;
         return false;
@@ -60,7 +60,7 @@ class FechamentoNotaController extends Controller
         // (ex.: competência 05/2026 → prazo 15/06/2026), salvo liberação do administrativo
         // para este notable+mês — admin sempre pode enviar.
         $deadline = \Carbon\Carbon::parse($yearMonth . '-01')->addMonthNoOverflow()->day(15)->endOfDay();
-        if (now()->greaterThan($deadline) && !auth()->user()->isAdmin()) {
+        if (now()->greaterThan($deadline) && !(auth()->user()->isAdmin() || auth()->user()->isAdministrativo())) {
             $existing = FechamentoNota::where('notable_type', get_class($model))
                 ->where('notable_id', $model->id)
                 ->where('year_month', $yearMonth)
@@ -183,11 +183,11 @@ class FechamentoNotaController extends Controller
         return Storage::disk(self::DISK)->download($att->storage_path, $att->original_name ?: basename($att->storage_path));
     }
 
-    /** POST .../fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao — só admin. */
+    /** POST .../fechamento/notas/{type}/{id}/{yearMonth}/{tipo}/decisao — admin/administrativo. */
     public function decisao(Request $request, string $type, int $id, string $yearMonth, string $tipo): JsonResponse
     {
         $user = Auth::user();
-        if (!$user || !$user->isAdmin()) {
+        if (!$user || !($user->isAdmin() || $user->isAdministrativo())) {
             return response()->json(['error' => 'Apenas administradores podem aceitar/recusar notas'], 403);
         }
         if (!in_array($tipo, FechamentoNota::TIPOS, true)) {
@@ -236,11 +236,11 @@ class FechamentoNotaController extends Controller
         return response()->json(['ok' => true, 'notas' => $nota->toRowPayload()]);
     }
 
-    /** POST .../fechamento/notas/{type}/{id}/{yearMonth}/liberar — admin libera envio após o prazo. */
+    /** POST .../fechamento/notas/{type}/{id}/{yearMonth}/liberar — admin/administrativo libera envio após o prazo. */
     public function liberar(string $type, int $id, string $yearMonth): JsonResponse
     {
         $user = Auth::user();
-        if (!$user || !$user->isAdmin()) {
+        if (!$user || !($user->isAdmin() || $user->isAdministrativo())) {
             return response()->json(['error' => 'Apenas administradores podem liberar o envio'], 403);
         }
         [$model, $isPj] = $this->entity($type, $id);

@@ -172,12 +172,56 @@ class BankHoursMonthlyController extends Controller
             });
         }
 
-        // Calcular horas contratadas (soma de sold_hours dos projetos pais)
-        $contractedHours = (int) $query->sum('sold_hours') ?? 0;
+        // Horas contratadas POR MÊS: usa o valor VIGENTE na competência selecionada
+        // (project_sold_hours_history.effective_from), não o sold_hours atual — assim
+        // alterar a quantidade de horas NÃO muda os meses anteriores no dashboard.
+        // Sem mês/ano (modo Período), cai no valor atual.
+        $bhmCompetencia = ($request->get('month') && $request->get('year'))
+            ? sprintf('%04d-%02d', (int) $request->get('year'), (int) $request->get('month'))
+            : null;
 
         // Buscar todos os projetos com seus relacionamentos necessários
-        // serviceType do próprio projeto + filhos (evita N+1)
-        $parentProjects = $query->with(['serviceType', 'contractType', 'childProjects.contractType', 'childProjects.serviceType'])->get();
+        // serviceType do próprio projeto + filhos (evita N+1); soldHoursHistory p/ vigência
+        $parentProjects = $query->with(['serviceType', 'contractType', 'childProjects.contractType', 'childProjects.serviceType', 'soldHoursHistory'])->get();
+
+        $contractedHours = 0;
+        foreach ($parentProjects as $pp) {
+            $contractedHours += ($bhmCompetencia !== null && $pp->isBankHoursMonthly())
+                ? $pp->soldHoursForCompetencia($bhmCompetencia)
+                : (float) ($pp->sold_hours ?? 0);
+        }
+        $contractedHours = (int) round($contractedHours);
+
+        // Breakdown mensal vigência-aware p/ a tabela "Horas Mensais Incrementadas"
+        // (extrato simplificado do cliente, usado quando há >1 projeto pai → sem
+        // monthly_statement). Soma, por mês, as horas vendidas VIGENTES de cada projeto
+        // BH Mensal (respeita effective_from). Substitui a derivação naive do front
+        // (horas atuais × meses), que mostrava a quantidade NOVA em todos os meses.
+        $bhmProjects = $parentProjects->filter(fn ($p) => $p->isBankHoursMonthly() && $p->start_date);
+        $monthlyIncrements = [];
+        if ($bhmProjects->isNotEmpty()) {
+            $globalEnd = \Carbon\Carbon::now()->startOfMonth();
+            $cursor = $bhmProjects
+                ->map(fn ($p) => \Carbon\Carbon::parse($p->start_date)->startOfMonth())
+                ->sort()
+                ->first()
+                ->copy();
+            while ($cursor->lte($globalEnd)) {
+                $ym = $cursor->format('Y-m');
+                $h = 0.0;
+                foreach ($bhmProjects as $p) {
+                    $pStart = \Carbon\Carbon::parse($p->start_date)->startOfMonth();
+                    $pEnd   = $p->encerramento_date
+                        ? \Carbon\Carbon::parse($p->encerramento_date)->startOfMonth()
+                        : $globalEnd;
+                    if ($cursor->gte($pStart) && $cursor->lte($pEnd)) {
+                        $h += $p->soldHoursForCompetencia($ym);
+                    }
+                }
+                $monthlyIncrements[] = ['year_month' => $ym, 'hours' => round($h, 2)];
+                $cursor->addMonth();
+            }
+        }
 
         // Extrato (Situação do Contrato mês a mês) só aparece no perfil do cliente se
         // TODOS os projetos pais em escopo permitirem (chave extrato_visivel_cliente).
@@ -626,6 +670,7 @@ class BankHoursMonthlyController extends Controller
                 'contracted_hours' => $contractedHours,
                 'extrato_visivel_cliente' => $extratoVisivelCliente,
                 'monthly_statement' => $monthlyStatement,
+                'monthly_increments' => $monthlyIncrements,
                 'accumulated_contracted_hours' => $accumulatedContractedHours,
                 'contributed_hours' => $contributedHours,
                 'consumed_hours' => $consumedHours,

@@ -408,6 +408,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
+            Route::get('/projects/{project}/sold-hours-history', [ProjectController::class, 'soldHoursHistoryIndex'])->name('projects.sold-hours-history.index');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
             Route::get('/projects/{project}/monthly-statement', [ProjectController::class, 'monthlyStatement'])->name('projects.monthly-statement');
         });
