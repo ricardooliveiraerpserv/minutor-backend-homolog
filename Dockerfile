@@ -35,12 +35,18 @@ opcache.fast_shutdown=1\n' > /usr/local/etc/php/conf.d/opcache.ini
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
-# Copia o projeto
-COPY . .
-
-# Instala dependências PHP (cache de pacotes entre builds)
+# Instala dependências PHP ANTES de copiar o código. Assim a camada do vendor
+# (~80MB) só é invalidada quando composer.json/lock mudam — deploys de código
+# (a grande maioria) não re-buildam nem re-puxam o vendor no VPS toda vez.
+# --no-scripts/--no-autoloader: artisan ainda não existe; autoloader vem depois.
+COPY composer.json composer.lock ./
 RUN --mount=type=cache,id=minutor-composer,target=/root/.composer \
-    composer install --no-dev --optimize-autoloader --no-interaction
+    composer install --no-dev --no-interaction --no-scripts --no-autoloader
+
+# Copia o projeto e gera o autoloader otimizado (roda post-autoload-dump →
+# artisan package:discover, agora que o source está presente).
+COPY . .
+RUN composer dump-autoload --optimize --no-dev --no-interaction
 
 # Permissões
 RUN mkdir -p storage/logs storage/framework/cache \

@@ -1,0 +1,36 @@
+# Build context enxuto + reprodutível. Sem isso, `COPY . .` arrasta artefatos
+# locais (vendor com dev-deps, bootstrap/cache stale, .env, .git) pra imagem.
+
+# Controle de versão / CI
+.git
+.gitignore
+.github
+
+# Dependências: vêm SÓ da camada `composer install --no-dev`, nunca do COPY.
+# (senão um vendor local com dev-deps clobbra o instalado → package:discover quebra)
+vendor
+node_modules
+
+# Caches compilados do Laravel (stale → providers de dev inexistentes na imagem)
+bootstrap/cache/*.php
+
+# Runtime volátil (Dockerfile recria a estrutura)
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+
+# Segredos / ambiente local — nunca na imagem
+.env
+.env.*
+!.env.example
+
+# Docs e infra que não entram no runtime
+*.md
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Testes
+tests
+phpunit.xml
