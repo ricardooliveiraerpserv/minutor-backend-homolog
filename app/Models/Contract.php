@@ -25,9 +25,11 @@ class Contract extends Model
         'kanban_status', 'kanban_coordinator_id', 'kanban_order', 'sustentacao_column',
         // Aditivo: altera um projeto pai/independente (não gera projeto novo)
         'is_aditivo', 'aditivo_project_id', 'aditivo_field', 'aditivo_effective_from', 'aditivo_old_value',
+        'aditivo_changes',
     ];
 
     protected $casts = [
+        'aditivo_changes'        => 'array',
         'cobra_despesa_cliente'  => 'boolean',
         'expectativa_inicio'     => 'date:Y-m-d',
         'generated_at'           => 'datetime',
