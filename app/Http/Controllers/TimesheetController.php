@@ -2342,15 +2342,16 @@ class TimesheetController extends Controller
             ], 403);
         }
 
+        // Motivo do estorno de aprovação não é mais obrigatório (removido a pedido).
         $validator = Validator::make($request->all(), [
-            'reason' => 'required|string|max:1000'
+            'reason' => 'nullable|string|max:1000'
         ]);
 
         if ($validator->fails()) {
             return $this->validationErrorResponse($validator->errors()->all());
         }
 
-        if ($timesheet->reverseApproval($user, $request->reason)) {
+        if ($timesheet->reverseApproval($user, $request->reason ?? '')) {
             $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 
