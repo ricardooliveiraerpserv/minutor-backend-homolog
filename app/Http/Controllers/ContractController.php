@@ -208,8 +208,12 @@ class ContractController extends Controller
     {
         $validated = $request->validate([
             'aditivo_project_id'     => 'required|exists:projects,id',
-            'aditivo_field'          => 'required|in:valor_hora,horas_contratadas,valor_projeto',
-            'aditivo_value'          => 'required|numeric|min:0',
+            'aditivo_field'          => 'nullable|in:valor_hora,horas_contratadas,valor_projeto',
+            'aditivo_value'          => 'nullable|numeric|min:0',
+            // Multi-alteração (Banco de Horas Mensal): muda valor-hora E/OU horas no mesmo aditivo.
+            'aditivo_changes'           => 'nullable|array|min:1',
+            'aditivo_changes.*.field'   => 'required_with:aditivo_changes|in:valor_hora,horas_contratadas',
+            'aditivo_changes.*.value'   => 'required_with:aditivo_changes|numeric|min:0',
             'aditivo_effective_from' => 'nullable|date',
             'condicao_pagamento'     => 'nullable|string',
             'observacoes'            => 'required|string',
@@ -233,6 +237,66 @@ class ContractController extends Controller
         };
         if (empty($allowed)) {
             return response()->json(['message' => 'Aditivo só se aplica a projetos On Demand, Cloud ou Banco de Horas Mensal.'], 422);
+        }
+
+        // ── Multi-alteração (Banco de Horas Mensal): valor-hora E/OU horas no mesmo aditivo,
+        //    recalculando o valor do contrato (horas × valor-hora) automaticamente. ──
+        if (!empty($validated['aditivo_changes'])) {
+            if ($code !== 'monthly_hours') {
+                return response()->json(['message' => 'Múltiplas alterações no mesmo aditivo só para Banco de Horas Mensal.'], 422);
+            }
+            foreach ($validated['aditivo_changes'] as $ch) {
+                if (!in_array($ch['field'], $allowed, true)) {
+                    return response()->json(['message' => 'Campo não permitido para este projeto: ' . $ch['field']], 422);
+                }
+            }
+            $effMulti = $validated['aditivo_effective_from'] ?? null;
+            $oldContractValue = (float) ($project->project_value ?? 0); // valor do contrato ANTES
+            $oldRate  = (float) ($project->hourly_rate ?? 0);           // valor-hora ANTES
+            $oldHoras = (float) ($project->sold_hours ?? 0);            // horas ANTES
+
+            $contract = DB::transaction(function () use ($validated, $project, $effMulti, $oldContractValue, $oldRate, $oldHoras) {
+                foreach ($validated['aditivo_changes'] as $ch) {
+                    $this->applyAditivoToProject($project, $ch['field'], $ch['value'], $effMulti);
+                }
+                $project->refresh(); // pega hourly_rate/sold_hours/project_value recomputados
+
+                // Breakdown SEMPRE com os DOIS campos (valor-hora E horas), de→para — mesmo
+                // que só um tenha mudado (o que não mudou aparece com antes=depois).
+                $changesDetail = [
+                    ['field' => 'valor_hora',        'label' => 'Valor da Hora',       'old' => $oldRate,  'new' => (float) ($project->hourly_rate ?? 0)],
+                    ['field' => 'horas_contratadas', 'label' => 'Quantidade de Horas', 'old' => $oldHoras, 'new' => (float) ($project->sold_hours ?? 0)],
+                ];
+
+                return Contract::create([
+                    'aditivo_old_value'      => $oldContractValue,
+                    'aditivo_changes'        => $changesDetail,
+                    'customer_id'            => $project->customer_id,
+                    'project_name'           => $project->name,
+                    'categoria'              => 'projeto',
+                    'contract_type_id'       => $project->contract_type_id,
+                    'service_type_id'        => $project->service_type_id,
+                    'horas_contratadas'      => (int) ($project->sold_hours ?? 0),
+                    'valor_hora'             => $project->hourly_rate,
+                    'valor_projeto'          => $project->project_value, // novo valor do contrato (recomputado)
+                    'is_aditivo'             => true,
+                    'aditivo_project_id'     => $project->id,
+                    'aditivo_field'          => 'multiplo', // impacto exibido como "Valor do Contrato" (old→new)
+                    'aditivo_effective_from' => $effMulti ? \Carbon\Carbon::parse($effMulti)->startOfMonth()->toDateString() : null,
+                    'condicao_pagamento'     => $validated['condicao_pagamento'] ?? null,
+                    'observacoes'            => $validated['observacoes'] ?? null,
+                    'created_by_id'          => auth()->id(),
+                    'status'                 => Contract::STATUS_ATIVO,
+                    'kanban_status'          => Contract::KANBAN_NOVO_PROJETO,
+                ]);
+            });
+
+            return response()->json($contract->load(['customer:id,name', 'aditivoProject:id,name,code']), 201);
+        }
+
+        // ── Alteração única (fluxo original) ──
+        if (empty($validated['aditivo_field']) || $validated['aditivo_value'] === null) {
+            return response()->json(['message' => 'Informe o campo e o valor do aditivo.'], 422);
         }
         if (!in_array($validated['aditivo_field'], $allowed, true)) {
             return response()->json(['message' => 'Esse campo não pode ser alterado para o tipo deste projeto.'], 422);
@@ -418,8 +482,104 @@ class ContractController extends Controller
         return response()->json($contract->fresh()->load(['customer:id,name', 'contacts', 'attachments']));
     }
 
+    /**
+     * Edita um ADITIVO. Para aditivo Mensal "multiplo" (valor-hora + horas), reaplica os
+     * novos valores no projeto SOBRESCREVENDO a vigência do mês e recalculando o valor do
+     * contrato — mas SÓ se for o aditivo MAIS RECENTE do projeto (editar um antigo bagunçaria
+     * a vigência). Os demais campos (forma de pagamento / observação) sempre editáveis.
+     */
+    public function updateAditivo(Request $request, Contract $contract): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+        if (!$contract->is_aditivo) {
+            return response()->json(['message' => 'Não é um aditivo.'], 422);
+        }
+        $validated = $request->validate([
+            'aditivo_changes'         => 'nullable|array',
+            'aditivo_changes.*.field' => 'required_with:aditivo_changes|in:valor_hora,horas_contratadas',
+            'aditivo_changes.*.value' => 'required_with:aditivo_changes|numeric|min:0',
+            'condicao_pagamento'      => 'nullable|string',
+            'observacoes'             => 'nullable|string',
+        ]);
+
+        $reapply = !empty($validated['aditivo_changes']) && $contract->aditivo_field === 'multiplo';
+
+        if ($reapply) {
+            $project = Project::with('contractType')->find($contract->aditivo_project_id);
+            if (!$project || strtolower($project->contractType->code ?? '') !== 'monthly_hours') {
+                return response()->json(['message' => 'Reaplicação só para Banco de Horas Mensal.'], 422);
+            }
+            // Só o aditivo MAIS RECENTE do projeto pode reaplicar.
+            $isLatest = Contract::where('aditivo_project_id', $project->id)
+                ->where('is_aditivo', true)->where('id', '>', $contract->id)->doesntExist();
+            if (!$isLatest) {
+                return response()->json(['message' => 'Só o aditivo mais recente do projeto pode ser editado. Crie um novo aditivo.'], 422);
+            }
+
+            $eff = $contract->aditivo_effective_from
+                ? \Carbon\Carbon::parse($contract->aditivo_effective_from)->startOfMonth()->toDateString()
+                : \Carbon\Carbon::now()->startOfMonth()->toDateString();
+
+            $newRate = null; $newHoras = null;
+            foreach ($validated['aditivo_changes'] as $ch) {
+                if ($ch['field'] === 'valor_hora') $newRate = (float) $ch['value'];
+                if ($ch['field'] === 'horas_contratadas') $newHoras = (float) $ch['value'];
+            }
+            $newRate  ??= (float) ($contract->valor_hora ?? $project->hourly_rate ?? 0);
+            $newHoras ??= (float) ($contract->horas_contratadas ?? $project->sold_hours ?? 0);
+
+            DB::transaction(function () use ($contract, $project, $eff, $newRate, $newHoras, $validated) {
+                // valor-hora: sobrescreve a vigência do mês (por effective_from), não por dia.
+                $project->update(['hourly_rate' => $newRate]);
+                $log = \App\Models\ProjectChangeLog::where('project_id', $project->id)
+                    ->where('field_name', 'hourly_rate')->where('effective_from', $eff)->first();
+                if ($log) { $log->update(['new_value' => (string) $newRate]); }
+
+                // horas: sobrescreve a vigência do mês.
+                $project->update(['sold_hours' => $newHoras]);
+                $h = $project->soldHoursHistory()->where('effective_from', $eff)->first();
+                if ($h) { $h->update(['sold_hours' => $newHoras, 'changed_by' => auth()->id()]); }
+                $project->updateAccumulatedSoldHours(null, true);
+
+                // valor do contrato recomputado.
+                $newValue = round($newHoras * $newRate, 2);
+                $project->update(['project_value' => $newValue]);
+
+                // atualiza o registro do aditivo (preserva os .old originais do breakdown).
+                $changes = array_map(function ($c) use ($newRate, $newHoras) {
+                    $c['new'] = $c['field'] === 'valor_hora' ? $newRate : $newHoras;
+                    return $c;
+                }, $contract->aditivo_changes ?? []);
+
+                $contract->update([
+                    'valor_hora'         => $newRate,
+                    'horas_contratadas'  => (int) $newHoras,
+                    'valor_projeto'      => $newValue,
+                    'aditivo_changes'    => $changes,
+                    'condicao_pagamento' => $validated['condicao_pagamento'] ?? $contract->condicao_pagamento,
+                    'observacoes'        => $validated['observacoes'] ?? $contract->observacoes,
+                ]);
+            });
+        } else {
+            $contract->update([
+                'condicao_pagamento' => $validated['condicao_pagamento'] ?? $contract->condicao_pagamento,
+                'observacoes'        => $validated['observacoes'] ?? $contract->observacoes,
+            ]);
+        }
+
+        return response()->json($contract->fresh()->load(['customer:id,name', 'aditivoProject:id,name,code']));
+    }
+
     public function destroy(Contract $contract): JsonResponse
     {
+        // Aditivo: excluir REVERTE a alteração no projeto (só o aditivo mais recente).
+        if ($contract->is_aditivo) {
+            return $this->destroyAditivo($contract);
+        }
+
         if ($contract->project_id) {
             if (Expense::where('project_id', $contract->project_id)->exists()) {
                 return response()->json(['message' => 'Contrato com despesas registradas não pode ser excluído.'], 422);
@@ -436,6 +596,69 @@ class ContractController extends Controller
         }
 
         $contract->delete();
+        return response()->json(null, 204);
+    }
+
+    /**
+     * Exclui um ADITIVO REVERTENDO a alteração no projeto (valor-hora/horas/valor do contrato
+     * voltam ao "antes" e a vigência daquele mês é removida). Só o aditivo MAIS RECENTE do
+     * projeto pode ser excluído — reverter um antigo (com outros depois) bagunçaria a vigência.
+     */
+    private function destroyAditivo(Contract $contract): JsonResponse
+    {
+        $isLatest = Contract::where('aditivo_project_id', $contract->aditivo_project_id)
+            ->where('is_aditivo', true)->where('id', '>', $contract->id)->doesntExist();
+        if (!$isLatest) {
+            return response()->json([
+                'message' => 'Só o aditivo MAIS RECENTE do projeto pode ser excluído (a exclusão reverte a alteração). Exclua os mais novos primeiro.',
+            ], 422);
+        }
+
+        $project = Project::with('contractType')->find($contract->aditivo_project_id);
+
+        DB::transaction(function () use ($contract, $project) {
+            if ($project) {
+                $eff = $contract->aditivo_effective_from
+                    ? \Carbon\Carbon::parse($contract->aditivo_effective_from)->startOfMonth()->toDateString()
+                    : null;
+                $field   = $contract->aditivo_field;
+                $changes = collect($contract->aditivo_changes ?? []);
+
+                if ($field === 'multiplo' && $changes->isNotEmpty()) {
+                    $oldRate  = (float) ($changes->firstWhere('field', 'valor_hora')['old'] ?? $project->hourly_rate);
+                    $oldHoras = (float) ($changes->firstWhere('field', 'horas_contratadas')['old'] ?? $project->sold_hours);
+                    if ($eff) {
+                        \App\Models\ProjectChangeLog::where('project_id', $project->id)->where('field_name', 'hourly_rate')->where('effective_from', $eff)->delete();
+                        $project->soldHoursHistory()->where('effective_from', $eff)->delete();
+                    }
+                    $project->update(['hourly_rate' => $oldRate, 'sold_hours' => $oldHoras, 'project_value' => round($oldRate * $oldHoras, 2)]);
+                    $project->updateAccumulatedSoldHours(null, true);
+                } elseif ($field === 'valor_hora') {
+                    $old = (float) ($contract->aditivo_old_value ?? $project->hourly_rate);
+                    if ($eff) \App\Models\ProjectChangeLog::where('project_id', $project->id)->where('field_name', 'hourly_rate')->where('effective_from', $eff)->delete();
+                    $project->update(['hourly_rate' => $old]);
+                    if ($project->isBankHoursMonthly() && (float) $project->sold_hours > 0) {
+                        $project->update(['project_value' => round((float) $project->sold_hours * $old, 2)]);
+                    }
+                } elseif ($field === 'horas_contratadas') {
+                    $old = (float) ($contract->aditivo_old_value ?? $project->sold_hours);
+                    if ($eff) $project->soldHoursHistory()->where('effective_from', $eff)->delete();
+                    $project->update(['sold_hours' => $old]);
+                    $project->updateAccumulatedSoldHours(null, true);
+                    if ($project->isBankHoursMonthly() && (float) $project->hourly_rate > 0) {
+                        $project->update(['project_value' => round($old * (float) $project->hourly_rate, 2)]);
+                    }
+                } elseif ($field === 'valor_projeto') {
+                    $project->update(['project_value' => (float) ($contract->aditivo_old_value ?? $project->project_value)]);
+                }
+            }
+
+            foreach ($contract->attachments as $att) {
+                $att->delete();
+            }
+            $contract->delete();
+        });
+
         return response()->json(null, 204);
     }
 
@@ -1492,15 +1715,18 @@ class ContractController extends Controller
             'created_at'       => $contract->created_at,
             'is_aditivo'       => (bool) $contract->is_aditivo,
             'aditivo_field'    => $contract->aditivo_field,
+            'aditivo_changes'  => $contract->aditivo_changes, // breakdown [{field,label,old,new}] (multi Mensal)
             'aditivo_old_value'   => $contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null,
             'aditivo_new_value'   => $contract->is_aditivo ? (float) match ($contract->aditivo_field) {
                 'valor_hora'        => $contract->valor_hora,
                 'horas_contratadas' => $contract->horas_contratadas,
                 'valor_projeto'     => $contract->valor_projeto,
+                'multiplo'          => $contract->valor_projeto, // novo valor do contrato
                 default             => 0,
             } : null,
             'aditivo_project_code' => $contract->aditivoProject?->code,
             'aditivo_project_name' => $contract->aditivoProject?->name ?? $contract->project_name,
+            // Valor do contrato (Mensal = horas × valor-hora) impactado pelo aditivo — de → para.
             'aditivo_contract_old' => $this->aditivoContractValue($contract, 'old'),
             'aditivo_contract_new' => $this->aditivoContractValue($contract, 'new'),
             'aditivo_effective_from' => $contract->aditivo_effective_from?->format('Y-m-d') ?? (is_string($contract->aditivo_effective_from) ? $contract->aditivo_effective_from : null),
@@ -1529,11 +1755,18 @@ class ContractController extends Controller
         }
         if ($contract->aditivo_field === 'valor_hora') {
             $hours = (float) ($ap->sold_hours ?? 0);
-            if ($hours <= 0) return null;
+            if ($hours <= 0) return null; // sem horas não há "valor do contrato"
             $rate  = $which === 'old'
                 ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
                 : (float) $contract->valor_hora;
             return $rate === null ? null : round($hours * $rate, 2);
+        }
+        if ($contract->aditivo_field === 'multiplo') {
+            // Multi (Mensal): old = valor do contrato antes (gravado em aditivo_old_value),
+            // new = valor do contrato recomputado (gravado em valor_projeto).
+            return $which === 'old'
+                ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
+                : ($contract->valor_projeto !== null ? (float) $contract->valor_projeto : null);
         }
         return null;
     }

@@ -489,7 +489,8 @@ class ProjectController extends Controller
 
         try {
         $currentUserForTransform = $request->user();
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform) {
+        $gestaoYearMonth = $request->query('year_month'); // p/ a coluna Consumo Mensal (closure não captura $request)
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoYearMonth) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -523,6 +524,23 @@ class ProjectController extends Controller
             $timesheetsMap = $rows->toArray();
         }
 
+        // Consumo MENSAL (horas apontadas no mês escolhido) — alimenta a coluna "Consumo Mensal".
+        // Mesma whitelist (approved/pending). Vazio quando não há year_month.
+        $monthlyMap = [];
+        if ($gestaoMode && $gestaoYearMonth && !empty($allIdsToSum)) {
+            $mFrom = "{$gestaoYearMonth}-01";
+            $mTo   = \Carbon\Carbon::parse($mFrom)->endOfMonth()->toDateString();
+            $monthlyMap = DB::table('timesheets')
+                ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as m')
+                ->whereIn('project_id', $allIdsToSum)
+                ->whereNull('deleted_at')
+                ->whereIn('status', ['approved', 'pending'])
+                ->whereBetween('date', [$mFrom, $mTo])
+                ->groupBy('project_id')
+                ->pluck('m', 'project_id')
+                ->toArray();
+        }
+
         // Consumo de COORDENAÇÃO por projeto — só apontamentos cujo autor é coordenador
         // do projeto (join project_coordinators). Uma query só (sem N+1). Mesmo whitelist
         // de consumo (approved/pending) usado acima.
@@ -550,10 +568,11 @@ class ProjectController extends Controller
         if ($allChildProjectIds->isNotEmpty()) {
             // Atribuir total_logged_minutes e consumed_hours aos projetos filhos
             // consumed_hours usa a mesma lógica do pai para que os valores somem visualmente
-            $projects->getCollection()->each(function ($project) use ($timesheetsMap, $gestaoMode) {
+            $projects->getCollection()->each(function ($project) use ($timesheetsMap, $gestaoMode, $monthlyMap) {
                 if ($project->relationLoaded('childProjects') && $project->childProjects) {
-                    $project->childProjects->each(function ($childProject) use ($timesheetsMap, $gestaoMode) {
+                    $project->childProjects->each(function ($childProject) use ($timesheetsMap, $gestaoMode, $monthlyMap) {
                         $childProject->total_logged_minutes = $timesheetsMap[$childProject->id] ?? 0;
+                        $childProject->consumo_mensal = round(($monthlyMap[$childProject->id] ?? 0) / 60, 1);
                         $childLogged = $childProject->total_logged_minutes / 60;
                         $initialConsumed = (float)($childProject->initial_hours_consumed ?? 0);
 
@@ -590,7 +609,7 @@ class ProjectController extends Controller
             ->flip()
             ->toArray();
 
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap) {
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap) {
             $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
@@ -599,6 +618,16 @@ class ProjectController extends Controller
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
                 $consumed = ($project->total_logged_minutes ?? 0) / 60;
                 $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
+
+                // Consumo MENSAL do contrato = horas apontadas no mês no projeto + filhos diretos.
+                $monthlyOwn = ($monthlyMap[$project->id] ?? 0) / 60;
+                $monthlyChildren = 0.0;
+                if ($project->relationLoaded('childProjects') && $project->childProjects) {
+                    foreach ($project->childProjects as $mChild) {
+                        $monthlyChildren += ($monthlyMap[$mChild->id] ?? 0) / 60;
+                    }
+                }
+                $project->consumo_mensal = round($monthlyOwn + $monthlyChildren, 1);
 
                 // Consumo dos filhos comprometido no banco do pai, conforme o tipo do filho:
                 //  - Fechado / BH Fixo: comprometem sold_hours + aportes do filho (independe do consumo efetivo)
