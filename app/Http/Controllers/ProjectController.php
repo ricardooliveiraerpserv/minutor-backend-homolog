@@ -492,8 +492,13 @@ class ProjectController extends Controller
 
         try {
         $currentUserForTransform = $request->user();
-        $gestaoYearMonth = $request->query('year_month'); // p/ a coluna Consumo Mensal (closure não captura $request)
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoYearMonth) {
+        // Coluna Consumo: um ou mais meses (year_months=2026-05,2026-06). Aceita o legado
+        // year_month (1 mês). Closure não captura $request → computa aqui e passa via use.
+        $gestaoMonthsRaw = $request->query('year_months') ?? $request->query('year_month');
+        $gestaoMonths = $gestaoMonthsRaw
+            ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
+            : [];
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -527,18 +532,17 @@ class ProjectController extends Controller
             $timesheetsMap = $rows->toArray();
         }
 
-        // Consumo MENSAL (horas apontadas no mês escolhido) — alimenta a coluna "Consumo Mensal".
-        // Mesma whitelist (approved/pending). Vazio quando não há year_month.
+        // Consumo (horas apontadas) nos meses escolhidos — alimenta a coluna "Consumo Mensal".
+        // Soma de TODOS os meses selecionados. Mesma whitelist (approved/pending).
+        // Vazio quando nenhum mês selecionado.
         $monthlyMap = [];
-        if ($gestaoMode && $gestaoYearMonth && !empty($allIdsToSum)) {
-            $mFrom = "{$gestaoYearMonth}-01";
-            $mTo   = \Carbon\Carbon::parse($mFrom)->endOfMonth()->toDateString();
+        if ($gestaoMode && !empty($gestaoMonths) && !empty($allIdsToSum)) {
             $monthlyMap = DB::table('timesheets')
                 ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as m')
                 ->whereIn('project_id', $allIdsToSum)
                 ->whereNull('deleted_at')
                 ->whereIn('status', ['approved', 'pending'])
-                ->whereBetween('date', [$mFrom, $mTo])
+                ->whereIn(DB::raw("to_char(timesheets.date, 'YYYY-MM')"), $gestaoMonths)
                 ->groupBy('project_id')
                 ->pluck('m', 'project_id')
                 ->toArray();
