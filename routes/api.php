@@ -776,6 +776,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoClienteController::class, 'enviarEmail']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoClienteController::class, 'limparEnvio']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/desconto',                   [\App\Http\Controllers\FechamentoClienteController::class, 'salvarDesconto']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoClienteController::class, 'emailPreview']);
             Route::post('/fechamento-cliente/{customerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
@@ -831,6 +832,26 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/excel',               [\App\Http\Controllers\FechamentoConsultorController::class, 'excel']);
             // Ajustes do recebimento (desconto/adiantamento/adicional) do consultor no mês.
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/ajustes',            [\App\Http\Controllers\FechamentoConsultorController::class, 'salvarAjustes']);
+
+            // ── Rotina de Adiantamento (consultor/parceiro), parcelado por competência ──
+            Route::get('/adiantamentos',                 [\App\Http\Controllers\AdiantamentoController::class, 'index']);
+            Route::get('/adiantamentos/beneficiarios',   [\App\Http\Controllers\AdiantamentoController::class, 'beneficiarios']);
+            Route::post('/adiantamentos',                [\App\Http\Controllers\AdiantamentoController::class, 'store']);
+            Route::put('/adiantamentos/{id}',            [\App\Http\Controllers\AdiantamentoController::class, 'update']);
+            Route::delete('/adiantamentos/{id}',         [\App\Http\Controllers\AdiantamentoController::class, 'destroy']);
+
+            // ── Fechamento Diretoria (por diretor + competência, com status) ──
+            Route::get('/fechamento-diretoria/diretores', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'diretores']);
+            Route::get('/fechamento-diretoria/usuarios',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'usuarios']);
+            Route::post('/fechamento-diretoria/diretores', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'definirDiretores']);
+            Route::get('/fechamento-diretoria/folha/{userId}/{yearMonth}',       [\App\Http\Controllers\FechamentoDiretoriaController::class, 'folha']);
+            Route::get('/fechamento-diretoria/{userId}/{yearMonth}/report-html',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'reportHtml']);
+            Route::get('/fechamento-diretoria/{userId}/{yearMonth}',             [\App\Http\Controllers\FechamentoDiretoriaController::class, 'show']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}',            [\App\Http\Controllers\FechamentoDiretoriaController::class, 'salvar']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/finalizar',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'finalizar']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/reabrir',    [\App\Http\Controllers\FechamentoDiretoriaController::class, 'reabrir']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/email-preview', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'emailPreview']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/enviar-email', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'enviarEmail']);
             // Recebimento do próprio usuário (meu-painel / partner-dashboard).
             Route::get('/my-closing/{yearMonth}',                                        [\App\Http\Controllers\FechamentoConsultorController::class, 'myClosing']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/email-preview',      [\App\Http\Controllers\FechamentoConsultorController::class, 'emailPreview']);
