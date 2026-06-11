@@ -126,7 +126,9 @@ class FechamentoParceiroController extends Controller
 
             $ajuste       = $ajustesMap->get($partner->id);
             $desconto     = round((float) ($ajuste->desconto ?? 0), 2);
-            $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2);
+            // Adiantamento = ajuste manual + parcelas da rotina de adiantamento no mês.
+            $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2)
+                + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partner->id, $yearMonth);
             $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
 
             // Quebra serviços × despesas. O pagamento de SERVIÇOS (mão de obra) é sem despesas —
@@ -175,6 +177,7 @@ class FechamentoParceiroController extends Controller
                 'desconto'       => $desconto,
                 'desconto_desc'  => $ajuste->desconto_desc ?? null,
                 'adiantamento'   => $adiantamento,
+                'adiantamento_desc' => \App\Models\Adiantamento::descricaoNoMes('parceiro', (int) $partner->id, $yearMonth),
                 'adicional'      => $adicional,
                 'adicional_desc' => $ajuste->adicional_desc ?? null,
                 'recebimento'    => $recebimento,
@@ -244,7 +247,9 @@ class FechamentoParceiroController extends Controller
         $ajuste        = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partnerId)
             ->where('year_month', $yearMonth)->first();
         $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
-        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        // Adiantamento = ajuste manual + parcelas da rotina (congeladas no snapshot ao fechar).
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2)
+            + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partnerId, $yearMonth);
         $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
 
         $fechamento->fill([
@@ -953,6 +958,7 @@ class FechamentoParceiroController extends Controller
             $totalAPagar
             - (float) $ajuste->desconto
             - (float) $ajuste->adiantamento
+            - \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partnerId, $yearMonth)
             + (float) $ajuste->adicional,
             2
         );

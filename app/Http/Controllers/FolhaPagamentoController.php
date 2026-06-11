@@ -39,7 +39,7 @@ class FolhaPagamentoController extends Controller
     }
 
     /** Linhas do grid: cooperados regulares + as linhas-sócio fixas (totalmente editáveis). */
-    private function buildRows(string $yearMonth, string $empresa = 'erpserv'): array
+    private function buildRows(string $yearMonth, string $empresa = 'erpserv', bool $comDiretoria = true): array
     {
         $all = FechamentoFolha::where('year_month', $yearMonth)->where('empresa', $empresa)->get();
 
@@ -61,10 +61,10 @@ class FolhaPagamentoController extends Controller
                         ->whereNotNull('socio_key')
                         ->where('cancelado', false)
                         ->get();
-                    return $this->buildBizifyRows($prev, true); // carried = vindo do mês anterior
+                    return $this->injectDiretoria($this->buildBizifyRows($prev, true), 'bizify', $yearMonth, $comDiretoria);
                 }
             }
-            return $this->buildBizifyRows($all);
+            return $this->injectDiretoria($this->buildBizifyRows($all), 'bizify', $yearMonth, $comDiretoria);
         }
 
         $fc   = app(FechamentoConsultorController::class);
@@ -447,8 +447,107 @@ class FolhaPagamentoController extends Controller
             ];
         }
 
+        $rows = $this->injectDiretoria($rows, 'erpserv', $yearMonth, $comDiretoria);
         usort($rows, fn ($a, $b) => strcasecmp((string) $a['nome'], (string) $b['nome']));
         return $rows;
+    }
+
+    /**
+     * Soma na produção (por empresa) o valor a receber + taxa da divisão por cooperativa
+     * do Fechamento Diretoria. Cria a linha do diretor se ele não estiver na folha.
+     *
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array<string, mixed>>
+     */
+    private function injectDiretoria(array $rows, string $empresa, string $yearMonth, bool $ativo = true): array
+    {
+        if (!$ativo) {
+            return $rows;
+        }
+        $headers = \App\Models\FechamentoDiretoria::where('year_month', $yearMonth)->get();
+        if ($headers->isEmpty()) {
+            return $rows;
+        }
+
+        // Contribuição por diretor = valor a receber (coop) + taxa (coop) da empresa.
+        $contrib = [];
+        foreach ($headers as $h) {
+            $valor = (float) ($empresa === 'bizify' ? $h->valor_coop_bizify : $h->valor_coop_erpserv);
+            $taxa  = (float) ($empresa === 'bizify' ? $h->taxa_coop_bizify  : $h->taxa_coop_erpserv);
+            $c = round($valor + $taxa, 2);
+            if ($c == 0.0) {
+                continue;
+            }
+            $contrib[$h->user_id] = round(($contrib[$h->user_id] ?? 0) + $c, 2);
+        }
+        if (!$contrib) {
+            return $rows;
+        }
+
+        // 1) Soma na produção das linhas existentes (por user_id).
+        $usados = [];
+        foreach ($rows as &$row) {
+            $uid = $row['user_id'] ?? null;
+            if ($uid !== null && isset($contrib[$uid])) {
+                $c = $contrib[$uid];
+                $row['producao'] = round((float) ($row['producao'] ?? 0) + $c, 2);
+                if (array_key_exists('total_rend', $row))     $row['total_rend']     = round((float) $row['total_rend'] + $c, 2);
+                if (array_key_exists('total_creditos', $row)) $row['total_creditos'] = round((float) $row['total_creditos'] + $c, 2);
+                $row['liquido'] = round((float) ($row['liquido'] ?? 0) + $c, 2);
+                $row['from_diretoria'] = true;
+                $usados[$uid] = true;
+            }
+        }
+        unset($row);
+
+        // 2) Diretores sem linha na empresa → cria a linha.
+        $faltam = array_diff_key($contrib, $usados);
+        if ($faltam) {
+            $users = \App\Models\User::whereIn('id', array_keys($faltam))->get()->keyBy('id');
+            foreach ($faltam as $uid => $c) {
+                $u = $users->get($uid);
+                if (!$u) {
+                    continue;
+                }
+                $rows[] = $empresa === 'bizify'
+                    ? $this->diretoriaBizifyRow($u, $c)
+                    : $this->diretoriaErpservRow($u, $c);
+            }
+        }
+
+        return $rows;
+    }
+
+    /** Linha de diretor (sem folha própria) na aba ERPSERV — produção vem da divisão por coop. */
+    private function diretoriaErpservRow($u, float $c): array
+    {
+        return [
+            'row_key' => 'd:' . $u->id, 'is_socio' => false, 'is_cooperado' => true, 'is_bizify' => false,
+            'inativo' => false, 'cancelado' => false, 'from_diretoria' => true,
+            'user_id' => $u->id, 'socio_key' => null,
+            'cpf' => $u->cpf ?? '', 'matricula' => $u->matricula ?? '', 'status' => $u->payroll_status ?? '',
+            'nome' => $u->full_name ?: $u->name,
+            'dias' => 0.0, 'horas' => 0.0, 'horas_apontamentos' => 0.0, 'valor_hora' => 0.0,
+            'producao' => $c, 'producao_calc' => 0.0,
+            'fech_serv' => 0.0, 'fech_desconto' => 0.0, 'fech_adiantamento' => 0.0, 'fech_adicional' => 0.0, 'fech_desp' => 0.0,
+            'variavel' => 0.0, 'reemb' => 0.0, 'reemb_auto' => 0.0, 'descontos' => 0.0, 'adiantamento' => 0.0,
+            'horista_mensalista' => 'Mensalista',
+            'total_rend' => $c, 'total_debitos' => 0.0, 'liquido' => $c,
+        ];
+    }
+
+    /** Linha de diretor (sem folha própria) na aba BIZIFY — produção vem da divisão por coop. */
+    private function diretoriaBizifyRow($u, float $c): array
+    {
+        return [
+            'row_key' => 'd:' . $u->id, 'is_bizify' => true, 'is_socio' => false, 'is_raho' => false,
+            'inativo' => false, 'carried' => false, 'cancelado' => false, 'from_diretoria' => true,
+            'user_id' => $u->id, 'socio_key' => null,
+            'matricula' => $u->matricula ?? '', 'nome' => $u->full_name ?: $u->name, 'status' => $u->payroll_status ?? '',
+            'producao' => $c, 'variavel' => 0.0, 'aj_custo' => 0.0, 'reemb' => 0.0, 'adto' => 0.0,
+            'descontos' => 0.0, 'adiantamento' => 0.0,
+            'total_creditos' => $c, 'total_debitos' => 0.0, 'liquido' => $c,
+        ];
     }
 
     /**
@@ -507,6 +606,26 @@ class FolhaPagamentoController extends Controller
         }
         $empresa = $request->query('empresa') === 'bizify' ? 'bizify' : 'erpserv';
         return response()->json(['data' => $this->buildRows($yearMonth, $empresa)]);
+    }
+
+    /**
+     * Linha da folha de um usuário no mês (procura nas duas empresas).
+     * Reutilizada pelo Fechamento Diretoria para montar a folha do diretor.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function rowForUser(string $yearMonth, int $userId): ?array
+    {
+        foreach (['erpserv', 'bizify'] as $empresa) {
+            // comDiretoria=false: a folha-base (sem a injeção da própria diretoria),
+            // pra não realimentar o repasse de forma circular.
+            foreach ($this->buildRows($yearMonth, $empresa, false) as $row) {
+                if ((int) ($row['user_id'] ?? 0) === $userId) {
+                    return $row;
+                }
+            }
+        }
+        return null;
     }
 
     public function save(Request $request, string $yearMonth): JsonResponse

@@ -170,7 +170,7 @@
           <tr><td>Despesa</td><td class="muted">—</td><td class="right nowrap" style="color:#15803d;">+ {{ $despTotFmt }}</td></tr>
         @endif
         <tr><td>Desconto</td><td class="muted">{{ $descontoDesc ?: '—' }}</td><td class="right nowrap" style="color:#b91c1c;">− {{ $descontoFmt }}</td></tr>
-        <tr><td>Adiantamento</td><td class="muted">—</td><td class="right nowrap" style="color:#b91c1c;">− {{ $adiantamentoFmt }}</td></tr>
+        <tr><td>Adiantamento</td><td class="muted">{{ ($adiantamentoDesc ?? null) ?: '—' }}</td><td class="right nowrap" style="color:#b91c1c;">− {{ $adiantamentoFmt }}</td></tr>
         <tr><td>Adicional</td><td class="muted">{{ $adicionalDesc ?: '—' }}</td><td class="right nowrap" style="color:#15803d;">+ {{ $adicionalFmt }}</td></tr>
       </tbody>
     </table>
