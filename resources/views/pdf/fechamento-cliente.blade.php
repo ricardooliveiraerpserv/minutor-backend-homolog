@@ -47,7 +47,15 @@
     .sub-title { font-size: 11px; font-weight: bold; color: #5b21b6; background: #f5f3ff; padding: 4px 10px; margin-top: 8px; border-left: 3px solid #8b5cf6; }
     .sub-total { font-size: 10px; font-weight: bold; color: #5b21b6; text-align: right; padding: 3px 6px 2px; }
 
-    .total-box { margin-top: 22px; background: #5b21b6; color: #fff; padding: 12px 16px; border-radius: 6px; }
+    /* Quebra de subtotal/desconto acima do total final. */
+    .desc-breakdown { width: 100%; border-collapse: collapse; margin-top: 22px; }
+    .desc-breakdown td { padding: 6px 16px; }
+    .desc-breakdown .bd-label { text-align: right; font-size: 12px; color: #4b5563; }
+    .desc-breakdown .bd-value { text-align: right; font-size: 13px; font-weight: bold; color: #374151; width: 170px; white-space: nowrap; }
+    .desc-breakdown .bd-desc { color: #b91c1c; }
+    .desc-breakdown .bd-note { color: #6b7280; font-weight: normal; }
+
+    .total-box { margin-top: 10px; background: #5b21b6; color: #fff; padding: 12px 16px; border-radius: 6px; }
     .total-box td { color: #fff; }
     .total-label { font-size: 12px; font-weight: bold; }
     .total-value { font-size: 18px; font-weight: bold; text-align: right; }
@@ -205,6 +213,22 @@
         </tfoot>
       </table>
     </div>
+  @endif
+
+  @if(!empty($temDesconto))
+    <table class="desc-breakdown" width="100%">
+      <tr>
+        <td class="bd-label">Subtotal dos serviços</td>
+        <td class="bd-value">{{ $subtotalFmt }}</td>
+      </tr>
+      <tr>
+        <td class="bd-label bd-desc">
+          Desconto
+          @if(!empty($descontoDescricao))<span class="bd-note">— {{ $descontoDescricao }}</span>@endif
+        </td>
+        <td class="bd-value bd-desc">&minus; {{ $descontoFmt }}</td>
+      </tr>
+    </table>
   @endif
 
   <table class="total-box" width="100%">

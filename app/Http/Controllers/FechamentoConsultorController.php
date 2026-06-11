@@ -543,6 +543,7 @@ class FechamentoConsultorController extends Controller
             'descontoFmt'     => $this->brl($desconto),
             'descontoDesc'    => $consultor['desconto_desc'] ?? null,
             'adiantamentoFmt' => $this->brl($adiantamento),
+            'adiantamentoDesc'=> \App\Models\Adiantamento::descricaoNoMes('consultor', $userId, $yearMonth),
             'adicionalFmt'    => $this->brl($adicional),
             'adicionalDesc'   => $consultor['adicional_desc'] ?? null,
             'baseValorFmt'    => $this->brl($baseValor),
@@ -579,7 +580,8 @@ class FechamentoConsultorController extends Controller
         $ajuste        = \App\Models\FechamentoConsultorAjuste::where('user_id', $consultant->id)
             ->where('year_month', $yearMonth)->first();
         $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
-        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2)
+            + \App\Models\Adiantamento::descontoNoMes('consultor', $consultant->id, $yearMonth);
         $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
         $temAjustes    = ($desconto != 0 || $adiantamento != 0 || $adicional != 0);
         // Recebimento = valor base do relatório (conforme mode) − desconto − adiantamento + adicional.
@@ -1219,6 +1221,7 @@ class FechamentoConsultorController extends Controller
                     'desconto'       => $desconto,
                     'desconto_desc'  => $row['desconto_desc'] ?? null,
                     'adiantamento'   => $adiantamento,
+                    'adiantamento_desc' => $row['adiantamento_desc'] ?? null,
                     'adicional'      => $adicional,
                     'adicional_desc' => $row['adicional_desc'] ?? null,
                     'recebimento'    => round((float) ($row['recebimento'] ?? ($totalBase - $desconto - $adiantamento + $adicional)), 2),
@@ -1253,6 +1256,7 @@ class FechamentoConsultorController extends Controller
                 'desconto'       => $desconto,
                 'desconto_desc'  => $row['desconto_desc'] ?? null,
                 'adiantamento'   => $adiantamento,
+                'adiantamento_desc' => $row['adiantamento_desc'] ?? null,
                 'adicional'      => $adicional,
                 'adicional_desc' => $row['adicional_desc'] ?? null,
                 'recebimento'    => round((float) ($row['recebimento'] ?? ($totalServico + $totalDespesas - $desconto - $adiantamento + $adicional)), 2),
@@ -1263,7 +1267,8 @@ class FechamentoConsultorController extends Controller
         $ajuste        = \App\Models\FechamentoConsultorAjuste::where('user_id', $user->id)
             ->where('year_month', $yearMonth)->first();
         $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
-        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2);
+        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2)
+            + \App\Models\Adiantamento::descontoNoMes('consultor', $user->id, $yearMonth);
         $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
 
         return response()->json(['data' => [
@@ -1274,6 +1279,7 @@ class FechamentoConsultorController extends Controller
             'desconto'       => $desconto,
             'desconto_desc'  => $ajuste->desconto_desc ?? null,
             'adiantamento'   => $adiantamento,
+            'adiantamento_desc' => \App\Models\Adiantamento::descricaoNoMes('consultor', $user->id, $yearMonth),
             'adicional'      => $adicional,
             'adicional_desc' => $ajuste->adicional_desc ?? null,
             'recebimento'    => round(0 - $desconto - $adiantamento + $adicional, 2),
@@ -1325,6 +1331,7 @@ class FechamentoConsultorController extends Controller
             $totalServico + $totalDespesas
             - (float) $ajuste->desconto
             - (float) $ajuste->adiantamento
+            - \App\Models\Adiantamento::descontoNoMes('consultor', (int) $userId, $yearMonth)
             + (float) $ajuste->adicional,
             2
         );
@@ -1430,7 +1437,9 @@ class FechamentoConsultorController extends Controller
 
             $ajuste            = $ajustesMap->get($user->id);
             $descontoAjuste    = round((float) ($ajuste->desconto ?? 0), 2);
-            $adiantamentoAjuste= round((float) ($ajuste->adiantamento ?? 0), 2);
+            // Adiantamento = ajuste manual do mês + parcelas da rotina de adiantamento.
+            $adiantamentoAjuste= round((float) ($ajuste->adiantamento ?? 0), 2)
+                + \App\Models\Adiantamento::descontoNoMes('consultor', $user->id, $yearMonth);
             $adicionalAjuste   = round((float) ($ajuste->adicional ?? 0), 2);
 
             $base = [
@@ -1449,6 +1458,7 @@ class FechamentoConsultorController extends Controller
                 'desconto'          => $descontoAjuste,
                 'desconto_desc'     => $ajuste->desconto_desc ?? null,
                 'adiantamento'      => $adiantamentoAjuste,
+                'adiantamento_desc' => \App\Models\Adiantamento::descricaoNoMes('consultor', $user->id, $yearMonth),
                 'adicional'         => $adicionalAjuste,
                 'adicional_desc'    => $ajuste->adicional_desc ?? null,
                 'envio_em'          => $envioMap[$user->id]['envio_em'] ?? null,

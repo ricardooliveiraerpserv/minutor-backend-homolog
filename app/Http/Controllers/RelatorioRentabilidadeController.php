@@ -113,7 +113,8 @@ class RelatorioRentabilidadeController extends Controller
                 'user:id,name,hourly_rate,rate_type,partner_id',
                 'user.partner:id,pricing_type,hourly_rate',
                 'project:id,name,hourly_rate,customer_id',
-                'project.customer:id,name,cgc,secondary_cgcs',
+                'project.customer:id,name,cgc,secondary_cgcs,executive_id',
+                'project.customer.executive:id,name',
             ])
             ->whereBetween('date', [$from, $to])
             // Mesma regra do faturamento (fechamento cliente): tudo que é cobrado,
@@ -152,17 +153,33 @@ class RelatorioRentabilidadeController extends Controller
                 $byCustomer[$cid] = [
                     'customer_id' => $cid,
                     'cliente'     => $ts->project->customer->name ?? '—',
+                    'executivo'   => $ts->project->customer->executive->name ?? null,
                     'cnpj'        => preg_replace('/\D/', '', (string) ($ts->project->customer->cgc ?? '')),
                     'cnpjs'       => $cnpjs,
                     'horas'       => 0.0,
                     'receita'     => 0.0,
                     'custo'       => 0.0,
+                    'consultores' => [],
                 ];
             }
             $horas = round($ts->effort_minutes / 60, 4);
+            $rateCons = $costRate($ts->user);
             $byCustomer[$cid]['horas']   += $horas;
             $byCustomer[$cid]['receita'] += $horas * (float) ($ts->project->hourly_rate ?? 0);
-            $byCustomer[$cid]['custo']   += $horas * $costRate($ts->user);
+            $byCustomer[$cid]['custo']   += $horas * $rateCons;
+            // Breakdown por consultor dentro do cliente (p/ a margem do consultor na expansão).
+            $uid = $ts->user_id;
+            if (!isset($byCustomer[$cid]['consultores'][$uid])) {
+                $byCustomer[$cid]['consultores'][$uid] = [
+                    'user_id'    => $uid,
+                    'consultor'  => $ts->user->name ?? '—',
+                    'valor_hora' => round($rateCons, 2),
+                    'horas'      => 0.0,
+                    'custo'      => 0.0,
+                ];
+            }
+            $byCustomer[$cid]['consultores'][$uid]['horas'] += $horas;
+            $byCustomer[$cid]['consultores'][$uid]['custo'] += $horas * $rateCons;
         }
 
         // ?refresh=1 (botão "Atualizar Keruak"): ignora o cache de 3h e busca ao vivo.
@@ -187,6 +204,7 @@ class RelatorioRentabilidadeController extends Controller
             $rows[] = [
                 'customer_id'     => $g['customer_id'],
                 'cliente'         => $g['cliente'],
+                'executivo'       => $g['executivo'],
                 'cnpj'            => $cnpj,
                 'horas'           => $horas,
                 'receita'         => $receita,
@@ -197,6 +215,13 @@ class RelatorioRentabilidadeController extends Controller
                 'margem_real'     => $margemReal,
                 'margem_real_pct' => $recebido > 0 ? round($margemReal / $recebido * 100, 1) : null,
                 'no_minutor'      => true,
+                'consultores'     => array_map(fn ($c) => [
+                    'user_id'    => $c['user_id'],
+                    'consultor'  => $c['consultor'],
+                    'valor_hora' => $c['valor_hora'],
+                    'horas'      => round($c['horas'], 2),
+                    'custo'      => round($c['custo'], 2),
+                ], array_values($g['consultores'])),
             ];
         }
 
@@ -208,6 +233,7 @@ class RelatorioRentabilidadeController extends Controller
             $rows[] = [
                 'customer_id'     => null,
                 'cliente'         => $info['name'] ?: '(fora do Minutor)',
+                'executivo'       => null,
                 'cnpj'            => $cnpj,
                 'horas'           => 0.0,
                 'receita'         => 0.0,
@@ -218,6 +244,7 @@ class RelatorioRentabilidadeController extends Controller
                 'margem_real'     => round($recebido, 2),
                 'margem_real_pct' => 100.0,
                 'no_minutor'      => false,
+                'consultores'     => [],
             ];
         }
 

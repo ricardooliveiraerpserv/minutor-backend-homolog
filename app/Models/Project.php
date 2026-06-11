@@ -1357,6 +1357,10 @@ class Project extends Model
             ? $this->hourContributions
             : $this->hourContributions()->get();
 
+        // Vigência por competência: só conta aportes até o fim do mês da competência
+        // (aporte datado num mês posterior NÃO infla meses anteriores).
+        $contributions = $this->contributionsUpToCompetencia($contributions, $competencia);
+
         $newContributions = $contributions->sum(fn($c) => $c->contributed_hours * $c->hourly_rate);
 
         if ($newContributions > 0) {
@@ -1388,6 +1392,9 @@ class Project extends Model
             ? $this->hourContributions
             : $this->hourContributions()->get();
 
+        // Vigência por competência (mesma regra do valor total).
+        $contributions = $this->contributionsUpToCompetencia($contributions, $competencia);
+
         if ($contributions->count() > 0) {
             $totalHours = $this->sold_hours ?? 0;
             $totalValue = ($this->sold_hours ?? 0) * $rate;
@@ -1405,5 +1412,34 @@ class Project extends Model
         $totalValue = $totalHours * $rate;
 
         return $totalHours > 0 ? round($totalValue / $totalHours, 2) : $rate;
+    }
+
+    /**
+     * Filtra aportes pela competência (vigência): mantém só os com
+     * `contributed_at` até o último dia do mês da competência. Sem competência
+     * (null), devolve a coleção inteira (comportamento legado). Aportes sem data
+     * são tratados como sempre vigentes (legado).
+     *
+     * @param  \Illuminate\Support\Collection|\Illuminate\Database\Eloquent\Collection  $contributions
+     * @return \Illuminate\Support\Collection
+     */
+    private function contributionsUpToCompetencia($contributions, ?string $competencia)
+    {
+        if ($competencia === null) {
+            return $contributions;
+        }
+
+        try {
+            $cutoff = \Illuminate\Support\Carbon::createFromFormat('Y-m', $competencia)->endOfMonth();
+        } catch (\Throwable $e) {
+            return $contributions; // competência malformada → não filtra
+        }
+
+        return $contributions->filter(function ($c) use ($cutoff) {
+            if (empty($c->contributed_at)) {
+                return true; // sem data = legado, sempre conta
+            }
+            return \Illuminate\Support\Carbon::parse($c->contributed_at)->lessThanOrEqualTo($cutoff);
+        });
     }
 }

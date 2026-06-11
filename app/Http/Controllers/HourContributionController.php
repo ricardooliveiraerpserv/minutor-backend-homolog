@@ -60,12 +60,15 @@ class HourContributionController extends Controller
     public function index(Project $project): JsonResponse
     {
         $contributions = $project->hourContributions()
-            ->with('contributedBy:id,name,email')
+            ->with(['contributedBy:id,name,email', 'changeLogs.changedByUser:id,name,email'])
             ->get();
-        
-        // Adicionar campo total_value calculado
+
+        // Adicionar campo total_value calculado + histórico de auditoria formatado
         $contributions->transform(function ($contribution) {
             $contribution->total_value = $contribution->getTotalValue();
+            $contribution->change_logs = $contribution->changeLogs
+                ->map(fn ($log) => $log->toFormattedArray())
+                ->values();
             return $contribution;
         });
         
@@ -274,6 +277,8 @@ class HourContributionController extends Controller
             'description' => 'nullable|string|max:1000',
             'motivo' => 'sometimes|in:aporte,excedentes,absorvidas',
             'contributed_at' => 'sometimes|date',
+            // Motivo opcional da alteração — vai pro histórico de auditoria.
+            'reason' => 'nullable|string|max:500',
         ], [
             'contributed_hours.min' => 'A quantidade de horas deve ser pelo menos 1',
             'contributed_hours.max' => 'A quantidade de horas não pode exceder 999.999',
@@ -282,11 +287,19 @@ class HourContributionController extends Controller
             'description.max' => 'A descrição não pode ter mais de 1000 caracteres',
             'contributed_at.date' => 'Data do aporte inválida',
         ]);
-        
+
+        // Repassa o motivo ao observer de auditoria (atributo transitório, não-coluna).
+        $contribution->changeReason = $request->input('reason');
+
+        // 'reason' não é coluna do aporte — só audita.
+        unset($validated['reason']);
         $contribution->update($validated);
-        $contribution->load('contributedBy:id,name,email');
+        $contribution->load(['contributedBy:id,name,email', 'changeLogs.changedByUser:id,name,email']);
         $contribution->total_value = $contribution->getTotalValue();
-        
+        $contribution->change_logs = $contribution->changeLogs
+            ->map(fn ($log) => $log->toFormattedArray())
+            ->values();
+
         $this->invalidateListCache('projects');
 
         return response()->json($contribution);
