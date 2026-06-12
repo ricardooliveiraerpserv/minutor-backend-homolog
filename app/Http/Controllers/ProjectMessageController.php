@@ -3,46 +3,45 @@
 namespace App\Http\Controllers;
 
 use App\Models\Attachment;
+use App\Models\CardEnvolvido;
 use App\Models\Project;
 use App\Models\ProjectMessage;
 use App\Models\ProjectMessageMention;
 use App\Models\ProjectMessageRead;
 use App\Models\User;
+use App\Notifications\CardChatMessageNotification;
+use App\Services\CardEnvolvidoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ProjectMessageController extends Controller
 {
+    use \App\Http\Controllers\Concerns\DispatchesChatMentions;
 
     public function index(Request $request, Project $project): JsonResponse
     {
         $user = $request->user();
 
+        // Cliente não tem acesso ao chat de projeto — fluxo dele encerra na requisição.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        // Cliente: vê apenas mensagens criadas até req_decided_at da contract_request
-        // que originou o projeto. Após virar projeto, novas trocas internas/visíveis
-        // não chegam mais a ele.
-        $clientCutoff = null;
-        if ($user->isCliente() && $project->contract_request_id) {
-            $cr = \App\Models\ContractRequest::find($project->contract_request_id);
-            $clientCutoff = $cr?->req_decided_at;
-        }
-
         $messages = ProjectMessage::where('project_id', $project->id)
             ->with([
-                'author:id,name,profile_photo',
+                'author:id,name',
                 'attachments',
                 'reads' => fn($q) => $q->where('user_id', $user->id),
             ])
             ->withExists(['mentions as is_mentioned' => fn($q) => $q->where('mentioned_user_id', $user->id)])
-            // Clientes só veem mensagens marcadas como visíveis
-            ->when($user->isCliente(), fn($q) => $q->where('visibility', 'client'))
-            ->when($clientCutoff, fn($q) => $q->where('created_at', '<=', $clientCutoff))
             ->latest()
             ->paginate(50);
 
@@ -53,6 +52,11 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
+        // Cliente bloqueado — chat de projeto é interno-only.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
@@ -60,7 +64,6 @@ class ProjectMessageController extends Controller
         $request->validate([
             'message'    => 'nullable|string|max:5000',
             'priority'   => 'nullable|in:normal,high',
-            'visibility' => 'nullable|in:internal,client',
             'files'      => 'nullable|array|max:10',
             'files.*'    => 'file|max:20480', // 20 MB por arquivo
         ]);
@@ -70,8 +73,8 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
 
-        // Clientes só enviam mensagens visíveis; admins sempre postam interno
-        $visibility = $user->isCliente() ? 'client' : ($user->isAdmin() ? 'internal' : $request->input('visibility', 'internal'));
+        // Toda mensagem em chat de projeto é interna — opção "visível ao cliente" removida.
+        $visibility = 'internal';
 
         $msg = ProjectMessage::create([
             'project_id' => $project->id,
@@ -81,12 +84,18 @@ class ProjectMessageController extends Controller
             'visibility' => $visibility,
         ]);
 
-        // Parse mention tokens @[id:Name]
-        preg_match_all('/@\[(\d+):([^\]]+)\]/', $text, $matches);
-        foreach (array_unique($matches[1]) as $mentionedId) {
+        // Parse mention tokens @[id:Name] + fallback plain-text via MentionParser.
+        // Cliente NUNCA pode ser mencionado em chat de projeto (regra ADR cards —
+        // chat de projeto é interno; cliente não tem acesso).
+        $candidates = User::query()
+            ->select('id', 'name')
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
+            ->get();
+        $mentionedIds = \App\Services\MentionParser::extract($text, $candidates);
+        foreach ($mentionedIds as $mentionedId) {
             ProjectMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
-                'mentioned_user_id' => (int) $mentionedId,
+                'mentioned_user_id' => $mentionedId,
             ]);
         }
 
@@ -106,21 +115,75 @@ class ProjectMessageController extends Controller
             }
         }
 
-        $msg->load(['author:id,name,profile_photo', 'attachments']);
+        $msg->load(['author:id,name', 'attachments']);
         $msg->is_mentioned = false;
 
+        // Fase card-envolvidos: notifica envolvidos internos (cliente NUNCA recebe
+        // chat de projeto — regra do CardEnvolvidoService). Best-effort.
+        try {
+            $this->dispatchChatNotification($project, $msg, $user, $mentionedIds);
+        } catch (\Throwable $e) {
+            \Log::warning('chat notif proj falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
+        }
+
         return response()->json($msg, 201);
+    }
+
+    private function dispatchChatNotification(Project $project, ProjectMessage $msg, User $author, array $mentionedIds = []): void
+    {
+        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+        $cardUrl = $base . '/contratos/pipeline?project=' . $project->id;
+        // tab=chat (query) é mais confiável que hash #chat em client-side nav (Next 16)
+        $openUrl = $cardUrl . '&tab=chat';
+        $code = $project->code ?? ('PRJ-' . str_pad((string) $project->id, 6, '0', STR_PAD_LEFT));
+        $title = $project->name ?? 'Projeto';
+        $excerpt = Str::limit($msg->message ?? '', 280);
+        $role = match ($author->type) {
+            'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
+            'cliente' => 'Cliente', 'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo',
+            default => 'Equipe',
+        };
+
+        $mkNotif = fn () => (new CardChatMessageNotification(
+            cardType:       CardEnvolvido::TYPE_PROJECT,
+            cardCode:       $code,
+            cardTitle:      $title,
+            authorName:     $author->name,
+            authorRole:     $role,
+            messageExcerpt: $excerpt,
+            openUrl:        $openUrl,
+            cardUrl:        $cardUrl,
+            recipientName:  'você',
+        ));
+
+        $resolver = app(\App\Workflows\WorkflowRecipientResolver::class);
+
+        // 1) Mensagem no chat → envolvidos do card.
+        $rcpt = $resolver->resolve('card.chat_message.project', [
+            'card'      => ['type' => CardEnvolvido::TYPE_PROJECT, 'id' => $project->id],
+            'actor'     => $author,
+            'mentioned' => $mentionedIds,
+        ]);
+        $chatTo = $rcpt['to'] ?? [];
+        if (!empty($chatTo)) {
+            Notification::route('mail', $chatTo)->notify($mkNotif()->withCc($rcpt['cc'] ?? []));
+        }
+
+        // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
+        $this->dispatchMentionNotification(CardEnvolvido::TYPE_PROJECT, $project->id, $author, $mentionedIds, [
+            'code' => $code, 'title' => $title, 'role' => $role, 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl,
+        ], array_merge($chatTo, $rcpt['cc'] ?? []));
     }
 
     public function downloadAttachment(Request $request, ProjectMessage $message, Attachment $attachment): mixed
     {
         $user = $request->user();
 
-        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $message->project)) {
+        if ($user->isCliente()) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        if ($user->isCliente() && $message->visibility !== 'client') {
+        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $message->project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -136,6 +199,10 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
@@ -143,10 +210,6 @@ class ProjectMessageController extends Controller
         $query = ProjectMessage::where('project_id', $project->id)
             ->where('user_id', '!=', $user->id)
             ->whereDoesntHave('reads', fn($q) => $q->where('user_id', $user->id));
-
-        if ($user->isCliente()) {
-            $query->where('visibility', 'client');
-        }
 
         $unreadIds = $query->pluck('id');
 
@@ -265,20 +328,35 @@ class ProjectMessageController extends Controller
     {
         $user = $request->user();
 
+        // Cliente não tem acesso ao chat de projeto → sem picker.
+        if ($user->isCliente()) {
+            return response()->json([], 403);
+        }
+
         $projectId = $request->query('project_id');
 
-        $users = User::where(function ($q) use ($projectId) {
-            $q->where('type', 'admin')
-              ->orWhere(function ($sq) use ($projectId) {
-                  $sq->where('type', 'coordenador');
-                  if ($projectId) {
-                      $sq->whereHas('coordinatorProjects', fn($p) => $p->where('projects.id', (int) $projectId));
-                  }
-              });
-        })
-        ->select('id', 'name')
-        ->orderBy('name')
-        ->get();
+        // Participantes do chat de projeto: coordenador(es) + executivo(s) (+ admin
+        // como superusuário). Cliente nunca — chat de projeto é interno.
+        $ids = collect(User::where('type', 'admin')->where('enabled', true)->pluck('id'));
+
+        if ($projectId) {
+            $project = Project::find((int) $projectId);
+            if ($project) {
+                $ids = $ids->merge($project->coordinators()->pluck('users.id'));
+                if ($project->executivo_conta_id) {
+                    $ids->push((int) $project->executivo_conta_id);
+                }
+            }
+        } else {
+            // Sem projeto no contexto: todos os coordenadores ativos.
+            $ids = $ids->merge(User::where('type', 'coordenador')->where('enabled', true)->pluck('id'));
+        }
+
+        $users = User::whereIn('id', $ids->unique()->filter()->values())
+            ->where('enabled', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
 
         return response()->json($users);
     }
