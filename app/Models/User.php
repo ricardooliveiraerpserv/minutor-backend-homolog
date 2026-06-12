@@ -73,6 +73,8 @@ class User extends Authenticatable
         'is_bizify',
         // Diretor (aparece na rotina de Fechamento Diretoria)
         'is_diretor',
+        // Diretor de Projetos (recebe e-mails das fases do contrato/Triagem)
+        'is_diretor_projetos',
         // Capacity (módulo skills)
         'capacity_hours',
         'allocated_hours',
@@ -129,6 +131,7 @@ class User extends Authenticatable
             'is_executive' => 'boolean',
             'is_bizify' => 'boolean',
             'is_diretor' => 'boolean',
+            'is_diretor_projetos' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',
