@@ -2,9 +2,10 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Attachment;
 use App\Models\Contract;
 use App\Models\ContractMessage;
+use App\Models\Attachment;
+use App\Models\ContractMessageMention;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,10 +14,16 @@ use Illuminate\Support\Facades\Storage;
 
 class ContractMessageController extends Controller
 {
+    use \App\Http\Controllers\Concerns\DispatchesChatMentions;
 
     public function index(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
+
+        // Cliente não tem acesso ao chat de contrato — fluxo dele encerra na requisição.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
 
         if (!$this->canAccess($user, $contract)) {
             return response()->json(['message' => 'Sem permissão'], 403);
@@ -24,16 +31,17 @@ class ContractMessageController extends Controller
 
         $query = $contract->messages()->with(['author:id,name', 'attachments'])->orderBy('created_at');
 
-        if ($user->isCliente()) {
-            $query->where('visibility', 'client');
-        }
-
         return response()->json(['data' => $query->get()]);
     }
 
     public function store(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
+
+        // Cliente bloqueado — chat de contrato é interno-only.
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
 
         if (!$this->canAccess($user, $contract)) {
             return response()->json(['message' => 'Sem permissão'], 403);
@@ -51,7 +59,9 @@ class ContractMessageController extends Controller
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
 
-        $visibility = $user->isCliente() ? 'client' : ($user->isAdmin() ? 'internal' : $request->input('visibility', 'internal'));
+        // Toda mensagem em chat de contrato é interna — não existe mais a opção
+        // de marcar visibility=client (cliente não acessa esse chat).
+        $visibility = 'internal';
 
         $msg = ContractMessage::create([
             'contract_id' => $contract->id,
@@ -78,6 +88,42 @@ class ContractMessageController extends Controller
 
         $msg->load(['author:id,name', 'attachments']);
 
+        // Parser @-mention (canônico + fallback plain-text via MentionParser).
+        // Cliente NUNCA recebe mention de chat de contrato — não tem acesso a esse chat.
+        $candidates = \App\Models\User::query()
+            ->select('id', 'name')
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
+            ->get();
+        $mentionedIds = \App\Services\MentionParser::extract((string) $msg->message, $candidates);
+        foreach ($mentionedIds as $uid) {
+            ContractMessageMention::firstOrCreate([
+                'message_id'        => $msg->id,
+                'mentioned_user_id' => $uid,
+            ]);
+        }
+
+        // Marcação (@) → notifica a pessoa marcada (workflow chat.mention).
+        try {
+            $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+            $cardUrl = $base . '/contratos/pipeline?contract=' . $contract->id;
+            $code = $contract->code ?? ($contract->project_code_preview ?? ('CTR-' . str_pad((string) $contract->id, 6, '0', STR_PAD_LEFT)));
+            $title = $contract->project_name ?? 'Contrato';
+            $role = match ($user->type) {
+                'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
+                'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo', default => 'Equipe',
+            };
+            $this->dispatchMentionNotification('contract', $contract->id, $user, $mentionedIds, [
+                'code'    => $code,
+                'title'   => $title,
+                'role'    => $role,
+                'excerpt' => \Illuminate\Support\Str::limit($msg->message ?? '', 280),
+                'openUrl' => $cardUrl . '&tab=chat',
+                'cardUrl' => $cardUrl,
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('chat mention notif contrato falhou', ['contract_id' => $contract->id, 'err' => $e->getMessage()]);
+        }
+
         return response()->json($msg, 201);
     }
 
@@ -85,11 +131,11 @@ class ContractMessageController extends Controller
     {
         $user = $request->user();
 
-        if (!$this->canAccess($user, $message->contract)) {
+        if ($user->isCliente()) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        if ($user->isCliente() && $message->visibility !== 'client') {
+        if (!$this->canAccess($user, $message->contract)) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
@@ -104,6 +150,11 @@ class ContractMessageController extends Controller
     public function mentionableUsers(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
+
+        // Cliente não tem acesso ao chat de contrato → sem picker.
+        if ($user->isCliente()) {
+            return response()->json([], 403);
+        }
 
         if (!$this->canAccess($user, $contract)) {
             return response()->json([], 403);
@@ -126,14 +177,7 @@ class ContractMessageController extends Controller
             $ids->push($contract->kanban_coordinator_id);
         }
 
-        // Usuários cliente vinculados ao cliente do contrato
-        if ($contract->customer_id) {
-            $clientUserIds = User::where('type', 'cliente')
-                ->where('customer_id', $contract->customer_id)
-                ->where('enabled', true)
-                ->pluck('id');
-            $ids = $ids->merge($clientUserIds);
-        }
+        // Cliente não entra no picker — chat de contrato é interno-only.
 
         // Exclui o próprio usuário da lista
         $ids = $ids->unique()->reject(fn($id) => $id === $user->id)->values();
