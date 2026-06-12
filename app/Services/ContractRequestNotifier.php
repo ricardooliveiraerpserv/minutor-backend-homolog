@@ -42,13 +42,13 @@ class ContractRequestNotifier
 
             $req->loadMissing(['customer', 'createdBy', 'watchers.user']);
 
-            // Workflow por FASE (coluna destino); cai no lifecycle genérico se a
-            // coluna não tiver workflow próprio (ou na criação).
-            $phaseKey = 'request.phase.' . $toColumn;
-            $workflowKey = ($stage === 'moved' && isset(config('workflows.workflows')[$phaseKey]))
-                ? $phaseKey
-                : 'request.lifecycle';
-            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+            // Criação entra em Backlog; movimentação usa o workflow da coluna destino.
+            // Coluna sem workflow próprio cai no de Backlog (fallback).
+            $phaseKey = 'request.phase.' . ($stage === 'created' ? 'backlog' : $toColumn);
+            if (!isset(config('workflows.workflows')[$phaseKey])) {
+                $phaseKey = 'request.phase.backlog';
+            }
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($phaseKey, [
                 'request' => $req,
             ]);
             if (empty($rcpt['to'])) return;
