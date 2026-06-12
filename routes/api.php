@@ -342,6 +342,12 @@ Route::prefix('v1')->group(function () {
         Route::put('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'update']);
         Route::delete('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'destroy']);
 
+        // ⚙️ CENTRAL DE WORKFLOWS — quem recebe cada e-mail (admin-only, guard no controller)
+        Route::get('/workflows', [\App\Http\Controllers\WorkflowController::class, 'index'])->name('workflows.index');
+        Route::put('/workflows/{key}', [\App\Http\Controllers\WorkflowController::class, 'update'])->name('workflows.update');
+        Route::post('/workflows/{key}/test', [\App\Http\Controllers\WorkflowController::class, 'test'])->name('workflows.test');
+        Route::post('/workflows/{key}/preview', [\App\Http\Controllers\WorkflowController::class, 'preview'])->name('workflows.preview');
+
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {
             Route::post('/service-types', [ServiceTypeController::class, 'store'])->name('service-types.store');
@@ -943,6 +949,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-requests/options',              [\App\Http\Controllers\ContractRequestController::class, 'options'])->name('contract-requests.options');
         Route::get('/contract-requests',                      [\App\Http\Controllers\ContractRequestController::class, 'index'])->name('contract-requests.index');
         Route::post('/contract-requests',                     [\App\Http\Controllers\ContractRequestController::class, 'store'])->name('contract-requests.store');
+        Route::post('/contract-requests/resolve-emails',      [\App\Http\Controllers\ContractRequestController::class, 'resolveEmails'])->name('contract-requests.resolve-emails');
         Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');
         Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review');
         Route::patch('/contract-requests/{contractRequest}/kanban-move', [\App\Http\Controllers\ContractController::class, 'requestKanbanMove'])->name('contract-requests.kanban-move');
@@ -961,6 +968,24 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-messages/notifications',            [\App\Http\Controllers\ContractMessageController::class, 'notifications'])->name('contract-messages.notifications');
         Route::get('/contract-messages/unread-contracts',         [\App\Http\Controllers\ContractMessageController::class, 'unreadContracts'])->name('contract-messages.unread-contracts');
         Route::get('/contract-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractMessageController::class, 'downloadAttachment'])->name('contract-messages.attachment-download');
+
+        // 🔔 SININHO DE MENÇÕES + CLIENTE (header) — Triagem
+        Route::get('/me/mentions', [\App\Http\Controllers\MeController::class, 'mentions'])->name('me.mentions');
+        Route::get('/me/customer', [\App\Http\Controllers\MeController::class, 'customer'])->name('me.customer');
+
+        // 👥 ENVOLVIDOS DO CARD (chat + notificação por e-mail) — cardType: contract-requests | projects
+        Route::get('/{cardType}/{cardId}/envolvidos',           [\App\Http\Controllers\CardEnvolvidoController::class, 'index'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+'])
+            ->name('card-envolvidos.index');
+        Route::post('/{cardType}/{cardId}/envolvidos',          [\App\Http\Controllers\CardEnvolvidoController::class, 'store'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+'])
+            ->name('card-envolvidos.store');
+        Route::delete('/{cardType}/{cardId}/envolvidos/{id}',   [\App\Http\Controllers\CardEnvolvidoController::class, 'destroy'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+', 'id' => '[0-9]+'])
+            ->name('card-envolvidos.destroy');
+        Route::get('/{cardType}/{cardId}/mention-candidates',   [\App\Http\Controllers\CardEnvolvidoController::class, 'mentionCandidates'])
+            ->where(['cardType' => 'contract-requests|projects', 'cardId' => '[0-9]+'])
+            ->name('card-envolvidos.mention-candidates');
 
         // 🛡️ PORTAL DE SUSTENTAÇÃO - Admins e coordenadores do tipo "sustentacao"
         Route::prefix('sustentacao')->group(function () {
