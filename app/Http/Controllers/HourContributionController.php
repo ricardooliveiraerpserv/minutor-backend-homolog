@@ -178,7 +178,51 @@ class HourContributionController extends Controller
             $contribution->refresh();
         }
 
+        // Comunica novo aporte de horas em contrato existente.
+        // Só para motivo 'aporte' (excedentes/absorvidas são ajustes internos).
+        if (($validated['motivo'] ?? 'aporte') === 'aporte') {
+            $this->notifyNewAporte($project, $contribution);
+        }
+
         return response()->json($contribution, 201);
+    }
+
+    /**
+     * Comunica um novo aporte de horas.
+     *
+     * - Contrato PAI: To = cliente(s) do customer, Cc = envolvidos internos
+     *   (executivo de contas + quem incluiu o aporte).
+     * - Contrato FILHO (subprojeto): NÃO comunica o cliente — vai só para os
+     *   envolvidos internos (executivo de contas + autor) no To.
+     *
+     * Síncrono + best-effort: falha de e-mail não bloqueia o lançamento do aporte.
+     */
+    private function notifyNewAporte(Project $project, HourContribution $contribution): void
+    {
+        try {
+            // Workflow separado por tipo: aporte no pai vs em subprojeto (filho).
+            $isChild = $project->parent_project_id !== null;
+            $workflowKey = $isChild ? 'contract.aporte.child' : 'contract.aporte';
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+                'project'      => $project,
+                'contribution' => $contribution,
+                'actor'        => \App\Models\User::find($contribution->contributed_by),
+                'is_child'     => $isChild,
+            ]);
+
+            if (empty($rcpt['to'])) {
+                return;
+            }
+
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $rcpt['cc']));
+        } catch (\Throwable $e) {
+            \Log::warning('Aporte notification falhou', [
+                'project_id'      => $project->id,
+                'contribution_id' => $contribution->id ?? null,
+                'err'             => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
