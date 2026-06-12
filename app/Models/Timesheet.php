@@ -532,7 +532,26 @@ class Timesheet extends Model
             return;
         }
         try {
-            $owner->notify(new TimesheetStatusNotification($this, $statusKey, $reason));
+            // Workflow por tipo: rejeição / ajuste têm Central própria; CONFLITO
+            // não tem workflow (dono é avisado direto, sem CC de papéis).
+            $workflowKey = match ($statusKey) {
+                'REJEITADO' => 'timesheet.rejected',
+                'AJUSTE'    => 'timesheet.adjustment',
+                default     => null,
+            };
+            $cc = [];
+            if ($workflowKey) {
+                // Dono é o destinatário; a Central pode adicionar papéis (ex.: coordenador) em cópia.
+                $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+                    'actor'   => $owner,
+                    'project' => $this->project,
+                ]);
+                $cc = array_values(array_diff(
+                    array_merge($rcpt['to'], $rcpt['cc']),
+                    [strtolower(trim((string) $owner->email))],
+                ));
+            }
+            $owner->notify((new TimesheetStatusNotification($this, $statusKey, $reason))->withCc($cc));
         } catch (\Throwable $e) {
             \Log::warning('notifyOwnerOfStatus: falha ao enviar', [
                 'timesheet_id' => $this->id,

@@ -38,18 +38,23 @@ class AlertaReajustesVencidosCommand extends Command
         $totalImpacto = round((float) $vencidos->sum('valor_estimado_reajuste'), 2);
         $referencia   = $this->mesAno(Carbon::now());
         $dashboardUrl = rtrim(env('APP_FRONTEND_URL', config('app.url', 'https://app.minutor.com.br')), '/') . '/fechamento/reajustes';
-        $to           = config('mail.reajustes_alerta_to', env('MAIL_REAJUSTES_ALERTA_TO', 'financeiro@erpserv.com.br'));
+        // Destinatários pela Central de Workflows (financeiro + extras configurados).
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajustes_pendentes', []);
+        $to = !empty($rcpt['to'])
+            ? $rcpt['to']
+            : [config('mail.reajustes_alerta_to', env('MAIL_REAJUSTES_ALERTA_TO', 'financeiro@erpserv.com.br'))];
+        $cc = $rcpt['cc'];
 
         $mail = new ReajustesPendentesMail($vencidos->all(), $totalImpacto, $referencia, $dashboardUrl);
         // Entrega via Microsoft Graph (mesmo canal do fechamento); fallback p/ mailer default.
         $graphFrom = config('services.graph.mailbox');
         if (\App\Services\GraphMailer::enabled() && $graphFrom) {
-            \App\Services\GraphMailer::sendAs($graphFrom, [$to], [], $mail->envelope()->subject, $mail->render());
+            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
         } else {
-            Mail::to($to)->send($mail);
+            Mail::to($to)->cc($cc)->send($mail);
         }
 
-        $this->info("Alerta enviado para {$to}: {$vencidos->count()} contrato(s) vencido(s), impacto R$ " . number_format($totalImpacto, 2, ',', '.') . '.');
+        $this->info('Alerta enviado para ' . implode(', ', $to) . ": {$vencidos->count()} contrato(s) vencido(s), impacto R$ " . number_format($totalImpacto, 2, ',', '.') . '.');
         return self::SUCCESS;
     }
 
