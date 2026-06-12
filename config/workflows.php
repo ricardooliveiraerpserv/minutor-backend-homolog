@@ -31,7 +31,6 @@ return [
         'contract.aporte.child'        => '#6EE7B7', // esmeralda claro (aporte subprojeto)
         'contract.reajuste'            => '#F472B6', // pink
         'contract.reajustes_pendentes' => '#FB923C', // laranja
-        'request.lifecycle'            => '#38BDF8', // azul (fallback)
         'request.phase.backlog'              => '#93C5FD',
         'request.phase.novo_projeto'         => '#60A5FA',
         'request.phase.em_planejamento'      => '#38BDF8',
@@ -117,7 +116,6 @@ return [
         'contract.aporte.child'        => ['contract', 'project', 'customer', 'actor'],
         'contract.reajuste'            => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
-        'request.lifecycle'            => ['request', 'customer', 'actor'],
         'request.phase.backlog'              => ['request', 'customer', 'actor'],
         'request.phase.novo_projeto'         => ['request', 'customer', 'actor'],
         'request.phase.em_planejamento'      => ['request', 'customer', 'actor'],
@@ -196,14 +194,9 @@ return [
             'body'      => 'Há contratos com reajuste vencido/pendente aguardando ação.',
             'variables' => [],
         ],
-        'request.lifecycle' => [
-            'subject'   => 'Requisição {codigo} avançou para {para}',
-            'body'      => 'A requisição {codigo} do cliente {cliente} foi movida de {de} para {para}.',
-            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente', 'de' => 'Fase anterior', 'para' => 'Nova fase'],
-        ],
         'request.phase.backlog' => [
-            'subject'   => 'Requisição {codigo} → Backlog',
-            'body'      => 'A requisição {codigo} ({cliente}) entrou em Backlog.',
+            'subject'   => 'Requisição {codigo} criada — Backlog',
+            'body'      => 'A requisição {codigo} ({cliente}) foi criada e está em Backlog.',
             'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
         ],
         'request.phase.novo_projeto' => [
@@ -414,21 +407,10 @@ return [
         ],
 
         // ───────────────────────── Triagem ─────────────────────────
-        'request.lifecycle' => [
-            'label'       => 'Requisição movida — outras fases (fallback)',
-            'domain'      => 'Requisições',
-            'description' => 'Usado na criação da requisição e em colunas que não têm workflow de fase próprio. Cada fase abaixo tem o seu.',
-            'audiences'   => [
-                'solicitante'         => 'to',
-                'executivo_de_contas' => 'to',
-                'watchers'            => 'cc',
-                'cliente'             => 'off',
-            ],
-        ],
         'request.phase.backlog' => [
-            'label'       => 'Requisição → Backlog',
+            'label'       => 'Requisição criada / Backlog',
             'domain'      => 'Requisições',
-            'description' => 'Quando uma requisição entra na coluna Backlog.',
+            'description' => 'Quando a requisição é criada (entra em Backlog) ou movida para a coluna Backlog. Também é o fallback de colunas sem workflow próprio.',
             'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
         ],
         'request.phase.novo_projeto' => [
