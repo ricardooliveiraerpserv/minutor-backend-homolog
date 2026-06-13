@@ -78,4 +78,28 @@ class Adiantamento extends Model
 
         return $descs->isEmpty() ? null : $descs->implode(' · ');
     }
+
+    /**
+     * Legenda da(s) parcela(s) da competência no formato NN/TT (ex.: "01/24").
+     * Junta múltiplos adiantamentos do mês com " · ".
+     */
+    public static function parcelaLabelNoMes(string $tipo, int $beneficiarioId, string $yearMonth): ?string
+    {
+        $rows = AdiantamentoParcela::query()
+            ->where('year_month', $yearMonth)
+            ->whereHas('adiantamento', fn ($q) => $q
+                ->where('beneficiario_tipo', $tipo)
+                ->where('beneficiario_id', $beneficiarioId))
+            ->with('adiantamento:id,num_parcelas')
+            ->orderBy('numero')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return null;
+        }
+
+        return $rows->map(fn ($p) => str_pad((string) $p->numero, 2, '0', STR_PAD_LEFT)
+            . '/' . str_pad((string) ($p->adiantamento?->num_parcelas ?? 0), 2, '0', STR_PAD_LEFT))
+            ->implode(' · ');
+    }
 }
