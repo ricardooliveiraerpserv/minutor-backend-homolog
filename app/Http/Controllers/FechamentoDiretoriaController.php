@@ -91,9 +91,13 @@ class FechamentoDiretoriaController extends Controller
         $header = FechamentoDiretoria::where('user_id', $userId)->where('year_month', $yearMonth)->first();
         $lancamentos = $this->itensDoDiretor((int) $userId, $yearMonth);
 
-        // TOTAL = soma dos lançamentos + a Taxa+INSS (que vem do campo e entra como linha).
+        // Adiantamento (parcelas da rotina) do mês — desconto que reduz o valor a receber.
+        $adiantamento     = \App\Models\Adiantamento::descontoNoMes('consultor', (int) $userId, $yearMonth);
+        $adiantamentoDesc = $this->adiantamentoLegenda((int) $userId, $yearMonth);
+
+        // Valor a Receber = soma dos lançamentos − adiantamento; REPASSE = valor a receber + Taxa+INSS.
         $taxa  = (float) ($header?->taxa_inss ?? 0);
-        $total = round(collect($lancamentos)->sum(fn ($l) => (float) ($l['valor'] ?? 0)) + $taxa, 2);
+        $total = round(collect($lancamentos)->sum(fn ($l) => (float) ($l['valor'] ?? 0)) - $adiantamento + $taxa, 2);
 
         $envio = FechamentoSendStatus::mapFor(FechamentoSendStatus::TIPO_DIRETORIA, $yearMonth, [(int) $userId])[(int) $userId] ?? null;
 
@@ -109,7 +113,10 @@ class FechamentoDiretoriaController extends Controller
             'valor_coop_bizify'  => $header?->valor_coop_bizify !== null ? (float) $header->valor_coop_bizify : null,
             'taxa_coop_erpserv'  => $header?->taxa_coop_erpserv !== null ? (float) $header->taxa_coop_erpserv : null,
             'taxa_coop_bizify'   => $header?->taxa_coop_bizify !== null ? (float) $header->taxa_coop_bizify : null,
+            'adiantamento_coop'  => $header?->adiantamento_coop,
             'lancamentos'  => $lancamentos,
+            'adiantamento' => $adiantamento,
+            'adiantamento_desc' => $adiantamentoDesc,
             'total'        => $total,
         ]);
     }
@@ -136,9 +143,11 @@ class FechamentoDiretoriaController extends Controller
             'valor_coop_bizify'       => ['nullable', 'numeric'],
             'taxa_coop_erpserv'       => ['nullable', 'numeric'],
             'taxa_coop_bizify'        => ['nullable', 'numeric'],
+            'adiantamento_coop'       => ['nullable', 'in:erpserv,bizify'],
             'lancamentos'             => ['present', 'array'],
             'lancamentos.*.descricao' => ['nullable', 'string', 'max:255'],
             'lancamentos.*.valor'     => ['nullable', 'numeric'],   // negativo = desconto; entra no total
+            'lancamentos.*.coop'      => ['nullable', 'in:erpserv,bizify'], // coop do lançamento (divisão)
         ]);
 
         $uid = $request->user()->id;
@@ -150,12 +159,14 @@ class FechamentoDiretoriaController extends Controller
                 if ($desc === '' && $valor === null) {
                     continue; // pula lançamento vazio
                 }
+                $coop = in_array($item['coop'] ?? null, ['erpserv', 'bizify'], true) ? $item['coop'] : null;
                 FechamentoDiretoriaItem::create([
                     'year_month' => $yearMonth,
                     'user_id'    => (int) $userId,
                     'ordem'      => $ordem,
                     'descricao'  => $desc ?: null,
                     'valor'      => $valor,
+                    'coop'       => $coop,
                     'created_by' => $uid,
                 ]);
             }
@@ -167,6 +178,7 @@ class FechamentoDiretoriaController extends Controller
             $header->valor_coop_bizify  = $val('valor_coop_bizify');
             $header->taxa_coop_erpserv  = $val('taxa_coop_erpserv');
             $header->taxa_coop_bizify   = $val('taxa_coop_bizify');
+            $header->adiantamento_coop  = in_array($data['adiantamento_coop'] ?? null, ['erpserv', 'bizify'], true) ? $data['adiantamento_coop'] : null;
             if (!$header->exists) {
                 $header->status = FechamentoDiretoria::STATUS_ABERTO;
             }
@@ -250,6 +262,10 @@ class FechamentoDiretoriaController extends Controller
         $user    = User::find($userId);
         $nome    = $user?->name ?? 'Diretor';
         $subject = 'Fechamento Diretoria - ' . $this->periodoMMAAAA($yearMonth) . ' | ' . $nome;
+
+        // Central de workflows: papéis em cópia (administrativo/financeiro) configuráveis pela Central.
+        $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('fechamento.diretoria', ['actor' => $sender, 'user' => $user]);
+        $cc = array_values(array_diff(array_unique(array_merge($wf['to'], $wf['cc'])), $to));
         $body    = $this->buildEmailBody((int) $userId, $yearMonth, $validated['mensagem'] ?? null, $sender->name ?? 'ERPSERV Consultoria');
 
         // Relatório (padrão consultor) em PDF anexo.
@@ -266,10 +282,13 @@ class FechamentoDiretoriaController extends Controller
             file_put_contents($pdfPath, $pdf->output());
 
             if (GraphMailer::enabled() && filled($sender->email)) {
-                GraphMailer::sendAs($sender->email, $to, [], $subject, $body, [$pdfPath]);
+                GraphMailer::sendAs($sender->email, $to, $cc, $subject, $body, [$pdfPath]);
             } else {
-                Mail::html($body, function ($m) use ($to, $subject, $pdfPath, $pdfName) {
+                Mail::html($body, function ($m) use ($to, $cc, $subject, $pdfPath, $pdfName) {
                     $m->to($to)->subject($subject)->attach($pdfPath, ['as' => $pdfName, 'mime' => 'application/pdf']);
+                    if ($cc) {
+                        $m->cc($cc);
+                    }
                 });
             }
         } catch (\Throwable $e) {
@@ -290,10 +309,16 @@ class FechamentoDiretoriaController extends Controller
         return ($meses[(int) $m] ?? $m) . '/' . $y;
     }
 
-    /** GET /fechamento-diretoria/{userId}/{yearMonth}/report-html — relatório (padrão consultor). */
-    public function reportHtml(string $userId, string $yearMonth): JsonResponse
+    /**
+     * GET/POST /fechamento-diretoria/{userId}/{yearMonth}/report-html — relatório (padrão consultor).
+     * Se vierem dados no corpo (POST), monta com os dados da TELA (preview ao vivo); senão usa o banco.
+     */
+    public function reportHtml(Request $request, string $userId, string $yearMonth): JsonResponse
     {
-        $html = view('pdf.fechamento-diretoria', $this->buildReportView((int) $userId, $yearMonth))->render();
+        $ov = $request->isMethod('post') && $request->has('lancamentos')
+            ? $request->only(['lancamentos', 'taxa_inss', 'cooperativa', 'valor_coop_erpserv', 'valor_coop_bizify', 'taxa_coop_erpserv', 'taxa_coop_bizify'])
+            : null;
+        $html = view('pdf.fechamento-diretoria', $this->buildReportView((int) $userId, $yearMonth, $ov))->render();
         return response()->json(['html' => $html]);
     }
 
@@ -318,24 +343,48 @@ class FechamentoDiretoriaController extends Controller
         ])->render();
     }
 
-    /** Dados do relatório (padrão consultor) — usado no preview e no e-mail. */
-    private function buildReportView(int $userId, string $yearMonth): array
+    /**
+     * Dados do relatório (padrão consultor) — usado no preview e no e-mail.
+     * $ov (override): se passado, usa os dados da TELA (preview ao vivo) em vez do banco.
+     */
+    private function buildReportView(int $userId, string $yearMonth, ?array $ov = null): array
     {
         $header  = FechamentoDiretoria::where('user_id', $userId)->where('year_month', $yearMonth)->first();
-        $lancs   = $this->itensDoDiretor($userId, $yearMonth);
-        $taxa    = (float) ($header?->taxa_inss ?? 0);
-        $somaLan = collect($lancs)->sum(fn ($l) => (float) ($l['valor'] ?? 0));
-        $total   = round($somaLan + $taxa, 2);
-        $liquido = round($total - $taxa, 2);
+        if ($ov !== null) {
+            $lancs = collect($ov['lancamentos'] ?? [])->map(fn ($l) => [
+                'descricao' => $l['descricao'] ?? null,
+                'valor'     => isset($l['valor']) && $l['valor'] !== null && $l['valor'] !== '' ? (float) $l['valor'] : null,
+            ])->all();
+            $taxa     = (float) ($ov['taxa_inss'] ?? 0);
+            $coopOver = $ov['cooperativa'] ?? null;
+            $valErp = (float) ($ov['valor_coop_erpserv'] ?? 0); $taxErp = (float) ($ov['taxa_coop_erpserv'] ?? 0);
+            $valBiz = (float) ($ov['valor_coop_bizify'] ?? 0);  $taxBiz = (float) ($ov['taxa_coop_bizify'] ?? 0);
+        } else {
+            $lancs    = $this->itensDoDiretor($userId, $yearMonth);
+            $taxa     = (float) ($header?->taxa_inss ?? 0);
+            $coopOver = $header?->cooperativa;
+            $valErp = (float) ($header?->valor_coop_erpserv ?? 0); $taxErp = (float) ($header?->taxa_coop_erpserv ?? 0);
+            $valBiz = (float) ($header?->valor_coop_bizify ?? 0);  $taxBiz = (float) ($header?->taxa_coop_bizify ?? 0);
+        }
+        // Adiantamento (parcelas da rotina) do mês — sempre do banco; vira linha de desconto
+        // automática (nunca vem do payload da tela, evitando dupla contagem).
+        $adto = \App\Models\Adiantamento::descontoNoMes('consultor', $userId, $yearMonth);
+        if ($adto > 0.0) {
+            $adtoDesc = $this->adiantamentoLegenda($userId, $yearMonth);
+            $lancs[] = ['descricao' => 'Adiantamento' . ($adtoDesc ? " ({$adtoDesc})" : ''), 'valor' => -$adto];
+        }
+
+        // Lançamentos (salário − descontos) somam o VALOR A RECEBER (líquido do diretor).
+        // REPASSE à cooperativa = valor a receber + Taxa+INSS (gross-up); taxa incide no repasse.
+        $somaLan = round(collect($lancs)->sum(fn ($l) => (float) ($l['valor'] ?? 0)), 2);
+        $liquido = $somaLan;                          // VALOR A RECEBER
+        $total   = round($somaLan + $taxa, 2);        // REPASSE
         $u       = User::find($userId);
-        $coop    = $header?->cooperativa ?: ($u?->name ?? '');
+        $coop    = $coopOver ?: ($u?->name ?? '');
         $brl = fn ($v) => 'R$ ' . number_format((float) $v, 2, ',', '.');
 
         $logoFile    = public_path('logo-erpserv.png');
         $logoDataUri = is_file($logoFile) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile)) : null;
-
-        $valErp = (float) ($header?->valor_coop_erpserv ?? 0); $taxErp = (float) ($header?->taxa_coop_erpserv ?? 0);
-        $valBiz = (float) ($header?->valor_coop_bizify ?? 0);  $taxBiz = (float) ($header?->taxa_coop_bizify ?? 0);
 
         return [
             'diretorNome' => $u?->name ?? 'Diretor',
@@ -359,6 +408,17 @@ class FechamentoDiretoriaController extends Controller
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
+    /** Legenda do adiantamento: descrição + parcela (NN/TT), ex.: "Empréstimo · 01/24". */
+    private function adiantamentoLegenda(int $userId, string $yearMonth): ?string
+    {
+        $parts = array_filter([
+            \App\Models\Adiantamento::descricaoNoMes('consultor', $userId, $yearMonth),
+            \App\Models\Adiantamento::parcelaLabelNoMes('consultor', $userId, $yearMonth),
+        ]);
+
+        return $parts ? implode(' · ', $parts) : null;
+    }
+
     /** @return array<int, array<string, mixed>> */
     private function itensDoDiretor(int $userId, string $yearMonth): array
     {
@@ -370,6 +430,7 @@ class FechamentoDiretoriaController extends Controller
                 'id'        => $i->id,
                 'descricao' => $i->descricao,
                 'valor'     => $i->valor !== null ? (float) $i->valor : null,
+                'coop'      => $i->coop,
             ])->all();
     }
 }

@@ -27,6 +27,7 @@
     table.rows th { background: #f9fafb; border-bottom: 1px solid #e5e7eb; text-align: left; padding: 5px 7px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.03em; color: #6b7280; }
     table.rows td { border-bottom: 1px solid #f3f4f6; padding: 5px 7px; font-size: 10px; }
     .right { text-align: right; }
+    .center { text-align: center; }
     .neg { color: #dc2626; font-weight: bold; }
     .row-total td { border-top: 2px solid #e5e7eb; font-weight: bold; background: #f9fafb; }
     .row-liq td { background: #ecfdf5; font-weight: bold; color: #065f46; }
@@ -61,7 +62,7 @@
   <table class="summary">
     <tr>
       <td>
-        <div class="summary-label">Total</div>
+        <div class="summary-label">Repasse</div>
         <div class="summary-value">{{ $totalFmt }}</div>
       </td>
       <td>
@@ -69,7 +70,7 @@
         <div class="summary-value">{{ $taxaFmt }}</div>
       </td>
       <td>
-        <div class="summary-label">Valor Líquido a Receber</div>
+        <div class="summary-label">Valor a Receber</div>
         <div class="summary-value" style="color:#065f46;">{{ $liquidoFmt }}</div>
       </td>
     </tr>
@@ -87,11 +88,11 @@
           <td class="right @if($l['neg'])neg @endif">{{ $l['valorFmt'] }}</td>
         </tr>
       @endforeach
+      <tr class="row-total"><td class="right">REPASSE À COOPERATIVA</td><td class="right">{{ $totalFmt }}</td></tr>
       @if($temTaxa)
-        <tr><td>Taxa + INSS</td><td class="right">{{ $taxaFmt }}</td></tr>
+        <tr><td class="right">(−) Taxa + INSS (desconto)</td><td class="right neg">− {{ $taxaFmt }}</td></tr>
       @endif
-      <tr class="row-total"><td class="right">TOTAL</td><td class="right">{{ $totalFmt }}</td></tr>
-      <tr class="row-liq"><td class="right">VALOR LÍQUIDO A RECEBER</td><td class="right">{{ $liquidoFmt }}</td></tr>
+      <tr class="row-liq"><td class="right">VALOR A RECEBER (líquido)</td><td class="right">{{ $liquidoFmt }}</td></tr>
     </tbody>
   </table>
 
@@ -100,14 +101,14 @@
     <div class="group-title">Divisão por cooperativa</div>
     <table class="rows">
       <thead>
-        <tr><th>Cooperativa</th><th class="right" style="width:130px;">Valor a Receber</th><th class="right" style="width:110px;">Taxa</th><th class="right" style="width:130px;">Produção</th></tr>
+        <tr><th>Cooperativa</th><th style="width:130px;text-align:center;">Produção</th><th style="width:110px;text-align:center;">Taxa</th><th style="width:130px;text-align:center;">Valor a Receber</th></tr>
       </thead>
       <tbody>
         <tr>
-          <td>ERPSERV</td><td class="right">{{ $coopErpValorFmt }}</td><td class="right">{{ $coopErpTaxaFmt }}</td><td class="right">{{ $coopErpProdFmt }}</td>
+          <td>ERPSERV</td><td style="text-align:center;">{{ $coopErpProdFmt }}</td><td style="text-align:center;">{{ $coopErpTaxaFmt }}</td><td style="text-align:center;">{{ $coopErpValorFmt }}</td>
         </tr>
         <tr>
-          <td>BIZIFY</td><td class="right">{{ $coopBizValorFmt }}</td><td class="right">{{ $coopBizTaxaFmt }}</td><td class="right">{{ $coopBizProdFmt }}</td>
+          <td>BIZIFY</td><td style="text-align:center;">{{ $coopBizProdFmt }}</td><td style="text-align:center;">{{ $coopBizTaxaFmt }}</td><td style="text-align:center;">{{ $coopBizValorFmt }}</td>
         </tr>
       </tbody>
     </table>
