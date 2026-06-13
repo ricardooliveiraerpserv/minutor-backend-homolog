@@ -16,6 +16,7 @@ class FechamentoDiretoriaItem extends Model
         'descricao',
         'tipo',
         'valor',
+        'coop',
         'cooperativa',
         'repasse',
         'taxa_inss',

@@ -65,12 +65,17 @@ class AdiantamentoController extends Controller
         return response()->json(['data' => $data]);
     }
 
-    /** Beneficiários disponíveis para o formulário (consultores + parceiros). */
+    /** Beneficiários disponíveis para o formulário (colaboradores + parceiros). */
     public function beneficiarios(): JsonResponse
     {
+        // Colaboradores = consultores + diretores + coordenadores (todos User).
         $consultores = User::where('enabled', true)
             ->whereNotIn('type', ['parceiro_admin', 'cliente'])
-            ->whereNotNull('consultant_type')
+            ->where(function ($q) {
+                $q->whereNotNull('consultant_type')
+                  ->orWhere('is_diretor', true)
+                  ->orWhere('type', 'coordenador');
+            })
             ->orderBy('name')
             ->get(['id', 'name'])
             ->map(fn ($u) => ['id' => $u->id, 'nome' => $u->name]);

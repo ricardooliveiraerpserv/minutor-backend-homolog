@@ -21,6 +21,7 @@ class FechamentoDiretoria extends Model
         'valor_coop_bizify',
         'taxa_coop_erpserv',
         'taxa_coop_bizify',
+        'adiantamento_coop',
         'status',
         'finalized_at',
         'finalized_by',
