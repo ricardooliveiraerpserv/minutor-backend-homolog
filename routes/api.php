@@ -851,7 +851,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-diretoria/usuarios',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'usuarios']);
             Route::post('/fechamento-diretoria/diretores', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'definirDiretores']);
             Route::get('/fechamento-diretoria/folha/{userId}/{yearMonth}',       [\App\Http\Controllers\FechamentoDiretoriaController::class, 'folha']);
-            Route::get('/fechamento-diretoria/{userId}/{yearMonth}/report-html',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'reportHtml']);
+            Route::match(['get', 'post'], '/fechamento-diretoria/{userId}/{yearMonth}/report-html',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'reportHtml']);
             Route::get('/fechamento-diretoria/{userId}/{yearMonth}',             [\App\Http\Controllers\FechamentoDiretoriaController::class, 'show']);
             Route::post('/fechamento-diretoria/{userId}/{yearMonth}',            [\App\Http\Controllers\FechamentoDiretoriaController::class, 'salvar']);
             Route::post('/fechamento-diretoria/{userId}/{yearMonth}/finalizar',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'finalizar']);
