@@ -93,7 +93,13 @@ class FechamentoDiretoriaController extends Controller
 
         // Adiantamento (parcelas da rotina) do mês — desconto que reduz o valor a receber.
         // Uma linha por adiantamento (não somadas); o total ainda reduz o repasse.
-        $adiantamentos    = \App\Models\Adiantamento::parcelasNoMes('consultor', (int) $userId, $yearMonth);
+        // Cada adiantamento tem sua coop (mapa por id; default = adiantamento_coop ou erpserv).
+        $coopsMap         = $header?->adiantamento_coops ?? [];
+        $defaultCoop      = in_array($header?->adiantamento_coop, ['erpserv', 'bizify'], true) ? $header->adiantamento_coop : 'erpserv';
+        $adiantamentos    = array_map(function ($a) use ($coopsMap, $defaultCoop) {
+            $a['coop'] = $coopsMap[$a['adiantamento_id']] ?? $coopsMap[(string) $a['adiantamento_id']] ?? $defaultCoop;
+            return $a;
+        }, \App\Models\Adiantamento::parcelasNoMes('consultor', (int) $userId, $yearMonth));
         $adiantamento     = round(collect($adiantamentos)->sum('valor'), 2);
         $adiantamentoDesc = $this->adiantamentoLegenda((int) $userId, $yearMonth);
 
@@ -147,6 +153,8 @@ class FechamentoDiretoriaController extends Controller
             'taxa_coop_erpserv'       => ['nullable', 'numeric'],
             'taxa_coop_bizify'        => ['nullable', 'numeric'],
             'adiantamento_coop'       => ['nullable', 'in:erpserv,bizify'],
+            'adiantamento_coops'      => ['nullable', 'array'],            // { adiantamento_id: coop } por adiantamento
+            'adiantamento_coops.*'    => ['in:erpserv,bizify'],
             'lancamentos'             => ['present', 'array'],
             'lancamentos.*.descricao' => ['nullable', 'string', 'max:255'],
             'lancamentos.*.valor'     => ['nullable', 'numeric'],   // negativo = desconto; entra no total
@@ -181,7 +189,15 @@ class FechamentoDiretoriaController extends Controller
             $header->valor_coop_bizify  = $val('valor_coop_bizify');
             $header->taxa_coop_erpserv  = $val('taxa_coop_erpserv');
             $header->taxa_coop_bizify   = $val('taxa_coop_bizify');
-            $header->adiantamento_coop  = in_array($data['adiantamento_coop'] ?? null, ['erpserv', 'bizify'], true) ? $data['adiantamento_coop'] : null;
+            // Coop por adiantamento (mapa id→coop); só valores válidos. adiantamento_coop
+            // segue como default/fallback (1ª coop) para retrocompat.
+            $coops = collect($data['adiantamento_coops'] ?? [])
+                ->filter(fn ($c) => in_array($c, ['erpserv', 'bizify'], true))
+                ->all();
+            $header->adiantamento_coops = $coops ?: null;
+            $header->adiantamento_coop  = in_array($data['adiantamento_coop'] ?? null, ['erpserv', 'bizify'], true)
+                ? $data['adiantamento_coop']
+                : (reset($coops) ?: null);
             if (!$header->exists) {
                 $header->status = FechamentoDiretoria::STATUS_ABERTO;
             }
