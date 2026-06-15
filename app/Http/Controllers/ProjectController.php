@@ -286,7 +286,9 @@ class ProjectController extends Controller
 
         // Escopo por role: Coordenador só vê projetos onde é coordinator
         // (aplica apenas quando não está no modo consultant_only, que tem escopo próprio)
-        if ($consultantOnly !== 'true') {
+        // EXCEÇÃO: na rotina de Contratos de Investimento (only_investimento_comercial),
+        // TODOS os coordenadores (projeto e sustentação) enxergam TODOS os projetos.
+        if ($consultantOnly !== 'true' && !$request->boolean('only_investimento_comercial')) {
             $currentUser = $request->user();
             if ($currentUser && $currentUser->isCoordenador()) {
                 $isSustentacao = $currentUser->coordinator_type === 'sustentacao';
