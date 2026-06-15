@@ -102,4 +102,36 @@ class Adiantamento extends Model
             . '/' . str_pad((string) ($p->adiantamento?->num_parcelas ?? 0), 2, '0', STR_PAD_LEFT))
             ->implode(' · ');
     }
+
+    /**
+     * UMA entrada por parcela de adiantamento do beneficiário na competência —
+     * cada adiantamento vira uma linha separada no fechamento (não somadas).
+     * Item: ['adiantamento_id'=>int, 'descricao'=>?string, 'parcela'=>'NN/TT',
+     *        'valor'=>float, 'legenda'=>'descricao · NN/TT'].
+     */
+    public static function parcelasNoMes(string $tipo, int $beneficiarioId, string $yearMonth): array
+    {
+        return AdiantamentoParcela::query()
+            ->where('year_month', $yearMonth)
+            ->whereHas('adiantamento', fn ($q) => $q
+                ->where('beneficiario_tipo', $tipo)
+                ->where('beneficiario_id', $beneficiarioId))
+            ->with('adiantamento:id,num_parcelas,descricao')
+            ->orderBy('numero')
+            ->get()
+            ->map(function ($p) {
+                $parcela = str_pad((string) $p->numero, 2, '0', STR_PAD_LEFT)
+                    . '/' . str_pad((string) ($p->adiantamento?->num_parcelas ?? 0), 2, '0', STR_PAD_LEFT);
+                $desc = $p->adiantamento?->descricao;
+                return [
+                    'adiantamento_id' => $p->adiantamento_id,
+                    'descricao'       => $desc,
+                    'parcela'         => $parcela,
+                    'valor'           => round((float) $p->valor, 2),
+                    'legenda'         => implode(' · ', array_filter([$desc, $parcela])),
+                ];
+            })
+            ->values()
+            ->all();
+    }
 }

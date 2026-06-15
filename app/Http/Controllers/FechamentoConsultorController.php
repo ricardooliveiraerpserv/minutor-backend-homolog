@@ -462,6 +462,19 @@ class FechamentoConsultorController extends Controller
         $temAjustes   = !$soDespesa && ($desconto != 0 || $adiantamento != 0 || $adicional != 0);
         $recebimento  = round($baseValor - $desconto - $adiantamento + $adicional, 2);
 
+        // Adiantamento: UMA linha por adiantamento da rotina (não somadas) + eventual ajuste
+        // manual avulso. O total ($adiantamento) segue igual no cálculo do recebimento.
+        $adtoParcelas = \App\Models\Adiantamento::parcelasNoMes('consultor', $userId, $yearMonth);
+        $adtoRotina   = round(collect($adtoParcelas)->sum('valor'), 2);
+        $adtoManual   = round($adiantamento - $adtoRotina, 2);
+        $adiantamentoLinhas = [];
+        if ($adtoManual > 0) {
+            $adiantamentoLinhas[] = ['legenda' => null, 'valor_fmt' => $this->brl($adtoManual)];
+        }
+        foreach ($adtoParcelas as $a) {
+            $adiantamentoLinhas[] = ['legenda' => $a['legenda'], 'valor_fmt' => $this->brl($a['valor'])];
+        }
+
         // ── Resumo (cards) — espelha o summaryExtra por tipo do buildReport ──
         $rate4 = fn ($v) => 'R$ ' . number_format((float) $v, ((float) $v == floor((float) $v)) ? 2 : 4, ',', '.');
         $cards = [];
@@ -556,6 +569,7 @@ class FechamentoConsultorController extends Controller
             'descontoDesc'    => $consultor['desconto_desc'] ?? null,
             'adiantamentoFmt' => $this->brl($adiantamento),
             'adiantamentoDesc'=> \App\Models\Adiantamento::descricaoNoMes('consultor', $userId, $yearMonth),
+            'adiantamentoLinhas' => $adiantamentoLinhas,
             'adicionalFmt'    => $this->brl($adicional),
             'adicionalDesc'   => $consultor['adicional_desc'] ?? null,
             'baseValorFmt'    => $this->brl($baseValor),
