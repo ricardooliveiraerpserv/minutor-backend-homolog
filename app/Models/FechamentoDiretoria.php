@@ -22,6 +22,7 @@ class FechamentoDiretoria extends Model
         'taxa_coop_erpserv',
         'taxa_coop_bizify',
         'adiantamento_coop',
+        'adiantamento_coops',
         'status',
         'finalized_at',
         'finalized_by',
@@ -33,6 +34,7 @@ class FechamentoDiretoria extends Model
         'valor_coop_bizify'  => 'decimal:2',
         'taxa_coop_erpserv'  => 'decimal:2',
         'taxa_coop_bizify'   => 'decimal:2',
+        'adiantamento_coops' => 'array',
         'finalized_at'       => 'datetime',
     ];
 
