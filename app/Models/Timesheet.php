@@ -145,22 +145,42 @@ class Timesheet extends Model
      */
     public function calculateEffort(): void
     {
-        // Se já existe um valor de effort_minutes definido manualmente, não sobrescrever
+        // Não sobrescrever effort_minutes já definido: vale tanto para lançamento
+        // manual (total_hours) quanto para a integração Movidesk, que grava o tempo
+        // REPORTADO e usa start/end apenas como janela (o span pode diferir do effort).
+        // A apuração por intervalo do fluxo web é feita no TimesheetController, que é
+        // quem decide quando o intervalo deve prevalecer sobre o total_hours enviado.
         if ($this->effort_minutes !== null && $this->effort_minutes > 0) {
             return;
         }
 
-        if ($this->start_time && $this->end_time) {
-            $startTime = Carbon::parse($this->start_time);
-            $endTime = Carbon::parse($this->end_time);
-
-            // Se o horário final for menor que o inicial, assumir que passou da meia-noite
-            if ($endTime->lt($startTime)) {
-                $endTime->addDay();
-            }
-
-            $this->effort_minutes = $startTime->diffInMinutes($endTime);
+        $minutes = self::minutesFromInterval($this->start_time, $this->end_time);
+        if ($minutes !== null) {
+            $this->effort_minutes = $minutes;
         }
+    }
+
+    /**
+     * Minutos entre início e fim. Fonte única usada pelo model e pelo
+     * TimesheetController (store/update) para apurar o TEMPO a partir do intervalo.
+     * Aceita Carbon ou string (HH:MM / HH:MM:SS). Trata virada de meia-noite.
+     * Retorna null se faltar início ou fim; 0 quando início == fim (não é intervalo).
+     */
+    public static function minutesFromInterval($start, $end): ?int
+    {
+        if (empty($start) || empty($end)) {
+            return null;
+        }
+
+        $startTime = Carbon::parse($start);
+        $endTime   = Carbon::parse($end);
+
+        // Se o horário final for menor que o inicial, assumir que passou da meia-noite
+        if ($endTime->lt($startTime)) {
+            $endTime->addDay();
+        }
+
+        return (int) round($startTime->diffInMinutes($endTime));
     }
 
     /**
