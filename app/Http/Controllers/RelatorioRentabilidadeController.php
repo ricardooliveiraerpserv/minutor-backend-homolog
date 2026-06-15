@@ -112,9 +112,13 @@ class RelatorioRentabilidadeController extends Controller
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id',
                 'user.partner:id,pricing_type,hourly_rate',
-                'project:id,name,hourly_rate,customer_id',
+                'project:id,name,hourly_rate,customer_id,is_investimento_comercial',
                 'project.customer:id,name,cgc,secondary_cgcs,executive_id',
                 'project.customer.executive:id,name',
+                // Investimento: o custo é atribuído ao CLIENTE REAL (projeto real do apontamento).
+                'realProject:id,name,hourly_rate,customer_id',
+                'realProject.customer:id,name,cgc,secondary_cgcs,executive_id',
+                'realProject.customer.executive:id,name',
             ])
             ->whereBetween('date', [$from, $to])
             // Mesma regra do faturamento (fechamento cliente): tudo que é cobrado,
@@ -141,20 +145,27 @@ class RelatorioRentabilidadeController extends Controller
         // Agrega por cliente (com CNPJ p/ casar com o Keruak).
         $byCustomer = [];
         foreach ($timesheets as $ts) {
-            if (!$ts->project || !$ts->project->customer) continue;
-            $cid = $ts->project->customer_id;
+            if (!$ts->project) continue;
+            // Apontamento de INVESTIMENTO: o custo vai para o CLIENTE REAL (projeto real do
+            // apontamento), não para a ERPSERV (dona do projeto de investimento). Sem projeto
+            // real, mantém o cliente do próprio projeto.
+            $proj = ($ts->project->is_investimento_comercial && $ts->real_project_id && $ts->realProject && $ts->realProject->customer)
+                ? $ts->realProject
+                : $ts->project;
+            if (!$proj->customer) continue;
+            $cid = $proj->customer_id;
             if (!isset($byCustomer[$cid])) {
                 // Todos os CNPJs do cliente (principal + secundários) p/ UNIR o
                 // recebimento do Keruak de clientes faturados em mais de um CNPJ.
-                $cnpjs = collect([$ts->project->customer->cgc])
-                    ->merge((array) ($ts->project->customer->secondary_cgcs ?? []))
+                $cnpjs = collect([$proj->customer->cgc])
+                    ->merge((array) ($proj->customer->secondary_cgcs ?? []))
                     ->map(fn ($c) => preg_replace('/\D/', '', (string) $c))
                     ->filter()->unique()->values()->all();
                 $byCustomer[$cid] = [
                     'customer_id' => $cid,
-                    'cliente'     => $ts->project->customer->name ?? '—',
-                    'executivo'   => $ts->project->customer->executive->name ?? null,
-                    'cnpj'        => preg_replace('/\D/', '', (string) ($ts->project->customer->cgc ?? '')),
+                    'cliente'     => $proj->customer->name ?? '—',
+                    'executivo'   => $proj->customer->executive->name ?? null,
+                    'cnpj'        => preg_replace('/\D/', '', (string) ($proj->customer->cgc ?? '')),
                     'cnpjs'       => $cnpjs,
                     'horas'       => 0.0,
                     'receita'     => 0.0,
@@ -165,7 +176,7 @@ class RelatorioRentabilidadeController extends Controller
             $horas = round($ts->effort_minutes / 60, 4);
             $rateCons = $costRate($ts->user);
             $byCustomer[$cid]['horas']   += $horas;
-            $byCustomer[$cid]['receita'] += $horas * (float) ($ts->project->hourly_rate ?? 0);
+            $byCustomer[$cid]['receita'] += $horas * (float) ($proj->hourly_rate ?? 0);
             $byCustomer[$cid]['custo']   += $horas * $rateCons;
             // Breakdown por consultor dentro do cliente (p/ a margem do consultor na expansão).
             $uid = $ts->user_id;
