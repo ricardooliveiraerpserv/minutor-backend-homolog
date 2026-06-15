@@ -994,30 +994,26 @@ class TimesheetController extends Controller
         try {
             $validatedData = $validator->validated();
 
-            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
-            $effortMinutes = null;
-            if (!empty($validatedData['total_hours'])) {
+            // Apuração do TEMPO (effort_minutes).
+            // REGRA: havendo início E fim formando um intervalo real (> 0 min), o
+            // INTERVALO é a fonte da verdade e PREVALECE sobre qualquer total_hours
+            // enviado pelo front — assim início/fim e TEMPO nunca divergem. total_hours
+            // só vale no lançamento manual (sem horários). start == end (ex.: janela
+            // 00:00/00:00 do Movidesk) não é intervalo e cai no manual.
+            $effortMinutes = Timesheet::minutesFromInterval(
+                $validatedData['start_time'] ?? null,
+                $validatedData['end_time'] ?? null
+            );
+            if ($effortMinutes !== null && $effortMinutes > 0) {
+                $validatedData['effort_minutes'] = $effortMinutes;
+            } elseif (!empty($validatedData['total_hours'])) {
                 $effortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
                 if ($effortMinutes !== null) {
                     $validatedData['effort_minutes'] = $effortMinutes;
                 }
-                // Remover total_hours dos dados validados pois não é um campo do modelo
-                unset($validatedData['total_hours']);
-            } else {
-                // Se não forneceu total_hours, calcular a partir de start_time e end_time
-                // O modelo Timesheet calcula automaticamente no boot, mas precisamos calcular aqui para validação
-                if (isset($validatedData['start_time']) && isset($validatedData['end_time'])) {
-                    $startTime = \Carbon\Carbon::parse($validatedData['start_time']);
-                    $endTime = \Carbon\Carbon::parse($validatedData['end_time']);
-
-                    // Se o horário final for menor que o inicial, assumir que passou da meia-noite
-                    if ($endTime->lt($startTime)) {
-                        $endTime->addDay();
-                    }
-
-                    $effortMinutes = $startTime->diffInMinutes($endTime);
-                }
             }
+            // total_hours nunca é coluna do modelo
+            unset($validatedData['total_hours']);
 
             // Calcular horas decimais para validação
             $hoursToAdd = $effortMinutes ? round($effortMinutes / 60, 2) : 0;
@@ -1543,30 +1539,32 @@ class TimesheetController extends Controller
             // Determinar qual usuário usar para validação
             $userIdForValidation = isset($validatedData['user_id']) ? $validatedData['user_id'] : $timesheet->user_id;
 
-            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
-            $newEffortMinutes = null;
-            if (!empty($validatedData['total_hours'])) {
+            // Apuração do TEMPO (effort_minutes) na edição.
+            // REGRA: início+fim (intervalo real, > 0 min) é a fonte da verdade e
+            // PREVALECE sobre total_hours. Usa o horário enviado no request quando
+            // presente, senão o já gravado — assim editar SÓ o horário recalcula o
+            // TEMPO (antes ficava preso ao valor antigo pelo guard do model, gerando
+            // a divergência início/fim × TEMPO). total_hours só vale no lançamento
+            // manual (sem horários); start == end não é intervalo.
+            $effStart = array_key_exists('start_time', $validatedData)
+                ? $validatedData['start_time'] : $timesheet->start_time;
+            $effEnd = array_key_exists('end_time', $validatedData)
+                ? $validatedData['end_time'] : $timesheet->end_time;
+
+            $newEffortMinutes = Timesheet::minutesFromInterval($effStart, $effEnd);
+            if ($newEffortMinutes !== null && $newEffortMinutes > 0) {
+                $validatedData['effort_minutes'] = $newEffortMinutes;
+            } elseif (!empty($validatedData['total_hours'])) {
                 $newEffortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
                 if ($newEffortMinutes !== null) {
                     $validatedData['effort_minutes'] = $newEffortMinutes;
                 }
-                // Remover total_hours dos dados validados pois não é um campo do modelo
-                unset($validatedData['total_hours']);
-            } elseif (isset($validatedData['start_time']) && isset($validatedData['end_time'])) {
-                // Se não forneceu total_hours mas forneceu start_time e end_time, calcular
-                $startTime = \Carbon\Carbon::parse($validatedData['start_time']);
-                $endTime = \Carbon\Carbon::parse($validatedData['end_time']);
-
-                // Se o horário final for menor que o inicial, assumir que passou da meia-noite
-                if ($endTime->lt($startTime)) {
-                    $endTime->addDay();
-                }
-
-                $newEffortMinutes = $startTime->diffInMinutes($endTime);
             } else {
-                // Se não forneceu nem total_hours nem start_time/end_time, usar o valor atual
+                // Sem intervalo nem total_hours: mantém o valor atual
                 $newEffortMinutes = $timesheet->effort_minutes;
             }
+            // total_hours nunca é coluna do modelo
+            unset($validatedData['total_hours']);
 
             // Calcular a diferença de horas (novas horas - horas atuais)
             $currentHours = round(($timesheet->effort_minutes ?? 0) / 60, 2);
