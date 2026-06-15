@@ -251,7 +251,7 @@ class FechamentoConsultorController extends Controller
                     'horas_a_pagar'     => $horasExtras,
                     'horas_trabalhadas' => round($calc['worked_hours'] ?? $horasTrabalhadas, 2),
                     'effective_rate'    => $valorHoraExtra,
-                    'taxa_label'        => 'Salário Mensal',
+                    'taxa_label'        => 'Repasse no Mês',
                     'taxa_value'        => $hourlyRate,
                 ];
 
@@ -262,7 +262,7 @@ class FechamentoConsultorController extends Controller
                     'horas_a_pagar'     => $horasTrabalhadas,
                     'horas_trabalhadas' => $horasTrabalhadas,
                     'effective_rate'    => $effectiveRate,
-                    'taxa_label'        => 'Salário Mensal',
+                    'taxa_label'        => 'Repasse no Mês',
                     'taxa_value'        => $hourlyRate,
                 ];
 
@@ -477,7 +477,7 @@ class FechamentoConsultorController extends Controller
                 $cards[] = ['label' => 'Saldo Acumulado', 'value' => $this->fmtHoras((float) ($consultor['accumulated_balance'] ?? 0))];
                 $cards[] = ['label' => 'H Extras', 'value' => ($consultor['horas_extras'] ?? 0) > 0 ? $this->fmtHoras((float) $consultor['horas_extras']) : '—'];
             } elseif (array_key_exists('salario_mensal', $consultor)) {    // Fixo
-                $cards[] = ['label' => 'Salário Mensal', 'value' => $this->brl((float) ($consultor['salario_mensal'] ?? 0))];
+                $cards[] = ['label' => 'Repasse no Mês', 'value' => $this->brl((float) ($consultor['salario_mensal'] ?? 0))];
             } else {                                                        // Horista
                 $hasGuaranteed = ($consultor['guaranteed_prorated'] ?? 0) > 0 && ($consultor['horas_a_pagar'] ?? 0) > ($consultor['horas_trabalhadas'] ?? 0);
                 if ($hasGuaranteed) {
@@ -486,7 +486,8 @@ class FechamentoConsultorController extends Controller
                 }
                 $cards[] = ['label' => 'Taxa/h', 'value' => $this->brl((float) ($consultor['effective_rate'] ?? 0))];
             }
-            $cards[] = ['label' => 'Total Serviços', 'value' => $this->brl($servTotal), 'color' => '#7c3aed'];
+            // Faixa do cabeçalho reflete o RECEBIMENTO (com ajustes), igual à barra/total do rodapé.
+            $cards[] = ['label' => 'Total Serviços', 'value' => $this->brl($temAjustes ? $recebimento : $servTotal), 'color' => '#7c3aed'];
         }
 
         // ── Apontamentos: tipo → cliente → linhas (8 colunas, espelha a tela) ──
@@ -571,6 +572,26 @@ class FechamentoConsultorController extends Controller
         return response()->json(['html' => $html]);
     }
 
+    /**
+     * Total EXIBIDO do fechamento (= recebimento com ajustes), idêntico ao $totalValor
+     * do relatório/PDF/tela. Quando não há ajustes, recebimento == base. Em modo despesa
+     * não há ajustes (espelha buildConsultorReportView). É o valor "maior" que deve aparecer
+     * no card "Valor total do fechamento" do e-mail (base − desconto − adiantamento + adicional).
+     */
+    private function consultorDisplayTotal(int $userId, string $yearMonth, string $mode, float $baseValor): float
+    {
+        if ($mode === 'despesa') {
+            return $baseValor;
+        }
+        $ajuste       = \App\Models\FechamentoConsultorAjuste::where('user_id', $userId)
+            ->where('year_month', $yearMonth)->first();
+        $desconto     = round((float) ($ajuste->desconto ?? 0), 2);
+        $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2)
+            + \App\Models\Adiantamento::descontoNoMes('consultor', $userId, $yearMonth);
+        $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
+        return round($baseValor - $desconto - $adiantamento + $adicional, 2);
+    }
+
     private function generateFechamentoFiles(User $consultant, string $yearMonth, string $mode = 'ambos'): array
     {
         [$from, $to]   = $this->period($yearMonth);
@@ -587,16 +608,9 @@ class FechamentoConsultorController extends Controller
         $soServico  = $mode === 'servicos';
         $totalValue = $soDespesa ? $totalDespesas : ($soServico ? $totalServico : (float) $closing['total_geral']);
 
-        // Ajustes manuais (desconto/adiantamento/adicional) — entram no Recebimento final.
-        $ajuste        = \App\Models\FechamentoConsultorAjuste::where('user_id', $consultant->id)
-            ->where('year_month', $yearMonth)->first();
-        $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
-        $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2)
-            + \App\Models\Adiantamento::descontoNoMes('consultor', $consultant->id, $yearMonth);
-        $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
-        $temAjustes    = ($desconto != 0 || $adiantamento != 0 || $adicional != 0);
-        // Recebimento = valor base do relatório (conforme mode) − desconto − adiantamento + adicional.
-        $recebimento   = round($totalValue - $desconto - $adiantamento + $adicional, 2);
+        // Total exibido (recebimento com ajustes) — idêntico ao $totalValor do relatório/PDF/tela.
+        // É o valor que vai no card "Valor total do fechamento" do e-mail e no log.
+        $displayTotal = $this->consultorDisplayTotal($consultant->id, $yearMonth, $mode, $totalValue);
 
         $prefix       = $soDespesa ? 'Despesas' : 'Fechamento';
         $safeName     = $this->sanitizeFilename($consultant->name);
@@ -633,10 +647,7 @@ class FechamentoConsultorController extends Controller
             'xlsx_full'   => $xlsxFullPath,
             'pdf_name'    => $pdfFileName,
             'xlsx_name'   => $xlsxFileName,
-            // Recebimento final (já com desconto/adiantamento/adicional) — é o valor que
-            // o consultor recebe e o que o e-mail/PDF comunicam. Antes devolvia $totalValue
-            // (base, sem ajustes), fazendo o e-mail ignorar o desconto digitado.
-            'total_value' => $recebimento,
+            'total_value' => $displayTotal,
         ];
     }
 
@@ -897,9 +908,11 @@ class FechamentoConsultorController extends Controller
         $periodo        = $this->periodoExtenso($yearMonth);
         $mode           = $request->input('mode', 'ambos');
         $closing        = $this->closingComDespesas($consultant, $yearMonth);
-        $valorPreview   = $mode === 'despesa'
+        $baseValorPrev  = $mode === 'despesa'
             ? (float) $closing['total_despesas']
             : ($mode === 'servicos' ? (float) $closing['total_servico'] : (float) $closing['total_geral']);
+        // Card "Valor total do fechamento" = recebimento (com ajustes), idêntico ao PDF/tela.
+        $valorPreview   = $this->consultorDisplayTotal($userId, $yearMonth, $mode, $baseValorPrev);
         $mensagemPadrao = $this->defaultMensagem($periodo, $yearMonth, $mode);
         // Semeia a partir do modelo do cadastro (por tipo de contrato), se houver ativo.
         $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
