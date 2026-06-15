@@ -135,6 +135,14 @@ Schedule::command('reajustes:alerta-vencidos')
   ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
   ->withoutOverlapping();
 
+// Recorrência do aviso de despesa aprovada e não paga (reenvia a cada N dias,
+// N = recurrence_days da Central). O aviso inicial sai na própria aprovação.
+Schedule::command('expenses:alerta-pendentes-pagamento')
+  ->dailyAt('08:30')
+  ->name('alerta-despesas-pendentes-pagamento')
+  ->description('Reenvia aviso de despesas aprovadas e não pagas conforme recorrência da Central')
+  ->withoutOverlapping();
+
 // FASE 11.1 — Integrity sweep diário dos anexos (verifica entidade-dona, arquivo
 // físico, checksum e provider). Default incremental (últimos 7 dias) pra não
 // pesar; varredura completa pode ser disparada manualmente com --all.
