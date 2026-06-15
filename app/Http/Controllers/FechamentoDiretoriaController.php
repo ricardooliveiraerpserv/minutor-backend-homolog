@@ -92,7 +92,9 @@ class FechamentoDiretoriaController extends Controller
         $lancamentos = $this->itensDoDiretor((int) $userId, $yearMonth);
 
         // Adiantamento (parcelas da rotina) do mês — desconto que reduz o valor a receber.
-        $adiantamento     = \App\Models\Adiantamento::descontoNoMes('consultor', (int) $userId, $yearMonth);
+        // Uma linha por adiantamento (não somadas); o total ainda reduz o repasse.
+        $adiantamentos    = \App\Models\Adiantamento::parcelasNoMes('consultor', (int) $userId, $yearMonth);
+        $adiantamento     = round(collect($adiantamentos)->sum('valor'), 2);
         $adiantamentoDesc = $this->adiantamentoLegenda((int) $userId, $yearMonth);
 
         // Valor a Receber = soma dos lançamentos − adiantamento; REPASSE = valor a receber + Taxa+INSS.
@@ -117,6 +119,7 @@ class FechamentoDiretoriaController extends Controller
             'lancamentos'  => $lancamentos,
             'adiantamento' => $adiantamento,
             'adiantamento_desc' => $adiantamentoDesc,
+            'adiantamentos' => $adiantamentos,
             'total'        => $total,
         ]);
     }
@@ -366,12 +369,10 @@ class FechamentoDiretoriaController extends Controller
             $valErp = (float) ($header?->valor_coop_erpserv ?? 0); $taxErp = (float) ($header?->taxa_coop_erpserv ?? 0);
             $valBiz = (float) ($header?->valor_coop_bizify ?? 0);  $taxBiz = (float) ($header?->taxa_coop_bizify ?? 0);
         }
-        // Adiantamento (parcelas da rotina) do mês — sempre do banco; vira linha de desconto
-        // automática (nunca vem do payload da tela, evitando dupla contagem).
-        $adto = \App\Models\Adiantamento::descontoNoMes('consultor', $userId, $yearMonth);
-        if ($adto > 0.0) {
-            $adtoDesc = $this->adiantamentoLegenda($userId, $yearMonth);
-            $lancs[] = ['descricao' => 'Adiantamento' . ($adtoDesc ? " ({$adtoDesc})" : ''), 'valor' => -$adto];
+        // Adiantamento (parcelas da rotina) do mês — sempre do banco; UMA linha de desconto
+        // por adiantamento (nunca vem do payload da tela, evitando dupla contagem).
+        foreach (\App\Models\Adiantamento::parcelasNoMes('consultor', $userId, $yearMonth) as $a) {
+            $lancs[] = ['descricao' => 'Adiantamento' . ($a['legenda'] ? " ({$a['legenda']})" : ''), 'valor' => -$a['valor']];
         }
 
         // Lançamentos (salário − descontos) somam o VALOR A RECEBER (líquido do diretor).
