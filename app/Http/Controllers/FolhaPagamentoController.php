@@ -470,27 +470,40 @@ class FolhaPagamentoController extends Controller
         }
 
         // Contribuição por diretor = valor a receber (coop) + taxa (coop) da empresa.
+        // Quando o repasse é DIVIDIDO entre as duas coops, a coop SEM INSS grava o valor
+        // na coluna VARIÁVEL; a coop COM INSS (e o caso de coop única) grava em PRODUÇÃO.
         $contrib = [];
         foreach ($headers as $h) {
-            $valor = (float) ($empresa === 'bizify' ? $h->valor_coop_bizify : $h->valor_coop_erpserv);
-            $taxa  = (float) ($empresa === 'bizify' ? $h->taxa_coop_bizify  : $h->taxa_coop_erpserv);
+            $valErp = (float) $h->valor_coop_erpserv; $taxErp = (float) $h->taxa_coop_erpserv;
+            $valBiz = (float) $h->valor_coop_bizify;  $taxBiz = (float) $h->taxa_coop_bizify;
+            $valor = $empresa === 'bizify' ? $valBiz : $valErp;
+            $taxa  = $empresa === 'bizify' ? $taxBiz : $taxErp;
             $c = round($valor + $taxa, 2);
             if ($c == 0.0) {
                 continue;
             }
-            $contrib[$h->user_id] = round(($contrib[$h->user_id] ?? 0) + $c, 2);
+            // Dividido = ambas as coops com repasse > 0.
+            $dividido = round($valErp + $taxErp, 2) != 0.0 && round($valBiz + $taxBiz, 2) != 0.0;
+            // Coop que recolheu o INSS = a com resíduo de INSS na taxa (taxa − repasse×1%).
+            $inssErp = round($taxErp - ($valErp + $taxErp) * 0.01, 2);
+            $inssBiz = round($taxBiz - ($valBiz + $taxBiz) * 0.01, 2);
+            $inssCoop = $inssBiz > $inssErp + 0.01 ? 'bizify' : 'erpserv';
+            $col = ($dividido && $empresa !== $inssCoop) ? 'variavel' : 'producao';
+            $prev = $contrib[$h->user_id] ?? ['amount' => 0.0, 'col' => $col];
+            $contrib[$h->user_id] = ['amount' => round($prev['amount'] + $c, 2), 'col' => $col];
         }
         if (!$contrib) {
             return $rows;
         }
 
-        // 1) Soma na produção das linhas existentes (por user_id).
+        // 1) Soma na coluna certa (produção/variável) das linhas existentes (por user_id).
         $usados = [];
         foreach ($rows as &$row) {
             $uid = $row['user_id'] ?? null;
             if ($uid !== null && isset($contrib[$uid])) {
-                $c = $contrib[$uid];
-                $row['producao'] = round((float) ($row['producao'] ?? 0) + $c, 2);
+                $c   = $contrib[$uid]['amount'];
+                $col = $contrib[$uid]['col'];
+                $row[$col] = round((float) ($row[$col] ?? 0) + $c, 2);
                 if (array_key_exists('total_rend', $row))     $row['total_rend']     = round((float) $row['total_rend'] + $c, 2);
                 if (array_key_exists('total_creditos', $row)) $row['total_creditos'] = round((float) $row['total_creditos'] + $c, 2);
                 $row['liquido'] = round((float) ($row['liquido'] ?? 0) + $c, 2);
@@ -500,26 +513,26 @@ class FolhaPagamentoController extends Controller
         }
         unset($row);
 
-        // 2) Diretores sem linha na empresa → cria a linha.
+        // 2) Diretores sem linha na empresa → cria a linha (na coluna certa).
         $faltam = array_diff_key($contrib, $usados);
         if ($faltam) {
             $users = \App\Models\User::whereIn('id', array_keys($faltam))->get()->keyBy('id');
-            foreach ($faltam as $uid => $c) {
+            foreach ($faltam as $uid => $info) {
                 $u = $users->get($uid);
                 if (!$u) {
                     continue;
                 }
                 $rows[] = $empresa === 'bizify'
-                    ? $this->diretoriaBizifyRow($u, $c)
-                    : $this->diretoriaErpservRow($u, $c);
+                    ? $this->diretoriaBizifyRow($u, $info['amount'], $info['col'])
+                    : $this->diretoriaErpservRow($u, $info['amount'], $info['col']);
             }
         }
 
         return $rows;
     }
 
-    /** Linha de diretor (sem folha própria) na aba ERPSERV — produção vem da divisão por coop. */
-    private function diretoriaErpservRow($u, float $c): array
+    /** Linha de diretor (sem folha própria) na aba ERPSERV — valor vem da divisão por coop. */
+    private function diretoriaErpservRow($u, float $c, string $col = 'producao'): array
     {
         return [
             'row_key' => 'd:' . $u->id, 'is_socio' => false, 'is_cooperado' => true, 'is_bizify' => false,
@@ -528,23 +541,23 @@ class FolhaPagamentoController extends Controller
             'cpf' => $u->cpf ?? '', 'matricula' => $u->matricula ?? '', 'status' => $u->payroll_status ?? '',
             'nome' => $u->full_name ?: $u->name,
             'dias' => 0.0, 'horas' => 0.0, 'horas_apontamentos' => 0.0, 'valor_hora' => 0.0,
-            'producao' => $c, 'producao_calc' => 0.0,
+            'producao' => $col === 'producao' ? $c : 0.0, 'producao_calc' => 0.0,
             'fech_serv' => 0.0, 'fech_desconto' => 0.0, 'fech_adiantamento' => 0.0, 'fech_adicional' => 0.0, 'fech_desp' => 0.0,
-            'variavel' => 0.0, 'reemb' => 0.0, 'reemb_auto' => 0.0, 'descontos' => 0.0, 'adiantamento' => 0.0,
+            'variavel' => $col === 'variavel' ? $c : 0.0, 'reemb' => 0.0, 'reemb_auto' => 0.0, 'descontos' => 0.0, 'adiantamento' => 0.0,
             'horista_mensalista' => 'Mensalista',
             'total_rend' => $c, 'total_debitos' => 0.0, 'liquido' => $c,
         ];
     }
 
-    /** Linha de diretor (sem folha própria) na aba BIZIFY — produção vem da divisão por coop. */
-    private function diretoriaBizifyRow($u, float $c): array
+    /** Linha de diretor (sem folha própria) na aba BIZIFY — valor vem da divisão por coop. */
+    private function diretoriaBizifyRow($u, float $c, string $col = 'producao'): array
     {
         return [
             'row_key' => 'd:' . $u->id, 'is_bizify' => true, 'is_socio' => false, 'is_raho' => false,
             'inativo' => false, 'carried' => false, 'cancelado' => false, 'from_diretoria' => true,
             'user_id' => $u->id, 'socio_key' => null,
             'matricula' => $u->matricula ?? '', 'nome' => $u->full_name ?: $u->name, 'status' => $u->payroll_status ?? '',
-            'producao' => $c, 'variavel' => 0.0, 'aj_custo' => 0.0, 'reemb' => 0.0, 'adto' => 0.0,
+            'producao' => $col === 'producao' ? $c : 0.0, 'variavel' => $col === 'variavel' ? $c : 0.0, 'aj_custo' => 0.0, 'reemb' => 0.0, 'adto' => 0.0,
             'descontos' => 0.0, 'adiantamento' => 0.0,
             'total_creditos' => $c, 'total_debitos' => 0.0, 'liquido' => $c,
         ];
