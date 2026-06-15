@@ -58,6 +58,7 @@ return [
         'Fechamento'  => '#F59E0B',
         'Apontamento' => '#A78BFA',
         'Projetos'    => '#94A3B8',
+        'Despesas'    => '#F97316',
         'Outros'      => '#FB7185',
     ],
 
@@ -116,6 +117,7 @@ return [
         'contract.aporte.child'        => ['contract', 'project', 'customer', 'actor'],
         'contract.reajuste'            => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
+        'expense.approved_pending_payment' => ['actor'],
         'request.phase.backlog'              => ['request', 'customer', 'actor'],
         'request.phase.novo_projeto'         => ['request', 'customer', 'actor'],
         'request.phase.em_planejamento'      => ['request', 'customer', 'actor'],
@@ -139,6 +141,18 @@ return [
     // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
     // Editável na Central; o layout/branding (logo, card de dados, botão) é automático.
     'templates' => [
+        'expense.approved_pending_payment' => [
+            'subject'   => 'Despesa aprovada e pendente de pagamento — {valor}',
+            'body'      => 'A despesa "{descricao}" ({categoria}) no valor de {valor}, lançada por {autor}, foi aprovada e está pendente de pagamento.',
+            'variables' => [
+                'valor'     => 'Valor',
+                'descricao' => 'Descrição',
+                'categoria' => 'Categoria',
+                'projeto'   => 'Projeto',
+                'autor'     => 'Lançado por',
+                'data'      => 'Data da despesa',
+            ],
+        ],
         'contract.created' => [
             'subject'   => 'Novo contrato cadastrado — {codigo}',
             'body'      => 'O contrato {codigo} do cliente {cliente} foi cadastrado e está em Novo Contrato.',
@@ -288,6 +302,19 @@ return [
 
     // Workflows agrupados por domínio.
     'workflows' => [
+
+        // ───────────────────────── Despesas ─────────────────────────
+        'expense.approved_pending_payment' => [
+            'label'       => 'Despesa aprovada — pendente de pagamento',
+            'domain'      => 'Despesas',
+            'description' => 'Quando uma despesa é APROVADA, avisa o administrativo que há despesa a pagar. Defina a recorrência abaixo para reenviar o aviso a cada N dias enquanto a despesa não for marcada como paga (0 = só o aviso na aprovação).',
+            'recurrence'  => true,
+            'audiences'   => [
+                'administrativo' => 'to',
+                'financeiro'     => 'off',
+                'autor'          => 'off',
+            ],
+        ],
 
         // ───────────────────────── Contratos ─────────────────────────
         'contract.created' => [
