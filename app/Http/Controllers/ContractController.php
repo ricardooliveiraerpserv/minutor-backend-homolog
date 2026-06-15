@@ -154,8 +154,16 @@ class ContractController extends Controller
             return $contract;
         });
 
-        // Notifica área administrativa + criador. Cliente ainda NÃO recebe nessa fase.
-        $this->notifyContractCreated($contract);
+        // Notificação conforme a COLUNA em que o contrato nasce:
+        // - Novo Contrato (backlog): avisa a triagem administrativa (contract.created).
+        // - Subprojeto (nasce em Início Autorizado): dispara o workflow de início
+        //   autorizado — NÃO o de novo contrato (senão o administrativo recebe aviso
+        //   indevido e com a fase errada). Cliente ainda NÃO recebe nessa fase.
+        if ($contract->kanban_status === Contract::KANBAN_INICIO_AUTORIZADO) {
+            $this->notifyInicioAutorizado($contract->load('customer'));
+        } else {
+            $this->notifyContractCreated($contract);
+        }
 
         return response()->json($contract->load(['customer:id,name', 'contacts', 'attachments']), 201);
     }
