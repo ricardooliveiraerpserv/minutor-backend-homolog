@@ -162,7 +162,8 @@ class RelatorioRentabilidadeController extends Controller
                 'horas'       => 0.0,
                 'receita'     => 0.0,
                 'custo'       => 0.0,
-                'investimento_custo' => 0.0,
+                'investimento_mo'   => 0.0, // mão de obra de apontamentos de investimento
+                'investimento_desp' => 0.0, // despesas de projetos de investimento
                 'consultores' => [],
                 'despesas'    => ['custo' => 0.0, 'projetos' => []],
             ];
@@ -204,7 +205,7 @@ class RelatorioRentabilidadeController extends Controller
             $isInvest = (bool) $ts->project->is_investimento_comercial;
             if ($isInvest) {
                 $byCustomer[$cid]['consultores'][$uid]['tem_investimento'] = true;
-                $byCustomer[$cid]['investimento_custo'] += $horas * $rateCons;
+                $byCustomer[$cid]['investimento_mo'] += $horas * $rateCons;
             }
             $pid = $ts->project_id;
             if (!isset($byCustomer[$cid]['consultores'][$uid]['projetos'][$pid])) {
@@ -250,7 +251,7 @@ class RelatorioRentabilidadeController extends Controller
 
             $isInvest = (bool) $exp->project->is_investimento_comercial;
             if ($isInvest) {
-                $byCustomer[$cid]['investimento_custo'] += $amount;
+                $byCustomer[$cid]['investimento_desp'] += $amount;
             }
             $pid = $exp->project_id;
             if (!isset($byCustomer[$cid]['despesas']['projetos'][$pid])) {
@@ -312,7 +313,8 @@ class RelatorioRentabilidadeController extends Controller
                         'is_investimento' => $p['is_investimento'],
                     ], array_values($c['projetos'])),
                 ], array_values($g['consultores'])),
-                'investimento_custo' => round($g['investimento_custo'], 2),
+                'investimento_mo'   => round($g['investimento_mo'], 2),
+                'investimento_desp' => round($g['investimento_desp'], 2),
                 'despesas'        => [
                     'custo'    => round($g['despesas']['custo'], 2),
                     'projetos' => array_map(fn ($p) => [
