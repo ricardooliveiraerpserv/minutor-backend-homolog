@@ -511,11 +511,30 @@ class FolhaPagamentoController extends Controller
             return $rows;
         }
 
-        // 1) Soma na coluna certa (produção/variável) das linhas existentes (por user_id).
+        // Usuários-diretores e mapa matrícula→uid. Linhas SEM user_id (ex.: Bizify, que é
+        // 100% manual e identificada por socio_key/matrícula) só casam por matrícula —
+        // senão o passo 2 cria uma linha de diretor a mais e DUPLICA o diretor.
+        $dirUsers = \App\Models\User::whereIn('id', array_keys($contrib))->get()->keyBy('id');
+        $uidByMatricula = [];
+        foreach ($dirUsers as $du) {
+            $m = trim((string) $du->matricula);
+            if ($m !== '') {
+                $uidByMatricula[$m] = $du->id;
+            }
+        }
+
+        // 1) Soma na coluna certa (produção/variável) das linhas existentes (por user_id,
+        //    ou por matrícula quando a linha não tem user_id).
         $usados = [];
         foreach ($rows as &$row) {
             $uid = $row['user_id'] ?? null;
-            if ($uid !== null && isset($contrib[$uid])) {
+            if ($uid === null) {
+                $m = trim((string) ($row['matricula'] ?? ''));
+                if ($m !== '' && isset($uidByMatricula[$m])) {
+                    $uid = $uidByMatricula[$m];
+                }
+            }
+            if ($uid !== null && isset($contrib[$uid]) && !isset($usados[$uid])) {
                 $c   = $contrib[$uid]['amount'];
                 $col = $contrib[$uid]['col'];
                 $row[$col] = round((float) ($row[$col] ?? 0) + $c, 2);
@@ -531,7 +550,7 @@ class FolhaPagamentoController extends Controller
         // 2) Diretores sem linha na empresa → cria a linha (na coluna certa).
         $faltam = array_diff_key($contrib, $usados);
         if ($faltam) {
-            $users = \App\Models\User::whereIn('id', array_keys($faltam))->get()->keyBy('id');
+            $users = $dirUsers;
             foreach ($faltam as $uid => $info) {
                 $u = $users->get($uid);
                 if (!$u) {
@@ -695,10 +714,19 @@ class FolhaPagamentoController extends Controller
         // edição vinda do grid pra essas linhas (defesa — o FE também não deixa editar).
         $diretoriaUserIds = \App\Models\FechamentoDiretoria::where('year_month', $yearMonth)
             ->pluck('user_id')->map(fn ($i) => (int) $i)->flip();
+        // Matrículas dos diretores — Bizify é manual (socio_key/matrícula), sem user_id,
+        // então a guarda read-only do diretor na Bizify é por matrícula.
+        $diretoriaMatriculas = \App\Models\User::whereIn('id', $diretoriaUserIds->keys())
+            ->pluck('matricula')->map(fn ($m) => trim((string) $m))->filter()->flip();
 
         foreach ($request->input('entries') as $e) {
             if (!empty($e['user_id']) && $diretoriaUserIds->has((int) $e['user_id'])) {
                 continue; // linha de diretor: read-only
+            }
+            // Bizify: linha de diretor é identificada por matrícula (socio_key) → read-only.
+            $eMat = trim((string) ($e['matricula'] ?? $e['socio_key'] ?? ''));
+            if ($eMat !== '' && $diretoriaMatriculas->has($eMat)) {
+                continue;
             }
             $comum = [
                 'dias_trabalhados'   => $e['dias_trabalhados'] ?? 0,
