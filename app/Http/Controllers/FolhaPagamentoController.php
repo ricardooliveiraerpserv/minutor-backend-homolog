@@ -361,8 +361,23 @@ class FolhaPagamentoController extends Controller
             ];
         }
 
+        // Identidades (CPF só-dígitos + matrícula) das linhas já criadas por usuário real
+        // (cooperado/Raho/parceiro). Diretores migraram p/ User + Fechamento Diretoria, mas a
+        // linha-sócio manual LEGADA ainda existe na fechamento_folha → duplicava o diretor.
+        // Suprimimos a linha-sócio que colide por CPF ou matrícula com um usuário já incluído.
+        $cpfDigits = fn ($v) => preg_replace('/\D+/', '', (string) $v);
+        $userCpfs       = collect($rows)->whereNotNull('user_id')->pluck('cpf')->map($cpfDigits)->filter()->flip();
+        $userMatriculas = collect($rows)->whereNotNull('user_id')->pluck('matricula')
+            ->map(fn ($m) => trim((string) $m))->filter()->flip();
+
         // ── Linhas manuais ("Nova linha editável") — inclui os sócios (migrados p/ manual). ──
         foreach ($folhaBySocio as $key => $f) {
+            // Diretor já representado por usuário (cooperado + Fechamento Diretoria): não duplica.
+            $sCpf = $cpfDigits($f->cpf);
+            $sMat = trim((string) $f->matricula);
+            if (($sCpf !== '' && $userCpfs->has($sCpf)) || ($sMat !== '' && $userMatriculas->has($sMat))) {
+                continue;
+            }
             $variavel     = (float) $f->variavel;
             $reemb        = (float) $f->reemb;
             $descontos    = (float) $f->descontos_diversos;
@@ -675,7 +690,16 @@ class FolhaPagamentoController extends Controller
         $rahoId      = self::rahoPartnerId();
         $rahoUserIds = $rahoId ? User::where('partner_id', $rahoId)->pluck('id')->map(fn ($i) => (int) $i)->all() : [];
 
+        // Diretores (têm Fechamento Diretoria no mês) são SOMENTE-LEITURA na folha: identidade
+        // vem do cadastro do usuário e valores do Fechamento Diretoria. Ignoramos qualquer
+        // edição vinda do grid pra essas linhas (defesa — o FE também não deixa editar).
+        $diretoriaUserIds = \App\Models\FechamentoDiretoria::where('year_month', $yearMonth)
+            ->pluck('user_id')->map(fn ($i) => (int) $i)->flip();
+
         foreach ($request->input('entries') as $e) {
+            if (!empty($e['user_id']) && $diretoriaUserIds->has((int) $e['user_id'])) {
+                continue; // linha de diretor: read-only
+            }
             $comum = [
                 'dias_trabalhados'   => $e['dias_trabalhados'] ?? 0,
                 'horas_trabalhadas'  => $e['horas_trabalhadas'] ?? null,
