@@ -228,14 +228,11 @@ class Timesheet extends Model
      */
     public function getEffortHoursAttribute(): string
     {
-        if (!$this->effort_minutes) {
-            return '0:00';
-        }
-
-        $hours = intval($this->effort_minutes / 60);
-        $minutes = $this->effort_minutes % 60;
-
-        return sprintf('%d:%02d', $hours, $minutes);
+        // TEMPO sempre em DECIMAL (ex.: 480min → "8" ; 150min → "2,5" ; 0 → "0").
+        // Vale para todos os perfis/rotinas que exibem este accessor (view, edição, dashboards).
+        $h = (float) ($this->effort_minutes ?? 0) / 60;
+        $s = number_format($h, 2, ',', '');           // "8,00" | "2,50" | "0,00"
+        return rtrim(rtrim($s, '0'), ',') ?: '0';     // "8" | "2,5" | "0"
     }
 
     /**
