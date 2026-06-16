@@ -327,11 +327,48 @@ class RelatorioRentabilidadeController extends Controller
             ];
         }
 
-        // Clientes com recebimento no M+1 mas SEM apontamento Minutor no mês M.
+        // Mapa global CNPJ→cliente (principal + secundários) de TODOS os clientes cadastrados.
+        // Necessário pra casar o recebimento do Keruak com clientes que NÃO tiveram movimento
+        // no mês M (não entram em $byCustomer) — senão o recebido deles (inclusive sob CNPJ
+        // adicional cadastrado) cairia indevidamente como "fora do Minutor".
+        $cnpjToCustomer = [];
+        \App\Models\Customer::with('executive:id,name')
+            ->get(['id', 'name', 'cgc', 'secondary_cgcs', 'executive_id'])
+            ->each(function ($c) use (&$cnpjToCustomer) {
+                collect([$c->cgc])->merge((array) ($c->secondary_cgcs ?? []))
+                    ->map(fn ($x) => preg_replace('/\D/', '', (string) $x))
+                    ->filter()->unique()
+                    ->each(function ($cc) use (&$cnpjToCustomer, $c) {
+                        if (!isset($cnpjToCustomer[$cc])) {
+                            $cnpjToCustomer[$cc] = [
+                                'customer_id' => $c->id,
+                                'cliente'     => $c->name,
+                                'executivo'   => $c->executive->name ?? null,
+                            ];
+                        }
+                    });
+            });
+
+        // Recebimento no M+1 SEM apontamento Minutor no mês M:
+        //  - CNPJ casa com cliente cadastrado (principal/adicional) → consolida no cliente (no_minutor=true);
+        //  - CNPJ não cadastrado em ninguém → "fora do Minutor".
+        $extraByCustomer = [];
         foreach ($keruak as $cnpj => $info) {
             if (isset($usados[$cnpj])) continue;
             $recebido = (float) ($info['receb'][$recebMonth] ?? 0);
             if ($recebido <= 0) continue;
+            $usados[$cnpj] = true;
+
+            $match = $cnpjToCustomer[$cnpj] ?? null;
+            if ($match) {
+                $cid = $match['customer_id'];
+                if (!isset($extraByCustomer[$cid])) {
+                    $extraByCustomer[$cid] = ['info' => $match, 'cnpj' => $cnpj, 'recebido' => 0.0];
+                }
+                $extraByCustomer[$cid]['recebido'] += $recebido;
+                continue;
+            }
+
             $rows[] = [
                 'customer_id'     => null,
                 'cliente'         => $info['name'] ?: '(fora do Minutor)',
@@ -346,6 +383,27 @@ class RelatorioRentabilidadeController extends Controller
                 'margem_real'     => round($recebido, 2),
                 'margem_real_pct' => 100.0,
                 'no_minutor'      => false,
+                'consultores'     => [],
+            ];
+        }
+
+        // Clientes CADASTRADOS sem movimento no mês, mas com recebido (consolidado por cliente).
+        foreach ($extraByCustomer as $cid => $e) {
+            $recebido = round($e['recebido'], 2);
+            $rows[] = [
+                'customer_id'     => $cid,
+                'cliente'         => $e['info']['cliente'],
+                'executivo'       => $e['info']['executivo'],
+                'cnpj'            => $e['cnpj'],
+                'horas'           => 0.0,
+                'receita'         => 0.0,
+                'custo'           => 0.0,
+                'margem'          => 0.0,
+                'margem_pct'      => null,
+                'recebido'        => $recebido,
+                'margem_real'     => $recebido,
+                'margem_real_pct' => $recebido > 0 ? 100.0 : null,
+                'no_minutor'      => true,
                 'consultores'     => [],
             ];
         }
