@@ -595,9 +595,21 @@ class ContractController extends Controller
 
     public function show(Contract $contract): JsonResponse
     {
-        return response()->json(
-            $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name'])
-        );
+        $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name']);
+
+        // Flag p/ legenda verde "Gerou aporte automático": subprojeto faturado gera um aporte
+        // no pai (ContractController@store). Vínculo pelo CÓDIGO do subprojeto na descrição.
+        $contract->generated_aporte = null;
+        if ($contract->parent_project_id && $contract->project_code_preview) {
+            $ap = \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
+                ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $contract->project_code_preview . '%')
+                ->orderByDesc('id')->first(['id', 'project_id']);
+            if ($ap) {
+                $contract->generated_aporte = ['id' => $ap->id, 'parent_id' => $ap->project_id];
+            }
+        }
+
+        return response()->json($contract);
     }
 
     public function update(Request $request, Contract $contract): JsonResponse
@@ -1079,6 +1091,32 @@ class ContractController extends Controller
             'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
             'metadata'      => ['legacy_type' => $request->input('type')],
         ]);
+
+        // Subprojeto faturado: a proposta/aprovação do contrato também alimenta o APORTE
+        // gerado no pai (mantém "no filho e no aporte" mesmo antes do projeto-filho existir).
+        try {
+            if (
+                in_array($request->input('type'), ['proposta', 'aprovacao_cliente'], true)
+                && $contract->parent_project_id && $contract->project_code_preview
+            ) {
+                $aporte = \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
+                    ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $contract->project_code_preview . '%')
+                    ->orderByDesc('id')->first();
+                if ($aporte) {
+                    app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user(), [
+                        'entity_type'   => 'HOUR_CONTRIBUTION',
+                        'entity_id'     => $aporte->id,
+                        'category'      => 'proposal',
+                        'storage_path'  => $path,
+                        'original_name' => $file->getClientOriginalName(),
+                        'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
+                        'metadata'      => ['mirrored' => true, 'from' => 'contract', 'contract_id' => $contract->id],
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('mirror proposta contrato->aporte falhou', ['contract_id' => $contract->id, 'err' => $e->getMessage()]);
+        }
 
         return response()->json($attachment, 201);
     }
@@ -2095,6 +2133,12 @@ class ContractController extends Controller
             'project_id'       => $contract->project_id,
             'project_code'     => $contract->project?->code,
             'project_status'   => $contract->project?->status,
+            // Subprojeto faturado que gerou aporte automático no pai → badge "Gerou aporte" na capa.
+            'gerou_aporte'     => ($contract->parent_project_id && $contract->project_code_preview)
+                ? \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
+                    ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $contract->project_code_preview . '%')
+                    ->exists()
+                : false,
             'is_complete'      => $contract->isKanbanComplete(),
             'created_at'       => $contract->created_at,
             'is_aditivo'       => (bool) $contract->is_aditivo,
