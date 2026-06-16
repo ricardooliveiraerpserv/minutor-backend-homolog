@@ -244,7 +244,21 @@ class TimesheetController extends Controller
                 $applyProject  = (!$field || $field === 'project')  && $defaultProjectId;
 
                 if ($applyUser)     $q->orWhere('timesheets.user_id',     (int) $defaultUserId);
-                if ($applyCustomer) $q->orWhere('timesheets.customer_id', (int) $defaultCustomerId);
+                // Cliente padrão (ERPSERV) NÃO é "não identificado" sozinho — a ERPSERV
+                // tem projetos internos legítimos (ex.: Investimento Cloud). Só conta
+                // quando o PROJETO também é o padrão (PROJETO PADRÃO) ou está vazio —
+                // que é o sinal real do fallback do Movidesk.
+                if ($applyCustomer) {
+                    $q->orWhere(function ($qq) use ($defaultCustomerId, $defaultProjectId) {
+                        $qq->where('timesheets.customer_id', (int) $defaultCustomerId)
+                           ->where(function ($qp) use ($defaultProjectId) {
+                               $qp->whereNull('timesheets.project_id');
+                               if ($defaultProjectId) {
+                                   $qp->orWhere('timesheets.project_id', (int) $defaultProjectId);
+                               }
+                           });
+                    });
+                }
                 if ($applyProject)  $q->orWhere('timesheets.project_id',  (int) $defaultProjectId);
                 if (!$applyUser && !$applyCustomer && !$applyProject) {
                     $q->whereRaw('1 = 0');
