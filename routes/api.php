@@ -809,6 +809,9 @@ Route::prefix('v1')->group(function () {
             // 💰 Relatórios novos (pagamentos consultores+parceiros; rentabilidade consultor×projeto)
             Route::get('/relatorios/pagamentos/{yearMonth}',                             [\App\Http\Controllers\RelatorioPagamentoController::class, 'pagamentos']);
             Route::get('/relatorios/rentabilidade/clientes/{yearMonth}',                 [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'clientes']);
+            // Ajustes iniciais (custo/receita) por cliente × ano — antes do catch-all {yearMonth}.
+            Route::get('/relatorios/rentabilidade/initials/{year}',                      [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'initials']);
+            Route::put('/relatorios/rentabilidade/initials',                             [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'saveInitial']);
             Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
