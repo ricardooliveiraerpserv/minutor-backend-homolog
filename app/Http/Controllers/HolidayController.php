@@ -57,6 +57,13 @@ class HolidayController extends Controller
 
     public function destroy(Holiday $holiday): JsonResponse
     {
+        // Feriado nacional (importado) não pode ser apagado — apenas desativado (active=false).
+        if ($holiday->type === 'national') {
+            return response()->json([
+                'message' => 'Feriado nacional importado não pode ser excluído. Desative-o se necessário.',
+            ], 422);
+        }
+
         $holiday->delete();
         return response()->json(null, 204);
     }
