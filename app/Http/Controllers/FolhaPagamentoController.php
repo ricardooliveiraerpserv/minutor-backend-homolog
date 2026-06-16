@@ -523,17 +523,15 @@ class FolhaPagamentoController extends Controller
             }
         }
 
-        // 1) Soma na coluna certa (produção/variável) das linhas existentes (por user_id,
-        //    ou por matrícula quando a linha não tem user_id).
+        // 1) Linhas COM user_id (ERPSERV cooperado): soma a contribuição na própria linha
+        //    (a identidade dessa linha já vem do cadastro). Linhas SEM user_id que casam por
+        //    matrícula são linhas manuais LEGADAS do diretor (Bizify) — descartadas aqui pra
+        //    que o passo 2 recrie a linha 100% a partir do cadastro + Fechamento Diretoria,
+        //    igual à ERPSERV (identidade travada, valores do Fechamento Diretoria).
         $usados = [];
+        $descartar = [];
         foreach ($rows as &$row) {
             $uid = $row['user_id'] ?? null;
-            if ($uid === null) {
-                $m = trim((string) ($row['matricula'] ?? ''));
-                if ($m !== '' && isset($uidByMatricula[$m])) {
-                    $uid = $uidByMatricula[$m];
-                }
-            }
             if ($uid !== null && isset($contrib[$uid]) && !isset($usados[$uid])) {
                 $c   = $contrib[$uid]['amount'];
                 $col = $contrib[$uid]['col'];
@@ -543,9 +541,17 @@ class FolhaPagamentoController extends Controller
                 $row['liquido'] = round((float) ($row['liquido'] ?? 0) + $c, 2);
                 $row['from_diretoria'] = true;
                 $usados[$uid] = true;
+            } elseif ($uid === null) {
+                $m = trim((string) ($row['matricula'] ?? ''));
+                if ($m !== '' && isset($uidByMatricula[$m])) {
+                    $descartar[$row['row_key']] = true; // linha manual legada do diretor → some
+                }
             }
         }
         unset($row);
+        if ($descartar) {
+            $rows = array_values(array_filter($rows, fn ($r) => !isset($descartar[$r['row_key']])));
+        }
 
         // 2) Diretores sem linha na empresa → cria a linha (na coluna certa).
         $faltam = array_diff_key($contrib, $usados);
