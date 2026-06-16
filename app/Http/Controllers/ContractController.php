@@ -120,6 +120,9 @@ class ContractController extends Controller
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
             'project_code_preview'   => 'nullable|string|max:20',
+            // Subprojeto faturado: além do card do filho (Início Autorizado), gera um card de
+            // aporte (Novo Contrato) no projeto pai, valorado pelas horas/valor-hora do filho.
+            'sera_faturado'          => 'boolean',
             'contacts'               => 'nullable|array',
             'contacts.*.name'        => 'required|string',
             'contacts.*.cargo'       => 'nullable|string',
@@ -127,12 +130,17 @@ class ContractController extends Controller
             'contacts.*.phone'       => 'nullable|string',
         ]);
 
-        $contract = DB::transaction(function () use ($validated, $request) {
+        // Aporte do subprojeto faturado (se houver) — notificado APÓS o commit, igual aos
+        // demais avisos. [project, contribution] pra reusar o workflow padrão de aporte.
+        $aporteToNotify = null;
+
+        $contract = DB::transaction(function () use ($validated, $request, &$aporteToNotify) {
             // Subprojeto (tem parent_project_id): regra antiga — nasce em "Início Autorizado",
             // não em "Novo Contrato" (o contrato pai já está aprovado; o filho não passa pela
             // revisão de novo contrato). Demais contratos nascem em rascunho/backlog.
             $isSubproject = !empty($validated['parent_project_id']);
-            $data = collect($validated)->except('contacts')->merge([
+            // 'sera_faturado' não é coluna de Contract — é só o gatilho do aporte do filho.
+            $data = collect($validated)->except(['contacts', 'sera_faturado'])->merge([
                 'created_by_id' => auth()->id(),
                 'status'        => $isSubproject ? Contract::STATUS_INICIO_AUTORIZADO : Contract::STATUS_RASCUNHO,
                 'kanban_status' => $isSubproject ? Contract::KANBAN_INICIO_AUTORIZADO : Contract::KANBAN_BACKLOG,
@@ -151,6 +159,33 @@ class ContractController extends Controller
                 ContractContact::create(array_merge($c, ['contract_id' => $contract->id]));
             }
 
+            // Contatos do contrato espelham no cadastro da empresa (upsert; nunca deleta).
+            $this->syncContactsToCustomerRegistry((int) $validated['customer_id'], $validated['contacts'] ?? []);
+
+            // Subprojeto FATURADO → nasce também um card de APORTE em "Novo Contrato".
+            // O Kanban só exibe aporte de projeto PAI, então o aporte é anexado ao pai,
+            // valorado pelas horas × valor-hora do filho (descrição referencia o subprojeto).
+            // A notificação segue o MESMO workflow padrão de aporte (disparada pós-commit) —
+            // por isso o subprojeto faturado gera DOIS avisos: início autorizado + aporte.
+            if ($isSubproject && !empty($validated['sera_faturado'])) {
+                $parent = Project::find($validated['parent_project_id']);
+                $horas  = (float) ($validated['horas_contratadas'] ?? 0);
+                $rate   = (float) ($validated['valor_hora'] ?? ($parent?->hourly_rate ?? 0));
+                if ($parent && $horas > 0 && $rate > 0) {
+                    $ref = trim(($validated['project_code_preview'] ?? '') . ' ' . ($validated['project_name'] ?? ''));
+                    $contribution = $parent->hourContributions()->create([
+                        'contributed_hours' => $horas,
+                        'hourly_rate'       => $rate,
+                        'motivo'            => 'aporte',
+                        'description'       => 'Aporte ref. subprojeto faturado' . ($ref !== '' ? " ({$ref})" : ''),
+                        'kanban_status'     => \App\Models\HourContribution::KANBAN_NOVO,
+                        'contributed_by'    => auth()->id(),
+                        'contributed_at'    => now(),
+                    ]);
+                    $aporteToNotify = ['project' => $parent, 'contribution' => $contribution];
+                }
+            }
+
             return $contract;
         });
 
@@ -165,7 +200,82 @@ class ContractController extends Controller
             $this->notifyContractCreated($contract);
         }
 
+        // Subprojeto faturado: dispara o workflow padrão de aporte (2º aviso).
+        if ($aporteToNotify) {
+            $this->notifyNewAporte($aporteToNotify['project'], $aporteToNotify['contribution']);
+        }
+
         return response()->json($contract->load(['customer:id,name', 'contacts', 'attachments']), 201);
+    }
+
+    /**
+     * Comunica um novo aporte de horas seguindo o mesmo padrão do HourContributionController:
+     * aporte em projeto PAI usa o workflow 'contract.aporte' (cliente + internos); em filho,
+     * 'contract.aporte.child' (só internos). Síncrono + best-effort (não bloqueia a criação).
+     */
+    private function notifyNewAporte(Project $project, \App\Models\HourContribution $contribution): void
+    {
+        try {
+            $isChild = $project->parent_project_id !== null;
+            $workflowKey = $isChild ? 'contract.aporte.child' : 'contract.aporte';
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+                'project'      => $project,
+                'contribution' => $contribution,
+                'actor'        => \App\Models\User::find($contribution->contributed_by),
+                'is_child'     => $isChild,
+            ]);
+
+            if (empty($rcpt['to'])) {
+                return;
+            }
+
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $rcpt['cc']));
+        } catch (\Throwable $e) {
+            \Log::warning('Aporte (subprojeto faturado) notification falhou', [
+                'project_id'      => $project->id,
+                'contribution_id' => $contribution->id ?? null,
+                'err'             => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Espelha os contatos informados no contrato no cadastro de contatos da EMPRESA
+     * (`customer_contacts`). Faz UPSERT por cliente: casa por e-mail (se houver) ou por
+     * nome (case-insensitive); cria os novos e atualiza os existentes. NUNCA deleta do
+     * cadastro — é um registro compartilhado entre contratos/projetos do cliente.
+     */
+    private function syncContactsToCustomerRegistry(int $customerId, array $contacts): void
+    {
+        foreach ($contacts as $c) {
+            $name = trim((string) ($c['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $email = trim((string) ($c['email'] ?? ''));
+
+            $match = \App\Models\CustomerContact::where('customer_id', $customerId)
+                ->when(
+                    $email !== '',
+                    fn ($q) => $q->whereRaw('LOWER(email) = ?', [mb_strtolower($email)]),
+                    fn ($q) => $q->whereRaw('LOWER(name) = ?', [mb_strtolower($name)]),
+                )
+                ->first();
+
+            $data = [
+                'name'  => $name,
+                'cargo' => ($c['cargo'] ?? '') !== '' ? $c['cargo'] : null,
+                'email' => $email !== '' ? $email : null,
+                'phone' => ($c['phone'] ?? '') !== '' ? $c['phone'] : null,
+            ];
+
+            if ($match) {
+                $match->update($data);
+            } else {
+                \App\Models\CustomerContact::create(array_merge($data, ['customer_id' => $customerId]));
+            }
+        }
     }
 
     /**
@@ -537,6 +647,8 @@ class ContractController extends Controller
                 foreach ($validated['contacts'] ?? [] as $c) {
                     ContractContact::create(array_merge($c, ['contract_id' => $contract->id]));
                 }
+                // Espelha no cadastro da empresa (upsert; nunca deleta do cadastro).
+                $this->syncContactsToCustomerRegistry((int) $contract->customer_id, $validated['contacts'] ?? []);
             }
         });
 
