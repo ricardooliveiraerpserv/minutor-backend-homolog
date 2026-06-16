@@ -412,4 +412,44 @@ class RelatorioRentabilidadeController extends Controller
 
         return response()->json(['data' => ['rows' => $rows, 'receb_month' => $recebMonth]]);
     }
+
+    /**
+     * Ajustes iniciais (custo/receita) por cliente do ANO. Mapa { customer_id: {custo_inicial, receita_inicial} }.
+     * O FE soma esses valores UMA vez no agregado anual (a visão anual é a soma dos meses no FE).
+     */
+    public function initials(int $year): JsonResponse
+    {
+        $map = [];
+        foreach (\App\Models\CustomerRentabInitial::where('year', $year)->get(['customer_id', 'custo_inicial', 'receita_inicial']) as $r) {
+            $map[$r->customer_id] = [
+                'custo_inicial'   => (float) $r->custo_inicial,
+                'receita_inicial' => (float) $r->receita_inicial,
+            ];
+        }
+        return response()->json(['data' => $map]);
+    }
+
+    /**
+     * Upsert do ajuste inicial de um cliente em um ano.
+     */
+    public function saveInitial(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'customer_id'     => 'required|exists:customers,id',
+            'year'            => 'required|integer|min:2000|max:2100',
+            'custo_inicial'   => 'nullable|numeric|min:0',
+            'receita_inicial' => 'nullable|numeric|min:0',
+        ]);
+
+        $rec = \App\Models\CustomerRentabInitial::updateOrCreate(
+            ['customer_id' => $v['customer_id'], 'year' => $v['year']],
+            ['custo_inicial' => $v['custo_inicial'] ?? 0, 'receita_inicial' => $v['receita_inicial'] ?? 0],
+        );
+
+        return response()->json(['ok' => true, 'data' => [
+            'customer_id'     => $rec->customer_id,
+            'custo_inicial'   => (float) $rec->custo_inicial,
+            'receita_inicial' => (float) $rec->receita_inicial,
+        ]]);
+    }
 }
