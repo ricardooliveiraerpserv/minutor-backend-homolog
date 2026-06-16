@@ -1246,7 +1246,77 @@ class ProjectController extends Controller
 
         $this->invalidateListCache('projects');
 
+        // Subprojeto faturado que gerou aporte automático no pai → flag p/ legenda verde no filho.
+        $project->generated_aporte = null;
+        if ($project->parent_project_id && $project->code) {
+            $ap = \App\Models\HourContribution::where('project_id', $project->parent_project_id)
+                ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $project->code . '%')
+                ->orderByDesc('id')
+                ->first(['id', 'project_id', 'kanban_status']);
+            if ($ap) {
+                $project->generated_aporte = ['id' => $ap->id, 'parent_id' => $ap->project_id, 'kanban_status' => $ap->kanban_status];
+            }
+        }
+
+        // Subprojeto faturado: garante que a proposta exista NO FILHO e NO APORTE gerado
+        // (espelhamento idempotente, self-healing/backfill). O anexo pode ter chegado via
+        // aporte, contrato ou projeto — pega de onde estiver e replica nos dois.
+        try {
+            $this->syncFaturadoSubprojectProposta($project);
+        } catch (\Throwable $e) {
+            \Log::warning('syncFaturadoSubprojectProposta falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
+        }
+
         return response()->json($project);
+    }
+
+    /**
+     * Espelha a "proposta/aprovação" entre o subprojeto faturado e o aporte que ele gerou
+     * no projeto pai, mantendo os dois com o mesmo anexo. Idempotente (registerExisting
+     * deduplica por checksum) e best-effort. Vínculo pelo CÓDIGO do filho na descrição do
+     * aporte ("Aporte ref. subprojeto faturado (CÓDIGO ...)").
+     */
+    private function syncFaturadoSubprojectProposta(Project $project): void
+    {
+        if (!$project->parent_project_id || empty($project->code)) {
+            return;
+        }
+        $aporte = \App\Models\HourContribution::where('project_id', $project->parent_project_id)
+            ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $project->code . '%')
+            ->orderByDesc('id')
+            ->first();
+        if (!$aporte) {
+            return;
+        }
+
+        $att = \App\Models\Attachment::query()->where('entity_type', 'HOUR_CONTRIBUTION')->where('entity_id', $aporte->id)
+            ->whereNull('deleted_at')->orderByDesc('id')->first();
+        if (!$att && $project->contract_id) {
+            $att = \App\Models\Attachment::query()->where('entity_type', 'CONTRACT')->where('entity_id', $project->contract_id)
+                ->whereNull('deleted_at')->orderByDesc('id')->first();
+        }
+        if (!$att) {
+            $att = \App\Models\Attachment::query()->where('entity_type', 'PROJECT')->where('entity_id', $project->id)
+                ->whereNull('deleted_at')->orderByDesc('id')->first();
+        }
+        if (!$att) {
+            return;
+        }
+
+        $svc   = app(\App\Attachments\AttachmentService::class);
+        $actor = \App\Models\User::find($att->uploaded_by) ?? \App\Models\User::find($aporte->contributed_by);
+        if (!$actor) {
+            return;
+        }
+        $payload = [
+            'storage_path'  => $att->storage_path,
+            'original_name' => $att->original_name,
+            'mime_type'     => $att->mime_type,
+            'category'      => 'proposal',
+            'metadata'      => ['mirrored' => true, 'from_attachment_id' => $att->id],
+        ];
+        $svc->registerExisting($actor, array_merge($payload, ['entity_type' => 'PROJECT', 'entity_id' => $project->id]));
+        $svc->registerExisting($actor, array_merge($payload, ['entity_type' => 'HOUR_CONTRIBUTION', 'entity_id' => $aporte->id]));
     }
 
     /**
