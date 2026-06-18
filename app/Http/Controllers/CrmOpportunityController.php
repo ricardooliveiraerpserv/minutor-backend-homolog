@@ -242,7 +242,15 @@ class CrmOpportunityController extends Controller
     {
         $v = $request->validate($this->rules(false));
         $oldStage = $opportunity->stage_id;
+        $oldValor = (float) $opportunity->valor;
         $opportunity->update($v);
+        if (array_key_exists('valor', $v) && (float) $opportunity->valor !== $oldValor) {
+            CrmOpportunityEvent::log($opportunity->id, 'valor_alterado', [
+                'field'      => 'valor',
+                'from_value' => number_format($oldValor, 2, '.', ''),
+                'to_value'   => number_format((float) $opportunity->valor, 2, '.', ''),
+            ]);
+        }
         if (array_key_exists('stage_id', $v) && (int) $v['stage_id'] !== (int) $oldStage) {
             $this->applyStage($opportunity, (int) $v['stage_id'], $oldStage, $request->input('motivo'));
         }
