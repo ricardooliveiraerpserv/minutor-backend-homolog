@@ -65,6 +65,10 @@ class FechadoController extends Controller
         $customerId = $user->customer_id
             ?? ($user->isAdmin() && $request->has('customer_id') ? $request->get('customer_id') : null);
 
+        // Cliente NÃO pode ver informação de horas em contrato Fechado (apenas
+        // valores). Zera os campos de horas; mantém valores/aportes monetários.
+        $isCliente = $user->isCliente();
+
         $month = (int) ($request->get('month') ?: now()->month);
         $year  = (int) ($request->get('year')  ?: now()->year);
 
@@ -95,11 +99,11 @@ class FechadoController extends Controller
                 ->with(['project:id,name,code', 'contributedBy:id,name,email'])
                 ->orderBy('contributed_at', 'desc')
                 ->get()
-                ->map(function ($c) {
+                ->map(function ($c) use ($isCliente) {
                     return [
                         'id'                => 'contribution_' . $c->id,
                         'project'           => $c->project ? ['id' => $c->project->id, 'name' => $c->project->name, 'code' => $c->project->code] : null,
-                        'contributed_hours' => $c->contributed_hours,
+                        'contributed_hours' => $isCliente ? null : $c->contributed_hours,
                         'hourly_rate'       => (float) $c->hourly_rate,
                         'total_value'       => $c->getTotalValue(),
                         'description'       => $c->description,
@@ -113,10 +117,10 @@ class FechadoController extends Controller
             'success' => true,
             'message' => 'Dados do dashboard Fechado obtidos com sucesso',
             'data'    => [
-                'base_hours'                => round($projects->sum(fn ($p) => (float) ($p->sold_hours ?? 0)), 1),
-                'contribution_hours'        => round($projects->sum(fn ($p) => (float) $p->getTotalAvailableHours() - (float) ($p->sold_hours ?? 0)), 1),
-                'consumed_hours'            => round($consumedHours, 1),
-                'month_consumed_hours'      => round($monthConsumedHours, 1),
+                'base_hours'                => $isCliente ? null : round($projects->sum(fn ($p) => (float) ($p->sold_hours ?? 0)), 1),
+                'contribution_hours'        => $isCliente ? null : round($projects->sum(fn ($p) => (float) $p->getTotalAvailableHours() - (float) ($p->sold_hours ?? 0)), 1),
+                'consumed_hours'            => $isCliente ? null : round($consumedHours, 1),
+                'month_consumed_hours'      => $isCliente ? null : round($monthConsumedHours, 1),
                 'project_count'             => $projects->count(),
                 'month_project_count'       => $projects->filter(function ($p) use ($month, $year) {
                     if (!$p->start_date) return false;
@@ -146,6 +150,10 @@ class FechadoController extends Controller
 
         $customerId = $user->customer_id
             ?? ($user->isAdmin() && $request->has('customer_id') ? $request->get('customer_id') : null);
+
+        // Cliente NÃO pode ver informação de horas em contrato Fechado — zera os
+        // campos de horas na resposta (defesa no backend, além de esconder no FE).
+        $isCliente = $user->isCliente();
 
         $month = (int) ($request->get('month') ?: now()->month);
         $year  = (int) ($request->get('year')  ?: now()->year);
@@ -179,7 +187,7 @@ class FechadoController extends Controller
             })->values();
         }
 
-        $data = $projects->map(function ($p) use ($month, $year) {
+        $data = $projects->map(function ($p) use ($month, $year, $isCliente) {
             $inMonth = false;
             if ($p->start_date) {
                 $d = \Carbon\Carbon::parse($p->start_date);
@@ -199,9 +207,9 @@ class FechadoController extends Controller
                 'name'               => $p->name,
                 'code'               => $p->code,
                 'status'             => $p->status,
-                'base_hours'         => (float) ($p->sold_hours ?? 0),
-                'contribution_hours' => $contributionHours,
-                'sold_hours'         => (float) $p->getTotalAvailableHours(),
+                'base_hours'         => $isCliente ? null : (float) ($p->sold_hours ?? 0),
+                'contribution_hours' => $isCliente ? null : $contributionHours,
+                'sold_hours'         => $isCliente ? null : (float) $p->getTotalAvailableHours(),
                 'start_date'         => $p->start_date ? \Carbon\Carbon::parse($p->start_date)->format('Y-m-d') : null,
                 'in_month'           => $inMonth,
             ];

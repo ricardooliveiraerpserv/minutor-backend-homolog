@@ -206,6 +206,14 @@ class ClientPortalController extends Controller
         };
     }
 
+    // Projeto de contrato Fechado — cliente NÃO vê horas (sem controle de
+    // saldo/consumo). Fica fora dos agregados de horas e tem horas zeradas na lista.
+    private function isFechado($p): bool
+    {
+        $type = mb_strtolower($p->contract_type_display ?? ($p->contractType->name ?? ''));
+        return str_contains($type, 'fechad');
+    }
+
     private function buildOverview(iterable $projects, $loggedMinutes): array
     {
         $totalSold     = 0;
@@ -213,12 +221,14 @@ class ClientPortalController extends Controller
         $totalValue    = 0;
 
         foreach ($projects as $p) {
+            if ($this->isFechado($p)) continue; // Fechado fora do saldo de horas
             $sold = $p->sold_hours ?? 0;
             $consumed = ($loggedMinutes[$p->id] ?? 0) / 60;
 
             // Incluir filhos também (exceto subprojetos Auster históricos)
             foreach ($p->childProjects ?? [] as $child) {
                 if ($child->isAusterFrozen()) continue;
+                if ($this->isFechado($child)) continue;
                 $sold     += $child->sold_hours ?? 0;
                 $consumed += ($loggedMinutes[$child->id] ?? 0) / 60;
                 $totalValue += ($child->sold_hours ?? 0) * ($child->hourly_rate ?? 0);
@@ -260,6 +270,7 @@ class ClientPortalController extends Controller
         }
 
         foreach ($allProjects as $p) {
+            if ($this->isFechado($p)) continue; // Fechado não entra no resumo por contrato (horas)
             $typeName = $p->contract_type_display ?? ($p->contractType->name ?? 'Sem tipo');
             $sold     = (float)($p->sold_hours ?? 0);
             $consumed = ($loggedMinutes[$p->id] ?? 0) / 60;
@@ -307,6 +318,8 @@ class ClientPortalController extends Controller
         $list = [];
 
         foreach ($projects as $p) {
+            // Fechado: cliente não vê horas → zera sold/consumed/balance e marca is_closed.
+            $isClosed = $this->isFechado($p);
             $sold     = (float)($p->sold_hours ?? 0);
             $consumed = ($loggedMinutes[$p->id] ?? 0) / 60;
             $balance  = round($sold - $consumed, 1);
@@ -316,23 +329,26 @@ class ClientPortalController extends Controller
             $status = 'ok';
             if ($pct >= 90 || $balance < 0) $status = 'critical';
             elseif ($pct >= 70) $status = 'warning';
+            if ($isClosed) $status = 'closed';
 
             $children = [];
             foreach ($p->childProjects ?? [] as $child) {
+                $cIsClosed = $this->isFechado($child);
                 $cSold     = (float)($child->sold_hours ?? 0);
                 $cConsumed = ($loggedMinutes[$child->id] ?? 0) / 60;
                 $cBalance  = round($cSold - $cConsumed, 1);
                 $cPct      = $cSold > 0 ? round(($cConsumed / $cSold) * 100, 1) : 0;
-                $cStatus   = $cPct >= 90 || $cBalance < 0 ? 'critical' : ($cPct >= 70 ? 'warning' : 'ok');
+                $cStatus   = $cIsClosed ? 'closed' : ($cPct >= 90 || $cBalance < 0 ? 'critical' : ($cPct >= 70 ? 'warning' : 'ok'));
 
                 $children[] = [
                     'id'              => $child->id,
                     'name'            => $child->name,
                     'status_display'  => $child->status_display,
-                    'sold_hours'      => $cSold,
-                    'consumed_hours'  => round($cConsumed, 1),
-                    'balance_hours'   => $cBalance,
-                    'consumption_pct' => $cPct,
+                    'is_closed'       => $cIsClosed,
+                    'sold_hours'      => $cIsClosed ? null : $cSold,
+                    'consumed_hours'  => $cIsClosed ? null : round($cConsumed, 1),
+                    'balance_hours'   => $cIsClosed ? null : $cBalance,
+                    'consumption_pct' => $cIsClosed ? null : $cPct,
                     'health'          => $cStatus,
                     'contract_type'   => $child->contract_type_display,
                     'is_sustentacao'  => str_contains($normalize($child->contract_type_display ?? ''), 'sustenta'),
@@ -344,10 +360,11 @@ class ClientPortalController extends Controller
                 'name'            => $p->name,
                 'code'            => $p->code,
                 'status_display'  => $p->status_display,
-                'sold_hours'      => $sold,
-                'consumed_hours'  => round($consumed, 1),
-                'balance_hours'   => $balance,
-                'consumption_pct' => $pct,
+                'is_closed'       => $isClosed,
+                'sold_hours'      => $isClosed ? null : $sold,
+                'consumed_hours'  => $isClosed ? null : round($consumed, 1),
+                'balance_hours'   => $isClosed ? null : $balance,
+                'consumption_pct' => $isClosed ? null : $pct,
                 'health'          => $status,
                 'contract_type'   => $p->contract_type_display,
                 'is_sustentacao'  => $isSust,
