@@ -102,6 +102,11 @@ class PermissionService
         'consultant_groups.view',
         // Follow Up (pendências/compromissos)
         'followups.view', 'followups.view_all', 'followups.manage',
+        // CRM (Fase 1)
+        'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
+        'crm.opportunities.view', 'crm.opportunities.view_all',
+        'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
+        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
         // Parceiros
         'partners.view', 'partners.manage',
         // Usuários
@@ -160,6 +165,11 @@ class PermissionService
             'reports.view', 'reports.export',
             // Configurações
             'settings.view',
+                    // CRM (gestão comercial)
+            'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
+            'crm.opportunities.view', 'crm.opportunities.view_all',
+            'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
+            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
         ];
     }
 
