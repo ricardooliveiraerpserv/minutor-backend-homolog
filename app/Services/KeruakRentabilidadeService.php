@@ -16,7 +16,8 @@ use Illuminate\Support\Facades\Log;
 class KeruakRentabilidadeService
 {
     private const DEFAULT_URL = 'https://app.keruak.com/cgi-bin/Relatorios/powerbi?id=ZXJwc2VydmNvO0ZBOTJBNTE0LTE0RkUtRUYxMS05Q0QxLTAyMkJFMEVBOEFDOQ==';
-    private const CACHE_KEY    = 'keruak:recebido-map';
+    // v2: passou a guardar 'titulos' por CNPJ (drill-down do Valor Recebido).
+    private const CACHE_KEY    = 'keruak:recebido-map:v2';
 
     /**
      * @return array<string, array{name: string, receb: array<string, float>}>
@@ -71,12 +72,61 @@ class KeruakRentabilidadeService
             }
             $ym = $mm[2] . '-' . $mm[1];
 
+            // Emissão "MM-YYYY" -> "YYYY-MM" (col 2). Empresa (col 5) e Observação
+            // (col 6, normalmente o código/descrição do projeto) são opcionais.
+            $emissaoRaw = trim(strip_tags($cells[2] ?? ''));
+            $emissao = preg_match('/^(\d{2})-(\d{4})$/', $emissaoRaw, $me) ? ($me[2] . '-' . $me[1]) : null;
+            $empresa    = trim(html_entity_decode(strip_tags($cells[5] ?? '')));
+            $observacao = trim(html_entity_decode(strip_tags($cells[6] ?? '')));
+
             if (!isset($out[$cnpj])) {
-                $out[$cnpj] = ['name' => $name, 'receb' => []];
+                $out[$cnpj] = ['name' => $name, 'receb' => [], 'titulos' => []];
             }
             $out[$cnpj]['receb'][$ym] = round(($out[$cnpj]['receb'][$ym] ?? 0) + $valor, 2);
+            // Detalhe por título — usado pelo drill-down do "Valor Recebido".
+            $out[$cnpj]['titulos'][] = [
+                'emissao'     => $emissao,
+                'recebimento' => $ym,
+                'valor'       => round($valor, 2),
+                'empresa'     => $empresa,
+                'observacao'  => $observacao,
+            ];
         }
 
         return $out;
+    }
+
+    /**
+     * Títulos do Keruak para um conjunto de CNPJs, filtrados pelos meses de
+     * recebimento (YYYY-MM). Usado pelo drill-down da célula "Valor Recebido".
+     *
+     * @param string[] $cnpjs        CNPJs (só dígitos)
+     * @param string[] $recebMonths  meses de recebimento YYYY-MM (vazio = todos)
+     * @return array{titulos: array<int, array<string, mixed>>, total: float}
+     */
+    public function titulos(array $cnpjs, array $recebMonths = [], bool $fresh = false): array
+    {
+        $map = $this->recebido($fresh);
+        $months = array_flip(array_filter($recebMonths));
+
+        $titulos = [];
+        $total = 0.0;
+        foreach (array_unique(array_filter($cnpjs)) as $cnpj) {
+            $cnpj = preg_replace('/\D/', '', (string) $cnpj);
+            foreach (($map[$cnpj]['titulos'] ?? []) as $t) {
+                if ($months && !isset($months[$t['recebimento']])) {
+                    continue;
+                }
+                $titulos[] = $t + ['cnpj' => $cnpj, 'cliente' => $map[$cnpj]['name'] ?? null];
+                $total += (float) $t['valor'];
+            }
+        }
+
+        // Mais recentes primeiro; dentro do mês, maior valor primeiro.
+        usort($titulos, function ($a, $b) {
+            return [$b['recebimento'], $b['valor']] <=> [$a['recebimento'], $a['valor']];
+        });
+
+        return ['titulos' => $titulos, 'total' => round($total, 2)];
     }
 }
