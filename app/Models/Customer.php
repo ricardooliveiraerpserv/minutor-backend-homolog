@@ -27,7 +27,15 @@ class Customer extends Model
         'fechamento_email',
         'emails_administrativos',
         'secondary_cgcs',
+        'crm_status',
     ];
+
+    public const CRM_STATUSES = ['lead', 'prospect', 'cliente', 'contrato_ativo', 'em_renovacao', 'inativo'];
+    public const CGC_REQUIRED_STATUSES = ['cliente', 'contrato_ativo', 'em_renovacao'];
+    public static function statusRequiresCgc(?string $status): bool
+    {
+        return in_array($status, self::CGC_REQUIRED_STATUSES, true);
+    }
 
     /**
      * The attributes that should be cast.
@@ -71,7 +79,7 @@ class Customer extends Model
      */
     public function isValidCgc(): bool
     {
-        $cgc = preg_replace('/[^0-9]/', '', $this->cgc);
+        $cgc = preg_replace('/[^0-9]/', '', $this->cgc ?? '');
         
         // Verifica se é CPF (11 dígitos)
         if (strlen($cgc) === 11) {
@@ -156,7 +164,7 @@ class Customer extends Model
      */
     public function getFormattedCgcAttribute(): string
     {
-        $cgc = preg_replace('/[^0-9]/', '', $this->cgc);
+        $cgc = preg_replace('/[^0-9]/', '', $this->cgc ?? '');
         
         if (strlen($cgc) === 11) {
             // Formata como CPF: 000.000.000-00
@@ -183,7 +191,7 @@ class Customer extends Model
      */
     public function getCgcTypeAttribute(): string
     {
-        $cgc = preg_replace('/[^0-9]/', '', $this->cgc);
+        $cgc = preg_replace('/[^0-9]/', '', $this->cgc ?? '');
         
         if (strlen($cgc) === 11) {
             return 'CPF';
@@ -224,4 +232,14 @@ class Customer extends Model
     {
         return $this->hasMany(CustomerContact::class);
     }
-} 
+
+    public function crmProfile(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(CustomerCrmProfile::class);
+    }
+
+    public function tags(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(CrmTag::class, 'customer_tag');
+    }
+}

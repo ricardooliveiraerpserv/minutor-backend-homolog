@@ -51,6 +51,7 @@ class User extends Authenticatable
         'rate_type',
         'daily_hours',
         'consultant_type',
+        'is_crm_responsavel',
         'contract_type',
         // Folha de pagamento (planilha de importação)
         'full_name',
@@ -126,6 +127,7 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'is_crm_responsavel' => 'boolean',
             'is_bizify' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',

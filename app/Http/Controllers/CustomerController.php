@@ -193,10 +193,15 @@ class CustomerController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        // Item 1 (Opção A): CNPJ é obrigatório só para cliente/contrato_ativo.
+        // Sem crm_status informado = criação administrativa de cliente → obrigatório.
+        $status = $request->input('crm_status', 'cliente');
+        $cgcRequired = Customer::statusRequiresCgc($status);
+
         $validated = $request->validate([
             'name' => 'required|string|max:255|min:2',
             'company_name' => 'nullable|string|max:255',
-            'cgc' => 'required|string|unique:customers,cgc,NULL,id,deleted_at,NULL',
+            'cgc' => [$cgcRequired ? 'required' : 'nullable', 'string', 'unique:customers,cgc,NULL,id,deleted_at,NULL'],
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
@@ -208,35 +213,34 @@ class CustomerController extends Controller
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
             'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
+            'cgc.required' => 'O CNPJ/CPF é obrigatório para clientes.',
         ]);
         // emails_administrativos é gravado via setAdminEmails (sincroniza fechamento_email).
         unset($validated['emails_administrativos']);
 
-        // Remove caracteres especiais do CGC
-        $validated['cgc'] = preg_replace('/[^0-9]/', '', $validated['cgc']);
+        // Remove caracteres especiais do CGC (null-safe: lead/prospect podem não ter)
+        $validated['cgc'] = !empty($validated['cgc']) ? preg_replace('/[^0-9]/', '', $validated['cgc']) : null;
         $validated['secondary_cgcs'] = $this->normalizeSecondaryCgcs($validated['secondary_cgcs'] ?? null);
 
-        // Valida se é CPF ou CNPJ (tamanho)
-        if (!in_array(strlen($validated['cgc']), [11, 14])) {
-            return response()->json([
-                'code' => 'INVALID_CGC_LENGTH',
-                'type' => 'error',
-                'message' => 'CGC deve ter 11 dígitos (CPF) ou 14 dígitos (CNPJ)',
-                'detailMessage' => 'O CGC informado deve conter exatamente 11 dígitos para CPF ou 14 dígitos para CNPJ'
-            ], 422);
-        }
-
-        // Cria uma instância temporária para validar o CGC ANTES de salvar no banco
-        $tempCustomer = new Customer($validated);
-
-        // Valida se o CGC é realmente válido (algoritmo de validação)
-        if (!$tempCustomer->isValidCgc()) {
-            return response()->json([
-                'code' => 'INVALID_CGC',
-                'type' => 'error',
-                'message' => 'CGC inválido',
-                'detailMessage' => 'O CGC informado não passou na validação de algoritmo'
-            ], 422);
+        // Validação de CPF/CNPJ só quando informado.
+        if (!empty($validated['cgc'])) {
+            if (!in_array(strlen($validated['cgc']), [11, 14])) {
+                return response()->json([
+                    'code' => 'INVALID_CGC_LENGTH',
+                    'type' => 'error',
+                    'message' => 'CGC deve ter 11 dígitos (CPF) ou 14 dígitos (CNPJ)',
+                    'detailMessage' => 'O CGC informado deve conter exatamente 11 dígitos para CPF ou 14 dígitos para CNPJ'
+                ], 422);
+            }
+            $tempCustomer = new Customer($validated);
+            if (!$tempCustomer->isValidCgc()) {
+                return response()->json([
+                    'code' => 'INVALID_CGC',
+                    'type' => 'error',
+                    'message' => 'CGC inválido',
+                    'detailMessage' => 'O CGC informado não passou na validação de algoritmo'
+                ], 422);
+            }
         }
 
         // Normaliza o prefixo para maiúsculas
@@ -362,7 +366,17 @@ class CustomerController extends Controller
             $validated['secondary_cgcs'] = $this->normalizeSecondaryCgcs($validated['secondary_cgcs'] ?? null);
         }
 
-        if (isset($validated['cgc'])) {
+        // Bloqueia limpar o CNPJ de quem já é cliente/contrato (Item 1 — Opção A).
+        if (array_key_exists('cgc', $validated) && empty($validated['cgc'])
+            && Customer::statusRequiresCgc($customer->crm_status)) {
+            return response()->json([
+                'code' => 'CGC_REQUIRED',
+                'type' => 'error',
+                'message' => 'CNPJ/CPF é obrigatório para clientes e contratos ativos.',
+            ], 422);
+        }
+
+        if (!empty($validated['cgc'])) {
             // Remove caracteres especiais do CGC
             $validated['cgc'] = preg_replace('/[^0-9]/', '', $validated['cgc']);
 

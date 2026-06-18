@@ -143,3 +143,16 @@ Schedule::command('attachments:integrity-check')
   ->description('FASE 11: verifica integridade dos anexos (entidade-dona, arquivo, checksum)')
   ->withoutOverlapping()
   ->runInBackground();
+
+// CRM — snapshot diário de Saúde da Conta (Roadmap Fase 1).
+Schedule::command('crm:snapshot-saude')
+  ->dailyAt('04:30')
+  ->name('crm-snapshot-saude')
+  ->withoutOverlapping();
+
+// CRM — gera oportunidades de renovação p/ contratos a 90 dias do vencimento.
+Schedule::command('crm:gerar-renovacoes')
+  ->dailyAt('05:00')
+  ->name('crm-gerar-renovacoes')
+  ->description('Cria oportunidades de renovação para contratos próximos do vencimento')
+  ->withoutOverlapping();

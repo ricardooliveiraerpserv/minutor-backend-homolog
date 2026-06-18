@@ -7,6 +7,9 @@ use App\Attachments\Exceptions\InvalidCategoryException;
 use App\Attachments\Exceptions\InvalidMimeTypeException;
 use App\Attachments\Exceptions\UnknownEntityTypeException;
 use App\Models\Contract;
+use App\Models\CrmOpportunity;
+use App\Models\CrmProposal;
+use App\Models\Document;
 use App\Models\ContractMessage;
 use App\Models\ContractRequestMessage;
 use App\Models\Expense;
@@ -132,6 +135,39 @@ class AttachableEntitiesRegistry
                 'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
                 'allowed_extensions' => ['pdf','docx','doc','xlsx','xls','csv','txt','png','jpg','jpeg','webp','gif'],
                 'max_size_mb' => 50,
+            ],
+
+            // ── DOCUMENT (Plataforma de Documentos — PDF gerado) ──────────────
+            'DOCUMENT' => [
+                'model' => Document::class,
+                'categories' => ['generated_pdf', 'signed_pdf'],
+                'default_visibility' => 'internal',
+                'permission_check' => fn (User $user) => $internalStaff($user),
+                'allowed_mime' => ['application/pdf'],
+                'allowed_extensions' => ['pdf'],
+                'max_size_mb' => 50,
+            ],
+
+            // ── CRM_PROPOSAL (logo do cliente + anexos da proposta) ───────────
+            'CRM_PROPOSAL' => [
+                'model' => CrmProposal::class,
+                'categories' => ['logo', 'proposal', 'attachment'],
+                'default_visibility' => 'internal',
+                'permission_check' => fn (User $user) => $internalStaff($user),
+                'allowed_mime' => ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'application/pdf'],
+                'allowed_extensions' => ['png', 'jpg', 'jpeg', 'webp', 'svg', 'pdf'],
+                'max_size_mb' => 5,
+            ],
+
+            // ── CRM_OPPORTUNITY (anexos da oportunidade) ──────────────────────
+            'CRM_OPPORTUNITY' => [
+                'model' => CrmOpportunity::class,
+                'categories' => ['attachment', 'evidence', 'image', 'proposal', 'contract'],
+                'default_visibility' => 'internal',
+                'permission_check' => fn (User $user) => $internalStaff($user),
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'xlsx', 'xls', 'csv', 'docx', 'doc'],
+                'max_size_mb' => 15,
             ],
 
             // ── EXPENSE ───────────────────────────────────────────────────────
