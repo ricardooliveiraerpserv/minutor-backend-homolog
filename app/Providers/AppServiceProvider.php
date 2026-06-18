@@ -3,9 +3,13 @@
 namespace App\Providers;
 
 use Carbon\Carbon;
+use Illuminate\Http\Request;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Mail\Events\MessageSent;
 use App\Events\ContractEventCreated;
@@ -54,5 +58,18 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Timesheet::class, TimesheetPolicy::class);
         Gate::policy(Project::class, ProjectPolicy::class);
 
+        // Rate limiter do login keyed por e-mail+IP.
+        // Atrás do duplo proxy (Cloudflare -> nginx -> backend), request->ip()
+        // colapsa no gateway Docker (172.20.0.1) p/ TODOS os usuários, então o
+        // `throttle:5,1` por-IP virava um balde COLETIVO de 5 logins/min do
+        // sistema inteiro -> saturava no pico -> 429 mascarado em 422 no login.
+        // Chavear por e-mail garante isolamento por conta mesmo com o IP coletivo.
+        RateLimiter::for('login', function (Request $request) {
+            $email = Str::lower((string) $request->input('email'));
+
+            return [
+                Limit::perMinute(5)->by($email !== '' ? $email.'|'.$request->ip() : $request->ip()),
+            ];
+        });
     }
 }
