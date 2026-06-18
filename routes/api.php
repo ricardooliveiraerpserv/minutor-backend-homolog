@@ -58,9 +58,11 @@ use App\Http\Controllers\CandidateController;
 Route::prefix('v1')->group(function () {
     // Rotas públicas (sem autenticação) — throttle obrigatório para mitigar brute-force
     Route::prefix('auth')->group(function () {
-        // Autenticação — 5 tentativas por minuto por IP
+        // Autenticação — 5 tentativas por minuto por e-mail+IP (limiter 'login').
+        // NÃO usar throttle:5,1 (por-IP): atrás do proxy o IP colapsa no gateway
+        // Docker e o balde vira coletivo do sistema inteiro. Ver AppServiceProvider.
         Route::post('/login', [AuthController::class, 'login'])
-            ->middleware('throttle:5,1')
+            ->middleware('throttle:login')
             ->name('auth.login');
 
         // Recuperação de senha — 3 solicitações por hora por IP
