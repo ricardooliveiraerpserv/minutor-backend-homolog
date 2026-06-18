@@ -814,6 +814,8 @@ Route::prefix('v1')->group(function () {
             // Ajustes iniciais (custo/receita) por cliente × ano — antes do catch-all {yearMonth}.
             Route::get('/relatorios/rentabilidade/initials/{year}',                      [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'initials']);
             Route::put('/relatorios/rentabilidade/initials',                             [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'saveInitial']);
+            // Drill-down: títulos do Keruak que compõem o "Valor Recebido" — antes do catch-all {yearMonth}.
+            Route::get('/relatorios/rentabilidade/keruak-titulos',                       [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'keruakTitulos']);
             Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
