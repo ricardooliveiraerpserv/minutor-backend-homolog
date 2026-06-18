@@ -652,24 +652,28 @@ class ClientPortalController extends Controller
             ->where('is_investimento_comercial', false)
             ->whereNull('deleted_at')
             ->count();
+        // Cliente NÃO vê horas de contrato Fechado (sem controle de saldo/consumo).
+        $isClosedProj = fn ($p) => strtolower(trim(optional($p->contractType)->name ?? '')) === 'fechado'
+            || (optional($p->contractType)->code ?? '') === 'closed';
+
         // Horas contratadas: soma apenas das raízes pra evitar duplicidade pai+filho.
-        $totalSoldHours = round((float) $projects->sum('sold_hours'), 2);
+        // Fechado fica de fora — cliente não vê horas desses contratos.
+        $totalSoldHours = round((float) $projects->reject($isClosedProj)->sum('sold_hours'), 2);
 
-        $mapProject = function ($p) {
-            $ctName  = strtolower(trim(optional($p->contractType)->name ?? ''));
-            $ctCode  = optional($p->contractType)->code ?? '';
-            $isClosed = $ctName === 'fechado' || $ctCode === 'closed';
+        $mapProject = function ($p) use ($isClosedProj) {
+            $isClosed = $isClosedProj($p);
 
-            // Saldo / % uso apenas pra projetos NÃO-Fechado. Fechado: só sold_hours.
+            // Saldo / % uso apenas pra projetos NÃO-Fechado.
             $sold = (float) ($p->sold_hours ?? 0);
             if ($isClosed) {
+                // Fechado: NENHUMA informação de horas é exposta ao cliente.
                 return [
                     'id'             => $p->id,
                     'code'           => $p->code,
                     'name'           => $p->name,
                     'contract_type'  => optional($p->contractType)->name,
                     'is_closed'      => true,
-                    'sold_hours'     => $sold,
+                    'sold_hours'     => null,
                     'consumed_hours' => null,
                     'balance_hours'  => null,
                     'percentage'     => null,
