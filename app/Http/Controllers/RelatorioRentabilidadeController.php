@@ -414,6 +414,32 @@ class RelatorioRentabilidadeController extends Controller
     }
 
     /**
+     * Drill-down do "Valor Recebido": títulos do Keruak que compõem o valor de um
+     * cliente. Recebe os CNPJs do cliente (principal + secundários) e os meses de
+     * recebimento (YYYY-MM) que a tela está somando, garantindo que o total bata
+     * com a célula.
+     *
+     * Query: ?cnpjs=11111111000111,22222222000122&receb=2026-02,2026-03
+     */
+    public function keruakTitulos(Request $request): JsonResponse
+    {
+        $cnpjs = array_filter(array_map(
+            fn ($c) => preg_replace('/\D/', '', (string) $c),
+            explode(',', (string) $request->query('cnpjs', ''))
+        ));
+        $receb = array_filter(array_map('trim', explode(',', (string) $request->query('receb', ''))));
+
+        if (empty($cnpjs)) {
+            return response()->json(['data' => ['titulos' => [], 'total' => 0]]);
+        }
+
+        $result = app(\App\Services\KeruakRentabilidadeService::class)
+            ->titulos($cnpjs, $receb, $request->boolean('refresh'));
+
+        return response()->json(['data' => $result]);
+    }
+
+    /**
      * Ajustes iniciais (custo/receita) por cliente do ANO. Mapa { customer_id: {custo_inicial, receita_inicial} }.
      * O FE soma esses valores UMA vez no agregado anual (a visão anual é a soma dos meses no FE).
      */
