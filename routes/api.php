@@ -886,6 +886,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/messages/mentionable-users', [ProjectMessageController::class, 'mentionableUsers'])->name('messages.mentionable-users');
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
+        Route::patch('/projects/{project}/messages/{message}', [ProjectMessageController::class, 'update'])->name('project-messages.update');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
         Route::get('/messages/{message}/attachments/{attachment}/download', [ProjectMessageController::class, 'downloadAttachment'])->name('project-messages.attachment-download');
 
