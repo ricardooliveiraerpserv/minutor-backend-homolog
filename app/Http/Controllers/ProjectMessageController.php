@@ -140,6 +140,72 @@ class ProjectMessageController extends Controller
         return response()->json($msg, 201);
     }
 
+    /**
+     * Editar uma interação do Diário do Projeto.
+     * Regras: só o autor, só a SUA última interação no projeto, e dentro da
+     * janela de 3h (ProjectMessage::EDIT_WINDOW_HOURS). Re-sincroniza menções
+     * (chips), mas não reenvia notificação — edição é correção, não novo aviso.
+     */
+    public function update(Request $request, Project $project, ProjectMessage $message): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        if ((int) $message->project_id !== (int) $project->id) {
+            return response()->json(['message' => 'Interação não encontrada'], 404);
+        }
+        if ((int) $message->user_id !== (int) $user->id) {
+            return response()->json(['message' => 'Você só pode editar suas próprias interações.'], 403);
+        }
+
+        // Tem de ser a última interação DESTE usuário no projeto.
+        $lastOwnId = ProjectMessage::where('project_id', $project->id)
+            ->where('user_id', $user->id)
+            ->max('id');
+        if ((int) $message->id !== (int) $lastOwnId) {
+            return response()->json(['message' => 'Só é possível editar sua última interação.'], 422);
+        }
+
+        // Janela de 3h a partir do envio.
+        if ($message->created_at->lt(now()->subHours(ProjectMessage::EDIT_WINDOW_HOURS))) {
+            return response()->json(['message' => 'O prazo de ' . ProjectMessage::EDIT_WINDOW_HOURS . 'h para editar esta interação expirou.'], 422);
+        }
+
+        $request->validate([
+            'message' => 'required|string|max:5000',
+        ]);
+        $text = $request->input('message');
+
+        $message->update(['message' => $text, 'edited_at' => now()]);
+
+        // Re-sincroniza menções (mesma regra do store; cliente nunca é mencionado).
+        $candidates = User::query()
+            ->select('id', 'name')
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
+            ->get();
+        $mentionedIds = \App\Services\MentionParser::extract($text, $candidates);
+        if (preg_match('/@\[all:/i', $text)) {
+            $mentionedIds = array_values(array_unique(array_merge(
+                $mentionedIds,
+                array_diff($this->projectMentionableUserIds($project), [$user->id])
+            )));
+        }
+        $message->mentions()->whereNotIn('mentioned_user_id', $mentionedIds ?: [0])->delete();
+        foreach ($mentionedIds as $mentionedId) {
+            ProjectMessageMention::firstOrCreate([
+                'message_id'        => $message->id,
+                'mentioned_user_id' => $mentionedId,
+            ]);
+        }
+
+        $message->load(['author:id,name', 'attachments']);
+        $message->is_mentioned = in_array($user->id, $mentionedIds, true);
+
+        return response()->json($message);
+    }
+
     private function dispatchChatNotification(Project $project, ProjectMessage $msg, User $author, array $mentionedIds = []): void
     {
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
@@ -172,6 +238,7 @@ class ProjectMessageController extends Controller
         // 1) Mensagem no chat → envolvidos do card.
         $rcpt = $resolver->resolve('card.chat_message.project', [
             'card'      => ['type' => CardEnvolvido::TYPE_PROJECT, 'id' => $project->id],
+            'project'   => $project,
             'actor'     => $author,
             'mentioned' => $mentionedIds,
         ]);
