@@ -126,7 +126,7 @@ return [
         'request.phase.aprovado'             => ['request', 'customer', 'actor'],
         'request.phase.req_inicio_autorizado' => ['request', 'customer', 'actor'],
         'card.chat_message.request'    => ['card', 'actor', 'mentioned'],
-        'card.chat_message.project'    => ['card', 'actor', 'mentioned'],
+        'card.chat_message.project'    => ['card', 'project', 'contract', 'customer', 'actor', 'mentioned'],
         'card.phase_movement.request'  => ['card', 'actor'],
         'card.phase_movement.project'  => ['card', 'actor'],
         'chat.mention'                 => ['card', 'actor', 'mentioned'],
@@ -249,9 +249,9 @@ return [
             'variables' => ['codigo' => 'Código do card', 'titulo' => 'Título do card', 'autor' => 'Autor da mensagem'],
         ],
         'card.chat_message.project' => [
-            'subject'   => 'Nova mensagem em {codigo} — {titulo}',
-            'body'      => '{autor} enviou uma nova mensagem no chat do projeto {titulo}.',
-            'variables' => ['codigo' => 'Código do card', 'titulo' => 'Título do card', 'autor' => 'Autor da mensagem'],
+            'subject'   => 'Nova interação no Diário do Projeto — {codigo} {titulo}',
+            'body'      => '{autor} registrou uma nova interação no Diário do Projeto {titulo}.',
+            'variables' => ['codigo' => 'Código do card', 'titulo' => 'Título do card', 'autor' => 'Autor da interação'],
         ],
         'card.phase_movement.request' => [
             'subject'   => '{codigo} avançou para {para}',
@@ -486,11 +486,13 @@ return [
             ],
         ],
         'card.chat_message.project' => [
-            'label'       => 'Mensagem no chat — Projeto',
+            'label'       => 'Diário do Projeto',
             'domain'      => 'Projetos',
-            'description' => 'Nova mensagem no chat de um projeto. Interno — o cliente não participa nem recebe.',
+            'description' => 'Nova interação no Diário do Projeto. Interno (cliente não participa). Sem menção, recebem o executivo de contas, o(s) coordenador(es) e o diretor de projetos. Pessoas fora desses papéis só recebem se forem citadas (@).',
             'audiences'   => [
-                'envolvidos_internos' => 'to',
+                'executivo_de_contas' => 'to',
+                'coordenador'         => 'to',
+                'diretor'             => 'to',
             ],
         ],
         'card.phase_movement.request' => [
