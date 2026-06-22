@@ -92,6 +92,17 @@ class ProjectMessageController extends Controller
             ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
             ->get();
         $mentionedIds = \App\Services\MentionParser::extract($text, $candidates);
+
+        // Menção "Todos" (token @[all:...]) → expande pra todos os participantes
+        // internos do projeto (admins + coordenadores + executivo). Cliente NUNCA
+        // participa do chat de projeto. Exclui o próprio autor.
+        if (preg_match('/@\[all:/i', $text)) {
+            $mentionedIds = array_values(array_unique(array_merge(
+                $mentionedIds,
+                array_diff($this->projectMentionableUserIds($project), [$user->id])
+            )));
+        }
+
         foreach ($mentionedIds as $mentionedId) {
             ProjectMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
@@ -334,22 +345,15 @@ class ProjectMessageController extends Controller
         }
 
         $projectId = $request->query('project_id');
+        $project = $projectId ? Project::find((int) $projectId) : null;
 
         // Participantes do chat de projeto: coordenador(es) + executivo(s) (+ admin
         // como superusuário). Cliente nunca — chat de projeto é interno.
-        $ids = collect(User::where('type', 'admin')->where('enabled', true)->pluck('id'));
-
-        if ($projectId) {
-            $project = Project::find((int) $projectId);
-            if ($project) {
-                $ids = $ids->merge($project->coordinators()->pluck('users.id'));
-                if ($project->executivo_conta_id) {
-                    $ids->push((int) $project->executivo_conta_id);
-                }
-            }
+        if ($project) {
+            $ids = collect($this->projectMentionableUserIds($project));
         } else {
-            // Sem projeto no contexto: todos os coordenadores ativos.
-            $ids = $ids->merge(User::where('type', 'coordenador')->where('enabled', true)->pluck('id'));
+            // Sem projeto no contexto: admins + coordenadores ativos.
+            $ids = User::whereIn('type', ['admin', 'coordenador'])->where('enabled', true)->pluck('id');
         }
 
         $users = User::whereIn('id', $ids->unique()->filter()->values())
@@ -359,6 +363,26 @@ class ProjectMessageController extends Controller
             ->get();
 
         return response()->json($users);
+    }
+
+    /**
+     * IDs dos participantes internos mencionáveis do projeto: admins ativos +
+     * coordenador(es) + executivo de conta. Cliente NUNCA entra (chat é interno).
+     * Fonte única usada pelo picker (mentionableUsers) e pela menção "Todos".
+     */
+    private function projectMentionableUserIds(Project $project): array
+    {
+        $ids = collect(User::where('type', 'admin')->where('enabled', true)->pluck('id'));
+        $ids = $ids->merge($project->coordinators()->pluck('users.id'));
+        if ($project->executivo_conta_id) {
+            $ids->push((int) $project->executivo_conta_id);
+        }
+
+        return User::whereIn('id', $ids->unique()->filter()->values())
+            ->where('enabled', true)
+            ->pluck('id')
+            ->map(fn ($i) => (int) $i)
+            ->all();
     }
 
     private function userCanAccessProject($user, Project $project): bool
