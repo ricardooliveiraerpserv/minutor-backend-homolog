@@ -45,10 +45,16 @@ class ContractRequestLifecycleNotification extends Notification implements Shoul
             ? "[Minutor] Requisição {$this->reqCode} criada — próximos passos"
             : "[Minutor] Requisição {$this->reqCode} avançou para " . $this->prettyColumn($this->toColumn);
 
+        $phaseKey = 'request.phase.' . ($this->stage === 'created' ? 'backlog' : $this->toColumn);
+        if (!isset(config('workflows.workflows')[$phaseKey])) {
+            $phaseKey = 'request.phase.backlog';
+        }
+        $accentKey = $phaseKey;
+
         return $this->applyCc((new MailMessage)
             ->subject($subject))
             ->view('emails.requests.lifecycle', [
-                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('request.lifecycle'),
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent($accentKey),
                 'stage'         => $this->stage,
                 'reqCode'       => $this->reqCode,
                 'reqTitle'      => $this->reqTitle,

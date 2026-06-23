@@ -28,8 +28,11 @@ class CardPhaseMovementDispatcher
         // Se from == to, nada a notificar
         if ($fromColumn === $toColumn) return;
 
-        // Destinatários pela Central de Workflows (envolvidos internos/cliente, etc.).
-        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.phase_movement', [
+        // Destinatários pela Central de Workflows (split por tipo de card: requisição vs projeto).
+        $workflowKey = $cardType === CardEnvolvido::TYPE_REQUEST
+            ? 'card.phase_movement.request'
+            : 'card.phase_movement.project';
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
             'card'  => ['type' => $cardType, 'id' => $cardId],
             'actor' => $movedBy,
         ]);

@@ -67,10 +67,15 @@ class User extends Authenticatable
         'type',
         'coordinator_type',
         'is_executive',
+        'is_crm_responsavel',
         'can_timesheet_sustentacao',
         'extra_permissions',
         // Funcionário Bizify (separa do resultado ERPSERV no fechamento de consultores)
         'is_bizify',
+        // Diretor (aparece na rotina de Fechamento Diretoria)
+        'is_diretor',
+        // Diretor de Projetos (recebe e-mails das fases do contrato — Triagem)
+        'is_diretor_projetos',
         // Capacity (módulo skills)
         'capacity_hours',
         'allocated_hours',
@@ -125,7 +130,10 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'is_crm_responsavel' => 'boolean',
             'is_bizify' => 'boolean',
+            'is_diretor' => 'boolean',
+            'is_diretor_projetos' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',
             'guaranteed_hours'      => 'decimal:2',

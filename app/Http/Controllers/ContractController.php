@@ -120,6 +120,11 @@ class ContractController extends Controller
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
             'project_code_preview'   => 'nullable|string|max:20',
+            // Subprojeto faturado: além do card do filho (Início Autorizado), gera um card de
+            // aporte (Novo Contrato) no projeto pai, valorado pelas horas/valor-hora do filho.
+            'sera_faturado'          => 'boolean',
+            // CRM: quando o contrato nasce de uma oportunidade GANHA, vincula a opp (idempotente).
+            'opportunity_id'         => 'nullable|exists:crm_opportunities,id',
             'contacts'               => 'nullable|array',
             'contacts.*.name'        => 'required|string',
             'contacts.*.cargo'       => 'nullable|string',
@@ -127,12 +132,17 @@ class ContractController extends Controller
             'contacts.*.phone'       => 'nullable|string',
         ]);
 
-        $contract = DB::transaction(function () use ($validated, $request) {
+        // Aporte do subprojeto faturado (se houver) — notificado APÓS o commit, igual aos
+        // demais avisos. [project, contribution] pra reusar o workflow padrão de aporte.
+        $aporteToNotify = null;
+
+        $contract = DB::transaction(function () use ($validated, $request, &$aporteToNotify) {
             // Subprojeto (tem parent_project_id): regra antiga — nasce em "Início Autorizado",
             // não em "Novo Contrato" (o contrato pai já está aprovado; o filho não passa pela
             // revisão de novo contrato). Demais contratos nascem em rascunho/backlog.
             $isSubproject = !empty($validated['parent_project_id']);
-            $data = collect($validated)->except('contacts')->merge([
+            // 'sera_faturado'/'opportunity_id' não são colunas de Contract — gatilhos auxiliares.
+            $data = collect($validated)->except(['contacts', 'sera_faturado', 'opportunity_id'])->merge([
                 'created_by_id' => auth()->id(),
                 'status'        => $isSubproject ? Contract::STATUS_INICIO_AUTORIZADO : Contract::STATUS_RASCUNHO,
                 'kanban_status' => $isSubproject ? Contract::KANBAN_INICIO_AUTORIZADO : Contract::KANBAN_BACKLOG,
@@ -151,13 +161,416 @@ class ContractController extends Controller
                 ContractContact::create(array_merge($c, ['contract_id' => $contract->id]));
             }
 
+            // Contatos do contrato espelham no cadastro da empresa (upsert; nunca deleta).
+            $this->syncContactsToCustomerRegistry((int) $validated['customer_id'], $validated['contacts'] ?? []);
+
+            // CRM: vincula a oportunidade GANHA ao contrato (mesmo fluxo do CrmConversionController,
+            // idempotente — 1 opp → 1 contrato): contract_id + evento + status comercial + migração de investimento.
+            if (!empty($validated['opportunity_id'])) {
+                $opp = \App\Models\CrmOpportunity::find($validated['opportunity_id']);
+                if ($opp && !$opp->contract_id) {
+                    $opp->update(['contract_id' => $contract->id]);
+                    \App\Models\CrmOpportunityEvent::log($opp->id, 'converted', [
+                        'to_value' => "Contrato #{$contract->id}",
+                        'meta'     => ['contract_id' => $contract->id],
+                    ]);
+                    $cust = Customer::find($opp->customer_id);
+                    if ($cust && in_array($cust->crm_status, ['lead', 'prospect', 'cliente'], true)) {
+                        $cust->update(['crm_status' => 'cliente']);
+                    }
+                    if ($cust) {
+                        app(\App\Services\InvestimentoComercialService::class)->promoverLeadParaCliente($cust->fresh('crmProfile'));
+                    }
+                    // Marca a proposta vencedora como CONVERTIDA → Gestão de Propostas a move para "Convertida"
+                    // automaticamente, qualquer que seja a origem do contrato (Pipeline ou Gestão). Fonte única.
+                    $propVencedora = \App\Models\CrmProposal::where('opportunity_id', $opp->id)->whereNull('deleted_at')
+                        ->whereIn('status', ['assinada', 'liberada', 'aguardando_assinatura', 'enviada', 'aprovada'])
+                        ->orderByDesc('versao')->orderByDesc('id')->first();
+                    if ($propVencedora) $propVencedora->update(['status' => 'convertida']);
+                }
+                // Anexa automaticamente a PROPOSTA ASSINADA da oportunidade ao contrato (server-side, robusto).
+                $this->autoAnexarPropostaAssinada($contract, (int) $validated['opportunity_id']);
+            }
+
+            // Subprojeto FATURADO → nasce também um card de APORTE em "Novo Contrato".
+            // O Kanban só exibe aporte de projeto PAI, então o aporte é anexado ao pai,
+            // valorado pelas horas × valor-hora do filho (descrição referencia o subprojeto).
+            // A notificação segue o MESMO workflow padrão de aporte (disparada pós-commit) —
+            // por isso o subprojeto faturado gera DOIS avisos: início autorizado + aporte.
+            if ($isSubproject && !empty($validated['sera_faturado'])) {
+                $parent = Project::find($validated['parent_project_id']);
+                $horas  = (float) ($validated['horas_contratadas'] ?? 0);
+                $rate   = (float) ($validated['valor_hora'] ?? ($parent?->hourly_rate ?? 0));
+                if ($parent && $horas > 0 && $rate > 0) {
+                    $ref = trim(($validated['project_code_preview'] ?? '') . ' ' . ($validated['project_name'] ?? ''));
+                    $contribution = $parent->hourContributions()->create([
+                        'contributed_hours' => $horas,
+                        'hourly_rate'       => $rate,
+                        'motivo'            => 'aporte',
+                        'description'       => 'Aporte ref. subprojeto faturado' . ($ref !== '' ? " ({$ref})" : ''),
+                        'kanban_status'     => \App\Models\HourContribution::KANBAN_NOVO,
+                        'contributed_by'    => auth()->id(),
+                        'contributed_at'    => now(),
+                    ]);
+                    $aporteToNotify = ['project' => $parent, 'contribution' => $contribution];
+                }
+            }
+
             return $contract;
         });
 
-        // Notifica área administrativa + criador. Cliente ainda NÃO recebe nessa fase.
-        $this->notifyContractCreated($contract);
+        // Notificação conforme a COLUNA em que o contrato nasce:
+        // - Novo Contrato (backlog): avisa a triagem administrativa (contract.created).
+        // - Subprojeto (nasce em Início Autorizado): dispara o workflow de início
+        //   autorizado — NÃO o de novo contrato (senão o administrativo recebe aviso
+        //   indevido e com a fase errada). Cliente ainda NÃO recebe nessa fase.
+        if ($contract->kanban_status === Contract::KANBAN_INICIO_AUTORIZADO) {
+            $this->notifyInicioAutorizado($contract->load('customer'));
+        } else {
+            $this->notifyContractCreated($contract);
+        }
+
+        // Subprojeto faturado: dispara o workflow padrão de aporte (2º aviso).
+        if ($aporteToNotify) {
+            $this->notifyNewAporte($aporteToNotify['project'], $aporteToNotify['contribution']);
+        }
 
         return response()->json($contract->load(['customer:id,name', 'contacts', 'attachments']), 201);
+    }
+
+    /**
+     * Comunica um novo aporte de horas seguindo o mesmo padrão do HourContributionController:
+     * aporte em projeto PAI usa o workflow 'contract.aporte' (cliente + internos); em filho,
+     * 'contract.aporte.child' (só internos). Síncrono + best-effort (não bloqueia a criação).
+     */
+    private function notifyNewAporte(Project $project, \App\Models\HourContribution $contribution): void
+    {
+        try {
+            $isChild = $project->parent_project_id !== null;
+            $workflowKey = $isChild ? 'contract.aporte.child' : 'contract.aporte';
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+                'project'      => $project,
+                'contribution' => $contribution,
+                'actor'        => \App\Models\User::find($contribution->contributed_by),
+                'is_child'     => $isChild,
+            ]);
+
+            if (empty($rcpt['to'])) {
+                return;
+            }
+
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify(new \App\Notifications\ContractAporteNotification($contribution, $project, $rcpt['cc']));
+        } catch (\Throwable $e) {
+            \Log::warning('Aporte (subprojeto faturado) notification falhou', [
+                'project_id'      => $project->id,
+                'contribution_id' => $contribution->id ?? null,
+                'err'             => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Espelha os contatos informados no contrato no cadastro de contatos da EMPRESA
+     * (`customer_contacts`). Faz UPSERT por cliente: casa por e-mail (se houver) ou por
+     * nome (case-insensitive); cria os novos e atualiza os existentes. NUNCA deleta do
+     * cadastro — é um registro compartilhado entre contratos/projetos do cliente.
+     */
+    private function syncContactsToCustomerRegistry(int $customerId, array $contacts): void
+    {
+        foreach ($contacts as $c) {
+            $name = trim((string) ($c['name'] ?? ''));
+            if ($name === '') {
+                continue;
+            }
+            $email = trim((string) ($c['email'] ?? ''));
+
+            $match = \App\Models\CustomerContact::where('customer_id', $customerId)
+                ->when(
+                    $email !== '',
+                    fn ($q) => $q->whereRaw('LOWER(email) = ?', [mb_strtolower($email)]),
+                    fn ($q) => $q->whereRaw('LOWER(name) = ?', [mb_strtolower($name)]),
+                )
+                ->first();
+
+            $data = [
+                'name'  => $name,
+                'cargo' => ($c['cargo'] ?? '') !== '' ? $c['cargo'] : null,
+                'email' => $email !== '' ? $email : null,
+                'phone' => ($c['phone'] ?? '') !== '' ? $c['phone'] : null,
+            ];
+
+            if ($match) {
+                $match->update($data);
+            } else {
+                \App\Models\CustomerContact::create(array_merge($data, ['customer_id' => $customerId]));
+            }
+        }
+    }
+
+    /**
+     * Projetos elegíveis para um aditivo: pai ou independente (parent_project_id null)
+     * dos tipos On Demand / Cloud / Banco de Horas Mensal. Devolve o que cada tipo
+     * permite alterar e os valores atuais (pra prefill no modal).
+     */
+    public function aditivoEligibleProjects(Request $request): JsonResponse
+    {
+        $allowedByCode = [
+            'on_demand'     => ['valor_hora'],
+            'cloud'         => ['valor_projeto'],
+            'monthly_hours' => ['valor_hora', 'horas_contratadas'],
+        ];
+
+        $projects = Project::query()
+            ->whereNull('parent_project_id')
+            // Buckets internos de investimento (Comercial/Suporte/Projeto) não entram.
+            ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+            ->whereHas('contractType', fn ($q) => $q->whereIn('code', array_keys($allowedByCode)))
+            ->with('contractType:id,name,code')
+            ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->get('customer_id')))
+            ->orderBy('name')
+            ->get(['id', 'code', 'name', 'customer_id', 'contract_type_id', 'hourly_rate', 'sold_hours', 'project_value']);
+
+        $data = $projects->map(function (Project $p) use ($allowedByCode) {
+            $code = (string) ($p->contractType->code ?? '');
+            return [
+                'id'             => $p->id,
+                'code'           => $p->code,
+                'name'           => $p->name,
+                'customer_id'    => $p->customer_id,
+                'type_code'      => $code,
+                'type_name'      => $p->contractType->name ?? null,
+                'allowed_fields' => $allowedByCode[$code] ?? [],
+                'hourly_rate'    => $p->hourly_rate !== null ? (float) $p->hourly_rate : null,
+                'sold_hours'     => $p->sold_hours !== null ? (float) $p->sold_hours : null,
+                'project_value'  => $p->project_value !== null ? (float) $p->project_value : null,
+            ];
+        });
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Cria um contrato ADITIVO: altera (na hora) um projeto pai/independente reusando a
+     * vigência (valor-hora/horas) ou direto (valor do contrato, Cloud). O card nasce em
+     * "Novo Contrato" e só pode ir para a coluna "Aditivos".
+     */
+    public function storeAditivo(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'aditivo_project_id'     => 'required|exists:projects,id',
+            'aditivo_field'          => 'nullable|in:valor_hora,horas_contratadas,valor_projeto',
+            'aditivo_value'          => 'nullable|numeric|min:0',
+            // Multi-alteração (Banco de Horas Mensal): muda valor-hora E/OU horas no mesmo aditivo.
+            'aditivo_changes'           => 'nullable|array|min:1',
+            'aditivo_changes.*.field'   => 'required_with:aditivo_changes|in:valor_hora,horas_contratadas',
+            'aditivo_changes.*.value'   => 'required_with:aditivo_changes|numeric|min:0',
+            'aditivo_effective_from' => 'nullable|date',
+            'condicao_pagamento'     => 'nullable|string',
+            'observacoes'            => 'required|string',
+        ]);
+
+        $project = Project::with('contractType')->find($validated['aditivo_project_id']);
+
+        if ($project->parent_project_id !== null) {
+            return response()->json(['message' => 'Aditivo só pode alterar projeto pai ou independente (projeto-filho não entra).'], 422);
+        }
+        if ($project->is_investimento_comercial) {
+            return response()->json(['message' => 'Projetos de investimento (buckets internos) não recebem aditivo.'], 422);
+        }
+
+        $code = (string) ($project->contractType->code ?? '');
+        $allowed = match ($code) {
+            'on_demand'     => ['valor_hora'],
+            'cloud'         => ['valor_projeto'],
+            'monthly_hours' => ['valor_hora', 'horas_contratadas'],
+            default         => [],
+        };
+        if (empty($allowed)) {
+            return response()->json(['message' => 'Aditivo só se aplica a projetos On Demand, Cloud ou Banco de Horas Mensal.'], 422);
+        }
+
+        // ── Multi-alteração (Banco de Horas Mensal): valor-hora E/OU horas no mesmo aditivo,
+        //    recalculando o valor do contrato (horas × valor-hora) automaticamente. ──
+        if (!empty($validated['aditivo_changes'])) {
+            if ($code !== 'monthly_hours') {
+                return response()->json(['message' => 'Múltiplas alterações no mesmo aditivo só para Banco de Horas Mensal.'], 422);
+            }
+            foreach ($validated['aditivo_changes'] as $ch) {
+                if (!in_array($ch['field'], $allowed, true)) {
+                    return response()->json(['message' => 'Campo não permitido para este projeto: ' . $ch['field']], 422);
+                }
+            }
+            $effMulti = $validated['aditivo_effective_from'] ?? null;
+            $oldContractValue = (float) ($project->project_value ?? 0); // valor do contrato ANTES
+            $oldRate  = (float) ($project->hourly_rate ?? 0);           // valor-hora ANTES
+            $oldHoras = (float) ($project->sold_hours ?? 0);            // horas ANTES
+
+            $contract = DB::transaction(function () use ($validated, $project, $effMulti, $oldContractValue, $oldRate, $oldHoras) {
+                foreach ($validated['aditivo_changes'] as $ch) {
+                    $this->applyAditivoToProject($project, $ch['field'], $ch['value'], $effMulti);
+                }
+                $project->refresh(); // pega hourly_rate/sold_hours/project_value recomputados
+
+                // Breakdown SEMPRE com os DOIS campos (valor-hora E horas), de→para — mesmo
+                // que só um tenha mudado (o que não mudou aparece com antes=depois).
+                $changesDetail = [
+                    ['field' => 'valor_hora',        'label' => 'Valor da Hora',       'old' => $oldRate,  'new' => (float) ($project->hourly_rate ?? 0)],
+                    ['field' => 'horas_contratadas', 'label' => 'Quantidade de Horas', 'old' => $oldHoras, 'new' => (float) ($project->sold_hours ?? 0)],
+                ];
+
+                return Contract::create([
+                    'aditivo_old_value'      => $oldContractValue,
+                    'aditivo_changes'        => $changesDetail,
+                    'customer_id'            => $project->customer_id,
+                    'project_name'           => $project->name,
+                    'categoria'              => 'projeto',
+                    'contract_type_id'       => $project->contract_type_id,
+                    'service_type_id'        => $project->service_type_id,
+                    'horas_contratadas'      => (int) ($project->sold_hours ?? 0),
+                    'valor_hora'             => $project->hourly_rate,
+                    'valor_projeto'          => $project->project_value, // novo valor do contrato (recomputado)
+                    'is_aditivo'             => true,
+                    'aditivo_project_id'     => $project->id,
+                    'aditivo_field'          => 'multiplo', // impacto exibido como "Valor do Contrato" (old→new)
+                    'aditivo_effective_from' => $effMulti ? \Carbon\Carbon::parse($effMulti)->startOfMonth()->toDateString() : null,
+                    'condicao_pagamento'     => $validated['condicao_pagamento'] ?? null,
+                    'observacoes'            => $validated['observacoes'] ?? null,
+                    'created_by_id'          => auth()->id(),
+                    'status'                 => Contract::STATUS_ATIVO,
+                    'kanban_status'          => Contract::KANBAN_NOVO_PROJETO,
+                ]);
+            });
+
+            return response()->json($contract->load(['customer:id,name', 'aditivoProject:id,name,code']), 201);
+        }
+
+        // ── Alteração única (fluxo original) ──
+        if (empty($validated['aditivo_field']) || $validated['aditivo_value'] === null) {
+            return response()->json(['message' => 'Informe o campo e o valor do aditivo.'], 422);
+        }
+        if (!in_array($validated['aditivo_field'], $allowed, true)) {
+            return response()->json(['message' => 'Esse campo não pode ser alterado para o tipo deste projeto.'], 422);
+        }
+
+        // valor_projeto (Cloud) não tem vigência mensal; demais usam o mês escolhido (ou atual).
+        $eff = $validated['aditivo_field'] === 'valor_projeto'
+            ? null
+            : ($validated['aditivo_effective_from'] ?? null);
+
+        // Valor ANTES do aditivo (pra exibir "antes → depois" no card).
+        $oldValue = match ($validated['aditivo_field']) {
+            'valor_hora'        => (float) ($project->hourly_rate ?? 0),
+            'horas_contratadas' => (float) ($project->sold_hours ?? 0),
+            'valor_projeto'     => (float) ($project->project_value ?? 0),
+            default             => null,
+        };
+
+        $contract = DB::transaction(function () use ($validated, $project, $eff, $oldValue) {
+            $this->applyAditivoToProject($project, $validated['aditivo_field'], $validated['aditivo_value'], $eff);
+
+            return Contract::create([
+                'aditivo_old_value'      => $oldValue,
+                'customer_id'            => $project->customer_id,
+                'project_name'           => $project->name,
+                'categoria'              => 'projeto',
+                'contract_type_id'       => $project->contract_type_id,
+                'service_type_id'        => $project->service_type_id,
+                'horas_contratadas'      => $validated['aditivo_field'] === 'horas_contratadas' ? (int) $validated['aditivo_value'] : 0,
+                'valor_hora'             => $validated['aditivo_field'] === 'valor_hora' ? $validated['aditivo_value'] : null,
+                'valor_projeto'          => $validated['aditivo_field'] === 'valor_projeto' ? $validated['aditivo_value'] : null,
+                'is_aditivo'             => true,
+                'aditivo_project_id'     => $project->id,
+                'aditivo_field'          => $validated['aditivo_field'],
+                'aditivo_effective_from' => $eff ? \Carbon\Carbon::parse($eff)->startOfMonth()->toDateString() : null,
+                'condicao_pagamento'     => $validated['condicao_pagamento'] ?? null,
+                'observacoes'            => $validated['observacoes'] ?? null,
+                'created_by_id'          => auth()->id(),
+                'status'                 => Contract::STATUS_ATIVO,
+                'kanban_status'          => Contract::KANBAN_NOVO_PROJETO,
+            ]);
+        });
+
+        return response()->json($contract->load(['customer:id,name', 'aditivoProject:id,name,code']), 201);
+    }
+
+    /**
+     * Aplica a alteração de um aditivo no projeto alvo, reusando a MESMA mecânica de
+     * vigência do ProjectController@update (project_change_logs.effective_from p/ valor-hora,
+     * project_sold_hours_history p/ horas vendidas; project_value direto p/ Cloud).
+     */
+    private function applyAditivoToProject(Project $project, string $field, $value, ?string $effectiveFrom): void
+    {
+        $eff = $effectiveFrom
+            ? \Carbon\Carbon::parse($effectiveFrom)->startOfMonth()->toDateString()
+            : \Carbon\Carbon::now()->startOfMonth()->toDateString();
+
+        if ($field === 'valor_hora') {
+            $project->update(['hourly_rate' => $value]);
+            if ($project->wasChanged('hourly_rate')) {
+                // Dedup mesmo-dia + grava effective_from (espelha ProjectController@update).
+                $todayLogs = \App\Models\ProjectChangeLog::where('project_id', $project->id)
+                    ->where('field_name', 'hourly_rate')
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderBy('id')->get();
+                if ($todayLogs->isNotEmpty()) {
+                    $survivor = $todayLogs->first();
+                    $survivor->new_value = (string) $project->hourly_rate;
+                    $survivor->effective_from = $eff;
+                    $survivor->save();
+                    $dups = $todayLogs->slice(1)->pluck('id');
+                    if ($dups->isNotEmpty()) {
+                        \App\Models\ProjectChangeLog::whereIn('id', $dups)->delete();
+                    }
+                }
+            }
+            // Mensal: valor do contrato = horas × valor-hora — atualiza junto (só se tem horas).
+            if ($project->isBankHoursMonthly() && (float) ($project->sold_hours ?? 0) > 0) {
+                $project->update(['project_value' => round((float) $project->sold_hours * (float) ($project->hourly_rate ?? 0), 2)]);
+            }
+            return;
+        }
+
+        if ($field === 'horas_contratadas') {
+            $previous = (float) ($project->sold_hours ?? 0);
+            $new      = (float) $value;
+            $project->update(['sold_hours' => $new]);
+            if ($previous !== $new && $project->isBankHoursMonthly()) {
+                if ($project->soldHoursHistory()->count() === 0 && $project->start_date) {
+                    \App\Models\ProjectSoldHoursHistory::create([
+                        'project_id'     => $project->id,
+                        'sold_hours'     => $previous,
+                        'effective_from' => \Carbon\Carbon::parse($project->start_date)->startOfMonth()->toDateString(),
+                        'changed_by'     => null,
+                    ]);
+                }
+                $exists = $project->soldHoursHistory()->where('effective_from', $eff)->exists();
+                if (!$exists) {
+                    \App\Models\ProjectSoldHoursHistory::create([
+                        'project_id'     => $project->id,
+                        'sold_hours'     => $new,
+                        'effective_from' => $eff,
+                        'changed_by'     => auth()->id(),
+                    ]);
+                } else {
+                    $project->soldHoursHistory()->where('effective_from', $eff)
+                        ->update(['sold_hours' => $new, 'changed_by' => auth()->id()]);
+                }
+                // Recalcula o acumulado DEPOIS de gravar a vigência (evita stale).
+                $project->updateAccumulatedSoldHours(null, true);
+                // Valor do contrato = horas × valor-hora — atualiza junto (só se tem rate,
+                // pra não ZERAR o project_value de projetos sem valor-hora configurado).
+                if ((float) ($project->hourly_rate ?? 0) > 0) {
+                    $project->update(['project_value' => round($new * (float) $project->hourly_rate, 2)]);
+                }
+            }
+            return;
+        }
+
+        if ($field === 'valor_projeto') {
+            // Cloud: valor do contrato, sem vigência mensal (Observer loga a mudança).
+            $project->update(['project_value' => $value]);
+        }
     }
 
     private function notifyContractCreated(Contract $contract): void
@@ -197,14 +610,14 @@ class ContractController extends Controller
 
     /**
      * Diretor de Projetos — recebe e-mail em TODA fase pós-Novo Contrato
-     * (Início Autorizado, Projeto Gerado). Hoje: Ricardo Badawi.
-     * Em Novo Contrato só recebe se for o executivo do cliente.
+     * (Início Autorizado, Projeto Gerado). Definido pela flag is_diretor_projetos
+     * no cadastro do usuário (configurável). Em Novo Contrato só recebe se for o
+     * executivo do cliente.
      */
     private function projectDirectorUserId(): ?int
     {
-        $email = 'ricardo.badawi@erpserv.com.br';
         $id = \App\Models\User::query()
-            ->where('email', $email)
+            ->where('is_diretor_projetos', true)
             ->where('enabled', true)
             ->value('id');
         return $id ? (int) $id : null;
@@ -212,9 +625,21 @@ class ContractController extends Controller
 
     public function show(Contract $contract): JsonResponse
     {
-        return response()->json(
-            $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status'])
-        );
+        $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name']);
+
+        // Flag p/ legenda verde "Gerou aporte automático": subprojeto faturado gera um aporte
+        // no pai (ContractController@store). Vínculo pelo CÓDIGO do subprojeto na descrição.
+        $contract->generated_aporte = null;
+        if ($contract->parent_project_id && $contract->project_code_preview) {
+            $ap = \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
+                ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $contract->project_code_preview . '%')
+                ->orderByDesc('id')->first(['id', 'project_id']);
+            if ($ap) {
+                $contract->generated_aporte = ['id' => $ap->id, 'parent_id' => $ap->project_id];
+            }
+        }
+
+        return response()->json($contract);
     }
 
     public function update(Request $request, Contract $contract): JsonResponse
@@ -264,14 +689,112 @@ class ContractController extends Controller
                 foreach ($validated['contacts'] ?? [] as $c) {
                     ContractContact::create(array_merge($c, ['contract_id' => $contract->id]));
                 }
+                // Espelha no cadastro da empresa (upsert; nunca deleta do cadastro).
+                $this->syncContactsToCustomerRegistry((int) $contract->customer_id, $validated['contacts'] ?? []);
             }
         });
 
         return response()->json($contract->fresh()->load(['customer:id,name', 'contacts', 'attachments']));
     }
 
+    /**
+     * Edita um ADITIVO. Para aditivo Mensal "multiplo" (valor-hora + horas), reaplica os
+     * novos valores no projeto SOBRESCREVENDO a vigência do mês e recalculando o valor do
+     * contrato — mas SÓ se for o aditivo MAIS RECENTE do projeto (editar um antigo bagunçaria
+     * a vigência). Os demais campos (forma de pagamento / observação) sempre editáveis.
+     */
+    public function updateAditivo(Request $request, Contract $contract): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+        if (!$contract->is_aditivo) {
+            return response()->json(['message' => 'Não é um aditivo.'], 422);
+        }
+        $validated = $request->validate([
+            'aditivo_changes'         => 'nullable|array',
+            'aditivo_changes.*.field' => 'required_with:aditivo_changes|in:valor_hora,horas_contratadas',
+            'aditivo_changes.*.value' => 'required_with:aditivo_changes|numeric|min:0',
+            'condicao_pagamento'      => 'nullable|string',
+            'observacoes'             => 'nullable|string',
+        ]);
+
+        $reapply = !empty($validated['aditivo_changes']) && $contract->aditivo_field === 'multiplo';
+
+        if ($reapply) {
+            $project = Project::with('contractType')->find($contract->aditivo_project_id);
+            if (!$project || strtolower($project->contractType->code ?? '') !== 'monthly_hours') {
+                return response()->json(['message' => 'Reaplicação só para Banco de Horas Mensal.'], 422);
+            }
+            // Só o aditivo MAIS RECENTE do projeto pode reaplicar.
+            $isLatest = Contract::where('aditivo_project_id', $project->id)
+                ->where('is_aditivo', true)->where('id', '>', $contract->id)->doesntExist();
+            if (!$isLatest) {
+                return response()->json(['message' => 'Só o aditivo mais recente do projeto pode ser editado. Crie um novo aditivo.'], 422);
+            }
+
+            $eff = $contract->aditivo_effective_from
+                ? \Carbon\Carbon::parse($contract->aditivo_effective_from)->startOfMonth()->toDateString()
+                : \Carbon\Carbon::now()->startOfMonth()->toDateString();
+
+            $newRate = null; $newHoras = null;
+            foreach ($validated['aditivo_changes'] as $ch) {
+                if ($ch['field'] === 'valor_hora') $newRate = (float) $ch['value'];
+                if ($ch['field'] === 'horas_contratadas') $newHoras = (float) $ch['value'];
+            }
+            $newRate  ??= (float) ($contract->valor_hora ?? $project->hourly_rate ?? 0);
+            $newHoras ??= (float) ($contract->horas_contratadas ?? $project->sold_hours ?? 0);
+
+            DB::transaction(function () use ($contract, $project, $eff, $newRate, $newHoras, $validated) {
+                // valor-hora: sobrescreve a vigência do mês (por effective_from), não por dia.
+                $project->update(['hourly_rate' => $newRate]);
+                $log = \App\Models\ProjectChangeLog::where('project_id', $project->id)
+                    ->where('field_name', 'hourly_rate')->where('effective_from', $eff)->first();
+                if ($log) { $log->update(['new_value' => (string) $newRate]); }
+
+                // horas: sobrescreve a vigência do mês.
+                $project->update(['sold_hours' => $newHoras]);
+                $h = $project->soldHoursHistory()->where('effective_from', $eff)->first();
+                if ($h) { $h->update(['sold_hours' => $newHoras, 'changed_by' => auth()->id()]); }
+                $project->updateAccumulatedSoldHours(null, true);
+
+                // valor do contrato recomputado.
+                $newValue = round($newHoras * $newRate, 2);
+                $project->update(['project_value' => $newValue]);
+
+                // atualiza o registro do aditivo (preserva os .old originais do breakdown).
+                $changes = array_map(function ($c) use ($newRate, $newHoras) {
+                    $c['new'] = $c['field'] === 'valor_hora' ? $newRate : $newHoras;
+                    return $c;
+                }, $contract->aditivo_changes ?? []);
+
+                $contract->update([
+                    'valor_hora'         => $newRate,
+                    'horas_contratadas'  => (int) $newHoras,
+                    'valor_projeto'      => $newValue,
+                    'aditivo_changes'    => $changes,
+                    'condicao_pagamento' => $validated['condicao_pagamento'] ?? $contract->condicao_pagamento,
+                    'observacoes'        => $validated['observacoes'] ?? $contract->observacoes,
+                ]);
+            });
+        } else {
+            $contract->update([
+                'condicao_pagamento' => $validated['condicao_pagamento'] ?? $contract->condicao_pagamento,
+                'observacoes'        => $validated['observacoes'] ?? $contract->observacoes,
+            ]);
+        }
+
+        return response()->json($contract->fresh()->load(['customer:id,name', 'aditivoProject:id,name,code']));
+    }
+
     public function destroy(Contract $contract): JsonResponse
     {
+        // Aditivo: excluir REVERTE a alteração no projeto (só o aditivo mais recente).
+        if ($contract->is_aditivo) {
+            return $this->destroyAditivo($contract);
+        }
+
         if ($contract->project_id) {
             if (Expense::where('project_id', $contract->project_id)->exists()) {
                 return response()->json(['message' => 'Contrato com despesas registradas não pode ser excluído.'], 422);
@@ -288,6 +811,69 @@ class ContractController extends Controller
         }
 
         $contract->delete();
+        return response()->json(null, 204);
+    }
+
+    /**
+     * Exclui um ADITIVO REVERTENDO a alteração no projeto (valor-hora/horas/valor do contrato
+     * voltam ao "antes" e a vigência daquele mês é removida). Só o aditivo MAIS RECENTE do
+     * projeto pode ser excluído — reverter um antigo (com outros depois) bagunçaria a vigência.
+     */
+    private function destroyAditivo(Contract $contract): JsonResponse
+    {
+        $isLatest = Contract::where('aditivo_project_id', $contract->aditivo_project_id)
+            ->where('is_aditivo', true)->where('id', '>', $contract->id)->doesntExist();
+        if (!$isLatest) {
+            return response()->json([
+                'message' => 'Só o aditivo MAIS RECENTE do projeto pode ser excluído (a exclusão reverte a alteração). Exclua os mais novos primeiro.',
+            ], 422);
+        }
+
+        $project = Project::with('contractType')->find($contract->aditivo_project_id);
+
+        DB::transaction(function () use ($contract, $project) {
+            if ($project) {
+                $eff = $contract->aditivo_effective_from
+                    ? \Carbon\Carbon::parse($contract->aditivo_effective_from)->startOfMonth()->toDateString()
+                    : null;
+                $field   = $contract->aditivo_field;
+                $changes = collect($contract->aditivo_changes ?? []);
+
+                if ($field === 'multiplo' && $changes->isNotEmpty()) {
+                    $oldRate  = (float) ($changes->firstWhere('field', 'valor_hora')['old'] ?? $project->hourly_rate);
+                    $oldHoras = (float) ($changes->firstWhere('field', 'horas_contratadas')['old'] ?? $project->sold_hours);
+                    if ($eff) {
+                        \App\Models\ProjectChangeLog::where('project_id', $project->id)->where('field_name', 'hourly_rate')->where('effective_from', $eff)->delete();
+                        $project->soldHoursHistory()->where('effective_from', $eff)->delete();
+                    }
+                    $project->update(['hourly_rate' => $oldRate, 'sold_hours' => $oldHoras, 'project_value' => round($oldRate * $oldHoras, 2)]);
+                    $project->updateAccumulatedSoldHours(null, true);
+                } elseif ($field === 'valor_hora') {
+                    $old = (float) ($contract->aditivo_old_value ?? $project->hourly_rate);
+                    if ($eff) \App\Models\ProjectChangeLog::where('project_id', $project->id)->where('field_name', 'hourly_rate')->where('effective_from', $eff)->delete();
+                    $project->update(['hourly_rate' => $old]);
+                    if ($project->isBankHoursMonthly() && (float) $project->sold_hours > 0) {
+                        $project->update(['project_value' => round((float) $project->sold_hours * $old, 2)]);
+                    }
+                } elseif ($field === 'horas_contratadas') {
+                    $old = (float) ($contract->aditivo_old_value ?? $project->sold_hours);
+                    if ($eff) $project->soldHoursHistory()->where('effective_from', $eff)->delete();
+                    $project->update(['sold_hours' => $old]);
+                    $project->updateAccumulatedSoldHours(null, true);
+                    if ($project->isBankHoursMonthly() && (float) $project->hourly_rate > 0) {
+                        $project->update(['project_value' => round($old * (float) $project->hourly_rate, 2)]);
+                    }
+                } elseif ($field === 'valor_projeto') {
+                    $project->update(['project_value' => (float) ($contract->aditivo_old_value ?? $project->project_value)]);
+                }
+            }
+
+            foreach ($contract->attachments as $att) {
+                $att->delete();
+            }
+            $contract->delete();
+        });
+
         return response()->json(null, 204);
     }
 
@@ -457,6 +1043,105 @@ class ContractController extends Controller
         }
     }
 
+    /**
+     * Modelo 2 — coordenador (re)atribuído num projeto JÁ gerado. Notifica
+     * SÓ o coordenador da coluna (escopo via setRelation), pelo workflow
+     * configurável `project.coordinator_assigned` na Central.
+     */
+    private function notifyCoordinatorAssigned(?Contract $contract, int $coordinatorId): void
+    {
+        if (!$contract || !$contract->project_id) return;
+        try {
+            $project = \App\Models\Project::find($contract->project_id);
+            if (!$project) return;
+
+            // Escopa a audiência "coordenador" ao coordenador recém-atribuído da
+            // coluna (não a todos os coordenadores do pivot).
+            $project->setRelation('coordinators', \App\Models\User::whereIn('id', [$coordinatorId])->where('enabled', true)->get());
+
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('project.coordinator_assigned', [
+                'contract' => $contract,
+                'project'  => $project,
+            ]);
+            if (empty($rcpt['to'])) return;
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify((new \App\Notifications\ProjectCoordinatorAssignedNotification($contract, $project))->withCc($rcpt['cc']));
+        } catch (\Throwable $e) {
+            \Log::warning('ProjectCoordinatorAssigned notification falhou', [
+                'contract_id'    => $contract->id,
+                'coordinator_id' => $coordinatorId,
+                'err'            => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Workflows de fase terminal do projeto (Fechado/Cancelado/Pausado),
+     * configuráveis na Central (project.finished / cancelled / paused).
+     */
+    private function notifyProjectPhase(\App\Models\Project $project, string $workflowKey): void
+    {
+        try {
+            $project->loadMissing('customer', 'coordinators');
+            $contract = $project->contract_id ? \App\Models\Contract::find($project->contract_id) : null;
+
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+                'project'  => $project,
+                'contract' => $contract,
+                'customer' => $project->customer,
+                'actor'    => auth()->user(),
+            ]);
+            if (empty($rcpt['to'])) return;
+            \Illuminate\Support\Facades\Notification::route('mail', $rcpt['to'])
+                ->notify((new \App\Notifications\ProjectPhaseChangedNotification($project, $workflowKey))->withCc($rcpt['cc']));
+        } catch (\Throwable $e) {
+            \Log::warning('ProjectPhase notification falhou', [
+                'project_id'   => $project->id,
+                'workflow_key' => $workflowKey,
+                'err'          => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Anexa a PROPOSTA ASSINADA da oportunidade ao contrato (server-side). Copia o arquivo do
+     * Attachment da proposta para o caminho do contrato e registra como anexo "proposta".
+     * Best-effort e idempotente (não duplica se já houver anexo de proposta).
+     */
+    private function autoAnexarPropostaAssinada(Contract $contract, ?int $oppId): void
+    {
+        if (!$oppId) return;
+        try {
+            $jaTem = app(\App\Attachments\AttachmentService::class)
+                ->listFor('CONTRACT', $contract->id, auth()->user() ?? \App\Models\User::find($contract->created_by_id), 'proposta');
+            if ($jaTem->isNotEmpty()) return;
+        } catch (\Throwable $e) { /* segue */ }
+
+        $prop = \App\Models\CrmProposal::where('opportunity_id', $oppId)->whereNull('deleted_at')
+            ->whereIn('status', ['assinada', 'liberada', 'convertida'])->whereNotNull('document_id')
+            ->orderByDesc('versao')->orderByDesc('id')->first();
+        $doc = $prop ? \App\Models\Document::find($prop->document_id) : null;
+        $srcId = $doc?->signed_attachment_id ?? $doc?->attachment_id;
+        $src = $srcId ? \App\Models\Attachment::find($srcId) : null;
+        if (!$src) return;
+        try {
+            $disk = \Illuminate\Support\Facades\Storage::disk($src->storage_provider ?: config('filesystems.default'));
+            if (!$disk->exists($src->storage_path)) return;
+            $ext  = $src->extension ?: 'pdf';
+            $dest = "contracts/{$contract->id}/attachments/" . \Illuminate\Support\Str::uuid() . ".{$ext}";
+            $disk->copy($src->storage_path, $dest);
+            app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user() ?? \App\Models\User::find($contract->created_by_id), [
+                'entity_type'   => 'CONTRACT',
+                'entity_id'     => $contract->id,
+                'category'      => self::mapAttachmentTypeToCategory('proposta'),
+                'storage_path'  => $dest,
+                'original_name' => $src->original_name ?: ('Proposta-' . ($prop->codigo ?? $prop->id) . '-assinada.pdf'),
+                'mime_type'     => $src->mime_type ?: 'application/pdf',
+                'metadata'      => ['legacy_type' => 'proposta', 'origem' => 'proposta_assinada_auto', 'proposal_id' => $prop->id],
+            ]);
+        } catch (\Throwable $e) { /* best-effort: não quebra a criação do contrato */ }
+    }
+
     public function uploadAttachment(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
@@ -477,6 +1162,33 @@ class ContractController extends Controller
             'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
             'metadata'      => ['legacy_type' => $request->input('type')],
         ]);
+
+        // Subprojeto faturado: a proposta/aprovação do contrato também alimenta o APORTE
+        // gerado no pai (mantém "no filho e no aporte" mesmo antes do projeto-filho existir).
+        // Vínculo pelo CÓDIGO do subprojeto na descrição do aporte. Idempotente, best-effort.
+        try {
+            if (
+                in_array($request->input('type'), ['proposta', 'aprovacao_cliente'], true)
+                && $contract->parent_project_id && $contract->project_code_preview
+            ) {
+                $aporte = \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
+                    ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $contract->project_code_preview . '%')
+                    ->orderByDesc('id')->first();
+                if ($aporte) {
+                    app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user(), [
+                        'entity_type'   => 'HOUR_CONTRIBUTION',
+                        'entity_id'     => $aporte->id,
+                        'category'      => 'proposal',
+                        'storage_path'  => $path,
+                        'original_name' => $file->getClientOriginalName(),
+                        'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
+                        'metadata'      => ['mirrored' => true, 'from' => 'contract', 'contract_id' => $contract->id],
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('mirror proposta contrato->aporte falhou', ['contract_id' => $contract->id, 'err' => $e->getMessage()]);
+        }
 
         return response()->json($attachment, 201);
     }
@@ -525,8 +1237,10 @@ class ContractController extends Controller
                 'kanbanCoordinator:id,name',
                 'executivoConta:id,name',
                 'project:id,code,name,status',
+                'aditivoProject:id,code,name,hourly_rate,sold_hours,contract_type_id',
+                'aditivoProject.contractType:id,code',
             ])->where(function ($q) {
-                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, 'novo', 'novo_contrato']))
+                $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, Contract::KANBAN_ADITIVO, 'novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
               })
               ->whereNull('sustentacao_column')
@@ -847,6 +1561,22 @@ class ContractController extends Controller
         $coordinatorId = $request->input('coordinator_id');
         $fromColumn    = $this->resolveColumnName($contract);
 
+        // Aditivo: card só transita entre "Novo Contrato" (demanda) e a coluna "Aditivos".
+        if ($contract->is_aditivo) {
+            if ($toColumn !== Contract::KANBAN_ADITIVO && !in_array($toColumn, Contract::DEMAND_COLUMNS, true)) {
+                return response()->json(['message' => 'Aditivo só pode ir para a coluna Aditivos.'], 422);
+            }
+            $contract->update([
+                'kanban_status' => $toColumn === Contract::KANBAN_ADITIVO ? Contract::KANBAN_ADITIVO : Contract::KANBAN_NOVO_PROJETO,
+                'kanban_order'  => $request->input('order', 0),
+            ]);
+            return response()->json($contract->fresh());
+        }
+        // Não-aditivo não pode entrar na coluna Aditivos.
+        if ($toColumn === Contract::KANBAN_ADITIVO) {
+            return response()->json(['message' => 'Apenas contratos aditivos vão para a coluna Aditivos.'], 422);
+        }
+
         $validDemandColumns = array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_ALOCADO]);
 
         // Mover para coluna de coordenador (legado) ou para "alocado" = gerar projeto
@@ -868,6 +1598,13 @@ class ContractController extends Controller
                     'kanban_order'          => $request->input('order', 0),
                     'sustentacao_column'    => null,
                 ]);
+
+                // Projeto já existia: coordenador (re)atribuído ao mover para a
+                // coluna dele. Notifica o coordenador da coluna (Modelo 2 —
+                // direcionado, sem reincomodar cliente/executivo do broadcast).
+                if ($coordinatorId) {
+                    $this->notifyCoordinatorAssigned($contract->fresh(['customer', 'contacts']), (int) $coordinatorId);
+                }
             } else {
                 if (!in_array($contract->status, [Contract::STATUS_INICIO_AUTORIZADO, Contract::STATUS_APROVADO])) {
                     $contract->update(['status' => Contract::STATUS_APROVADO]);
@@ -1075,6 +1812,15 @@ class ContractController extends Controller
                 ]);
             }
 
+            // Modelo 2: coordenador (re)atribuído num projeto já gerado — notifica
+            // o NOVO coordenador (workflow configurável project.coordinator_assigned).
+            if ($project->contract_id) {
+                $assignContract = \App\Models\Contract::find($project->contract_id);
+                if ($assignContract) {
+                    $this->notifyCoordinatorAssigned($assignContract, $newCoordId);
+                }
+            }
+
             return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
         }
 
@@ -1113,6 +1859,16 @@ class ContractController extends Controller
             );
         } catch (\Throwable $e) {
             \Log::warning('phase notif projectMove falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
+        }
+
+        // Workflows de fase terminal (Central): Fechado / Cancelado / Pausado.
+        $phaseWorkflow = [
+            'finished'  => 'project.finished',
+            'cancelled' => 'project.cancelled',
+            'paused'    => 'project.paused',
+        ][$newStatus] ?? null;
+        if ($phaseWorkflow) {
+            $this->notifyProjectPhase($project, $phaseWorkflow);
         }
 
         return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
@@ -1451,9 +2207,70 @@ class ContractController extends Controller
             'project_id'       => $contract->project_id,
             'project_code'     => $contract->project?->code,
             'project_status'   => $contract->project?->status,
+            // Subprojeto faturado que gerou aporte automático no pai → badge "Gerou aporte" na capa.
+            'gerou_aporte'     => ($contract->parent_project_id && $contract->project_code_preview)
+                ? \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
+                    ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $contract->project_code_preview . '%')
+                    ->exists()
+                : false,
             'is_complete'      => $contract->isKanbanComplete(),
             'created_at'       => $contract->created_at,
+            'is_aditivo'       => (bool) $contract->is_aditivo,
+            'aditivo_field'    => $contract->aditivo_field,
+            'aditivo_changes'  => $contract->aditivo_changes, // breakdown [{field,label,old,new}] (multi Mensal)
+            'aditivo_old_value'   => $contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null,
+            'aditivo_new_value'   => $contract->is_aditivo ? (float) match ($contract->aditivo_field) {
+                'valor_hora'        => $contract->valor_hora,
+                'horas_contratadas' => $contract->horas_contratadas,
+                'valor_projeto'     => $contract->valor_projeto,
+                'multiplo'          => $contract->valor_projeto, // novo valor do contrato
+                default             => 0,
+            } : null,
+            'aditivo_project_code' => $contract->aditivoProject?->code,
+            'aditivo_project_name' => $contract->aditivoProject?->name ?? $contract->project_name,
+            // Valor do contrato (Mensal = horas × valor-hora) impactado pelo aditivo — de → para.
+            'aditivo_contract_old' => $this->aditivoContractValue($contract, 'old'),
+            'aditivo_contract_new' => $this->aditivoContractValue($contract, 'new'),
+            'aditivo_effective_from' => $contract->aditivo_effective_from?->format('Y-m-d') ?? (is_string($contract->aditivo_effective_from) ? $contract->aditivo_effective_from : null),
+            'aditivo_cond_pagamento' => $contract->condicao_pagamento,
+            'aditivo_obs'            => $contract->observacoes,
         ];
+    }
+
+    /**
+     * Valor do CONTRATO (Mensal = horas × valor-hora) antes/depois do aditivo. Só faz
+     * sentido pra Banco de Horas Mensal; On Demand/Cloud retornam null (não é horas×hora).
+     */
+    private function aditivoContractValue(Contract $contract, string $which): ?float
+    {
+        if (!$contract->is_aditivo) return null;
+        $ap = $contract->aditivoProject;
+        if (!$ap || strtolower($ap->contractType->code ?? '') !== 'monthly_hours') return null;
+
+        if ($contract->aditivo_field === 'horas_contratadas') {
+            $rate = (float) ($ap->hourly_rate ?? 0);
+            if ($rate <= 0) return null; // sem valor-hora não há "valor do contrato"
+            $hours = $which === 'old'
+                ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
+                : (float) $contract->horas_contratadas;
+            return $hours === null ? null : round($hours * $rate, 2);
+        }
+        if ($contract->aditivo_field === 'valor_hora') {
+            $hours = (float) ($ap->sold_hours ?? 0);
+            if ($hours <= 0) return null; // sem horas não há "valor do contrato"
+            $rate  = $which === 'old'
+                ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
+                : (float) $contract->valor_hora;
+            return $rate === null ? null : round($hours * $rate, 2);
+        }
+        if ($contract->aditivo_field === 'multiplo') {
+            // Multi (Mensal): old = valor do contrato antes (gravado em aditivo_old_value),
+            // new = valor do contrato recomputado (gravado em valor_projeto).
+            return $which === 'old'
+                ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
+                : ($contract->valor_projeto !== null ? (float) $contract->valor_projeto : null);
+        }
+        return null;
     }
 
     private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
@@ -2383,6 +3200,280 @@ class ContractController extends Controller
             }
         }
         return $achou ? round(($fator - 1) * 100, 4) : null;
+    }
+
+    // ─── Assinatura Eletrônica (pré-requisitos Clicksign) ────────────────────────
+
+    /** POST /contracts/{contract}/gerar-documento — gera o Document OFICIAL do contrato (PDF). */
+    public function gerarDocumento(\Illuminate\Http\Request $request, Contract $contract, \App\Documents\ContractDocumentService $svc): \Illuminate\Http\JsonResponse
+    {
+        if (empty($contract->customer_id)) {
+            return response()->json(['message' => 'Contrato sem empresa vinculada.'], 422);
+        }
+        $doc = $svc->gerar($contract, $request->user(), true);
+        return response()->json(['data' => [
+            'document_id'       => $doc->id,
+            'versao'            => $doc->versao,
+            'download_url'      => "/documents/{$doc->id}/download",
+            'status_assinatura' => $doc->status_assinatura,
+        ]]);
+    }
+
+    /** GET /contracts/{contract}/assinatura — painel "Assinatura Eletrônica" (Item 8 + envio 4.2). */
+    public function assinatura(Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        $contract->loadMissing(['contractDocument', 'crmProposal:id,codigo,versao', 'proposalDocument:id,versao']);
+        $doc = $contract->contractDocument;
+
+        $ativo = $contract->activeEnvelope()->with('signers')->first();
+        $envelopeAtivo = $ativo ? [
+            'id'           => $ativo->id,
+            'status'       => $ativo->status,
+            'environment'  => $ativo->environment,
+            'motivo_envio' => $ativo->motivo_envio,
+            'sent_at'      => optional($ativo->sent_at)->toIso8601String(),
+            'clicksign_envelope_id' => $ativo->clicksign_envelope_id,
+            'signers'      => $ativo->signers->map(fn ($s) => [
+                'name' => $s->name, 'email' => $s->email, 'sign_order' => $s->sign_order,
+                'status' => $s->status, 'sign_url' => $s->sign_url,
+            ])->all(),
+        ] : null;
+        $podeEnviar = $doc && $contract->status === Contract::STATUS_EMITIDO && !$ativo;
+
+        // Checklist de Liberação (Fase 4.5)
+        $contract->loadMissing(['releaseChecklist.checkedBy:id,name', 'liberadoPor:id,name', 'bloqueadoPor:id,name']);
+        $checklistSvc = app(\App\Services\ContractReleaseChecklistService::class);
+        $checklist = $contract->releaseChecklist->map(fn ($it) => [
+            'item_key' => $it->item_key, 'label' => $it->label, 'obrigatorio' => $it->obrigatorio,
+            'aplicavel' => $it->aplicavel, 'checked' => $it->checked,
+            'checked_by' => $it->checkedBy?->name, 'checked_at' => optional($it->checked_at)->toIso8601String(),
+            'auto' => $it->item_key === 'contrato_assinado',
+        ])->values()->all();
+        $podeLiberar = $contract->status === Contract::STATUS_AGUARDANDO_LIBERACAO && $checklistSvc->podeLiberar($contract);
+
+        $eventos = [];
+        $anexos  = ['assinado' => null, 'certificado' => null, 'evidencias' => null];
+        if ($doc) {
+            $eventos = \App\Models\DocumentEvent::where('document_id', $doc->id)
+                ->orderByDesc('sequence_number')->limit(50)->get(['event_type', 'created_at'])
+                ->map(fn ($e) => ['tipo' => $e->event_type, 'em' => optional($e->created_at)->toIso8601String()])->all();
+            foreach (\App\Models\Attachment::where('entity_type', 'DOCUMENT')->where('entity_id', $doc->id)->get() as $a) {
+                $info = ['id' => $a->id, 'url' => "/api/v1/attachments/{$a->id}/url", 'size' => (int) $a->size_bytes, 'em' => optional($a->created_at)->toIso8601String(), 'versao' => $doc->versao];
+                if ($a->category === 'signed_pdf') $anexos['assinado'] = $info;
+                if ($a->category === 'assinatura_certificado') $anexos['certificado'] = $info;
+                if ($a->category === 'assinatura_evidencias') $anexos['evidencias'] = $info;
+            }
+        }
+        $sig = $doc?->status_assinatura ?: \App\Models\Document::SIG_NAO_ENVIADO;
+
+        return response()->json(['data' => [
+            // Fluxo COMERCIAL (operacional) — SEPARADO do jurídico (Item 4).
+            'status_operacional' => $contract->status,
+            // Fluxo JURÍDICO (assinatura) — vive no Document.
+            'status_assinatura'       => $sig,
+            'status_assinatura_label' => \App\Models\Document::SIG_LABELS[$sig] ?? $sig,
+            // Envio para assinatura (Fase 4.2)
+            'clicksign_enabled'   => \App\Services\Clicksign\ClicksignService::enabled(),
+            'clicksign_ambiente'  => app(\App\Services\Clicksign\ClicksignService::class)->environment(),
+            'pode_enviar'         => $podeEnviar,
+            'envelope_ativo'      => $envelopeAtivo,
+            'documento' => $doc ? [
+                'id' => $doc->id, 'versao' => $doc->versao,
+                'gerado_em'    => optional($doc->generated_at)->toIso8601String(),
+                'assinado_em'  => optional($doc->signed_at)->toIso8601String(),
+                'download_url' => "/documents/{$doc->id}/download",
+            ] : null,
+            // Liberação operacional (Fase 4.5)
+            'checklist'    => $checklist,
+            'pode_liberar' => $podeLiberar,
+            'liberacao'    => $contract->liberado_em ? [
+                'liberado_por' => $contract->liberadoPor?->name, 'liberado_em' => optional($contract->liberado_em)->toIso8601String(),
+                'observacao' => $contract->liberacao_observacao,
+            ] : null,
+            'bloqueio'     => $contract->bloqueado_em ? [
+                'bloqueado_por' => $contract->bloqueadoPor?->name, 'bloqueado_em' => optional($contract->bloqueado_em)->toIso8601String(),
+                'motivo' => $contract->motivo_bloqueio,
+            ] : null,
+            'anexos' => $anexos,
+            'captura' => (function () use ($contract) {
+                $env = $contract->signatureEnvelopes()->first();
+                return $env && $env->capture_status ? ['status' => $env->capture_status, 'em' => optional($env->captured_at)->toIso8601String(), 'erro' => $env->capture_error] : null;
+            })(),
+            'origem' => $contract->crmProposal ? [
+                'proposal_id'  => $contract->crm_proposal_id,
+                'codigo'       => $contract->crmProposal->codigo,
+                'versao'       => $contract->proposal_version ?? $contract->crmProposal->versao,
+                'proposal_document_version' => $contract->proposal_document_version,
+                'proposal_document_hash'    => $contract->proposal_document_hash ? substr($contract->proposal_document_hash, 0, 12) : null,
+                'proposta_url' => "/crm/propostas/{$contract->crm_proposal_id}",
+                'proposal_document_download' => $contract->proposal_document_id ? "/documents/{$contract->proposal_document_id}/download" : null,
+            ] : null,
+            'eventos' => $eventos,
+        ]]);
+    }
+
+    /** POST /contracts/{contract}/assinatura/enviar — Fase 4.2: envia o contrato para assinatura (Clicksign v3). */
+    public function enviarAssinatura(\Illuminate\Http\Request $request, Contract $contract, \App\Services\Clicksign\ClicksignService $clicksign): \Illuminate\Http\JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !in_array($user->type, ['admin', 'administrativo'], true)) {
+            return response()->json(['message' => 'Sem permissão para enviar o contrato para assinatura.'], 403);
+        }
+
+        $v = $request->validate([
+            'signers'                => 'required|array|min:1',
+            'signers.*.name'         => 'required|string|max:160',
+            'signers.*.email'        => 'nullable|email',
+            'signers.*.documentation' => 'nullable|string|max:20',
+            'signers.*.sign_order'   => 'nullable|integer|min:1',
+            'signers.*.action'       => 'nullable|in:sign,agree,provide_evidence',
+            'signers.*.auth'         => 'nullable|in:email,icp_brasil,whatsapp',
+            'signers.*.role'         => 'nullable|string|max:32',
+            'deadline_at'            => 'nullable|date',
+            'subject'                => 'nullable|string|max:200',
+        ]);
+
+        // Pré-condições (4.2).
+        $contract->loadMissing('contractDocument');
+        if (!$contract->contract_document_id || !$contract->contractDocument) {
+            return response()->json(['message' => 'Gere o documento oficial do contrato antes de enviar para assinatura.'], 422);
+        }
+        if ($contract->status !== Contract::STATUS_EMITIDO) {
+            return response()->json(['message' => 'O contrato precisa estar no status "Emitido" para ser enviado.'], 422);
+        }
+        if ($contract->activeEnvelope()->exists()) {
+            return response()->json(['message' => 'Já existe um envelope de assinatura ativo para este contrato.'], 422);
+        }
+
+        try {
+            $envelope = $clicksign->enviar($contract, $v['signers'], [
+                'deadline_at' => $v['deadline_at'] ?? null,
+                'subject'     => $v['subject'] ?? null,
+                'motivo_envio' => 'inicial',
+            ], $user);
+        } catch (\Throwable $e) {
+            \Log::error('Falha ao enviar contrato para assinatura', ['contract' => $contract->id, 'erro' => $e->getMessage()]);
+            return response()->json(['message' => 'Falha ao enviar para assinatura: ' . $e->getMessage()], 502);
+        }
+
+        // Transições de status (jurídico no Document; operacional no Contract).
+        $doc = $contract->contractDocument;
+        $doc->setSignatureStatus(\App\Models\Document::SIG_ENVIADO, \App\Models\DocumentEvent::TYPE_ASSINATURA_SOLICITADA, [
+            'envelope_id' => $envelope->id, 'clicksign_envelope_id' => $envelope->clicksign_envelope_id,
+            'signers' => array_map(fn ($s) => ['name' => $s['name'] ?? null, 'email' => $s['email'] ?? null], $v['signers']),
+        ], $user->id);
+        $doc->setSignatureStatus(\App\Models\Document::SIG_ASSINATURA_PENDENTE);
+        $contract->update(['status' => Contract::STATUS_AGUARDANDO_ASSINATURA]);
+
+        \App\Models\ContractEvent::create([
+            'contract_id'  => $contract->id,
+            'event_type'   => 'assinatura_solicitada',
+            'to_value'     => 'Enviado para assinatura (' . count($v['signers']) . ' signatário(s))',
+            'triggered_by' => $user->id,
+            'meta'         => [
+                'envelope_id' => $envelope->id,
+                'clicksign_envelope_id' => $envelope->clicksign_envelope_id,
+                'environment' => $envelope->environment,
+                'stub'        => $clicksign->usandoStub(),
+                'signers'     => $envelope->signers->map(fn ($s) => ['name' => $s->name, 'sign_order' => $s->sign_order])->all(),
+            ],
+        ]);
+
+        return response()->json(['data' => [
+            'envelope_id'  => $envelope->id,
+            'status'       => $envelope->status,
+            'environment'  => $envelope->environment,
+            'stub'         => $clicksign->usandoStub(),
+            'status_assinatura' => $doc->fresh()->status_assinatura,
+            'contract_status'   => $contract->fresh()->status,
+            'signers'      => $envelope->signers->map(fn ($s) => ['name' => $s->name, 'sign_order' => $s->sign_order, 'sign_url' => $s->sign_url, 'status' => $s->status])->all(),
+        ]], 201);
+    }
+
+    // ─── Liberação Operacional (Fase 4.5) ────────────────────────────────────────
+
+    private function podeGerirLiberacao(Request $request): bool
+    {
+        $u = $request->user();
+        return $u && in_array($u->type, ['admin', 'administrativo'], true);
+    }
+
+    /** POST /contracts/{contract}/checklist — marca/desmarca um item do Checklist de Liberação. */
+    public function checklistMarcar(Request $request, Contract $contract, \App\Services\ContractReleaseChecklistService $svc): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+        $v = $request->validate(['item_key' => 'required|string|max:48', 'checked' => 'required|boolean']);
+        if ($v['item_key'] === 'contrato_assinado') {
+            return response()->json(['message' => 'O item "Contrato assinado" é automático (assinatura jurídica).'], 422);
+        }
+        $svc->instanciar($contract);
+        $item = $svc->marcar($contract, $v['item_key'], $v['checked'], $request->user()->id);
+        if (!$item) return response()->json(['message' => 'Item não encontrado.'], 404);
+        return response()->json(['data' => ['item_key' => $item->item_key, 'checked' => $item->checked, 'pode_liberar' => $svc->podeLiberar($contract)]]);
+    }
+
+    /** POST /contracts/{contract}/liberar — Liberação Operacional (aguardando_liberacao → liberado_execucao). */
+    public function liberar(Request $request, Contract $contract, \App\Services\ContractReleaseChecklistService $svc): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão para liberar o contrato.'], 403);
+        }
+        $v = $request->validate(['observacao' => 'nullable|string|max:1000']);
+
+        if ($contract->status !== Contract::STATUS_AGUARDANDO_LIBERACAO) {
+            return response()->json(['message' => 'O contrato precisa estar em "Aguardando Liberação".'], 422);
+        }
+        $svc->instanciar($contract);
+        if (!$svc->podeLiberar($contract)) {
+            return response()->json(['message' => 'Existem itens obrigatórios do checklist pendentes.'], 422);
+        }
+
+        $contract->update([
+            'status'              => Contract::STATUS_LIBERADO_EXECUCAO,
+            'liberado_por'        => $request->user()->id,
+            'liberado_em'         => now(),
+            'liberacao_observacao' => $v['observacao'] ?? null,
+        ]);
+        \App\Models\ContractEvent::create([
+            'contract_id' => $contract->id, 'event_type' => 'liberado_execucao',
+            'to_value' => 'Liberado para execução', 'triggered_by' => $request->user()->id,
+            'meta' => ['observacao' => $v['observacao'] ?? null],
+        ]);
+        return response()->json(['data' => ['status' => $contract->status, 'liberado_em' => optional($contract->liberado_em)->toIso8601String()]]);
+    }
+
+    /** POST /contracts/{contract}/bloquear — HOLD operacional reversível (NÃO altera o status). */
+    public function bloquear(Request $request, Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+        $v = $request->validate(['motivo' => 'required|string|max:500']);
+        $contract->update(['bloqueado_por' => $request->user()->id, 'bloqueado_em' => now(), 'motivo_bloqueio' => $v['motivo']]);
+        \App\Models\ContractEvent::create([
+            'contract_id' => $contract->id, 'event_type' => 'bloqueado',
+            'to_value' => 'Bloqueado: ' . $v['motivo'], 'triggered_by' => $request->user()->id,
+        ]);
+        return response()->json(['data' => ['bloqueado' => true]]);
+    }
+
+    /** POST /contracts/{contract}/desbloquear — remove o HOLD operacional. */
+    public function desbloquear(Request $request, Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+        if (!$contract->bloqueado_em) {
+            return response()->json(['message' => 'O contrato não está bloqueado.'], 422);
+        }
+        $contract->update(['bloqueado_por' => null, 'bloqueado_em' => null, 'motivo_bloqueio' => null]);
+        \App\Models\ContractEvent::create([
+            'contract_id' => $contract->id, 'event_type' => 'desbloqueado',
+            'to_value' => 'Desbloqueado', 'triggered_by' => $request->user()->id,
+        ]);
+        return response()->json(['data' => ['bloqueado' => false]]);
     }
 
 }

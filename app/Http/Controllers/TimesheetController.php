@@ -244,7 +244,21 @@ class TimesheetController extends Controller
                 $applyProject  = (!$field || $field === 'project')  && $defaultProjectId;
 
                 if ($applyUser)     $q->orWhere('timesheets.user_id',     (int) $defaultUserId);
-                if ($applyCustomer) $q->orWhere('timesheets.customer_id', (int) $defaultCustomerId);
+                // Cliente padrão (ERPSERV) NÃO é "não identificado" sozinho — a ERPSERV
+                // tem projetos internos legítimos (ex.: Investimento Cloud). Só conta
+                // quando o PROJETO também é o padrão (PROJETO PADRÃO) ou está vazio —
+                // que é o sinal real do fallback do Movidesk.
+                if ($applyCustomer) {
+                    $q->orWhere(function ($qq) use ($defaultCustomerId, $defaultProjectId) {
+                        $qq->where('timesheets.customer_id', (int) $defaultCustomerId)
+                           ->where(function ($qp) use ($defaultProjectId) {
+                               $qp->whereNull('timesheets.project_id');
+                               if ($defaultProjectId) {
+                                   $qp->orWhere('timesheets.project_id', (int) $defaultProjectId);
+                               }
+                           });
+                    });
+                }
                 if ($applyProject)  $q->orWhere('timesheets.project_id',  (int) $defaultProjectId);
                 if (!$applyUser && !$applyCustomer && !$applyProject) {
                     $q->whereRaw('1 = 0');
@@ -409,9 +423,12 @@ class TimesheetController extends Controller
             $needsUserJoin = false;
             $needsProjectJoin = false;
             $needsCustomerJoin = false;
+            $needsServiceTypeJoin = false;
+            $needsContractTypeJoin = false;
 
             $relationOrders = [];
             $scalarOrders = [];
+            $rawOrders = []; // ordenações por expressão (ex.: solicitante JSON, título)
 
             foreach ($orderFields as $field) {
                 $direction = 'asc';
@@ -424,6 +441,25 @@ class TimesheetController extends Controller
                 // Mapear campos calculados/virtuais para colunas reais
                 if ($field === 'effort_hours') {
                     $field = 'effort_minutes';
+                }
+
+                // Colunas relacionais específicas: Tipo de Serviço / Contrato (via project),
+                // Solicitante (JSON do movidesk, já left-joined) e Título (movidesk).
+                if (in_array($field, ['service_type', 'contract', 'solicitante', 'titulo'], true)) {
+                    if ($field === 'service_type') {
+                        $needsProjectJoin = true;
+                        $needsServiceTypeJoin = true;
+                        $relationOrders[] = ['table' => 'service_types', 'column' => 'name', 'direction' => $direction];
+                    } elseif ($field === 'contract') {
+                        $needsProjectJoin = true;
+                        $needsContractTypeJoin = true;
+                        $relationOrders[] = ['table' => 'contract_types', 'column' => 'name', 'direction' => $direction];
+                    } elseif ($field === 'solicitante') {
+                        $rawOrders[] = "movidesk_tickets.solicitante->>'name' " . $direction;
+                    } else { // titulo
+                        $rawOrders[] = "movidesk_tickets.titulo " . $direction;
+                    }
+                    continue;
                 }
 
                 // Ordenação por relacionamentos, ex: user.name, project.name, customer.name
@@ -484,6 +520,14 @@ class TimesheetController extends Controller
                 $query->leftJoin('customers', 'customers.id', '=', 'timesheets.customer_id');
             }
 
+            // Joins de Tipo de Serviço / Contrato (dependem do join de projects acima).
+            if ($needsServiceTypeJoin) {
+                $query->leftJoin('service_types', 'service_types.id', '=', 'projects.service_type_id');
+            }
+            if ($needsContractTypeJoin) {
+                $query->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id');
+            }
+
             // Ordenação por campos da própria tabela (prefixo para evitar ambiguidade com JOINs)
             foreach ($scalarOrders as $order) {
                 $query->orderBy('timesheets.' . $order['column'], $order['direction']);
@@ -492,6 +536,11 @@ class TimesheetController extends Controller
             // Ordenação por campos de relacionamentos
             foreach ($relationOrders as $order) {
                 $query->orderBy($order['table'] . '.' . $order['column'], $order['direction']);
+            }
+
+            // Ordenação por expressões (solicitante JSON do movidesk, título do movidesk)
+            foreach ($rawOrders as $raw) {
+                $query->orderByRaw($raw);
             }
         } else {
             $query->orderBy('timesheets.date', 'desc')->orderBy('timesheets.start_time', 'desc');
@@ -959,30 +1008,26 @@ class TimesheetController extends Controller
         try {
             $validatedData = $validator->validated();
 
-            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
-            $effortMinutes = null;
-            if (!empty($validatedData['total_hours'])) {
+            // Apuração do TEMPO (effort_minutes).
+            // REGRA: havendo início E fim formando um intervalo real (> 0 min), o
+            // INTERVALO é a fonte da verdade e PREVALECE sobre qualquer total_hours
+            // enviado pelo front — assim início/fim e TEMPO nunca divergem. total_hours
+            // só vale no lançamento manual (sem horários). start == end (ex.: janela
+            // 00:00/00:00 do Movidesk) não é intervalo e cai no manual.
+            $effortMinutes = Timesheet::minutesFromInterval(
+                $validatedData['start_time'] ?? null,
+                $validatedData['end_time'] ?? null
+            );
+            if ($effortMinutes !== null && $effortMinutes > 0) {
+                $validatedData['effort_minutes'] = $effortMinutes;
+            } elseif (!empty($validatedData['total_hours'])) {
                 $effortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
                 if ($effortMinutes !== null) {
                     $validatedData['effort_minutes'] = $effortMinutes;
                 }
-                // Remover total_hours dos dados validados pois não é um campo do modelo
-                unset($validatedData['total_hours']);
-            } else {
-                // Se não forneceu total_hours, calcular a partir de start_time e end_time
-                // O modelo Timesheet calcula automaticamente no boot, mas precisamos calcular aqui para validação
-                if (isset($validatedData['start_time']) && isset($validatedData['end_time'])) {
-                    $startTime = \Carbon\Carbon::parse($validatedData['start_time']);
-                    $endTime = \Carbon\Carbon::parse($validatedData['end_time']);
-
-                    // Se o horário final for menor que o inicial, assumir que passou da meia-noite
-                    if ($endTime->lt($startTime)) {
-                        $endTime->addDay();
-                    }
-
-                    $effortMinutes = $startTime->diffInMinutes($endTime);
-                }
             }
+            // total_hours nunca é coluna do modelo
+            unset($validatedData['total_hours']);
 
             // Calcular horas decimais para validação
             $hoursToAdd = $effortMinutes ? round($effortMinutes / 60, 2) : 0;
@@ -1508,30 +1553,32 @@ class TimesheetController extends Controller
             // Determinar qual usuário usar para validação
             $userIdForValidation = isset($validatedData['user_id']) ? $validatedData['user_id'] : $timesheet->user_id;
 
-            // Processar total_hours se fornecido (HH:MM | decimal | inteiro).
-            $newEffortMinutes = null;
-            if (!empty($validatedData['total_hours'])) {
+            // Apuração do TEMPO (effort_minutes) na edição.
+            // REGRA: início+fim (intervalo real, > 0 min) é a fonte da verdade e
+            // PREVALECE sobre total_hours. Usa o horário enviado no request quando
+            // presente, senão o já gravado — assim editar SÓ o horário recalcula o
+            // TEMPO (antes ficava preso ao valor antigo pelo guard do model, gerando
+            // a divergência início/fim × TEMPO). total_hours só vale no lançamento
+            // manual (sem horários); start == end não é intervalo.
+            $effStart = array_key_exists('start_time', $validatedData)
+                ? $validatedData['start_time'] : $timesheet->start_time;
+            $effEnd = array_key_exists('end_time', $validatedData)
+                ? $validatedData['end_time'] : $timesheet->end_time;
+
+            $newEffortMinutes = Timesheet::minutesFromInterval($effStart, $effEnd);
+            if ($newEffortMinutes !== null && $newEffortMinutes > 0) {
+                $validatedData['effort_minutes'] = $newEffortMinutes;
+            } elseif (!empty($validatedData['total_hours'])) {
                 $newEffortMinutes = Timesheet::parseTotalHoursToMinutes($validatedData['total_hours']);
                 if ($newEffortMinutes !== null) {
                     $validatedData['effort_minutes'] = $newEffortMinutes;
                 }
-                // Remover total_hours dos dados validados pois não é um campo do modelo
-                unset($validatedData['total_hours']);
-            } elseif (isset($validatedData['start_time']) && isset($validatedData['end_time'])) {
-                // Se não forneceu total_hours mas forneceu start_time e end_time, calcular
-                $startTime = \Carbon\Carbon::parse($validatedData['start_time']);
-                $endTime = \Carbon\Carbon::parse($validatedData['end_time']);
-
-                // Se o horário final for menor que o inicial, assumir que passou da meia-noite
-                if ($endTime->lt($startTime)) {
-                    $endTime->addDay();
-                }
-
-                $newEffortMinutes = $startTime->diffInMinutes($endTime);
             } else {
-                // Se não forneceu nem total_hours nem start_time/end_time, usar o valor atual
+                // Sem intervalo nem total_hours: mantém o valor atual
                 $newEffortMinutes = $timesheet->effort_minutes;
             }
+            // total_hours nunca é coluna do modelo
+            unset($validatedData['total_hours']);
 
             // Calcular a diferença de horas (novas horas - horas atuais)
             $currentHours = round(($timesheet->effort_minutes ?? 0) / 60, 2);
@@ -1961,6 +2008,10 @@ class TimesheetController extends Controller
             }
         }
 
+        // Sem invalidar o cache da lista, o refetch do front trazia dados stale
+        // (projeto/cliente antigos) → a alteração em massa "às vezes não atualizava".
+        $this->invalidateListCache('timesheets');
+
         return response()->json(['success' => true, 'updated' => $updated]);
     }
 
@@ -2342,15 +2393,16 @@ class TimesheetController extends Controller
             ], 403);
         }
 
+        // Motivo do estorno de aprovação não é mais obrigatório (removido a pedido).
         $validator = Validator::make($request->all(), [
-            'reason' => 'required|string|max:1000'
+            'reason' => 'nullable|string|max:1000'
         ]);
 
         if ($validator->fails()) {
             return $this->validationErrorResponse($validator->errors()->all());
         }
 
-        if ($timesheet->reverseApproval($user, $request->reason)) {
+        if ($timesheet->reverseApproval($user, $request->reason ?? '')) {
             $this->invalidateListCache('timesheets');
             $timesheet->load(['user', 'customer', 'project', 'reviewedBy']);
 

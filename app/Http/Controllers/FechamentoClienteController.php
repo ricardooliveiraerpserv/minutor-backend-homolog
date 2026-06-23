@@ -104,6 +104,8 @@ class FechamentoClienteController extends Controller
                 'total_servicos' => (float) ($f?->total_servicos ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
                 'total_geral'    => (float) ($f?->total_geral ?? 0),
+                'desconto'           => (float) ($f?->desconto ?? 0),
+                'desconto_descricao' => $f?->desconto_descricao,
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
                 'envio_em'       => $envioMap[$customer->id]['envio_em'] ?? null,
@@ -632,6 +634,35 @@ class FechamentoClienteController extends Controller
         ]);
 
         return response()->json(['message' => "Fechamento do cliente reaberto para {$yearMonth}."]);
+    }
+
+    // ─── Desconto do fechamento (valor + descritivo) ──────────────────────────
+    // Persiste um desconto por (cliente, competência) que abate o total de
+    // serviços no relatório/PDF/e-mail. Independe de "fechar" (que não tem rota
+    // ativa nesta rotina) — é editável a qualquer momento pelo admin.
+    public function salvarDesconto(Request $request, string $customerId, string $yearMonth): JsonResponse
+    {
+        $validated = $request->validate([
+            'desconto'           => ['nullable', 'numeric', 'min:0'],
+            'desconto_descricao' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $desconto = round((float) ($validated['desconto'] ?? 0), 2);
+        $descricao = trim((string) ($validated['desconto_descricao'] ?? '')) ?: null;
+
+        $fechamento = FechamentoCliente::firstOrNew([
+            'customer_id' => $customerId,
+            'year_month'  => $yearMonth,
+        ]);
+        $fechamento->desconto           = $desconto;
+        $fechamento->desconto_descricao = $descricao;
+        $fechamento->save();
+
+        return response()->json([
+            'message'            => 'Desconto salvo.',
+            'desconto'           => (float) $fechamento->desconto,
+            'desconto_descricao' => $fechamento->desconto_descricao,
+        ]);
     }
 
     // ─── Helpers privados ────────────────────────────────────────────────────
@@ -1363,6 +1394,17 @@ class FechamentoClienteController extends Controller
             : $this->clienteTotal((int) $customer->id, $yearMonth);
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
+        // Desconto do fechamento (valor + descritivo) abate o total de serviços.
+        // Só aplica na visão completa do cliente (sem filtro de projeto), pois é um
+        // ajuste sobre o total do fechamento, não sobre um contrato isolado.
+        $fechamentoRec = FechamentoCliente::where('customer_id', $customer->id)
+            ->where('year_month', $yearMonth)
+            ->first();
+        $desconto          = $projectId ? 0.0 : (float) ($fechamentoRec->desconto ?? 0);
+        $descontoDescricao = $projectId ? null : ($fechamentoRec->desconto_descricao ?? null);
+        $subtotal          = $totalValue;
+        $valorFinal        = max(0.0, round($subtotal - $desconto, 2));
+
         $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
@@ -1407,7 +1449,11 @@ class FechamentoClienteController extends Controller
             'emitidoEm'            => now()->format('d/m/Y'),
             'projetos'             => $projetosList,
             'totalHorasFmt'        => $this->fmtHoras($totalHoras),
-            'valorTotal'           => $this->brl($totalValue),
+            'valorTotal'           => $this->brl($valorFinal),
+            'temDesconto'          => $desconto > 0,
+            'subtotalFmt'          => $this->brl($subtotal),
+            'descontoFmt'          => $this->brl($desconto),
+            'descontoDescricao'    => $descontoDescricao,
             'valorHoraResumo'      => $valorHoraResumo,
             'grupos'               => $this->buildPdfGroups($rows),
             'vedamotors'           => $vedamotors,

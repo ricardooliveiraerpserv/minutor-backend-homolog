@@ -18,6 +18,8 @@ use Illuminate\Support\Str;
 
 class ContractRequestMessageController extends Controller
 {
+    use \App\Http\Controllers\Concerns\DispatchesChatMentions;
+
     public function index(Request $request, ContractRequest $contractRequest): JsonResponse
     {
         $user = auth()->user();
@@ -97,12 +99,12 @@ class ContractRequestMessageController extends Controller
         $msg->load(['author:id,name', 'attachments']);
 
         // Parser @-mention token @[id:Nome] (espelha ProjectMessageController)
-        $this->persistMentions($msg);
+        $mentionedIds = $this->persistMentions($msg);
 
         // Fase card-envolvidos: notifica envolvidos do card (cliente sai automaticamente
         // se req_decided_at preenchido). Best-effort — falha em mail não bloqueia chat.
         try {
-            $this->dispatchChatNotification($contractRequest, $msg, $user);
+            $this->dispatchChatNotification($contractRequest, $msg, $user, $mentionedIds);
         } catch (\Throwable $e) {
             \Log::warning('chat notif req falhou', ['req_id' => $contractRequest->id, 'err' => $e->getMessage()]);
         }
@@ -110,7 +112,7 @@ class ContractRequestMessageController extends Controller
         return response()->json($msg, 201);
     }
 
-    private function persistMentions(ContractRequestMessage $msg): void
+    private function persistMentions(ContractRequestMessage $msg): array
     {
         // Candidatos = usuários com acesso à req (cliente da req + admins/coords)
         $req = $msg->request ?? \App\Models\ContractRequest::find($msg->contract_request_id);
@@ -131,16 +133,11 @@ class ContractRequestMessageController extends Controller
                 'mentioned_user_id' => $uid,
             ]);
         }
+        return $userIds;
     }
 
-    private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author): void
+    private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author, array $mentionedIds = []): void
     {
-        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message', [
-            'card'  => ['type' => CardEnvolvido::TYPE_REQUEST, 'id' => $req->id],
-            'actor' => $author,
-        ]);
-        if (empty($rcpt['to'])) return;
-
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
         // tab=chat (query) é mais confiável que hash #chat em client-side nav (Next 16)
@@ -149,19 +146,33 @@ class ContractRequestMessageController extends Controller
         $title = $req->title ?? ($req->subject ?? 'Requisição');
         $excerpt = Str::limit($msg->message ?? '', 280);
 
-        Notification::route('mail', $rcpt['to'])->notify(
-            (new CardChatMessageNotification(
-                cardType:       CardEnvolvido::TYPE_REQUEST,
-                cardCode:       $code,
-                cardTitle:      $title,
-                authorName:     $author->name,
-                authorRole:     $this->userRoleLabel($author),
-                messageExcerpt: $excerpt,
-                openUrl:        $openUrl,
-                cardUrl:        $cardUrl,
-                recipientName:  'você',
-            ))->withCc($rcpt['cc'])
-        );
+        $mkNotif = fn () => (new CardChatMessageNotification(
+            cardType:       CardEnvolvido::TYPE_REQUEST,
+            cardCode:       $code,
+            cardTitle:      $title,
+            authorName:     $author->name,
+            authorRole:     $this->userRoleLabel($author),
+            messageExcerpt: $excerpt,
+            openUrl:        $openUrl,
+            cardUrl:        $cardUrl,
+            recipientName:  'você',
+        ));
+
+        // 1) Mensagem no chat → envolvidos do card.
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message.request', [
+            'card'      => ['type' => CardEnvolvido::TYPE_REQUEST, 'id' => $req->id],
+            'actor'     => $author,
+            'mentioned' => $mentionedIds,
+        ]);
+        $chatTo = $rcpt['to'] ?? [];
+        if (!empty($chatTo)) {
+            Notification::route('mail', $chatTo)->notify($mkNotif()->withCc($rcpt['cc'] ?? []));
+        }
+
+        // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
+        $this->dispatchMentionNotification(CardEnvolvido::TYPE_REQUEST, $req->id, $author, $mentionedIds, [
+            'code' => $code, 'title' => $title, 'role' => $this->userRoleLabel($author), 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl,
+        ], array_merge($chatTo, $rcpt['cc'] ?? []));
     }
 
     private function userRoleLabel(User $u): string

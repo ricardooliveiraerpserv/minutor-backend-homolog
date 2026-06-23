@@ -270,6 +270,9 @@ class AuthController extends Controller
                 'coordinator_type'      => $user->coordinator_type,
                 'extra_permissions'     => $user->extra_permissions ?? [],
                 'permissions'           => \App\Services\PermissionService::for($user),
+                // Módulos de NAVEGAÇÃO (Serviços/Administrativo) do perfil — camada separada
+                // das permissões; ver ProfileModule. Cliente não tem módulos (mantém portal).
+                'modules'               => \App\Models\ProfileModule::forProfile($user->type),
                 'consultant_type'       => $user->consultant_type,
                 'rate_type'             => $user->rate_type,
                 'hourly_rate'           => $user->hourly_rate,

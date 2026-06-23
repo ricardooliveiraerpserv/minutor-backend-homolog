@@ -36,6 +36,7 @@ class WorkflowConfigService
             'variables'       => $defaults['variables'] ?? [],
             'default_subject' => $defaults['subject'] ?? '',
             'default_body'    => $defaults['body'] ?? '',
+            'recurrence_days' => $row->recurrence_days ?? 0,
         ];
     }
 
@@ -127,6 +128,7 @@ class WorkflowConfigService
                 'label'       => $meta['label'] ?? $key,
                 'domain'      => $meta['domain'] ?? 'Outros',
                 'description' => $meta['description'] ?? null,
+                'recurrence'  => (bool) ($meta['recurrence'] ?? false),
                 'audiences'   => $audiences,
                 'available'   => $available,
                 'template'    => $this->template($key),
@@ -144,7 +146,7 @@ class WorkflowConfigService
      * @param array<string,string> $audiences audience => off|to|cc
      * @param array<int,array{email:string,channel:string}> $extraEmails
      */
-    public function save(string $key, array $audiences, array $extraEmails, ?string $subject = null, ?string $body = null): void
+    public function save(string $key, array $audiences, array $extraEmails, ?string $subject = null, ?string $body = null, ?int $recurrenceDays = null): void
     {
         $workflows = (array) config('workflows.workflows', []);
         $meta = $workflows[$key] ?? null;
@@ -152,11 +154,17 @@ class WorkflowConfigService
             abort(404, 'Workflow desconhecido.');
         }
 
-        // Modelo (título + texto) — grava override quando enviado.
-        if ($subject !== null || $body !== null) {
+        // Modelo (título + texto + recorrência) — grava override quando enviado.
+        // Recorrência só faz sentido nos workflows marcados com 'recurrence' no registry.
+        $supportsRecurrence = (bool) ($meta['recurrence'] ?? false);
+        if ($subject !== null || $body !== null || ($supportsRecurrence && $recurrenceDays !== null)) {
+            $attrs = ['subject' => $subject, 'body' => $body];
+            if ($supportsRecurrence && $recurrenceDays !== null) {
+                $attrs['recurrence_days'] = max(0, $recurrenceDays);
+            }
             WorkflowTemplate::updateOrCreate(
                 ['workflow_key' => $key],
-                ['subject' => $subject, 'body' => $body],
+                $attrs,
             );
         }
         // Qualquer audiência do catálogo global pode ser incluída em qualquer

@@ -145,22 +145,42 @@ class Timesheet extends Model
      */
     public function calculateEffort(): void
     {
-        // Se já existe um valor de effort_minutes definido manualmente, não sobrescrever
+        // Não sobrescrever effort_minutes já definido: vale tanto para lançamento
+        // manual (total_hours) quanto para a integração Movidesk, que grava o tempo
+        // REPORTADO e usa start/end apenas como janela (o span pode diferir do effort).
+        // A apuração por intervalo do fluxo web é feita no TimesheetController, que é
+        // quem decide quando o intervalo deve prevalecer sobre o total_hours enviado.
         if ($this->effort_minutes !== null && $this->effort_minutes > 0) {
             return;
         }
 
-        if ($this->start_time && $this->end_time) {
-            $startTime = Carbon::parse($this->start_time);
-            $endTime = Carbon::parse($this->end_time);
-
-            // Se o horário final for menor que o inicial, assumir que passou da meia-noite
-            if ($endTime->lt($startTime)) {
-                $endTime->addDay();
-            }
-
-            $this->effort_minutes = $startTime->diffInMinutes($endTime);
+        $minutes = self::minutesFromInterval($this->start_time, $this->end_time);
+        if ($minutes !== null) {
+            $this->effort_minutes = $minutes;
         }
+    }
+
+    /**
+     * Minutos entre início e fim. Fonte única usada pelo model e pelo
+     * TimesheetController (store/update) para apurar o TEMPO a partir do intervalo.
+     * Aceita Carbon ou string (HH:MM / HH:MM:SS). Trata virada de meia-noite.
+     * Retorna null se faltar início ou fim; 0 quando início == fim (não é intervalo).
+     */
+    public static function minutesFromInterval($start, $end): ?int
+    {
+        if (empty($start) || empty($end)) {
+            return null;
+        }
+
+        $startTime = Carbon::parse($start);
+        $endTime   = Carbon::parse($end);
+
+        // Se o horário final for menor que o inicial, assumir que passou da meia-noite
+        if ($endTime->lt($startTime)) {
+            $endTime->addDay();
+        }
+
+        return (int) round($startTime->diffInMinutes($endTime));
     }
 
     /**
@@ -208,14 +228,11 @@ class Timesheet extends Model
      */
     public function getEffortHoursAttribute(): string
     {
-        if (!$this->effort_minutes) {
-            return '0:00';
-        }
-
-        $hours = intval($this->effort_minutes / 60);
-        $minutes = $this->effort_minutes % 60;
-
-        return sprintf('%d:%02d', $hours, $minutes);
+        // TEMPO sempre em DECIMAL (ex.: 480min → "8" ; 150min → "2,5" ; 0 → "0").
+        // Vale para todos os perfis/rotinas que exibem este accessor (view, edição, dashboards).
+        $h = (float) ($this->effort_minutes ?? 0) / 60;
+        $s = number_format($h, 2, ',', '');           // "8,00" | "2,50" | "0,00"
+        return rtrim(rtrim($s, '0'), ',') ?: '0';     // "8" | "2,5" | "0"
     }
 
     /**
@@ -532,15 +549,25 @@ class Timesheet extends Model
             return;
         }
         try {
-            // Dono é o destinatário; a Central pode adicionar papéis (ex.: coordenador) em cópia.
-            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('timesheet.status', [
-                'actor'   => $owner,
-                'project' => $this->project,
-            ]);
-            $cc = array_values(array_diff(
-                array_merge($rcpt['to'], $rcpt['cc']),
-                [strtolower(trim((string) $owner->email))],
-            ));
+            // Workflow por tipo: rejeição / ajuste têm Central própria; CONFLITO
+            // não tem workflow (dono é avisado direto, sem CC de papéis).
+            $workflowKey = match ($statusKey) {
+                'REJEITADO' => 'timesheet.rejected',
+                'AJUSTE'    => 'timesheet.adjustment',
+                default     => null,
+            };
+            $cc = [];
+            if ($workflowKey) {
+                // Dono é o destinatário; a Central pode adicionar papéis (ex.: coordenador) em cópia.
+                $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($workflowKey, [
+                    'actor'   => $owner,
+                    'project' => $this->project,
+                ]);
+                $cc = array_values(array_diff(
+                    array_merge($rcpt['to'], $rcpt['cc']),
+                    [strtolower(trim((string) $owner->email))],
+                ));
+            }
             $owner->notify((new TimesheetStatusNotification($this, $statusKey, $reason))->withCc($cc));
         } catch (\Throwable $e) {
             \Log::warning('notifyOwnerOfStatus: falha ao enviar', [

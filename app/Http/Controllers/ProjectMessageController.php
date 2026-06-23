@@ -20,6 +20,8 @@ use Illuminate\Support\Str;
 
 class ProjectMessageController extends Controller
 {
+    use \App\Http\Controllers\Concerns\DispatchesChatMentions;
+
     public function index(Request $request, Project $project): JsonResponse
     {
         $user = $request->user();
@@ -35,7 +37,7 @@ class ProjectMessageController extends Controller
 
         $messages = ProjectMessage::where('project_id', $project->id)
             ->with([
-                'author:id,name,profile_photo',
+                'author:id,name',
                 'attachments',
                 'reads' => fn($q) => $q->where('user_id', $user->id),
             ])
@@ -89,7 +91,19 @@ class ProjectMessageController extends Controller
             ->select('id', 'name')
             ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
             ->get();
-        foreach (\App\Services\MentionParser::extract($text, $candidates) as $mentionedId) {
+        $mentionedIds = \App\Services\MentionParser::extract($text, $candidates);
+
+        // Menção "Todos" (token @[all:...]) → expande pra todos os participantes
+        // internos do projeto (admins + coordenadores + executivo). Cliente NUNCA
+        // participa do chat de projeto. Exclui o próprio autor.
+        if (preg_match('/@\[all:/i', $text)) {
+            $mentionedIds = array_values(array_unique(array_merge(
+                $mentionedIds,
+                array_diff($this->projectMentionableUserIds($project), [$user->id])
+            )));
+        }
+
+        foreach ($mentionedIds as $mentionedId) {
             ProjectMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
                 'mentioned_user_id' => $mentionedId,
@@ -112,13 +126,13 @@ class ProjectMessageController extends Controller
             }
         }
 
-        $msg->load(['author:id,name,profile_photo', 'attachments']);
+        $msg->load(['author:id,name', 'attachments']);
         $msg->is_mentioned = false;
 
         // Fase card-envolvidos: notifica envolvidos internos (cliente NUNCA recebe
         // chat de projeto — regra do CardEnvolvidoService). Best-effort.
         try {
-            $this->dispatchChatNotification($project, $msg, $user);
+            $this->dispatchChatNotification($project, $msg, $user, $mentionedIds);
         } catch (\Throwable $e) {
             \Log::warning('chat notif proj falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
         }
@@ -126,14 +140,74 @@ class ProjectMessageController extends Controller
         return response()->json($msg, 201);
     }
 
-    private function dispatchChatNotification(Project $project, ProjectMessage $msg, User $author): void
+    /**
+     * Editar uma interação do Diário do Projeto.
+     * Regras: só o autor, só a SUA última interação no projeto, e dentro da
+     * janela de 3h (ProjectMessage::EDIT_WINDOW_HOURS). Re-sincroniza menções
+     * (chips), mas não reenvia notificação — edição é correção, não novo aviso.
+     */
+    public function update(Request $request, Project $project, ProjectMessage $message): JsonResponse
     {
-        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message', [
-            'card'  => ['type' => CardEnvolvido::TYPE_PROJECT, 'id' => $project->id],
-            'actor' => $author,
-        ]);
-        if (empty($rcpt['to'])) return;
+        $user = $request->user();
 
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        if ((int) $message->project_id !== (int) $project->id) {
+            return response()->json(['message' => 'Interação não encontrada'], 404);
+        }
+        if ((int) $message->user_id !== (int) $user->id) {
+            return response()->json(['message' => 'Você só pode editar suas próprias interações.'], 403);
+        }
+
+        // Tem de ser a última interação DESTE usuário no projeto.
+        $lastOwnId = ProjectMessage::where('project_id', $project->id)
+            ->where('user_id', $user->id)
+            ->max('id');
+        if ((int) $message->id !== (int) $lastOwnId) {
+            return response()->json(['message' => 'Só é possível editar sua última interação.'], 422);
+        }
+
+        // Janela de 3h a partir do envio.
+        if ($message->created_at->lt(now()->subHours(ProjectMessage::EDIT_WINDOW_HOURS))) {
+            return response()->json(['message' => 'O prazo de ' . ProjectMessage::EDIT_WINDOW_HOURS . 'h para editar esta interação expirou.'], 422);
+        }
+
+        $request->validate([
+            'message' => 'required|string|max:5000',
+        ]);
+        $text = $request->input('message');
+
+        $message->update(['message' => $text, 'edited_at' => now()]);
+
+        // Re-sincroniza menções (mesma regra do store; cliente nunca é mencionado).
+        $candidates = User::query()
+            ->select('id', 'name')
+            ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
+            ->get();
+        $mentionedIds = \App\Services\MentionParser::extract($text, $candidates);
+        if (preg_match('/@\[all:/i', $text)) {
+            $mentionedIds = array_values(array_unique(array_merge(
+                $mentionedIds,
+                array_diff($this->projectMentionableUserIds($project), [$user->id])
+            )));
+        }
+        $message->mentions()->whereNotIn('mentioned_user_id', $mentionedIds ?: [0])->delete();
+        foreach ($mentionedIds as $mentionedId) {
+            ProjectMessageMention::firstOrCreate([
+                'message_id'        => $message->id,
+                'mentioned_user_id' => $mentionedId,
+            ]);
+        }
+
+        $message->load(['author:id,name', 'attachments']);
+        $message->is_mentioned = in_array($user->id, $mentionedIds, true);
+
+        return response()->json($message);
+    }
+
+    private function dispatchChatNotification(Project $project, ProjectMessage $msg, User $author, array $mentionedIds = []): void
+    {
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?project=' . $project->id;
         // tab=chat (query) é mais confiável que hash #chat em client-side nav (Next 16)
@@ -147,19 +221,36 @@ class ProjectMessageController extends Controller
             default => 'Equipe',
         };
 
-        Notification::route('mail', $rcpt['to'])->notify(
-            (new CardChatMessageNotification(
-                cardType:       CardEnvolvido::TYPE_PROJECT,
-                cardCode:       $code,
-                cardTitle:      $title,
-                authorName:     $author->name,
-                authorRole:     $role,
-                messageExcerpt: $excerpt,
-                openUrl:        $openUrl,
-                cardUrl:        $cardUrl,
-                recipientName:  'você',
-            ))->withCc($rcpt['cc'])
-        );
+        $mkNotif = fn () => (new CardChatMessageNotification(
+            cardType:       CardEnvolvido::TYPE_PROJECT,
+            cardCode:       $code,
+            cardTitle:      $title,
+            authorName:     $author->name,
+            authorRole:     $role,
+            messageExcerpt: $excerpt,
+            openUrl:        $openUrl,
+            cardUrl:        $cardUrl,
+            recipientName:  'você',
+        ));
+
+        $resolver = app(\App\Workflows\WorkflowRecipientResolver::class);
+
+        // 1) Mensagem no chat → envolvidos do card.
+        $rcpt = $resolver->resolve('card.chat_message.project', [
+            'card'      => ['type' => CardEnvolvido::TYPE_PROJECT, 'id' => $project->id],
+            'project'   => $project,
+            'actor'     => $author,
+            'mentioned' => $mentionedIds,
+        ]);
+        $chatTo = $rcpt['to'] ?? [];
+        if (!empty($chatTo)) {
+            Notification::route('mail', $chatTo)->notify($mkNotif()->withCc($rcpt['cc'] ?? []));
+        }
+
+        // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
+        $this->dispatchMentionNotification(CardEnvolvido::TYPE_PROJECT, $project->id, $author, $mentionedIds, [
+            'code' => $code, 'title' => $title, 'role' => $role, 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl,
+        ], array_merge($chatTo, $rcpt['cc'] ?? []));
     }
 
     public function downloadAttachment(Request $request, ProjectMessage $message, Attachment $attachment): mixed
@@ -321,21 +412,44 @@ class ProjectMessageController extends Controller
         }
 
         $projectId = $request->query('project_id');
+        $project = $projectId ? Project::find((int) $projectId) : null;
 
-        $users = User::where(function ($q) use ($projectId) {
-            $q->where('type', 'admin')
-              ->orWhere(function ($sq) use ($projectId) {
-                  $sq->where('type', 'coordenador');
-                  if ($projectId) {
-                      $sq->whereHas('coordinatorProjects', fn($p) => $p->where('projects.id', (int) $projectId));
-                  }
-              });
-        })
-        ->select('id', 'name')
-        ->orderBy('name')
-        ->get();
+        // Participantes do chat de projeto: coordenador(es) + executivo(s) (+ admin
+        // como superusuário). Cliente nunca — chat de projeto é interno.
+        if ($project) {
+            $ids = collect($this->projectMentionableUserIds($project));
+        } else {
+            // Sem projeto no contexto: admins + coordenadores ativos.
+            $ids = User::whereIn('type', ['admin', 'coordenador'])->where('enabled', true)->pluck('id');
+        }
+
+        $users = User::whereIn('id', $ids->unique()->filter()->values())
+            ->where('enabled', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
 
         return response()->json($users);
+    }
+
+    /**
+     * IDs dos participantes internos mencionáveis do projeto: admins ativos +
+     * coordenador(es) + executivo de conta. Cliente NUNCA entra (chat é interno).
+     * Fonte única usada pelo picker (mentionableUsers) e pela menção "Todos".
+     */
+    private function projectMentionableUserIds(Project $project): array
+    {
+        $ids = collect(User::where('type', 'admin')->where('enabled', true)->pluck('id'));
+        $ids = $ids->merge($project->coordinators()->pluck('users.id'));
+        if ($project->executivo_conta_id) {
+            $ids->push((int) $project->executivo_conta_id);
+        }
+
+        return User::whereIn('id', $ids->unique()->filter()->values())
+            ->where('enabled', true)
+            ->pluck('id')
+            ->map(fn ($i) => (int) $i)
+            ->all();
     }
 
     private function userCanAccessProject($user, Project $project): bool

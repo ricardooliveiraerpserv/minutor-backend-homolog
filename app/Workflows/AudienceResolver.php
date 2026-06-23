@@ -14,7 +14,7 @@ use Illuminate\Support\Collection;
  * Contexto (array, chaves opcionais):
  *   contract, project, customer, request, contribution, actor (User),
  *   card => ['type' => 'contract_request'|'project', 'id' => int],
- *   consultant (User), partner (User), followup (model com ->responsible),
+ *   consultant (User), partner (User),
  *   is_child (bool) — aporte em subprojeto: cliente sai do To.
  */
 class AudienceResolver
@@ -37,8 +37,8 @@ class AudienceResolver
             'autor'                => $this->autor($ctx),
             'consultor'            => $this->oneEmail($ctx['consultant'] ?? null),
             'parceiro'             => $this->oneEmail($ctx['partner'] ?? null),
-            'responsavel'          => $this->oneEmail(optional($ctx['followup'] ?? null)->responsible),
             'financeiro'           => array_filter([config('workflows.financeiro_email')]),
+            'mencionado'           => $this->mencionado($ctx),
             default                => [],
         };
 
@@ -104,11 +104,23 @@ class AudienceResolver
 
     private function diretor(): array
     {
+        // Diretor de projetos: governado pela flag `is_diretor_projetos` no cadastro
+        // do usuário (configurável). Mesma fonte do ContractController::projectDirectorUserId().
+        $emails = User::query()
+            ->where('is_diretor_projetos', true)
+            ->where('enabled', true)
+            ->pluck('email')
+            ->filter()
+            ->values()
+            ->all();
+        if ($emails) {
+            return $emails;
+        }
+        // Fallback legado: e-mail fixo por config, enquanto a flag não estiver setada.
         $email = config('workflows.diretor_email');
         if (!$email) {
             return [];
         }
-        // Só envia se houver usuário ativo com esse e-mail (mesma regra do legado).
         $exists = User::query()->where('email', $email)->where('enabled', true)->exists();
         return $exists ? [$email] : [];
     }
@@ -152,6 +164,18 @@ class AudienceResolver
     {
         $email = is_object($user) ? ($user->email ?? null) : null;
         return $email ? [$email] : [];
+    }
+
+    /** E-mails das pessoas marcadas (@) na mensagem. Aceita ids ou User; exclui o autor. */
+    private function mencionado(array $ctx): array
+    {
+        $ids = collect($ctx['mentioned'] ?? [])
+            ->map(fn ($u) => is_object($u) ? (int) $u->id : (int) $u)
+            ->filter()
+            ->all();
+        $actorId = optional($ctx['actor'] ?? null)->id;
+        $ids = array_filter($ids, fn ($id) => !$actorId || $id !== (int) $actorId);
+        return $this->userEmails($ids);
     }
 
     private function userEmails(array $ids): array

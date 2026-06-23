@@ -32,7 +32,9 @@ class ContractInicioAutorizadoNotification extends Notification
     public function toMail($notifiable): MailMessage
     {
         $c = $this->contract->loadMissing(['customer:id,name']);
-        $codigo  = $c->code ?? '—';
+        // `contracts` não tem coluna `code` (gerado só na geração do projeto):
+        // usar o código-preview como identificador.
+        $codigo  = ($c->code ?? null) ?: ($c->project_code_preview ?? null) ?: '—';
         $projeto = $c->project_name ?? '—';
         $cliente = optional($c->customer)->name ?? '—';
 

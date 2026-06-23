@@ -166,7 +166,10 @@ class ProjectController extends Controller
         // Cap maior para listagem de Investimento Interno: cada cliente tem ~3 projetos
         // (Comercial/Suporte/Projetos) + manuais → o cap padrão de 200 cortava a página
         // e clientes sumiam da tela /investimento-comercial.
-        $maxPerPage = $request->boolean('only_investimento_comercial') ? 2000 : 200;
+        // Idem para o dashboard /gestao-projetos (modo gestao): a tela carrega TODOS os
+        // projetos pra filtrar/ordenar no client; o cap de 200 cortava os últimos (ex.:
+        // projetos "[SUPORTE]..." que ordenam por nome depois do Z e caíam fora da página).
+        $maxPerPage = ($request->boolean('only_investimento_comercial') || $request->boolean('gestao')) ? 2000 : 200;
         $perPage = min($request->get('pageSize', $request->get('per_page', 15)), $maxPerPage);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
@@ -190,6 +193,12 @@ class ProjectController extends Controller
             elseif ($status === 'open') $q->open();
             elseif ($status) $q->where('status', $status);
             if ($request->get('customer_id')) $q->where('customer_id', $request->get('customer_id'));
+            // Filtra por consultor ALOCADO (project_consultants) — usado p/ só oferecer,
+            // na realocação de apontamento, projetos em que o consultor está alocado.
+            if ($request->get('consultant_user_id')) {
+                $cuid = (int) $request->get('consultant_user_id');
+                $q->whereHas('consultants', fn ($c) => $c->where('users.id', $cuid));
+            }
             $items = $q->orderBy('name')->limit($perPage)->get();
             return response()->json(['hasNext' => false, 'items' => $items]);
         }
@@ -277,7 +286,9 @@ class ProjectController extends Controller
 
         // Escopo por role: Coordenador só vê projetos onde é coordinator
         // (aplica apenas quando não está no modo consultant_only, que tem escopo próprio)
-        if ($consultantOnly !== 'true') {
+        // EXCEÇÃO: na rotina de Contratos de Investimento (only_investimento_comercial),
+        // TODOS os coordenadores (projeto e sustentação) enxergam TODOS os projetos.
+        if ($consultantOnly !== 'true' && !$request->boolean('only_investimento_comercial')) {
             $currentUser = $request->user();
             if ($currentUser && $currentUser->isCoordenador()) {
                 $isSustentacao = $currentUser->coordinator_type === 'sustentacao';
@@ -483,7 +494,13 @@ class ProjectController extends Controller
 
         try {
         $currentUserForTransform = $request->user();
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform) {
+        // Coluna Consumo: um ou mais meses (year_months=2026-05,2026-06). Aceita o legado
+        // year_month (1 mês). Closure não captura $request → computa aqui e passa via use.
+        $gestaoMonthsRaw = $request->query('year_months') ?? $request->query('year_month');
+        $gestaoMonths = $gestaoMonthsRaw
+            ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
+            : [];
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -517,6 +534,22 @@ class ProjectController extends Controller
             $timesheetsMap = $rows->toArray();
         }
 
+        // Consumo (horas apontadas) nos meses escolhidos — alimenta a coluna "Consumo Mensal".
+        // Soma de TODOS os meses selecionados. Mesma whitelist (approved/pending).
+        // Vazio quando nenhum mês selecionado.
+        $monthlyMap = [];
+        if ($gestaoMode && !empty($gestaoMonths) && !empty($allIdsToSum)) {
+            $monthlyMap = DB::table('timesheets')
+                ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as m')
+                ->whereIn('project_id', $allIdsToSum)
+                ->whereNull('deleted_at')
+                ->whereIn('status', ['approved', 'pending'])
+                ->whereIn(DB::raw("to_char(timesheets.date, 'YYYY-MM')"), $gestaoMonths)
+                ->groupBy('project_id')
+                ->pluck('m', 'project_id')
+                ->toArray();
+        }
+
         // Consumo de COORDENAÇÃO por projeto — só apontamentos cujo autor é coordenador
         // do projeto (join project_coordinators). Uma query só (sem N+1). Mesmo whitelist
         // de consumo (approved/pending) usado acima.
@@ -544,10 +577,11 @@ class ProjectController extends Controller
         if ($allChildProjectIds->isNotEmpty()) {
             // Atribuir total_logged_minutes e consumed_hours aos projetos filhos
             // consumed_hours usa a mesma lógica do pai para que os valores somem visualmente
-            $projects->getCollection()->each(function ($project) use ($timesheetsMap, $gestaoMode) {
+            $projects->getCollection()->each(function ($project) use ($timesheetsMap, $gestaoMode, $monthlyMap) {
                 if ($project->relationLoaded('childProjects') && $project->childProjects) {
-                    $project->childProjects->each(function ($childProject) use ($timesheetsMap, $gestaoMode) {
+                    $project->childProjects->each(function ($childProject) use ($timesheetsMap, $gestaoMode, $monthlyMap) {
                         $childProject->total_logged_minutes = $timesheetsMap[$childProject->id] ?? 0;
+                        $childProject->consumo_mensal = round(($monthlyMap[$childProject->id] ?? 0) / 60, 1);
                         $childLogged = $childProject->total_logged_minutes / 60;
                         $initialConsumed = (float)($childProject->initial_hours_consumed ?? 0);
 
@@ -584,7 +618,7 @@ class ProjectController extends Controller
             ->flip()
             ->toArray();
 
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap) {
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap) {
             $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
@@ -593,6 +627,16 @@ class ProjectController extends Controller
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
                 $consumed = ($project->total_logged_minutes ?? 0) / 60;
                 $initialConsumed = (float)($project->initial_hours_consumed ?? 0);
+
+                // Consumo MENSAL do contrato = horas apontadas no mês no projeto + filhos diretos.
+                $monthlyOwn = ($monthlyMap[$project->id] ?? 0) / 60;
+                $monthlyChildren = 0.0;
+                if ($project->relationLoaded('childProjects') && $project->childProjects) {
+                    foreach ($project->childProjects as $mChild) {
+                        $monthlyChildren += ($monthlyMap[$mChild->id] ?? 0) / 60;
+                    }
+                }
+                $project->consumo_mensal = round($monthlyOwn + $monthlyChildren, 1);
 
                 // Consumo dos filhos comprometido no banco do pai, conforme o tipo do filho:
                 //  - Fechado / BH Fixo: comprometem sold_hours + aportes do filho (independe do consumo efetivo)
@@ -1202,7 +1246,81 @@ class ProjectController extends Controller
 
         $this->invalidateListCache('projects');
 
+        // Subprojeto faturado que gerou aporte automático no pai → flag p/ legenda verde no filho.
+        // Vínculo pela referência ao CÓDIGO do filho na descrição do aporte do pai.
+        $project->generated_aporte = null;
+        if ($project->parent_project_id && $project->code) {
+            $ap = \App\Models\HourContribution::where('project_id', $project->parent_project_id)
+                ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $project->code . '%')
+                ->orderByDesc('id')
+                ->first(['id', 'project_id', 'kanban_status']);
+            if ($ap) {
+                $project->generated_aporte = ['id' => $ap->id, 'parent_id' => $ap->project_id, 'kanban_status' => $ap->kanban_status];
+            }
+        }
+
+        // Subprojeto faturado: garante que a proposta exista NO FILHO e NO APORTE gerado
+        // (espelhamento idempotente, self-healing/backfill). O anexo pode ter chegado via
+        // aporte, contrato ou projeto — pega de onde estiver e replica nos dois.
+        try {
+            $this->syncFaturadoSubprojectProposta($project);
+        } catch (\Throwable $e) {
+            \Log::warning('syncFaturadoSubprojectProposta falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
+        }
+
         return response()->json($project);
+    }
+
+    /**
+     * Espelha a "proposta/aprovação" entre o subprojeto faturado e o aporte que ele gerou
+     * no projeto pai, mantendo os dois com o mesmo anexo. Idempotente (registerExisting
+     * deduplica por checksum) e best-effort. Vínculo pelo CÓDIGO do filho na descrição do
+     * aporte ("Aporte ref. subprojeto faturado (CÓDIGO ...)").
+     */
+    private function syncFaturadoSubprojectProposta(Project $project): void
+    {
+        if (!$project->parent_project_id || empty($project->code)) {
+            return; // só subprojeto com código
+        }
+        $aporte = \App\Models\HourContribution::where('project_id', $project->parent_project_id)
+            ->where('description', 'ilike', '%ref. subprojeto faturado%(' . $project->code . '%')
+            ->orderByDesc('id')
+            ->first();
+        if (!$aporte) {
+            return; // não é subprojeto faturado (sem aporte gerado)
+        }
+
+        // Procura a proposta de origem: no aporte → no contrato vinculado → no próprio projeto.
+        $att = \App\Models\Attachment::query()->where('entity_type', 'HOUR_CONTRIBUTION')->where('entity_id', $aporte->id)
+            ->whereNull('deleted_at')->orderByDesc('id')->first();
+        if (!$att && $project->contract_id) {
+            $att = \App\Models\Attachment::query()->where('entity_type', 'CONTRACT')->where('entity_id', $project->contract_id)
+                ->whereNull('deleted_at')->orderByDesc('id')->first();
+        }
+        if (!$att) {
+            $att = \App\Models\Attachment::query()->where('entity_type', 'PROJECT')->where('entity_id', $project->id)
+                ->whereNull('deleted_at')->orderByDesc('id')->first();
+        }
+        if (!$att) {
+            return; // nenhuma proposta em lugar nenhum ainda
+        }
+
+        $svc   = app(\App\Attachments\AttachmentService::class);
+        $actor = \App\Models\User::find($att->uploaded_by) ?? \App\Models\User::find($aporte->contributed_by);
+        if (!$actor) {
+            return;
+        }
+        $payload = [
+            'storage_path'  => $att->storage_path,
+            'original_name' => $att->original_name,
+            'mime_type'     => $att->mime_type,
+            'category'      => 'proposal',
+            'metadata'      => ['mirrored' => true, 'from_attachment_id' => $att->id],
+        ];
+        // Garante no FILHO (PROJECT).
+        $svc->registerExisting($actor, array_merge($payload, ['entity_type' => 'PROJECT', 'entity_id' => $project->id]));
+        // Garante no APORTE (HOUR_CONTRIBUTION).
+        $svc->registerExisting($actor, array_merge($payload, ['entity_type' => 'HOUR_CONTRIBUTION', 'entity_id' => $aporte->id]));
     }
 
     /**
@@ -1703,6 +1821,18 @@ class ProjectController extends Controller
             }
         }
 
+        // Recalcular accumulated_sold_hours DEPOIS de gravar o histórico de sold_hours:
+        // o Observer já recalculou durante $project->update() (acima), mas as vigências
+        // novas só nascem no bloco anterior — sem isto o acumulado fica stale e diverge
+        // do extrato (ex.: 3840 em vez de 3850 ao mudar 320→330 com vigência futura).
+        if ($previousSoldHours !== $newSoldHours && $project->isBankHoursMonthly()) {
+            try {
+                $project->updateAccumulatedSoldHours(null, true);
+            } catch (\Throwable $e) {
+                \Log::warning('ProjectController@update: falha ao recalcular accumulated_sold_hours pós-histórico', ['error' => $e->getMessage()]);
+            }
+        }
+
         // Dedup mesmo-dia do change log de hourly_rate: o Observer cria uma nova linha a cada
         // alteração. Se hourly_rate mudou, colapsamos as linhas de HOJE deste projeto numa só —
         // mantendo a MAIS ANTIGA (que tem o old_value do início do dia), atualizando seu new_value
@@ -1853,6 +1983,17 @@ class ProjectController extends Controller
         $log->delete();
 
         return response()->json(null, 204);
+    }
+
+    /**
+     * Lista o histórico de horas vendidas (vigências) de um projeto, ordenado por
+     * mês de vigência. Espelha o histórico de valor-hora (change-history) na tela.
+     */
+    public function soldHoursHistoryIndex(Project $project): JsonResponse
+    {
+        $project->load('soldHoursHistory.changer');
+
+        return response()->json($project->soldHoursHistory->sortBy('effective_from')->values());
     }
 
     /**
@@ -3347,7 +3488,7 @@ class ProjectController extends Controller
         //  • monthly  (BH Mensal): vendidas acumulam mês a mês.
         //  • fixed    (BH Fixo / Fechado): vendidas = total fixo constante.
         //  • on_demand: sem vendidas/saldo — só consumo.
-        $project->loadMissing(['contractType', 'hourContributions']);
+        $project->loadMissing(['contractType', 'hourContributions', 'soldHoursHistory']);
         $ctName = strtolower((string) ($project->contractType->name ?? ''));
         $isOnDemand = str_contains($ctName, 'on demand') || $project->tipo_faturamento === 'on_demand';
         $isMonthly  = !$isOnDemand && str_contains($ctName, 'mensal');
@@ -3383,20 +3524,17 @@ class ProjectController extends Controller
         }
         $startDate = Carbon::parse($startStr)->startOfMonth();
 
-        // Nº de meses. BH Mensal: acumulado/horas-mês (congela no encerramento);
-        // demais tipos: do início até hoje (ou encerramento).
-        $accumulatedSold = (int) ($project->accumulated_sold_hours ?? 0);
-        if ($isMonthly && $accumulatedSold > 0 && $hoursPerMonth > 0) {
-            $months = (int) round($accumulatedSold / $hoursPerMonth);
-        } else {
-            $endDate = $project->encerramento_date
-                ? Carbon::parse($project->encerramento_date)->startOfMonth()
-                : Carbon::now()->startOfMonth();
-            if ($endDate->lt($startDate)) {
-                $endDate = $startDate->copy();
-            }
-            $months = $startDate->diffInMonths($endDate) + 1;
+        // Nº de meses: do início até o encerramento (ou mês atual se ativo). Para BH
+        // Mensal cada mês incrementa o valor VIGENTE naquele mês (soldHoursForCompetencia),
+        // então o total não depende mais do accumulated_sold_hours (que podia ficar stale e
+        // não respeitava a vigência — meses anteriores apareciam com a quantidade nova).
+        $endDate = $project->encerramento_date
+            ? Carbon::parse($project->encerramento_date)->startOfMonth()
+            : Carbon::now()->startOfMonth();
+        if ($endDate->lt($startDate)) {
+            $endDate = $startDate->copy();
         }
+        $months = $startDate->diffInMonths($endDate) + 1;
 
         if ($months < 1) {
             return response()->json($empty);
@@ -3473,8 +3611,12 @@ class ProjectController extends Controller
             $monthAporte = round($accumAporte - $prevAccumAporte, 2);
             $prevAccumAporte = $accumAporte;
 
+            $monthlyHours = 0.0;
             if ($isMonthly) {
-                $accumulatedHours += $hoursPerMonth;
+                // Incremento do mês = horas vendidas VIGENTES nessa competência (não o
+                // sold_hours atual) — preserva os meses anteriores ao alterar a quantidade.
+                $monthlyHours = $project->soldHoursForCompetencia($ym);
+                $accumulatedHours += $monthlyHours;
                 $vendidasHours = $accumulatedHours + $accumAporte;
             } elseif ($isFixed) {
                 $vendidasHours = (float) $hoursPerMonth + $accumAporte;
@@ -3500,6 +3642,7 @@ class ProjectController extends Controller
             $rows[] = [
                 'year_month' => $ym,
                 'vendidas_hours' => $vendidasHours,
+                'monthly_hours' => $isMonthly ? round($monthlyHours, 2) : null,
                 'aporte_hours' => $monthAporte,
                 'consumption_hours' => $consumptionHours,
                 'child_block_hours' => $childBlock,

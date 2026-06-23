@@ -37,7 +37,8 @@ class ProjectFromContractGeneratedNotification extends Notification
     public function toMail($notifiable): MailMessage
     {
         $c = $this->contract->loadMissing(['customer:id,name']);
-        $codigo  = $c->code ?? '—';
+        // O contrato não tem coluna `code`; o projeto gerado já tem o código real.
+        $codigo  = ($this->project->code ?? null) ?: ($c->project_code_preview ?? null) ?: '—';
         $projeto = $this->project->name ?? ($c->project_name ?? '—');
         $cliente = optional($c->customer)->name ?? '—';
 

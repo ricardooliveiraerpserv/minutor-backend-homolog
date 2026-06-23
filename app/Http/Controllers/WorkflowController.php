@@ -36,6 +36,7 @@ class WorkflowController extends Controller
             'extra_emails.*.channel' => 'required|in:to,cc',
             'subject'                => 'nullable|string|max:255',
             'body'                   => 'nullable|string|max:5000',
+            'recurrence_days'        => 'nullable|integer|min:0|max:365',
         ]);
 
         $this->config->save(
@@ -44,6 +45,7 @@ class WorkflowController extends Controller
             $data['extra_emails'] ?? [],
             $data['subject'] ?? null,
             $data['body'] ?? null,
+            array_key_exists('recurrence_days', $data) ? (int) $data['recurrence_days'] : null,
         );
 
         return response()->json([
