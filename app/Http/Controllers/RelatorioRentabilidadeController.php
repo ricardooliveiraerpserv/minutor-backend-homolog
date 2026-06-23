@@ -112,8 +112,13 @@ class RelatorioRentabilidadeController extends Controller
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id',
                 'user.partner:id,pricing_type,hourly_rate',
-                'project:id,name,hourly_rate,customer_id',
-                'project.customer:id,name,cgc,secondary_cgcs',
+                'project:id,name,hourly_rate,customer_id,is_investimento_comercial',
+                'project.customer:id,name,cgc,secondary_cgcs,executive_id',
+                'project.customer.executive:id,name',
+                // Investimento: o custo é atribuído ao CLIENTE REAL (projeto real do apontamento).
+                'realProject:id,name,hourly_rate,customer_id',
+                'realProject.customer:id,name,cgc,secondary_cgcs,executive_id',
+                'realProject.customer.executive:id,name',
             ])
             ->whereBetween('date', [$from, $to])
             // Mesma regra do faturamento (fechamento cliente): tudo que é cobrado,
@@ -139,30 +144,125 @@ class RelatorioRentabilidadeController extends Controller
 
         // Agrega por cliente (com CNPJ p/ casar com o Keruak).
         $byCustomer = [];
+        // Inicializa o bucket do cliente (usado tanto por apontamento quanto por despesa).
+        $ensureCustomer = function (int $cid, $proj) use (&$byCustomer) {
+            if (isset($byCustomer[$cid])) return;
+            // Todos os CNPJs do cliente (principal + secundários) p/ UNIR o
+            // recebimento do Keruak de clientes faturados em mais de um CNPJ.
+            $cnpjs = collect([$proj->customer->cgc])
+                ->merge((array) ($proj->customer->secondary_cgcs ?? []))
+                ->map(fn ($c) => preg_replace('/\D/', '', (string) $c))
+                ->filter()->unique()->values()->all();
+            $byCustomer[$cid] = [
+                'customer_id' => $cid,
+                'cliente'     => $proj->customer->name ?? '—',
+                'executivo'   => $proj->customer->executive->name ?? null,
+                'cnpj'        => preg_replace('/\D/', '', (string) ($proj->customer->cgc ?? '')),
+                'cnpjs'       => $cnpjs,
+                'horas'       => 0.0,
+                'receita'     => 0.0,
+                'custo'       => 0.0,
+                'investimento_mo'   => 0.0, // mão de obra de apontamentos de investimento
+                'investimento_desp' => 0.0, // despesas de projetos de investimento
+                'consultores' => [],
+                'despesas'    => ['custo' => 0.0, 'projetos' => []],
+            ];
+        };
         foreach ($timesheets as $ts) {
-            if (!$ts->project || !$ts->project->customer) continue;
-            $cid = $ts->project->customer_id;
-            if (!isset($byCustomer[$cid])) {
-                // Todos os CNPJs do cliente (principal + secundários) p/ UNIR o
-                // recebimento do Keruak de clientes faturados em mais de um CNPJ.
-                $cnpjs = collect([$ts->project->customer->cgc])
-                    ->merge((array) ($ts->project->customer->secondary_cgcs ?? []))
-                    ->map(fn ($c) => preg_replace('/\D/', '', (string) $c))
-                    ->filter()->unique()->values()->all();
-                $byCustomer[$cid] = [
-                    'customer_id' => $cid,
-                    'cliente'     => $ts->project->customer->name ?? '—',
-                    'cnpj'        => preg_replace('/\D/', '', (string) ($ts->project->customer->cgc ?? '')),
-                    'cnpjs'       => $cnpjs,
-                    'horas'       => 0.0,
-                    'receita'     => 0.0,
-                    'custo'       => 0.0,
+            if (!$ts->project) continue;
+            // Apontamento de INVESTIMENTO: o custo vai para o CLIENTE REAL (projeto real do
+            // apontamento), não para a ERPSERV (dona do projeto de investimento). Sem projeto
+            // real, mantém o cliente do próprio projeto.
+            $proj = ($ts->project->is_investimento_comercial && $ts->real_project_id && $ts->realProject && $ts->realProject->customer)
+                ? $ts->realProject
+                : $ts->project;
+            if (!$proj->customer) continue;
+            $cid = $proj->customer_id;
+            $ensureCustomer($cid, $proj);
+            $horas = round($ts->effort_minutes / 60, 4);
+            $rateCons = $costRate($ts->user);
+            $byCustomer[$cid]['horas']   += $horas;
+            $byCustomer[$cid]['receita'] += $horas * (float) ($proj->hourly_rate ?? 0);
+            $byCustomer[$cid]['custo']   += $horas * $rateCons;
+            // Breakdown por consultor dentro do cliente (p/ a margem do consultor na expansão).
+            $uid = $ts->user_id;
+            if (!isset($byCustomer[$cid]['consultores'][$uid])) {
+                $byCustomer[$cid]['consultores'][$uid] = [
+                    'user_id'          => $uid,
+                    'consultor'        => $ts->user->name ?? '—',
+                    'valor_hora'       => round($rateCons, 2),
+                    'horas'            => 0.0,
+                    'custo'            => 0.0,
+                    'tem_investimento' => false,
+                    'projetos'         => [],
                 ];
             }
-            $horas = round($ts->effort_minutes / 60, 4);
-            $byCustomer[$cid]['horas']   += $horas;
-            $byCustomer[$cid]['receita'] += $horas * (float) ($ts->project->hourly_rate ?? 0);
-            $byCustomer[$cid]['custo']   += $horas * $costRate($ts->user);
+            $byCustomer[$cid]['consultores'][$uid]['horas'] += $horas;
+            $byCustomer[$cid]['consultores'][$uid]['custo'] += $horas * $rateCons;
+            // Breakdown por PROJETO que o consultor atuou (3º nível da expansão).
+            // Projeto efetivamente apontado ($ts->project): em investimento é o projeto
+            // de investimento (o trabalho real), atribuído a este cliente via projeto real.
+            $isInvest = (bool) $ts->project->is_investimento_comercial;
+            if ($isInvest) {
+                $byCustomer[$cid]['consultores'][$uid]['tem_investimento'] = true;
+                $byCustomer[$cid]['investimento_mo'] += $horas * $rateCons;
+            }
+            $pid = $ts->project_id;
+            if (!isset($byCustomer[$cid]['consultores'][$uid]['projetos'][$pid])) {
+                $byCustomer[$cid]['consultores'][$uid]['projetos'][$pid] = [
+                    'project_id'      => $pid,
+                    'projeto'         => $ts->project->name ?? '—',
+                    'horas'           => 0.0,
+                    'custo'           => 0.0,
+                    'is_investimento' => $isInvest,
+                ];
+            }
+            $byCustomer[$cid]['consultores'][$uid]['projetos'][$pid]['horas'] += $horas;
+            $byCustomer[$cid]['consultores'][$uid]['projetos'][$pid]['custo'] += $horas * $rateCons;
+        }
+
+        // DESPESAS (aprovadas + pendentes) entram no CUSTO, mapeadas ao cliente como o
+        // apontamento (projeto → cliente; investimento → cliente real). Aparecem numa
+        // linha "Despesas" separada no detalhamento (não misturam com mão de obra).
+        $expenses = \App\Models\Expense::with([
+                'project:id,name,customer_id,is_investimento_comercial',
+                'project.customer:id,name,cgc,secondary_cgcs,executive_id',
+                'project.customer.executive:id,name',
+                'realProject:id,name,customer_id',
+                'realProject.customer:id,name,cgc,secondary_cgcs,executive_id',
+                'realProject.customer.executive:id,name',
+            ])
+            ->whereBetween('expense_date', [$from, $to])
+            ->whereIn('status', [\App\Models\Expense::STATUS_APPROVED, \App\Models\Expense::STATUS_PENDING])
+            ->get();
+
+        foreach ($expenses as $exp) {
+            if (!$exp->project) continue;
+            $proj = ($exp->project->is_investimento_comercial && $exp->real_project_id && $exp->realProject && $exp->realProject->customer)
+                ? $exp->realProject
+                : $exp->project;
+            if (!$proj->customer) continue;
+            $cid = $proj->customer_id;
+            $ensureCustomer($cid, $proj);
+
+            $amount = (float) $exp->amount;
+            $byCustomer[$cid]['custo']               += $amount;
+            $byCustomer[$cid]['despesas']['custo']   += $amount;
+
+            $isInvest = (bool) $exp->project->is_investimento_comercial;
+            if ($isInvest) {
+                $byCustomer[$cid]['investimento_desp'] += $amount;
+            }
+            $pid = $exp->project_id;
+            if (!isset($byCustomer[$cid]['despesas']['projetos'][$pid])) {
+                $byCustomer[$cid]['despesas']['projetos'][$pid] = [
+                    'project_id'      => $pid,
+                    'projeto'         => $exp->project->name ?? '—',
+                    'custo'           => 0.0,
+                    'is_investimento' => $isInvest,
+                ];
+            }
+            $byCustomer[$cid]['despesas']['projetos'][$pid]['custo'] += $amount;
         }
 
         // ?refresh=1 (botão "Atualizar Keruak"): ignora o cache de 3h e busca ao vivo.
@@ -187,6 +287,7 @@ class RelatorioRentabilidadeController extends Controller
             $rows[] = [
                 'customer_id'     => $g['customer_id'],
                 'cliente'         => $g['cliente'],
+                'executivo'       => $g['executivo'],
                 'cnpj'            => $cnpj,
                 'horas'           => $horas,
                 'receita'         => $receita,
@@ -197,17 +298,81 @@ class RelatorioRentabilidadeController extends Controller
                 'margem_real'     => $margemReal,
                 'margem_real_pct' => $recebido > 0 ? round($margemReal / $recebido * 100, 1) : null,
                 'no_minutor'      => true,
+                'consultores'     => array_map(fn ($c) => [
+                    'user_id'          => $c['user_id'],
+                    'consultor'        => $c['consultor'],
+                    'valor_hora'       => $c['valor_hora'],
+                    'horas'            => round($c['horas'], 2),
+                    'custo'            => round($c['custo'], 2),
+                    'tem_investimento' => $c['tem_investimento'],
+                    'projetos'         => array_map(fn ($p) => [
+                        'project_id'      => $p['project_id'],
+                        'projeto'         => $p['projeto'],
+                        'horas'           => round($p['horas'], 2),
+                        'custo'           => round($p['custo'], 2),
+                        'is_investimento' => $p['is_investimento'],
+                    ], array_values($c['projetos'])),
+                ], array_values($g['consultores'])),
+                'investimento_mo'   => round($g['investimento_mo'], 2),
+                'investimento_desp' => round($g['investimento_desp'], 2),
+                'despesas'        => [
+                    'custo'    => round($g['despesas']['custo'], 2),
+                    'projetos' => array_map(fn ($p) => [
+                        'project_id'      => $p['project_id'],
+                        'projeto'         => $p['projeto'],
+                        'custo'           => round($p['custo'], 2),
+                        'is_investimento' => $p['is_investimento'],
+                    ], array_values($g['despesas']['projetos'])),
+                ],
             ];
         }
 
-        // Clientes com recebimento no M+1 mas SEM apontamento Minutor no mês M.
+        // Mapa global CNPJ→cliente (principal + secundários) de TODOS os clientes cadastrados.
+        // Necessário pra casar o recebimento do Keruak com clientes que NÃO tiveram movimento
+        // no mês M (não entram em $byCustomer) — senão o recebido deles (inclusive sob CNPJ
+        // adicional cadastrado) cairia indevidamente como "fora do Minutor".
+        $cnpjToCustomer = [];
+        \App\Models\Customer::with('executive:id,name')
+            ->get(['id', 'name', 'cgc', 'secondary_cgcs', 'executive_id'])
+            ->each(function ($c) use (&$cnpjToCustomer) {
+                collect([$c->cgc])->merge((array) ($c->secondary_cgcs ?? []))
+                    ->map(fn ($x) => preg_replace('/\D/', '', (string) $x))
+                    ->filter()->unique()
+                    ->each(function ($cc) use (&$cnpjToCustomer, $c) {
+                        if (!isset($cnpjToCustomer[$cc])) {
+                            $cnpjToCustomer[$cc] = [
+                                'customer_id' => $c->id,
+                                'cliente'     => $c->name,
+                                'executivo'   => $c->executive->name ?? null,
+                            ];
+                        }
+                    });
+            });
+
+        // Recebimento no M+1 SEM apontamento Minutor no mês M:
+        //  - CNPJ casa com cliente cadastrado (principal/adicional) → consolida no cliente (no_minutor=true);
+        //  - CNPJ não cadastrado em ninguém → "fora do Minutor".
+        $extraByCustomer = [];
         foreach ($keruak as $cnpj => $info) {
             if (isset($usados[$cnpj])) continue;
             $recebido = (float) ($info['receb'][$recebMonth] ?? 0);
             if ($recebido <= 0) continue;
+            $usados[$cnpj] = true;
+
+            $match = $cnpjToCustomer[$cnpj] ?? null;
+            if ($match) {
+                $cid = $match['customer_id'];
+                if (!isset($extraByCustomer[$cid])) {
+                    $extraByCustomer[$cid] = ['info' => $match, 'cnpj' => $cnpj, 'recebido' => 0.0];
+                }
+                $extraByCustomer[$cid]['recebido'] += $recebido;
+                continue;
+            }
+
             $rows[] = [
                 'customer_id'     => null,
                 'cliente'         => $info['name'] ?: '(fora do Minutor)',
+                'executivo'       => null,
                 'cnpj'            => $cnpj,
                 'horas'           => 0.0,
                 'receita'         => 0.0,
@@ -218,11 +383,73 @@ class RelatorioRentabilidadeController extends Controller
                 'margem_real'     => round($recebido, 2),
                 'margem_real_pct' => 100.0,
                 'no_minutor'      => false,
+                'consultores'     => [],
+            ];
+        }
+
+        // Clientes CADASTRADOS sem movimento no mês, mas com recebido (consolidado por cliente).
+        foreach ($extraByCustomer as $cid => $e) {
+            $recebido = round($e['recebido'], 2);
+            $rows[] = [
+                'customer_id'     => $cid,
+                'cliente'         => $e['info']['cliente'],
+                'executivo'       => $e['info']['executivo'],
+                'cnpj'            => $e['cnpj'],
+                'horas'           => 0.0,
+                'receita'         => 0.0,
+                'custo'           => 0.0,
+                'margem'          => 0.0,
+                'margem_pct'      => null,
+                'recebido'        => $recebido,
+                'margem_real'     => $recebido,
+                'margem_real_pct' => $recebido > 0 ? 100.0 : null,
+                'no_minutor'      => true,
+                'consultores'     => [],
             ];
         }
 
         usort($rows, fn ($a, $b) => strcasecmp($a['cliente'], $b['cliente']));
 
         return response()->json(['data' => ['rows' => $rows, 'receb_month' => $recebMonth]]);
+    }
+
+    /**
+     * Ajustes iniciais (custo/receita) por cliente do ANO. Mapa { customer_id: {custo_inicial, receita_inicial} }.
+     * O FE soma esses valores UMA vez no agregado anual (a visão anual é a soma dos meses no FE).
+     */
+    public function initials(int $year): JsonResponse
+    {
+        $map = [];
+        foreach (\App\Models\CustomerRentabInitial::where('year', $year)->get(['customer_id', 'custo_inicial', 'receita_inicial']) as $r) {
+            $map[$r->customer_id] = [
+                'custo_inicial'   => (float) $r->custo_inicial,
+                'receita_inicial' => (float) $r->receita_inicial,
+            ];
+        }
+        return response()->json(['data' => $map]);
+    }
+
+    /**
+     * Upsert do ajuste inicial de um cliente em um ano.
+     */
+    public function saveInitial(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'customer_id'     => 'required|exists:customers,id',
+            'year'            => 'required|integer|min:2000|max:2100',
+            'custo_inicial'   => 'nullable|numeric|min:0',
+            'receita_inicial' => 'nullable|numeric|min:0',
+        ]);
+
+        $rec = \App\Models\CustomerRentabInitial::updateOrCreate(
+            ['customer_id' => $v['customer_id'], 'year' => $v['year']],
+            ['custo_inicial' => $v['custo_inicial'] ?? 0, 'receita_inicial' => $v['receita_inicial'] ?? 0],
+        );
+
+        return response()->json(['ok' => true, 'data' => [
+            'customer_id'     => $rec->customer_id,
+            'custo_inicial'   => (float) $rec->custo_inicial,
+            'receita_inicial' => (float) $rec->receita_inicial,
+        ]]);
     }
 }

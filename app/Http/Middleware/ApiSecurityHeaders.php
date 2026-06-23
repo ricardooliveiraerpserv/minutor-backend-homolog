@@ -17,12 +17,16 @@ class ApiSecurityHeaders
     {
         $response = $next($request);
 
+        // PDFs servidos para EXIBIÇÃO em iframe (mesma origem): Portal de Propostas (/p/{token}/pdf).
+        // Precisam ser "frameáveis" pela própria origem — senão o navegador bloqueia (ícone quebrado).
+        $framableInline = $request->is('api/v1/p/*/pdf') || $request->is('api/v1/p/*/deck-html');
+
         // Headers de segurança
         $response->headers->set('X-Content-Type-Options', 'nosniff');
-        $response->headers->set('X-Frame-Options', 'DENY');
+        $response->headers->set('X-Frame-Options', $framableInline ? 'SAMEORIGIN' : 'DENY');
         $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+        $response->headers->set('Content-Security-Policy', $framableInline ? "frame-ancestors 'self'" : "default-src 'none'; frame-ancestors 'none'");
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
 

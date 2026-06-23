@@ -59,9 +59,12 @@ class ContractAporteNotification extends Notification
 
         $base = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/');
 
+        // Workflow por tipo: subprojeto (filho) tem template/cor próprios.
+        $wfKey = $this->project->parent_project_id ? 'contract.aporte.child' : 'contract.aporte';
+
         // Modelo editável (título + texto) da Central, com variáveis substituídas.
         $vars = compact('codigo', 'projeto', 'cliente', 'horas', 'data') + ['saldo' => $saldoFmt ?? '—'];
-        $tpl  = app(\App\Workflows\WorkflowConfigService::class)->template('contract.aporte');
+        $tpl  = app(\App\Workflows\WorkflowConfigService::class)->template($wfKey);
         $subject  = \App\Workflows\WorkflowConfigService::render($tpl['subject'], $vars) ?: "Novo aporte de horas no contrato — {$codigo}";
         $bodyText = \App\Workflows\WorkflowConfigService::render($tpl['body'], $vars) ?: "Foi registrado um novo aporte de horas no contrato {$codigo}.";
 
@@ -74,7 +77,7 @@ class ContractAporteNotification extends Notification
 
         return $mail
             ->view('emails.contracts.aporte', [
-                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('contract.aporte'),
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent($wfKey),
                 'codigo'        => $codigo,
                 'projeto'       => $projeto,
                 'cliente'       => $cliente,

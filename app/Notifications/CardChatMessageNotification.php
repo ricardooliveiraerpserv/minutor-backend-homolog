@@ -45,7 +45,7 @@ class CardChatMessageNotification extends Notification implements ShouldQueue
         return $this->applyCc((new MailMessage)
             ->subject($subject))
             ->view('emails.cards.chat-message', [
-                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent('card.chat_message'),
+                'accent'        => app(\App\Workflows\WorkflowConfigService::class)->accent($isRequest ? 'card.chat_message.request' : 'card.chat_message.project'),
                 'eyebrow'       => $eyebrow,
                 'cardType'      => $this->cardType,
                 'cardCode'      => $this->cardCode,

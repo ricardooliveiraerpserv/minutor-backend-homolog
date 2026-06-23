@@ -279,7 +279,50 @@ class Expense extends Model
         $this->charge_client = $chargeClient;
         $this->rejection_reason = null;
 
-        return $this->save();
+        $saved = $this->save();
+        if ($saved) {
+            // Avisa o administrativo (workflow) que há despesa aprovada a pagar.
+            // Após commit p/ não disparar e-mail se o bulk-approve reverter.
+            $this->dispatchPendingPaymentWorkflow();
+        }
+
+        return $saved;
+    }
+
+    /**
+     * Dispara (após commit) o workflow "despesa aprovada — pendente de pagamento".
+     * Destinatários e recorrência são configurados na Central de Workflows.
+     */
+    public function dispatchPendingPaymentWorkflow(): void
+    {
+        \Illuminate\Support\Facades\DB::afterCommit(function () {
+            try {
+                app(\App\Workflows\WorkflowMailer::class)->send(
+                    'expense.approved_pending_payment',
+                    ['actor' => $this->reviewed_by ? User::find($this->reviewed_by) : null],
+                    $this->paymentWorkflowVars(),
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Aviso de despesa pendente de pagamento falhou', [
+                    'expense_id' => $this->id,
+                    'err'        => $e->getMessage(),
+                ]);
+            }
+        });
+    }
+
+    /** Variáveis do template do workflow de despesa pendente de pagamento. */
+    public function paymentWorkflowVars(): array
+    {
+        $this->loadMissing(['user:id,name', 'category:id,name', 'project:id,name']);
+        return [
+            'valor'     => 'R$ ' . number_format((float) $this->amount, 2, ',', '.'),
+            'descricao' => $this->description ?: '—',
+            'categoria' => optional($this->category)->name ?? '—',
+            'projeto'   => optional($this->project)->name ?? '—',
+            'autor'     => optional($this->user)->name ?? '—',
+            'data'      => optional($this->expense_date)->format('d/m/Y') ?? '—',
+        ];
     }
 
     /**

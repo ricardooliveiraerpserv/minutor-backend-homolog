@@ -22,25 +22,43 @@ return [
     'workflow_accents' => [
         'contract.created'             => '#FBBF24', // amarelo
         'contract.project_generated'   => '#22C55E', // verde
+        'project.coordinator_assigned' => '#A3E635', // lima
+        'project.finished'             => '#94A3B8', // slate (encerrado)
+        'project.cancelled'            => '#EF4444', // vermelho (cancelado)
+        'project.paused'               => '#EAB308', // amarelo (pausado)
         'contract.inicio_autorizado'   => '#22D3EE', // ciano
-        'contract.aporte'              => '#34D399', // esmeralda
+        'contract.aporte'              => '#34D399', // esmeralda (aporte pai)
+        'contract.aporte.child'        => '#6EE7B7', // esmeralda claro (aporte subprojeto)
         'contract.reajuste'            => '#F472B6', // pink
         'contract.reajustes_pendentes' => '#FB923C', // laranja
-        'request.lifecycle'            => '#38BDF8', // azul
-        'card.chat_message'            => '#818CF8', // índigo
-        'card.phase_movement'          => '#A78BFA', // roxo
+        'request.phase.backlog'              => '#93C5FD',
+        'request.phase.novo_projeto'         => '#60A5FA',
+        'request.phase.em_planejamento'      => '#38BDF8',
+        'request.phase.em_validacao'         => '#22D3EE',
+        'request.phase.em_revisao'           => '#2DD4BF',
+        'request.phase.aprovado'             => '#34D399',
+        'request.phase.req_inicio_autorizado' => '#818CF8',
+        'card.chat_message.request'    => '#818CF8', // índigo (chat requisição)
+        'card.chat_message.project'    => '#6366F1', // índigo escuro (chat projeto)
+        'card.phase_movement.request'  => '#A78BFA', // roxo (movimento requisição)
+        'card.phase_movement.project'  => '#8B5CF6', // roxo escuro (movimento projeto)
+        'chat.mention'                 => '#C084FC', // lilás (marcação @)
         'fechamento.cliente'           => '#F59E0B', // âmbar
         'fechamento.consultor'         => '#2DD4BF', // teal
         'fechamento.parceiro'          => '#FACC15', // dourado
-        'timesheet.status'             => '#FB7185', // rosa
-        'followup.reminder'            => '#C084FC', // lilás
+        'fechamento.diretoria'         => '#FDBA74', // pêssego
+        'timesheet.rejected'           => '#FB7185', // rosa (rejeitado)
+        'timesheet.adjustment'         => '#F97316', // laranja (ajuste)
     ],
     // Fallback por domínio (workflow novo sem cor própria).
     'domain_accents' => [
+        'Requisições' => '#38BDF8',
         'Contratos'   => '#22C55E',
         'Triagem'     => '#38BDF8',
         'Fechamento'  => '#F59E0B',
         'Apontamento' => '#A78BFA',
+        'Projetos'    => '#94A3B8',
+        'Despesas'    => '#F97316',
         'Outros'      => '#FB7185',
     ],
 
@@ -63,8 +81,8 @@ return [
         'autor'                => 'Autor da ação',
         'consultor'            => 'Consultor',
         'parceiro'             => 'Parceiro',
-        'responsavel'          => 'Responsável',
         'financeiro'           => 'Financeiro (e-mail fixo)',
+        'mencionado'           => 'Pessoa marcada (@) na mensagem',
     ],
 
     // O que cada audiência PRECISA do contexto pra resolver (any-of). [] = sempre aplicável.
@@ -82,31 +100,59 @@ return [
         'autor'                => ['actor'],
         'consultor'            => ['consultant'],
         'parceiro'             => ['partner'],
-        'responsavel'          => ['followup'],
         'financeiro'           => [],
+        'mencionado'           => ['mentioned'],
     ],
 
     // Capacidades que CADA workflow fornece no contexto (define o que faz sentido nele).
     'context' => [
         'contract.created'             => ['contract', 'customer', 'actor'],
         'contract.project_generated'   => ['contract', 'project', 'customer', 'actor'],
+        'project.coordinator_assigned' => ['contract', 'project', 'customer', 'actor'],
+        'project.finished'             => ['project', 'contract', 'customer', 'actor'],
+        'project.cancelled'            => ['project', 'contract', 'customer', 'actor'],
+        'project.paused'               => ['project', 'contract', 'customer', 'actor'],
         'contract.inicio_autorizado'   => ['contract', 'customer', 'actor'],
         'contract.aporte'              => ['contract', 'project', 'customer', 'actor'],
+        'contract.aporte.child'        => ['contract', 'project', 'customer', 'actor'],
         'contract.reajuste'            => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
-        'request.lifecycle'            => ['request', 'customer', 'actor'],
-        'card.chat_message'            => ['card', 'actor'],
-        'card.phase_movement'          => ['card', 'actor'],
+        'expense.approved_pending_payment' => ['actor'],
+        'request.phase.backlog'              => ['request', 'customer', 'actor'],
+        'request.phase.novo_projeto'         => ['request', 'customer', 'actor'],
+        'request.phase.em_planejamento'      => ['request', 'customer', 'actor'],
+        'request.phase.em_validacao'         => ['request', 'customer', 'actor'],
+        'request.phase.em_revisao'           => ['request', 'customer', 'actor'],
+        'request.phase.aprovado'             => ['request', 'customer', 'actor'],
+        'request.phase.req_inicio_autorizado' => ['request', 'customer', 'actor'],
+        'card.chat_message.request'    => ['card', 'actor', 'mentioned'],
+        'card.chat_message.project'    => ['card', 'project', 'contract', 'customer', 'actor', 'mentioned'],
+        'card.phase_movement.request'  => ['card', 'actor'],
+        'card.phase_movement.project'  => ['card', 'actor'],
+        'chat.mention'                 => ['card', 'actor', 'mentioned'],
         'fechamento.cliente'           => ['contract', 'customer', 'actor'],
         'fechamento.consultor'         => ['consultant', 'actor'],
         'fechamento.parceiro'          => ['partner', 'actor'],
-        'timesheet.status'             => ['project', 'actor'],
-        'followup.reminder'            => ['followup', 'actor'],
+        'fechamento.diretoria'         => ['actor'],
+        'timesheet.rejected'           => ['project', 'actor'],
+        'timesheet.adjustment'         => ['project', 'actor'],
     ],
 
     // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
     // Editável na Central; o layout/branding (logo, card de dados, botão) é automático.
     'templates' => [
+        'expense.approved_pending_payment' => [
+            'subject'   => 'Despesa aprovada e pendente de pagamento — {valor}',
+            'body'      => 'A despesa "{descricao}" ({categoria}) no valor de {valor}, lançada por {autor}, foi aprovada e está pendente de pagamento.',
+            'variables' => [
+                'valor'     => 'Valor',
+                'descricao' => 'Descrição',
+                'categoria' => 'Categoria',
+                'projeto'   => 'Projeto',
+                'autor'     => 'Lançado por',
+                'data'      => 'Data da despesa',
+            ],
+        ],
         'contract.created' => [
             'subject'   => 'Novo contrato cadastrado — {codigo}',
             'body'      => 'O contrato {codigo} do cliente {cliente} foi cadastrado e está em Novo Contrato.',
@@ -122,10 +168,35 @@ return [
             'body'      => 'O contrato {codigo} ({cliente}) entrou na fase Início Autorizado.',
             'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
         ],
+        'project.coordinator_assigned' => [
+            'subject'   => 'Você foi designado(a) coordenador(a) — {codigo}',
+            'body'      => 'Você foi designado(a) coordenador(a) do projeto {projeto} ({cliente}). Ele está pronto para iniciar.',
+            'variables' => ['codigo' => 'Código', 'projeto' => 'Projeto', 'cliente' => 'Cliente'],
+        ],
+        'project.finished' => [
+            'subject'   => 'Projeto encerrado — {codigo}',
+            'body'      => 'O projeto {projeto} ({cliente}) foi encerrado.',
+            'variables' => ['codigo' => 'Código', 'projeto' => 'Projeto', 'cliente' => 'Cliente'],
+        ],
+        'project.cancelled' => [
+            'subject'   => 'Projeto cancelado — {codigo}',
+            'body'      => 'O projeto {projeto} ({cliente}) foi cancelado.',
+            'variables' => ['codigo' => 'Código', 'projeto' => 'Projeto', 'cliente' => 'Cliente'],
+        ],
+        'project.paused' => [
+            'subject'   => 'Projeto pausado — {codigo}',
+            'body'      => 'O projeto {projeto} ({cliente}) foi pausado.',
+            'variables' => ['codigo' => 'Código', 'projeto' => 'Projeto', 'cliente' => 'Cliente'],
+        ],
         'contract.aporte' => [
             'subject'   => 'Novo aporte de horas no contrato — {codigo}',
             'body'      => 'Foi registrado um novo aporte de horas no contrato {codigo}.',
             'variables' => ['codigo' => 'Código do contrato', 'projeto' => 'Projeto', 'cliente' => 'Cliente', 'horas' => 'Horas aportadas', 'saldo' => 'Saldo total', 'data' => 'Data'],
+        ],
+        'contract.aporte.child' => [
+            'subject'   => 'Novo aporte de horas no subprojeto — {codigo}',
+            'body'      => 'Foi registrado um novo aporte de horas no subprojeto {projeto}.',
+            'variables' => ['codigo' => 'Código', 'projeto' => 'Subprojeto', 'cliente' => 'Cliente', 'horas' => 'Horas aportadas', 'saldo' => 'Saldo total', 'data' => 'Data'],
         ],
         'contract.reajuste' => [
             'subject'   => 'Reajuste do contrato — {codigo}',
@@ -137,20 +208,65 @@ return [
             'body'      => 'Há contratos com reajuste vencido/pendente aguardando ação.',
             'variables' => [],
         ],
-        'request.lifecycle' => [
-            'subject'   => 'Requisição {codigo} avançou para {para}',
-            'body'      => 'A requisição {codigo} do cliente {cliente} foi movida de {de} para {para}.',
-            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente', 'de' => 'Fase anterior', 'para' => 'Nova fase'],
+        'request.phase.backlog' => [
+            'subject'   => 'Requisição {codigo} criada — Backlog',
+            'body'      => 'A requisição {codigo} ({cliente}) foi criada e está em Backlog.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
         ],
-        'card.chat_message' => [
+        'request.phase.novo_projeto' => [
+            'subject'   => 'Requisição {codigo} → Novo Projeto',
+            'body'      => 'A requisição {codigo} ({cliente}) entrou em Novo Projeto.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
+        ],
+        'request.phase.em_planejamento' => [
+            'subject'   => 'Requisição {codigo} → Em Planejamento',
+            'body'      => 'A requisição {codigo} ({cliente}) entrou em Em Planejamento.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
+        ],
+        'request.phase.em_validacao' => [
+            'subject'   => 'Requisição {codigo} → Em Validação',
+            'body'      => 'A requisição {codigo} ({cliente}) entrou em Em Validação.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
+        ],
+        'request.phase.em_revisao' => [
+            'subject'   => 'Requisição {codigo} → Em Revisão',
+            'body'      => 'A requisição {codigo} ({cliente}) entrou em Em Revisão.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
+        ],
+        'request.phase.aprovado' => [
+            'subject'   => 'Requisição {codigo} → Aprovado',
+            'body'      => 'A requisição {codigo} ({cliente}) foi Aprovada.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
+        ],
+        'request.phase.req_inicio_autorizado' => [
+            'subject'   => 'Requisição {codigo} → Aguardando Início',
+            'body'      => 'A requisição {codigo} ({cliente}) está Aguardando Início.',
+            'variables' => ['codigo' => 'Código da requisição', 'cliente' => 'Cliente'],
+        ],
+        'card.chat_message.request' => [
             'subject'   => 'Nova mensagem em {codigo} — {titulo}',
-            'body'      => '{autor} enviou uma nova mensagem no chat de {titulo}.',
+            'body'      => '{autor} enviou uma nova mensagem no chat da requisição {titulo}.',
             'variables' => ['codigo' => 'Código do card', 'titulo' => 'Título do card', 'autor' => 'Autor da mensagem'],
         ],
-        'card.phase_movement' => [
+        'card.chat_message.project' => [
+            'subject'   => 'Nova interação no Diário do Projeto — {codigo} {titulo}',
+            'body'      => '{autor} registrou uma nova interação no Diário do Projeto {titulo}.',
+            'variables' => ['codigo' => 'Código do card', 'titulo' => 'Título do card', 'autor' => 'Autor da interação'],
+        ],
+        'card.phase_movement.request' => [
             'subject'   => '{codigo} avançou para {para}',
-            'body'      => 'O card {titulo} foi movido de {de} para {para} por {autor}.',
+            'body'      => 'A requisição {titulo} foi movida de {de} para {para} por {autor}.',
             'variables' => ['codigo' => 'Código', 'titulo' => 'Título', 'de' => 'Fase anterior', 'para' => 'Nova fase', 'autor' => 'Responsável'],
+        ],
+        'card.phase_movement.project' => [
+            'subject'   => '{codigo} avançou para {para}',
+            'body'      => 'O projeto {titulo} foi movido de {de} para {para} por {autor}.',
+            'variables' => ['codigo' => 'Código', 'titulo' => 'Título', 'de' => 'Fase anterior', 'para' => 'Nova fase', 'autor' => 'Responsável'],
+        ],
+        'chat.mention' => [
+            'subject'   => 'Você foi marcado(a) por {autor} — {titulo}',
+            'body'      => '{autor} marcou você em uma mensagem de {titulo}.',
+            'variables' => ['titulo' => 'Título do card', 'autor' => 'Autor da mensagem'],
         ],
         'fechamento.cliente' => [
             'subject'   => 'Fechamento {periodo} — {cliente}',
@@ -167,20 +283,38 @@ return [
             'body'      => 'Segue o relatório de fechamento referente a {periodo}.',
             'variables' => ['periodo' => 'Competência', 'parceiro' => 'Parceiro'],
         ],
-        'timesheet.status' => [
-            'subject'   => 'Apontamento {status}',
-            'body'      => 'Seu apontamento de {data} foi marcado como {status}. {motivo}',
-            'variables' => ['data' => 'Data do apontamento', 'status' => 'Novo status', 'motivo' => 'Motivo/observação'],
+        'fechamento.diretoria' => [
+            'subject'   => 'Fechamento Diretoria — {periodo} | {diretor}',
+            'body'      => 'Segue o fechamento da diretoria referente a {periodo}.',
+            'variables' => ['periodo' => 'Competência', 'diretor' => 'Diretor'],
         ],
-        'followup.reminder' => [
-            'subject'   => 'Lembrete de follow-up — {assunto}',
-            'body'      => 'Você tem um follow-up pendente: {assunto}.',
-            'variables' => ['assunto' => 'Assunto', 'data' => 'Data'],
+        'timesheet.rejected' => [
+            'subject'   => 'Apontamento rejeitado',
+            'body'      => 'Seu apontamento de {data} foi rejeitado. {motivo}',
+            'variables' => ['data' => 'Data do apontamento', 'motivo' => 'Motivo/observação'],
+        ],
+        'timesheet.adjustment' => [
+            'subject'   => 'Apontamento — ajuste solicitado',
+            'body'      => 'Seu apontamento de {data} precisa de ajuste. {motivo}',
+            'variables' => ['data' => 'Data do apontamento', 'motivo' => 'Motivo/observação'],
         ],
     ],
 
     // Workflows agrupados por domínio.
     'workflows' => [
+
+        // ───────────────────────── Despesas ─────────────────────────
+        'expense.approved_pending_payment' => [
+            'label'       => 'Despesa aprovada — pendente de pagamento',
+            'domain'      => 'Despesas',
+            'description' => 'Quando uma despesa é APROVADA, avisa o administrativo que há despesa a pagar. Defina a recorrência abaixo para reenviar o aviso a cada N dias enquanto a despesa não for marcada como paga (0 = só o aviso na aprovação).',
+            'recurrence'  => true,
+            'audiences'   => [
+                'administrativo' => 'to',
+                'financeiro'     => 'off',
+                'autor'          => 'off',
+            ],
+        ],
 
         // ───────────────────────── Contratos ─────────────────────────
         'contract.created' => [
@@ -216,13 +350,67 @@ return [
                 'coordenador'         => 'off',
             ],
         ],
-        'contract.aporte' => [
-            'label'       => 'Novo aporte de horas',
+        'project.coordinator_assigned' => [
+            'label'       => 'Coordenador atribuído ao projeto',
             'domain'      => 'Contratos',
-            'description' => 'Ao registrar um aporte (motivo=aporte). Em contrato filho, o cliente nunca entra.',
+            'description' => 'Quando um coordenador é atribuído/trocado num projeto JÁ gerado (move o card para a coluna do coordenador). Notifica o coordenador da coluna — sem reincomodar cliente/executivo a cada troca.',
+            'audiences'   => [
+                'coordenador'         => 'to',
+                'diretor'             => 'off',
+                'executivo_de_contas' => 'off',
+            ],
+        ],
+
+        // ───────────────────────── Projetos (fases) ─────────────────────────
+        'project.finished' => [
+            'label'       => 'Projeto encerrado (Fechado)',
+            'domain'      => 'Projetos',
+            'description' => 'Quando um projeto é movido para Fechado (status finished).',
+            'audiences'   => [
+                'coordenador'         => 'to',
+                'executivo_de_contas' => 'cc',
+                'diretor'             => 'off',
+                'cliente'             => 'off',
+            ],
+        ],
+        'project.cancelled' => [
+            'label'       => 'Projeto cancelado',
+            'domain'      => 'Projetos',
+            'description' => 'Quando um projeto é movido para Cancelado (status cancelled).',
+            'audiences'   => [
+                'coordenador'         => 'to',
+                'executivo_de_contas' => 'cc',
+                'diretor'             => 'off',
+                'cliente'             => 'off',
+            ],
+        ],
+        'project.paused' => [
+            'label'       => 'Projeto pausado',
+            'domain'      => 'Projetos',
+            'description' => 'Quando um projeto é movido para Pausado (status paused).',
+            'audiences'   => [
+                'coordenador'         => 'to',
+                'executivo_de_contas' => 'cc',
+                'diretor'             => 'off',
+                'cliente'             => 'off',
+            ],
+        ],
+        'contract.aporte' => [
+            'label'       => 'Novo aporte de horas — Projeto pai',
+            'domain'      => 'Contratos',
+            'description' => 'Ao registrar um aporte no projeto pai. O cliente é avisado.',
             'audiences'   => [
                 'cliente'             => 'to',
                 'executivo_de_contas' => 'cc',
+                'autor'               => 'cc',
+            ],
+        ],
+        'contract.aporte.child' => [
+            'label'       => 'Novo aporte de horas — Subprojeto',
+            'domain'      => 'Contratos',
+            'description' => 'Ao registrar um aporte em subprojeto (contrato filho). Interno — o cliente NÃO é avisado.',
+            'audiences'   => [
+                'executivo_de_contas' => 'to',
                 'autor'               => 'cc',
             ],
         ],
@@ -246,33 +434,90 @@ return [
         ],
 
         // ───────────────────────── Triagem ─────────────────────────
-        'request.lifecycle' => [
-            'label'       => 'Requisição movida (lifecycle)',
-            'domain'      => 'Triagem',
-            'description' => 'A cada movimentação da requisição no kanban, até virar contrato/projeto.',
+        'request.phase.backlog' => [
+            'label'       => 'Requisição criada / Backlog',
+            'domain'      => 'Requisições',
+            'description' => 'Quando a requisição é criada (entra em Backlog) ou movida para a coluna Backlog. Também é o fallback de colunas sem workflow próprio.',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'request.phase.novo_projeto' => [
+            'label'       => 'Requisição → Novo Projeto',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição entra na coluna Novo Projeto.',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'request.phase.em_planejamento' => [
+            'label'       => 'Requisição → Em Planejamento',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição entra na coluna Em Planejamento.',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'request.phase.em_validacao' => [
+            'label'       => 'Requisição → Em Validação',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição entra na coluna Em Validação (visível ao cliente).',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'request.phase.em_revisao' => [
+            'label'       => 'Requisição → Em Revisão',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição entra na coluna Em Revisão.',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'request.phase.aprovado' => [
+            'label'       => 'Requisição → Aprovado',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição entra na coluna Aprovado.',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'request.phase.req_inicio_autorizado' => [
+            'label'       => 'Requisição → Aguardando Início',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição entra na coluna Aguardando Início.',
+            'audiences'   => ['solicitante' => 'to', 'executivo_de_contas' => 'to', 'watchers' => 'cc', 'cliente' => 'off'],
+        ],
+        'card.chat_message.request' => [
+            'label'       => 'Mensagem no chat — Requisição',
+            'domain'      => 'Requisições',
+            'description' => 'Nova mensagem no chat de uma requisição. O cliente participa (até a requisição virar projeto).',
             'audiences'   => [
-                'solicitante'         => 'to',
+                'envolvidos_internos' => 'to',
+                'envolvidos_cliente'  => 'to',
+            ],
+        ],
+        'card.chat_message.project' => [
+            'label'       => 'Diário do Projeto',
+            'domain'      => 'Projetos',
+            'description' => 'Nova interação no Diário do Projeto. Interno (cliente não participa). Sem menção, recebem o executivo de contas, o(s) coordenador(es) e o diretor de projetos. Pessoas fora desses papéis só recebem se forem citadas (@).',
+            'audiences'   => [
                 'executivo_de_contas' => 'to',
-                'watchers'            => 'cc',
-                'cliente'             => 'off',
+                'coordenador'         => 'to',
+                'diretor'             => 'to',
             ],
         ],
-        'card.chat_message' => [
-            'label'       => 'Mensagem no chat do card',
-            'domain'      => 'Triagem',
-            'description' => 'Nova mensagem no chat de uma requisição/projeto.',
+        'card.phase_movement.request' => [
+            'label'       => 'Movimentação de fase — Requisição',
+            'domain'      => 'Requisições',
+            'description' => 'Quando uma requisição muda de fase no kanban.',
             'audiences'   => [
                 'envolvidos_internos' => 'to',
                 'envolvidos_cliente'  => 'to',
             ],
         ],
-        'card.phase_movement' => [
-            'label'       => 'Movimentação de fase do card',
-            'domain'      => 'Triagem',
-            'description' => 'Quando um card de requisição/projeto muda de fase.',
+        'card.phase_movement.project' => [
+            'label'       => 'Movimentação de fase — Projeto',
+            'domain'      => 'Projetos',
+            'description' => 'Quando um projeto muda de fase no kanban. Interno — o cliente não participa.',
             'audiences'   => [
                 'envolvidos_internos' => 'to',
-                'envolvidos_cliente'  => 'to',
+            ],
+        ],
+        'chat.mention' => [
+            'label'       => 'Marcação em chat (@)',
+            'domain'      => 'Requisições',
+            'description' => 'Quando alguém marca (@) uma pessoa numa mensagem de chat (requisição, contrato ou projeto). Notifica a pessoa marcada (além do sino in-app). Não duplica com quem já recebe o e-mail de "Mensagem no chat".',
+            'audiences'   => [
+                'mencionado' => 'to',
             ],
         ],
 
@@ -303,23 +548,31 @@ return [
                 'parceiro' => 'to',
             ],
         ],
+        'fechamento.diretoria' => [
+            'label'       => 'Fechamento da diretoria',
+            'domain'      => 'Fechamento',
+            'description' => 'Envio do fechamento ao diretor. Os e-mails escolhidos na tela são sempre o destinatário; a Central adiciona papéis em cópia (ex.: administrativo/financeiro).',
+            'audiences'   => [
+                'administrativo' => 'off',
+                'financeiro'     => 'off',
+            ],
+        ],
 
         // ───────────────────────── Apontamento / Outros ─────────────────────────
-        'timesheet.status' => [
-            'label'       => 'Status de apontamento',
+        'timesheet.rejected' => [
+            'label'       => 'Apontamento rejeitado',
             'domain'      => 'Apontamento',
-            'description' => 'Quando um apontamento é rejeitado ou tem ajuste solicitado.',
+            'description' => 'Quando um apontamento é rejeitado. O dono do apontamento (quem o criou) sempre recebe automaticamente — aqui você só adiciona papéis em cópia (ex.: coordenador).',
             'audiences'   => [
-                'autor'       => 'to',
                 'coordenador' => 'off',
             ],
         ],
-        'followup.reminder' => [
-            'label'       => 'Lembrete de follow-up',
-            'domain'      => 'Outros',
-            'description' => 'Rotina que lembra o responsável de um follow-up pendente.',
+        'timesheet.adjustment' => [
+            'label'       => 'Apontamento — ajuste solicitado',
+            'domain'      => 'Apontamento',
+            'description' => 'Quando é solicitado ajuste num apontamento. O dono do apontamento (quem o criou) sempre recebe automaticamente — aqui você só adiciona papéis em cópia (ex.: coordenador).',
             'audiences'   => [
-                'responsavel' => 'to',
+                'coordenador' => 'off',
             ],
         ],
     ],

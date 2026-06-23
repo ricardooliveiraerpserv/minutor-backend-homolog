@@ -79,6 +79,39 @@ Route::prefix('v1')->group(function () {
     Route::post('/webhooks/movidesk/ticket', [MovideskWebhookController::class, 'handleTicket'])
         ->name('webhooks.movidesk.ticket');
 
+    // ✍️ WEBHOOK Clicksign (v3) — REATIVADO (P-E.2.0): assinatura da PROPOSTA via Clicksign.
+    Route::post('/webhooks/clicksign', [\App\Http\Controllers\ClicksignWebhookController::class, 'handle'])
+        ->middleware('throttle:120,1')
+        ->name('webhooks.clicksign');
+
+    // 🔗 PORTAL DE PROPOSTAS — acesso público por token (sem login). Throttle alto: o portal faz muito
+    // tracking (página/seção/heartbeat) + polling; o token de 48 chars já é a barreira anti-brute-force.
+    Route::middleware('throttle:300,1')->group(function () {
+        Route::get('/p/{token}',           [\App\Http\Controllers\ProposalPortalController::class, 'show']);
+        Route::get('/p/{token}/pdf',       [\App\Http\Controllers\ProposalPortalController::class, 'pdf']);
+        // P-E.1.1: deck HTML (pixel-fiel, rastreável por página) + tracking de leitura
+        Route::get('/p/{token}/deck-html', [\App\Http\Controllers\ProposalPortalController::class, 'deckHtml']);
+        Route::post('/p/{token}/pagina',   [\App\Http\Controllers\ProposalPortalController::class, 'registrarPagina']);
+        Route::post('/p/{token}/heartbeat', [\App\Http\Controllers\ProposalPortalController::class, 'heartbeat']);
+        // P-C.1: tracking de seções (section_entered/exited + duração)
+        Route::post('/p/{token}/secao',     [\App\Http\Controllers\ProposalPortalController::class, 'registrarSecao']);
+        // P-C.2: comentários e revisões por seção
+        Route::get('/p/{token}/secao/{key}/threads',  [\App\Http\Controllers\ProposalPortalController::class, 'threads']);
+        Route::post('/p/{token}/secao/{key}/threads', [\App\Http\Controllers\ProposalPortalController::class, 'abrirThread']);
+        Route::post('/p/{token}/threads/{thread}/mensagens', [\App\Http\Controllers\ProposalPortalController::class, 'comentar']);
+        Route::post('/p/{token}/threads/{thread}/resolver',  [\App\Http\Controllers\ProposalPortalController::class, 'resolverThread']);
+        // P-B: cliente adiciona participantes pelo portal
+        Route::post('/p/{token}/identificar', [\App\Http\Controllers\ProposalPortalController::class, 'identificar']);
+        Route::post('/p/{token}/participantes', [\App\Http\Controllers\ProposalPortalController::class, 'adicionarParticipante']);
+        // Fluxo P-A: Análise → Revisão → Aprovação → Assinatura (Approver ≠ Signer)
+        Route::post('/p/{token}/revisao',  [\App\Http\Controllers\ProposalPortalController::class, 'solicitarRevisao']);
+        Route::post('/p/{token}/aprovar',  [\App\Http\Controllers\ProposalPortalController::class, 'aprovar']);
+        Route::post('/p/{token}/assinar',  [\App\Http\Controllers\ProposalPortalController::class, 'assinar']);
+        Route::post('/p/{token}/iniciar-assinatura', [\App\Http\Controllers\ProposalPortalController::class, 'iniciarAssinatura']);
+        Route::post('/p/{token}/sincronizar', [\App\Http\Controllers\ProposalPortalController::class, 'sincronizar']);
+        Route::post('/p/{token}/reject',   [\App\Http\Controllers\ProposalPortalController::class, 'reject']);
+    });
+
     /**
      * @OA\Get(
      *     path="/api/v1/health",
@@ -414,6 +447,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
+            Route::get('/projects/{project}/sold-hours-history', [ProjectController::class, 'soldHoursHistoryIndex'])->name('projects.sold-hours-history.index');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
             Route::get('/projects/{project}/monthly-statement', [ProjectController::class, 'monthlyStatement'])->name('projects.monthly-statement');
         });
@@ -718,6 +752,193 @@ Route::prefix('v1')->group(function () {
         Route::delete('/permission-groups/{permissionGroup}/users/{user}', [PermissionGroupController::class, 'removeUser'])->name('permission-groups.remove-user');
         Route::delete('/permission-groups/{permissionGroup}', [PermissionGroupController::class, 'destroy'])->name('permission-groups.destroy');
 
+        // 🧭 Cadastro de Perfil → Módulos de navegação (Serviços / Administrativo) — admin
+        Route::get('/profile-modules', [\App\Http\Controllers\ProfileModuleController::class, 'index'])->name('profile-modules.index');
+        Route::put('/profile-modules/{profile}', [\App\Http\Controllers\ProfileModuleController::class, 'update'])->name('profile-modules.update');
+
+        // 🤝 CRM — Fase 1A (cadastros base). Empresa = customers (não duplica).
+        Route::get('/crm/products',  [\App\Http\Controllers\CrmProductController::class, 'index']);
+        Route::post('/crm/products', [\App\Http\Controllers\CrmProductController::class, 'store']);
+        Route::put('/crm/products/{crmProduct}',    [\App\Http\Controllers\CrmProductController::class, 'update']);
+        Route::delete('/crm/products/{crmProduct}', [\App\Http\Controllers\CrmProductController::class, 'destroy']);
+        Route::get('/crm/tags',  [\App\Http\Controllers\CustomerCrmController::class, 'tagsIndex']);
+        Route::post('/crm/tags', [\App\Http\Controllers\CustomerCrmController::class, 'tagsStore']);
+        Route::get('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'show']);
+        Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
+
+        // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
+        Route::get('/crm/pipelines', [\App\Http\Controllers\CrmPipelineController::class, 'index']);
+        // CRM configurável (Fase 1) — gestão de pipelines/etapas
+        Route::get('/crm/pipelines/manage', [\App\Http\Controllers\CrmPipelineController::class, 'manageIndex']);
+        Route::post('/crm/pipelines', [\App\Http\Controllers\CrmPipelineController::class, 'storePipeline']);
+        Route::patch('/crm/pipelines/reorder', [\App\Http\Controllers\CrmPipelineController::class, 'reorderPipelines']);
+        Route::put('/crm/pipelines/{pipeline}', [\App\Http\Controllers\CrmPipelineController::class, 'updatePipeline']);
+        Route::post('/crm/pipelines/{pipeline}/duplicate', [\App\Http\Controllers\CrmPipelineController::class, 'duplicatePipeline']);
+        Route::get('/crm/pipeline-events', [\App\Http\Controllers\CrmPipelineController::class, 'events']);
+        Route::post('/crm/pipelines/{pipeline}/stages', [\App\Http\Controllers\CrmPipelineController::class, 'storeStage']);
+        Route::patch('/crm/pipelines/{pipeline}/stages/reorder', [\App\Http\Controllers\CrmPipelineController::class, 'reorderStages']);
+        Route::put('/crm/pipeline-stages/{stage}', [\App\Http\Controllers\CrmPipelineController::class, 'updateStage']);
+        Route::delete('/crm/pipeline-stages/{stage}', [\App\Http\Controllers\CrmPipelineController::class, 'destroyStage']);
+        // Automações de etapa (Fase 3)
+        Route::get('/crm/pipeline-stages/{stage}/automations', [\App\Http\Controllers\CrmStageAutomationController::class, 'index']);
+        Route::post('/crm/pipeline-stages/{stage}/automations', [\App\Http\Controllers\CrmStageAutomationController::class, 'store']);
+        Route::put('/crm/stage-automations/{automation}', [\App\Http\Controllers\CrmStageAutomationController::class, 'update']);
+        Route::delete('/crm/stage-automations/{automation}', [\App\Http\Controllers\CrmStageAutomationController::class, 'destroy']);
+        Route::get('/crm/users', [\App\Http\Controllers\CrmOpportunityController::class, 'crmUsers']);
+        Route::get('/crm/responsaveis', [\App\Http\Controllers\CrmResponsavelController::class, 'index']);
+        Route::put('/crm/responsaveis/{user}', [\App\Http\Controllers\CrmResponsavelController::class, 'update']);
+        Route::get('/crm/opportunities/kanban', [\App\Http\Controllers\CrmOpportunityController::class, 'kanban']);
+        Route::get('/crm/opportunities/export', [\App\Http\Controllers\CrmOpportunityController::class, 'export']);
+        Route::get('/crm/opportunities',  [\App\Http\Controllers\CrmOpportunityController::class, 'index']);
+        Route::post('/crm/opportunities', [\App\Http\Controllers\CrmOpportunityController::class, 'store']);
+        Route::get('/crm/opportunities/{opportunity}',  [\App\Http\Controllers\CrmOpportunityController::class, 'show']);
+        Route::put('/crm/opportunities/{opportunity}',  [\App\Http\Controllers\CrmOpportunityController::class, 'update']);
+        Route::patch('/crm/opportunities/{opportunity}/stage', [\App\Http\Controllers\CrmOpportunityController::class, 'moveStage']);
+        // Produtos vinculados (Item 3)
+        Route::post('/crm/opportunities/{opportunity}/products', [\App\Http\Controllers\CrmOpportunityController::class, 'addProduct']);
+        Route::put('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'updateProduct']);
+        Route::delete('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'removeProduct']);
+        // Anexos da oportunidade
+        Route::get('/crm/opportunities/{opportunity}/attachments', [\App\Http\Controllers\CrmOpportunityController::class, 'attachments']);
+        Route::post('/crm/opportunities/{opportunity}/attachments', [\App\Http\Controllers\CrmOpportunityController::class, 'uploadAttachment']);
+        Route::get('/crm/opportunities/{opportunity}/attachments/{attachment}/download', [\App\Http\Controllers\CrmOpportunityController::class, 'downloadAttachment']);
+        Route::delete('/crm/opportunities/{opportunity}/attachments/{attachment}', [\App\Http\Controllers\CrmOpportunityController::class, 'deleteAttachment']);
+        Route::get('/crm/tasks/agenda', [\App\Http\Controllers\CrmTaskController::class, 'agenda']);
+        Route::get('/crm/tasks',  [\App\Http\Controllers\CrmTaskController::class, 'index']);
+        Route::post('/crm/tasks', [\App\Http\Controllers\CrmTaskController::class, 'store']);
+        Route::patch('/crm/tasks/{crmTask}/complete', [\App\Http\Controllers\CrmTaskController::class, 'complete']);
+        Route::put('/crm/tasks/{crmTask}', [\App\Http\Controllers\CrmTaskController::class, 'update']);
+        Route::delete('/crm/tasks/{crmTask}', [\App\Http\Controllers\CrmTaskController::class, 'destroy']);
+
+        // 🤝 CRM — Fase 1C (Propostas) + Editor (Fase 1.4)
+        Route::get('/crm/proposals',  [\App\Http\Controllers\CrmProposalController::class, 'index']);
+        Route::post('/crm/proposals', [\App\Http\Controllers\CrmProposalController::class, 'store']);
+        // Gestão operacional Proposal-Centric (kanban) — ANTES do binding {crmProposal}.
+        Route::get('/crm/proposals/board', [\App\Http\Controllers\CrmProposalController::class, 'board']);
+        // Handoff p/ Serviços: fila de propostas LIBERADAS aguardando contrato operacional.
+        Route::get('/crm/proposals/handoff', [\App\Http\Controllers\CrmProposalController::class, 'handoff']);
+        // P-E.1.2 §4: inteligência de conteúdo agregada.
+        Route::get('/crm/proposals/analytics-conteudo', [\App\Http\Controllers\CrmProposalController::class, 'analyticsConteudo']);
+        // específicas ANTES do binding {crmProposal} p/ não serem capturadas
+        Route::get('/crm/proposals/artwork', [\App\Http\Controllers\CrmProposalController::class, 'artwork']);
+        Route::post('/crm/proposals/preview', [\App\Http\Controllers\CrmProposalController::class, 'preview']);
+        Route::post('/crm/simulador', [\App\Http\Controllers\CrmProposalController::class, 'simular']);
+        Route::get('/crm/saved-filters',  [\App\Http\Controllers\CrmSavedFilterController::class, 'index']);
+        Route::post('/crm/saved-filters', [\App\Http\Controllers\CrmSavedFilterController::class, 'store']);
+        Route::delete('/crm/saved-filters/{crmSavedFilter}', [\App\Http\Controllers\CrmSavedFilterController::class, 'destroy']);
+        Route::get('/crm/proposals/logo/{attachment}', [\App\Http\Controllers\CrmProposalController::class, 'logoServe']);
+        Route::get('/crm/proposals/escopo-image/{attachment}', [\App\Http\Controllers\CrmProposalController::class, 'escopoImageServe']);
+        Route::get('/crm/proposal-config/contratada', [\App\Http\Controllers\CrmProposalController::class, 'contratadaGet']);
+        Route::put('/crm/proposal-config/contratada', [\App\Http\Controllers\CrmProposalController::class, 'contratadaUpdate']);
+        Route::get('/crm/proposal-templates', [\App\Http\Controllers\CrmProposalController::class, 'templatesList']);
+        Route::get('/crm/proposal-templates/{tipo}/preview', [\App\Http\Controllers\CrmProposalController::class, 'templatePreview']);
+        Route::get('/crm/proposal-templates/{tipo}', [\App\Http\Controllers\CrmProposalController::class, 'templateGet']);
+        Route::put('/crm/proposal-templates/{tipo}', [\App\Http\Controllers\CrmProposalController::class, 'templateSave']);
+        Route::delete('/crm/proposal-templates/{tipo}', [\App\Http\Controllers\CrmProposalController::class, 'templateDelete']);
+        Route::get('/crm/proposals/{crmProposal}', [\App\Http\Controllers\CrmProposalController::class, 'show']);
+        Route::put('/crm/proposals/{crmProposal}',    [\App\Http\Controllers\CrmProposalController::class, 'update']);
+        Route::get('/crm/proposals/{crmProposal}/codigo-check', [\App\Http\Controllers\CrmProposalController::class, 'codigoCheck']);
+        Route::put('/crm/proposals/{crmProposal}/editar', [\App\Http\Controllers\CrmProposalController::class, 'editar']);
+        Route::post('/crm/proposals/{crmProposal}/gerar', [\App\Http\Controllers\CrmProposalController::class, 'gerar']);
+        Route::post('/crm/proposals/{crmProposal}/email-preview', [\App\Http\Controllers\CrmProposalController::class, 'emailPreview']);
+        Route::post('/crm/proposals/{crmProposal}/enviar-email', [\App\Http\Controllers\CrmProposalController::class, 'enviarEmail']);
+        // CRM comercial — liberação COMERCIAL (handoff p/ Serviços). SEM operacional.
+        Route::get('/crm/proposals/{crmProposal}/liberacao',      [\App\Http\Controllers\CrmProposalController::class, 'liberacao']);
+        Route::get('/crm/proposals/{crmProposal}/participantes',  [\App\Http\Controllers\CrmProposalController::class, 'participantes']);
+        Route::post('/crm/proposals/{crmProposal}/participantes', [\App\Http\Controllers\CrmProposalController::class, 'adicionarParticipante']);
+        Route::put('/crm/proposals/{crmProposal}/participantes/{part}', [\App\Http\Controllers\CrmProposalController::class, 'atualizarParticipante']);
+        Route::post('/crm/proposals/{crmProposal}/participantes/{part}/assinar', [\App\Http\Controllers\CrmProposalController::class, 'assinarParticipante']);
+        Route::post('/crm/proposals/{crmProposal}/participantes/{part}/clicksign', [\App\Http\Controllers\CrmProposalController::class, 'iniciarClicksignParticipante']);
+        Route::get('/crm/proposals/{crmProposal}/participantes/{part}/comprovante', [\App\Http\Controllers\CrmProposalController::class, 'comprovanteAssinatura']);
+        Route::get('/crm/signature-profile', [\App\Http\Controllers\CrmProposalController::class, 'signatureProfile']);
+        Route::post('/crm/proposals/{crmProposal}/participantes/{part}/reenviar', [\App\Http\Controllers\CrmProposalController::class, 'reenviarConvite']);
+        Route::delete('/crm/proposals/{crmProposal}/participantes/{part}', [\App\Http\Controllers\CrmProposalController::class, 'desativarParticipante']);
+        // P-E.2.2 — caderno de participantes do cliente (memória entre propostas)
+        Route::get('/crm/proposals/{crmProposal}/caderno-cliente', [\App\Http\Controllers\CrmProposalController::class, 'cadernoCliente']);
+        Route::post('/crm/proposals/{crmProposal}/importar-caderno', [\App\Http\Controllers\CrmProposalController::class, 'importarCaderno']);
+        Route::delete('/crm/customer-signers/{signer}', [\App\Http\Controllers\CrmProposalController::class, 'excluirCadernoCliente']);
+        // P-C.2 — revisões por seção (gestão comercial)
+        Route::get('/crm/proposals/{crmProposal}/threads',  [\App\Http\Controllers\CrmProposalController::class, 'threads']);
+        Route::post('/crm/proposals/{crmProposal}/threads/{thread}/mensagens', [\App\Http\Controllers\CrmProposalController::class, 'comentarThread']);
+        Route::post('/crm/proposals/{crmProposal}/threads/{thread}/resolver',  [\App\Http\Controllers\CrmProposalController::class, 'resolverThread']);
+        Route::post('/crm/proposals/{crmProposal}/aprovacao-email-preview', [\App\Http\Controllers\CrmProposalController::class, 'aprovacaoEmailPreview']);
+        Route::post('/crm/proposals/{crmProposal}/solicitar-aprovacao', [\App\Http\Controllers\CrmProposalController::class, 'solicitarAprovacao']);
+        Route::post('/crm/proposals/{crmProposal}/solicitar-assinatura', [\App\Http\Controllers\CrmProposalController::class, 'solicitarAssinatura']);
+        Route::post('/crm/proposals/{crmProposal}/assinatura-email-preview', [\App\Http\Controllers\CrmProposalController::class, 'assinaturaEmailPreview']);
+        Route::post('/crm/proposals/{crmProposal}/enviar-assinatura', [\App\Http\Controllers\CrmProposalController::class, 'enviarAssinatura']);
+        Route::get('/crm/proposals/{crmProposal}/assinatura', [\App\Http\Controllers\CrmProposalController::class, 'assinaturaStatus']);
+        Route::post('/crm/proposals/{crmProposal}/reenviar-assinatura', [\App\Http\Controllers\CrmProposalController::class, 'reenviarAssinatura']);
+        Route::post('/crm/proposals/{crmProposal}/cancelar-assinatura', [\App\Http\Controllers\CrmProposalController::class, 'cancelarAssinatura']);
+        Route::post('/crm/proposals/{crmProposal}/sincronizar-assinatura', [\App\Http\Controllers\CrmProposalController::class, 'sincronizarAssinatura']);
+        Route::post('/crm/proposals/{crmProposal}/liberar',       [\App\Http\Controllers\CrmProposalController::class, 'liberar']);
+        Route::post('/crm/proposals/{crmProposal}/bloquear',      [\App\Http\Controllers\CrmProposalController::class, 'bloquear']);
+        Route::post('/crm/proposals/{crmProposal}/desbloquear',   [\App\Http\Controllers\CrmProposalController::class, 'desbloquear']);
+        Route::post('/crm/proposals/{crmProposal}/marcar-perda',  [\App\Http\Controllers\CrmProposalController::class, 'marcarPerda']);
+        // ARQUIVADO (operação pertence a Serviços/Projetos — fora do CRM):
+        // Route::post('/crm/proposals/{crmProposal}/checklist',     [\App\Http\Controllers\CrmProposalController::class, 'checklistMarcar']);
+        // Route::post('/crm/proposals/{crmProposal}/gerar-projeto', [\App\Http\Controllers\CrmProposalController::class, 'gerarProjeto']);
+        // ARQUIVADO/INATIVO (via opcional Contrato Individual — fora do fluxo padrão Proposal-Centric):
+        Route::post('/crm/proposals/{crmProposal}/converter', [\App\Http\Controllers\CrmProposalController::class, 'converter']);
+        Route::post('/crm/proposals/{crmProposal}/share', [\App\Http\Controllers\CrmProposalController::class, 'criarShare']);
+        Route::get('/crm/proposals/{crmProposal}/engajamento', [\App\Http\Controllers\CrmProposalController::class, 'engajamento']);
+        Route::get('/crm/proposals/{crmProposal}/analytics', [\App\Http\Controllers\CrmProposalController::class, 'analytics']);
+        Route::post('/crm/proposals/{crmProposal}/diagnostico-feedback', [\App\Http\Controllers\CrmProposalController::class, 'diagnosticoFeedback']);
+        Route::post('/crm/proposals/{crmProposal}/shares/{share}/revoke', [\App\Http\Controllers\CrmProposalController::class, 'revokeShare']);
+        Route::post('/crm/proposals/{crmProposal}/logo', [\App\Http\Controllers\CrmProposalController::class, 'logo']);
+        Route::post('/crm/proposals/{crmProposal}/escopo-image', [\App\Http\Controllers\CrmProposalController::class, 'escopoImage']);
+        Route::delete('/crm/proposals/{crmProposal}', [\App\Http\Controllers\CrmProposalController::class, 'destroy']);
+
+        // 🤝 CRM — Fase 1D (Conversão comercial → contrato)
+        Route::post('/crm/opportunities/{opportunity}/convert', [\App\Http\Controllers\CrmConversionController::class, 'convert']);
+
+        // 🤝 CRM — Fase 1E (Dashboards + Timeline da empresa)
+        Route::get('/crm/dashboard/summary', [\App\Http\Controllers\CrmDashboardController::class, 'summary']);
+        Route::get('/crm/dashboard/forecast', [\App\Http\Controllers\CrmDashboardController::class, 'forecast']);
+        Route::post('/crm/dashboard/forecast/snapshot', [\App\Http\Controllers\CrmDashboardController::class, 'snapshot']);
+        Route::get('/crm/sales-targets', [\App\Http\Controllers\CrmSalesTargetController::class, 'index']);
+        Route::post('/crm/sales-targets', [\App\Http\Controllers\CrmSalesTargetController::class, 'upsert']);
+        Route::get('/crm/dashboard/leads', [\App\Http\Controllers\CrmDashboardController::class, 'leads']);
+        Route::get('/crm/dashboard/funil', [\App\Http\Controllers\CrmDashboardController::class, 'funil']);
+        Route::get('/crm/dashboard/renovacoes', [\App\Http\Controllers\CrmDashboardController::class, 'renovacoes']);
+        Route::get('/crm/dashboard/origem', [\App\Http\Controllers\CrmDashboardController::class, 'origem']);
+        Route::get('/crm/dashboard/relacionamento', [\App\Http\Controllers\CrmDashboardController::class, 'relacionamento']);
+        Route::get('/crm/dashboard/risco-renovacao', [\App\Http\Controllers\CrmDashboardController::class, 'riscoRenovacao']);
+        Route::get('/crm/carteira', [\App\Http\Controllers\CrmCarteiraController::class, 'index']);
+        // Plataforma de Documentos (Fase 0.7) — download do PDF congelado por versão.
+        Route::get('/documents/{document}/download', [\App\Http\Controllers\DocumentController::class, 'download']);
+        // Saneamento cadastral (Item 2) — somente leitura.
+        Route::get('/contracts/data-quality/vencimentos', [\App\Http\Controllers\ContractDataQualityController::class, 'vencimentos']);
+        Route::get('/customers/{customer}/crm/timeline', [\App\Http\Controllers\CustomerCrmController::class, 'timeline']);
+        // Visão 360° da Empresa — Fase A (Ficha da Empresa, carregamento por seções)
+        Route::get('/customers/{customer}/360', [\App\Http\Controllers\Customer360Controller::class, 'show']);
+        // Saúde da Conta (Roadmap Fase 1)
+        Route::get('/crm/saude/painel', [\App\Http\Controllers\CrmSaudeController::class, 'painel']);
+        Route::get('/customers/{customer}/saude/historico', [\App\Http\Controllers\CrmSaudeController::class, 'historico']);
+
+        // 🤝 CRM — Camada de Leads (captação + qualificação; empresa única)
+        Route::get('/crm/leads',  [\App\Http\Controllers\CrmLeadController::class, 'index']);
+        Route::post('/crm/leads', [\App\Http\Controllers\CrmLeadController::class, 'store']);
+        Route::put('/crm/leads/{customer}', [\App\Http\Controllers\CrmLeadController::class, 'update']);
+        Route::patch('/crm/leads/{customer}/stage', [\App\Http\Controllers\CrmLeadController::class, 'moveStage']);
+        Route::post('/crm/leads/{customer}/convert-prospect', [\App\Http\Controllers\CrmLeadController::class, 'convertToProspect']);
+        Route::get('/crm/leads/{customer}/followups', [\App\Http\Controllers\CrmLeadController::class, 'followups']);
+        Route::post('/crm/leads/{customer}/followups', [\App\Http\Controllers\CrmLeadController::class, 'addFollowup']);
+        Route::post('/crm/leads/{customer}/proxima-acao', [\App\Http\Controllers\CrmLeadController::class, 'setProximaAcao']);
+        Route::get('/crm/leads/{customer}/health', [\App\Http\Controllers\CrmLeadController::class, 'health']);
+        Route::get('/crm/lead-sources',  [\App\Http\Controllers\CrmLeadController::class, 'sourcesIndex']);
+        Route::post('/crm/lead-sources', [\App\Http\Controllers\CrmLeadController::class, 'sourcesStore']);
+        Route::put('/crm/lead-sources/{source}', [\App\Http\Controllers\CrmLeadController::class, 'sourcesUpdate']);
+        // Motivos de perda (Item 2)
+        Route::get('/crm/loss-reasons',  [\App\Http\Controllers\CrmLossReasonController::class, 'index']);
+        Route::post('/crm/loss-reasons', [\App\Http\Controllers\CrmLossReasonController::class, 'store']);
+        Route::put('/crm/loss-reasons/{lossReason}', [\App\Http\Controllers\CrmLossReasonController::class, 'update']);
+
+        // Tipos de contato (follow-up) — cadastro
+        Route::get('/crm/contact-types',  [\App\Http\Controllers\CrmContactTypeController::class, 'index']);
+        Route::post('/crm/contact-types', [\App\Http\Controllers\CrmContactTypeController::class, 'store']);
+        Route::put('/crm/contact-types/{crmContactType}',    [\App\Http\Controllers\CrmContactTypeController::class, 'update']);
+        Route::delete('/crm/contact-types/{crmContactType}', [\App\Http\Controllers\CrmContactTypeController::class, 'destroy']);
+
         // 🤝 PARCEIROS
         Route::get('/partner/report', [PartnerReportController::class, 'index'])->name('partner.report');
 
@@ -781,6 +1002,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/pagamento',                   [\App\Http\Controllers\FechamentoClienteController::class, 'pagamento']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/enviar-email',               [\App\Http\Controllers\FechamentoClienteController::class, 'enviarEmail']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/limpar-envio',               [\App\Http\Controllers\FechamentoClienteController::class, 'limparEnvio']);
+            Route::post('/fechamento-cliente/{customerId}/{yearMonth}/desconto',                   [\App\Http\Controllers\FechamentoClienteController::class, 'salvarDesconto']);
             Route::get('/fechamento-cliente/{customerId}/{yearMonth}/excel',                       [\App\Http\Controllers\FechamentoClienteController::class, 'excel']);
             Route::post('/fechamento-cliente/{customerId}/{yearMonth}/email-preview',              [\App\Http\Controllers\FechamentoClienteController::class, 'emailPreview']);
             Route::post('/fechamento-cliente/{customerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
@@ -807,6 +1029,9 @@ Route::prefix('v1')->group(function () {
             // 💰 Relatórios novos (pagamentos consultores+parceiros; rentabilidade consultor×projeto)
             Route::get('/relatorios/pagamentos/{yearMonth}',                             [\App\Http\Controllers\RelatorioPagamentoController::class, 'pagamentos']);
             Route::get('/relatorios/rentabilidade/clientes/{yearMonth}',                 [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'clientes']);
+            // Ajustes iniciais (custo/receita) por cliente × ano — antes do catch-all {yearMonth}.
+            Route::get('/relatorios/rentabilidade/initials/{year}',                      [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'initials']);
+            Route::put('/relatorios/rentabilidade/initials',                             [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'saveInitial']);
             Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
@@ -836,6 +1061,26 @@ Route::prefix('v1')->group(function () {
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/excel',               [\App\Http\Controllers\FechamentoConsultorController::class, 'excel']);
             // Ajustes do recebimento (desconto/adiantamento/adicional) do consultor no mês.
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/ajustes',            [\App\Http\Controllers\FechamentoConsultorController::class, 'salvarAjustes']);
+
+            // ── Rotina de Adiantamento (consultor/parceiro), parcelado por competência ──
+            Route::get('/adiantamentos',                 [\App\Http\Controllers\AdiantamentoController::class, 'index']);
+            Route::get('/adiantamentos/beneficiarios',   [\App\Http\Controllers\AdiantamentoController::class, 'beneficiarios']);
+            Route::post('/adiantamentos',                [\App\Http\Controllers\AdiantamentoController::class, 'store']);
+            Route::put('/adiantamentos/{id}',            [\App\Http\Controllers\AdiantamentoController::class, 'update']);
+            Route::delete('/adiantamentos/{id}',         [\App\Http\Controllers\AdiantamentoController::class, 'destroy']);
+
+            // ── Fechamento Diretoria (por diretor + competência, com status) ──
+            Route::get('/fechamento-diretoria/diretores', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'diretores']);
+            Route::get('/fechamento-diretoria/usuarios',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'usuarios']);
+            Route::post('/fechamento-diretoria/diretores', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'definirDiretores']);
+            Route::get('/fechamento-diretoria/folha/{userId}/{yearMonth}',       [\App\Http\Controllers\FechamentoDiretoriaController::class, 'folha']);
+            Route::match(['get', 'post'], '/fechamento-diretoria/{userId}/{yearMonth}/report-html',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'reportHtml']);
+            Route::get('/fechamento-diretoria/{userId}/{yearMonth}',             [\App\Http\Controllers\FechamentoDiretoriaController::class, 'show']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}',            [\App\Http\Controllers\FechamentoDiretoriaController::class, 'salvar']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/finalizar',  [\App\Http\Controllers\FechamentoDiretoriaController::class, 'finalizar']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/reabrir',    [\App\Http\Controllers\FechamentoDiretoriaController::class, 'reabrir']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/email-preview', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'emailPreview']);
+            Route::post('/fechamento-diretoria/{userId}/{yearMonth}/enviar-email', [\App\Http\Controllers\FechamentoDiretoriaController::class, 'enviarEmail']);
             // Recebimento do próprio usuário (meu-painel / partner-dashboard).
             Route::get('/my-closing/{yearMonth}',                                        [\App\Http\Controllers\FechamentoConsultorController::class, 'myClosing']);
             Route::post('/fechamento-consultor/{userId}/{yearMonth}/email-preview',      [\App\Http\Controllers\FechamentoConsultorController::class, 'emailPreview']);
@@ -857,6 +1102,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/messages/mentionable-users', [ProjectMessageController::class, 'mentionableUsers'])->name('messages.mentionable-users');
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
+        Route::patch('/projects/{project}/messages/{message}', [ProjectMessageController::class, 'update'])->name('project-messages.update');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
         Route::get('/messages/{message}/attachments/{attachment}/download', [ProjectMessageController::class, 'downloadAttachment'])->name('project-messages.attachment-download');
 
@@ -887,6 +1133,13 @@ Route::prefix('v1')->group(function () {
         Route::patch('/projects/{project}/kanban-move',              [ContractController::class, 'projectMove'])->name('projects.kanban-move');
         Route::get('/contracts/{contract}/kanban-logs',              [\App\Http\Controllers\KanbanLogController::class, 'contractLogs'])->name('contracts.kanban-logs');
         Route::get('/contracts/{contract}/events',                    [ContractController::class, 'events'])->name('contracts.events');
+        Route::post('/contracts/{contract}/gerar-documento',          [ContractController::class, 'gerarDocumento'])->name('contracts.gerar-documento');
+        Route::get('/contracts/{contract}/assinatura',                [ContractController::class, 'assinatura'])->name('contracts.assinatura');
+        Route::post('/contracts/{contract}/assinatura/enviar',        [ContractController::class, 'enviarAssinatura'])->name('contracts.assinatura.enviar');
+        Route::post('/contracts/{contract}/checklist',                [ContractController::class, 'checklistMarcar'])->name('contracts.checklist');
+        Route::post('/contracts/{contract}/liberar',                  [ContractController::class, 'liberar'])->name('contracts.liberar');
+        Route::post('/contracts/{contract}/bloquear',                 [ContractController::class, 'bloquear'])->name('contracts.bloquear');
+        Route::post('/contracts/{contract}/desbloquear',              [ContractController::class, 'desbloquear'])->name('contracts.desbloquear');
         Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
         Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay');
         Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report');
@@ -909,6 +1162,10 @@ Route::prefix('v1')->group(function () {
         Route::prefix('contracts')->group(function () {
             Route::get('/',                                         [ContractController::class, 'index'])->name('contracts.index');
             Route::post('/',                                        [ContractController::class, 'store'])->name('contracts.store');
+            // Aditivo (antes do /{contract} pra não casar 'aditivo' como id)
+            Route::get('/aditivo/eligible-projects',               [ContractController::class, 'aditivoEligibleProjects'])->name('contracts.aditivo.eligible');
+            Route::post('/aditivo',                                [ContractController::class, 'storeAditivo'])->name('contracts.aditivo.store');
+            Route::put('/aditivo/{contract}',                      [ContractController::class, 'updateAditivo'])->name('contracts.aditivo.update');
             Route::get('/{contract}',                              [ContractController::class, 'show'])->name('contracts.show');
             Route::put('/{contract}',                              [ContractController::class, 'update'])->name('contracts.update');
             Route::delete('/{contract}',                           [ContractController::class, 'destroy'])->name('contracts.destroy');

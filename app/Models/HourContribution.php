@@ -70,7 +70,22 @@ class HourContribution extends Model
     {
         return $this->belongsTo(User::class, 'contributed_by');
     }
-    
+
+    /**
+     * Motivo opcional da alteração — repassado pelo controller ao observer
+     * de auditoria (não é coluna; atributo transitório).
+     */
+    public ?string $changeReason = null;
+
+    /**
+     * Histórico de auditoria deste aporte (old→new por campo).
+     */
+    public function changeLogs(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(HourContributionChangeLog::class, 'hour_contribution_id')
+            ->orderByDesc('created_at');
+    }
+
     /**
      * Calcular o valor total deste aporte
      *

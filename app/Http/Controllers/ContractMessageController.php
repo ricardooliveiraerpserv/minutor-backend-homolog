@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\Storage;
 
 class ContractMessageController extends Controller
 {
+    use \App\Http\Controllers\Concerns\DispatchesChatMentions;
+
     public function index(Request $request, Contract $contract): JsonResponse
     {
         $user = $request->user();
@@ -92,11 +94,34 @@ class ContractMessageController extends Controller
             ->select('id', 'name')
             ->whereIn('type', ['admin', 'coordenador', 'consultor', 'parceiro_admin', 'administrativo'])
             ->get();
-        foreach (\App\Services\MentionParser::extract((string) $msg->message, $candidates) as $uid) {
+        $mentionedIds = \App\Services\MentionParser::extract((string) $msg->message, $candidates);
+        foreach ($mentionedIds as $uid) {
             ContractMessageMention::firstOrCreate([
                 'message_id'        => $msg->id,
                 'mentioned_user_id' => $uid,
             ]);
+        }
+
+        // Marcação (@) → notifica a pessoa marcada (workflow chat.mention).
+        try {
+            $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+            $cardUrl = $base . '/contratos/pipeline?contract=' . $contract->id;
+            $code = $contract->code ?? ($contract->project_code_preview ?? ('CTR-' . str_pad((string) $contract->id, 6, '0', STR_PAD_LEFT)));
+            $title = $contract->project_name ?? 'Contrato';
+            $role = match ($user->type) {
+                'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
+                'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo', default => 'Equipe',
+            };
+            $this->dispatchMentionNotification('contract', $contract->id, $user, $mentionedIds, [
+                'code'    => $code,
+                'title'   => $title,
+                'role'    => $role,
+                'excerpt' => \Illuminate\Support\Str::limit($msg->message ?? '', 280),
+                'openUrl' => $cardUrl . '&tab=chat',
+                'cardUrl' => $cardUrl,
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('chat mention notif contrato falhou', ['contract_id' => $contract->id, 'err' => $e->getMessage()]);
         }
 
         return response()->json($msg, 201);

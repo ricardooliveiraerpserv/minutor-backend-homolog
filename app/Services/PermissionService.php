@@ -110,6 +110,11 @@ class PermissionService
         'financial.view_own_rate', 'financial.view_partner_rate', 'financial.view_project_cost',
         // Relatórios
         'reports.view', 'reports.export',
+        // CRM (Fase 1)
+        'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
+        'crm.opportunities.view', 'crm.opportunities.view_all',
+        'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
+        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
         // Sistema
         'settings.view',
     ];
@@ -154,6 +159,11 @@ class PermissionService
             'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',
             // Aprovações
             'approvals.view', 'approvals.manage',
+            // CRM (gestão comercial)
+            'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
+            'crm.opportunities.view', 'crm.opportunities.view_all',
+            'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
+            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
             // Relatórios
             'reports.view', 'reports.export',
             // Configurações

@@ -17,42 +17,14 @@ class ProjectCodeService
      */
     public function generateParentCode(Customer $customer): array
     {
-        if (!$customer->code_prefix) {
-            throw new \RuntimeException("Cliente '{$customer->name}' não possui prefixo de código (code_prefix).");
-        }
-
-        $sequence = null;
-        $code     = null;
-
-        DB::transaction(function () use ($customer, &$sequence, &$code) {
-            $seq = ProjectSequence::where('customer_id', $customer->id)
-                ->lockForUpdate()
-                ->first();
-
-            if (!$seq) {
-                $seq = ProjectSequence::create([
-                    'customer_id'   => $customer->id,
-                    'last_sequence' => 0,
-                ]);
-            }
-
-            $year   = now()->format('y');
-            $prefix = strtoupper($customer->code_prefix);
-
-            do {
-                $seq->last_sequence += 1;
-                $padded = str_pad($seq->last_sequence, 3, '0', STR_PAD_LEFT);
-                $code   = $prefix . $padded . '-' . $year;
-            } while (Project::withTrashed()->where('code', $code)->exists());
-
-            $seq->save();
-            $sequence = $seq->last_sequence;
-        });
+        // MOTOR ÚNICO (Fase 1.1): delega ao DocumentNumberService — mesma sequência (project_sequences),
+        // mesma regra contínua por ano, agora com unicidade cross-entidade (projects/contracts/propostas/documents).
+        $r = app(\App\Documents\DocumentNumberService::class)->reservar($customer->id, 'projeto');
 
         return [
-            'code'          => $code,
-            'proj_sequence' => $sequence,
-            'proj_year'     => now()->format('y'),
+            'code'           => $r['codigo'],
+            'proj_sequence'  => $r['sequence'],
+            'proj_year'      => $r['year'],
             'child_sequence' => null,
             'is_manual_code' => false,
         ];
