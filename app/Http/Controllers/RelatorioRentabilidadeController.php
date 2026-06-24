@@ -27,7 +27,7 @@ class RelatorioRentabilidadeController extends Controller
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
                 'user.partner:id,pricing_type,hourly_rate',
-                'project:id,name,hourly_rate,customer_id',
+                'project:id,name,hourly_rate,customer_id,is_investimento_comercial',
                 'project.customer:id,name',
             ])
             ->whereBetween('date', [$from, $to])
@@ -97,6 +97,7 @@ class RelatorioRentabilidadeController extends Controller
                     'rate_type'            => $meta['type'],
                     'custo_fixo_mes'       => round($meta['salary'], 2), // salário mensal cheio (monthly)
                     'fixo_excluir'         => $fixoExcluir, // coordenador/diretor/Bizify → fora da seção Recebe Fixo
+                    'is_investimento'      => (bool) $ts->project->is_investimento_comercial, // projeto de investimento (receita 0, em evidência)
                     'horas'                => 0.0,
                     'receita'              => 0.0,
                     'custo'                => 0.0,
