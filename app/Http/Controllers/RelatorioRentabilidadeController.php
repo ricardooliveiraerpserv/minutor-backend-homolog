@@ -165,7 +165,7 @@ class RelatorioRentabilidadeController extends Controller
                 'investimento_mo'   => 0.0, // mão de obra de apontamentos de investimento
                 'investimento_desp' => 0.0, // despesas de projetos de investimento
                 'consultores' => [],
-                'despesas'    => ['custo' => 0.0, 'projetos' => []],
+                'despesas'    => ['custo' => 0.0, 'projetos' => [], 'usuarios' => []],
             ];
         };
         foreach ($timesheets as $ts) {
@@ -225,6 +225,7 @@ class RelatorioRentabilidadeController extends Controller
         // apontamento (projeto → cliente; investimento → cliente real). Aparecem numa
         // linha "Despesas" separada no detalhamento (não misturam com mão de obra).
         $expenses = \App\Models\Expense::with([
+                'user:id,name',
                 'project:id,name,customer_id,is_investimento_comercial',
                 'project.customer:id,name,cgc,secondary_cgcs,executive_id',
                 'project.customer.executive:id,name',
@@ -263,6 +264,19 @@ class RelatorioRentabilidadeController extends Controller
                 ];
             }
             $byCustomer[$cid]['despesas']['projetos'][$pid]['custo'] += $amount;
+
+            // Quem apontou a despesa (valor por usuário).
+            $euid = $exp->user_id;
+            if ($euid) {
+                if (!isset($byCustomer[$cid]['despesas']['usuarios'][$euid])) {
+                    $byCustomer[$cid]['despesas']['usuarios'][$euid] = [
+                        'user_id' => $euid,
+                        'usuario' => $exp->user->name ?? '—',
+                        'custo'   => 0.0,
+                    ];
+                }
+                $byCustomer[$cid]['despesas']['usuarios'][$euid]['custo'] += $amount;
+            }
         }
 
         // ?refresh=1 (botão "Atualizar Keruak"): ignora o cache de 3h e busca ao vivo.
@@ -323,6 +337,11 @@ class RelatorioRentabilidadeController extends Controller
                         'custo'           => round($p['custo'], 2),
                         'is_investimento' => $p['is_investimento'],
                     ], array_values($g['despesas']['projetos'])),
+                    'usuarios' => array_map(fn ($u) => [
+                        'user_id' => $u['user_id'],
+                        'usuario' => $u['usuario'],
+                        'custo'   => round($u['custo'], 2),
+                    ], array_values($g['despesas']['usuarios'])),
                 ],
             ];
         }
