@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Holiday;
 use App\Models\Partner;
 use App\Models\Timesheet;
 use App\Models\UserHourlyRateLog;
@@ -117,12 +118,17 @@ class RelatorioRentabilidadeController extends Controller
 
         usort($rows, fn ($a, $b) => strcasecmp($a['consultor'], $b['consultor']) ?: strcasecmp($a['projeto'], $b['projeto']));
 
+        // Feriados ativos no período → dias não úteis (FE pinta fim de semana/feriado).
+        $feriados = Holiday::whereBetween('date', [$from, $to])->where('active', true)
+            ->pluck('date')->map(fn ($d) => Carbon::parse($d)->format('Y-m-d'))->all();
+
         $porDia = array_map(fn ($d) => [
             'dia'        => $d['dia'],
             'user_id'    => $d['user_id'],
             'project_id' => $d['project_id'],
             'cliente'    => $d['cliente'],
             'horas'      => round($d['horas'], 2),
+            'nao_util'   => Carbon::parse($d['dia'])->isWeekend() || in_array($d['dia'], $feriados), // fim de semana ou feriado
         ], array_values($porDia));
 
         return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia]]);
