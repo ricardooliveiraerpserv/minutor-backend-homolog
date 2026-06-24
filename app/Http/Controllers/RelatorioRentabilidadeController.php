@@ -165,7 +165,7 @@ class RelatorioRentabilidadeController extends Controller
                 'investimento_mo'   => 0.0, // mão de obra de apontamentos de investimento
                 'investimento_desp' => 0.0, // despesas de projetos de investimento
                 'consultores' => [],
-                'despesas'    => ['custo' => 0.0, 'projetos' => [], 'usuarios' => []],
+                'despesas'    => ['custo' => 0.0, 'projetos' => []],
             ];
         };
         foreach ($timesheets as $ts) {
@@ -261,21 +261,22 @@ class RelatorioRentabilidadeController extends Controller
                     'projeto'         => $exp->project->name ?? '—',
                     'custo'           => 0.0,
                     'is_investimento' => $isInvest,
+                    'usuarios'        => [],
                 ];
             }
             $byCustomer[$cid]['despesas']['projetos'][$pid]['custo'] += $amount;
 
-            // Quem apontou a despesa (valor por usuário).
+            // Quem apontou a despesa, agrupado DENTRO do respectivo projeto.
             $euid = $exp->user_id;
             if ($euid) {
-                if (!isset($byCustomer[$cid]['despesas']['usuarios'][$euid])) {
-                    $byCustomer[$cid]['despesas']['usuarios'][$euid] = [
+                if (!isset($byCustomer[$cid]['despesas']['projetos'][$pid]['usuarios'][$euid])) {
+                    $byCustomer[$cid]['despesas']['projetos'][$pid]['usuarios'][$euid] = [
                         'user_id' => $euid,
                         'usuario' => $exp->user->name ?? '—',
                         'custo'   => 0.0,
                     ];
                 }
-                $byCustomer[$cid]['despesas']['usuarios'][$euid]['custo'] += $amount;
+                $byCustomer[$cid]['despesas']['projetos'][$pid]['usuarios'][$euid]['custo'] += $amount;
             }
         }
 
@@ -336,12 +337,12 @@ class RelatorioRentabilidadeController extends Controller
                         'projeto'         => $p['projeto'],
                         'custo'           => round($p['custo'], 2),
                         'is_investimento' => $p['is_investimento'],
+                        'usuarios'        => array_map(fn ($u) => [
+                            'user_id' => $u['user_id'],
+                            'usuario' => $u['usuario'],
+                            'custo'   => round($u['custo'], 2),
+                        ], array_values($p['usuarios'] ?? [])),
                     ], array_values($g['despesas']['projetos'])),
-                    'usuarios' => array_map(fn ($u) => [
-                        'user_id' => $u['user_id'],
-                        'usuario' => $u['usuario'],
-                        'custo'   => round($u['custo'], 2),
-                    ], array_values($g['despesas']['usuarios'])),
                 ],
             ];
         }
