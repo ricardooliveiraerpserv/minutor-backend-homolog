@@ -24,7 +24,7 @@ class RelatorioRentabilidadeController extends Controller
         $to   = Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
 
         $timesheets = Timesheet::with([
-                'user:id,name,hourly_rate,rate_type,partner_id',
+                'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
                 'user.partner:id,pricing_type,hourly_rate',
                 'project:id,name,hourly_rate,customer_id',
                 'project.customer:id,name',
@@ -78,6 +78,13 @@ class RelatorioRentabilidadeController extends Controller
             $porDia[$dk]['horas'] += $horas;
 
             if (!isset($groups[$key])) {
+                // Seção "Recebe Fixo" do FE NÃO mostra coordenador/diretor/Bizify (são
+                // tratados em outras rotinas: Fechamento Diretoria, aba Bizify, etc).
+                $u = $ts->user;
+                $fixoExcluir = $u && (
+                    $u->is_bizify || $u->is_diretor || $u->is_diretor_projetos
+                    || $u->type === 'coordenador' || !empty($u->coordinator_type)
+                );
                 $groups[$key] = [
                     'user_id'              => $ts->user_id,
                     'consultor'            => $ts->user->name ?? '—',
@@ -88,6 +95,7 @@ class RelatorioRentabilidadeController extends Controller
                     'valor_hora_consultor' => round($rateCons, 2),
                     'rate_type'            => $meta['type'],
                     'custo_fixo_mes'       => round($meta['salary'], 2), // salário mensal cheio (monthly)
+                    'fixo_excluir'         => $fixoExcluir, // coordenador/diretor/Bizify → fora da seção Recebe Fixo
                     'horas'                => 0.0,
                     'receita'              => 0.0,
                     'custo'                => 0.0,
