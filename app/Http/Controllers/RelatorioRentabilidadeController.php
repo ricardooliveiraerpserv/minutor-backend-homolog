@@ -27,8 +27,10 @@ class RelatorioRentabilidadeController extends Controller
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
                 'user.partner:id,pricing_type,hourly_rate',
-                'project:id,name,hourly_rate,customer_id,is_investimento_comercial',
+                'project:id,name,hourly_rate,customer_id,is_investimento_comercial,service_type_id,contract_type_id',
                 'project.customer:id,name',
+                'project.serviceType:id,name',
+                'project.contractType:id,name',
             ])
             ->whereBetween('date', [$from, $to])
             // Mesma regra do faturamento (fechamento cliente): tudo que é cobrado,
@@ -86,6 +88,10 @@ class RelatorioRentabilidadeController extends Controller
                     $u->is_bizify || $u->is_diretor || $u->is_diretor_projetos
                     || $u->type === 'coordenador' || !empty($u->coordinator_type)
                 );
+                // Categoria do projeto: Cloud/Bizify/Sustentação → 'sustentacao'; demais → 'projeto'.
+                $svcName = strtolower((string) ($ts->project->serviceType->name ?? ''));
+                $ctName  = strtolower((string) ($ts->project->contractType->name ?? ''));
+                $isSust  = str_contains($svcName, 'sustenta') || str_contains($svcName, 'bizify') || str_contains($ctName, 'cloud');
                 $groups[$key] = [
                     'user_id'              => $ts->user_id,
                     'consultor'            => $ts->user->name ?? '—',
@@ -98,6 +104,7 @@ class RelatorioRentabilidadeController extends Controller
                     'custo_fixo_mes'       => round($meta['salary'], 2), // salário mensal cheio (monthly)
                     'fixo_excluir'         => $fixoExcluir, // coordenador/diretor/Bizify → fora da seção Recebe Fixo
                     'is_investimento'      => (bool) $ts->project->is_investimento_comercial, // projeto de investimento (receita 0, em evidência)
+                    'categoria'            => $isSust ? 'sustentacao' : 'projeto', // Cloud/Bizify/Sustentação = sustentacao
                     'horas'                => 0.0,
                     'receita'              => 0.0,
                     'custo'                => 0.0,
