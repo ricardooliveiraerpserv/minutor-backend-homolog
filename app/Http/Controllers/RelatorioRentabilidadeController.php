@@ -37,32 +37,45 @@ class RelatorioRentabilidadeController extends Controller
             ->where('is_internal_action', false)
             ->get();
 
-        $costRateCache = [];
-        $costRate = function ($user) use (&$costRateCache, $from, $yearMonth) {
-            if (!$user) return 0.0;
-            if (isset($costRateCache[$user->id])) return $costRateCache[$user->id];
+        // Metadados de custo por consultor: ['eff' => custo/hora, 'type' => hourly|monthly,
+        // 'salary' => salário mensal cheio quando monthly (0 caso contrário)].
+        $costMetaCache = [];
+        $costMeta = function ($user) use (&$costMetaCache, $from, $yearMonth) {
+            if (!$user) return ['eff' => 0.0, 'type' => 'hourly', 'salary' => 0.0];
+            if (isset($costMetaCache[$user->id])) return $costMetaCache[$user->id];
 
             // Consultor vinculado a parceiro herda o valor/hora DO PARCEIRO na competência
             // quando o parceiro é de valor fixo. Se o parceiro for "por consultor"
             // (pricing_type 'variable'), usa o valor do próprio consultor (regra abaixo).
             if ($user->partner_id && $user->partner && $user->partner->pricing_type === Partner::PRICING_FIXED) {
-                return $costRateCache[$user->id] = (float) $user->partner->hourlyRateForCompetencia($yearMonth);
+                $r = (float) $user->partner->hourlyRateForCompetencia($yearMonth);
+                return $costMetaCache[$user->id] = ['eff' => $r, 'type' => 'hourly', 'salary' => 0.0];
             }
 
             $hist = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $rate = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
             $type = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
             $eff  = ($type === 'monthly' && $rate > 0) ? round($rate / 160, 4) : $rate;
-            return $costRateCache[$user->id] = $eff;
+            return $costMetaCache[$user->id] = ['eff' => $eff, 'type' => $type, 'salary' => ($type === 'monthly' ? $rate : 0.0)];
         };
+        $costRate = fn ($user) => $costMeta($user)['eff'];
 
         $groups = [];
+        $porDia = []; // horas apontadas por dia × consultor × projeto (p/ gráfico diário no FE)
         foreach ($timesheets as $ts) {
             if (!$ts->project) continue;
             $key = $ts->user_id . ':' . $ts->project_id;
             $horas    = round($ts->effort_minutes / 60, 4);
             $rateProj = (float) ($ts->project->hourly_rate ?? 0);
-            $rateCons = $costRate($ts->user);
+            $meta     = $costMeta($ts->user);
+            $rateCons = $meta['eff'];
+
+            $dia = Carbon::parse($ts->date)->toDateString();
+            $dk  = $dia . ':' . $ts->user_id . ':' . $ts->project_id;
+            if (!isset($porDia[$dk])) {
+                $porDia[$dk] = ['dia' => $dia, 'user_id' => $ts->user_id, 'project_id' => $ts->project_id, 'cliente' => $ts->project->customer->name ?? '—', 'horas' => 0.0];
+            }
+            $porDia[$dk]['horas'] += $horas;
 
             if (!isset($groups[$key])) {
                 $groups[$key] = [
@@ -73,6 +86,8 @@ class RelatorioRentabilidadeController extends Controller
                     'cliente'              => $ts->project->customer->name ?? '—',
                     'valor_hora_projeto'   => round($rateProj, 2),
                     'valor_hora_consultor' => round($rateCons, 2),
+                    'rate_type'            => $meta['type'],
+                    'custo_fixo_mes'       => round($meta['salary'], 2), // salário mensal cheio (monthly)
                     'horas'                => 0.0,
                     'receita'              => 0.0,
                     'custo'                => 0.0,
@@ -94,7 +109,15 @@ class RelatorioRentabilidadeController extends Controller
 
         usort($rows, fn ($a, $b) => strcasecmp($a['consultor'], $b['consultor']) ?: strcasecmp($a['projeto'], $b['projeto']));
 
-        return response()->json(['data' => ['rows' => $rows]]);
+        $porDia = array_map(fn ($d) => [
+            'dia'        => $d['dia'],
+            'user_id'    => $d['user_id'],
+            'project_id' => $d['project_id'],
+            'cliente'    => $d['cliente'],
+            'horas'      => round($d['horas'], 2),
+        ], array_values($porDia));
+
+        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia]]);
     }
 
     /**
