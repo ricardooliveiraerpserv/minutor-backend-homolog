@@ -21,8 +21,10 @@ class RelatorioRentabilidadeController extends Controller
     public function rentabilidade(Request $request, string $yearMonth): JsonResponse
     {
         [$y, $m] = array_map('intval', explode('-', $yearMonth));
-        $from = Carbon::create($y, $m, 1)->startOfMonth()->toDateString();
-        $to   = Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
+        // Por padrão o mês inteiro; o FE pode passar ?from/?to (YYYY-MM-DD) p/ filtrar por DIA
+        // (clampado a este mês pelo FE). A competência (rates) continua sendo $yearMonth.
+        $from = $request->query('from') ?: Carbon::create($y, $m, 1)->startOfMonth()->toDateString();
+        $to   = $request->query('to')   ?: Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
 
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
