@@ -100,6 +100,13 @@ class PermissionService
         'services.manage', 'executives.manage', 'groups.manage', 'holidays.manage',
         'expense_categories.manage', 'expense_types.manage', 'payment_methods.manage',
         'consultant_groups.view',
+        // Follow Up (pendências/compromissos)
+        'followups.view', 'followups.view_all', 'followups.manage',
+        // CRM (Fase 1)
+        'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
+        'crm.opportunities.view', 'crm.opportunities.view_all',
+        'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
+        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
         // Parceiros
         'partners.view', 'partners.manage',
         // Usuários
@@ -168,6 +175,11 @@ class PermissionService
             'reports.view', 'reports.export',
             // Configurações
             'settings.view',
+                    // CRM (gestão comercial)
+            'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
+            'crm.opportunities.view', 'crm.opportunities.view_all',
+            'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
+            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
         ];
     }
 
@@ -186,6 +198,10 @@ class PermissionService
             'financial.view_own_rate', 'financial.view_project_cost',
             'reports.view', 'reports.export',
             'consultant_groups.view',
+            // Cadastro de feriados: alimenta o calendário do cronograma (rotina do coordenador).
+            'holidays.manage',
+            // Follow Up: coordenador vê/gerencia os do seu contexto.
+            'followups.view', 'followups.manage',
         ];
     }
 
@@ -200,6 +216,8 @@ class PermissionService
             'expenses.view', 'expenses.manage',
             'users.view_own_profile', 'users.update_own_profile',
             'financial.view_own_rate', 'financial.view_partner_rate',
+            // Follow Up: consultor vê/gerencia os atribuídos a ele.
+            'followups.view', 'followups.manage',
         ];
     }
 
