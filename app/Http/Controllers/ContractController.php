@@ -1772,7 +1772,7 @@ class ContractController extends Controller
     public function projectMove(Request $request, \App\Models\Project $project): JsonResponse
     {
         $validated = $request->validate([
-            'status'              => 'nullable|string|in:awaiting_start,started,liberado_para_testes,paused,cancelled,finished',
+            'status'              => 'nullable|string|in:backlog,awaiting_start,planning,started,liberado_para_testes,em_producao,paused,cancelled,finished',
             'coordinator_id'      => 'nullable|integer|exists:users,id',
             'from_coordinator_id' => 'nullable|integer|exists:users,id',
         ]);
