@@ -144,7 +144,9 @@ class ContractRequestMessageController extends Controller
         $openUrl = $cardUrl . '&tab=chat';
         $code = $req->code ?? ('REQ-' . str_pad((string) $req->id, 6, '0', STR_PAD_LEFT));
         $title = $req->title ?? ($req->subject ?? 'Requisição');
-        $excerpt = Str::limit($msg->message ?? '', 280);
+        // Texto COMPLETO no e-mail (antes truncava em 280). Cap alto como salvaguarda.
+        $excerpt = Str::limit($msg->message ?? '', 5000);
+        $customerName = $req->customer?->name ?? '';
 
         $mkNotif = fn () => (new CardChatMessageNotification(
             cardType:       CardEnvolvido::TYPE_REQUEST,
@@ -156,6 +158,7 @@ class ContractRequestMessageController extends Controller
             openUrl:        $openUrl,
             cardUrl:        $cardUrl,
             recipientName:  'você',
+            customerName:   $customerName,
         ));
 
         // 1) Mensagem no chat → envolvidos do card.
@@ -171,7 +174,7 @@ class ContractRequestMessageController extends Controller
 
         // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
         $this->dispatchMentionNotification(CardEnvolvido::TYPE_REQUEST, $req->id, $author, $mentionedIds, [
-            'code' => $code, 'title' => $title, 'role' => $this->userRoleLabel($author), 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl,
+            'code' => $code, 'title' => $title, 'role' => $this->userRoleLabel($author), 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl, 'customer' => $customerName,
         ], array_merge($chatTo, $rcpt['cc'] ?? []));
     }
 

@@ -27,6 +27,7 @@ class CardChatMessageNotification extends Notification implements ShouldQueue
         public string $openUrl,           // link pra abrir o chat
         public string $cardUrl,           // link pro detalhe
         public string $recipientName,
+        public string $customerName = '', // nome do cliente do projeto/requisição
     ) {}
 
     public function via($notifiable): array
@@ -56,6 +57,7 @@ class CardChatMessageNotification extends Notification implements ShouldQueue
                 'openUrl'       => $this->openUrl,
                 'cardUrl'       => $this->cardUrl,
                 'recipientName' => $this->recipientName,
+                'customerName'  => $this->customerName,
             ]);
     }
 }
