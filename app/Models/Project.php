@@ -31,9 +31,13 @@ class Project extends Model
     public const STATUS_PLANNING             = 'planning';
     public const STATUS_STARTED              = 'started';
     public const STATUS_LIBERADO_PARA_TESTES = 'liberado_para_testes';
+    public const STATUS_EM_PRODUCAO          = 'em_producao';
     public const STATUS_PAUSED               = 'paused';
     public const STATUS_CANCELLED            = 'cancelled';
     public const STATUS_FINISHED             = 'finished';
+
+    /** Status definidos MANUALMENTE — a automação do cronograma NÃO sobrescreve. */
+    public const MANUAL_STATUSES = [self::STATUS_PAUSED, self::STATUS_CANCELLED, self::STATUS_FINISHED];
 
     /**
      * Expense responsible party constants
@@ -909,6 +913,54 @@ class Project extends Model
             $this->saveQuietly();
         }
         return $new;
+    }
+
+    /**
+     * Status do projeto derivado do cronograma (board Demandas e Projetos).
+     * Regra: o projeto fica na coluna da etapa MENOS avançada ("a última atividade").
+     *   sem etapas → Backlog (awaiting_start)
+     *   etapa derived_status: planejamento→planning · execucao/bloqueada→started ·
+     *   homologacao→liberado_para_testes · concluida→em_producao
+     * NÃO sobrescreve status MANUAL (paused/cancelled/finished). saveQuietly p/ não loopar no observer.
+     */
+    public function recomputeStatusFromStages(): void
+    {
+        if (in_array($this->status, self::MANUAL_STATUSES, true)) return;
+
+        $stages = $this->stages()->withCount([
+            'deliveries',
+            'deliveries as deliveries_done_count'    => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_DONE),
+            'deliveries as deliveries_review_count'  => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_REVIEW),
+            'deliveries as deliveries_waiting_count' => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_WAITING_CLIENT),
+            'deliveries as deliveries_backlog_count' => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_BACKLOG),
+        ])->get();
+
+        // rank: 0 planejamento · 1 execução(/bloqueada) · 2 homologação · 3 produção (concluída)
+        $rankOf = function ($s): int {
+            $total   = (int) ($s->deliveries_count ?? 0);
+            $done    = (int) ($s->deliveries_done_count ?? 0);
+            $review  = (int) ($s->deliveries_review_count ?? 0);
+            $waiting = (int) ($s->deliveries_waiting_count ?? 0);
+            $backlog = (int) ($s->deliveries_backlog_count ?? 0);
+            if ($total === 0)            return 0; // planejamento
+            if ($waiting > 0)            return 1; // bloqueada (aguardando cliente) conta como execução
+            if ($done === $total)        return 3; // concluída → produção
+            if (($review + $done) === $total) return 2; // homologação
+            if ($backlog === 0)          return 1; // execução
+            return 0; // ainda há entrega em backlog → planejamento
+        };
+
+        if ($stages->isEmpty()) {
+            $target = self::STATUS_AWAITING_START; // Backlog
+        } else {
+            $min = min($stages->map($rankOf)->all());
+            $target = [0 => self::STATUS_PLANNING, 1 => self::STATUS_STARTED, 2 => self::STATUS_LIBERADO_PARA_TESTES, 3 => self::STATUS_EM_PRODUCAO][$min];
+        }
+
+        if ($this->status !== $target) {
+            $this->status = $target;
+            $this->saveQuietly();
+        }
     }
 
     /**

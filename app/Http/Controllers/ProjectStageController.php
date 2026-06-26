@@ -377,6 +377,7 @@ class ProjectStageController extends Controller
 
         // Prazo de entrega do projeto deriva sempre da última data do cronograma.
         $project->recalcExpectedEndFromSchedule();
+        $project->recomputeStatusFromStages(); // nova etapa → Em Planejamento (board)
 
         return response()->json($stage->load('responsible:id,name,email'), 201);
     }
@@ -436,6 +437,7 @@ class ProjectStageController extends Controller
 
         // Prazo de entrega do projeto deriva sempre da última data do cronograma.
         $stage->project?->recalcExpectedEndFromSchedule();
+        $stage->project?->recomputeStatusFromStages();
 
         return response()->json($stage->fresh()->load('responsible:id,name,email'));
     }
@@ -482,6 +484,7 @@ class ProjectStageController extends Controller
 
         // Remover a última etapa pode antecipar o prazo — recalcula.
         $project?->recalcExpectedEndFromSchedule();
+        $project?->recomputeStatusFromStages();
 
         return response()->json(['deleted' => true]);
     }
