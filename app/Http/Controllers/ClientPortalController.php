@@ -618,6 +618,11 @@ class ClientPortalController extends Controller
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%');
             })
+            // Não expõe apontamentos de projetos cuja chave "Cliente acompanha" está desligada.
+            ->where(function ($q) {
+                $q->whereNull('projects.client_follows_timesheets')
+                  ->orWhere('projects.client_follows_timesheets', true);
+            })
             ->whereNull('timesheets.deleted_at')
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->where('timesheets.date', '>=', $start12)
@@ -678,6 +683,24 @@ class ClientPortalController extends Controller
                     'balance_hours'  => null,
                     'percentage'     => null,
                     'status'         => 'closed',
+                ];
+            }
+
+            // "Cliente acompanha apontamento" DESLIGADO: o cliente não vê o detalhe.
+            // Exibe neutro, SEM saúde (igual projeto Fechado) — sem barra, sem saldo,
+            // sem % e sem chip de risco. Não vaza o consumo/saldo real.
+            if (($p->client_follows_timesheets ?? true) === false) {
+                return [
+                    'id'             => $p->id,
+                    'code'           => $p->code,
+                    'name'           => $p->name,
+                    'contract_type'  => optional($p->contractType)->name,
+                    'is_closed'      => false,
+                    'sold_hours'     => $sold,
+                    'consumed_hours' => null,
+                    'balance_hours'  => null,
+                    'percentage'     => null,
+                    'status'         => 'unknown',
                 ];
             }
 
