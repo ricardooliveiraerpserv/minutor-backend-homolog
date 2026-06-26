@@ -27,6 +27,7 @@ class StageDeliveryObserver
         ]);
 
         $this->recalcStageDates($delivery->stage_id);
+        $this->recomputeProjectStatus($delivery->stage_id);
     }
 
     public function updated(StageDelivery $delivery): void
@@ -113,8 +114,10 @@ class StageDeliveryObserver
         );
         if (!empty($touchesStageDates)) {
             $this->recalcStageDates($delivery->stage_id);
+            $this->recomputeProjectStatus($delivery->stage_id);
             if (!empty($original['stage_id']) && $original['stage_id'] !== $delivery->stage_id) {
                 $this->recalcStageDates((int) $original['stage_id']);
+                $this->recomputeProjectStatus((int) $original['stage_id']);
             }
         }
     }
@@ -122,6 +125,14 @@ class StageDeliveryObserver
     public function deleted(StageDelivery $delivery): void
     {
         $this->recalcStageDates($delivery->stage_id);
+        $this->recomputeProjectStatus($delivery->stage_id);
+    }
+
+    /** Reavalia o status (coluna do board) do projeto a partir das etapas. */
+    private function recomputeProjectStatus(?int $stageId): void
+    {
+        if (!$stageId) return;
+        ProjectStage::with('project')->find($stageId)?->project?->recomputeStatusFromStages();
     }
 
     /**
