@@ -45,6 +45,7 @@ trait DispatchesChatMentions
             messageExcerpt: (string) ($payload['excerpt'] ?? ''),
             openUrl:        (string) ($payload['openUrl'] ?? ''),
             cardUrl:        (string) ($payload['cardUrl'] ?? ''),
+            customerName:   (string) ($payload['customer'] ?? ''),
         ));
     }
 }

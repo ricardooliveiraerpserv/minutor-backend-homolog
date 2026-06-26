@@ -28,6 +28,7 @@ class CardPhaseMovementNotification extends Notification implements ShouldQueue
         public ?string $note,          // observação opcional
         public string $cardUrl,
         public string $recipientName,
+        public string $customerName = '',
     ) {}
 
     public function via($notifiable): array
@@ -54,6 +55,7 @@ class CardPhaseMovementNotification extends Notification implements ShouldQueue
                 'note'          => $this->note,
                 'cardUrl'       => $this->cardUrl,
                 'recipientName' => $this->recipientName,
+                'customerName'  => $this->customerName,
             ]);
     }
 }

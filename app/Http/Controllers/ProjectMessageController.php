@@ -214,7 +214,9 @@ class ProjectMessageController extends Controller
         $openUrl = $cardUrl . '&tab=chat';
         $code = $project->code ?? ('PRJ-' . str_pad((string) $project->id, 6, '0', STR_PAD_LEFT));
         $title = $project->name ?? 'Projeto';
-        $excerpt = Str::limit($msg->message ?? '', 280);
+        // Texto COMPLETO no e-mail (antes truncava em 280 chars). Cap alto só como salvaguarda.
+        $excerpt = Str::limit($msg->message ?? '', 5000);
+        $customerName = $project->customer?->name ?? '';
         $role = match ($author->type) {
             'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
             'cliente' => 'Cliente', 'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo',
@@ -231,6 +233,7 @@ class ProjectMessageController extends Controller
             openUrl:        $openUrl,
             cardUrl:        $cardUrl,
             recipientName:  'você',
+            customerName:   $customerName,
         ));
 
         $resolver = app(\App\Workflows\WorkflowRecipientResolver::class);
@@ -249,7 +252,7 @@ class ProjectMessageController extends Controller
 
         // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
         $this->dispatchMentionNotification(CardEnvolvido::TYPE_PROJECT, $project->id, $author, $mentionedIds, [
-            'code' => $code, 'title' => $title, 'role' => $role, 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl,
+            'code' => $code, 'title' => $title, 'role' => $role, 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl, 'customer' => $customerName,
         ], array_merge($chatTo, $rcpt['cc'] ?? []));
     }
 
