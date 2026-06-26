@@ -1046,7 +1046,9 @@ class TimesheetController extends Controller
 
             // Apontamento de investimento exige o "Projeto Real" (referência + define o coordenador
             // que aprova). O consumo continua no projeto de investimento. Exceto ERPSERV (acima).
-            $requiresRealProject = $isInvestimentoInterno && !$isErpserv;
+            // Só nos investimentos de Projetos e Suporte; Comercial não pede Projeto Real.
+            $requiresRealProject = $isInvestimentoInterno && !$isErpserv
+                && in_array($project->categoria_interna, ['Projeto', 'Suporte'], true);
             $realProjectId = $requiresRealProject ? ((int) $request->input('real_project_id') ?: null) : null;
             if ($requiresRealProject && !$realProjectId) {
                 DB::rollBack();
