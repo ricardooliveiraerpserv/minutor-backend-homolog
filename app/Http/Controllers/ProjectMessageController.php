@@ -385,16 +385,17 @@ class ProjectMessageController extends Controller
                 "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)",
                 [$user->id]
             )
-            ->with(['project:id,name,code', 'author:id,name'])
+            ->with(['project:id,name,code,customer_id', 'project.customer:id,name', 'author:id,name'])
             ->latest()
             ->limit(10)
             ->get()
             ->map(fn($msg) => [
-                'id'           => $msg->id,
-                'project_id'   => $msg->project_id,
-                'project_name' => $msg->project?->name ?? '—',
-                'project_code' => $msg->project?->code ?? '',
-                'author_name'  => $msg->author?->name ?? '—',
+                'id'            => $msg->id,
+                'project_id'    => $msg->project_id,
+                'project_name'  => $msg->project?->name ?? '—',
+                'project_code'  => $msg->project?->code ?? '',
+                'customer_name' => $msg->project?->customer?->name ?? null,
+                'author_name'   => $msg->author?->name ?? '—',
                 'preview'      => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message), 0, 80, '…'),
                 'created_at'   => $msg->created_at,
             ]);
