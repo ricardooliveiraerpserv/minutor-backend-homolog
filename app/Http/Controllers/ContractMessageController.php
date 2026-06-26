@@ -224,38 +224,38 @@ class ContractMessageController extends Controller
     {
         $user = $request->user();
 
-        $query = ContractMessage::query()
-            ->where('user_id', '!=', $user->id)
-            ->whereRaw(
-                "contract_messages.created_at > COALESCE((SELECT last_read_at FROM contract_user_reads WHERE user_id = ? AND contract_id = contract_messages.contract_id LIMIT 1), '1970-01-01'::timestamp)",
-                [$user->id]
-            );
-
+        $base = ContractMessage::query()->where('user_id', '!=', $user->id);
         if ($user->isCliente()) {
-            $query->where('visibility', 'client')
-                  ->whereHas('contract', fn($q) => $q->where('customer_id', $user->customer_id));
+            $base->where('visibility', 'client')
+                 ->whereHas('contract', fn($q) => $q->where('customer_id', $user->customer_id));
         } elseif ($user->isCoordenador()) {
-            $query->whereHas('contract', fn($q) =>
-                $q->where('kanban_coordinator_id', $user->id)
-            );
+            $base->whereHas('contract', fn($q) => $q->where('kanban_coordinator_id', $user->id));
         }
 
-        $rows = $query
-            ->with(['contract:id,project_name,customer_id', 'contract.customer:id,name', 'author:id,name'])
-            ->latest()
-            ->limit(10)
-            ->get()
-            ->map(fn($msg) => [
-                'id'            => $msg->id,
-                'contract_id'   => $msg->contract_id,
-                'project_name'  => $msg->contract?->project_name ?? '—',
-                'customer_name' => $msg->contract?->customer?->name ?? '—',
-                'author_name'   => $msg->author?->name ?? '—',
-                'preview'       => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message ?? ''), 0, 80, '…'),
-                'created_at'    => $msg->created_at,
-            ]);
+        $unreadExpr = "contract_messages.created_at > COALESCE((SELECT last_read_at FROM contract_user_reads WHERE user_id = ? AND contract_id = contract_messages.contract_id LIMIT 1), '1970-01-01'::timestamp)";
+        $unread = (clone $base)->whereRaw($unreadExpr, [$user->id])->count();
 
-        return response()->json($rows);
+        $limit = min(max((int) $request->get('limit', 10), 1), 200);
+        $reads = \Illuminate\Support\Facades\DB::table('contract_user_reads')->where('user_id', $user->id)->pluck('last_read_at', 'contract_id');
+
+        $rows = $base
+            ->with(['contract:id,project_name,customer_id', 'contract.customer:id,name', 'author:id,name'])
+            ->latest()->limit($limit)->get()
+            ->map(function ($msg) use ($reads) {
+                $lr = $reads[$msg->contract_id] ?? null;
+                return [
+                    'id'            => $msg->id,
+                    'contract_id'   => $msg->contract_id,
+                    'project_name'  => $msg->contract?->project_name ?? '—',
+                    'customer_name' => $msg->contract?->customer?->name ?? '—',
+                    'author_name'   => $msg->author?->name ?? '—',
+                    'preview'       => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message ?? ''), 0, 80, '…'),
+                    'created_at'    => $msg->created_at,
+                    'is_unread'     => !$lr || $msg->created_at->gt(\Illuminate\Support\Carbon::parse($lr)),
+                ];
+            });
+
+        return response()->json(['items' => $rows, 'unread' => $unread]);
     }
 
     public function unreadContracts(Request $request): JsonResponse

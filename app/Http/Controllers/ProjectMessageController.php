@@ -373,37 +373,40 @@ class ProjectMessageController extends Controller
         $user = $request->user();
 
         if (!$user->isAdmin() && !$user->isCoordenador()) {
-            return response()->json([]);
+            return response()->json(['items' => [], 'unread' => 0]);
         }
 
-        $query = ProjectMessage::query();
-
+        $base = ProjectMessage::query()->where('user_id', '!=', $user->id);
         if ($user->isCoordenador()) {
-            $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
+            $base->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
         }
 
-        $rows = $query
-            ->where('user_id', '!=', $user->id)
-            ->whereRaw(
-                "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)",
-                [$user->id]
-            )
-            ->with(['project:id,name,code,customer_id', 'project.customer:id,name', 'author:id,name'])
-            ->latest()
-            ->limit(10)
-            ->get()
-            ->map(fn($msg) => [
-                'id'            => $msg->id,
-                'project_id'    => $msg->project_id,
-                'project_name'  => $msg->project?->name ?? '—',
-                'project_code'  => $msg->project?->code ?? '',
-                'customer_name' => $msg->project?->customer?->name ?? null,
-                'author_name'   => $msg->author?->name ?? '—',
-                'preview'      => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message), 0, 80, '…'),
-                'created_at'   => $msg->created_at,
-            ]);
+        $unreadExpr = "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)";
+        $unread = (clone $base)->whereRaw($unreadExpr, [$user->id])->count();
 
-        return response()->json($rows);
+        // limit=10 no sino (mantém últimas 10 como histórico mesmo após ler); limit alto na tabela "Ver todas".
+        $limit = min(max((int) $request->get('limit', 10), 1), 200);
+        $reads = \Illuminate\Support\Facades\DB::table('project_user_reads')->where('user_id', $user->id)->pluck('last_read_at', 'project_id');
+
+        $rows = $base
+            ->with(['project:id,name,code,customer_id', 'project.customer:id,name', 'author:id,name'])
+            ->latest()->limit($limit)->get()
+            ->map(function ($msg) use ($reads) {
+                $lr = $reads[$msg->project_id] ?? null;
+                return [
+                    'id'            => $msg->id,
+                    'project_id'    => $msg->project_id,
+                    'project_name'  => $msg->project?->name ?? '—',
+                    'project_code'  => $msg->project?->code ?? '',
+                    'customer_name' => $msg->project?->customer?->name ?? null,
+                    'author_name'   => $msg->author?->name ?? '—',
+                    'preview'       => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message), 0, 80, '…'),
+                    'created_at'    => $msg->created_at,
+                    'is_unread'     => !$lr || $msg->created_at->gt(\Illuminate\Support\Carbon::parse($lr)),
+                ];
+            });
+
+        return response()->json(['items' => $rows, 'unread' => $unread]);
     }
 
     public function mentionableUsers(Request $request): JsonResponse
