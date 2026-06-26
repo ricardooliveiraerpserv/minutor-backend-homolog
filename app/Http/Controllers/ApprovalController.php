@@ -641,6 +641,16 @@ class ApprovalController extends Controller
     /**
      * Constrói query para timesheets pendentes
      */
+    /** Usuário coordena ALGUM projeto? (project.coordinators ou override do kanban) — vale p/ executivos. */
+    private function userCoordinatesAnyProject(User $user): bool
+    {
+        return \App\Models\Project::query()
+            ->where(fn ($q) => $q
+                ->whereHas('coordinators', fn ($c) => $c->where('users.id', $user->id))
+                ->orWhere('kanban_coordinator_override_id', $user->id))
+            ->exists();
+    }
+
     private function buildTimesheetQuery(User $user, ?Request $request = null)
     {
         $query = Timesheet::with([
@@ -676,12 +686,20 @@ class ApprovalController extends Controller
             $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
         }
 
-        // Executivo de conta que NÃO é coordenador/administrativo: o acesso a Aprovações foi
-        // concedido SÓ pra aprovar investimento Comercial dos seus clientes — restringe a isso.
+        // Executivo de conta SEM papel coordenador: vê investimento Comercial dos seus clientes
+        // E TAMBÉM os projetos que coordena (o executivo também é coordenador — project.coordinators
+        // ou override do kanban). Antes via só o Comercial → não conseguia aprovar os que coordena.
         if (!$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo'
-            && \App\Models\Customer::where('executive_id', $user->id)->exists()) {
-            $query->whereHas('project', fn ($pq) => $pq->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial'))
-                  ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id));
+            && (\App\Models\Customer::where('executive_id', $user->id)->exists() || $this->userCoordinatesAnyProject($user))) {
+            $query->where(function ($outer) use ($user) {
+                $outer->where(function ($q) use ($user) {
+                    $q->whereHas('project', fn ($pq) => $pq->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial'))
+                      ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id));
+                })->orWhereHas('project', function ($pq) use ($user) {
+                    $pq->whereHas('coordinators', fn ($c) => $c->where('users.id', $user->id))
+                       ->orWhere('kanban_coordinator_override_id', $user->id);
+                });
+            });
         }
 
         // Aplicar filtros se fornecidos
@@ -768,10 +786,16 @@ class ApprovalController extends Controller
         // Executivo de conta que NÃO é coordenador/administrativo: só vê despesas de investimento
         // Comercial dos seus clientes (cliente via projeto).
         if (!$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo'
-            && \App\Models\Customer::where('executive_id', $user->id)->exists()) {
-            $query->whereHas('project', fn ($pq) => $pq
-                ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
-                ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id)));
+            && (\App\Models\Customer::where('executive_id', $user->id)->exists() || $this->userCoordinatesAnyProject($user))) {
+            $query->whereHas('project', function ($pq) use ($user) {
+                $pq->where(function ($p) use ($user) {
+                    $p->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
+                      ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $user->id));
+                })->orWhere(function ($p) use ($user) {
+                    $p->whereHas('coordinators', fn ($c) => $c->where('users.id', $user->id))
+                      ->orWhere('kanban_coordinator_override_id', $user->id);
+                });
+            });
         }
 
         // Aplicar filtros se fornecidos
