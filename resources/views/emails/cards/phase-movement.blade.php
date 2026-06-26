@@ -19,6 +19,9 @@
           {{ $cardType === 'contract_request' ? 'Requisição' : 'Projeto' }}
           <b style="color:#FFFFFF;">{{ $cardCode }}</b> — {{ $cardTitle }}
         </p>
+        @if(!empty($customerName))
+        <p style="margin:4px 0 0;color:#A1A1AA;font-size:13px;line-height:1.4;">Cliente: <b style="color:#D4D4D8;">{{ $customerName }}</b></p>
+        @endif
       </td>
     </tr>
 
