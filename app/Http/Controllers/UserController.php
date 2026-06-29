@@ -1079,7 +1079,48 @@ class UserController extends Controller
     {
         $user = Auth::user();
 
-        return response()->json($user);
+        $arr = $user->toArray();
+        // Cargo padrão do perfil (vínculo Cargo × Perfil registrado pelo admin) — base da assinatura.
+        $arr['default_cargo'] = \App\Models\ProfileCargo::forProfile($user->type);
+
+        return response()->json($arr);
+    }
+
+    /** Prévia da assinatura padrão (não persiste). Nome/e-mail vêm do cadastro; cargo/celular são editáveis. */
+    public function signaturePreview(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'name'                => 'nullable|string|max:160',
+            'email'               => 'nullable|string|max:160',
+            'signature'           => 'nullable|array',
+            'signature.role'      => 'nullable|string|max:120',
+            'signature.mobile'    => 'nullable|string|max:60',
+            'signature.photo'     => 'nullable|string',
+            'signature.show_photo'=> 'nullable|boolean',
+        ]);
+
+        $sig = $v['signature'] ?? [];
+        $u = $request->user();
+        // Cargo padrão do perfil (admin) quando não informado.
+        if ($u && trim((string) ($sig['role'] ?? '')) === '') {
+            $sig['role'] = \App\Models\ProfileCargo::forProfile($u->type);
+        }
+        // Foto: ligada por padrão p/ quem tem foto de perfil; só não inclui se o usuário desmarcou (show_photo=false).
+        $wantsPhoto = array_key_exists('show_photo', $sig) ? (bool) $sig['show_photo'] : true;
+        if ($u && $wantsPhoto && empty($sig['photo'])) {
+            $dataUrl = $u->profilePhotoDataUrl();
+            if ($dataUrl) $sig['photo'] = $dataUrl;
+        }
+
+        $data = \App\Services\SignatureRenderer::resolveData(
+            (string) ($v['name'] ?? ''),
+            (string) ($v['email'] ?? ''),
+            $sig,
+        );
+        return response()->json(['data' => [
+            'system' => \App\Services\SignatureRenderer::render($data, 'data', true, 'light'),
+            'email'  => \App\Services\SignatureRenderer::render($data, 'data', true, 'light'),
+        ]]);
     }
 
     /**
@@ -1117,6 +1158,11 @@ class UserController extends Controller
             'email' => ['sometimes', 'string', 'email', 'max:255', Rule::unique('users')->ignore($user->id)],
             'current_password' => 'required_with:password|string',
             'password' => 'sometimes|string|min:8|confirmed',
+            'signature'           => 'sometimes|nullable|array',
+            'signature.role'      => 'nullable|string|max:120',
+            'signature.mobile'    => 'nullable|string|max:60',
+            'signature.photo'     => 'nullable|string',
+            'signature.show_photo'=> 'nullable|boolean',
         ]);
 
         if ($validator->fails()) {
