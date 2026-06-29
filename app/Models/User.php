@@ -63,6 +63,7 @@ class User extends Authenticatable
         'temporary_password_expires_at',
         'customer_id',
         'partner_id',
+        'signature',
         // Type/permission flags
         'type',
         'coordinator_type',
@@ -138,6 +139,7 @@ class User extends Authenticatable
             'extra_permissions'     => 'array',
             'segments' => 'array',
             'extra_permissions' => 'array',
+            'signature' => 'array',
             // Criptografa em repouso com APP_KEY; descriptografa na leitura.
             'smtp_app_password' => 'encrypted',
         ];
@@ -369,6 +371,27 @@ class User extends Authenticatable
     public function getProfilePhotoUrlAttribute(): ?string
     {
         return $this->attachmentUrl('avatar');
+    }
+
+    /**
+     * Foto de perfil como data URL (base64) — embutível na assinatura de e-mail
+     * (o renderer roda no servidor e não consegue baixar a URL autenticada do attachment).
+     */
+    public function profilePhotoDataUrl(): ?string
+    {
+        try {
+            $att = \App\Models\Attachment::query()
+                ->forEntity('USER', $this->id)
+                ->ofCategory('avatar')
+                ->whereNull('deleted_at')
+                ->latest('id')->first();
+            if (!$att || !$att->storage_path) return null;
+            $disk = \Illuminate\Support\Facades\Storage::disk('public');
+            if (!$disk->exists($att->storage_path)) return null;
+            return 'data:' . ($att->mime_type ?: 'image/jpeg') . ';base64,' . base64_encode($disk->get($att->storage_path));
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
 
