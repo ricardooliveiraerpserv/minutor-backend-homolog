@@ -627,6 +627,9 @@ Route::prefix('v1')->group(function () {
         // Perfil do usuário (sempre acessível para usuários autenticados)
         Route::get('/users/profile', [UserController::class, 'profile'])->name('users.profile');
         Route::put('/users/profile', [UserController::class, 'updateProfile'])->name('users.update-profile');
+        Route::post('/signature/preview', [UserController::class, 'signaturePreview'])->name('signature.preview');
+        Route::get('/profile-cargos', [\App\Http\Controllers\ProfileCargoController::class, 'index'])->name('profile-cargos.index');
+        Route::put('/profile-cargos/{profile}', [\App\Http\Controllers\ProfileCargoController::class, 'update'])->name('profile-cargos.update');
 
         // Upload de foto de perfil
         Route::post('/users/profile/photo', [UserController::class, 'uploadProfilePhoto'])->name('users.upload-photo');
