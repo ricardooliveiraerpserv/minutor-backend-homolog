@@ -560,18 +560,24 @@ class Project extends Model
      * Verifica se o projeto usa modelo OPERACIONAL (etapas + alocação por etapa + cards).
      * Modelo alternativo: sustentação (alocação direta no projeto, sem etapas).
      *
-     * Regra (mesma do CLAUDE.md): categoria=sustentacao ⇔ serviceType.name contém
-     * "cloud", "bizify" ou "sustentacao". Demais são projeto operacional.
+     * Regra (mesma do CLAUDE.md): NÃO-operacional (alocação direta de equipe) ⇔
+     * é contrato — Investimento (is_investimento_comercial) ou serviceType.name
+     * contém "cloud", "bizify", "sustentacao" ou "investimento". Demais (tipo
+     * "Projeto") são operacionais: equipe alocada por atividade do cronograma.
      *
      * Ver ADR 0004.
      */
     public function isOperational(): bool
     {
+        // Investimento (comercial/interno) é contrato — aloca equipe direto no
+        // projeto, sem etapas/atividades.
+        if ($this->is_investimento_comercial) return false;
         $name = strtolower((string) ($this->serviceType?->name ?? ''));
         if ($name === '') return true; // sem serviceType, default operacional
-        if (str_contains($name, 'sustenta')) return false;
-        if (str_contains($name, 'cloud'))    return false;
-        if (str_contains($name, 'bizify'))   return false;
+        if (str_contains($name, 'sustenta'))    return false;
+        if (str_contains($name, 'cloud'))       return false;
+        if (str_contains($name, 'bizify'))      return false;
+        if (str_contains($name, 'investimento')) return false;
         return true;
     }
 
