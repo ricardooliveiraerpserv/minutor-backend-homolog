@@ -22,6 +22,122 @@ class ApprovalController extends Controller
 {
     use ListCacheable;
 
+    /** Cards de ação da tela inicial (Meu Dia / aba Ações). */
+    public function homeActions(Request $request): JsonResponse
+    {
+        $u = $request->user();
+        abort_unless($u, 401);
+        $actions = [];
+
+        // scope=today → só as ações DO DIA (Meu Dia). Após as 17h, a ação carrega p/ o dia seguinte:
+        // janela = tudo que mudou de status a partir de ONTEM às 17:00. Sem scope = tudo (aba Ações).
+        $dayScope = $request->query('scope') === 'today';
+        $cutoff   = now()->copy()->startOfDay()->subDay()->addHours(17);
+        $sinceCut = fn ($q) => $dayScope ? $q->where('updated_at', '>=', $cutoff) : $q;
+
+        try {
+            // APONTAMENTOS p/ aprovar — só de quem COORDENA projetos, escopado aos projetos que coordena.
+            // (admin sem projeto coordenado não vê; o link já filtra pelo coordenador.)
+            if ($u->isAdmin() || $u->isCoordenador()) {
+                $isSust = $u->isCoordenador() && $u->coordinator_type === 'sustentacao';
+                $coord = $isSust ? '' : '&coordinator_id=' . $u->id;
+                $tsQuery = $sinceCut($this->buildTimesheetQuery($u));
+                // Sustentação: lembrete só dos apontamentos do DIA ANTERIOR (regra própria).
+                if ($isSust) $tsQuery->whereDate('date', now()->subDay()->toDateString());
+                $ts = $this->scopedApprovalCount($tsQuery, $u);
+                if ($ts > 0) $actions[] = $this->homeAction('approve_ts', 'high', 'Apontamentos para aprovar',
+                    "Há {$ts} apontamento(s)" . ($isSust ? ' do dia anterior' : '') . " aguardando sua aprovação.", 'Revisar apontamentos', "/approvals?tab=timesheets{$coord}", $ts);
+
+                // Despesas para APROVAR — mesma responsabilidade de quem aprova apontamento (coordenador/admin).
+                $exApprove = $this->scopedApprovalCount($sinceCut($this->buildExpenseQuery($u)), $u);
+                if ($exApprove > 0) $actions[] = $this->homeAction('approve_exp', 'high', 'Despesas para aprovar',
+                    "Há {$exApprove} despesa(s) aguardando sua aprovação.", 'Revisar despesas', "/approvals?tab=expenses{$coord}", $exApprove);
+            }
+
+            // DESPESAS para PAGAR — responsabilidade do ADMINISTRATIVO (administrativo NÃO aprova, só paga).
+            if ($u->type === 'administrativo') {
+                $pay = $sinceCut(Expense::where('status', Expense::STATUS_APPROVED)->where('is_paid', false))->count();
+                if ($pay > 0) $actions[] = $this->homeAction('pay_exp', 'medium', 'Despesas para pagar',
+                    "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas', $pay);
+            }
+
+            if ($u->type === 'consultor' || $u->type === 'parceiro_admin') {
+                $ids = $u->type === 'parceiro_admin' && $u->partner_id
+                    ? User::where('partner_id', $u->partner_id)->pluck('id')->all()
+                    : [$u->id];
+                // Rejeitados e "ajuste solicitado" separados — cada um leva à tela já filtrada.
+                // AJUSTES primeiro (amarelo, até resolver); depois REJEITADOS (vermelho, até 5º dia útil do mês posterior).
+                $tsAdj = $sinceCut(Timesheet::whereIn('user_id', $ids)->where('status', Timesheet::STATUS_ADJUSTMENT_REQUESTED))->count();
+                if ($tsAdj > 0) $actions[] = $this->homeAction('fix_ts_adjust', 'high', 'Apontamentos para ajustar',
+                    "{$tsAdj} apontamento(s) com ajuste solicitado.", 'Ver apontamentos', '/timesheets?status=adjustment_requested', $tsAdj);
+                $tsRej = $sinceCut(Timesheet::whereIn('user_id', $ids)->where('status', Timesheet::STATUS_REJECTED))
+                    ->get(['id', 'date'])
+                    ->filter(fn ($t) => $this->withinRejectionWindow($t->date))->count();
+                if ($tsRej > 0) $actions[] = $this->homeAction('fix_ts_rejected', 'critical', 'Apontamentos rejeitados',
+                    "{$tsRej} apontamento(s) rejeitado(s).", 'Ver apontamentos', '/timesheets?status=rejected', $tsRej);
+                // Despesas — ajuste e rejeitada separadas (espelha apontamentos): ajuste primeiro, depois rejeitada.
+                $exAdj = $sinceCut(Expense::whereIn('user_id', $ids)->where('status', Expense::STATUS_ADJUSTMENT_REQUESTED))->count();
+                if ($exAdj > 0) $actions[] = $this->homeAction('fix_exp', 'high', 'Despesas para ajustar',
+                    "{$exAdj} despesa(s) com ajuste solicitado.", 'Ver despesas', '/expenses', $exAdj);
+                $exRej = $sinceCut(Expense::whereIn('user_id', $ids)->where('status', Expense::STATUS_REJECTED))->count();
+                if ($exRej > 0) $actions[] = $this->homeAction('fix_exp_rejected', 'critical', 'Despesas rejeitadas',
+                    "{$exRej} despesa(s) rejeitada(s).", 'Ver despesas', '/expenses', $exRej);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('homeActions falhou: ' . $e->getMessage());
+        }
+
+        return response()->json(['data' => $actions]);
+    }
+
+    /**
+     * Conta itens pendentes (apontamentos OU despesas) que o usuário REALMENTE aprova: projetos
+     * onde ele é coordenador (ou override do kanban) ou comercial dos clientes onde é executivo.
+     * Vale também p/ ADMIN — só nota o que ele coordena. Sustentação usa a fila própria (build*Query).
+     */
+    private function scopedApprovalCount($query, User $u): int
+    {
+        if ($u->isCoordenador() && $u->coordinator_type === 'sustentacao') {
+            return $query->count(); // build*Query já restringe à fila de sustentação/cloud
+        }
+        $query->where(function ($outer) use ($u) {
+            $outer->whereHas('project', fn ($pq) => $pq
+                    ->whereHas('coordinators', fn ($c) => $c->where('users.id', $u->id))
+                    ->orWhere('kanban_coordinator_override_id', $u->id))
+                ->orWhereHas('project', fn ($pq) => $pq
+                    ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
+                    ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $u->id)));
+        });
+        return $query->count();
+    }
+
+    private function homeAction(string $key, string $priority, string $title, string $message, string $cta, string $url, int $count): array
+    {
+        return ['key' => $key, 'type' => 'action', 'priority' => $priority, 'title' => $title,
+            'message' => $message, 'cta_label' => $cta, 'cta_url' => $url, 'count' => $count];
+    }
+
+    /** Apontamento rejeitado aparece até o 5º dia útil do mês POSTERIOR à sua competência (prazo de correção). */
+    private function withinRejectionWindow(?\Illuminate\Support\Carbon $date): bool
+    {
+        if (!$date) return true;   // sem data → mantém
+        $next = $date->copy()->addMonthNoOverflow()->startOfMonth();
+        $deadline = $this->nthBusinessDayOfMonth($next->year, $next->month, 5);
+        return now()->startOfDay()->lte($deadline);
+    }
+
+    /** Data do Nº dia útil (seg-sex) do mês; se não existir, o último dia útil. */
+    private function nthBusinessDayOfMonth(int $year, int $month, int $n): \Illuminate\Support\Carbon
+    {
+        $d = \Illuminate\Support\Carbon::create($year, $month, 1)->startOfDay();
+        $count = 0; $last = $d->copy();
+        while ($d->month === $month) {
+            if (!$d->isWeekend()) { $count++; $last = $d->copy(); if ($count === $n) return $d->copy(); }
+            $d->addDay();
+        }
+        return $last; // menos de N dias úteis → último dia útil do mês
+    }
+
     /**
      * @OA\Get(
      *     path="/api/v1/approvals/pending",
