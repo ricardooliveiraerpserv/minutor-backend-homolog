@@ -1020,14 +1020,17 @@ class ProjectController extends Controller
         unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids']);
 
         // Pilar 1: projeto operacional não aceita alocação direta (consultants)
-        // — aloca via /stages/{id}/allocations. ADR 0007.
-        if (!empty($consultantIds) && !empty($validated['service_type_id'])) {
+        // — aloca via /stages/{id}/allocations. ADR 0007. Contratos (Investimento,
+        // cloud, bizify, sustentação) alocam equipe direto no projeto.
+        $isInvestimento = !empty($validated['is_investimento_comercial']);
+        if (!empty($consultantIds) && !empty($validated['service_type_id']) && !$isInvestimento) {
             $st = \App\Models\ServiceType::find($validated['service_type_id']);
             $name = strtolower((string) ($st?->name ?? ''));
             $isOperational = $name === '' || (
                 !str_contains($name, 'sustenta')
                 && !str_contains($name, 'cloud')
                 && !str_contains($name, 'bizify')
+                && !str_contains($name, 'investimento')
             );
             if ($isOperational) {
                 return response()->json([
