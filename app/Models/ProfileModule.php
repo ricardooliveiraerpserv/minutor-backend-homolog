@@ -15,14 +15,14 @@ class ProfileModule extends Model
     protected $casts = ['modules' => 'array'];
 
     /** Módulos disponíveis (administrativo PRIMEIRO). */
-    public const MODULES = ['administrativo', 'servicos'];
+    public const MODULES = ['administrativo', 'servicos', 'configurador'];
 
     /** Perfis que participam dos módulos (cliente NÃO entra — mantém portal). */
     public const PROFILES = ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin'];
 
-    /** Defaults quando não há linha cadastrada (administrativo primeiro onde houver). */
+    /** Defaults quando não há linha cadastrada (administrativo primeiro; configurador só admin). */
     public const DEFAULTS = [
-        'admin'          => ['administrativo', 'servicos'],
+        'admin'          => ['administrativo', 'servicos', 'configurador'],
         'administrativo' => ['administrativo'],
         'coordenador'    => ['administrativo', 'servicos'],
         'consultor'      => ['servicos'],
@@ -30,7 +30,8 @@ class ProfileModule extends Model
         // 'cliente' ausente de propósito → [] (sem módulos; acessa o Portal)
     ];
 
-    /** Módulos efetivos de um perfil (linha cadastrada OU default), na ordem do catálogo. */
+    /** Módulos efetivos de um perfil (linha cadastrada OU default). Não filtra por MODULES
+     *  (admin pode ter módulos custom do Configurador). */
     public static function forProfile(?string $profile): array
     {
         if (!$profile) {
