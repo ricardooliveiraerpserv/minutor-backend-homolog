@@ -710,6 +710,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/profile-cargos', [\App\Http\Controllers\ProfileCargoController::class, 'index'])->name('profile-cargos.index');
         Route::put('/profile-cargos/{profile}', [\App\Http\Controllers\ProfileCargoController::class, 'update'])->name('profile-cargos.update');
 
+        // Cadastro de Perfil → Módulos de navegação (Administrativo / Serviços)
+        Route::get('/profile-modules', [\App\Http\Controllers\ProfileModuleController::class, 'index'])->name('profile-modules.index');
+        Route::put('/profile-modules/{profile}', [\App\Http\Controllers\ProfileModuleController::class, 'update'])->name('profile-modules.update');
+
         // Upload de foto de perfil
         Route::post('/users/profile/photo', [UserController::class, 'uploadProfilePhoto'])->name('users.upload-photo');
         Route::delete('/users/profile/photo', [UserController::class, 'removeProfilePhoto'])->name('users.remove-photo');
