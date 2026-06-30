@@ -64,6 +64,7 @@ class User extends Authenticatable
         'customer_id',
         'partner_id',
         'signature',
+        'birth_date',
         // Type/permission flags
         'type',
         'coordinator_type',
@@ -140,6 +141,7 @@ class User extends Authenticatable
             'segments' => 'array',
             'extra_permissions' => 'array',
             'signature' => 'array',
+            'birth_date' => 'date',
             // Criptografa em repouso com APP_KEY; descriptografa na leitura.
             'smtp_app_password' => 'encrypted',
         ];
