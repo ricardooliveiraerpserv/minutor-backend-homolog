@@ -100,13 +100,27 @@ class ApprovalController extends Controller
         if ($u->isCoordenador() && $u->coordinator_type === 'sustentacao') {
             return $query->count(); // build*Query já restringe à fila de sustentação/cloud
         }
-        $query->where(function ($outer) use ($u) {
-            $outer->whereHas('project', fn ($pq) => $pq
-                    ->whereHas('coordinators', fn ($c) => $c->where('users.id', $u->id))
-                    ->orWhere('kanban_coordinator_override_id', $u->id))
-                ->orWhereHas('project', fn ($pq) => $pq
-                    ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
-                    ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $u->id)));
+        // MESMA lógica do filtro coordinator_id da tela de Aprovações (senão o badge conta o que a tela não mostra):
+        // override do coordenador TEM PRECEDÊNCIA; sustentação só conta p/ coord de sustentação.
+        $isSust = $u->isCoordenador() && $u->coordinator_type === 'sustentacao';
+        $query->where(function ($outer) use ($u, $isSust) {
+            // (A) é o override do projeto (qualquer fila)
+            $outer->whereHas('project', fn ($pq) => $pq->where('kanban_coordinator_override_id', $u->id));
+            // (B) projeto SEM override e NÃO-sustentação, e está nos coordenadores
+            $outer->orWhere(function ($q2) use ($u) {
+                $q2->whereHas('project', fn ($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereDoesntHave('serviceType', fn ($sq) => $sq->where('code', 'sustentacao')))
+                   ->whereHas('project.coordinators', fn ($cq) => $cq->where('users.id', $u->id));
+            });
+            // (C) sustentação sem override só conta se o user for coord de sustentação
+            if ($isSust) {
+                $outer->orWhereHas('project', fn ($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                    ->whereHas('serviceType', fn ($sq) => $sq->where('code', 'sustentacao')));
+            }
+            // (D) executivo comercial dos seus clientes (investimento Comercial)
+            $outer->orWhereHas('project', fn ($pq) => $pq
+                ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
+                ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $u->id)));
         });
         return $query->count();
     }
