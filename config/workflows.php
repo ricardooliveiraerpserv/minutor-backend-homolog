@@ -31,6 +31,7 @@ return [
         'contract.aporte.child'        => '#6EE7B7', // esmeralda claro (aporte subprojeto)
         'contract.reajuste'            => '#F472B6', // pink
         'contract.reajuste.estorno'    => '#F87171', // vermelho claro (estorno)
+        'contract.reajuste.aviso'      => '#38BDF8', // azul (aviso prévio)
         'contract.reajustes_pendentes' => '#FB923C', // laranja
         'request.phase.backlog'              => '#93C5FD',
         'request.phase.novo_projeto'         => '#60A5FA',
@@ -118,6 +119,7 @@ return [
         'contract.aporte.child'        => ['contract', 'project', 'customer', 'actor'],
         'contract.reajuste'            => ['contract', 'customer', 'actor'],
         'contract.reajuste.estorno'    => ['contract', 'customer', 'actor'],
+        'contract.reajuste.aviso'      => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
         'expense.approved_pending_payment' => ['actor'],
         'request.phase.backlog'              => ['request', 'customer', 'actor'],
@@ -199,6 +201,11 @@ return [
             'subject'   => 'Novo aporte de horas no subprojeto — {codigo}',
             'body'      => 'Foi registrado um novo aporte de horas no subprojeto {projeto}.',
             'variables' => ['codigo' => 'Código', 'projeto' => 'Subprojeto', 'cliente' => 'Cliente', 'horas' => 'Horas aportadas', 'saldo' => 'Saldo total', 'data' => 'Data'],
+        ],
+        'contract.reajuste.aviso' => [
+            'subject'   => 'Aviso: reajuste no próximo mês — {codigo}',
+            'body'      => 'Está na hora de enviar ao cliente o aviso de que o contrato {codigo} ({cliente}) será reajustado no próximo mês.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
         ],
         'contract.reajuste.estorno' => [
             'subject'   => 'Estorno de reajuste — {codigo}',
@@ -435,6 +442,17 @@ return [
                 'diretor'              => 'off',
             ],
         ],
+        'contract.reajuste.aviso' => [
+            'label'       => 'Aviso prévio de reajuste (lembrar administrativo)',
+            'domain'      => 'Contratos',
+            'description' => 'Um mês antes do vencimento: avisa o administrativo para enviar ao cliente o comunicado de reajuste do próximo mês.',
+            'audiences'   => [
+                'administrativo' => 'to',
+                'financeiro'     => 'off',
+                'coordenador'    => 'off',
+                'diretor'        => 'off',
+            ],
+        ],
         'contract.reajuste.estorno' => [
             'label'       => 'Estorno de reajuste',
             'domain'      => 'Contratos',
@@ -452,9 +470,10 @@ return [
         'contract.reajustes_pendentes' => [
             'label'       => 'Alerta de reajustes pendentes',
             'domain'      => 'Contratos',
-            'description' => 'Rotina diária que alerta sobre reajustes vencidos/pendentes.',
+            'description' => 'Rotina diária que alerta sobre reajustes vencidos/pendentes (contrato vencido).',
             'audiences'   => [
-                'financeiro' => 'to',
+                'financeiro'     => 'to',
+                'administrativo' => 'to',
             ],
         ],
 

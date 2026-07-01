@@ -947,10 +947,14 @@ Route::prefix('v1')->group(function () {
         Route::get('/contracts/reajustes/manual/{manual}/adjustment-email-preview',  [ContractController::class, 'manualAdjustmentEmailPreview'])->name('contracts.reajustes-manual-email-preview');
         Route::post('/contracts/reajustes/manual/{manual}/reverse-adjustment',        [ContractController::class, 'manualReverseAdjustment'])->name('contracts.reajustes-manual-reverse');
         Route::post('/contracts/reajustes/manual/{manual}/resend-adjustment',         [ContractController::class, 'manualResendAdjustment'])->name('contracts.reajustes-manual-resend');
+        Route::get('/contracts/reajustes/manual/{manual}/aviso-preview',              [ContractController::class, 'manualAvisoPreview'])->name('contracts.reajustes-manual-aviso-preview');
+        Route::post('/contracts/reajustes/manual/{manual}/aviso-send',                [ContractController::class, 'manualAvisoSend'])->name('contracts.reajustes-manual-aviso-send');
         // Prévia do e-mail de reajuste (contrato) + estorno + reenvio
         Route::get('/contracts/{contract}/adjustment-email-preview',  [ContractController::class, 'contractAdjustmentEmailPreview'])->name('contracts.adjustment-email-preview');
         Route::post('/contracts/{contract}/reverse-adjustment',       [ContractController::class, 'reverseAdjustment'])->name('contracts.reverse-adjustment');
         Route::post('/contracts/{contract}/resend-adjustment',        [ContractController::class, 'resendAdjustment'])->name('contracts.resend-adjustment');
+        Route::get('/contracts/{contract}/aviso-preview',             [ContractController::class, 'contractAvisoPreview'])->name('contracts.aviso-preview');
+        Route::post('/contracts/{contract}/aviso-send',               [ContractController::class, 'contractAvisoSend'])->name('contracts.aviso-send');
         Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');

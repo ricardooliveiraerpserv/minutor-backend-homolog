@@ -129,6 +129,13 @@ Schedule::job(new CleanupContractEventsJob)
 
 // Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
 // só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
+// Aviso prévio: 1 mês antes do vencimento, avisa o administrativo p/ enviar o comunicado.
+Schedule::command('reajustes:alerta-aviso-previo')
+  ->dailyAt('08:10')
+  ->name('alerta-aviso-previo-reajuste')
+  ->description('Avisa o administrativo (1 mês antes) para enviar o comunicado de reajuste')
+  ->withoutOverlapping();
+
 Schedule::command('reajustes:alerta-vencidos')
   ->dailyAt('08:00')
   ->name('alerta-reajustes-vencidos')
