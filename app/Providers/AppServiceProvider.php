@@ -20,6 +20,10 @@ use App\Observers\HourContributionObserver;
 use App\Observers\ProjectObserver;
 use App\Policies\ProjectPolicy;
 use App\Policies\TimesheetPolicy;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -55,5 +59,14 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(Timesheet::class, TimesheetPolicy::class);
         Gate::policy(Project::class, ProjectPolicy::class);
 
+        // Rate limiter do login keyed por e-mail+IP (throttle:login). Atrás do duplo proxy
+        // (Cloudflare/Render), request->ip() colapsa no gateway; chavear por e-mail isola por conta.
+        RateLimiter::for('login', function (Request $request) {
+            $email = Str::lower((string) $request->input('email'));
+
+            return [
+                Limit::perMinute(5)->by($email !== '' ? $email . '|' . $request->ip() : $request->ip()),
+            ];
+        });
     }
 }
