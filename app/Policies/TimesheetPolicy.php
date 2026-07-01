@@ -80,23 +80,20 @@ class TimesheetPolicy
 
     // ── update ────────────────────────────────────────────────────────────────
 
+    // Regras de update/delete concentradas em AccessControl (row-level + motivo). A Policy segue
+    // sendo o ponto de entrada do Gate ($user->can('update', $ts)); o "porquê" e as flags do
+    // dataset vêm da MESMA fonte (sem duplicação). Inclui: bloqueio de aprovado, dono,
+    // coordenador do projeto, escopo de parceiro e permissão ampla (hours.update_all/delete_all).
     public function update(User $user, Timesheet $ts): bool
     {
-        if ($this->isAdmin($user)) return true;
-        if (!$user->hasAccess('timesheets.manage')) return false;
-
-        // Parceiro ADM pode editar apontamentos do parceiro
-        if ($user->isParceiroAdmin()) return $this->isOwnPartnerScope($user, $ts);
-
-        // Consultor/Coordenador: apenas próprios
-        return $ts->user_id === $user->id;
+        return \App\Services\AccessControl::decide($user, 'update', $ts)['allowed'];
     }
 
     // ── delete ────────────────────────────────────────────────────────────────
 
     public function delete(User $user, Timesheet $ts): bool
     {
-        return $this->update($user, $ts);
+        return \App\Services\AccessControl::decide($user, 'delete', $ts)['allowed'];
     }
 
     // ── approve ───────────────────────────────────────────────────────────────

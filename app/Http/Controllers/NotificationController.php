@@ -561,7 +561,22 @@ class NotificationController extends Controller
     /** Corpo do e-mail: mensagem da notificação ou, em enquete, pergunta + opções + chamada p/ votar. */
     private function emailBody(AppNotification $n, ?array $pollPayload = null): string
     {
-        if ($n->type !== 'poll') return (string) $n->message;
+        if ($n->type !== 'poll') {
+            $msg = (string) $n->message;
+            // Botão de AÇÃO (cta_label + cta_url): aparece no e-mail (preview, reenvio e envio).
+            if (!empty($n->cta_label) && !empty($n->cta_url)) {
+                $url = trim((string) $n->cta_url);
+                if (str_starts_with($url, '/')) {
+                    $url = rtrim((string) config('app.frontend_url', config('app.url', '')), '/') . $url;  // rota interna → app
+                } elseif (!preg_match('#^https?://#i', $url)) {
+                    $url = 'https://' . $url;  // domínio sem esquema (ex.: minutor.com.br)
+                }
+                $msg .= '<div style="margin:18px 0 4px"><a href="' . e($url) . '" target="_blank" '
+                    . 'style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;background:#7c3aed;border-radius:8px;text-decoration:none">'
+                    . e($n->cta_label) . '</a></div>';
+            }
+            return $msg;
+        }
 
         $poll = $pollPayload ?? ($n->relationLoaded('poll') ? optional($n->poll)->toArray() : null);
         $question = trim((string) ($poll['question'] ?? ''));
@@ -605,9 +620,13 @@ class NotificationController extends Controller
     {
         abort_unless($request->user()?->isAdmin(), 403);
         $q = trim((string) $request->query('search', ''));
+        $type = trim((string) $request->query('type', ''));               // filtra por perfil (aba do Configurador)
+        $coord = trim((string) $request->query('coordinator_type', ''));   // coordenador projetos/sustentação
         $rows = \App\Models\User::query()->whereNotNull('email')
             ->when($q !== '', fn ($w) => $w->where(fn ($x) => $x->where('name', 'ilike', "%{$q}%")->orWhere('email', 'ilike', "%{$q}%")))
-            ->orderBy('name')->limit(20)->get(['id', 'name', 'email', 'type']);
+            ->when($type !== '', fn ($w) => $w->where('type', $type))
+            ->when($coord !== '', fn ($w) => $w->where('coordinator_type', $coord))
+            ->orderBy('name')->limit(20)->get(['id', 'name', 'email', 'type', 'coordinator_type']);
         return response()->json(['data' => $rows]);
     }
 }
