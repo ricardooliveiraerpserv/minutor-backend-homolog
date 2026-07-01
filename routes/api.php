@@ -432,6 +432,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/real-project-options', [ProjectController::class, 'realProjectOptions'])->name('projects.real-project-options');
         });
 
+        // Alocação de investimento (consultores + projetos reais): escopo assign_consultants
+        // para que coordenadores também aloquem, sem projects.update global.
+        Route::middleware('permission.or.admin:projects.assign_consultants')->group(function () {
+            Route::patch('/projects/{project}/investment-allocation', [ProjectController::class, 'updateInvestmentAllocation'])->name('projects.investment-allocation');
+        });
+
         Route::middleware('permission.or.admin:projects.create')->group(function () {
             Route::post('/projects', [ProjectController::class, 'store'])->name('projects.store');
             Route::post('/investimento-interno/projects', [ProjectController::class, 'storeInternalProject'])->name('projects.store-internal');

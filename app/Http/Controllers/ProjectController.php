@@ -3493,6 +3493,40 @@ class ProjectController extends Controller
         return response()->json(['items' => $items]);
     }
 
+    /**
+     * Alocação de um projeto de INVESTIMENTO (consultores + projetos reais por consultor).
+     * Endpoint dedicado e escopado por `projects.assign_consultants` — assim o
+     * COORDENADOR (que não tem projects.update) também aloca nesta rotina, sem ganhar
+     * poder de editar os demais campos do projeto.
+     * PATCH /projects/{project}/investment-allocation
+     */
+    public function updateInvestmentAllocation(Request $request, Project $project): JsonResponse
+    {
+        if (!$project->is_investimento_comercial) {
+            return response()->json(['message' => 'Alocação de investimento só se aplica a projetos de investimento.'], 422);
+        }
+
+        $data = $request->validate([
+            'consultant_ids'                  => 'nullable|array',
+            'consultant_ids.*'                => 'exists:users,id',
+            'real_projects_by_consultant'     => 'nullable|array',
+            'real_projects_by_consultant.*'   => 'array',
+            'real_projects_by_consultant.*.*' => 'integer|exists:projects,id',
+        ]);
+
+        \DB::transaction(function () use ($project, $data) {
+            if (array_key_exists('consultant_ids', $data)) {
+                $project->consultants()->sync($data['consultant_ids'] ?? []);
+            }
+            if (array_key_exists('real_projects_by_consultant', $data)
+                && Schema::hasTable('project_consultant_real_projects')) {
+                $this->syncConsultantRealProjects($project, $data['real_projects_by_consultant'] ?? []);
+            }
+        });
+
+        return response()->json(['message' => 'Alocação atualizada.']);
+    }
+
     // ─── Períodos abertos por projeto ────────────────────────────────────────
 
     public function openPeriod(Request $request, Project $project): JsonResponse
