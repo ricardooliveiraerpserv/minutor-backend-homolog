@@ -2953,6 +2953,7 @@ class ContractController extends Controller
         // flag `manual` + `empresa` (ERPSERV|BIZIFY). Não entram no summary/KPIs.
         $rows = $rows->concat(
             \App\Models\ManualReajuste::query()
+                ->with('project:id,code,name,hourly_rate')
                 ->withCount([
                     'valueChanges as active_changes_count'   => fn ($x) => $x->whereNull('reversed_at'),
                     'valueChanges as reversed_changes_count' => fn ($x) => $x->whereNotNull('reversed_at'),
@@ -3008,6 +3009,8 @@ class ContractController extends Controller
     private function manualRow(\App\Models\ManualReajuste $m): array
     {
         $hoje = Carbon::today();
+        $proj = $m->project_id ? ($m->relationLoaded('project') ? $m->project : \App\Models\Project::find($m->project_id)) : null;
+        $projectBacked = $proj !== null;
         $prox = $m->data_vencimento
             ? Carbon::parse($m->data_vencimento)->startOfDay()
             : ($m->data_ultimo_reajuste ? Carbon::parse($m->data_ultimo_reajuste)->addYear()->startOfDay() : null);
@@ -3026,6 +3029,9 @@ class ContractController extends Controller
         return [
             'id'                      => $m->id,
             'manual'                  => true,
+            'project_backed'          => $projectBacked,
+            'project_id'              => $m->project_id,
+            'project_name'            => $proj?->name,
             'can_reverse'             => (int) ($m->active_changes_count ?? 0) > 0
                                           && $m->last_change_at
                                           && Carbon::parse($m->last_change_at)->gte(Carbon::now()->subDays(30)),
@@ -3035,7 +3041,7 @@ class ContractController extends Controller
             'customer_id'             => $m->customer_id,
             'cliente_emails'          => $this->manualClienteEmails($m),
             'cliente_nome'            => $m->cliente_nome,
-            'codigo'                  => $m->descricao,
+            'codigo'                  => $projectBacked ? ($proj->code ?? $m->descricao) : $m->descricao,
             'valor_atual'             => round($valor, 2),
             'data_assinatura'         => optional($m->data_assinatura)->toDateString(),
             'valor_inicial'           => round($valor, 2),
@@ -3060,6 +3066,7 @@ class ContractController extends Controller
         $data = $request->validate([
             'cliente_nome'         => 'required|string|max:180',
             'customer_id'          => 'nullable|integer|exists:customers,id',
+            'project_id'           => 'nullable|integer|exists:projects,id',
             'descricao'            => 'nullable|string|max:200',
             'empresa'              => 'required|in:ERPSERV,BIZIFY',
             'valor_inicial'        => 'nullable|numeric|min:0',
@@ -3196,6 +3203,14 @@ class ContractController extends Controller
             }
             $manual->update($updates);
 
+            // Projeto sem contrato: o reajuste incide no hourly_rate do projeto.
+            if ($manual->project_id) {
+                $proj = \App\Models\Project::find($manual->project_id);
+                if ($proj && $proj->hourly_rate !== null) {
+                    $proj->update(['hourly_rate' => round((float) $proj->hourly_rate * (1 + $pct / 100), 2)]);
+                }
+            }
+
             \App\Models\ManualReajusteValueChange::create([
                 'manual_reajuste_id' => $manual->id,
                 'valor_anterior'     => round($base, 2),
@@ -3295,6 +3310,15 @@ class ContractController extends Controller
                 $updates['data_vencimento'] = Carbon::parse($manual->data_vencimento)->subYear()->toDateString();
             }
             $manual->update($updates);
+
+            // Projeto sem contrato: desfaz o reajuste no hourly_rate do projeto.
+            if ($manual->project_id && (float) $change->percentual != 0.0) {
+                $proj = \App\Models\Project::find($manual->project_id);
+                if ($proj && $proj->hourly_rate !== null) {
+                    $proj->update(['hourly_rate' => round((float) $proj->hourly_rate / (1 + (float) $change->percentual / 100), 2)]);
+                }
+            }
+
             $change->update(['reversed_at' => now()]); // marca estornado
         });
 

@@ -16,7 +16,7 @@ class ManualReajuste extends Model
     protected $table = 'manual_reajustes';
 
     protected $fillable = [
-        'cliente_nome', 'customer_id', 'descricao', 'empresa', 'valor_inicial',
+        'cliente_nome', 'customer_id', 'project_id', 'descricao', 'empresa', 'valor_inicial',
         'data_assinatura', 'data_ultimo_reajuste', 'data_vencimento',
         'taxa_reajuste', 'pct_reajuste', 'notify_emails',
     ];
@@ -33,6 +33,11 @@ class ManualReajuste extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
     }
 
     public function valueChanges(): HasMany
