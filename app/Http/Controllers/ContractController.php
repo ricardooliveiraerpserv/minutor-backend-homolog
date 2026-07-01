@@ -3042,6 +3042,7 @@ class ContractController extends Controller
             'pct_reajuste'            => $m->pct_reajuste !== null ? (float) $m->pct_reajuste : null,
             'data_ultimo_reajuste'    => optional($m->data_ultimo_reajuste)->toDateString(),
             'data_proximo_reajuste'   => optional($prox)->toDateString(),
+            'data_aviso'              => $prox ? $prox->copy()->subMonthNoOverflow()->toDateString() : null,
             'dias_para_vencimento'    => $dias,
             'status_reajuste'         => $status,
             'taxa_reajuste'           => $taxa,
@@ -3251,20 +3252,21 @@ class ContractController extends Controller
                 $contract->project?->code ?? $contract->project_code_preview,
                 $this->clienteEmailsContrato($contract),
                 ['contract' => $contract, 'customer' => $contract->customer, 'actor' => $request->user()],
-                $change
+                $change,
+                $request->input('mensagem')
             );
         }
         return response()->json(['ok' => true, 'valor_atual' => (float) $change->valor_anterior, 'email_sent' => $sent]);
     }
 
     /** Envia o comunicado de estorno (cliente + cópias internas da Central) como o usuário logado. */
-    private function sendEstornoMail(Request $request, string $cliente, ?string $contrato, array $toEmails, array $ccContext, $change): bool
+    private function sendEstornoMail(Request $request, string $cliente, ?string $contrato, array $toEmails, array $ccContext, $change, ?string $mensagem = null): bool
     {
         $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste.estorno', $ccContext);
         $to = array_values(array_unique(array_merge($toEmails, $rcpt['to'])));
         $cc = array_values(array_diff($rcpt['cc'], $to));
         if (!$to) return false;
-        $mail = $this->buildReajusteMailFromChange($cliente, $contrato, $change, null, true);
+        $mail = $this->buildReajusteMailFromChange($cliente, $contrato, $change, $mensagem, true);
         $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
         if (\App\Services\GraphMailer::enabled() && $graphFrom) {
             \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
@@ -3306,7 +3308,8 @@ class ContractController extends Controller
                 $manual->descricao ?? '—',
                 $this->manualClienteEmails($manual),
                 ['customer' => $manual->customer],
-                $change
+                $change,
+                $request->input('mensagem')
             );
         }
         return response()->json(['ok' => true, 'valor_atual' => (float) $change->valor_anterior, 'email_sent' => $sent]);
@@ -3496,6 +3499,119 @@ class ContractController extends Controller
         return response()->json(['ok' => true, 'emails' => $emails]);
     }
 
+    // ─── Aviso prévio de reajuste (comunicado "próximo mês", estimativa) ─────
+    private function buildAvisoMail(string $cliente, ?string $contrato, float $base, float $pct, string $indice, ?string $periodoFmt, ?string $mensagem): ReajusteClienteMail
+    {
+        return new ReajusteClienteMail(
+            cliente: $cliente ?: 'Cliente',
+            contrato: $contrato ?: '—',
+            valorAnterior: round($base, 2),
+            valorNovo: round($base * (1 + $pct / 100), 2),
+            percentual: round($pct, 4),
+            indice: EconomicIndexService::canonical($indice),
+            periodoFormatado: $periodoFmt,
+            vigencia: Carbon::now()->addMonthNoOverflow()->startOfMonth()->format('d/m/Y'),
+            mensagem: $mensagem,
+            aviso: true,
+        );
+    }
+
+    /** GET /contracts/{contract}/aviso-preview?index_type=IPCA|IGPM[&mensagem=] */
+    public function contractAvisoPreview(Request $request, Contract $contract): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = $this->valorBaseReajuste($contract);
+        if ($base <= 0) return response()->json(['message' => 'Contrato sem valor-base para estimar.'], 422);
+        [$start, $end] = $this->reajustePeriodo($contract);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $contract->loadMissing(['customer:id,name', 'project:id,code']);
+        $contrato = $contract->project?->code ?? $contract->project_code_preview;
+        $mensagem = $request->filled('mensagem') ? (string) $request->input('mensagem') : null;
+        $mail = $this->buildAvisoMail($contract->customer?->name ?? 'Cliente', $contrato, $base, $pct, $v['index_type'], $pf, $mensagem);
+        return response()->json([
+            'subject' => $mail->envelope()->subject, 'html' => $mail->render(),
+            'mensagem_padrao' => ReajusteClienteMail::defaultMensagem($contrato, $pct, EconomicIndexService::canonical($v['index_type']), $pf, 'aviso'),
+            'cliente_emails' => $this->clienteEmailsContrato($contract),
+            'percentual' => round($pct, 4), 'valor_estimado' => round($base * (1 + $pct / 100), 2),
+        ]);
+    }
+
+    /** POST /contracts/{contract}/aviso-send */
+    public function contractAvisoSend(Request $request, Contract $contract): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string', 'emails' => 'nullable|array', 'emails.*' => 'email', 'mensagem' => 'nullable|string', 'salvar' => 'nullable|boolean']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = $this->valorBaseReajuste($contract);
+        if ($base <= 0) return response()->json(['message' => 'Contrato sem valor-base.'], 422);
+        [$start, $end] = $this->reajustePeriodo($contract);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $contract->loadMissing(['customer:id,name', 'project:id,code']);
+        $emails = collect($v['emails'] ?? $this->clienteEmailsContrato($contract))->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) return response()->json(['message' => 'Informe ao menos um e-mail.'], 422);
+        if (!empty($v['salvar']) && $contract->customer) {
+            $contract->customer->setAdminEmails(array_values(array_unique(array_merge($contract->customer->adminEmails(), $emails))));
+            $contract->customer->save();
+        }
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste', ['contract' => $contract, 'customer' => $contract->customer, 'actor' => $request->user()]);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to']))); $cc = array_values(array_diff($rcpt['cc'], $to));
+        $mail = $this->buildAvisoMail($contract->customer?->name ?? 'Cliente', $contract->project?->code ?? $contract->project_code_preview, $base, $pct, $v['index_type'], $pf, $v['mensagem'] ?? null);
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        else Mail::to($to)->cc($cc)->send($mail);
+        return response()->json(['ok' => true, 'emails' => $emails]);
+    }
+
+    /** GET /contracts/reajustes/manual/{manual}/aviso-preview */
+    public function manualAvisoPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = (float) ($manual->valor_inicial ?? 0);
+        if ($base <= 0) return response()->json(['message' => 'Sem valor-base para estimar.'], 422);
+        [$start, $end] = $this->manualPeriodo($manual);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $contrato = $manual->descricao ?? '—';
+        $mensagem = $request->filled('mensagem') ? (string) $request->input('mensagem') : null;
+        $mail = $this->buildAvisoMail($manual->cliente_nome, $contrato, $base, $pct, $v['index_type'], $pf, $mensagem);
+        return response()->json([
+            'subject' => $mail->envelope()->subject, 'html' => $mail->render(),
+            'mensagem_padrao' => ReajusteClienteMail::defaultMensagem($contrato, $pct, EconomicIndexService::canonical($v['index_type']), $pf, 'aviso'),
+            'cliente_emails' => $this->manualClienteEmails($manual),
+            'percentual' => round($pct, 4), 'valor_estimado' => round($base * (1 + $pct / 100), 2),
+        ]);
+    }
+
+    /** POST /contracts/reajustes/manual/{manual}/aviso-send */
+    public function manualAvisoSend(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string', 'emails' => 'nullable|array', 'emails.*' => 'email', 'mensagem' => 'nullable|string', 'salvar' => 'nullable|boolean']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = (float) ($manual->valor_inicial ?? 0);
+        if ($base <= 0) return response()->json(['message' => 'Sem valor-base.'], 422);
+        [$start, $end] = $this->manualPeriodo($manual);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $manual->loadMissing('customer:id,name');
+        $emails = collect($v['emails'] ?? $this->manualClienteEmails($manual))->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) return response()->json(['message' => 'Informe ao menos um e-mail.'], 422);
+        if (!empty($v['salvar'])) $manual->update(['notify_emails' => $emails]);
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste', ['customer' => $manual->customer]);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to']))); $cc = array_values(array_diff($rcpt['cc'], $to));
+        $mail = $this->buildAvisoMail($manual->cliente_nome, $manual->descricao ?? '—', $base, $pct, $v['index_type'], $pf, $v['mensagem'] ?? null);
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        else Mail::to($to)->cc($cc)->send($mail);
+        return response()->json(['ok' => true, 'emails' => $emails]);
+    }
+
     private function reajusteElegiveis(?int $clienteId = null, ?string $indexType = null): \Illuminate\Support\Collection
     {
         $q = Contract::query()
@@ -3569,6 +3685,7 @@ class ContractController extends Controller
             'pct_reajuste'            => $c->pct_reajuste !== null ? (float) $c->pct_reajuste : null,
             'data_ultimo_reajuste'    => optional($c->data_ultimo_reajuste)->toDateString(),
             'data_proximo_reajuste'   => optional($prox)->toDateString(),
+            'data_aviso'              => $prox ? $prox->copy()->subMonthNoOverflow()->toDateString() : null,
             'dias_para_vencimento'    => $dias,
             'status_reajuste'         => $status,
             'taxa_reajuste'           => $taxaCanon,
