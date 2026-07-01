@@ -89,4 +89,15 @@ return [
         'client_secret' => env('GRAPH_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
     ],
 
+    /*
+     * Clicksign (assinatura eletrônica — API v3 Envelopes). DORMENTE até preencher o token:
+     * ClicksignService::enabled() retorna false e nada é enviado.
+     * 'env' = sandbox|production define a base URL.
+     */
+    'clicksign' => [
+        'token'          => env('CLICKSIGN_TOKEN'),
+        'webhook_secret' => env('CLICKSIGN_WEBHOOK_SECRET'),
+        'env'            => env('CLICKSIGN_ENV', 'sandbox'),
+    ],
+
 ];

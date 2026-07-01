@@ -29,7 +29,6 @@ class ChatMentionNotification extends Notification implements ShouldQueue
         public string $openUrl,
         public string $cardUrl,
         public string $recipientName = 'você',
-        public string $customerName = '',
     ) {}
 
     public function via($notifiable): array
@@ -55,7 +54,6 @@ class ChatMentionNotification extends Notification implements ShouldQueue
                 'openUrl'        => $this->openUrl,
                 'cardUrl'        => $this->cardUrl,
                 'recipientName'  => $this->recipientName,
-                'customerName'   => $this->customerName,
             ]);
     }
 }

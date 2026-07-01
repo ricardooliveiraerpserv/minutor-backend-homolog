@@ -22,12 +22,28 @@ class Customer extends Model
         'company_name',
         'cgc',
         'active',
+        'crm_status',
         'executive_id',
         'code_prefix',
         'fechamento_email',
         'emails_administrativos',
         'secondary_cgcs',
+        // Vínculo jurídico (Contrato Guarda-Chuva) como METADADO — Proposal-Centric, sem entidade própria.
+        'umbrella_contract_numero', 'umbrella_contract_assinatura', 'umbrella_contract_vigencia',
     ];
+
+    /** Status do ciclo comercial (CRM) — empresa única (mesma entidade do cliente).
+     *  "contrato_ativo" foi UNIFICADO em "cliente" (mesmo conceito p/ o negócio). */
+    public const CRM_STATUSES = ['lead', 'prospect', 'cliente', 'em_renovacao', 'inativo'];
+
+    /** Status em que o CNPJ/CPF é OBRIGATÓRIO (Item 1 — Opção A). Lead/Prospect ficam livres. */
+    public const CGC_REQUIRED_STATUSES = ['cliente', 'em_renovacao'];
+
+    /** Regra: este status exige CNPJ preenchido? */
+    public static function statusRequiresCgc(?string $status): bool
+    {
+        return in_array($status, self::CGC_REQUIRED_STATUSES, true);
+    }
 
     /**
      * The attributes that should be cast.
@@ -71,7 +87,7 @@ class Customer extends Model
      */
     public function isValidCgc(): bool
     {
-        $cgc = preg_replace('/[^0-9]/', '', $this->cgc);
+        $cgc = preg_replace('/[^0-9]/', '', $this->cgc ?? '');
         
         // Verifica se é CPF (11 dígitos)
         if (strlen($cgc) === 11) {
@@ -156,7 +172,7 @@ class Customer extends Model
      */
     public function getFormattedCgcAttribute(): string
     {
-        $cgc = preg_replace('/[^0-9]/', '', $this->cgc);
+        $cgc = preg_replace('/[^0-9]/', '', $this->cgc ?? '');
         
         if (strlen($cgc) === 11) {
             // Formata como CPF: 000.000.000-00
@@ -183,7 +199,7 @@ class Customer extends Model
      */
     public function getCgcTypeAttribute(): string
     {
-        $cgc = preg_replace('/[^0-9]/', '', $this->cgc);
+        $cgc = preg_replace('/[^0-9]/', '', $this->cgc ?? '');
         
         if (strlen($cgc) === 11) {
             return 'CPF';
@@ -224,4 +240,16 @@ class Customer extends Model
     {
         return $this->hasMany(CustomerContact::class);
     }
-} 
+
+    /** CRM — perfil empresarial 1:1 (firmográficos). */
+    public function crmProfile(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(CustomerCrmProfile::class);
+    }
+
+    /** CRM — tags/rótulos da empresa. */
+    public function tags(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(CrmTag::class, 'customer_tag');
+    }
+}

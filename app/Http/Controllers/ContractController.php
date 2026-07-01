@@ -123,6 +123,8 @@ class ContractController extends Controller
             // Subprojeto faturado: além do card do filho (Início Autorizado), gera um card de
             // aporte (Novo Contrato) no projeto pai, valorado pelas horas/valor-hora do filho.
             'sera_faturado'          => 'boolean',
+            // CRM: quando o contrato nasce de uma oportunidade GANHA, vincula a opp (idempotente).
+            'opportunity_id'         => 'nullable|exists:crm_opportunities,id',
             'contacts'               => 'nullable|array',
             'contacts.*.name'        => 'required|string',
             'contacts.*.cargo'       => 'nullable|string',
@@ -139,8 +141,8 @@ class ContractController extends Controller
             // não em "Novo Contrato" (o contrato pai já está aprovado; o filho não passa pela
             // revisão de novo contrato). Demais contratos nascem em rascunho/backlog.
             $isSubproject = !empty($validated['parent_project_id']);
-            // 'sera_faturado' não é coluna de Contract — é só o gatilho do aporte do filho.
-            $data = collect($validated)->except(['contacts', 'sera_faturado'])->merge([
+            // 'sera_faturado'/'opportunity_id' não são colunas de Contract — gatilhos auxiliares.
+            $data = collect($validated)->except(['contacts', 'sera_faturado', 'opportunity_id'])->merge([
                 'created_by_id' => auth()->id(),
                 'status'        => $isSubproject ? Contract::STATUS_INICIO_AUTORIZADO : Contract::STATUS_RASCUNHO,
                 'kanban_status' => $isSubproject ? Contract::KANBAN_INICIO_AUTORIZADO : Contract::KANBAN_BACKLOG,
@@ -161,6 +163,34 @@ class ContractController extends Controller
 
             // Contatos do contrato espelham no cadastro da empresa (upsert; nunca deleta).
             $this->syncContactsToCustomerRegistry((int) $validated['customer_id'], $validated['contacts'] ?? []);
+
+            // CRM: vincula a oportunidade GANHA ao contrato (mesmo fluxo do CrmConversionController,
+            // idempotente — 1 opp → 1 contrato): contract_id + evento + status comercial + migração de investimento.
+            if (!empty($validated['opportunity_id'])) {
+                $opp = \App\Models\CrmOpportunity::find($validated['opportunity_id']);
+                if ($opp && !$opp->contract_id) {
+                    $opp->update(['contract_id' => $contract->id]);
+                    \App\Models\CrmOpportunityEvent::log($opp->id, 'converted', [
+                        'to_value' => "Contrato #{$contract->id}",
+                        'meta'     => ['contract_id' => $contract->id],
+                    ]);
+                    $cust = Customer::find($opp->customer_id);
+                    if ($cust && in_array($cust->crm_status, ['lead', 'prospect', 'cliente'], true)) {
+                        $cust->update(['crm_status' => 'cliente']);
+                    }
+                    if ($cust) {
+                        app(\App\Services\InvestimentoComercialService::class)->promoverLeadParaCliente($cust->fresh('crmProfile'));
+                    }
+                    // Marca a proposta vencedora como CONVERTIDA → Gestão de Propostas a move para "Convertida"
+                    // automaticamente, qualquer que seja a origem do contrato (Pipeline ou Gestão). Fonte única.
+                    $propVencedora = \App\Models\CrmProposal::where('opportunity_id', $opp->id)->whereNull('deleted_at')
+                        ->whereIn('status', ['assinada', 'liberada', 'aguardando_assinatura', 'enviada', 'aprovada'])
+                        ->orderByDesc('versao')->orderByDesc('id')->first();
+                    if ($propVencedora) $propVencedora->update(['status' => 'convertida']);
+                }
+                // Anexa automaticamente a PROPOSTA ASSINADA da oportunidade ao contrato (server-side, robusto).
+                $this->autoAnexarPropostaAssinada($contract, (int) $validated['opportunity_id']);
+            }
 
             // Subprojeto FATURADO → nasce também um card de APORTE em "Novo Contrato".
             // O Kanban só exibe aporte de projeto PAI, então o aporte é anexado ao pai,
@@ -874,7 +904,7 @@ class ContractController extends Controller
     public function generateProject(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'coordinator_ids'   => 'nullable|array|max:1',
+            'coordinator_ids'   => 'nullable|array',
             'coordinator_ids.*' => 'integer|exists:users,id',
         ]);
 
@@ -1025,6 +1055,8 @@ class ContractController extends Controller
             $project = \App\Models\Project::find($contract->project_id);
             if (!$project) return;
 
+            // Escopa a audiência "coordenador" ao coordenador recém-atribuído da
+            // coluna (não a todos os coordenadores do pivot).
             $project->setRelation('coordinators', \App\Models\User::whereIn('id', [$coordinatorId])->where('enabled', true)->get());
 
             $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('project.coordinator_assigned', [
@@ -1071,6 +1103,45 @@ class ContractController extends Controller
         }
     }
 
+    /**
+     * Anexa a PROPOSTA ASSINADA da oportunidade ao contrato (server-side). Copia o arquivo do
+     * Attachment da proposta para o caminho do contrato e registra como anexo "proposta".
+     * Best-effort e idempotente (não duplica se já houver anexo de proposta).
+     */
+    private function autoAnexarPropostaAssinada(Contract $contract, ?int $oppId): void
+    {
+        if (!$oppId) return;
+        try {
+            $jaTem = app(\App\Attachments\AttachmentService::class)
+                ->listFor('CONTRACT', $contract->id, auth()->user() ?? \App\Models\User::find($contract->created_by_id), 'proposta');
+            if ($jaTem->isNotEmpty()) return;
+        } catch (\Throwable $e) { /* segue */ }
+
+        $prop = \App\Models\CrmProposal::where('opportunity_id', $oppId)->whereNull('deleted_at')
+            ->whereIn('status', ['assinada', 'liberada', 'convertida'])->whereNotNull('document_id')
+            ->orderByDesc('versao')->orderByDesc('id')->first();
+        $doc = $prop ? \App\Models\Document::find($prop->document_id) : null;
+        $srcId = $doc?->signed_attachment_id ?? $doc?->attachment_id;
+        $src = $srcId ? \App\Models\Attachment::find($srcId) : null;
+        if (!$src) return;
+        try {
+            $disk = \Illuminate\Support\Facades\Storage::disk($src->storage_provider ?: config('filesystems.default'));
+            if (!$disk->exists($src->storage_path)) return;
+            $ext  = $src->extension ?: 'pdf';
+            $dest = "contracts/{$contract->id}/attachments/" . \Illuminate\Support\Str::uuid() . ".{$ext}";
+            $disk->copy($src->storage_path, $dest);
+            app(\App\Attachments\AttachmentService::class)->registerExisting(auth()->user() ?? \App\Models\User::find($contract->created_by_id), [
+                'entity_type'   => 'CONTRACT',
+                'entity_id'     => $contract->id,
+                'category'      => self::mapAttachmentTypeToCategory('proposta'),
+                'storage_path'  => $dest,
+                'original_name' => $src->original_name ?: ('Proposta-' . ($prop->codigo ?? $prop->id) . '-assinada.pdf'),
+                'mime_type'     => $src->mime_type ?: 'application/pdf',
+                'metadata'      => ['legacy_type' => 'proposta', 'origem' => 'proposta_assinada_auto', 'proposal_id' => $prop->id],
+            ]);
+        } catch (\Throwable $e) { /* best-effort: não quebra a criação do contrato */ }
+    }
+
     public function uploadAttachment(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
@@ -1094,6 +1165,7 @@ class ContractController extends Controller
 
         // Subprojeto faturado: a proposta/aprovação do contrato também alimenta o APORTE
         // gerado no pai (mantém "no filho e no aporte" mesmo antes do projeto-filho existir).
+        // Vínculo pelo CÓDIGO do subprojeto na descrição do aporte. Idempotente, best-effort.
         try {
             if (
                 in_array($request->input('type'), ['proposta', 'aprovacao_cliente'], true)
@@ -1528,7 +1600,8 @@ class ContractController extends Controller
                 ]);
 
                 // Projeto já existia: coordenador (re)atribuído ao mover para a
-                // coluna dele. Notifica o coordenador da coluna (Modelo 2).
+                // coluna dele. Notifica o coordenador da coluna (Modelo 2 —
+                // direcionado, sem reincomodar cliente/executivo do broadcast).
                 if ($coordinatorId) {
                     $this->notifyCoordinatorAssigned($contract->fresh(['customer', 'contacts']), (int) $coordinatorId);
                 }
@@ -1739,7 +1812,8 @@ class ContractController extends Controller
                 ]);
             }
 
-            // Modelo 2: coordenador (re)atribuído num projeto já gerado — notifica o NOVO coordenador.
+            // Modelo 2: coordenador (re)atribuído num projeto já gerado — notifica
+            // o NOVO coordenador (workflow configurável project.coordinator_assigned).
             if ($project->contract_id) {
                 $assignContract = \App\Models\Contract::find($project->contract_id);
                 if ($assignContract) {
@@ -2175,7 +2249,7 @@ class ContractController extends Controller
 
         if ($contract->aditivo_field === 'horas_contratadas') {
             $rate = (float) ($ap->hourly_rate ?? 0);
-            if ($rate <= 0) return null;
+            if ($rate <= 0) return null; // sem valor-hora não há "valor do contrato"
             $hours = $which === 'old'
                 ? ($contract->aditivo_old_value !== null ? (float) $contract->aditivo_old_value : null)
                 : (float) $contract->horas_contratadas;
@@ -3126,6 +3200,280 @@ class ContractController extends Controller
             }
         }
         return $achou ? round(($fator - 1) * 100, 4) : null;
+    }
+
+    // ─── Assinatura Eletrônica (pré-requisitos Clicksign) ────────────────────────
+
+    /** POST /contracts/{contract}/gerar-documento — gera o Document OFICIAL do contrato (PDF). */
+    public function gerarDocumento(\Illuminate\Http\Request $request, Contract $contract, \App\Documents\ContractDocumentService $svc): \Illuminate\Http\JsonResponse
+    {
+        if (empty($contract->customer_id)) {
+            return response()->json(['message' => 'Contrato sem empresa vinculada.'], 422);
+        }
+        $doc = $svc->gerar($contract, $request->user(), true);
+        return response()->json(['data' => [
+            'document_id'       => $doc->id,
+            'versao'            => $doc->versao,
+            'download_url'      => "/documents/{$doc->id}/download",
+            'status_assinatura' => $doc->status_assinatura,
+        ]]);
+    }
+
+    /** GET /contracts/{contract}/assinatura — painel "Assinatura Eletrônica" (Item 8 + envio 4.2). */
+    public function assinatura(Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        $contract->loadMissing(['contractDocument', 'crmProposal:id,codigo,versao', 'proposalDocument:id,versao']);
+        $doc = $contract->contractDocument;
+
+        $ativo = $contract->activeEnvelope()->with('signers')->first();
+        $envelopeAtivo = $ativo ? [
+            'id'           => $ativo->id,
+            'status'       => $ativo->status,
+            'environment'  => $ativo->environment,
+            'motivo_envio' => $ativo->motivo_envio,
+            'sent_at'      => optional($ativo->sent_at)->toIso8601String(),
+            'clicksign_envelope_id' => $ativo->clicksign_envelope_id,
+            'signers'      => $ativo->signers->map(fn ($s) => [
+                'name' => $s->name, 'email' => $s->email, 'sign_order' => $s->sign_order,
+                'status' => $s->status, 'sign_url' => $s->sign_url,
+            ])->all(),
+        ] : null;
+        $podeEnviar = $doc && $contract->status === Contract::STATUS_EMITIDO && !$ativo;
+
+        // Checklist de Liberação (Fase 4.5)
+        $contract->loadMissing(['releaseChecklist.checkedBy:id,name', 'liberadoPor:id,name', 'bloqueadoPor:id,name']);
+        $checklistSvc = app(\App\Services\ContractReleaseChecklistService::class);
+        $checklist = $contract->releaseChecklist->map(fn ($it) => [
+            'item_key' => $it->item_key, 'label' => $it->label, 'obrigatorio' => $it->obrigatorio,
+            'aplicavel' => $it->aplicavel, 'checked' => $it->checked,
+            'checked_by' => $it->checkedBy?->name, 'checked_at' => optional($it->checked_at)->toIso8601String(),
+            'auto' => $it->item_key === 'contrato_assinado',
+        ])->values()->all();
+        $podeLiberar = $contract->status === Contract::STATUS_AGUARDANDO_LIBERACAO && $checklistSvc->podeLiberar($contract);
+
+        $eventos = [];
+        $anexos  = ['assinado' => null, 'certificado' => null, 'evidencias' => null];
+        if ($doc) {
+            $eventos = \App\Models\DocumentEvent::where('document_id', $doc->id)
+                ->orderByDesc('sequence_number')->limit(50)->get(['event_type', 'created_at'])
+                ->map(fn ($e) => ['tipo' => $e->event_type, 'em' => optional($e->created_at)->toIso8601String()])->all();
+            foreach (\App\Models\Attachment::where('entity_type', 'DOCUMENT')->where('entity_id', $doc->id)->get() as $a) {
+                $info = ['id' => $a->id, 'url' => "/api/v1/attachments/{$a->id}/url", 'size' => (int) $a->size_bytes, 'em' => optional($a->created_at)->toIso8601String(), 'versao' => $doc->versao];
+                if ($a->category === 'signed_pdf') $anexos['assinado'] = $info;
+                if ($a->category === 'assinatura_certificado') $anexos['certificado'] = $info;
+                if ($a->category === 'assinatura_evidencias') $anexos['evidencias'] = $info;
+            }
+        }
+        $sig = $doc?->status_assinatura ?: \App\Models\Document::SIG_NAO_ENVIADO;
+
+        return response()->json(['data' => [
+            // Fluxo COMERCIAL (operacional) — SEPARADO do jurídico (Item 4).
+            'status_operacional' => $contract->status,
+            // Fluxo JURÍDICO (assinatura) — vive no Document.
+            'status_assinatura'       => $sig,
+            'status_assinatura_label' => \App\Models\Document::SIG_LABELS[$sig] ?? $sig,
+            // Envio para assinatura (Fase 4.2)
+            'clicksign_enabled'   => \App\Services\Clicksign\ClicksignService::enabled(),
+            'clicksign_ambiente'  => app(\App\Services\Clicksign\ClicksignService::class)->environment(),
+            'pode_enviar'         => $podeEnviar,
+            'envelope_ativo'      => $envelopeAtivo,
+            'documento' => $doc ? [
+                'id' => $doc->id, 'versao' => $doc->versao,
+                'gerado_em'    => optional($doc->generated_at)->toIso8601String(),
+                'assinado_em'  => optional($doc->signed_at)->toIso8601String(),
+                'download_url' => "/documents/{$doc->id}/download",
+            ] : null,
+            // Liberação operacional (Fase 4.5)
+            'checklist'    => $checklist,
+            'pode_liberar' => $podeLiberar,
+            'liberacao'    => $contract->liberado_em ? [
+                'liberado_por' => $contract->liberadoPor?->name, 'liberado_em' => optional($contract->liberado_em)->toIso8601String(),
+                'observacao' => $contract->liberacao_observacao,
+            ] : null,
+            'bloqueio'     => $contract->bloqueado_em ? [
+                'bloqueado_por' => $contract->bloqueadoPor?->name, 'bloqueado_em' => optional($contract->bloqueado_em)->toIso8601String(),
+                'motivo' => $contract->motivo_bloqueio,
+            ] : null,
+            'anexos' => $anexos,
+            'captura' => (function () use ($contract) {
+                $env = $contract->signatureEnvelopes()->first();
+                return $env && $env->capture_status ? ['status' => $env->capture_status, 'em' => optional($env->captured_at)->toIso8601String(), 'erro' => $env->capture_error] : null;
+            })(),
+            'origem' => $contract->crmProposal ? [
+                'proposal_id'  => $contract->crm_proposal_id,
+                'codigo'       => $contract->crmProposal->codigo,
+                'versao'       => $contract->proposal_version ?? $contract->crmProposal->versao,
+                'proposal_document_version' => $contract->proposal_document_version,
+                'proposal_document_hash'    => $contract->proposal_document_hash ? substr($contract->proposal_document_hash, 0, 12) : null,
+                'proposta_url' => "/crm/propostas/{$contract->crm_proposal_id}",
+                'proposal_document_download' => $contract->proposal_document_id ? "/documents/{$contract->proposal_document_id}/download" : null,
+            ] : null,
+            'eventos' => $eventos,
+        ]]);
+    }
+
+    /** POST /contracts/{contract}/assinatura/enviar — Fase 4.2: envia o contrato para assinatura (Clicksign v3). */
+    public function enviarAssinatura(\Illuminate\Http\Request $request, Contract $contract, \App\Services\Clicksign\ClicksignService $clicksign): \Illuminate\Http\JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !in_array($user->type, ['admin', 'administrativo'], true)) {
+            return response()->json(['message' => 'Sem permissão para enviar o contrato para assinatura.'], 403);
+        }
+
+        $v = $request->validate([
+            'signers'                => 'required|array|min:1',
+            'signers.*.name'         => 'required|string|max:160',
+            'signers.*.email'        => 'nullable|email',
+            'signers.*.documentation' => 'nullable|string|max:20',
+            'signers.*.sign_order'   => 'nullable|integer|min:1',
+            'signers.*.action'       => 'nullable|in:sign,agree,provide_evidence',
+            'signers.*.auth'         => 'nullable|in:email,icp_brasil,whatsapp',
+            'signers.*.role'         => 'nullable|string|max:32',
+            'deadline_at'            => 'nullable|date',
+            'subject'                => 'nullable|string|max:200',
+        ]);
+
+        // Pré-condições (4.2).
+        $contract->loadMissing('contractDocument');
+        if (!$contract->contract_document_id || !$contract->contractDocument) {
+            return response()->json(['message' => 'Gere o documento oficial do contrato antes de enviar para assinatura.'], 422);
+        }
+        if ($contract->status !== Contract::STATUS_EMITIDO) {
+            return response()->json(['message' => 'O contrato precisa estar no status "Emitido" para ser enviado.'], 422);
+        }
+        if ($contract->activeEnvelope()->exists()) {
+            return response()->json(['message' => 'Já existe um envelope de assinatura ativo para este contrato.'], 422);
+        }
+
+        try {
+            $envelope = $clicksign->enviar($contract, $v['signers'], [
+                'deadline_at' => $v['deadline_at'] ?? null,
+                'subject'     => $v['subject'] ?? null,
+                'motivo_envio' => 'inicial',
+            ], $user);
+        } catch (\Throwable $e) {
+            \Log::error('Falha ao enviar contrato para assinatura', ['contract' => $contract->id, 'erro' => $e->getMessage()]);
+            return response()->json(['message' => 'Falha ao enviar para assinatura: ' . $e->getMessage()], 502);
+        }
+
+        // Transições de status (jurídico no Document; operacional no Contract).
+        $doc = $contract->contractDocument;
+        $doc->setSignatureStatus(\App\Models\Document::SIG_ENVIADO, \App\Models\DocumentEvent::TYPE_ASSINATURA_SOLICITADA, [
+            'envelope_id' => $envelope->id, 'clicksign_envelope_id' => $envelope->clicksign_envelope_id,
+            'signers' => array_map(fn ($s) => ['name' => $s['name'] ?? null, 'email' => $s['email'] ?? null], $v['signers']),
+        ], $user->id);
+        $doc->setSignatureStatus(\App\Models\Document::SIG_ASSINATURA_PENDENTE);
+        $contract->update(['status' => Contract::STATUS_AGUARDANDO_ASSINATURA]);
+
+        \App\Models\ContractEvent::create([
+            'contract_id'  => $contract->id,
+            'event_type'   => 'assinatura_solicitada',
+            'to_value'     => 'Enviado para assinatura (' . count($v['signers']) . ' signatário(s))',
+            'triggered_by' => $user->id,
+            'meta'         => [
+                'envelope_id' => $envelope->id,
+                'clicksign_envelope_id' => $envelope->clicksign_envelope_id,
+                'environment' => $envelope->environment,
+                'stub'        => $clicksign->usandoStub(),
+                'signers'     => $envelope->signers->map(fn ($s) => ['name' => $s->name, 'sign_order' => $s->sign_order])->all(),
+            ],
+        ]);
+
+        return response()->json(['data' => [
+            'envelope_id'  => $envelope->id,
+            'status'       => $envelope->status,
+            'environment'  => $envelope->environment,
+            'stub'         => $clicksign->usandoStub(),
+            'status_assinatura' => $doc->fresh()->status_assinatura,
+            'contract_status'   => $contract->fresh()->status,
+            'signers'      => $envelope->signers->map(fn ($s) => ['name' => $s->name, 'sign_order' => $s->sign_order, 'sign_url' => $s->sign_url, 'status' => $s->status])->all(),
+        ]], 201);
+    }
+
+    // ─── Liberação Operacional (Fase 4.5) ────────────────────────────────────────
+
+    private function podeGerirLiberacao(Request $request): bool
+    {
+        $u = $request->user();
+        return $u && in_array($u->type, ['admin', 'administrativo'], true);
+    }
+
+    /** POST /contracts/{contract}/checklist — marca/desmarca um item do Checklist de Liberação. */
+    public function checklistMarcar(Request $request, Contract $contract, \App\Services\ContractReleaseChecklistService $svc): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+        $v = $request->validate(['item_key' => 'required|string|max:48', 'checked' => 'required|boolean']);
+        if ($v['item_key'] === 'contrato_assinado') {
+            return response()->json(['message' => 'O item "Contrato assinado" é automático (assinatura jurídica).'], 422);
+        }
+        $svc->instanciar($contract);
+        $item = $svc->marcar($contract, $v['item_key'], $v['checked'], $request->user()->id);
+        if (!$item) return response()->json(['message' => 'Item não encontrado.'], 404);
+        return response()->json(['data' => ['item_key' => $item->item_key, 'checked' => $item->checked, 'pode_liberar' => $svc->podeLiberar($contract)]]);
+    }
+
+    /** POST /contracts/{contract}/liberar — Liberação Operacional (aguardando_liberacao → liberado_execucao). */
+    public function liberar(Request $request, Contract $contract, \App\Services\ContractReleaseChecklistService $svc): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão para liberar o contrato.'], 403);
+        }
+        $v = $request->validate(['observacao' => 'nullable|string|max:1000']);
+
+        if ($contract->status !== Contract::STATUS_AGUARDANDO_LIBERACAO) {
+            return response()->json(['message' => 'O contrato precisa estar em "Aguardando Liberação".'], 422);
+        }
+        $svc->instanciar($contract);
+        if (!$svc->podeLiberar($contract)) {
+            return response()->json(['message' => 'Existem itens obrigatórios do checklist pendentes.'], 422);
+        }
+
+        $contract->update([
+            'status'              => Contract::STATUS_LIBERADO_EXECUCAO,
+            'liberado_por'        => $request->user()->id,
+            'liberado_em'         => now(),
+            'liberacao_observacao' => $v['observacao'] ?? null,
+        ]);
+        \App\Models\ContractEvent::create([
+            'contract_id' => $contract->id, 'event_type' => 'liberado_execucao',
+            'to_value' => 'Liberado para execução', 'triggered_by' => $request->user()->id,
+            'meta' => ['observacao' => $v['observacao'] ?? null],
+        ]);
+        return response()->json(['data' => ['status' => $contract->status, 'liberado_em' => optional($contract->liberado_em)->toIso8601String()]]);
+    }
+
+    /** POST /contracts/{contract}/bloquear — HOLD operacional reversível (NÃO altera o status). */
+    public function bloquear(Request $request, Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+        $v = $request->validate(['motivo' => 'required|string|max:500']);
+        $contract->update(['bloqueado_por' => $request->user()->id, 'bloqueado_em' => now(), 'motivo_bloqueio' => $v['motivo']]);
+        \App\Models\ContractEvent::create([
+            'contract_id' => $contract->id, 'event_type' => 'bloqueado',
+            'to_value' => 'Bloqueado: ' . $v['motivo'], 'triggered_by' => $request->user()->id,
+        ]);
+        return response()->json(['data' => ['bloqueado' => true]]);
+    }
+
+    /** POST /contracts/{contract}/desbloquear — remove o HOLD operacional. */
+    public function desbloquear(Request $request, Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        if (!$this->podeGerirLiberacao($request)) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+        if (!$contract->bloqueado_em) {
+            return response()->json(['message' => 'O contrato não está bloqueado.'], 422);
+        }
+        $contract->update(['bloqueado_por' => null, 'bloqueado_em' => null, 'motivo_bloqueio' => null]);
+        \App\Models\ContractEvent::create([
+            'contract_id' => $contract->id, 'event_type' => 'desbloqueado',
+            'to_value' => 'Desbloqueado', 'triggered_by' => $request->user()->id,
+        ]);
+        return response()->json(['data' => ['bloqueado' => false]]);
     }
 
 }

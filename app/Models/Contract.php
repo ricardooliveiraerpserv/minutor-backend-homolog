@@ -26,10 +26,19 @@ class Contract extends Model
         // Aditivo: altera um projeto pai/independente (não gera projeto novo)
         'is_aditivo', 'aditivo_project_id', 'aditivo_field', 'aditivo_effective_from', 'aditivo_old_value',
         'aditivo_changes',
+        // Assinatura eletrônica (pré-requisitos): Document oficial + rastreabilidade/congelamento da origem
+        'contract_document_id', 'crm_proposal_id', 'proposal_version',
+        'proposal_document_id', 'proposal_document_version', 'proposal_document_hash', 'proposal_calc_snapshot',
+        // Fase 4.1 — liberação/bloqueio operacional + hierarquia de contratos
+        'liberado_por', 'liberado_em', 'liberacao_observacao',
+        'bloqueado_por', 'bloqueado_em', 'motivo_bloqueio', 'parent_contract_id',
     ];
 
     protected $casts = [
         'aditivo_changes'        => 'array',
+        'proposal_calc_snapshot' => 'array',
+        'liberado_em'            => 'datetime',
+        'bloqueado_em'           => 'datetime',
         'cobra_despesa_cliente'  => 'boolean',
         'expectativa_inicio'     => 'date:Y-m-d',
         'generated_at'           => 'datetime',
@@ -58,6 +67,12 @@ class Contract extends Model
     const STATUS_APROVADO          = 'aprovado';
     const STATUS_INICIO_AUTORIZADO = 'inicio_autorizado';
     const STATUS_ATIVO             = 'ativo';
+    // Fase 4.1 — fluxo operacional (Clicksign + liberação). Projeção coarse, separada do jurídico.
+    const STATUS_EMITIDO               = 'emitido';
+    const STATUS_AGUARDANDO_ASSINATURA = 'aguardando_assinatura';
+    const STATUS_AGUARDANDO_LIBERACAO  = 'aguardando_liberacao';
+    const STATUS_LIBERADO_EXECUCAO     = 'liberado_execucao';
+    const STATUS_PROJETO_GERADO        = 'projeto_gerado';
 
     // Colunas Fase Demanda
     const KANBAN_BACKLOG         = 'backlog';
@@ -157,6 +172,62 @@ class Contract extends Model
     {
         return $this->belongsTo(Project::class, 'aditivo_project_id');
     }
+
+    /** Document OFICIAL do contrato (document_type=contrato) — o que vai p/ assinatura. */
+    public function contractDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'contract_document_id');
+    }
+
+    /** Proposta que ORIGINOU o contrato (rastreabilidade). */
+    public function crmProposal(): BelongsTo
+    {
+        return $this->belongsTo(CrmProposal::class, 'crm_proposal_id');
+    }
+
+    /** Document (PDF) da PROPOSTA congelado na geração do contrato. */
+    public function proposalDocument(): BelongsTo
+    {
+        return $this->belongsTo(Document::class, 'proposal_document_id');
+    }
+
+    /** 1:N — um contrato é guarda-chuva de vários projetos (implantação/treinamento/sustentação/evoluções). */
+    public function projects(): HasMany
+    {
+        return $this->hasMany(Project::class, 'contract_id');
+    }
+
+    /** Hierarquia: Contrato Principal → Aditivos / Renovação (preserva o original). */
+    public function parentContract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class, 'parent_contract_id');
+    }
+
+    public function aditivos(): HasMany
+    {
+        return $this->hasMany(Contract::class, 'parent_contract_id');
+    }
+
+    /** Envelopes de assinatura (1:N, histórico). */
+    public function signatureEnvelopes(): HasMany
+    {
+        return $this->hasMany(ClicksignEnvelope::class, 'contract_id')->latest('id');
+    }
+
+    /** Envelope ATIVO (no máx. 1). */
+    public function activeEnvelope(): HasMany
+    {
+        return $this->hasMany(ClicksignEnvelope::class, 'contract_id')->where('is_active', true);
+    }
+
+    /** Itens do Checklist de Liberação deste contrato. */
+    public function releaseChecklist(): HasMany
+    {
+        return $this->hasMany(ContractReleaseChecklistItem::class, 'contract_id')->orderBy('ordem');
+    }
+
+    public function liberadoPor(): BelongsTo { return $this->belongsTo(User::class, 'liberado_por'); }
+    public function bloqueadoPor(): BelongsTo { return $this->belongsTo(User::class, 'bloqueado_por'); }
 
     public function contacts(): HasMany
     {

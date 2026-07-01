@@ -37,6 +37,38 @@ Schedule::call(function () {
   ->name('update-accumulated-sold-hours-18:00')
   ->description('Atualiza accumulated_sold_hours - Tentativa 4 (18:00)');
 
+// CRM — snapshot diário de Saúde da Conta (Roadmap Fase 1).
+Schedule::command('crm:snapshot-saude')
+  ->dailyAt('04:30')
+  ->name('crm-snapshot-saude')
+  ->withoutOverlapping();
+
+// CRM — snapshot semanal do forecast (tendência/slippage). Segunda 06:00.
+Schedule::command('crm:forecast-snapshot')
+  ->weeklyOn(1, '06:00')
+  ->name('crm-forecast-snapshot')
+  ->withoutOverlapping();
+
+// CRM — escalona leads negligenciados (sem dono / SLA estourado / parados) p/ os gestores.
+Schedule::command('crm:escalonar-leads')
+  ->dailyAt('07:30')
+  ->name('crm-escalonar-leads')
+  ->withoutOverlapping();
+
+// CRM — gera oportunidades de renovação p/ contratos a 90 dias do vencimento (Item 5).
+Schedule::command('crm:gerar-renovacoes')
+  ->dailyAt('05:00')
+  ->name('crm-gerar-renovacoes')
+  ->description('Cria oportunidades de renovação para contratos próximos do vencimento')
+  ->withoutOverlapping();
+
+// Portal de Propostas — follow-ups automáticos (sem abertura 3d / sem interação 7d) + expiração de links.
+Schedule::command('crm:proposta-followups')
+  ->dailyAt('05:30')
+  ->name('crm-proposta-followups')
+  ->description('Follow-ups das propostas por engajamento e expiração de links do Portal')
+  ->withoutOverlapping();
+
 // Comando de verificação que roda diariamente para garantir execução mensal
 Schedule::command('projects:ensure-monthly-update')
   ->dailyAt('02:00')
