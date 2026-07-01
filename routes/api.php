@@ -427,6 +427,9 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects/{project}/available-hours', [ProjectController::class, 'availableHours'])->name('projects.available-hours');
+            // Projetos reais escolhidos por consultor no investimento.
+            Route::get('/projects/{project}/real-project-assignments', [ProjectController::class, 'realProjectAssignments'])->name('projects.real-project-assignments');
+            Route::get('/projects/{project}/real-project-options', [ProjectController::class, 'realProjectOptions'])->name('projects.real-project-options');
         });
 
         Route::middleware('permission.or.admin:projects.create')->group(function () {

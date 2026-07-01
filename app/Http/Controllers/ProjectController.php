@@ -1410,6 +1410,11 @@ class ProjectController extends Controller
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
+            // Projetos reais por consultor (só faz sentido em projeto de investimento):
+            // mapa { user_id => [real_project_id, ...] }.
+            'real_projects_by_consultant' => 'nullable|array',
+            'real_projects_by_consultant.*' => 'array',
+            'real_projects_by_consultant.*.*' => 'integer|exists:projects,id',
             'coordinator_ids' => 'nullable|array|max:1',
             'coordinator_ids.*' => 'exists:users,id',
             'consultant_group_ids' => 'nullable|array',
@@ -1593,6 +1598,10 @@ class ProjectController extends Controller
 
         // Separar relacionamentos e campos que não pertencem ao model
         $consultantIds      = $validated['consultant_ids'] ?? null;
+        // false = campo não enviado (não mexe); array (mesmo vazio) = sincronizar.
+        $realProjectsByConsultant = array_key_exists('real_projects_by_consultant', $validated)
+            ? ($validated['real_projects_by_consultant'] ?? [])
+            : false;
         $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
         $consultantGroupIds = array_key_exists('consultant_group_ids', $validated) ? $validated['consultant_group_ids'] : false;
         $soldHoursEffectiveFrom = isset($validated['sold_hours_effective_from'])
@@ -1602,7 +1611,7 @@ class ProjectController extends Controller
             ? Carbon::parse($validated['hourly_rate_effective_from'])->startOfMonth()->toDateString()
             : null;
         $previousHourlyRate = $project->hourly_rate;
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
+        unset($validated['consultant_ids'], $validated['real_projects_by_consultant'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
         $previousSoldHours = (float) ($project->sold_hours ?? 0);
@@ -1760,6 +1769,16 @@ class ProjectController extends Controller
         // Atualizar consultores se fornecido
         if ($consultantIds !== null) {
             $project->consultants()->sync($consultantIds);
+        }
+
+        // Projetos reais por consultor (alocação em projeto de investimento).
+        // Só grava se o campo foi enviado E a tabela existe (migração aplicada).
+        if ($realProjectsByConsultant !== false && Schema::hasTable('project_consultant_real_projects')) {
+            try {
+                $this->syncConsultantRealProjects($project, $realProjectsByConsultant);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao sincronizar projetos reais por consultor', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
         }
 
         // Atualizar coordenadores se fornecido
@@ -3330,6 +3349,148 @@ class ProjectController extends Controller
         ]);
 
         return response()->json(['allow_manual_timesheet' => $data['allow']]);
+    }
+
+    // ─── Projetos reais por consultor (alocação em investimento) ──────────────
+
+    /**
+     * Sincroniza os projetos reais escolhidos por consultor neste projeto de
+     * investimento. $map = [ user_id => [real_project_id, ...] ].
+     * Só grava para consultores efetivamente alocados; só reais abertos do MESMO
+     * cliente e que NÃO sejam de investimento.
+     */
+    private function syncConsultantRealProjects(Project $project, array $map): void
+    {
+        $consultantIds = $project->consultants()->pluck('users.id')->map(fn ($id) => (int) $id)->all();
+
+        $validRealIds = Project::where('customer_id', $project->customer_id)
+            ->where('id', '!=', $project->id)
+            ->where(function ($q) {
+                $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $rows = [];
+        $now  = now();
+        foreach ($map as $userId => $realIds) {
+            $userId = (int) $userId;
+            if (!in_array($userId, $consultantIds, true)) {
+                continue;
+            }
+            foreach (array_unique(array_map('intval', (array) $realIds)) as $realId) {
+                if (!in_array($realId, $validRealIds, true)) {
+                    continue;
+                }
+                $rows[] = [
+                    'project_id'      => $project->id,
+                    'user_id'         => $userId,
+                    'real_project_id' => $realId,
+                    'created_at'      => $now,
+                    'updated_at'      => $now,
+                ];
+            }
+        }
+
+        \DB::transaction(function () use ($project, $rows) {
+            \DB::table('project_consultant_real_projects')
+                ->where('project_id', $project->id)
+                ->delete();
+            if (!empty($rows)) {
+                \DB::table('project_consultant_real_projects')->insert($rows);
+            }
+        });
+    }
+
+    /**
+     * Para o modal de Alocação: candidatos a projeto real (todos os projetos
+     * abertos do cliente, não-investimento) + o mapa atual de escolhas por consultor.
+     * GET /projects/{project}/real-project-assignments
+     */
+    public function realProjectAssignments(Request $request, Project $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador() && !$user->isAdministrativo()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $realProjects = Project::with('serviceType')
+            ->where('customer_id', $project->customer_id)
+            ->where('id', '!=', $project->id)
+            ->where(function ($q) {
+                $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+            })
+            ->open()
+            ->orderBy('name')
+            ->get()
+            ->map(fn ($p) => [
+                'id'                        => $p->id,
+                'name'                      => $p->name,
+                'service_type_code'         => $p->serviceType?->code,
+                'is_investimento_comercial' => (bool) $p->is_investimento_comercial,
+                'categoria_interna'         => $p->categoria_interna,
+            ]);
+
+        $assignments = [];
+        if (Schema::hasTable('project_consultant_real_projects')) {
+            $rows = \DB::table('project_consultant_real_projects')
+                ->where('project_id', $project->id)
+                ->get(['user_id', 'real_project_id']);
+            foreach ($rows as $r) {
+                $assignments[(string) $r->user_id][] = (int) $r->real_project_id;
+            }
+        }
+
+        return response()->json([
+            'real_projects' => $realProjects,
+            'assignments'   => (object) $assignments,
+        ]);
+    }
+
+    /**
+     * Para o modal de Apontamento: os projetos reais escolhidos para ESTE
+     * consultor neste projeto de investimento. Se não houver configuração,
+     * cai no fallback: todos os reais abertos do cliente (não bloqueia o apontamento).
+     * GET /projects/{project}/real-project-options?user_id=X
+     */
+    public function realProjectOptions(Request $request, Project $project): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $targetUserId = (int) ($request->get('user_id') ?: $currentUser->id);
+        if ($targetUserId !== (int) $currentUser->id
+            && !$currentUser->isAdmin() && !$currentUser->isCoordenador()) {
+            $targetUserId = (int) $currentUser->id;
+        }
+
+        $realIds = Schema::hasTable('project_consultant_real_projects')
+            ? \DB::table('project_consultant_real_projects')
+                ->where('project_id', $project->id)
+                ->where('user_id', $targetUserId)
+                ->pluck('real_project_id')
+                ->all()
+            : [];
+
+        $query = Project::with('serviceType')->where('id', '!=', $project->id)->open();
+
+        if (!empty($realIds)) {
+            $query->whereIn('id', $realIds);
+        } else {
+            $query->where('customer_id', $project->customer_id)
+                ->where(function ($q) {
+                    $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+                });
+        }
+
+        $items = $query->orderBy('name')->get()->map(fn ($p) => [
+            'id'                        => $p->id,
+            'name'                      => $p->name,
+            'service_type_code'         => $p->serviceType?->code,
+            'is_investimento_comercial' => (bool) $p->is_investimento_comercial,
+            'categoria_interna'         => $p->categoria_interna,
+        ]);
+
+        return response()->json(['items' => $items]);
     }
 
     // ─── Períodos abertos por projeto ────────────────────────────────────────
