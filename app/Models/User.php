@@ -69,6 +69,7 @@ class User extends Authenticatable
         'type',
         'coordinator_type',
         'is_executive',
+        'is_crm_responsavel',
         'can_timesheet_sustentacao',
         'extra_permissions',
         // Funcionário Bizify (separa do resultado ERPSERV no fechamento de consultores)
@@ -131,6 +132,7 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'is_crm_responsavel' => 'boolean',
             'is_bizify' => 'boolean',
             'is_diretor' => 'boolean',
             'is_diretor_projetos' => 'boolean',

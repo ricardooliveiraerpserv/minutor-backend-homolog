@@ -38,7 +38,7 @@ class CardPhaseMovementDispatcher
         ]);
         if (empty($rcpt['to'])) return;
 
-        [$code, $title, $cardUrl, $customerName] = $this->resolveCardInfo($cardType, $cardId);
+        [$code, $title, $cardUrl] = $this->resolveCardInfo($cardType, $cardId);
 
         Notification::route('mail', $rcpt['to'])->notify(
             (new CardPhaseMovementNotification(
@@ -52,13 +52,12 @@ class CardPhaseMovementDispatcher
                 note:           $note,
                 cardUrl:        $cardUrl,
                 recipientName:  'você',
-                customerName:   $customerName,
             ))->withCc($rcpt['cc'])
         );
     }
 
     /**
-     * @return array{0:string,1:string,2:string,3:string} [code, title, cardUrl, customerName]
+     * @return array{0:string,1:string,2:string} [code, title, cardUrl]
      */
     private function resolveCardInfo(string $cardType, int $cardId): array
     {
@@ -68,13 +67,13 @@ class CardPhaseMovementDispatcher
             $r = ContractRequest::find($cardId);
             $code = $r?->code ?? ('REQ-' . str_pad((string) $cardId, 6, '0', STR_PAD_LEFT));
             $title = $r?->title ?? ($r?->subject ?? 'Requisição');
-            return [$code, $title, $base . '/contratos/pipeline?req=' . $cardId, $r?->customer?->name ?? ''];
+            return [$code, $title, $base . '/contratos/pipeline?req=' . $cardId];
         }
 
         $p = Project::find($cardId);
         $code = $p?->code ?? ('PRJ-' . str_pad((string) $cardId, 6, '0', STR_PAD_LEFT));
         $title = $p?->name ?? 'Projeto';
-        return [$code, $title, $base . '/contratos/pipeline?project=' . $cardId, $p?->customer?->name ?? ''];
+        return [$code, $title, $base . '/contratos/pipeline?project=' . $cardId];
     }
 
     private function userRoleLabel(User $u): string
