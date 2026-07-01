@@ -32,6 +32,9 @@ class NavConfigController extends Controller
             if (isset($n['label']) && $n['label'] !== '') $node['label'] = (string) $n['label'];
             if (!empty($n['icon'])) $node['icon'] = (string) $n['icon'];
             if (!empty($n['hidden'])) $node['hidden'] = true;   // ocultar por perfil (nó da cópia)
+            // Override de VISIBILIDADE por usuário no nó (pasta/tela): libera ou esconde só p/ certos usuários.
+            if (!empty($n['users'])) $node['users'] = array_values(array_map('intval', (array) $n['users']));
+            if (!empty($n['deny_users'])) $node['deny_users'] = array_values(array_map('intval', (array) $n['deny_users']));
             if (!empty($n['children'])) $node['children'] = $this->sanitizeTree($n['children']);
             // nó precisa ser tela OU grupo (com label/children)
             if (isset($node['screen']) || isset($node['label']) || isset($node['children'])) {
