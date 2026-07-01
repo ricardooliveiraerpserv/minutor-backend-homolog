@@ -23,9 +23,11 @@ class Project extends Model
     // Contract type constants removidos - agora vem da tabela contract_types
 
     /**
-     * Status constants
+     * Status constants — lifecycle real (single source of truth).
+     * Derivações de coluna/visão usam App\Services\ProjectWorkflowService. Ver ADR 0002.
      */
     public const STATUS_AWAITING_START       = 'awaiting_start';
+    public const STATUS_BACKLOG              = 'backlog';
     public const STATUS_PLANNING             = 'planning';
     public const STATUS_STARTED              = 'started';
     public const STATUS_LIBERADO_PARA_TESTES = 'liberado_para_testes';
@@ -34,11 +36,32 @@ class Project extends Model
     public const STATUS_CANCELLED            = 'cancelled';
     public const STATUS_FINISHED             = 'finished';
 
+    /** Status definidos MANUALMENTE — a automação do cronograma NÃO sobrescreve. */
+    public const MANUAL_STATUSES = [self::STATUS_PAUSED, self::STATUS_CANCELLED, self::STATUS_FINISHED];
+
     /**
      * Expense responsible party constants
      */
     public const EXPENSE_RESPONSIBLE_CONSULTANCY = 'consultancy';
     public const EXPENSE_RESPONSIBLE_CLIENT = 'client';
+
+    /**
+     * Kanban executivo — desacoplado do status técnico.
+     * Status técnico (awaiting_start/started/...) ≠ stage executivo (backlog/planning/...).
+     */
+    public const KANBAN_STAGE_BACKLOG      = 'backlog';
+    public const KANBAN_STAGE_PLANNING     = 'planning';
+    public const KANBAN_STAGE_EXECUTION    = 'execution';
+    public const KANBAN_STAGE_HOMOLOGATION = 'homologation';
+    public const KANBAN_STAGE_CLOSED       = 'closed';
+
+    public const KANBAN_STAGES = [
+        self::KANBAN_STAGE_BACKLOG,
+        self::KANBAN_STAGE_PLANNING,
+        self::KANBAN_STAGE_EXECUTION,
+        self::KANBAN_STAGE_HOMOLOGATION,
+        self::KANBAN_STAGE_CLOSED,
+    ];
 
     /**
      * The attributes that are mass assignable.
@@ -79,6 +102,7 @@ class Project extends Model
         'start_date',
         'expected_end_date',
         'encerramento_date',
+        'saving_notified_at',
         'save_erpserv',
         'max_expense_per_consultant',
         'unlimited_expense',
@@ -88,7 +112,10 @@ class Project extends Model
         'service_type_id',
         'contract_type_id',
         'status',
+        'kanban_stage',
         'allow_negative_balance',
+        'allow_weekend_work',
+        'allow_holiday_work',
         'client_follows_timesheets',
         'extrato_visivel_cliente',
         'proj_sequence',
@@ -105,7 +132,7 @@ class Project extends Model
     /**
      * Atributos calculados incluídos automaticamente no JSON.
      */
-    protected $appends = ['status_display', 'contract_type_display', 'is_auster_frozen'];
+    protected $appends = ['status_display', 'contract_type_display', 'is_operational', 'is_auster_frozen'];
 
     public function getIsAusterFrozenAttribute(): bool
     {
@@ -136,6 +163,8 @@ class Project extends Model
         'timesheet_retroactive_limit_days' => 'integer',
         'allow_manual_timesheets' => 'boolean',
         'allow_negative_balance' => 'boolean',
+        'allow_weekend_work' => 'boolean',
+        'allow_holiday_work' => 'boolean',
         'client_follows_timesheets' => 'boolean',
         'extrato_visivel_cliente' => 'boolean',
         'is_investimento_comercial' => 'boolean',
@@ -144,6 +173,7 @@ class Project extends Model
         'start_date' => 'date:Y-m-d',
         'expected_end_date' => 'date:Y-m-d',
         'encerramento_date' => 'date:Y-m-d',
+        'saving_notified_at' => 'datetime',
         'cobra_despesa_cliente' => 'boolean',
         'permissoes_despesa' => 'array',
         'created_at' => 'datetime',
@@ -199,6 +229,14 @@ class Project extends Model
     }
 
     /**
+     * Espelha isOperational() pro JSON — frontend usa pra decidir UI dual.
+     */
+    public function getIsOperationalAttribute(): bool
+    {
+        return $this->isOperational();
+    }
+
+    /**
      * Relacionamento com customer
      */
     public function customer(): BelongsTo
@@ -247,6 +285,16 @@ class Project extends Model
     public function coordinators(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'project_coordinators')
+                    ->withTimestamps();
+    }
+
+    /**
+     * Clientes com VISÃO GLOBAL do projeto (nível projeto). Enxergam o projeto
+     * inteiro em dias; restrições de card continuam por atividade.
+     */
+    public function clientViewers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'project_client_viewers')
                     ->withTimestamps();
     }
 
@@ -394,6 +442,11 @@ class Project extends Model
         return $this->hasMany(Timesheet::class);
     }
 
+    public function stages(): HasMany
+    {
+        return $this->hasMany(ProjectStage::class)->orderBy('order_index');
+    }
+
     /**
      * Relacionamento com despesas
      */
@@ -477,6 +530,16 @@ class Project extends Model
     }
 
     /**
+     * Scope para projetos em execução REAL — produtividade, SLA, consumo operacional.
+     * Exclui backlog (autorizado mas ainda não executando) e awaiting_start (sem coord).
+     * Ver ProjectWorkflowService::IN_EXECUTION e ADR 0002.
+     */
+    public function scopeInExecution($query)
+    {
+        return $query->whereIn('status', \App\Services\ProjectWorkflowService::IN_EXECUTION);
+    }
+
+    /**
      * Verifica se o projeto está ativo (permite novos lançamentos)
      */
     public function isActive(): bool
@@ -491,6 +554,31 @@ class Project extends Model
     public function isOpen(): bool
     {
         return !in_array($this->status, [self::STATUS_CANCELLED, self::STATUS_FINISHED]);
+    }
+
+    /**
+     * Verifica se o projeto usa modelo OPERACIONAL (etapas + alocação por etapa + cards).
+     * Modelo alternativo: sustentação (alocação direta no projeto, sem etapas).
+     *
+     * Regra (mesma do CLAUDE.md): NÃO-operacional (alocação direta de equipe) ⇔
+     * é contrato — Investimento (is_investimento_comercial) ou serviceType.name
+     * contém "cloud", "bizify", "sustentacao" ou "investimento". Demais (tipo
+     * "Projeto") são operacionais: equipe alocada por atividade do cronograma.
+     *
+     * Ver ADR 0004.
+     */
+    public function isOperational(): bool
+    {
+        // Investimento (comercial/interno) é contrato — aloca equipe direto no
+        // projeto, sem etapas/atividades.
+        if ($this->is_investimento_comercial) return false;
+        $name = strtolower((string) ($this->serviceType?->name ?? ''));
+        if ($name === '') return true; // sem serviceType, default operacional
+        if (str_contains($name, 'sustenta'))    return false;
+        if (str_contains($name, 'cloud'))       return false;
+        if (str_contains($name, 'bizify'))      return false;
+        if (str_contains($name, 'investimento')) return false;
+        return true;
     }
 
     /**
@@ -743,6 +831,142 @@ class Project extends Model
         }
 
         return round($loggedHours * $percent / 100, 2);
+    }
+
+    /**
+     * Pool de horas que o Cronograma pode distribuir entre etapas/aportes.
+     *
+     * Regra (horas do coordenador): as horas disponibilizadas no cronograma são
+     * as LIBERADAS À GESTÃO — ou seja, o banco de coordenação (coordination_hours).
+     * Só libera 100% das horas vendidas quando coordination_hours está zerado ou
+     * não preenchido (coordenador ainda não delimitou o quanto abrir pra gestão).
+     */
+    public function cronogramaPoolHours(): float
+    {
+        $coord = (float) ($this->coordination_hours ?? 0);
+        return $coord > 0 ? $coord : (float) ($this->sold_hours ?? 0);
+    }
+
+    /**
+     * Horas PLANEJADAS que ocupam o pool do cronograma ("Liberado à gestão").
+     * Por etapa-FOLHA (sub-etapas, ou etapas de topo sem filhas): usa hours_planned
+     * próprio da etapa se > 0; senão a soma das horas das atividades NÃO-cliente.
+     * Etapas-mãe não entram (evita contar duas vezes mãe + sub-etapas).
+     *
+     * É a base do teto: planejamento (etapa + atividade) nunca pode passar do pool.
+     * Independe de allow_negative_balance (essa flag só libera APONTAMENTO negativo).
+     *
+     * @param int|null $excludeStageId etapa em edição (some do total; o chamador soma o novo valor).
+     */
+    public function plannedPoolUsage(?int $excludeStageId = null): float
+    {
+        // Contribuição EFETIVA de CADA etapa (mãe e filha): horas próprias se >0;
+        // senão a soma das atividades diretas não-cliente. Como `hours_planned` de uma
+        // etapa-mãe guarda só as horas das atividades DIRETAS dela (não da subárvore),
+        // somar todas as etapas não conta em dobro — cada atividade pertence a 1 etapa.
+        $stages = $this->stages()
+            ->when($excludeStageId, fn ($q) => $q->where('id', '!=', $excludeStageId))
+            ->get(['id', 'hours_planned']);
+
+        $total = 0.0;
+        foreach ($stages as $st) {
+            $own = (float) ($st->hours_planned ?? 0);
+            $total += $own > 0
+                ? $own
+                : (float) \App\Models\StageDelivery::where('stage_id', $st->id)
+                    ->where('client_involved', false)
+                    ->sum('hours_planned');
+        }
+        return $total;
+    }
+
+    /**
+     * Deriva o "Prazo de entrega" (expected_end_date) da última data do cronograma:
+     * o maior entre o fim das etapas (project_stages.expected_end_date) e o prazo das
+     * atividades (stage_deliveries.due_date). Persiste no projeto.
+     *
+     * Regra de negócio (escolha do produto): o prazo SEMPRE segue o cronograma.
+     * Só sincroniza se houver alguma data no cronograma — nunca apaga o prazo de um
+     * projeto sem etapas/atividades datadas.
+     *
+     * @return string|null Nova data (Y-m-d) ou null se o cronograma não tem datas.
+     */
+    public function recalcExpectedEndFromSchedule(): ?string
+    {
+        $latestStage = $this->stages()
+            ->whereNotNull('expected_end_date')
+            ->max('expected_end_date');
+
+        $latestDelivery = \App\Models\StageDelivery::whereHas('stage', fn ($q) =>
+                $q->where('project_id', $this->id))
+            ->whereNotNull('due_date')
+            ->max('due_date');
+
+        $latest = null;
+        foreach ([$latestStage, $latestDelivery] as $d) {
+            if (!$d) continue;
+            $c = \Carbon\Carbon::parse($d)->startOfDay();
+            if (!$latest || $c->gt($latest)) $latest = $c;
+        }
+
+        if (!$latest) {
+            return null;
+        }
+
+        $new = $latest->toDateString();
+        if ($this->expected_end_date?->toDateString() !== $new) {
+            $this->expected_end_date = $new;
+            $this->saveQuietly();
+        }
+        return $new;
+    }
+
+    /**
+     * Status do projeto derivado do cronograma (board Demandas e Projetos).
+     * Regra: o projeto fica na coluna da etapa MENOS avançada ("a última atividade").
+     *   sem etapas → Backlog (awaiting_start)
+     *   etapa derived_status: planejamento→planning · execucao/bloqueada→started ·
+     *   homologacao→liberado_para_testes · concluida→em_producao
+     * NÃO sobrescreve status MANUAL (paused/cancelled/finished). saveQuietly p/ não loopar no observer.
+     */
+    public function recomputeStatusFromStages(): void
+    {
+        if (in_array($this->status, self::MANUAL_STATUSES, true)) return;
+
+        $stages = $this->stages()->withCount([
+            'deliveries',
+            'deliveries as deliveries_done_count'    => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_DONE),
+            'deliveries as deliveries_review_count'  => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_REVIEW),
+            'deliveries as deliveries_waiting_count' => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_WAITING_CLIENT),
+            'deliveries as deliveries_backlog_count' => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_BACKLOG),
+        ])->get();
+
+        // rank: 0 planejamento · 1 execução(/bloqueada) · 2 homologação · 3 produção (concluída)
+        $rankOf = function ($s): int {
+            $total   = (int) ($s->deliveries_count ?? 0);
+            $done    = (int) ($s->deliveries_done_count ?? 0);
+            $review  = (int) ($s->deliveries_review_count ?? 0);
+            $waiting = (int) ($s->deliveries_waiting_count ?? 0);
+            $backlog = (int) ($s->deliveries_backlog_count ?? 0);
+            if ($total === 0)            return 0; // planejamento
+            if ($waiting > 0)            return 1; // bloqueada (aguardando cliente) conta como execução
+            if ($done === $total)        return 3; // concluída → produção
+            if (($review + $done) === $total) return 2; // homologação
+            if ($backlog === 0)          return 1; // execução
+            return 0; // ainda há entrega em backlog → planejamento
+        };
+
+        if ($stages->isEmpty()) {
+            $target = self::STATUS_AWAITING_START; // Backlog
+        } else {
+            $min = min($stages->map($rankOf)->all());
+            $target = [0 => self::STATUS_PLANNING, 1 => self::STATUS_STARTED, 2 => self::STATUS_LIBERADO_PARA_TESTES, 3 => self::STATUS_EM_PRODUCAO][$min];
+        }
+
+        if ($this->status !== $target) {
+            $this->status = $target;
+            $this->saveQuietly();
+        }
     }
 
     /**

@@ -30,6 +30,12 @@ class CustomerContactController extends Controller
             'cargo'       => 'nullable|string|max:255',
             'email'       => 'nullable|email|max:255',
             'phone'       => 'nullable|string|max:50',
+            // CRM
+            'departamento'       => 'nullable|string|max:120',
+            'whatsapp'           => 'nullable|string|max:40',
+            'linkedin'           => 'nullable|string|max:255',
+            'influencia_decisao' => 'nullable|in:alta,media,baixa',
+            'canal_preferido'    => 'nullable|in:email,whatsapp,telefone,linkedin',
         ]);
 
         $contact = CustomerContact::create($validated);
@@ -44,6 +50,12 @@ class CustomerContactController extends Controller
             'cargo'       => 'nullable|string|max:255',
             'email'       => 'nullable|email|max:255',
             'phone'       => 'nullable|string|max:50',
+            // CRM
+            'departamento'       => 'nullable|string|max:120',
+            'whatsapp'           => 'nullable|string|max:40',
+            'linkedin'           => 'nullable|string|max:255',
+            'influencia_decisao' => 'nullable|in:alta,media,baixa',
+            'canal_preferido'    => 'nullable|in:email,whatsapp,telefone,linkedin',
         ]);
 
         $customerContact->update($validated);

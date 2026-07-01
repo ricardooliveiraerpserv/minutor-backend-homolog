@@ -5,8 +5,8 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Cadastro de Perfil → Módulos de navegação. Camada de NAVEGAÇÃO apenas
- * (sem relação com permissões). Por enquanto só Administrativo + Serviços.
+ * Cadastro de Perfil → Módulos de navegação (Serviços / Administrativo).
+ * Camada de NAVEGAÇÃO apenas — não tem relação com permissões/PermissionService.
  */
 class ProfileModule extends Model
 {
@@ -14,24 +14,23 @@ class ProfileModule extends Model
 
     protected $casts = ['modules' => 'array'];
 
-    /** Módulos disponíveis (administrativo PRIMEIRO). */
-    public const MODULES = ['administrativo', 'servicos', 'configurador'];
+    /** Módulos disponíveis. */
+    public const MODULES = ['servicos', 'administrativo', 'crm'];
 
     /** Perfis que participam dos módulos (cliente NÃO entra — mantém portal). */
     public const PROFILES = ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin'];
 
-    /** Defaults quando não há linha cadastrada (administrativo primeiro; configurador só admin). */
+    /** Defaults quando não há linha cadastrada para o perfil. */
     public const DEFAULTS = [
-        'admin'          => ['administrativo', 'servicos', 'configurador'],
-        'administrativo' => ['administrativo'],
-        'coordenador'    => ['administrativo', 'servicos'],
+        'admin'          => ['servicos', 'administrativo', 'crm'],
+        'administrativo' => ['administrativo', 'crm'],
+        'coordenador'    => ['servicos', 'administrativo'],
         'consultor'      => ['servicos'],
         'parceiro_admin' => ['servicos'],
-        // 'cliente' ausente de propósito → [] (sem módulos; acessa o Portal)
+        // 'cliente' ausente de propósito → [] (sem módulos)
     ];
 
-    /** Módulos efetivos de um perfil (linha cadastrada OU default). Não filtra por MODULES
-     *  (admin pode ter módulos custom do Configurador). */
+    /** Módulos efetivos de um perfil (linha cadastrada OU default). */
     public static function forProfile(?string $profile): array
     {
         if (!$profile) {

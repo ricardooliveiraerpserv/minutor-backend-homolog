@@ -214,9 +214,7 @@ class ProjectMessageController extends Controller
         $openUrl = $cardUrl . '&tab=chat';
         $code = $project->code ?? ('PRJ-' . str_pad((string) $project->id, 6, '0', STR_PAD_LEFT));
         $title = $project->name ?? 'Projeto';
-        // Texto COMPLETO no e-mail (antes truncava em 280 chars). Cap alto só como salvaguarda.
-        $excerpt = Str::limit($msg->message ?? '', 5000);
-        $customerName = $project->customer?->name ?? '';
+        $excerpt = Str::limit($msg->message ?? '', 280);
         $role = match ($author->type) {
             'admin' => 'Admin', 'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
             'cliente' => 'Cliente', 'parceiro_admin' => 'Parceiro', 'administrativo' => 'Administrativo',
@@ -233,7 +231,6 @@ class ProjectMessageController extends Controller
             openUrl:        $openUrl,
             cardUrl:        $cardUrl,
             recipientName:  'você',
-            customerName:   $customerName,
         ));
 
         $resolver = app(\App\Workflows\WorkflowRecipientResolver::class);
@@ -252,7 +249,7 @@ class ProjectMessageController extends Controller
 
         // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
         $this->dispatchMentionNotification(CardEnvolvido::TYPE_PROJECT, $project->id, $author, $mentionedIds, [
-            'code' => $code, 'title' => $title, 'role' => $role, 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl, 'customer' => $customerName,
+            'code' => $code, 'title' => $title, 'role' => $role, 'excerpt' => $excerpt, 'openUrl' => $openUrl, 'cardUrl' => $cardUrl,
         ], array_merge($chatTo, $rcpt['cc'] ?? []));
     }
 
@@ -373,40 +370,36 @@ class ProjectMessageController extends Controller
         $user = $request->user();
 
         if (!$user->isAdmin() && !$user->isCoordenador()) {
-            return response()->json(['items' => [], 'unread' => 0]);
+            return response()->json([]);
         }
 
-        $base = ProjectMessage::query()->where('user_id', '!=', $user->id);
+        $query = ProjectMessage::query();
+
         if ($user->isCoordenador()) {
-            $base->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
+            $query->whereHas('project', fn($q) => $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $user->id)));
         }
 
-        $unreadExpr = "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)";
-        $unread = (clone $base)->whereRaw($unreadExpr, [$user->id])->count();
+        $rows = $query
+            ->where('user_id', '!=', $user->id)
+            ->whereRaw(
+                "project_messages.created_at > COALESCE((SELECT last_read_at FROM project_user_reads WHERE user_id = ? AND project_id = project_messages.project_id LIMIT 1), '1970-01-01'::timestamp)",
+                [$user->id]
+            )
+            ->with(['project:id,name,code', 'author:id,name'])
+            ->latest()
+            ->limit(10)
+            ->get()
+            ->map(fn($msg) => [
+                'id'           => $msg->id,
+                'project_id'   => $msg->project_id,
+                'project_name' => $msg->project?->name ?? '—',
+                'project_code' => $msg->project?->code ?? '',
+                'author_name'  => $msg->author?->name ?? '—',
+                'preview'      => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message), 0, 80, '…'),
+                'created_at'   => $msg->created_at,
+            ]);
 
-        // limit=10 no sino (mantém últimas 10 como histórico mesmo após ler); limit alto na tabela "Ver todas".
-        $limit = min(max((int) $request->get('limit', 10), 1), 200);
-        $reads = \Illuminate\Support\Facades\DB::table('project_user_reads')->where('user_id', $user->id)->pluck('last_read_at', 'project_id');
-
-        $rows = $base
-            ->with(['project:id,name,code,customer_id', 'project.customer:id,name', 'author:id,name'])
-            ->latest()->limit($limit)->get()
-            ->map(function ($msg) use ($reads) {
-                $lr = $reads[$msg->project_id] ?? null;
-                return [
-                    'id'            => $msg->id,
-                    'project_id'    => $msg->project_id,
-                    'project_name'  => $msg->project?->name ?? '—',
-                    'project_code'  => $msg->project?->code ?? '',
-                    'customer_name' => $msg->project?->customer?->name ?? null,
-                    'author_name'   => $msg->author?->name ?? '—',
-                    'preview'       => mb_strimwidth(preg_replace('/@\[\d+:([^\]]+)\]/', '@$1', $msg->message), 0, 80, '…'),
-                    'created_at'    => $msg->created_at,
-                    'is_unread'     => !$lr || $msg->created_at->gt(\Illuminate\Support\Carbon::parse($lr)),
-                ];
-            });
-
-        return response()->json(['items' => $rows, 'unread' => $unread]);
+        return response()->json($rows);
     }
 
     public function mentionableUsers(Request $request): JsonResponse

@@ -42,7 +42,8 @@ class AccessControl
 
             // 2) Caminhos de acesso (usuário → perfil)
             $owner   = $ts->user_id === $user->id;
-            $coord   = $user->isCoordenador() && in_array($ts->project_id, $user->coordinatedProjectIds(), true);
+            // coordenador do projeto OU qualquer coordenador em atividade do cronograma (stage_delivery)
+            $coord   = $user->isCoordenador() && (in_array($ts->project_id, $user->coordinatedProjectIds(), true) || !empty($ts->stage_delivery_id));
             $partner = $user->isParceiroAdmin() && $user->partner_id !== null
                        && optional($ts->user)->partner_id === $user->partner_id;
             $broad   = $user->hasAccess($action === 'delete' ? 'hours.delete_all' : 'hours.update_all');
