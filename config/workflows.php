@@ -30,6 +30,7 @@ return [
         'contract.aporte'              => '#34D399', // esmeralda (aporte pai)
         'contract.aporte.child'        => '#6EE7B7', // esmeralda claro (aporte subprojeto)
         'contract.reajuste'            => '#F472B6', // pink
+        'contract.reajuste.estorno'    => '#F87171', // vermelho claro (estorno)
         'contract.reajustes_pendentes' => '#FB923C', // laranja
         'request.phase.backlog'              => '#93C5FD',
         'request.phase.novo_projeto'         => '#60A5FA',
@@ -116,6 +117,7 @@ return [
         'contract.aporte'              => ['contract', 'project', 'customer', 'actor'],
         'contract.aporte.child'        => ['contract', 'project', 'customer', 'actor'],
         'contract.reajuste'            => ['contract', 'customer', 'actor'],
+        'contract.reajuste.estorno'    => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
         'expense.approved_pending_payment' => ['actor'],
         'request.phase.backlog'              => ['request', 'customer', 'actor'],
@@ -197,6 +199,11 @@ return [
             'subject'   => 'Novo aporte de horas no subprojeto — {codigo}',
             'body'      => 'Foi registrado um novo aporte de horas no subprojeto {projeto}.',
             'variables' => ['codigo' => 'Código', 'projeto' => 'Subprojeto', 'cliente' => 'Cliente', 'horas' => 'Horas aportadas', 'saldo' => 'Saldo total', 'data' => 'Data'],
+        ],
+        'contract.reajuste.estorno' => [
+            'subject'   => 'Estorno de reajuste — {codigo}',
+            'body'      => 'O reajuste do contrato {codigo} ({cliente}) foi estornado; o valor voltou ao anterior.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
         ],
         'contract.reajuste' => [
             'subject'   => 'Reajuste do contrato — {codigo}',
@@ -417,11 +424,29 @@ return [
         'contract.reajuste' => [
             'label'       => 'Reajuste de contrato',
             'domain'      => 'Contratos',
-            'description' => 'Ao aplicar reajuste. Os destinatários escolhidos no envio entram sempre; a Central adiciona papéis em cópia.',
+            'description' => 'Ao aplicar reajuste (contrato ou inclusão manual). Os e-mails escolhidos na tela são sempre o destinatário; a Central adiciona papéis internos em cópia (ex.: administrativo/financeiro/diretor).',
             'audiences'   => [
                 'contatos_do_contrato' => 'off',
                 'executivo_de_contas'  => 'off',
                 'cliente'              => 'off',
+                'administrativo'       => 'off',
+                'financeiro'           => 'off',
+                'coordenador'          => 'off',
+                'diretor'              => 'off',
+            ],
+        ],
+        'contract.reajuste.estorno' => [
+            'label'       => 'Estorno de reajuste',
+            'domain'      => 'Contratos',
+            'description' => 'Ao estornar um reajuste (contrato ou inclusão manual). O cliente é avisado do cancelamento; a Central adiciona papéis internos em cópia.',
+            'audiences'   => [
+                'contatos_do_contrato' => 'off',
+                'executivo_de_contas'  => 'off',
+                'cliente'              => 'off',
+                'administrativo'       => 'off',
+                'financeiro'           => 'off',
+                'coordenador'          => 'off',
+                'diretor'              => 'off',
             ],
         ],
         'contract.reajustes_pendentes' => [

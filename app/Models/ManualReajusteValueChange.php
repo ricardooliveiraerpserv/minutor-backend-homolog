@@ -5,19 +5,14 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class ContractValueChange extends Model
+/** Histórico de reajuste de uma inclusão manual (espelha ContractValueChange). */
+class ManualReajusteValueChange extends Model
 {
+    protected $table = 'manual_reajuste_value_changes';
+
     protected $fillable = [
-        'contract_id',
-        'valor_anterior',
-        'valor_novo',
-        'percentual',
-        'indice',
-        'periodo_inicio',
-        'periodo_fim',
-        'periodo_formatado',
-        'user_id',
-        'reversed_at',
+        'manual_reajuste_id', 'valor_anterior', 'valor_novo', 'percentual',
+        'indice', 'periodo_inicio', 'periodo_fim', 'periodo_formatado', 'user_id', 'reversed_at',
     ];
 
     protected $casts = [
@@ -28,11 +23,6 @@ class ContractValueChange extends Model
         'periodo_fim'    => 'date:Y-m-d',
         'reversed_at'    => 'datetime',
     ];
-
-    public function contract(): BelongsTo
-    {
-        return $this->belongsTo(Contract::class);
-    }
 
     public function user(): BelongsTo
     {
