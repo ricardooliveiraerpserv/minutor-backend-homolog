@@ -932,6 +932,22 @@ Route::prefix('v1')->group(function () {
         // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
         Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');
         Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list');
+        // Inclusão manual de reajuste (sem contrato) — só rastreio
+        Route::post('/contracts/reajustes/manual',                    [ContractController::class, 'manualReajusteStore'])->name('contracts.reajustes-manual-store');
+        Route::patch('/contracts/reajustes/manual/{manual}',          [ContractController::class, 'manualReajusteUpdate'])->name('contracts.reajustes-manual-update');
+        Route::delete('/contracts/reajustes/manual/{manual}',         [ContractController::class, 'manualReajusteDestroy'])->name('contracts.reajustes-manual-destroy');
+        // Fluxo de reajuste da inclusão manual (preview/aplicar/histórico/notificar/prévia e-mail)
+        Route::get('/contracts/reajustes/manual/{manual}/adjustment-preview',        [ContractController::class, 'manualAdjustmentPreview'])->name('contracts.reajustes-manual-preview');
+        Route::post('/contracts/reajustes/manual/{manual}/apply-adjustment',         [ContractController::class, 'manualApplyAdjustment'])->name('contracts.reajustes-manual-apply');
+        Route::get('/contracts/reajustes/manual/{manual}/value-changes',             [ContractController::class, 'manualValueChanges'])->name('contracts.reajustes-manual-changes');
+        Route::post('/contracts/reajustes/manual/{manual}/notify-client-adjustment', [ContractController::class, 'manualNotify'])->name('contracts.reajustes-manual-notify');
+        Route::get('/contracts/reajustes/manual/{manual}/adjustment-email-preview',  [ContractController::class, 'manualAdjustmentEmailPreview'])->name('contracts.reajustes-manual-email-preview');
+        Route::post('/contracts/reajustes/manual/{manual}/reverse-adjustment',        [ContractController::class, 'manualReverseAdjustment'])->name('contracts.reajustes-manual-reverse');
+        Route::post('/contracts/reajustes/manual/{manual}/resend-adjustment',         [ContractController::class, 'manualResendAdjustment'])->name('contracts.reajustes-manual-resend');
+        // Prévia do e-mail de reajuste (contrato) + estorno + reenvio
+        Route::get('/contracts/{contract}/adjustment-email-preview',  [ContractController::class, 'contractAdjustmentEmailPreview'])->name('contracts.adjustment-email-preview');
+        Route::post('/contracts/{contract}/reverse-adjustment',       [ContractController::class, 'reverseAdjustment'])->name('contracts.reverse-adjustment');
+        Route::post('/contracts/{contract}/resend-adjustment',        [ContractController::class, 'resendAdjustment'])->name('contracts.resend-adjustment');
         Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');
