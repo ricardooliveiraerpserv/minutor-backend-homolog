@@ -26,6 +26,9 @@ class RoutineGenerator
     public function generateGroup(TaskGroup $g, Carbon $date): int
     {
         $created = 0;
+        // Vigência: fora da janela [start_date, end_date] não gera.
+        if ($g->start_date && $date->lt($g->start_date->copy()->startOfDay())) return 0;
+        if ($g->end_date && $date->gt($g->end_date->copy()->endOfDay())) return 0;
         $userIds = $g->users->pluck('id');
         if ($userIds->isEmpty()) return 0;
 
@@ -56,14 +59,18 @@ class RoutineGenerator
         return $created;
     }
 
-    /** O item-modelo vence nesta data? (daily/weekly por dias da semana, monthly = dia 1). */
+    /** O item-modelo vence nesta data? daily/weekly por dias da semana; monthly = dia do mês
+     *  (recurrence_weekdays[0]; vazio = dia 1). Dia > que o tamanho do mês cai no último dia. */
     private function itemDueOn(TaskGroupItem $item, Carbon $date): bool
     {
         $days = array_map('intval', (array) ($item->recurrence_weekdays ?? []));
+        if ($item->recorrencia === 'monthly') {
+            $target = empty($days) ? 1 : max(1, min(31, (int) $days[0]));
+            return $date->day === min($target, $date->daysInMonth);
+        }
         return match ($item->recorrencia) {
             'daily'   => empty($days) ? true : in_array($date->dayOfWeek, $days, true),
             'weekly'  => !empty($days) && in_array($date->dayOfWeek, $days, true),
-            'monthly' => $date->day === 1,
             default   => false,
         };
     }

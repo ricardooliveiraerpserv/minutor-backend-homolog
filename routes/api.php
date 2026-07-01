@@ -582,6 +582,7 @@ Route::prefix('v1')->group(function () {
         // Histórico de alterações de um apontamento específico (admin/coord)
         Route::middleware('permission.or.admin:hours.approve')->group(function () {
             Route::get('/timesheets/{id}/logs', [\App\Http\Controllers\TimesheetLogController::class, 'forTimesheet'])->name('timesheets.logs');
+            Route::get('/timesheets/{id}/access', [TimesheetController::class, 'access'])->name('timesheets.access');
             Route::get('/timesheet-logs', [\App\Http\Controllers\TimesheetLogController::class, 'index'])->name('timesheet-logs.index');
         });
 
@@ -716,10 +717,13 @@ Route::prefix('v1')->group(function () {
 
         // Configurador de navegação: módulos dinâmicos + associação de itens de menu
         Route::get('/nav-config',                  [\App\Http\Controllers\NavConfigController::class, 'index'])->name('nav-config.index');
+        Route::put('/nav-screens',                 [\App\Http\Controllers\NavConfigController::class, 'saveScreens'])->name('nav-screens.save');
         Route::post('/nav-modules',                [\App\Http\Controllers\NavConfigController::class, 'store'])->name('nav-modules.store');
         Route::post('/nav-modules/reorder',        [\App\Http\Controllers\NavConfigController::class, 'reorder'])->name('nav-modules.reorder');
         Route::put('/nav-modules/{navModule}',     [\App\Http\Controllers\NavConfigController::class, 'update'])->name('nav-modules.update');
         Route::delete('/nav-modules/{navModule}',  [\App\Http\Controllers\NavConfigController::class, 'destroy'])->name('nav-modules.destroy');
+        Route::post('/nav-screen-actions',         [\App\Http\Controllers\NavConfigController::class, 'addScreenAction'])->name('nav-screen-actions.add');
+        Route::delete('/nav-screen-actions',       [\App\Http\Controllers\NavConfigController::class, 'deleteScreenAction'])->name('nav-screen-actions.delete');
 
         // Upload de foto de perfil
         Route::post('/users/profile/photo', [UserController::class, 'uploadProfilePhoto'])->name('users.upload-photo');

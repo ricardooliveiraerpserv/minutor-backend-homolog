@@ -12,9 +12,9 @@ class TaskGroup extends Model
 {
     protected $table = 'task_groups';
 
-    protected $fillable = ['nome', 'descricao', 'owner_id', 'active'];
+    protected $fillable = ['nome', 'descricao', 'owner_id', 'active', 'start_date', 'end_date'];
 
-    protected $casts = ['active' => 'boolean'];
+    protected $casts = ['active' => 'boolean', 'start_date' => 'date:Y-m-d', 'end_date' => 'date:Y-m-d'];
 
     public function owner(): BelongsTo { return $this->belongsTo(User::class, 'owner_id'); }
     public function items(): HasMany { return $this->hasMany(TaskGroupItem::class, 'group_id'); }
