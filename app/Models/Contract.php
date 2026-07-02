@@ -112,6 +112,30 @@ class Contract extends Model
         return $this->belongsTo(ContractType::class);
     }
 
+    /**
+     * Valor hora efetivo para gerar o projeto (project.hourly_rate).
+     *
+     * On Demand: o formulário de contrato captura o valor no campo "Valor do
+     * Projeto" (valor_projeto) e nunca preenche valor_hora — mas o faturamento
+     * On Demand cobra por hora consumida usando project.hourly_rate. Logo, para
+     * On Demand, o valor_projeto É o valor da hora. Sem esse fallback, todo
+     * projeto On Demand nascia com hourly_rate nulo (valor hora zerado nas telas).
+     */
+    public function resolvedHourlyRate(): ?float
+    {
+        if ($this->valor_hora !== null) {
+            return (float) $this->valor_hora;
+        }
+
+        $code = $this->relationLoaded('contractType')
+            ? $this->contractType?->code
+            : $this->contractType()->value('code');
+
+        return ($code === 'on_demand' && $this->valor_projeto !== null)
+            ? (float) $this->valor_projeto
+            : null;
+    }
+
     public function architect(): BelongsTo
     {
         return $this->belongsTo(User::class, 'architect_id');
