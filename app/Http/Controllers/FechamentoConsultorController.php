@@ -1412,9 +1412,9 @@ class FechamentoConsultorController extends Controller
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
             ->whereIn('user_id', $users->pluck('id'))
-            ->selectRaw('user_id, SUM(effort_minutes) as total_minutes')
+            ->selectRaw('user_id, SUM(ROUND(effort_minutes / 60.0, 2)) as total_hours')
             ->groupBy('user_id')
-            ->pluck('total_minutes', 'user_id');
+            ->pluck('total_hours', 'user_id');
 
         // Per-timesheet extras (consultant_extra_pct) — only where set
         $extraTimesheetsByUser = Timesheet::whereBetween('date', [$from, $to])
@@ -1471,7 +1471,10 @@ class FechamentoConsultorController extends Controller
             $hourlyRate       = (float) ($hist['hourly_rate'] ?? 0);
             $rateType         = $hist['rate_type'] ?? 'hourly';
             $effectiveRate    = $this->effectiveHourlyRate($hourlyRate, $rateType);
-            $horasTrabalhadas = round((int) ($hoursByUser[$user->id] ?? 0) / 60, 2);
+            // Horas = soma das horas de CADA apontamento arredondadas a 2 casas (mesma
+            // base exibida no relatório linha a linha), pra "Total × Taxa" fechar. Antes
+            // era round(Σ minutos/60), que divergia da soma das linhas por até 0,01h.
+            $horasTrabalhadas = round((float) ($hoursByUser[$user->id] ?? 0), 2);
 
             $extrasConsultant = round(
                 ($extraTimesheetsByUser->get($user->id, collect()))
