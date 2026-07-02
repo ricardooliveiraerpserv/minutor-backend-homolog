@@ -17,6 +17,7 @@ class FechamentoSendStatus extends Model
     public const TIPO_CLIENTE   = 'cliente';
     public const TIPO_PARCEIRO  = 'parceiro';
     public const TIPO_DIRETORIA = 'diretoria';
+    public const TIPO_EXCEDENTE = 'excedente';
 
     protected $fillable = ['tipo', 'entity_id', 'year_month', 'sent_at', 'sent_by'];
 
