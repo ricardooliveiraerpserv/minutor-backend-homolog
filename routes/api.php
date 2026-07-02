@@ -801,9 +801,11 @@ Route::prefix('v1')->group(function () {
 
         // ⏱️ FECHAMENTO DE HORAS EXCEDENTES (BH Mensal / BH Fixo)
         Route::middleware('auth:sanctum')->group(function () {
-            Route::get('/fechamento-excedente',                                [\App\Http\Controllers\FechamentoExcedenteController::class, 'index']);
-            Route::patch('/fechamento-excedente/{project}/flag',              [\App\Http\Controllers\FechamentoExcedenteController::class, 'toggleFlag']);
-            Route::post('/fechamento-excedente/{project}/{yearMonth}',        [\App\Http\Controllers\FechamentoExcedenteController::class, 'salvar']);
+            Route::get('/fechamento-excedente',                                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'index']);
+            Route::get('/fechamento-excedente/{customerId}/{yearMonth}/report-html',    [\App\Http\Controllers\FechamentoExcedenteController::class, 'reportHtml']);
+            Route::post('/fechamento-excedente/{customerId}/{yearMonth}/email',         [\App\Http\Controllers\FechamentoExcedenteController::class, 'enviarEmail']);
+            Route::patch('/fechamento-excedente/{project}/flag',                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'toggleFlag']);
+            Route::post('/fechamento-excedente/{project}/{yearMonth}',                  [\App\Http\Controllers\FechamentoExcedenteController::class, 'salvar']);
         });
 
         // 🤝 FECHAMENTO PARCEIRO
