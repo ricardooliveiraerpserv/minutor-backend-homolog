@@ -149,7 +149,9 @@ class FechamentoClienteController extends Controller
                 'customer_id' => (int) $cid,
                 'nome'        => $nomes[(int) $cid] ?? '—',
                 'qtd'         => $g->count(),
-                'total'       => round($g->sum('amount'), 2),
+                // Particularidade Auster: +R$30 por despesa na visão do cliente (mesma regra do
+                // relatório/despesasData). Sem isso o total da tabela divergia do PDF aberto.
+                'total'       => round($g->sum('amount') + $this->austerExpenseSurcharge((int) $cid) * $g->count(), 2),
             ])
             ->values()
             ->sortByDesc('total')
@@ -839,6 +841,8 @@ class FechamentoClienteController extends Controller
             ->where('status', Expense::STATUS_APPROVED)
             ->whereBetween('expense_date', [$from, $to])
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
+            ->orderBy('expense_date')
+            ->orderBy('id')
             ->get()
             ->map(fn ($e) => [
                 'id'          => $e->id,
