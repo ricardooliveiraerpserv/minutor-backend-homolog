@@ -1079,14 +1079,16 @@ class ProjectController extends Controller
         }
 
         $project = \DB::transaction(function () use ($validated, $wantsMovidesk) {
-            $p = Project::create($validated);
+            // Desliga o flag dos outros projetos do cliente ANTES de criar o novo com
+            // o flag ativo. A ordem importa: com a unique index parcial (máx 1 flag por
+            // cliente), criar com flag=true enquanto outro ainda está true violaria o
+            // índice. Desligando primeiro, nunca há 2 ativos simultâneos.
             if ($wantsMovidesk) {
-                Project::where('customer_id', $p->customer_id)
-                    ->where('id', '!=', $p->id)
+                Project::where('customer_id', $validated['customer_id'])
                     ->where('movidesk_integration_enabled', true)
                     ->update(['movidesk_integration_enabled' => false]);
             }
-            return $p;
+            return Project::create($validated);
         });
 
         // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
@@ -1743,13 +1745,15 @@ class ProjectController extends Controller
         }
 
         \DB::transaction(function () use ($project, $validated) {
-            $project->update($validated);
+            // Desliga o flag dos OUTROS projetos do cliente ANTES de ligar neste, pra
+            // nunca haver 2 ativos ao mesmo tempo (a unique index parcial barraria).
             if (!empty($validated['movidesk_integration_enabled'])) {
                 Project::where('customer_id', $project->customer_id)
                     ->where('id', '!=', $project->id)
                     ->where('movidesk_integration_enabled', true)
                     ->update(['movidesk_integration_enabled' => false]);
             }
+            $project->update($validated);
         });
 
         // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
