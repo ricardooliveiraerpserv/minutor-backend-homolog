@@ -171,13 +171,14 @@ class FechamentoConsultorController extends Controller
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
-        $totalMinutes = (int) Timesheet::whereBetween('date', [$from, $to])
+        $minutesList = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
             ->where('user_id', $user->id)
-            ->sum('effort_minutes');
+            ->pluck('effort_minutes');
+        $totalMinutes = (int) $minutesList->sum();
 
         $extraTimesheets = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
@@ -192,7 +193,12 @@ class FechamentoConsultorController extends Controller
         $hourlyRate    = (float) ($hist['hourly_rate'] ?? 0);
         $rateType      = $hist['rate_type'] ?? 'hourly';
         $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
-        $horasTrabalhadas = round($totalMinutes / 60, 2);
+        // Horas trabalhadas = soma das horas de CADA apontamento arredondadas a 2 casas
+        // (MESMA base exibida no relatório linha a linha), pra o total do fechamento bater
+        // com "Total Horas × Taxa". Antes era round(Σ minutos/60), que divergia da soma
+        // das linhas por até 0,01h e fazia o valor não fechar (ex.: 116,01 exibido mas
+        // total calculado sobre 116,02).
+        $horasTrabalhadas = round($minutesList->sum(fn ($m) => round(((int) $m) / 60, 2)), 2);
 
         $hourBankService  = app(HourBankService::class);
         $workingDaysFull  = $hourBankService->calculateWorkingDays($year, $month);
