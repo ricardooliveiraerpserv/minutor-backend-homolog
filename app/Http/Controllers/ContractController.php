@@ -2557,6 +2557,22 @@ class ContractController extends Controller
 
         $contract->update($validated);
 
+        // Rotina de reajuste (edição manual do cadastro): a alteração de valor reflete
+        // no operacional — projeto e contrato sempre iguais. valor_inicial é a base/
+        // "valor atual" do reajuste; on_demand → valor_hora/hourly_rate, demais →
+        // valor_projeto/project_value.
+        if (array_key_exists('valor_inicial', $validated) && $validated['valor_inicial'] !== null) {
+            $novo          = (float) $validated['valor_inicial'];
+            $isOnDemand    = $contract->tipo_faturamento === 'on_demand'
+                || optional($contract->contractType)->code === 'on_demand';
+            $contractField = $isOnDemand ? 'valor_hora' : 'valor_projeto';
+            $projField     = $isOnDemand ? 'hourly_rate' : 'project_value';
+            $contract->update([$contractField => $novo]);
+            if ($contract->project_id) {
+                \App\Models\Project::where('id', $contract->project_id)->update([$projField => $novo]);
+            }
+        }
+
         return response()->json(['ok' => true]);
     }
 
