@@ -37,7 +37,13 @@ class SustentacaoScopeService
         $stIds = $this->serviceTypeIds();
         if (empty($stIds)) return [];
 
-        $q = Project::whereIn('service_type_id', $stIds)
+        // Projetos elegíveis ao Portal de Sustentação: os de service_type de sustentação
+        // MAIS os "Investimento Suporte" (service_type 'Projeto', mas operacionalmente são
+        // suporte e devem ser geridos/aprovados pelo coordenador de sustentação).
+        $q = Project::where(function ($sub) use ($stIds) {
+                $sub->whereIn('service_type_id', $stIds)
+                    ->orWhereRaw("LOWER(TRIM(name)) = 'investimento suporte'");
+            })
             ->whereNull('deleted_at')
             ->whereNull('kanban_coordinator_override_id');
 
