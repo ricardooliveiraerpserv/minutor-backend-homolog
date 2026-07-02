@@ -98,7 +98,7 @@ class FechamentoExcedenteController extends Controller
             ];
         })
         // Mostra quem tem excedente (>0) OU já tem registro na competência.
-        ->filter(fn ($r) => $r['excess_hours'] > 0 || $r['record_id'] !== null)
+        ->filter(fn ($r) => $r['excess_value'] > 0 || $r['record_id'] !== null)
         ->sortByDesc('excess_value')
         ->values();
 
