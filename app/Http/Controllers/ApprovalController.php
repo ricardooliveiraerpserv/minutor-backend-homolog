@@ -813,7 +813,12 @@ class ApprovalController extends Controller
         // que Apontamentos/Despesas (PRs #36 / #33). Middleware
         // `permission.or.admin:timesheets.approve` continua bloqueando perfis sem acesso.
         if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
-            $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+            // Coord de sustentação vê fila de sustentacao/cloud + Investimento Suporte
+            // (service_type 'Projeto', mas é suporte — deve entrar na aprovação dele).
+            $query->where(function ($outer) {
+                $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+            });
         }
 
         // Executivo de conta SEM papel coordenador: vê investimento Comercial dos seus clientes
@@ -910,7 +915,12 @@ class ApprovalController extends Controller
         // Coordenador de SUSTENTAÇÃO: ver comentário em buildTimesheetQuery (mesmo padrão).
         // Coord-projetos sem filtro forçado; FE controla via chip "Meus projetos / Todos".
         if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
-            $query->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+            // Coord de sustentação vê fila de sustentacao/cloud + Investimento Suporte
+            // (service_type 'Projeto', mas é suporte — deve entrar na aprovação dele).
+            $query->where(function ($outer) {
+                $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+            });
         }
 
         // Executivo de conta que NÃO é coordenador/administrativo: só vê despesas de investimento
