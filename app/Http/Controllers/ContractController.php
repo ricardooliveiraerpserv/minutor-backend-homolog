@@ -2711,6 +2711,15 @@ class ContractController extends Controller
             }
             $contract->update($updates);
 
+            // Rotina de reajuste mantém o PROJETO sincronizado com o contrato
+            // (projeto e contrato sempre iguais). on_demand: valor_hora → hourly_rate;
+            // demais: valor_projeto → project_value. Sobrescreve o valor atual — sem
+            // vigência (operação recente, sem histórico a preservar).
+            if ($contract->project_id) {
+                $projField = $field === 'valor_hora' ? 'hourly_rate' : 'project_value';
+                Project::where('id', $contract->project_id)->update([$projField => $valorNovo]);
+            }
+
             ContractValueChange::create([
                 'contract_id'       => $contract->id,
                 'valor_anterior'    => round($base, 2),
