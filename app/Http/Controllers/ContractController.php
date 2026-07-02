@@ -1210,6 +1210,7 @@ class ContractController extends Controller
             'contractType:id,name,code',
             'serviceType:id,name,code',
             'executivoConta:id,name',
+            'kanbanLogs:id,project_id,to_status,created_at',
         ])->where(function ($q) use ($demandProjectIds) {
             $q->where(function ($inner) {
                 $inner->whereNotNull('contract_id')
@@ -2235,6 +2236,8 @@ class ContractController extends Controller
             'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,
             'created_at'            => $project->created_at,
+            // Dias na coluna atual do board (recomeça a contagem se o card voltar de etapa).
+            'days_in_current_column' => $project->daysInCurrentColumn(),
         ];
     }
 
