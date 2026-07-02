@@ -2626,6 +2626,7 @@ class ContractController extends Controller
         $matched = 0;
         $unmatched = [];
         $semData = [];
+        $valorSuspeito = [];
 
         foreach (array_slice($data, $headerIdx + 1) as $row) {
             $contratoRaw = trim((string) ($row[$cContrato] ?? ''));
@@ -2666,13 +2667,33 @@ class ContractController extends Controller
                 $contract->update($upd);
                 $matched++;
             }
+
+            // Sincroniza o projeto ligado com o valor carregado (projeto = contrato).
+            // Blindagem: para On Demand, valor-hora acima do teto plausível (R$ 2.000)
+            // é provável valor mensal/total na coluna errada (ex.: 19.600) → NÃO
+            // sobrescreve o projeto; o caso fica em $valorSuspeito para revisão manual.
+            if ($valor !== null && $valor > 0 && $contract->project_id) {
+                $isOnDemand = $contract->tipo_faturamento === 'on_demand'
+                    || optional($contract->contractType)->code === 'on_demand';
+                if ($isOnDemand) {
+                    if ($valor <= 2000) {
+                        Project::where('id', $contract->project_id)->update(['hourly_rate' => $valor]);
+                    } else {
+                        $valorSuspeito[] = "{$code} · {$cliente} · R$ " . number_format($valor, 2, ',', '.');
+                    }
+                } else {
+                    Project::where('id', $contract->project_id)->update(['project_value' => $valor]);
+                }
+            }
         }
 
         return response()->json([
-            'matched'        => $matched,
-            'unmatched'      => $unmatched,
-            'unmatched_count'=> count($unmatched),
-            'sem_data'       => $semData,
+            'matched'             => $matched,
+            'unmatched'           => $unmatched,
+            'unmatched_count'     => count($unmatched),
+            'sem_data'            => $semData,
+            'valor_suspeito'      => $valorSuspeito,
+            'valor_suspeito_count'=> count($valorSuspeito),
         ]);
     }
 
