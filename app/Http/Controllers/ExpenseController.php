@@ -530,7 +530,9 @@ class ExpenseController extends Controller
         if ($limitError) return $limitError;
 
         // Investimento exige o "Projeto Real" (referência). Consumo segue no projeto de investimento.
-        $isInvestimento = (bool) $project->is_investimento_comercial;
+        // ERPSERV (empresa própria): investimento interno não tem projeto de cliente real → não pede Projeto Real.
+        $isErpservCustomer = strtoupper(trim((string) optional($project->customer)->name)) === 'ERPSERV';
+        $isInvestimento = (bool) $project->is_investimento_comercial && !$isErpservCustomer;
         $realProjectId = $isInvestimento ? ((int) $request->input('real_project_id') ?: null) : null;
         if ($isInvestimento && !$realProjectId) {
             return response()->json([
