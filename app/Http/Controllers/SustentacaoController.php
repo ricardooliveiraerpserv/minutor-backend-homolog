@@ -305,7 +305,12 @@ class SustentacaoController extends Controller
             ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
-                  ->orWhere('service_types.name', 'ilike', '%sustenta%');
+                  ->orWhere('service_types.name', 'ilike', '%sustenta%')
+                  ->orWhere(function ($s) {
+                      // Investimento Suporte (todos os clientes) conta como sustentação.
+                      $s->where('projects.is_investimento_comercial', true)
+                        ->where('projects.categoria_interna', 'Suporte');
+                  });
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -337,7 +342,12 @@ class SustentacaoController extends Controller
             ->join('customers', 'customers.id', '=', 'projects.customer_id')
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
-                  ->orWhere('service_types.name', 'ilike', '%sustenta%');
+                  ->orWhere('service_types.name', 'ilike', '%sustenta%')
+                  ->orWhere(function ($s) {
+                      // Investimento Suporte (todos os clientes) conta como sustentação.
+                      $s->where('projects.is_investimento_comercial', true)
+                        ->where('projects.categoria_interna', 'Suporte');
+                  });
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -700,7 +710,12 @@ class SustentacaoController extends Controller
                     ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
                     ->where(function ($q) {
                         $q->where('service_types.code', 'sustentacao')
-                          ->orWhere('service_types.name', 'ilike', '%sustenta%');
+                          ->orWhere('service_types.name', 'ilike', '%sustenta%')
+                          ->orWhere(function ($s) {
+                              // Investimento Suporte (todos os clientes) conta como sustentação.
+                              $s->where('projects.is_investimento_comercial', true)
+                                ->where('projects.categoria_interna', 'Suporte');
+                          });
                     })
                     ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
                     ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -813,7 +828,9 @@ class SustentacaoController extends Controller
             ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->join('customers',     'customers.id',     '=', 'projects.customer_id')
             ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
-                                 ->orWhere('service_types.name', 'ilike', '%sustenta%'))
+                                 ->orWhere('service_types.name', 'ilike', '%sustenta%')
+                                 ->orWhere(fn($s) => $s->where('projects.is_investimento_comercial', true)
+                                                       ->where('projects.categoria_interna', 'Suporte')))
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->select(
