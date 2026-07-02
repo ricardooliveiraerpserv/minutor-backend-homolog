@@ -99,6 +99,7 @@ class Project extends Model
         'coordinator_percentage',
         'coordination_hours',
         'additional_hourly_rate',
+        'charge_excess_hours',
         'start_date',
         'expected_end_date',
         'encerramento_date',
@@ -148,6 +149,7 @@ class Project extends Model
         'project_value' => 'decimal:2',
         'hourly_rate' => 'decimal:2',
         'additional_hourly_rate' => 'decimal:2',
+        'charge_excess_hours' => 'boolean',
         'max_expense_per_consultant' => 'decimal:2',
         'unlimited_expense' => 'boolean',
         'sold_hours' => 'integer',
@@ -1373,6 +1375,54 @@ class Project extends Model
 
         $contractTypeName = strtolower(trim($this->contractType->name));
         return $contractTypeName === 'banco de horas mensal';
+    }
+
+    /** Verificar se o projeto é do tipo "Banco de Horas Fixo". */
+    public function isBankHoursFixed(): bool
+    {
+        if (!$this->contractType) {
+            return false;
+        }
+        $code = (string) ($this->contractType->code ?? '');
+        $name = strtolower(trim((string) $this->contractType->name));
+        return $code === 'fixed_hours' || $name === 'banco de horas fixo';
+    }
+
+    /**
+     * Consumo (horas apontáveis, approved+pending) do projeto numa competência.
+     * Base da apuração de horas excedentes do BH Mensal.
+     */
+    public function consumedHoursForCompetencia(string $yearMonth): float
+    {
+        $from = \Carbon\Carbon::parse($yearMonth . '-01')->startOfMonth()->toDateString();
+        $to   = \Carbon\Carbon::parse($yearMonth . '-01')->endOfMonth()->toDateString();
+        $min  = $this->timesheets()
+            ->whereIn('status', ['approved', 'pending'])
+            ->whereBetween('date', [$from, $to])
+            ->sum('effort_minutes');
+        return round(((float) $min) / 60, 2);
+    }
+
+    /**
+     * Horas excedentes a cobrar do projeto (BH Mensal ou BH Fixo).
+     *  - BH Mensal: excedente da COMPETÊNCIA = consumo do mês − contratadas do mês (>=0).
+     *  - BH Fixo:   excedente pelo ESTADO ATUAL = saldo negativo (banco esgotado).
+     *
+     * @return array{basis:string, contracted:float, consumed:float, excess:float}
+     */
+    public function excessHoursApuracao(string $yearMonth): array
+    {
+        if ($this->isBankHoursFixed()) {
+            $bd      = $this->managementBreakdown();
+            $balance = $bd['balance'];
+            $excess  = $balance < 0 ? round(-$balance, 2) : 0.0;
+            return ['basis' => 'fixed', 'contracted' => round((float) $bd['available'], 2), 'consumed' => round((float) $bd['consumed'], 2), 'excess' => $excess];
+        }
+
+        $contracted = round($this->soldHoursForCompetencia($yearMonth), 2);
+        $consumed   = $this->consumedHoursForCompetencia($yearMonth);
+        $excess     = $consumed > $contracted ? round($consumed - $contracted, 2) : 0.0;
+        return ['basis' => 'monthly', 'contracted' => $contracted, 'consumed' => $consumed, 'excess' => $excess];
     }
 
     /**
