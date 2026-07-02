@@ -278,6 +278,28 @@ class Project extends Model
             ->orderBy('effective_from');
     }
 
+    /** Logs de movimentação de coluna (status) no kanban Demandas e Projetos. */
+    public function kanbanLogs(): HasMany
+    {
+        return $this->hasMany(\App\Models\ProjectKanbanLog::class);
+    }
+
+    /**
+     * Dias que o card está na coluna (status) ATUAL do board Demandas e Projetos.
+     * Conta desde a última vez que o projeto ENTROU no status atual — se o card
+     * voltou para uma etapa anterior e depois avançou de novo, o período recomeça
+     * (usa a entrada mais recente naquela coluna). Sem log (card criado já nesse
+     * status), conta a partir do created_at do projeto.
+     */
+    public function daysInCurrentColumn(): int
+    {
+        $logs = $this->relationLoaded('kanbanLogs') ? $this->kanbanLogs : $this->kanbanLogs()->get();
+        $entered = $logs->where('to_status', $this->status)->pluck('created_at')->filter()->max();
+        $since = $entered ?: $this->created_at;
+        if (!$since) return 0;
+        return (int) \Carbon\Carbon::parse($since)->startOfDay()->diffInDays(\Carbon\Carbon::now()->startOfDay());
+    }
+
     /**
      * Valor hora vigente numa competência (YYYY-MM): a vigência mais recente com
      * effective_from <= competência; antes da 1ª vigência usa o valor anterior a ela;
