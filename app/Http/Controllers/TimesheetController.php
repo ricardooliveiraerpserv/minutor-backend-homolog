@@ -1498,6 +1498,7 @@ class TimesheetController extends Controller
             'ticket' => 'nullable|string|max:100',
             'customer_id' => 'sometimes|exists:customers,id',
             'project_id' => 'sometimes|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
@@ -1860,6 +1861,49 @@ class TimesheetController extends Controller
                     $isBillableOnly = $timesheet->is_billable_only;
                     $timesheet->consultant_extra_pct = (!$isBillableOnly && $request->filled('consultant_extra_pct'))
                         ? (float) $request->input('consultant_extra_pct') : null;
+                }
+            }
+
+            // Projeto Real (investimento comercial) — espelha o store(): apontamento de
+            // investimento (Projeto/Suporte, exceto ERPSERV) exige um "Projeto Real" de
+            // referência. Ao editar/trocar o projeto para um investimento é obrigatório;
+            // ao sair de um investimento o real é zerado. Sem este bloco, editar um
+            // apontamento para "Investimento Suporte" não trazia/gravava o projeto real.
+            $effectiveProject = $projectForValidation ?? $timesheet->project;
+            if ($effectiveProject) {
+                $effectiveProject->loadMissing('customer');
+                $isErpserv = $effectiveProject->customer
+                    && strtoupper(trim($effectiveProject->customer->name)) === 'ERPSERV';
+                $requiresRealProject = (bool) $effectiveProject->is_investimento_comercial && !$isErpserv
+                    && in_array($effectiveProject->categoria_interna, ['Projeto', 'Suporte'], true);
+
+                if ($requiresRealProject) {
+                    // Aceita o valor enviado; se não veio no request, preserva o já gravado.
+                    $realProjectId = $request->has('real_project_id')
+                        ? ((int) $request->input('real_project_id') ?: null)
+                        : $timesheet->real_project_id;
+                    if (!$realProjectId) {
+                        DB::rollBack();
+                        return response()->json([
+                            'message' => 'Projeto Real é obrigatório para apontamento de investimento.',
+                            'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+                        ], 422);
+                    }
+                    // Investimento SUPORTE: o projeto real precisa ser de SUSTENTAÇÃO.
+                    if ($effectiveProject->categoria_interna === 'Suporte') {
+                        $realProj = Project::with('serviceType')->find($realProjectId);
+                        if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                            DB::rollBack();
+                            return response()->json([
+                                'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                                'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                            ], 422);
+                        }
+                    }
+                    $timesheet->real_project_id = $realProjectId;
+                } else {
+                    // Projeto não é investimento (ou é ERPSERV) → não há projeto real.
+                    $timesheet->real_project_id = null;
                 }
             }
 
