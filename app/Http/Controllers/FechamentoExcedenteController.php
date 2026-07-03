@@ -64,14 +64,10 @@ class FechamentoExcedenteController extends Controller
             $rate = (float) ($p->additional_hourly_rate ?? 0);
             $rec  = $records->get($p->id);
 
-            if ($ap['basis'] === 'fixed' || $ap['basis'] === 'closed') {
-                $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
-                $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
-            } else {
-                $excessPend = $rec && in_array($rec->status, [ExcessHourCharge::STATUS_COBRADO, ExcessHourCharge::STATUS_NAO_COBRAR])
-                    ? (float) $rec->excess_hours
-                    : $ap['excess'];
-            }
+            // Todos os tipos (BH Mensal/Fixo/Fechado) apuram pelo SALDO ACUMULADO →
+            // incremental: excedente atual − já cobrado (em qualquer competência).
+            $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
+            $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
 
             $excess = $rec ? (float) $rec->excess_hours : $excessPend;
             $status = $rec?->status ?? ExcessHourCharge::STATUS_PENDENTE;
@@ -162,13 +158,10 @@ class FechamentoExcedenteController extends Controller
         $ap   = $p->excessHoursApuracao($yearMonth);
         $rate = (float) ($p->additional_hourly_rate ?? 0);
 
-        if ($ap['basis'] === 'fixed' || $ap['basis'] === 'closed') {
-            $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
-                ->where('project_id', $p->id)->sum('excess_hours');
-            $excess = max(0, round($ap['excess'] - $jaCobrado, 2));
-        } else {
-            $excess = $ap['excess'];
-        }
+        // Todos os tipos apuram pelo saldo acumulado → incremental (atual − já cobrado).
+        $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
+            ->where('project_id', $p->id)->sum('excess_hours');
+        $excess = max(0, round($ap['excess'] - $jaCobrado, 2));
 
         $rec = ExcessHourCharge::updateOrCreate(
             ['project_id' => $p->id, 'year_month' => $yearMonth],
