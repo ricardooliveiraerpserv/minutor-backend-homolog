@@ -2243,6 +2243,19 @@ class ProjectController extends Controller
 
         $timesheetsByUser = $allTimesheets->groupBy('user_id');
 
+        // Valor/hora efetivo do consultor VIGENTE por competência (respeita a vigência do
+        // cadastro: custo de meses passados não muda quando o valor/hora é alterado hoje).
+        $effRateCache = [];
+        $effRateFor = function ($user, string $ym) use (&$effRateCache) {
+            $k = $user->id . '|' . $ym;
+            if (isset($effRateCache[$k])) return $effRateCache[$k];
+            $hist = \App\Models\UserHourlyRateLog::effectiveValuesAt($user->id, $user, $ym . '-01');
+            $rate = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
+            $type = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
+            $eff  = ($type === 'monthly' && $rate > 0) ? round($rate / 160, 4) : $rate;
+            return $effRateCache[$k] = ['eff' => $eff, 'type' => $type];
+        };
+
         foreach ($timesheetsByUser as $userId => $userTimesheets) {
             $user = $userTimesheets->first()->user;
             $userTotalMinutes = $userTimesheets->sum('effort_minutes');
@@ -2253,19 +2266,28 @@ class ProjectController extends Controller
             $userApprovedHours = round($userApprovedMinutes / 60, 2);
             $userPendingHours = round($userPendingMinutes / 60, 2);
 
-            // Calcular o valor/hora efetivo do consultor:
-            // - rate_type = 'hourly': usa hourly_rate diretamente
-            // - rate_type = 'monthly': divide hourly_rate por 160 (horas mensais convencionadas)
-            // - sem hourly_rate: assume 0
-            $userHourlyRate = (float) ($user->hourly_rate ?? 0);
-            $rateType = $user->rate_type ?? 'hourly';
-            $effectiveHourlyRate = ($rateType === 'monthly' && $userHourlyRate > 0)
-                ? round($userHourlyRate / 160, 4)
-                : $userHourlyRate;
-
-            $userCost = round($userTotalHours * $effectiveHourlyRate, 2);
-            $userApprovedCost = round($userApprovedHours * $effectiveHourlyRate, 2);
-            $userPendingCost = round($userPendingHours * $effectiveHourlyRate, 2);
+            // Custo por competência: cada mês de apontamento usa o valor/hora efetivo
+            // VIGENTE naquele mês (mensalista = salário ÷ 160). Somar a vida inteira do
+            // projeto com o valor de hoje mudaria o custo/margem de meses passados.
+            $userCost = 0.0; $userApprovedCost = 0.0; $userPendingCost = 0.0;
+            $lastEffRate = 0.0; $rateType = $user->rate_type ?? 'hourly';
+            foreach ($userTimesheets->groupBy(fn ($ts) => \Carbon\Carbon::parse($ts->date)->format('Y-m')) as $ym => $monthTs) {
+                $meta        = $effRateFor($user, $ym);
+                $lastEffRate = $meta['eff'];
+                $rateType    = $meta['type'];
+                $mAll = $monthTs->sum('effort_minutes');
+                $mApp = $monthTs->where('status', 'approved')->sum('effort_minutes');
+                $mPen = $monthTs->where('status', 'pending')->sum('effort_minutes');
+                $userCost         += ($mAll / 60) * $meta['eff'];
+                $userApprovedCost += ($mApp / 60) * $meta['eff'];
+                $userPendingCost  += ($mPen / 60) * $meta['eff'];
+            }
+            $userCost         = round($userCost, 2);
+            $userApprovedCost = round($userApprovedCost, 2);
+            $userPendingCost  = round($userPendingCost, 2);
+            // Valor/hora representativo p/ exibição = média efetiva do que foi pago no projeto
+            // (fallback à taxa da última competência quando não há horas).
+            $effectiveHourlyRate = $userTotalHours > 0 ? round($userCost / $userTotalHours, 4) : $lastEffRate;
 
             $totalCost += $userCost;
             $approvedCost += $userApprovedCost;
@@ -3036,74 +3058,85 @@ class ProjectController extends Controller
         if ($from) $base->where('timesheets.date', '>=', $from);
         if ($to)   $base->where('timesheets.date', '<=', $to);
 
-        // Para consultores com rate_type='monthly', hourly_rate guarda o salário
-        // mensal — converter pra valor/hora dividindo por 160 (mesmo critério usado
-        // em FechamentoConsultorController::effectiveHourlyRate).
-        $costExpr = "SUM(timesheets.effort_minutes / 60.0 * CASE WHEN users.rate_type = 'monthly' AND users.hourly_rate > 0 THEN users.hourly_rate / 160.0 ELSE users.hourly_rate END)";
-
-        // ── Por cliente ────────────────────────────────────────────────────────
-        $byCustomer = (clone $base)
-            ->selectRaw("customers.id as customer_id, customers.name as customer_name,
-                         SUM(timesheets.effort_minutes) as total_minutes,
-                         {$costExpr} as total_cost")
-            ->groupBy('customers.id', 'customers.name')
-            ->orderByDesc('total_minutes')
-            ->get()
-            ->map(fn($r) => [
-                'customer_id'   => $r->customer_id,
-                'customer_name' => $r->customer_name,
-                'total_hours'   => round($r->total_minutes / 60, 2),
-                'total_cost'    => round((float)$r->total_cost, 2),
-            ]);
-
-        // ── Por consultor ──────────────────────────────────────────────────────
-        $byConsultant = (clone $base)
-            ->selectRaw("users.id as user_id, users.name as user_name,
-                         SUM(timesheets.effort_minutes) as total_minutes,
-                         {$costExpr} as total_cost,
-                         COUNT(DISTINCT customers.id) as num_customers")
-            ->groupBy('users.id', 'users.name')
-            ->orderByDesc('total_minutes')
-            ->limit(20)
-            ->get()
-            ->map(fn($r) => [
-                'user_id'       => $r->user_id,
-                'user_name'     => $r->user_name,
-                'total_hours'   => round($r->total_minutes / 60, 2),
-                'total_cost'    => round((float)$r->total_cost, 2),
-                'num_customers' => (int)$r->num_customers,
-            ]);
-
-        // ── Evolução mensal ────────────────────────────────────────────────────
-        $monthly = (clone $base)
-            ->selectRaw("TO_CHAR(timesheets.date, 'YYYY-MM') as month,
-                         SUM(timesheets.effort_minutes) as total_minutes,
-                         {$costExpr} as total_cost")
-            ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
-            ->orderByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
-            ->get()
-            ->map(fn($r) => [
-                'month'       => $r->month,
-                'total_hours' => round($r->total_minutes / 60, 2),
-                'total_cost'  => round((float)$r->total_cost, 2),
-            ]);
-
-        // ── Detalhamento consultor × cliente ───────────────────────────────────
-        $detail = (clone $base)
+        // Custo respeitando a VIGÊNCIA: cada apontamento é custeado pelo valor/hora efetivo
+        // vigente na SUA competência (mensalista = salário ÷ 160). Como a vigência (effective_from
+        // + regra de mês-seguinte) não é expressável num CASE de SQL, agregamos no grão
+        // consultor×cliente×mês e calculamos o custo em PHP via UserHourlyRateLog::effectiveValuesAt.
+        $grain = (clone $base)
             ->selectRaw("users.id as user_id, users.name as user_name,
                          customers.id as customer_id, customers.name as customer_name,
-                         SUM(timesheets.effort_minutes) as total_minutes,
-                         {$costExpr} as total_cost")
+                         TO_CHAR(timesheets.date, 'YYYY-MM') as month,
+                         SUM(timesheets.effort_minutes) as total_minutes")
             ->groupBy('users.id', 'users.name', 'customers.id', 'customers.name')
-            ->orderBy('users.name')
-            ->get()
-            ->map(fn($r) => [
-                'user_id'       => $r->user_id,
-                'user_name'     => $r->user_name,
-                'customer_id'   => $r->customer_id,
-                'customer_name' => $r->customer_name,
-                'total_hours'   => round($r->total_minutes / 60, 2),
-                'total_cost'    => round((float)$r->total_cost, 2),
+            ->groupByRaw("TO_CHAR(timesheets.date, 'YYYY-MM')")
+            ->get();
+
+        $userCache = \App\Models\User::whereIn('id', $grain->pluck('user_id')->unique()->all())
+            ->get(['id', 'hourly_rate', 'rate_type', 'consultant_type'])
+            ->keyBy('id');
+        $effCache = [];
+        $effRate = function ($uid, $ym) use (&$effCache, $userCache) {
+            $k = $uid . '|' . $ym;
+            if (isset($effCache[$k])) return $effCache[$k];
+            $u    = $userCache->get($uid);
+            $hist = \App\Models\UserHourlyRateLog::effectiveValuesAt((int) $uid, $u, $ym . '-01');
+            $rate = (float) ($hist['hourly_rate'] ?? $u?->hourly_rate ?? 0);
+            $type = $hist['rate_type'] ?? $u?->rate_type ?? 'hourly';
+            return $effCache[$k] = ($type === 'monthly' && $rate > 0) ? round($rate / 160, 4) : $rate;
+        };
+
+        $custAcc = []; $consAcc = []; $monthAcc = []; $detailAcc = [];
+        foreach ($grain as $r) {
+            $minutes = (float) $r->total_minutes;
+            $cost    = ($minutes / 60) * $effRate($r->user_id, $r->month);
+            $cid = $r->customer_id; $uid = $r->user_id; $mo = $r->month;
+
+            if (!isset($custAcc[$cid])) $custAcc[$cid] = ['customer_id' => $cid, 'customer_name' => $r->customer_name, 'minutes' => 0.0, 'cost' => 0.0];
+            $custAcc[$cid]['minutes'] += $minutes; $custAcc[$cid]['cost'] += $cost;
+
+            if (!isset($consAcc[$uid])) $consAcc[$uid] = ['user_id' => $uid, 'user_name' => $r->user_name, 'minutes' => 0.0, 'cost' => 0.0, 'customers' => []];
+            $consAcc[$uid]['minutes'] += $minutes; $consAcc[$uid]['cost'] += $cost; $consAcc[$uid]['customers'][$cid] = true;
+
+            if (!isset($monthAcc[$mo])) $monthAcc[$mo] = ['month' => $mo, 'minutes' => 0.0, 'cost' => 0.0];
+            $monthAcc[$mo]['minutes'] += $minutes; $monthAcc[$mo]['cost'] += $cost;
+
+            $dk = $uid . ':' . $cid;
+            if (!isset($detailAcc[$dk])) $detailAcc[$dk] = ['user_id' => $uid, 'user_name' => $r->user_name, 'customer_id' => $cid, 'customer_name' => $r->customer_name, 'minutes' => 0.0, 'cost' => 0.0];
+            $detailAcc[$dk]['minutes'] += $minutes; $detailAcc[$dk]['cost'] += $cost;
+        }
+
+        $byCustomer = collect($custAcc)->sortByDesc('minutes')->values()
+            ->map(fn ($c) => [
+                'customer_id'   => $c['customer_id'],
+                'customer_name' => $c['customer_name'],
+                'total_hours'   => round($c['minutes'] / 60, 2),
+                'total_cost'    => round($c['cost'], 2),
+            ]);
+
+        $byConsultant = collect($consAcc)->sortByDesc('minutes')->values()->take(20)
+            ->map(fn ($u) => [
+                'user_id'       => $u['user_id'],
+                'user_name'     => $u['user_name'],
+                'total_hours'   => round($u['minutes'] / 60, 2),
+                'total_cost'    => round($u['cost'], 2),
+                'num_customers' => count($u['customers']),
+            ])->values();
+
+        $monthly = collect($monthAcc)->sortBy('month')->values()
+            ->map(fn ($m) => [
+                'month'       => $m['month'],
+                'total_hours' => round($m['minutes'] / 60, 2),
+                'total_cost'  => round($m['cost'], 2),
+            ]);
+
+        $detail = collect($detailAcc)->sortBy('user_name')->values()
+            ->map(fn ($d) => [
+                'user_id'       => $d['user_id'],
+                'user_name'     => $d['user_name'],
+                'customer_id'   => $d['customer_id'],
+                'customer_name' => $d['customer_name'],
+                'total_hours'   => round($d['minutes'] / 60, 2),
+                'total_cost'    => round($d['cost'], 2),
             ]);
 
         return response()->json([

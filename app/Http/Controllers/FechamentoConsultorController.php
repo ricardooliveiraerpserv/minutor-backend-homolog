@@ -99,8 +99,9 @@ class FechamentoConsultorController extends Controller
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         $user          = $user ?: User::find($userId, ['id', 'name', 'hourly_rate', 'rate_type', 'consultant_type']);
-        $isBancoHoras  = $user?->consultant_type === 'banco_de_horas';
         $hist          = UserHourlyRateLog::effectiveValuesAt((int) $userId, $user, $from);
+        // Vínculo VIGENTE na competência (não o atual): trocar o tipo não altera fechamentos passados.
+        $isBancoHoras  = ($hist['consultant_type'] ?? $user?->consultant_type) === 'banco_de_horas';
         $effectiveRate = $this->effectiveHourlyRate(
             (float) ($hist['hourly_rate'] ?? $user?->hourly_rate ?? 0),
             $hist['rate_type'] ?? $user?->rate_type ?? 'hourly'
@@ -225,7 +226,8 @@ class FechamentoConsultorController extends Controller
             2
         );
 
-        switch ($user->consultant_type) {
+        // Vínculo VIGENTE na competência (via log de vigência), não o atual.
+        switch ($hist['consultant_type'] ?? $user->consultant_type) {
             case 'horista':
                 $guaranteedHours    = (float) ($user->guaranteed_hours ?? 0);
                 $guaranteedProrated = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
@@ -1494,7 +1496,8 @@ class FechamentoConsultorController extends Controller
                 'nome'              => $user->name,
                 'email'             => $user->email,
                 'type'              => $user->type,
-                'consultant_type'   => $user->consultant_type,
+                // Vínculo VIGENTE na competência (badge/aba refletem o mês, não a troca futura).
+                'consultant_type'   => $hist['consultant_type'] ?? $user->consultant_type,
                 'contract_type'     => $user->contract_type,
                 'is_bizify'         => (bool) $user->is_bizify,
                 'horas_trabalhadas' => $horasTrabalhadas,
@@ -1538,7 +1541,9 @@ class FechamentoConsultorController extends Controller
                 $ratio      = 1;
             }
 
-            switch ($user->consultant_type) {
+            // Vínculo VIGENTE na competência (via log de vigência), não o atual — assim
+            // trocar o tipo de contrato só reflete a partir do mês escolhido, sem mexer no passado.
+            switch ($hist['consultant_type'] ?? $user->consultant_type) {
                 case 'horista':
                     $guaranteedHours         = (float) ($user->guaranteed_hours ?? 0);
                     $guaranteedProrated      = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
