@@ -113,9 +113,10 @@ class FechamentoExcedenteController extends Controller
         );
 
         $data = $this->buildRows($this->baseQuery()->get(), $yearMonth)
-            // Só quem tem excedente A COBRAR (valor > 0) OU já tem registro na competência.
-            // Excedente em horas com Hora Adicional zerada fica de fora (tela de cobrança).
-            ->filter(fn ($r) => $r['excess_value'] > 0 || $r['record_id'] !== null)
+            // Mostra TODO contrato com horas excedentes (>0) OU com registro na competência.
+            // Hora Adicional zerada aparece com valor R$ 0,00 (a cobrança/relatório é que
+            // filtra por valor > 0). Ex.: Fechado sem Hora Adicional setada.
+            ->filter(fn ($r) => $r['excess_hours'] > 0 || $r['record_id'] !== null)
             ->map(function ($r) use ($envio) {
                 $r['envio_em']  = $envio[$r['customer_id']]['envio_em'] ?? null;
                 $r['envio_por'] = $envio[$r['customer_id']]['envio_por'] ?? null;
