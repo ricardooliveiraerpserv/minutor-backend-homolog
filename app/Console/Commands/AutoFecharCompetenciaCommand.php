@@ -5,23 +5,27 @@ namespace App\Console\Commands;
 use App\Http\Controllers\FechamentoController;
 use App\Models\FechamentoAdministrativo;
 use App\Models\Holiday;
+use App\Models\SystemSetting;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
 class AutoFecharCompetenciaCommand extends Command
 {
-    protected $signature   = 'fechamento:auto-fechar {--force : Forçar fechamento mesmo que hoje não seja o 2º dia útil}';
-    protected $description = 'Fecha automaticamente a competência do mês anterior no 2º dia útil do mês atual';
+    protected $signature   = 'fechamento:auto-fechar {--force : Forçar fechamento mesmo que hoje não seja o dia útil configurado}';
+    protected $description = 'Fecha automaticamente a competência do mês anterior no Nº dia útil configurado (Configurações)';
 
     public function handle(): int
     {
         $hoje = Carbon::today();
 
-        if (!$this->option('force')) {
-            $segundoDiaUtil = $this->calcularSegundoDiaUtil($hoje->year, $hoje->month);
+        // Dia útil de encerramento configurável em Configurações (default 2º dia útil).
+        $nthDiaUtil = max(1, (int) SystemSetting::get('fechamento_auto_dia_util', 2));
 
-            if (!$hoje->isSameDay($segundoDiaUtil)) {
-                $this->info("Hoje ({$hoje->toDateString()}) não é o 2º dia útil do mês ({$segundoDiaUtil->toDateString()}). Nenhuma ação.");
+        if (!$this->option('force')) {
+            $diaAlvo = $this->calcularNthDiaUtil($hoje->year, $hoje->month, $nthDiaUtil);
+
+            if (!$hoje->isSameDay($diaAlvo)) {
+                $this->info("Hoje ({$hoje->toDateString()}) não é o {$nthDiaUtil}º dia útil do mês ({$diaAlvo->toDateString()}). Nenhuma ação.");
                 return 0;
             }
         }
@@ -49,7 +53,7 @@ class AutoFecharCompetenciaCommand extends Command
         return 0;
     }
 
-    private function calcularSegundoDiaUtil(int $ano, int $mes): Carbon
+    private function calcularNthDiaUtil(int $ano, int $mes, int $n): Carbon
     {
         $feriados = Holiday::whereYear('date', $ano)
             ->whereMonth('date', $mes)
@@ -64,7 +68,7 @@ class AutoFecharCompetenciaCommand extends Command
         while (true) {
             if (!$dia->isWeekend() && !in_array($dia->toDateString(), $feriados)) {
                 $contagem++;
-                if ($contagem === 2) {
+                if ($contagem === $n) {
                     return $dia->copy();
                 }
             }
