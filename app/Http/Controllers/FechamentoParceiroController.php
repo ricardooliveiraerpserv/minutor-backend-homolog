@@ -314,12 +314,15 @@ class FechamentoParceiroController extends Controller
 
             $horas = round($minutos / 60, 2);
 
+            // Valor/hora do consultor VIGENTE na competência (legado intacto ao mudar o cadastro).
+            $hist      = \App\Models\UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
+            $rateType  = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
             if ($isFixed) {
                 $valorHora = $partnerRate;
             } else {
                 $valorHora = $this->effectiveHourlyRate(
-                    (float) ($user->hourly_rate ?? 0),
-                    $user->rate_type ?? 'hourly'
+                    (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0),
+                    $rateType
                 );
             }
 
@@ -331,7 +334,7 @@ class FechamentoParceiroController extends Controller
                 'user_id'              => $user->id,
                 'nome'                 => $user->name,
                 'horas'                => $horas,
-                'rate_type'            => $user->rate_type ?? 'hourly',
+                'rate_type'            => $rateType,
                 'valor_hora'           => $valorHora,
                 'pricing_type_parceiro'=> $partner->pricing_type,
                 'is_parceiro_adm'      => $isParceiroAdm,
