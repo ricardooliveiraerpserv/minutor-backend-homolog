@@ -41,7 +41,10 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
         }
 
         if ($this->request->filled('project_id')) {
-            $query->forProject($this->request->project_id);
+            // Filtro pode vir escalar (seleção única) ou array (multi-seleção) — normaliza.
+            $projectInput = $this->request->input('project_id');
+            $projectIds   = is_array($projectInput) ? $projectInput : [$projectInput];
+            $query->whereIn('timesheets.project_id', $projectIds);
         }
 
         if ($this->request->filled('customer_id')) {
@@ -51,7 +54,10 @@ class TimesheetsExport implements FromCollection, WithHeadings, WithMapping
         }
 
         if ($this->request->filled('user_id') && ($this->user->isAdmin() || $this->user->hasAccess('hours.view_all'))) {
-            $query->forUser($this->request->user_id);
+            // Filtro pode vir escalar ou array (multi-seleção de colaboradores) — normaliza.
+            $userInput = $this->request->input('user_id');
+            $userIds   = is_array($userInput) ? $userInput : [$userInput];
+            $query->whereIn('timesheets.user_id', $userIds);
         }
 
         if ($this->request->filled('status')) {
