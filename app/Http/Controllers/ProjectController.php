@@ -3670,6 +3670,29 @@ class ProjectController extends Controller
     }
 
     /**
+     * Fecha UM período de projeto específico (uma linha da visão de períodos abertos).
+     * O mês atual nunca é fechado.
+     */
+    public function closeOnePeriod(Request $request, \App\Models\ProjectOpenPeriod $period): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $mesAtual = \Carbon\Carbon::now()->startOfMonth()->format('Y-m');
+        if ($period->year_month >= $mesAtual) {
+            return response()->json(['message' => 'O mês atual não pode ser fechado.'], 422);
+        }
+
+        if ($period->closed_at === null) {
+            $period->update(['closed_at' => now(), 'closed_by' => $user->id]);
+        }
+
+        return response()->json(['message' => 'Período fechado.', 'id' => $period->id]);
+    }
+
+    /**
      * Sincroniza o card do contract no Kanban quando o `kanban_coordinator_override_id`
      * do projeto é setado ou limpo.
      *
