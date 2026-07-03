@@ -35,10 +35,9 @@ class FechamentoExcedenteController extends Controller
             ->whereNull('parent_project_id')
             ->where('is_investimento_comercial', false)
             ->whereHas('contractType', function ($q) {
-                // BH Mensal, BH Fixo e Fechado têm horas contratadas que podem estourar.
-                // On Demand não entra (paga por hora consumida, sem teto → sem excedente).
-                $q->whereIn('code', ['monthly_hours', 'fixed_hours', 'closed'])
-                  ->orWhereRaw('lower(name) in (?, ?, ?)', ['banco de horas mensal', 'banco de horas fixo', 'fechado']);
+                // Só BH Mensal e BH Fixo entram na apuração de horas excedentes.
+                $q->whereIn('code', ['monthly_hours', 'fixed_hours'])
+                  ->orWhereRaw('lower(name) in (?, ?)', ['banco de horas mensal', 'banco de horas fixo']);
             });
     }
 
