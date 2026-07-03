@@ -1200,18 +1200,20 @@ class Project extends Model
      */
     public function excessHoursApuracao(string $yearMonth): array
     {
-        // BH Fixo e Fechado: excedente pelo ESTADO ATUAL (saldo negativo = horas
-        // contratadas esgotadas), incremental sobre o já cobrado. A competência é
-        // irrelevante — olha o saldo atual via managementBreakdown().
-        if ($this->isBankHoursFixed() || $this->isClosedContract()) {
+        // BH Fixo, Fechado E BH Mensal: excedente pelo SALDO ACUMULADO (managementBreakdown).
+        // Só há excedente quando o saldo fica NEGATIVO (horas contratadas + acumuladas
+        // esgotadas), incremental sobre o já cobrado. O BH Mensal ACUMULA mês a mês — consumir
+        // acima da cota de UM mês NÃO gera excedente se o saldo de meses anteriores ainda cobre.
+        // (Ex.: cota 50/mês, saldo +100; gasta 90 no mês → saldo +10 → sem excedente.)
+        if ($this->isBankHoursFixed() || $this->isClosedContract() || $this->isBankHoursMonthly()) {
             $bd      = $this->managementBreakdown();
             $balance = $bd['balance'];
             $excess  = $balance < 0 ? round(-$balance, 2) : 0.0;
-            $basis   = $this->isClosedContract() ? 'closed' : 'fixed';
+            $basis   = $this->isClosedContract() ? 'closed' : ($this->isBankHoursMonthly() ? 'monthly' : 'fixed');
             return ['basis' => $basis, 'contracted' => round((float) $bd['available'], 2), 'consumed' => round((float) $bd['consumed'], 2), 'excess' => $excess];
         }
 
-        // BH Mensal (por competência).
+        // Fallback (tipos sem banco de horas): por competência.
         $contracted = round($this->soldHoursForCompetencia($yearMonth), 2);
         $consumed   = $this->consumedHoursForCompetencia($yearMonth);
         $excess     = $consumed > $contracted ? round($consumed - $contracted, 2) : 0.0;

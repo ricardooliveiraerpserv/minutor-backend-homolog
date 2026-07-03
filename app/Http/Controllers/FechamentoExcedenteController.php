@@ -64,17 +64,10 @@ class FechamentoExcedenteController extends Controller
             $rate = (float) ($p->additional_hourly_rate ?? 0);
             $rec  = $records->get($p->id);
 
-            // Excedente PENDENTE a cobrar nesta competência.
-            if ($ap['basis'] === 'fixed' || $ap['basis'] === 'closed') {
-                // Estado atual (BH Fixo/Fechado) — incremental: excedente atual − já
-                // cobrado (em qualquer competência).
-                $jaCobrado = (float) ($charged->get($p->id) ?? 0);
-                $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
-            } else {
-                $excessPend = $rec && in_array($rec->status, [ExcessHourCharge::STATUS_COBRADO, ExcessHourCharge::STATUS_NAO_COBRAR])
-                    ? (float) $rec->excess_hours
-                    : $ap['excess'];
-            }
+            // Excedente PENDENTE a cobrar. Todos os tipos (BH Mensal/Fixo/Fechado) apuram
+            // pelo SALDO ACUMULADO → incremental: excedente atual − já cobrado (qualquer competência).
+            $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
+            $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
 
             $excess = $rec ? (float) $rec->excess_hours : $excessPend;
             $status = $rec?->status ?? ExcessHourCharge::STATUS_PENDENTE;
@@ -165,14 +158,11 @@ class FechamentoExcedenteController extends Controller
         $ap   = $p->excessHoursApuracao($yearMonth);
         $rate = (float) ($p->additional_hourly_rate ?? 0);
 
-        // BH Fixo/Fechado: o excedente a registrar é o incremental (atual − já cobrado).
-        if ($ap['basis'] === 'fixed' || $ap['basis'] === 'closed') {
-            $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
-                ->where('project_id', $p->id)->sum('excess_hours');
-            $excess = max(0, round($ap['excess'] - $jaCobrado, 2));
-        } else {
-            $excess = $ap['excess'];
-        }
+        // Todos os tipos (BH Mensal/Fixo/Fechado) apuram pelo saldo acumulado → o excedente
+        // a registrar é o incremental (atual − já cobrado em qualquer competência).
+        $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
+            ->where('project_id', $p->id)->sum('excess_hours');
+        $excess = max(0, round($ap['excess'] - $jaCobrado, 2));
 
         $rec = ExcessHourCharge::updateOrCreate(
             ['project_id' => $p->id, 'year_month' => $yearMonth],
