@@ -35,8 +35,10 @@ class FechamentoExcedenteController extends Controller
             ->whereNull('parent_project_id')
             ->where('is_investimento_comercial', false)
             ->whereHas('contractType', function ($q) {
-                $q->whereIn('code', ['monthly_hours', 'fixed_hours'])
-                  ->orWhereRaw('lower(name) in (?, ?)', ['banco de horas mensal', 'banco de horas fixo']);
+                // BH Mensal, BH Fixo e Fechado têm horas contratadas que podem estourar.
+                // On Demand não entra (paga por hora consumida, sem teto → sem excedente).
+                $q->whereIn('code', ['monthly_hours', 'fixed_hours', 'closed'])
+                  ->orWhereRaw('lower(name) in (?, ?, ?)', ['banco de horas mensal', 'banco de horas fixo', 'fechado']);
             });
     }
 
@@ -62,7 +64,7 @@ class FechamentoExcedenteController extends Controller
             $rate = (float) ($p->additional_hourly_rate ?? 0);
             $rec  = $records->get($p->id);
 
-            if ($ap['basis'] === 'fixed') {
+            if ($ap['basis'] === 'fixed' || $ap['basis'] === 'closed') {
                 $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
                 $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
             } else {
@@ -159,7 +161,7 @@ class FechamentoExcedenteController extends Controller
         $ap   = $p->excessHoursApuracao($yearMonth);
         $rate = (float) ($p->additional_hourly_rate ?? 0);
 
-        if ($ap['basis'] === 'fixed') {
+        if ($ap['basis'] === 'fixed' || $ap['basis'] === 'closed') {
             $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
                 ->where('project_id', $p->id)->sum('excess_hours');
             $excess = max(0, round($ap['excess'] - $jaCobrado, 2));
@@ -218,7 +220,7 @@ class FechamentoExcedenteController extends Controller
 
         $linhas = $rows->map(fn ($r) => [
             'projeto'    => $r['code'] . ' — ' . $r['project_name'],
-            'tipo'       => $r['basis'] === 'fixed' ? 'BH Fixo' : 'BH Mensal',
+            'tipo'       => $r['basis'] === 'fixed' ? 'BH Fixo' : ($r['basis'] === 'closed' ? 'Fechado' : 'BH Mensal'),
             'contratadas'=> number_format((float) $r['contracted_hours'], 2, ',', '.') . 'h',
             'consumido'  => number_format((float) $r['consumed_hours'], 2, ',', '.') . 'h',
             'excedente'  => number_format((float) $r['excess_hours'], 2, ',', '.') . 'h',
