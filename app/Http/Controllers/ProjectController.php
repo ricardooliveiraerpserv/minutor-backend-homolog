@@ -3619,6 +3619,57 @@ class ProjectController extends Controller
     }
 
     /**
+     * Lista TODOS os períodos de projeto abertos (closed_at = null) de todos os projetos.
+     * Usado na visão de Configurações para o admin ver e fechar em lote.
+     */
+    public function allOpenPeriods(): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $periods = \App\Models\ProjectOpenPeriod::whereNull('closed_at')
+            ->with(['project:id,code,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])
+            ->orderBy('year_month')
+            ->orderBy('project_id')
+            ->get(['id', 'project_id', 'year_month', 'opened_by', 'created_at']);
+
+        $data = $periods->map(fn ($p) => [
+            'id'           => $p->id,
+            'project_id'   => $p->project_id,
+            'project_code' => $p->project?->code,
+            'project_name' => $p->project?->name,
+            'cliente'      => $p->project?->customer?->name,
+            'year_month'   => $p->year_month,
+            'opened_by'    => $p->openedBy?->name,
+            'created_at'   => $p->created_at,
+        ]);
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Fecha em lote TODOS os períodos de projeto abertos de competências anteriores à
+     * vigente (o mês atual nunca é fechado). Mesma regra do closePeriods, sem projeto fixo.
+     */
+    public function closeAllOpenPeriods(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isAdministrativo() && !$user->isCoordenador()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $mesAtual = \Carbon\Carbon::now()->startOfMonth()->format('Y-m');
+
+        $count = \App\Models\ProjectOpenPeriod::whereNull('closed_at')
+            ->where('year_month', '<', $mesAtual)
+            ->update(['closed_at' => now(), 'closed_by' => $user->id]);
+
+        return response()->json(['message' => "{$count} período(s) fechado(s).", 'count' => $count]);
+    }
+
+    /**
      * Sincroniza o card do contract no Kanban quando o `kanban_coordinator_override_id`
      * do projeto é setado ou limpo.
      *

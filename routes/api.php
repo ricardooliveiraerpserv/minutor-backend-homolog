@@ -927,6 +927,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/open-periods',  [ProjectController::class, 'listOpenPeriods'])->name('projects.open-periods.index');
         Route::post('/projects/{project}/open-period',  [ProjectController::class, 'openPeriod'])->name('projects.open-periods.open');
         Route::post('/projects/{project}/close-periods',[ProjectController::class, 'closePeriods'])->name('projects.open-periods.close');
+        // Visão global (Configurações): todos os períodos abertos + fechar em lote.
+        Route::get('/projects-open-periods',            [ProjectController::class, 'allOpenPeriods'])->name('projects.open-periods.all');
+        Route::post('/projects-open-periods/close-all', [ProjectController::class, 'closeAllOpenPeriods'])->name('projects.open-periods.close-all');
 
         // 📄 CONTRATOS
         Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');
