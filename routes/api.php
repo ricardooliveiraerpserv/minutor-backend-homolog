@@ -930,6 +930,7 @@ Route::prefix('v1')->group(function () {
         // Visão global (Configurações): todos os períodos abertos + fechar em lote.
         Route::get('/projects-open-periods',            [ProjectController::class, 'allOpenPeriods'])->name('projects.open-periods.all');
         Route::post('/projects-open-periods/close-all', [ProjectController::class, 'closeAllOpenPeriods'])->name('projects.open-periods.close-all');
+        Route::post('/projects-open-periods/{period}/close', [ProjectController::class, 'closeOnePeriod'])->name('projects.open-periods.close-one');
 
         // 📄 CONTRATOS
         Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');
