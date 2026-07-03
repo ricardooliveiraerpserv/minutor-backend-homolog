@@ -908,16 +908,20 @@ class FechamentoClienteController extends Controller
             $user       = $userTs->first()->user;
             $totalHoras = round($userTs->sum('effort_minutes') / 60, 2);
 
+            // Valores VIGENTES na competência (não os atuais do cadastro) — legado intacto.
+            $hist = \App\Models\UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
+
             if ($user->type === 'parceiro_admin') {
                 // Agrupa parceiros por partner_id
                 $partnerId    = $user->partner_id;
                 $partner      = $user->partner;
                 $isFixed      = $partner?->pricing_type === Partner::PRICING_FIXED;
-                $partnerRate  = (float) ($partner?->hourly_rate ?? 0);
+                // Taxa do parceiro fixo vigente na competência.
+                $partnerRate  = (float) ($partner?->hourlyRateForCompetencia($yearMonth) ?? 0);
 
                 $taxaHora = $isFixed
                     ? $partnerRate
-                    : $this->effectiveHourlyRate((float) ($user->hourly_rate ?? 0), $user->rate_type ?? 'hourly');
+                    : $this->effectiveHourlyRate((float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0), $hist['rate_type'] ?? $user->rate_type ?? 'hourly');
 
                 if (!isset($parceiros[$partnerId])) {
                     $parceiros[$partnerId] = [
@@ -931,14 +935,14 @@ class FechamentoClienteController extends Controller
                 $parceiros[$partnerId]['horas_total']   = round($parceiros[$partnerId]['horas_total'] + $totalHoras, 2);
                 $parceiros[$partnerId]['total_a_pagar'] = round($parceiros[$partnerId]['total_a_pagar'] + ($totalHoras * $taxaHora), 2);
             } else {
-                $hourlyRate    = (float) ($user->hourly_rate ?? 0);
-                $rateType      = $user->rate_type ?? 'hourly';
+                $hourlyRate    = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
+                $rateType      = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
                 $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
 
                 $internos[] = [
                     'user_id'         => $userId,
                     'nome'            => $user->name ?? '—',
-                    'consultant_type' => $user->consultant_type ?? $user->type ?? '—',
+                    'consultant_type' => $hist['consultant_type'] ?? $user->consultant_type ?? $user->type ?? '—',
                     'horas'           => $totalHoras,
                     'valor_hora'      => $hourlyRate,
                     'rate_type'       => $rateType,
