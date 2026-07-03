@@ -1388,6 +1388,17 @@ class Project extends Model
         return $code === 'fixed_hours' || $name === 'banco de horas fixo';
     }
 
+    /** Verificar se o projeto é do tipo "Fechado" (escopo/horas fechadas). */
+    public function isClosedContract(): bool
+    {
+        if (!$this->contractType) {
+            return false;
+        }
+        $code = (string) ($this->contractType->code ?? '');
+        $name = strtolower(trim((string) $this->contractType->name));
+        return $code === 'closed' || $name === 'fechado';
+    }
+
     /**
      * Consumo (horas apontáveis, approved+pending) do projeto numa competência.
      * Base da apuração de horas excedentes do BH Mensal.
@@ -1412,11 +1423,12 @@ class Project extends Model
      */
     public function excessHoursApuracao(string $yearMonth): array
     {
-        if ($this->isBankHoursFixed()) {
+        if ($this->isBankHoursFixed() || $this->isClosedContract()) {
             $bd      = $this->managementBreakdown();
             $balance = $bd['balance'];
             $excess  = $balance < 0 ? round(-$balance, 2) : 0.0;
-            return ['basis' => 'fixed', 'contracted' => round((float) $bd['available'], 2), 'consumed' => round((float) $bd['consumed'], 2), 'excess' => $excess];
+            $basis   = $this->isClosedContract() ? 'closed' : 'fixed';
+            return ['basis' => $basis, 'contracted' => round((float) $bd['available'], 2), 'consumed' => round((float) $bd['consumed'], 2), 'excess' => $excess];
         }
 
         $contracted = round($this->soldHoursForCompetencia($yearMonth), 2);
