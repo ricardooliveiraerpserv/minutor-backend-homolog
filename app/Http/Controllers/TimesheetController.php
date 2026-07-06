@@ -201,7 +201,12 @@ class TimesheetController extends Controller
             // Projetos (default): vê TODOS os apontamentos — filtro client-side via
             // chip "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
-                $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+                // sustentacao/cloud + Investimento Suporte (suporte de TODAS as empresas, mesmo
+                // com service_type 'Projeto') — igual ApprovalController.
+                $query->where(function ($outer) {
+                    $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                });
             }
         }
 
@@ -2689,7 +2694,11 @@ class TimesheetController extends Controller
         } elseif ($user->isCoordenador()) {
             // Coord projetos: vê tudo. Sustentação: restrito ao escopo.
             if ($user->coordinator_type === 'sustentacao') {
-                $base->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+                // sustentacao/cloud + Investimento Suporte (suporte de todas as empresas) — igual ApprovalController.
+                $base->where(function ($outer) {
+                    $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                });
             }
         }
 
