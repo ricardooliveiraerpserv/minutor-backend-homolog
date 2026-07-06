@@ -1405,8 +1405,11 @@ class TimesheetController extends Controller
         // Processar user_id se fornecido (apenas para administradores)
         $validatedData = $validator->validated();
         if (isset($validatedData['user_id'])) {
-            // Verificar se o usuário atual tem permissão para alterar o usuário do apontamento
-            if (!($user->isAdmin() || $user->hasAccess('admin.full_access'))) {
+            // Coordenador pode definir/trocar o usuário do apontamento (gestão da equipe — apont. de
+            // terceiros). Só bloqueia quando o usuário REALMENTE muda (mandar o mesmo user não é alteração).
+            $isUserChange = (int) $validatedData['user_id'] !== (int) $timesheet->user_id;
+            $isCoord = method_exists($user, 'isCoordenador') && $user->isCoordenador();
+            if ($isUserChange && !($user->isAdmin() || $user->hasAccess('admin.full_access') || $isCoord)) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
