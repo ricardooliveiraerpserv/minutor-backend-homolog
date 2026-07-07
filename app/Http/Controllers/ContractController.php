@@ -2219,6 +2219,8 @@ class ContractController extends Controller
             'status'                => $project->status,
             'sold_hours'            => $project->sold_hours,
             'consumed_hours'        => $consumed,
+            // Cliente só acompanha horas se o projeto estiver com o acompanhamento ligado (senão o FE esconde).
+            'client_follows_timesheets' => $project->client_follows_timesheets,
             'general_hours_balance' => $saldo,
             'project_value'         => $project->project_value,
             'start_date'            => $project->start_date,
