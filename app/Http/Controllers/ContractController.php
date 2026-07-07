@@ -1350,16 +1350,19 @@ class ContractController extends Controller
             }
         }
 
-        // ── Coordenadores ativos (apenas projetos — sustentação tem colunas próprias)
+        // ── Coordenadores que viram COLUNA no kanban (arrastar contrato → gera projeto).
         // Inclui:
         //  - coordenadores com coordinator_type=projetos
+        //  - coordenadores de sustentação (podem coordenar projetos pequenos pontualmente;
+        //    o FE colore a coluna deles de laranja pra diferenciar — coordinator_type volta
+        //    no payload). A sustentação continua com suas colunas de fila próprias.
         //  - admins definidos em algum projeto via project_coordinators (M2M)
         //  - usuários referenciados como kanban_coordinator_override_id em algum projeto
         $coordinators = User::where('enabled', true)
             ->where(function ($q) {
                 $q->where(function ($inner) {
                     $inner->where('type', 'coordenador')
-                          ->where('coordinator_type', 'projetos');
+                          ->whereIn('coordinator_type', ['projetos', 'sustentacao']);
                 })->orWhere(function ($inner) {
                     $inner->where('type', 'admin')
                           ->whereHas('coordinatorProjects');
@@ -1370,7 +1373,7 @@ class ContractController extends Controller
                         ->whereNull('projects.deleted_at');
                 });
             })
-            ->select('id', 'name')
+            ->select('id', 'name', 'coordinator_type')
             ->orderBy('name')
             ->get();
 
