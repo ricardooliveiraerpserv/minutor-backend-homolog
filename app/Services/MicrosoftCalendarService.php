@@ -99,7 +99,7 @@ class MicrosoftCalendarService
             $url = self::GRAPH_BASE . '/me/calendarView?' . http_build_query([
                 'startDateTime' => $start->toIso8601String(),
                 'endDateTime'   => $end->toIso8601String(),
-                '$select'       => 'subject,start,end,isAllDay',
+                '$select'       => 'subject,start,end,isAllDay,location,onlineMeeting,webLink,attendees,organizer',
                 '$orderby'      => 'start/dateTime',
                 '$top'          => 100,
             ]);
@@ -110,13 +110,24 @@ class MicrosoftCalendarService
 
             return collect($r->json('value', []))->map(function ($e) {
                 $startDt = data_get($e, 'start.dateTime');
+                $endDt   = data_get($e, 'end.dateTime');
                 $date = $startDt ? Carbon::parse($startDt)->toDateString() : null;
                 if (!$date) return null;
+                $convidados = collect(data_get($e, 'attendees', []))->map(fn ($a) => [
+                    'nome'     => (string) (data_get($a, 'emailAddress.name') ?: data_get($a, 'emailAddress.address') ?: ''),
+                    'email'    => (string) data_get($a, 'emailAddress.address'),
+                    'resposta' => (string) (data_get($a, 'status.response') ?: 'none'), // accepted|declined|tentativelyAccepted|notResponded|none
+                ])->filter(fn ($a) => $a['nome'] !== '')->values()->all();
                 return [
-                    'tipo'   => 'outlook',
-                    'data'   => $date,
-                    'titulo' => (string) (data_get($e, 'subject') ?: 'Compromisso'),
-                    'hora'   => data_get($e, 'isAllDay') ? null : ($startDt ? Carbon::parse($startDt)->format('H:i') : null),
+                    'tipo'        => 'outlook',
+                    'data'        => $date,
+                    'titulo'      => (string) (data_get($e, 'subject') ?: 'Compromisso'),
+                    'hora'        => data_get($e, 'isAllDay') ? null : ($startDt ? Carbon::parse($startDt)->format('H:i') : null),
+                    'hora_fim'    => data_get($e, 'isAllDay') ? null : ($endDt ? Carbon::parse($endDt)->format('H:i') : null),
+                    'local'       => (string) (data_get($e, 'location.displayName') ?: ''),
+                    'link'        => (string) (data_get($e, 'onlineMeeting.joinUrl') ?: data_get($e, 'webLink') ?: ''),
+                    'organizador' => (string) (data_get($e, 'organizer.emailAddress.name') ?: ''),
+                    'convidados'  => $convidados,
                 ];
             })->filter()->values()->all();
         } catch (\Throwable) {
