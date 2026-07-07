@@ -217,6 +217,18 @@ class User extends Authenticatable
     public function isCoordenador(): bool      { return $this->type === 'coordenador'; }
     public function isConsultor(): bool     { return $this->type === 'consultor'; }
     public function isCliente(): bool       { return $this->type === 'cliente'; }
+
+    /**
+     * Chaves de perfil EFETIVAS p/ permissões. Coordenador é separado por coordinator_type:
+     * coordenador_projetos | coordenador_sustentacao (mantém 'coordenador' p/ compat de dados antigos).
+     */
+    public function effectiveProfiles(): array
+    {
+        if ($this->type === 'coordenador') {
+            return ['coordenador', 'coordenador_' . ($this->coordinator_type ?: 'projetos')];
+        }
+        return [(string) $this->type];
+    }
     public function isParceiroAdmin(): bool { return $this->type === 'parceiro_admin'; }
 
     /**
@@ -263,6 +275,14 @@ class User extends Authenticatable
     {
         return $this->belongsToMany(Project::class, 'project_coordinators')
                     ->withTimestamps();
+    }
+
+    /** IDs dos projetos que o usuário coordena (memoizado — 1 query por request, não por linha). */
+    private ?array $coordinatedProjectIdsCache = null;
+    public function coordinatedProjectIds(): array
+    {
+        return $this->coordinatedProjectIdsCache
+            ??= $this->coordinatorProjects()->pluck('projects.id')->all();
     }
 
     /**

@@ -17,7 +17,7 @@ use Carbon\Carbon;
 #[ObservedBy([TimesheetObserver::class])]
 class Timesheet extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, \App\Traits\WithAbilities;
     use \App\Attachments\Concerns\HasGlobalAttachments;
 
     // FASE 11 — chave do registry global de anexos.

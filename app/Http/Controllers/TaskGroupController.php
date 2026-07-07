@@ -35,7 +35,7 @@ class TaskGroupController extends Controller
     {
         $u = $this->authorizeManager($request);
         $v = $this->validatePayload($request);
-        $g = TaskGroup::create(['nome' => $v['nome'], 'descricao' => $v['descricao'] ?? null, 'owner_id' => $u->id, 'active' => $v['active'] ?? true]);
+        $g = TaskGroup::create(['nome' => $v['nome'], 'descricao' => $v['descricao'] ?? null, 'owner_id' => $u->id, 'active' => $v['active'] ?? true, 'start_date' => $v['start_date'] ?? null, 'end_date' => $v['end_date'] ?? null]);
         $this->syncUsersAndItems($g, $v);
         return response()->json(['data' => $this->serialize($g->fresh(['owner', 'users', 'items']))], 201);
     }
@@ -44,7 +44,7 @@ class TaskGroupController extends Controller
     {
         $this->authorizeOwner($request, $taskGroup);
         $v = $this->validatePayload($request);
-        $taskGroup->update(['nome' => $v['nome'], 'descricao' => $v['descricao'] ?? null, 'active' => $v['active'] ?? $taskGroup->active]);
+        $taskGroup->update(['nome' => $v['nome'], 'descricao' => $v['descricao'] ?? null, 'active' => $v['active'] ?? $taskGroup->active, 'start_date' => $v['start_date'] ?? null, 'end_date' => $v['end_date'] ?? null]);
         $this->syncUsersAndItems($taskGroup, $v);
         return response()->json(['data' => $this->serialize($taskGroup->fresh(['owner', 'users', 'items']))]);
     }
@@ -106,6 +106,8 @@ class TaskGroupController extends Controller
             'nome'                       => 'required|string|max:200',
             'descricao'                  => 'nullable|string',
             'active'                     => 'nullable|boolean',
+            'start_date'                 => 'required|date',
+            'end_date'                   => 'nullable|date|after_or_equal:start_date',
             'user_ids'                   => 'nullable|array',
             'user_ids.*'                 => 'integer|exists:users,id',
             'items'                      => 'nullable|array',
@@ -131,6 +133,8 @@ class TaskGroupController extends Controller
             'nome'       => $g->nome,
             'descricao'  => $g->descricao,
             'active'     => $g->active,
+            'start_date' => $g->start_date?->format('Y-m-d'),
+            'end_date'   => $g->end_date?->format('Y-m-d'),
             'owner_id'   => $g->owner_id,
             'owner_name' => $g->owner?->name,
             'users'      => $g->users->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values(),
