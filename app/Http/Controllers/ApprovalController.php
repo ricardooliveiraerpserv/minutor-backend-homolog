@@ -41,7 +41,9 @@ class ApprovalController extends Controller
             if ($u->isAdmin() || $u->isCoordenador()) {
                 $isSust = $u->isCoordenador() && $u->coordinator_type === 'sustentacao';
                 $coord = $isSust ? '' : '&coordinator_id=' . $u->id;
-                $tsQuery = $sinceCut($this->buildTimesheetQuery($u));
+                // Aprovação NÃO é day-scoped: um apontamento pendente de dias atrás continua exigindo
+                // ação. Sem sinceCut aqui → o Meu Dia bate com a aba Ações (mesmo total pendente no escopo).
+                $tsQuery = $this->buildTimesheetQuery($u);
                 // Sustentação: lembrete só dos apontamentos do DIA ANTERIOR (regra própria).
                 if ($isSust) $tsQuery->whereDate('date', now()->subDay()->toDateString());
                 $ts = $this->scopedApprovalCount($tsQuery, $u);
@@ -49,7 +51,7 @@ class ApprovalController extends Controller
                     "Há {$ts} apontamento(s)" . ($isSust ? ' do dia anterior' : '') . " aguardando sua aprovação.", 'Revisar apontamentos', "/approvals?tab=timesheets{$coord}", $ts);
 
                 // Despesas para APROVAR — mesma responsabilidade de quem aprova apontamento (coordenador/admin).
-                $exApprove = $this->scopedApprovalCount($sinceCut($this->buildExpenseQuery($u)), $u);
+                $exApprove = $this->scopedApprovalCount($this->buildExpenseQuery($u), $u);
                 if ($exApprove > 0) $actions[] = $this->homeAction('approve_exp', 'high', 'Despesas para aprovar',
                     "Há {$exApprove} despesa(s) aguardando sua aprovação.", 'Revisar despesas', "/approvals?tab=expenses{$coord}", $exApprove);
             }
