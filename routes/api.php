@@ -116,7 +116,95 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:5,1')
         ->name('candidates.store');
 
+    // ===== Meu Dia (Central de Notificações / Ações / Tarefas / Comunicações) — público =====
+
+    // Resposta de 1 clique vinda do e-mail (link assinado, sem login) — botões de decisão no e-mail.
+    Route::get('/notifications/{notification}/respond-email', [\App\Http\Controllers\NotificationController::class, 'respondEmail'])
+        ->middleware('signed')->name('notifications.respond-email');
+    // 🔗 Callback OAuth Microsoft 365 (público — o browser é redirecionado pela Microsoft;
+    // o usuário é identificado pelo `state` assinado, não pelo bearer token).
+    Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
+        ->middleware('throttle:30,1')->name('integrations.microsoft.callback');
+
     Route::middleware('auth:sanctum')->group(function () {
+        // ===== Meu Dia: Central de Notificações + Ações + Tarefas + Calendário + Comunicações =====
+        // Central de Notificações (tela inicial — só usuários internos)
+        Route::get('/notifications',              [\App\Http\Controllers\NotificationController::class, 'index']);
+        Route::get('/notifications/actions',      [\App\Http\Controllers\ApprovalController::class, 'homeActions']);
+        Route::get('/me/badges',                  [\App\Http\Controllers\NotificationController::class, 'badges']);
+        Route::get('/notifications/stream',       [\App\Http\Controllers\NotificationController::class, 'stream']);
+        Route::get('/notifications/manage',       [\App\Http\Controllers\NotificationController::class, 'manage']);
+        Route::get('/notifications/meta',         [\App\Http\Controllers\NotificationController::class, 'meta']);
+        Route::get('/notifications/users',        [\App\Http\Controllers\NotificationController::class, 'searchUsers']);
+        Route::post('/notifications/preview',     [\App\Http\Controllers\NotificationController::class, 'preview']);
+        Route::post('/notifications',             [\App\Http\Controllers\NotificationController::class, 'store']);
+        Route::put('/notifications/{notification}',    [\App\Http\Controllers\NotificationController::class, 'update']);
+        Route::delete('/notifications/{notification}', [\App\Http\Controllers\NotificationController::class, 'destroy']);
+        Route::post('/notifications/{notification}/view', [\App\Http\Controllers\NotificationController::class, 'view']);
+        Route::post('/notifications/{notification}/ack',  [\App\Http\Controllers\NotificationController::class, 'ack']);
+        Route::post('/notifications/{notification}/respond', [\App\Http\Controllers\NotificationController::class, 'respond']);
+        Route::get('/notifications/{notification}/log',   [\App\Http\Controllers\NotificationController::class, 'log']);
+        Route::post('/notifications/{notification}/resend', [\App\Http\Controllers\NotificationController::class, 'resend']);
+
+        // Rotina (admin): recorrência dos lembretes de ações não resolvidas.
+        Route::get('/action-reminders',                [\App\Http\Controllers\ActionReminderController::class, 'index']);
+        Route::get('/action-reminders/{key}/preview',  [\App\Http\Controllers\ActionReminderController::class, 'preview']);
+        Route::put('/action-reminders/{key}',          [\App\Http\Controllers\ActionReminderController::class, 'update']);
+
+        // Enquetes (polls) da Central de Notificações
+        Route::post('/polls/{poll}/vote',   [\App\Http\Controllers\NotificationPollController::class, 'vote']);
+        Route::get('/polls/{poll}/results', [\App\Http\Controllers\NotificationPollController::class, 'resultsEndpoint']);
+        Route::get('/polls/{poll}/voters',  [\App\Http\Controllers\NotificationPollController::class, 'voters']);
+
+        // Agenda / Calendário da tela inicial (eventos do mês)
+        Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);
+
+        // Tarefas rápidas (Smart To-Do) pessoais
+        Route::get('/tasks',              [\App\Http\Controllers\TaskController::class, 'index']);
+        Route::get('/tasks/entities',     [\App\Http\Controllers\TaskController::class, 'entities']);
+        Route::get('/tasks/users',        [\App\Http\Controllers\TaskController::class, 'users']);
+        Route::get('/tasks/team',         [\App\Http\Controllers\TaskController::class, 'team']);
+        Route::post('/tasks',             [\App\Http\Controllers\TaskController::class, 'store']);
+        Route::patch('/tasks/{task}/resolve', [\App\Http\Controllers\TaskController::class, 'resolve']);
+        Route::put('/tasks/{task}',       [\App\Http\Controllers\TaskController::class, 'update']);
+        Route::delete('/tasks/{task}',    [\App\Http\Controllers\TaskController::class, 'destroy']);
+
+        // Central de Comunicação (externa, com clientes)
+        Route::get('/communications/mine',           [\App\Http\Controllers\CommunicationController::class, 'mine']);      // recebidas (endereçadas a mim)
+        Route::get('/communications/feed',           [\App\Http\Controllers\CommunicationController::class, 'feed']);      // mural (tudo que posso ler)
+        Route::get('/communications/{communication}/log', [\App\Http\Controllers\CommunicationController::class, 'log']); // log de leitura (admin)
+        Route::get('/communications/unread',         [\App\Http\Controllers\CommunicationController::class, 'unread']);    // popup de prévia
+        Route::post('/communications/mark-read',     [\App\Http\Controllers\CommunicationController::class, 'markRead']);  // marca lido
+        Route::get('/communications/meta',           [\App\Http\Controllers\CommunicationController::class, 'meta']);
+        Route::get('/communications/customer-users', [\App\Http\Controllers\CommunicationController::class, 'customerUsers']);
+        Route::post('/communications/preview',       [\App\Http\Controllers\CommunicationController::class, 'preview']);
+        Route::post('/communications/send',          [\App\Http\Controllers\CommunicationController::class, 'send']);
+        Route::get('/communications',                [\App\Http\Controllers\CommunicationController::class, 'index']);
+        Route::get('/distribution-lists',            [\App\Http\Controllers\DistributionListController::class, 'index']);
+        Route::post('/distribution-lists',           [\App\Http\Controllers\DistributionListController::class, 'store']);
+        Route::delete('/distribution-lists/{distributionList}', [\App\Http\Controllers\DistributionListController::class, 'destroy']);
+        Route::get('/communication-templates',       [\App\Http\Controllers\CommunicationTemplateController::class, 'index']);
+        Route::post('/communication-templates',      [\App\Http\Controllers\CommunicationTemplateController::class, 'store']);
+        Route::delete('/communication-templates/{communicationTemplate}', [\App\Http\Controllers\CommunicationTemplateController::class, 'destroy']);
+
+        // Rotinas de Equipe (task_groups)
+        Route::get('/task-groups',                       [\App\Http\Controllers\TaskGroupController::class, 'index']);
+        Route::post('/task-groups',                      [\App\Http\Controllers\TaskGroupController::class, 'store']);
+        Route::put('/task-groups/{taskGroup}',           [\App\Http\Controllers\TaskGroupController::class, 'update']);
+        Route::delete('/task-groups/{taskGroup}',        [\App\Http\Controllers\TaskGroupController::class, 'destroy']);
+        Route::post('/task-groups/{taskGroup}/generate', [\App\Http\Controllers\TaskGroupController::class, 'generate']);
+        Route::get('/task-groups/{taskGroup}/tracking',  [\App\Http\Controllers\TaskGroupController::class, 'tracking']);
+
+        // Integração Microsoft 365 / Outlook (OAuth delegado por usuário)
+        Route::get('/integrations/microsoft/status',      [\App\Http\Controllers\UserIntegrationController::class, 'status']);
+        Route::post('/integrations/microsoft/connect',    [\App\Http\Controllers\UserIntegrationController::class, 'connect']);
+        Route::post('/integrations/microsoft/disconnect', [\App\Http\Controllers\UserIntegrationController::class, 'disconnect']);
+        Route::post('/integrations/microsoft/sync',       [\App\Http\Controllers\UserIntegrationController::class, 'sync']);
+
+        // Aniversários — parabenização entre a equipe
+        Route::get('/birthdays/today',            [\App\Http\Controllers\BirthdayController::class, 'today']);
+        Route::post('/birthdays/{user}/message',  [\App\Http\Controllers\BirthdayController::class, 'sendMessage']);
+        Route::get('/birthdays/{user}/messages',  [\App\Http\Controllers\BirthdayController::class, 'messages']);
         // Dados do usuário
         Route::get('/user', [AuthController::class, 'user'])->name('user.profile');
         Route::put('/user/profile', [AuthController::class, 'updateProfile'])->name('user.update');
