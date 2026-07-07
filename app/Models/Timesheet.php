@@ -405,32 +405,25 @@ class Timesheet extends Model
         }
 
         // Investimento COMERCIAL: o EXECUTIVO do cliente aprova (mesmo sem ser coordenador).
-        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial') {
-            return $this->customer_id && \App\Models\Customer::where('id', $this->customer_id)
-                ->where('executive_id', $user->id)->exists();
+        // Concede ao executivo; se não for, cai na regra de coordenador abaixo.
+        if ($this->project->is_investimento_comercial && $this->project->categoria_interna === 'Comercial'
+            && $this->customer_id
+            && \App\Models\Customer::where('id', $this->customer_id)->where('executive_id', $user->id)->exists()) {
+            return true;
         }
 
-        if (!$user->isCoordenador()) {
-            return false;
+        // QUALQUER coordenador pode aprovar apontamentos (decisão do negócio 2026-07-07).
+        // A responsabilidade/coordenador cadastrado do projeto NÃO muda — isto define só
+        // quem PODE aprovar. As regras antigas (coord. de sustentação restrito a projetos
+        // de sustentação; coord. de projetos restrito aos projetos onde está vinculado)
+        // travavam os apontamentos de "Investimento Suporte" — coordenados por um
+        // coordenador de sustentação num projeto de service_type 'projeto' — para todos
+        // exceto admin: nem o próprio coordenador do projeto conseguia aprovar.
+        if ($user->isCoordenador()) {
+            return true;
         }
 
-        // Coordenador de sustentação aprova qualquer timesheet de projeto de sustentação
-        if ($user->coordinator_type === 'sustentacao') {
-            return $this->project->service_type_id &&
-                \App\Models\ServiceType::where('id', $this->project->service_type_id)
-                    ->where('code', 'sustentacao')
-                    ->exists();
-        }
-
-        // Apontamento de INVESTIMENTO (Suporte/Projeto): aprova o coordenador do PROJETO REAL.
-        if ($this->project->is_investimento_comercial && $this->real_project_id) {
-            return \App\Models\Project::where('id', $this->real_project_id)
-                ->whereHas('coordinators', fn($q) => $q->where('users.id', $user->id))
-                ->exists();
-        }
-
-        // Coordenador de projetos aprova projetos onde está vinculado como coordenador
-        return $this->project->coordinators()->where('users.id', $user->id)->exists();
+        return false;
     }
 
     /**
