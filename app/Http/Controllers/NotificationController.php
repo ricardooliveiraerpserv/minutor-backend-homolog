@@ -301,7 +301,9 @@ class NotificationController extends Controller
     {
         abort_unless($request->user()?->isAdmin(), 403);
         abort_if($notification->is_template, 422, 'Modelos não podem ser reenviados — use "Usar modelo" para publicar.');
-        $emailed = $this->fire($notification);
+        // channel: 'popup' = só reabre o pop-up (sem e-mail); qualquer outro (padrão) = e-mail + pop-up.
+        $sendEmail = $request->input('channel') !== 'popup';
+        $emailed = $this->fire($notification, [], $sendEmail);
         return response()->json(['data' => array_merge($notification->fresh('poll.options')->toArray(), ['emailed' => $emailed])]);
     }
 
@@ -310,7 +312,7 @@ class NotificationController extends Controller
      * fim do dia, marca resent_at (o pop-up reaparece) e reenvia o e-mail. Reusado pelo reenvio
      * manual e pela recorrência. Retorna nº de e-mails enviados.
      */
-    public function fire(AppNotification $n, array $extraBcc = []): int
+    public function fire(AppNotification $n, array $extraBcc = [], bool $sendEmail = true): int
     {
         NotificationRead::where('notification_id', $n->id)->delete();
         $n->forceFill([
@@ -318,7 +320,8 @@ class NotificationController extends Controller
             'last_fired_at' => now(),
             'expires_at'    => $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->endOfDay(),
         ])->save();
-        return $this->emailNotification($n->fresh('poll.options'), $extraBcc);
+        // $sendEmail = false → só re-dispara o pop-up (zera leituras), sem reenviar e-mail.
+        return $sendEmail ? $this->emailNotification($n->fresh('poll.options'), $extraBcc) : 0;
     }
 
     /** Cria uma notificação (admin). */
