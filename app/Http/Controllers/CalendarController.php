@@ -108,7 +108,17 @@ class CalendarController extends Controller
             foreach (($integ?->cached_events ?? []) as $ev) {
                 $d = (string) ($ev['data'] ?? '');
                 if (strlen($d) === 10 && (int) substr($d, 5, 2) === $month && (int) substr($d, 0, 4) === $year) {
-                    $eventos->push(['tipo' => 'outlook', 'data' => $d, 'titulo' => (string) ($ev['titulo'] ?? 'Compromisso')]);
+                    $eventos->push([
+                        'tipo'        => 'outlook',
+                        'data'        => $d,
+                        'titulo'      => (string) ($ev['titulo'] ?? 'Compromisso'),
+                        'hora'        => $ev['hora'] ?? null,
+                        'hora_fim'    => $ev['hora_fim'] ?? null,
+                        'local'       => $ev['local'] ?? '',
+                        'link'        => $ev['link'] ?? '',
+                        'organizador' => $ev['organizador'] ?? '',
+                        'convidados'  => $ev['convidados'] ?? [],
+                    ]);
                 }
             }
         } catch (\Throwable) { /* nunca trava o calendário */ }
