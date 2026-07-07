@@ -364,6 +364,22 @@ class CommunicationController extends Controller
         return response()->json(['data' => ['marked' => $ids->count()]]);
     }
 
+    public function ack(Request $request): JsonResponse
+    {
+        $u = $this->client($request);
+        $v = $request->validate(['id' => 'required|integer']);
+        $exists = Communication::visible()->forClient($u)->whereKey($v['id'])->exists();
+        abort_unless($exists, 404);
+
+        $read = CommunicationRead::firstOrCreate(
+            ['communication_id' => $v['id'], 'user_id' => $u->id],
+            ['read_at' => now()],
+        );
+        if (!$read->acknowledged_at) { $read->acknowledged_at = now(); $read->save(); }
+
+        return response()->json(['data' => ['acknowledged' => true]]);
+    }
+
     /** Resolve a lista final de e-mails (clientes + usuários + externos), em minúsculo e únicos. */
     private function resolveEmails(Request $request): array
     {

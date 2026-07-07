@@ -180,6 +180,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/communications/{communication}/log', [\App\Http\Controllers\CommunicationController::class, 'log']); // log de leitura (admin)
         Route::get('/communications/unread',         [\App\Http\Controllers\CommunicationController::class, 'unread']);    // popup de prévia
         Route::post('/communications/mark-read',     [\App\Http\Controllers\CommunicationController::class, 'markRead']);  // marca lido
+        Route::post('/communications/ack',           [\App\Http\Controllers\CommunicationController::class, 'ack']);       // confirma recebimento (requires_ack)
         Route::get('/communications/meta',           [\App\Http\Controllers\CommunicationController::class, 'meta']);
         Route::get('/communications/customer-users', [\App\Http\Controllers\CommunicationController::class, 'customerUsers']);
         Route::post('/communications/preview',       [\App\Http\Controllers\CommunicationController::class, 'preview']);
