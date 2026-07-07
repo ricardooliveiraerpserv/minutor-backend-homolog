@@ -24,21 +24,23 @@ class CalendarController extends Controller
         'task'                => 'Tarefa',
         'outlook'             => 'Outlook',
     ];
-    /** Perfis configuráveis (admin SEMPRE vê tudo — não entra na matriz). */
+    /** TODOS os perfis (users.type) entram na matriz de visibilidade. */
     const PROFILE_LABELS = [
+        'admin'          => 'Administrador',
+        'administrativo' => 'Administrativo',
         'coordenador'    => 'Coordenador',
         'consultor'      => 'Consultor',
         'parceiro_admin' => 'Parceiro',
         'cliente'        => 'Cliente',
     ];
-    /** Padrão: administrativos (vencimento/reajuste) só coordenador; o resto, todos. */
+    /** Padrão: administrativos (vencimento/reajuste) só admin/administrativo/coordenador; o resto, todos. */
     const DEFAULT_VISIBILITY = [
-        'birthday'            => ['coordenador', 'consultor', 'parceiro_admin', 'cliente'],
-        'holiday'             => ['coordenador', 'consultor', 'parceiro_admin', 'cliente'],
-        'contract_expiration' => ['coordenador'],
-        'reajuste'            => ['coordenador'],
-        'task'                => ['coordenador', 'consultor', 'parceiro_admin', 'cliente'],
-        'outlook'             => ['coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'birthday'            => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'holiday'             => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'contract_expiration' => ['admin', 'administrativo', 'coordenador'],
+        'reajuste'            => ['admin', 'administrativo', 'coordenador'],
+        'task'                => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'outlook'             => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
     ];
 
     /** Config atual de visibilidade (saved ∪ defaults, saneada) — { tipo: [perfis] }. */
@@ -69,9 +71,10 @@ class CalendarController extends Controller
             : $now->copy()->startOfMonth();
         $month  = (int) $ref->month;
         $year   = (int) $ref->year;
-        // Visibilidade por tipo × perfil (admin SEMPRE vê tudo). Config editável em SystemSetting.
+        // Visibilidade por tipo × perfil — TODOS os perfis (inclusive admin) respeitam a matriz.
+        // O padrão já concede tudo a admin/administrativo; o ⚙️ da agenda é admin-only no FE.
         $vis = self::visibilityConfig();
-        $canSee = fn (string $tipo) => $u->isAdmin() || in_array($u->type, $vis[$tipo] ?? [], true);
+        $canSee = fn (string $tipo) => in_array($u->type, $vis[$tipo] ?? [], true);
         // Só carrega contratos se algum dos tipos de contrato for visível a este perfil (perf).
         $canSeeContracts = $canSee('contract_expiration') || $canSee('reajuste');
 
