@@ -24,7 +24,6 @@ class ProjectStageController extends Controller
                       ->orWhereHas('deliveries', fn ($d) => $d->where('responsible_user_id', $user->id));
                 });
             })
-            ->with('responsible:id,name,email')
             ->withCount([
                 'deliveries',
                 'deliveries as deliveries_done_count' => function ($q) {
@@ -185,7 +184,7 @@ class ProjectStageController extends Controller
 
     public function show(ProjectStage $stage): JsonResponse
     {
-        $stage->load(['responsible:id,name,email', 'deliveries']);
+        $stage->load(['deliveries']);
 
         return response()->json($stage);
     }
@@ -334,7 +333,6 @@ class ProjectStageController extends Controller
     {
         $data = $request->validate([
             'name'                => 'required|string|max:100',
-            'responsible_user_id' => 'nullable|exists:users,id',
             'hours_planned'       => 'nullable|numeric|min:0',
             'status'              => ['nullable', Rule::in(ProjectStage::STATUSES)],
             'expected_end_date'   => 'nullable|date',
@@ -379,14 +377,13 @@ class ProjectStageController extends Controller
         $project->recalcExpectedEndFromSchedule();
         $project->recomputeStatusFromStages(); // nova etapa → Em Planejamento (board)
 
-        return response()->json($stage->load('responsible:id,name,email'), 201);
+        return response()->json($stage, 201);
     }
 
     public function update(Request $request, ProjectStage $stage): JsonResponse
     {
         $data = $request->validate([
             'name'                => 'sometimes|string|max:100',
-            'responsible_user_id' => 'nullable|exists:users,id',
             'hours_planned'       => 'sometimes|numeric|min:0',
             'status'              => ['sometimes', Rule::in(ProjectStage::STATUSES)],
             'blocked_reason'      => 'nullable|string|max:500',
@@ -439,7 +436,7 @@ class ProjectStageController extends Controller
         $stage->project?->recalcExpectedEndFromSchedule();
         $stage->project?->recomputeStatusFromStages();
 
-        return response()->json($stage->fresh()->load('responsible:id,name,email'));
+        return response()->json($stage->fresh());
     }
 
     /**
