@@ -227,6 +227,14 @@ class User extends Authenticatable
         if ($this->type === 'coordenador') {
             return ['coordenador', 'coordenador_' . ($this->coordinator_type ?: 'projetos')];
         }
+        // Consultor granular por vínculo (mantém 'consultor' p/ permissões de tela legadas).
+        if ($this->type === 'consultor' && $this->consultant_type) {
+            return ['consultor', 'consultor_' . $this->consultant_type];
+        }
+        // Parceiro: executivo (gestor) vs membro simples (mantém 'parceiro_admin').
+        if ($this->type === 'parceiro_admin') {
+            return ['parceiro_admin', $this->is_executive ? 'parceiro_gestor' : 'parceiro_simples'];
+        }
         return [(string) $this->type];
     }
     public function isParceiroAdmin(): bool { return $this->type === 'parceiro_admin'; }
