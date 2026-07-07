@@ -89,4 +89,13 @@ return [
         'client_secret' => env('GRAPH_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
     ],
 
+    // Outlook/Calendar do usuário (OAuth DELEGADO). Reusa o app do MAIL_GRAPH por padrão;
+    // o app no Azure precisa ter o redirect_uri abaixo registrado + permissão delegada Calendars.Read.
+    'microsoft_calendar' => [
+        'tenant_id'     => env('MS_CALENDAR_TENANT_ID', env('MAIL_GRAPH_TENANT_ID')),
+        'client_id'     => env('MS_CALENDAR_CLIENT_ID', env('MAIL_GRAPH_CLIENT_ID')),
+        'client_secret' => env('MS_CALENDAR_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
+        'redirect_uri'  => env('MS_CALENDAR_REDIRECT_URI', rtrim(env('APP_URL', ''), '/') . '/api/v1/integrations/microsoft/callback'),
+    ],
+
 ];
