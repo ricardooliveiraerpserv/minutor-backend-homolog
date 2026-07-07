@@ -96,6 +96,7 @@ return [
         'client_id'     => env('MS_CALENDAR_CLIENT_ID', env('MAIL_GRAPH_CLIENT_ID')),
         'client_secret' => env('MS_CALENDAR_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
         'redirect_uri'  => env('MS_CALENDAR_REDIRECT_URI', rtrim(env('APP_URL', ''), '/') . '/api/v1/integrations/microsoft/callback'),
+        'scopes'        => env('MS_CALENDAR_SCOPES', 'offline_access openid profile Calendars.Read'),
     ],
 
 ];
