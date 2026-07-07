@@ -772,8 +772,24 @@ class CrmProposalController extends Controller
                 ->map(fn ($e) => ['tipo' => $e->event_type, 'em' => optional($e->created_at)->toIso8601String()])->all();
         }
 
+        // Mapa de calor: tempo REAL de leitura por página do deck (crm_proposal_page_views).
+        // Soma a duração por página entre todas as visitas/participantes.
+        $paginasRows = \App\Models\CrmProposalPageView::where('crm_proposal_id', $crmProposal->id)
+            ->selectRaw('page, COALESCE(SUM(duration_seconds),0) as segundos, COUNT(*) as views')
+            ->groupBy('page')
+            ->orderBy('page')
+            ->get();
+        $paginas = $paginasRows->map(fn ($r) => [
+            'pagina'   => (int) $r->page,
+            'segundos' => (int) $r->segundos,
+            'views'    => (int) $r->views,
+        ])->all();
+        $totalPaginas = (int) \App\Models\CrmProposalPageView::where('crm_proposal_id', $crmProposal->id)->max('total_pages');
+
         return response()->json(['data' => [
             'status'          => $crmProposal->status,
+            'paginas'         => $paginas,
+            'total_paginas'   => $totalPaginas,
             'enviada_em'      => optional($enviadaEm)->toIso8601String(),
             'aberta'          => $primeira !== null,
             'primeira_abertura' => optional($primeira)->toIso8601String(),
