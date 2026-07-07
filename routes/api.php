@@ -732,6 +732,7 @@ Route::prefix('v1')->group(function () {
 
         // Configurador de navegação: módulos dinâmicos + associação de itens de menu
         Route::get('/nav-config',                  [\App\Http\Controllers\NavConfigController::class, 'index'])->name('nav-config.index');
+        Route::get('/my-denied-actions',           [\App\Http\Controllers\NavConfigController::class, 'myDeniedActions'])->name('my-denied-actions');
         Route::put('/nav-screens',                 [\App\Http\Controllers\NavConfigController::class, 'saveScreens'])->name('nav-screens.save');
         Route::post('/nav-modules',                [\App\Http\Controllers\NavConfigController::class, 'store'])->name('nav-modules.store');
         Route::post('/nav-modules/reorder',        [\App\Http\Controllers\NavConfigController::class, 'reorder'])->name('nav-modules.reorder');
