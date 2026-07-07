@@ -163,6 +163,8 @@ Route::prefix('v1')->group(function () {
 
         // Agenda / Calendário da tela inicial (eventos do mês)
         Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);
+        Route::get('/calendar/visibility', [\App\Http\Controllers\CalendarController::class, 'visibility']);      // config visibilidade agenda
+        Route::put('/calendar/visibility', [\App\Http\Controllers\CalendarController::class, 'saveVisibility']);  // salvar (admin)
 
         // Tarefas rápidas (Smart To-Do) pessoais
         Route::get('/tasks',              [\App\Http\Controllers\TaskController::class, 'index']);
