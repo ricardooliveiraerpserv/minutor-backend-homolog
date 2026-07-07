@@ -2465,16 +2465,23 @@ class ProjectController extends Controller
             ->orderBy('order_index')
             ->get();
 
-        // Consultor: vê SOMENTE as atividades onde é o responsável (as dele) — não o
-        // board completo do projeto. Filtra as entregas e descarta etapas sem entrega
-        // dele. Todo o resto (contadores/resumo) passa a refletir apenas o escopo dele.
+        // Consultor: vê SOMENTE as atividades onde está ALOCADO (alocação por atividade
+        // = stage_allocations.delivery_id, mesmo critério do "+ Apontar") — não o board
+        // completo. Descarta etapas sem atividade dele; contadores/resumo refletem só o
+        // escopo dele. Admin/coordenador (ou com hours.view_all) seguem vendo tudo.
         $viewer = auth()->user();
         if ($viewer && method_exists($viewer, 'isConsultor') && $viewer->isConsultor()
             && !(method_exists($viewer, 'hasAccess') && $viewer->hasAccess('hours.view_all'))) {
             $vid = $viewer->id;
+            $deliveryIds = $stages->flatMap(fn ($st) => $st->deliveries->pluck('id'))->all();
+            $allocatedSet = \App\Models\StageAllocation::where('user_id', $vid)
+                ->whereNotNull('delivery_id')
+                ->whereIn('delivery_id', $deliveryIds)
+                ->pluck('delivery_id')
+                ->flip();
             $stages->each(fn ($st) => $st->setRelation(
                 'deliveries',
-                $st->deliveries->where('responsible_user_id', $vid)->values()
+                $st->deliveries->filter(fn ($d) => isset($allocatedSet[$d->id]))->values()
             ));
             $stages = $stages->filter(fn ($st) => $st->deliveries->isNotEmpty())->values();
         }
