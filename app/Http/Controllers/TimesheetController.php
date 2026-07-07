@@ -148,6 +148,39 @@ class TimesheetController extends Controller
      *     )
      * )
      */
+    /**
+     * Acesso por LINHA (explicabilidade) — quem tem acesso, ações permitidas + motivo, origem.
+     * Só lê/descreve as decisões do AccessControl; NÃO altera o motor de permissões.
+     */
+    public function access(int $id): JsonResponse
+    {
+        $user = Auth::user();
+        $ts = Timesheet::with(['user', 'project.coordinators'])->find($id);
+        if (!$ts) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+        if (!$user->can('view', $ts)) {
+            return response()->json(['success' => false, 'message' => 'Acesso negado'], 403);
+        }
+
+        $edit   = \App\Services\AccessControl::decide($user, 'update', $ts);
+        $delete = \App\Services\AccessControl::decide($user, 'delete', $ts);
+        $approve= \App\Services\AccessControl::decide($user, 'approve', $ts);
+        $info   = \App\Services\AccessControl::explain($user, $ts);
+
+        return response()->json([
+            'success'  => true,
+            'data'     => array_merge($info, [
+                'status'    => $ts->status,
+                'abilities' => [
+                    'edit'    => $edit,
+                    'delete'  => $delete,
+                    'approve' => $approve,
+                ],
+            ]),
+        ]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         $user = Auth::user();
@@ -723,6 +756,11 @@ class TimesheetController extends Controller
                         }
                     }
                     $arr['coordinator_label'] = $coordLabel;
+
+                    // Controle por LINHA: flags + motivo p/ o FE desabilitar botões com tooltip.
+                    // (cache da lista é por-usuário; coordinatedProjectIds é memoizado → sem N+1)
+                    $arr = array_merge($arr, $ts->abilitiesFor(\Illuminate\Support\Facades\Auth::user()));
+
                     return $arr;
                 })->all();
 
@@ -1352,26 +1390,18 @@ class TimesheetController extends Controller
             ], 404);
         }
 
-        // Verificar permissões
-        $isOwnTimesheet  = $timesheet->user_id === $user->id;
-        $isTeamTimesheet = $user->isParceiroAdmin() && $user->partner_id &&
-            \App\Models\User::where('id', $timesheet->user_id)
-                ->where('partner_id', $user->partner_id)
-                ->exists();
-
-        if (!$user->isAdmin() && !$user->hasAccess('hours.update_all') && !$isOwnTimesheet && !$isTeamTimesheet) {
+        // Controle de acesso POR LINHA (mesma fonte das flags do dataset): dono, coordenador do
+        // projeto, parceiro (escopo) ou permissão ampla; apontamento aprovado/estado final bloqueia.
+        $decision = \App\Services\AccessControl::decide($user, 'update', $timesheet);
+        if (!$decision['allowed']) {
+            $statusBlocked = in_array($decision['reason'], [
+                \App\Services\AccessControl::R_APPROVED,
+                \App\Services\AccessControl::R_STATUS,
+            ], true);
             return response()->json([
                 'success' => false,
-                'message' => 'Acesso negado'
-            ], 403);
-        }
-
-        // Só pode editar se estiver pendente ou rejeitado
-        if (!$timesheet->canBeEdited()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Não é possível editar apontamentos já aprovados'
-            ], 422);
+                'message' => $decision['reason'],
+            ], $statusBlocked ? 422 : 403);
         }
 
         $validationRules = [
@@ -1952,21 +1982,18 @@ class TimesheetController extends Controller
             ], 404);
         }
 
-        // Verificar permissões
-        if (!$user->isAdmin() && !$user->hasAccess('hours.delete_all') && $timesheet->user_id !== $user->id) {
+        // Controle de acesso POR LINHA (mesma fonte das flags): dono, coordenador do projeto,
+        // parceiro (escopo) ou permissão ampla; apontamento aprovado/estado final bloqueia exclusão.
+        $decision = \App\Services\AccessControl::decide($user, 'delete', $timesheet);
+        if (!$decision['allowed']) {
+            $statusBlocked = in_array($decision['reason'], [
+                \App\Services\AccessControl::R_APPROVED,
+                \App\Services\AccessControl::R_STATUS,
+            ], true);
             return response()->json([
                 'success' => false,
-                'message' => 'Acesso negado'
-            ], 403);
-        }
-
-        // Admin e hours.delete_all podem excluir qualquer status; demais usuários só o que canBeEdited() permite
-        $canBypassStatusCheck = $user->isAdmin() || $user->hasAccess('hours.delete_all');
-        if (!$canBypassStatusCheck && !$timesheet->canBeEdited()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Não é possível excluir apontamentos já aprovados ou liberados'
-            ], 422);
+                'message' => $decision['reason'],
+            ], $statusBlocked ? 422 : 403);
         }
 
         // Captura user_id/date ANTES do delete pra resolver conflitos órfãos depois.
