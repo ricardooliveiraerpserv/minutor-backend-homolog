@@ -159,3 +159,34 @@ Schedule::command('attachments:integrity-check')
   ->description('FASE 11: verifica integridade dos anexos (entidade-dona, arquivo, checksum)')
   ->withoutOverlapping()
   ->runInBackground();
+
+// ===== Meu Dia — Central de Notificações / Ações / Tarefas =====
+Schedule::command('notifications:fire-recurring --scope=daily')
+  ->dailyAt('07:00')
+  ->name('notifications-fire-recurring')
+  ->description('Reabre/reenvia avisos recorrentes da Central da tela inicial')
+  ->withoutOverlapping();
+
+Schedule::command('notifications:fire-recurring --scope=hours')
+  ->hourly()
+  ->name('notifications-fire-recurring-hours')
+  ->description('Re-pergunta decisões recorrentes por horas')
+  ->withoutOverlapping();
+
+Schedule::command('actions:remind-pending')
+  ->hourly()
+  ->name('actions-remind-pending')
+  ->description('Re-lembra ações não resolvidas conforme recorrência configurada')
+  ->withoutOverlapping();
+
+Schedule::command('tasks:generate-routines')
+  ->dailyAt('06:30')
+  ->name('tasks-generate-routines')
+  ->description('Gera as tarefas das rotinas de equipe para o dia')
+  ->withoutOverlapping();
+
+Schedule::command('tasks:notify-overdue')
+  ->dailyAt('08:00')
+  ->name('tasks-notify-overdue')
+  ->description('Notifica o responsável sobre tarefas atrasadas')
+  ->withoutOverlapping();

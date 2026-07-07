@@ -576,6 +576,32 @@ class Timesheet extends Model
                 'error'        => $e->getMessage(),
             ]);
         }
+
+        // Pop-up in-app (Central de Notificações) para REJEIÇÃO / AJUSTE → leva à tela JÁ filtrada.
+        if (in_array($statusKey, ['REJEITADO', 'AJUSTE'], true)) {
+            try {
+                $isRej = $statusKey === 'REJEITADO';
+                $dia   = $this->date ? ' de ' . $this->date->format('d/m/Y') : '';
+                \App\Models\AppNotification::create([
+                    'title'        => $isRej ? 'Apontamento rejeitado' : 'Ajuste solicitado no apontamento',
+                    'message'      => ($isRej
+                                        ? "Seu apontamento{$dia} foi rejeitado."
+                                        : "Foi solicitado ajuste no seu apontamento{$dia}.")
+                                      . ($reason ? ' Motivo: ' . e($reason) : ''),
+                    'type'         => 'action',
+                    'priority'     => $isRej ? 'critical' : 'high',   // rejeitado=vermelho, ajuste=amarelo
+                    'target_users' => [$owner->id],
+                    'cta_label'    => 'Ver apontamentos',
+                    'cta_url'      => $isRej ? '/timesheets?status=rejected' : '/timesheets?status=adjustment_requested',
+                    'send_email'   => false,
+                    'visible'      => true,
+                    'created_by'   => $owner->id,
+                    'expires_at'   => now()->addDays(14),
+                ]);
+            } catch (\Throwable $e) {
+                \Log::warning('notifyOwnerOfStatus: pop-up falhou', ['timesheet_id' => $this->id, 'error' => $e->getMessage()]);
+            }
+        }
     }
 
     /**

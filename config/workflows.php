@@ -51,6 +51,11 @@ return [
         'fechamento.diretoria'         => '#FDBA74', // pêssego
         'timesheet.rejected'           => '#FB7185', // rosa (rejeitado)
         'timesheet.adjustment'         => '#F97316', // laranja (ajuste)
+        'timesheet.pending_approval'             => '#38BDF8', // azul (aprovar projetos)
+        'timesheet.pending_approval.sustentacao' => '#0EA5E9', // azul escuro (aprovar sustentação)
+        'expense.pending_approval'     => '#F59E0B', // âmbar (aprovar despesa)
+        'expense.adjustment'           => '#FB923C', // laranja claro (ajuste despesa)
+        'expense.rejected'             => '#EF4444', // vermelho (despesa rejeitada)
     ],
     // Fallback por domínio (workflow novo sem cor própria).
     'domain_accents' => [
@@ -140,6 +145,11 @@ return [
         'fechamento.diretoria'         => ['actor'],
         'timesheet.rejected'           => ['project', 'actor'],
         'timesheet.adjustment'         => ['project', 'actor'],
+        'timesheet.pending_approval'             => ['project', 'actor'],
+        'timesheet.pending_approval.sustentacao' => ['project', 'actor'],
+        'expense.pending_approval'     => ['project', 'actor'],
+        'expense.adjustment'           => ['project', 'actor'],
+        'expense.rejected'             => ['project', 'actor'],
     ],
 
     // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
@@ -311,6 +321,31 @@ return [
             'subject'   => 'Apontamento — ajuste solicitado',
             'body'      => 'Seu apontamento de {data} precisa de ajuste. {motivo}',
             'variables' => ['data' => 'Data do apontamento', 'motivo' => 'Motivo/observação'],
+        ],
+        'timesheet.pending_approval' => [
+            'subject'   => 'Apontamentos aguardando sua aprovação',
+            'body'      => 'Há apontamentos pendentes aguardando sua aprovação.',
+            'variables' => [],
+        ],
+        'timesheet.pending_approval.sustentacao' => [
+            'subject'   => 'Apontamentos de sustentação do dia anterior para aprovar',
+            'body'      => 'Há apontamentos de sustentação do dia anterior aguardando sua aprovação.',
+            'variables' => [],
+        ],
+        'expense.pending_approval' => [
+            'subject'   => 'Despesas aguardando sua aprovação',
+            'body'      => 'Há despesas pendentes aguardando sua aprovação.',
+            'variables' => [],
+        ],
+        'expense.adjustment' => [
+            'subject'   => 'Despesa — ajuste solicitado',
+            'body'      => 'Você tem despesas com ajuste solicitado.',
+            'variables' => [],
+        ],
+        'expense.rejected' => [
+            'subject'   => 'Despesa rejeitada',
+            'body'      => 'Você tem despesas rejeitadas.',
+            'variables' => [],
         ],
     ],
 
@@ -618,6 +653,43 @@ return [
             'audiences'   => [
                 'coordenador' => 'off',
             ],
+        ],
+
+        // ── Lembretes de AÇÕES NÃO RESOLVIDAS (Central de Ações / Meu Dia) ──
+        'timesheet.pending_approval' => [
+            'label'       => 'Apontamentos para aprovar (projetos)',
+            'domain'      => 'Apontamento',
+            'description' => 'Lembrete recorrente ao coordenador com apontamentos pendentes de aprovação. O coordenador responsável recebe automaticamente; adicione papéis/e-mails em cópia se quiser.',
+            'recurrence'  => true,
+            'audiences'   => ['administrativo' => 'off'],
+        ],
+        'timesheet.pending_approval.sustentacao' => [
+            'label'       => 'Apontamentos para aprovar (sustentação)',
+            'domain'      => 'Apontamento',
+            'description' => 'Lembrete ao coordenador de sustentação — só os apontamentos do dia anterior. O responsável recebe automaticamente.',
+            'recurrence'  => true,
+            'audiences'   => ['administrativo' => 'off'],
+        ],
+        'expense.pending_approval' => [
+            'label'       => 'Despesas para aprovar',
+            'domain'      => 'Despesas',
+            'description' => 'Lembrete ao coordenador com despesas pendentes de aprovação. O responsável recebe automaticamente.',
+            'recurrence'  => true,
+            'audiences'   => ['administrativo' => 'off'],
+        ],
+        'expense.adjustment' => [
+            'label'       => 'Despesa — ajuste solicitado',
+            'domain'      => 'Despesas',
+            'description' => 'Lembrete ao autor da despesa com ajuste solicitado. O autor recebe automaticamente; adicione papéis em cópia (ex.: coordenador).',
+            'recurrence'  => true,
+            'audiences'   => ['coordenador' => 'off'],
+        ],
+        'expense.rejected' => [
+            'label'       => 'Despesa rejeitada',
+            'domain'      => 'Despesas',
+            'description' => 'Lembrete ao autor da despesa rejeitada. O autor recebe automaticamente; adicione papéis em cópia (ex.: coordenador).',
+            'recurrence'  => true,
+            'audiences'   => ['coordenador' => 'off'],
         ],
     ],
 ];
