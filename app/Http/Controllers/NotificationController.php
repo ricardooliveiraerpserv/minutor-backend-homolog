@@ -30,6 +30,26 @@ class NotificationController extends Controller
             ->orderByDesc('created_at')
             ->get();
 
+        // LEMBRETES DE AÇÃO (recorrência): esconder de quem NÃO tem mais pendência — mesmo entre
+        // disparos. Com "qualquer coordenador aprova", um colega pode ter resolvido; quem não está
+        // mais nos "afetados" da regra não deve mais ver o pop-up/Meu Dia (nem no e-mail já enviado).
+        $reminderMap = \App\Models\ActionReminderRule::whereNotNull('notification_id')
+            ->pluck('key', 'notification_id'); // [notification_id => rule_key]
+        if ($reminderMap->isNotEmpty()) {
+            $affectedCache = [];
+            $rows = $rows->reject(function (AppNotification $n) use ($reminderMap, $u, &$affectedCache) {
+                $ruleKey = $reminderMap->get($n->id);
+                if (!$ruleKey) return false; // não é lembrete de recorrência → mantém
+                if (!array_key_exists($ruleKey, $affectedCache)) {
+                    $affectedCache[$ruleKey] = \Illuminate\Support\Facades\Cache::remember(
+                        "action_reminder_affected_{$ruleKey}", 60,
+                        fn () => \App\Http\Controllers\ActionReminderController::affectedUserIds($ruleKey)
+                    );
+                }
+                return !in_array((int) $u->id, array_map('intval', $affectedCache[$ruleKey]), true);
+            })->values();
+        }
+
         $reads = NotificationRead::where('user_id', $u->id)
             ->whereIn('notification_id', $rows->pluck('id'))->get()->keyBy('notification_id');
 
