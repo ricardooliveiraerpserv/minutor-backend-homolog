@@ -82,4 +82,11 @@ return [
         'mailbox'       => env('MAIL_GRAPH_MAILBOX', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS'))),
     ],
 
+    // Microsoft Graph — credenciais app-only do leitor/enviador (Central de Notificações + Comunicações).
+    'graph_reader' => [
+        'tenant_id'     => env('GRAPH_TENANT_ID', env('MAIL_GRAPH_TENANT_ID')),
+        'client_id'     => env('GRAPH_CLIENT_ID', env('MAIL_GRAPH_CLIENT_ID')),
+        'client_secret' => env('GRAPH_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
+    ],
+
 ];
