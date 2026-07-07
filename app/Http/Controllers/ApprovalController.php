@@ -56,7 +56,12 @@ class ApprovalController extends Controller
 
             // DESPESAS para PAGAR — responsabilidade do ADMINISTRATIVO (administrativo NÃO aprova, só paga).
             if ($u->type === 'administrativo') {
-                $pay = $sinceCut(Expense::where('status', Expense::STATUS_APPROVED)->where('is_paid', false))->count();
+                // "A Pagar" = aprovadas, não pagas e NÃO de parceiro (parceiro paga no fechamento —
+                // essas nunca viram is_paid=true, então inflavam o contador). Fora também as marcadas
+                // p/ pagar no fechamento.
+                $pay = $sinceCut(Expense::where('status', Expense::STATUS_APPROVED)->where('is_paid', false)
+                    ->whereHas('user', fn ($q) => $q->whereNull('partner_id'))
+                    ->where(fn ($q) => $q->whereNull('pagar_no_fechamento')->orWhere('pagar_no_fechamento', false)))->count();
                 if ($pay > 0) $actions[] = $this->homeAction('pay_exp', 'medium', 'Despesas para pagar',
                     "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas', $pay);
             }
