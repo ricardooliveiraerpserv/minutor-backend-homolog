@@ -67,11 +67,14 @@ RUN printf 'server {\n\
         fastcgi_pass 127.0.0.1:9000;\n\
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n\
         include fastcgi_params;\n\
+        fastcgi_read_timeout 120;\n\
+        fastcgi_send_timeout 120;\n\
     }\n\
 }\n' > /etc/nginx/http.d/default.conf
 
-# Limite de upload PHP
-RUN printf 'upload_max_filesize=20M\npost_max_size=25M\nmemory_limit=256M\n' > /usr/local/etc/php/conf.d/uploads.ini
+# Limite de upload PHP + timeout de execução (render de documento via Gotenberg
+# pode levar ~40-60s no plano free; o default 30s do PHP cortava e dava 500).
+RUN printf 'upload_max_filesize=20M\npost_max_size=25M\nmemory_limit=256M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
 
 # PHP-FPM pool: o default da imagem é max_children=5 — muito apertado.
 # Backend recebe tráfego de usuários + webhooks Movidesk (que podem segurar
