@@ -63,7 +63,7 @@ class ApprovalController extends Controller
                     ->whereHas('user', fn ($q) => $q->whereNull('partner_id'))
                     ->where(fn ($q) => $q->whereNull('pagar_no_fechamento')->orWhere('pagar_no_fechamento', false)))->count();
                 if ($pay > 0) $actions[] = $this->homeAction('pay_exp', 'medium', 'Despesas para pagar',
-                    "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas', $pay);
+                    "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas?all=1', $pay);
             }
 
             if ($u->type === 'consultor' || $u->type === 'parceiro_admin') {
