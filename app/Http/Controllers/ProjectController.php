@@ -2465,6 +2465,20 @@ class ProjectController extends Controller
             ->orderBy('order_index')
             ->get();
 
+        // Consultor: vê SOMENTE as atividades onde é o responsável (as dele) — não o
+        // board completo do projeto. Filtra as entregas e descarta etapas sem entrega
+        // dele. Todo o resto (contadores/resumo) passa a refletir apenas o escopo dele.
+        $viewer = auth()->user();
+        if ($viewer && method_exists($viewer, 'isConsultor') && $viewer->isConsultor()
+            && !(method_exists($viewer, 'hasAccess') && $viewer->hasAccess('hours.view_all'))) {
+            $vid = $viewer->id;
+            $stages->each(fn ($st) => $st->setRelation(
+                'deliveries',
+                $st->deliveries->where('responsible_user_id', $vid)->values()
+            ));
+            $stages = $stages->filter(fn ($st) => $st->deliveries->isNotEmpty())->values();
+        }
+
         // Follow Ups vinculados (denormalizados em project_id/stage_id/delivery_id):
         // contadores por atividade + agregados por etapa pra exibir no cronograma.
         $fuByDelivery = [];
