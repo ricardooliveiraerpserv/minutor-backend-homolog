@@ -136,6 +136,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/notifications/manage',       [\App\Http\Controllers\NotificationController::class, 'manage']);
         Route::get('/notifications/meta',         [\App\Http\Controllers\NotificationController::class, 'meta']);
         Route::get('/notifications/users',        [\App\Http\Controllers\NotificationController::class, 'searchUsers']);
+
+        // "Ver como" (impersonation) — admin vê o sistema como outro usuário (suporte).
+        Route::get('/impersonate/candidates', [\App\Http\Controllers\ImpersonationController::class, 'candidates'])->name('impersonate.candidates');
+        Route::get('/impersonate/partners',   [\App\Http\Controllers\ImpersonationController::class, 'partners'])->name('impersonate.partners');
+        Route::post('/impersonate',           [\App\Http\Controllers\ImpersonationController::class, 'impersonate'])->name('impersonate.start');
         Route::post('/notifications/preview',     [\App\Http\Controllers\NotificationController::class, 'preview']);
         Route::post('/notifications',             [\App\Http\Controllers\NotificationController::class, 'store']);
         Route::put('/notifications/{notification}',    [\App\Http\Controllers\NotificationController::class, 'update']);
