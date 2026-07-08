@@ -1611,6 +1611,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
         // Participantes CONVIDADOS do Diário (libera usuário específico a ver/postar).
         Route::get('/projects/{project}/messages/participants',            [ProjectMessageController::class, 'participants'])->name('project-messages.participants');
+        Route::get('/projects/{project}/messages/eligible-participants',    [ProjectMessageController::class, 'eligibleParticipants'])->name('project-messages.eligible-participants');
         Route::post('/projects/{project}/messages/participants',           [ProjectMessageController::class, 'addParticipant'])->name('project-messages.participants.add');
         Route::delete('/projects/{project}/messages/participants/{userId}',[ProjectMessageController::class, 'removeParticipant'])->name('project-messages.participants.remove');
         Route::get('/messages/{message}/attachments/{attachment}/download', [ProjectMessageController::class, 'downloadAttachment'])->name('project-messages.attachment-download');
