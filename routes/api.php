@@ -172,6 +172,12 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:30,1')->name('integrations.microsoft.callback');
 
     Route::middleware('auth:sanctum')->group(function () {
+        // ===== Work Sessions (Modo Atendimento) =====
+        Route::post('/work-sessions',                    [\App\Http\Controllers\WorkSessionController::class, 'start']);
+        Route::post('/work-sessions/{session}/events',   [\App\Http\Controllers\WorkSessionController::class, 'event']);
+        Route::post('/work-sessions/{session}/end',      [\App\Http\Controllers\WorkSessionController::class, 'end']);
+        Route::get('/work-sessions/{session}/summary',   [\App\Http\Controllers\WorkSessionController::class, 'summary']);
+
         // ===== HELP DESK (módulo nativo — chamados no Minutor) =====
         Route::get('/help-desk/access-profiles',                     [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'index']);
         Route::post('/help-desk/access-profiles',                    [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'store']);
