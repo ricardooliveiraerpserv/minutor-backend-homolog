@@ -12,6 +12,17 @@ class ProjectStage extends Model
 {
     use HasFactory, SoftDeletes;
 
+    protected static function booted(): void
+    {
+        // Cascata de exclusão: deletar uma etapa deleta suas ATIVIDADES e SUB-ETAPAS
+        // (recursivo — máx. 2 níveis). Sem isso a sub-etapa fica ÓRFÃ: some do board
+        // (mãe deletada) mas segue contando em ETAPAS/Prazo/Alertas.
+        static::deleting(function (self $stage) {
+            $stage->deliveries()->delete();               // soft-delete das atividades
+            $stage->subStages()->get()->each->delete();   // per-model → cascateia recursivo
+        });
+    }
+
     public const STATUS_ACTIVE = 'active';
     public const STATUS_PAUSED = 'paused';
     public const STATUS_DONE   = 'done';
