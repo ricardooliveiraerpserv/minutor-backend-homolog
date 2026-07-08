@@ -649,7 +649,22 @@ class NotificationController extends Controller
         $coord = trim((string) $request->query('coordinator_type', ''));   // coordenador projetos/sustentação
         $rows = \App\Models\User::query()->whereNotNull('email')
             ->when($q !== '', fn ($w) => $w->where(fn ($x) => $x->where('name', 'ilike', "%{$q}%")->orWhere('email', 'ilike', "%{$q}%")))
-            ->when($type !== '', fn ($w) => $w->where('type', $type))
+            // O Configurador manda a "profile key" EFETIVA (parceiro_gestor/simples,
+            // consultor_horista/…, coordenador_projetos/…), que NÃO é igual a users.type
+            // (parceiro_admin, consultor, coordenador). Traduz p/ o filtro real; senão a
+            // busca por parceiro/consultor/coordenador-subtipo não trazia ninguém.
+            ->when($type !== '', function ($w) use ($type) {
+                switch ($type) {
+                    case 'parceiro_gestor':          $w->where('type', 'parceiro_admin')->where('is_executive', true); break;
+                    case 'parceiro_simples':         $w->where('type', 'parceiro_admin')->where(fn ($x) => $x->where('is_executive', false)->orWhereNull('is_executive')); break;
+                    case 'coordenador_projetos':     $w->where('type', 'coordenador')->where('coordinator_type', 'projetos'); break;
+                    case 'coordenador_sustentacao':  $w->where('type', 'coordenador')->where('coordinator_type', 'sustentacao'); break;
+                    case 'consultor_horista':        $w->where('type', 'consultor')->where('consultant_type', 'horista'); break;
+                    case 'consultor_banco_de_horas': $w->where('type', 'consultor')->whereIn('consultant_type', ['bh_fixo', 'bh_mensal']); break;
+                    case 'consultor_fixo':           $w->where('type', 'consultor')->where('consultant_type', 'fixo'); break;
+                    default:                         $w->where('type', $type); break; // admin, administrativo, cliente, consultor, coordenador
+                }
+            })
             ->when($coord !== '', fn ($w) => $w->where('coordinator_type', $coord))
             ->orderBy('name')->limit(20)->get(['id', 'name', 'email', 'type', 'coordinator_type']);
         return response()->json(['data' => $rows]);
