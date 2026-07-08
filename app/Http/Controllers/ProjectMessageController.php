@@ -495,11 +495,30 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
         $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        // Só pode convidar quem tem LIBERAÇÃO de visualização do pipeline (senão nem acessa a tela).
+        if (!\App\Models\PipelineViewPermission::where('user_id', $data['user_id'])->exists()) {
+            return response()->json(['message' => 'Usuário sem liberação de visualização do pipeline.'], 422);
+        }
         \App\Models\ProjectMessageParticipant::firstOrCreate(
             ['project_id' => $project->id, 'user_id' => $data['user_id']],
             ['added_by' => $user->id]
         );
         return response()->json(['success' => true]);
+    }
+
+    /** GET usuários ELEGÍVEIS a convidar: os que têm liberação de visualização do pipeline. */
+    public function eligibleParticipants(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if (!$this->canManageParticipants($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        $q = trim((string) $request->query('search', ''));
+        $rows = User::query()
+            ->whereIn('id', \App\Models\PipelineViewPermission::query()->select('user_id'))
+            ->when($q !== '', fn ($w) => $w->where(fn ($x) => $x->where('name', 'ilike', "%{$q}%")->orWhere('email', 'ilike', "%{$q}%")))
+            ->orderBy('name')->limit(20)->get(['id', 'name', 'email', 'type']);
+        return response()->json(['success' => true, 'data' => $rows]);
     }
 
     /** DELETE remove um participante convidado. Admin/coord do projeto. */
