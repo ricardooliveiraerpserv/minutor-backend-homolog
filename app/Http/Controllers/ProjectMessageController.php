@@ -454,6 +454,10 @@ class ProjectMessageController extends Controller
 
     private function userCanAccessProject($user, Project $project): bool
     {
+        // Participante CONVIDADO (liberado explicitamente por admin/coord na aba do Diário).
+        if (\App\Models\ProjectMessageParticipant::where('project_id', $project->id)->where('user_id', $user->id)->exists()) {
+            return true;
+        }
         if ($user->isCoordenador()) {
             return $project->coordinators()->where('users.id', $user->id)->exists();
         }
@@ -461,5 +465,51 @@ class ProjectMessageController extends Controller
             return $project->customer_id === $user->customer_id;
         }
         return $project->consultants()->where('users.id', $user->id)->exists();
+    }
+
+    /** Quem pode gerir os participantes convidados do Diário: admin ou coordenador do projeto. */
+    private function canManageParticipants($user, Project $project): bool
+    {
+        if ($user->isAdmin() || (method_exists($user, 'isAdministrativo') && $user->isAdministrativo())) return true;
+        return $user->isCoordenador() && $project->coordinators()->where('users.id', $user->id)->exists();
+    }
+
+    /** GET participantes convidados do projeto. Acessível a quem já acessa o Diário. */
+    public function participants(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        $rows = \App\Models\ProjectMessageParticipant::where('project_id', $project->id)
+            ->with('user:id,name,email,type')->get()
+            ->map(fn ($p) => ['user_id' => $p->user_id, 'name' => $p->user->name ?? '—', 'email' => $p->user->email ?? null, 'type' => $p->user->type ?? null]);
+        return response()->json(['success' => true, 'data' => $rows, 'can_manage' => $this->canManageParticipants($user, $project)]);
+    }
+
+    /** POST convida um usuário p/ o Diário. Admin/coord do projeto. */
+    public function addParticipant(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if (!$this->canManageParticipants($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        \App\Models\ProjectMessageParticipant::firstOrCreate(
+            ['project_id' => $project->id, 'user_id' => $data['user_id']],
+            ['added_by' => $user->id]
+        );
+        return response()->json(['success' => true]);
+    }
+
+    /** DELETE remove um participante convidado. Admin/coord do projeto. */
+    public function removeParticipant(Request $request, Project $project, int $userId): JsonResponse
+    {
+        $user = $request->user();
+        if (!$this->canManageParticipants($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        \App\Models\ProjectMessageParticipant::where('project_id', $project->id)->where('user_id', $userId)->delete();
+        return response()->json(['success' => true]);
     }
 }
