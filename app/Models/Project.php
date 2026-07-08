@@ -940,6 +940,11 @@ class Project extends Model
         }
 
         if (!$latest) {
+            // Cronograma vazio (etapas/atividades removidas) → zera o Prazo de Entrega.
+            if ($this->expected_end_date !== null) {
+                $this->expected_end_date = null;
+                $this->saveQuietly();
+            }
             return null;
         }
 
