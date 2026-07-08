@@ -110,6 +110,12 @@ class SignatureRenderer
     {
         if (!$u) return self::companyDefault();
         $sig = is_array($u->signature) ? $u->signature : [];
+        // Cargo EFETIVO: se o usuário personalizou (custom_cargo), usa o cargo próprio; senão usa o
+        // padrão do perfil (cadastro Cargos por Perfil) — sempre fresco, sem depender do que ficou salvo.
+        $custom = !empty($sig['custom_cargo']);
+        $sig['role'] = $custom
+            ? trim((string) ($sig['role'] ?? ''))
+            : (string) \App\Models\ProfileCargo::forProfile($u->type);
         // Foto: ligada por padrão p/ quem tem foto de perfil; só não inclui se o usuário desmarcou (show_photo=false).
         $wantsPhoto = array_key_exists('show_photo', $sig) ? (bool) $sig['show_photo'] : true;
         if ($wantsPhoto && empty($sig['photo'])) {
