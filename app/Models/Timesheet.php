@@ -646,8 +646,10 @@ class Timesheet extends Model
             return true;
         }
 
-        // Apontamento de ATIVIDADE do cronograma: qualquer coordenador pode estornar.
-        if ($this->stage_delivery_id && method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
+        // Qualquer coordenador pode estornar (simétrico a canBeApprovedBy — decisão de
+        // negócio 2026-07-07: coordenador aprova/rejeita → coordenador estorna, sem o limite
+        // de 24h). Cobre também os apontamentos de atividade do cronograma.
+        if (method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
             return true;
         }
 
@@ -703,8 +705,10 @@ class Timesheet extends Model
             return true;
         }
 
-        // Apontamento de ATIVIDADE do cronograma: qualquer coordenador pode estornar.
-        if ($this->stage_delivery_id && method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
+        // Qualquer coordenador pode estornar (simétrico a canBeApprovedBy — decisão de
+        // negócio 2026-07-07: coordenador aprova/rejeita → coordenador estorna, sem o limite
+        // de 24h). Cobre também os apontamentos de atividade do cronograma.
+        if (method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
             return true;
         }
 
