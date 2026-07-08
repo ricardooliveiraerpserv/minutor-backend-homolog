@@ -612,6 +612,12 @@ class Timesheet extends Model
             return true;
         }
 
+        // Qualquer coordenador pode estornar (simétrico a canBeApprovedBy — decisão de
+        // negócio 2026-07-07: coordenador aprova → coordenador estorna, sem o limite de 24h).
+        if (method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
+            return true;
+        }
+
         // Quem aprovou pode estornar dentro do período permitido
         if ($this->reviewed_by === $user->id) {
             $reversalPeriod = config('timesheets.reversal_period_hours', 24);
@@ -661,6 +667,12 @@ class Timesheet extends Model
 
         // Administradores podem estornar qualquer rejeição
         if ($user->isAdmin()) {
+            return true;
+        }
+
+        // Qualquer coordenador pode estornar (simétrico a canBeApprovedBy — decisão de
+        // negócio 2026-07-07: coordenador aprova/rejeita → coordenador estorna, sem 24h).
+        if (method_exists($user, 'isCoordenador') && $user->isCoordenador()) {
             return true;
         }
 
