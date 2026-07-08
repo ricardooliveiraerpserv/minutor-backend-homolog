@@ -1,0 +1,248 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Attachments\AttachmentService;
+use App\Http\Portal\HelpDeskPortalPresenter;
+use App\Models\Attachment;
+use App\Models\HelpDeskKbArticle;
+use App\Models\HelpDeskStatus;
+use App\Models\HelpDeskTicket;
+use App\Models\HelpDeskTicketEvent;
+use App\Services\HelpDeskSlaService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+
+/**
+ * Help Desk — Portal do Cliente. Consome EXCLUSIVAMENTE dados locais do Minutor,
+ * escopado ao customer_id do usuário cliente. Respostas SEMPRE via HelpDeskPortalPresenter
+ * (C2): nunca devolve a entidade completa nem campos internos.
+ */
+class HelpDeskPortalController extends Controller
+{
+    public function __construct(private HelpDeskSlaService $sla, private \App\Services\HelpDeskAccessPolicy $access)
+    {
+    }
+
+    /** customer_id do cliente logado (aborta se o usuário não for cliente vinculado). */
+    private function customerId(Request $request): int
+    {
+        $cid = $request->user()?->customer_id;
+        abort_if($cid === null, 403, 'Portal disponível apenas para usuários cliente.');
+        return (int) $cid;
+    }
+
+    /** Eventos status_changed de vários tickets em UMA query (SLA pausado sem N+1). */
+    private function eventsByTicket(Collection $tickets): Collection
+    {
+        if ($tickets->isEmpty()) return collect();
+        return HelpDeskTicketEvent::whereIn('ticket_id', $tickets->pluck('id'))
+            ->where('event_type', 'status_changed')->orderBy('created_at')
+            ->get(['ticket_id', 'from_value', 'to_value', 'created_at'])
+            ->groupBy('ticket_id');
+    }
+
+    /** Garante que o chamado pertence à empresa do cliente. */
+    private function ownTicket(Request $request, HelpDeskTicket $ticket): void
+    {
+        abort_unless((int) $ticket->customer_id === $this->customerId($request), 404);
+    }
+
+    /** Anexos públicos (visíveis ao cliente) de um chamado. */
+    private function publicAttachments(HelpDeskTicket $ticket): Collection
+    {
+        return Attachment::query()->forEntity('HELPDESK_TICKET', $ticket->id)
+            ->where('visibility', 'customer')->whereNull('deleted_at')
+            ->orderBy('created_at')->get();
+    }
+
+    // ── Chamados do cliente ───────────────────────────────────────────────────
+    /** Permissões do cliente logado (p/ o Portal esconder campos/botões). */
+    public function permissions(Request $request): JsonResponse
+    {
+        $u = $request->user();
+        return response()->json(['data' => [
+            'can_open' => $this->access->clientCanOpen($u),
+            'inform'   => $this->access->informMap($u, ['service', 'category', 'urgency', 'subject', 'tags']),
+        ]]);
+    }
+
+    public function myTickets(Request $request): JsonResponse
+    {
+        $cid = $this->customerId($request);
+        $scope = $this->access->clientViewScope($request->user()); // own | same_org | none
+        $tickets = HelpDeskTicket::where('customer_id', $cid)
+            ->when($scope === 'own', fn ($q) => $q->where('requester_user_id', $request->user()->id)) // só os que ELE abriu
+            ->when($scope === 'none', fn ($q) => $q->whereRaw('1 = 0'))
+            ->with('status:id,key,label,color,is_open,sla_paused')
+            ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
+            ->orderByDesc('updated_at')->get();
+        $events = $this->eventsByTicket($tickets);
+        return response()->json(['data' => $tickets->map(fn ($t) =>
+            HelpDeskPortalPresenter::ticket($t, $this->sla->clientSummary($t, $events->get($t->id) ?? collect())))]);
+    }
+
+    public function showTicket(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        $u = $request->user();
+        $scope = $this->access->clientViewScope($u);
+        abort_if($scope === 'none', 403, 'Seu perfil de acesso não permite visualizar chamados.');
+        abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
+        $ticket->load(['status:id,key,label,color,is_open,sla_paused', 'service:id,name', 'assignee:id,name', 'category:id,name', 'justification:id,name', 'tags:id,name']);
+        $events   = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
+        $comments = $ticket->comments()->where('visibility', 'customer')->orderBy('created_at')->get();
+        $atts     = $this->publicAttachments($ticket);
+        $agentHours = round((float) $ticket->timesheets()->whereNull('deleted_at')->sum('effort_minutes') / 60, 2);
+        // Campos visíveis ao cliente (perfil). Legados default visível; novos default oculto.
+        $view = [
+            'urgency'       => $this->access->clientViewField($u, 'urgency', true),
+            'status'        => $this->access->clientViewField($u, 'status', true),
+            'sla_due'       => $this->access->clientViewField($u, 'sla_due', true),
+            'subject'       => $this->access->clientViewField($u, 'subject', true),
+            'service'       => $this->access->clientViewField($u, 'service', false),
+            'responsible'   => $this->access->clientViewField($u, 'responsible', false),
+            'category'      => $this->access->clientViewField($u, 'category', false),
+            'justification' => $this->access->clientViewField($u, 'justification', false),
+            'agent_times'   => $this->access->clientViewField($u, 'agent_times', false),
+            'tags'          => $this->access->clientViewField($u, 'tags', false),
+            'sla_first'     => $this->access->clientViewField($u, 'sla_first', false),
+        ];
+        return response()->json(['data' => HelpDeskPortalPresenter::ticketDetail(
+            $ticket, $this->sla->clientSummary($ticket, $events), $comments, $atts, $u->id, $view, $agentHours)]);
+    }
+
+    public function openTicket(Request $request): JsonResponse
+    {
+        $cid = $this->customerId($request);
+        abort_unless($this->access->clientCanOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
+        $v = $request->validate([
+            'subject'             => 'required|string|max:200',
+            'description'         => 'nullable|string',
+            'category_id'         => 'nullable|exists:helpdesk_categories,id',
+            'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
+            'contract_id'         => 'nullable|exists:contracts,id',
+            'project_id'          => 'nullable|exists:projects,id',
+            'customer_contact_id' => 'nullable|exists:customer_contacts,id',
+        ]);
+
+        // Perfil de acesso: ignora campos que o cliente não pode informar na abertura.
+        $u = $request->user();
+        if (!$this->access->informAllowed($u, 'category')) unset($v['category_id']);
+        if (!$this->access->informAllowed($u, 'urgency'))  unset($v['priority']);
+
+        if (!empty($v['customer_contact_id'])) {
+            abort_unless(\App\Models\CustomerContact::where('id', $v['customer_contact_id'])->where('customer_id', $cid)->exists(), 422, 'Contato não pertence à sua empresa.');
+        }
+        if (!empty($v['contract_id'])) {
+            abort_unless(\App\Models\Contract::where('id', $v['contract_id'])->where('customer_id', $cid)->exists(), 422, 'Contrato não pertence à sua empresa.');
+        }
+
+        $ticket = HelpDeskTicket::create(array_merge($v, [
+            'customer_id'       => $cid,
+            'priority'          => $v['priority'] ?? 'normal',
+            'channel'           => 'portal',
+            'status_id'         => optional(HelpDeskStatus::default())->id,
+            'requester_user_id' => $request->user()->id,
+            'created_by_id'     => $request->user()->id,
+            'last_activity_at'  => now(),
+        ]));
+        $ticket->update(['ticket_number' => 'HD-' . str_pad((string) $ticket->id, 6, '0', STR_PAD_LEFT)]);
+        $this->sla->apply($ticket);
+        HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
+
+        $ticket->load('status:id,key,label,color,is_open,sla_paused');
+        return response()->json(['data' => HelpDeskPortalPresenter::ticket($ticket, $this->sla->clientSummary($ticket))], 201);
+    }
+
+    /** Cliente responde ao próprio chamado (sempre visível ao cliente). */
+    public function addComment(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        $v = $request->validate(['body' => 'required|string']);
+        $comment = $ticket->comments()->create([
+            'author_user_id' => $request->user()->id,
+            'body'           => $v['body'],
+            'visibility'     => 'customer',
+            'channel'        => 'portal',
+        ]);
+        $ticket->update(['last_activity_at' => now()]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
+        return response()->json(['data' => HelpDeskPortalPresenter::comment($comment, $request->user()->id)], 201);
+    }
+
+    // ── Anexos do chamado pelo cliente (R5) — Attachment Engine global ────────
+    public function attachments(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        return response()->json(['data' => $this->publicAttachments($ticket)
+            ->map(fn (Attachment $a) => HelpDeskPortalPresenter::attachment($a, $ticket->id))->values()]);
+    }
+
+    public function uploadAttachment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        $request->validate(['file' => 'required|file|max:25600']);
+        $att = $svc->store($request->user(), [
+            'entity_type' => 'HELPDESK_TICKET', 'entity_id' => $ticket->id,
+            'category'    => 'attachment', 'file' => $request->file('file'),
+            'visibility'  => 'customer', // anexo do cliente nasce visível ao cliente
+        ], $request);
+        $ticket->update(['last_activity_at' => now()]);
+        HelpDeskTicketEvent::log($ticket->id, 'attachment_added', ['meta' => ['attachment_id' => $att->id ?? null, 'via' => 'portal']]);
+        return response()->json(['data' => HelpDeskPortalPresenter::attachment($att, $ticket->id)], 201);
+    }
+
+    public function downloadAttachment(Request $request, HelpDeskTicket $ticket, Attachment $attachment, AttachmentService $svc)
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless($attachment->entity_type === 'HELPDESK_TICKET' && (int) $attachment->entity_id === $ticket->id && $attachment->visibility === 'customer', 404);
+        return $svc->downloadStream($attachment, $request->user(), $request);
+    }
+
+    public function deleteAttachment(Request $request, HelpDeskTicket $ticket, Attachment $attachment, AttachmentService $svc): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless($attachment->entity_type === 'HELPDESK_TICKET' && (int) $attachment->entity_id === $ticket->id && $attachment->visibility === 'customer', 404);
+        $svc->softDeleteOwn($attachment, $request->user(), $request); // só o próprio upload (não remove doc do atendente)
+        return response()->json(null, 204);
+    }
+
+    // ── Base de Conhecimento (somente publicado e visível ao cliente) ─────────
+    private function kbVisible()
+    {
+        return HelpDeskKbArticle::query()->where('status', 'published')->where('visibility', 'customer');
+    }
+
+    public function kbIndex(Request $request): JsonResponse
+    {
+        $arts = $this->kbVisible()
+            ->when($request->filled('search'), fn ($q) => $q->where(fn ($w) =>
+                $w->where('title', 'ilike', '%' . $request->search . '%')->orWhere('body', 'ilike', '%' . $request->search . '%')))
+            ->orderByDesc('pinned')->orderByDesc('published_at')->get();
+        return response()->json(['data' => $arts->map(fn (HelpDeskKbArticle $a) => HelpDeskPortalPresenter::kbArticle($a))]);
+    }
+
+    public function kbShow(HelpDeskKbArticle $article): JsonResponse
+    {
+        abort_unless($article->status === 'published' && $article->visibility === 'customer', 404);
+        $article->increment('views_count');
+        $article->load('category:id,name');
+        return response()->json(['data' => HelpDeskPortalPresenter::kbArticle($article, true)]);
+    }
+
+    public function kbFeedback(Request $request, HelpDeskKbArticle $article): JsonResponse
+    {
+        abort_unless($article->status === 'published' && $article->visibility === 'customer', 404);
+        $v = $request->validate(['helpful' => 'required|boolean', 'comment' => 'nullable|string|max:500']);
+        $article->feedback()->create([
+            'user_id' => $request->user()?->id,
+            'helpful' => $v['helpful'],
+            'comment' => $v['comment'] ?? null,
+            'ip'      => $request->ip(),
+        ]);
+        $article->increment($v['helpful'] ? 'helpful_count' : 'not_helpful_count');
+        return response()->json(['data' => ['ok' => true]]);
+    }
+}
