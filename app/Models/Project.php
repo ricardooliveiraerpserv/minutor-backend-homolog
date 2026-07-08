@@ -917,20 +917,26 @@ class Project extends Model
      */
     public function recalcExpectedEndFromSchedule(): ?string
     {
+        $cal = app(\App\Services\BusinessCalendarService::class);
+        $calOpts = [
+            'allow_weekend' => (bool) $this->allow_weekend_work,
+            'allow_holiday' => (bool) $this->allow_holiday_work,
+        ];
+
         $latestStage = $this->stages()
             ->whereNotNull('expected_end_date')
             ->max('expected_end_date');
 
-        $latestDelivery = \App\Models\StageDelivery::whereHas('stage', fn ($q) =>
-                $q->where('project_id', $this->id))
-            ->whereNotNull('due_date')
-            ->max('due_date');
+        $latest = $latestStage ? \Carbon\Carbon::parse($latestStage)->startOfDay() : null;
 
-        $latest = null;
-        foreach ([$latestStage, $latestDelivery] as $d) {
-            if (!$d) continue;
-            $c = \Carbon\Carbon::parse($d)->startOfDay();
-            if (!$latest || $c->gt($latest)) $latest = $c;
+        // Fim de cada atividade = due_date, senão início + horas (calendário útil).
+        // Assim o Prazo de Entrega SEMPRE cobre a última atividade (mesmo sem due_date).
+        $deliveries = \App\Models\StageDelivery::whereHas('stage', fn ($q) =>
+                $q->where('project_id', $this->id))
+            ->get(['stage_id', 'due_date', 'planned_start_at', 'hours_planned']);
+        foreach ($deliveries as $del) {
+            $end = $del->plannedEndDate($cal, $calOpts);
+            if ($end && (!$latest || $end->gt($latest))) $latest = $end;
         }
 
         if (!$latest) {
