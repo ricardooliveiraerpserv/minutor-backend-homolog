@@ -88,6 +88,24 @@ class StageDelivery extends Model
         'approval_decided_at'   => 'datetime',
     ];
 
+    /**
+     * Fim PLANEJADO da atividade (conceito único de "fim", usado no Prazo Final do
+     * cronograma E no Prazo de Entrega do projeto): o `due_date` se houver; senão,
+     * o fim calculado a partir do início + horas planejadas no calendário útil.
+     * NUNCA usa o início cru como fim.
+     */
+    public function plannedEndDate(?\App\Services\BusinessCalendarService $cal = null, array $calOpts = []): ?\Carbon\Carbon
+    {
+        if ($this->due_date) {
+            return $this->due_date->copy()->startOfDay();
+        }
+        if ($this->planned_start_at) {
+            $cal = $cal ?: app(\App\Services\BusinessCalendarService::class);
+            return $cal->addBusinessHours($this->planned_start_at, (float) $this->hours_planned, 8.0, $calOpts)->startOfDay();
+        }
+        return null;
+    }
+
     public function stage(): BelongsTo
     {
         return $this->belongsTo(ProjectStage::class, 'stage_id');
