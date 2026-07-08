@@ -743,6 +743,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/nav-screen-actions',         [\App\Http\Controllers\NavConfigController::class, 'addScreenAction'])->name('nav-screen-actions.add');
         Route::delete('/nav-screen-actions',       [\App\Http\Controllers\NavConfigController::class, 'deleteScreenAction'])->name('nav-screen-actions.delete');
 
+        // Liberação de visualização do pipeline "Demandas e Projetos" (por usuário).
+        Route::get('/pipeline-view-permissions',            [\App\Http\Controllers\PipelineViewPermissionController::class, 'index'])->name('pipeline-view-permissions.index');
+        Route::post('/pipeline-view-permissions',           [\App\Http\Controllers\PipelineViewPermissionController::class, 'upsert'])->name('pipeline-view-permissions.upsert');
+        Route::delete('/pipeline-view-permissions/{userId}',[\App\Http\Controllers\PipelineViewPermissionController::class, 'destroy'])->name('pipeline-view-permissions.destroy');
+
         // Upload de foto de perfil
         Route::post('/users/profile/photo', [UserController::class, 'uploadProfilePhoto'])->name('users.upload-photo');
         Route::delete('/users/profile/photo', [UserController::class, 'removeProfilePhoto'])->name('users.remove-photo');

@@ -1478,6 +1478,9 @@ class ContractController extends Controller
             'coordinators'          => $coordinators,
             'user_role'             => $user?->type ?? 'admin',
             'contracts'             => $demandCards,
+            // Liberação de visualização do pipeline (Demandas e Projetos) p/ o usuário logado.
+            // O FE usa isto p/ mostrar/esconder as partes (demand/project) e filtrar por cliente.
+            'pipeline_view'         => \App\Models\PipelineViewPermission::effectiveFor($user),
         ]);
     }
 
