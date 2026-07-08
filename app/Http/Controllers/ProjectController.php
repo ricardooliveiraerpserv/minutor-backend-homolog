@@ -2466,6 +2466,11 @@ class ProjectController extends Controller
             ]);
         }
 
+        // Prazo de Entrega deriva do cronograma (fim da última atividade) — mantém
+        // sincronizado automaticamente ao visualizar. Usa queries próprias do projeto
+        // inteiro (não afetado pelo filtro de consultor abaixo).
+        $project->recalcExpectedEndFromSchedule();
+
         $stages = $project->stages()
             ->with([
                 'responsible:id,name,email',
@@ -2869,16 +2874,23 @@ class ProjectController extends Controller
         $minDate = null;
         $maxDate = null;
         foreach ($stages as $st) {
-            foreach ([$st->stage_start_at, $st->expected_end_date] as $d) {
-                if (!$d) continue;
-                $minDate = $minDate === null || $d->lt($minDate) ? $d : $minDate;
-                $maxDate = $maxDate === null || $d->gt($maxDate) ? $d : $maxDate;
+            // Início da etapa → minDate; fim da etapa → maxDate.
+            if ($st->stage_start_at) {
+                $minDate = $minDate === null || $st->stage_start_at->lt($minDate) ? $st->stage_start_at : $minDate;
+            }
+            if ($st->expected_end_date) {
+                $maxDate = $maxDate === null || $st->expected_end_date->gt($maxDate) ? $st->expected_end_date : $maxDate;
             }
             foreach ($st->deliveries as $del) {
-                foreach ([$del->planned_start_at, $del->due_date] as $d) {
-                    if (!$d) continue;
-                    $minDate = $minDate === null || $d->lt($minDate) ? $d : $minDate;
-                    $maxDate = $maxDate === null || $d->gt($maxDate) ? $d : $maxDate;
+                // Início da atividade → minDate.
+                if ($del->planned_start_at) {
+                    $minDate = $minDate === null || $del->planned_start_at->lt($minDate) ? $del->planned_start_at : $minDate;
+                }
+                // Prazo Final usa o FIM da atividade (due_date, ou início + horas no
+                // calendário útil) — NUNCA o início cru como se fosse fim.
+                $end = $del->plannedEndDate($calendar, $calOpts);
+                if ($end) {
+                    $maxDate = $maxDate === null || $end->gt($maxDate) ? $end : $maxDate;
                 }
             }
         }
