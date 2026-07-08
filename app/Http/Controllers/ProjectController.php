@@ -2845,28 +2845,56 @@ class ProjectController extends Controller
             }
         }
 
-        // Team load: usa UserCapacityService.summarize por user_id envolvido (lightweight)
+        // Team load: envolvimento de cada pessoa NESTE projeto — reflete os apontamentos.
+        // usage_pct = horas consumidas pela pessoa neste projeto (approved/released) sobre
+        // o pool do cronograma. Assim quem apontou aparece (mesmo sem stage_allocation), e
+        // não confunde com a carga GLOBAL da pessoa (bug anterior: usava planned/capacity).
         $teamLoad = [];
         if (!empty($userIdsInvolved)) {
-            $usersData = \App\Models\User::whereIn('id', array_keys($userIdsInvolved))->get(['id','name','email','capacity_hours']);
+            $uids  = array_keys($userIdsInvolved);
+            $pool  = (float) $project->cronogramaPoolHours();
+
+            // Consumido real por usuário neste projeto. Inclui 'pending' (apontou mas
+            // ainda não aprovado) — mesma whitelist de consumo do card CONSUMIDAS, senão
+            // o apontamento recém-feito não apareceria na equipe.
+            $actualByUser = \DB::table('timesheets')
+                ->where('project_id', $project->id)
+                ->whereNull('deleted_at')
+                ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_PENDING, \App\Models\Timesheet::STATUS_RELEASED])
+                ->whereIn('user_id', $uids)
+                ->groupBy('user_id')
+                ->selectRaw('user_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS h')
+                ->pluck('h', 'user_id');
+
+            // Planejado (alocação) por usuário neste projeto — pro tooltip/saldo.
+            $plannedByUser = \DB::table('stage_allocations as a')
+                ->join('project_stages as ps', 'ps.id', '=', 'a.stage_id')
+                ->where('ps.project_id', $project->id)
+                ->whereNull('ps.deleted_at')
+                ->whereIn('a.user_id', $uids)
+                ->groupBy('a.user_id')
+                ->selectRaw('a.user_id AS user_id, COALESCE(SUM(a.planned_hours), 0) AS h')
+                ->pluck('h', 'user_id');
+
+            $usersData = \App\Models\User::whereIn('id', $uids)->get(['id', 'name', 'email']);
             foreach ($usersData as $u) {
-                $cap = $u->capacity_hours !== null ? (float) $u->capacity_hours : \App\Services\UserCapacityService::DEFAULT_CAPACITY_HOURS;
-                $summary = \App\Services\UserCapacityService::summarize($u->id, $cap);
+                $planned = (float) ($plannedByUser[$u->id] ?? 0);
+                $actual  = (float) ($actualByUser[$u->id] ?? 0);
                 $teamLoad[] = [
                     'user' => [
                         'id'    => $u->id,
                         'name'  => $u->name,
                         'profile_photo_url' => $u->profile_photo_url ?? null,
                     ],
-                    'capacity_hours'  => $cap,
-                    'planned_hours'   => $summary['totals']['planned_hours'],
-                    'actual_hours'    => $summary['totals']['actual_hours'],
-                    'remaining_hours' => $summary['totals']['remaining_hours'],
-                    'usage_pct'       => $cap > 0 ? round(($summary['totals']['planned_hours'] / $cap) * 100, 1) : 0.0,
-                    'overloaded'      => (bool) $summary['overload'],
+                    'planned_hours'   => round($planned, 2),
+                    'actual_hours'    => round($actual, 2),
+                    'remaining_hours' => round($planned - $actual, 2),
+                    'usage_pct'       => $pool > 0 ? round(($actual / $pool) * 100, 1) : 0.0,
+                    'overloaded'      => $planned > 0 && $actual > $planned,
                 ];
             }
-            usort($teamLoad, fn ($a, $b) => $b['usage_pct'] <=> $a['usage_pct']);
+            // Quem mais consumiu no projeto primeiro.
+            usort($teamLoad, fn ($a, $b) => $b['actual_hours'] <=> $a['actual_hours']);
         }
 
         // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
