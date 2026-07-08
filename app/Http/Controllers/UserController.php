@@ -1106,23 +1106,34 @@ class UserController extends Controller
         $v = $request->validate([
             'name'                => 'nullable|string|max:160',
             'email'               => 'nullable|string|max:160',
+            'user_id'             => 'nullable|integer',
             'signature'           => 'nullable|array',
             'signature.role'      => 'nullable|string|max:120',
             'signature.mobile'    => 'nullable|string|max:60',
             'signature.photo'     => 'nullable|string',
             'signature.show_photo'=> 'nullable|boolean',
+            'signature.custom_cargo'=> 'nullable|boolean',
         ]);
 
         $sig = $v['signature'] ?? [];
         $u = $request->user();
-        // Cargo padrão do perfil (admin) quando não informado.
-        if ($u && trim((string) ($sig['role'] ?? '')) === '') {
-            $sig['role'] = \App\Models\ProfileCargo::forProfile($u->type);
+        // Alvo do preview: a tela de perfil (própria) NÃO manda user_id → usa o logado. O modal de
+        // usuários (admin editando OUTRO) manda user_id → usa a foto/cargo DAQUELE usuário, nunca a
+        // do admin logado (senão vaza a foto do admin na assinatura alheia).
+        if ($request->has('user_id')) {
+            $tid = (int) $request->input('user_id');
+            $target = ($u && $u->isAdmin() && $tid > 0) ? \App\Models\User::find($tid) : null;
+        } else {
+            $target = $u;
         }
-        // Foto: ligada por padrão p/ quem tem foto de perfil; só não inclui se o usuário desmarcou (show_photo=false).
+        // Cargo padrão do perfil quando não informado — do ALVO.
+        if ($target && trim((string) ($sig['role'] ?? '')) === '') {
+            $sig['role'] = \App\Models\ProfileCargo::forProfile($target->type);
+        }
+        // Foto do ALVO: ligada por padrão p/ quem tem foto de perfil; só não inclui se desmarcou.
         $wantsPhoto = array_key_exists('show_photo', $sig) ? (bool) $sig['show_photo'] : true;
-        if ($u && $wantsPhoto && empty($sig['photo'])) {
-            $dataUrl = $u->profilePhotoDataUrl();
+        if ($target && $wantsPhoto && empty($sig['photo'])) {
+            $dataUrl = $target->profilePhotoDataUrl();
             if ($dataUrl) $sig['photo'] = $dataUrl;
         }
 
