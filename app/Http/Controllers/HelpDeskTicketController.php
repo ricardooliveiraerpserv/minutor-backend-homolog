@@ -645,18 +645,48 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => $data]);
     }
 
-    /** Edita o corpo de uma interação (gated por service.edit_actions no perfil). */
+    /** Edita o corpo E o tempo trabalhado de uma interação (gated por service.edit_actions). */
     public function updateComment(Request $request, HelpDeskTicket $ticket, HelpDeskTicketComment $comment, AttachmentService $svc): JsonResponse
     {
         abort_unless($comment->ticket_id === $ticket->id, 404);
         abort_unless($this->access->canEditComment($request->user(), $comment), 403, 'Seu perfil de acesso não permite editar interações.');
-        $v = $request->validate(['body' => 'required|string']);
-        $comment->update(['body' => $v['body']]);
+        $v = $request->validate([
+            'body'        => 'nullable|string',
+            'worked_date' => 'nullable|date|before_or_equal:today',
+            'start_time'  => 'nullable|date_format:H:i',
+            'end_time'    => 'nullable|date_format:H:i|after:start_time',
+            'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
+        ]);
+
+        $update = ['body' => $v['body'] ?? $comment->body];
+        // Só mexe no tempo se o request trouxe algum campo de tempo (edições antigas só de corpo não zeram).
+        $touchedTime = $request->hasAny(['worked_date', 'start_time', 'end_time', 'total_hours']);
+        $effortMinutes = null;
+        $workedDate = filled($v['worked_date'] ?? null) ? $v['worked_date'] : null;
+        if ($touchedTime) {
+            $effortMinutes = $this->computeEffortMinutes($v);
+            $update['worked_date']    = $workedDate;
+            $update['start_time']     = $v['start_time'] ?? null;
+            $update['end_time']       = $v['end_time'] ?? null;
+            $update['effort_minutes'] = $effortMinutes;
+        }
+        $comment->update($update);
+
+        // Sincroniza o apontamento: se já existe vínculo, atualiza horas/data; se não existe
+        // e agora é elegível (resposta ao cliente + integração + projeto), cria.
+        $warning = null;
+        if ($touchedTime) {
+            $warning = $this->maybeCreateInteractionTimesheet($ticket, $comment->fresh(), $effortMinutes, $workedDate, $request);
+        }
+
         HelpDeskTicketEvent::log($ticket->id, 'comment_edited', ['meta' => ['comment_id' => $comment->id]]);
 
         $arr = $comment->fresh()->load('author:id,name')->toArray();
         $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $comment->id, $request->user())->values();
         $arr['can_edit'] = true;
+        if ($warning) {
+            $arr['apontamento_warning'] = $warning;
+        }
         return response()->json(['data' => $arr]);
     }
 
@@ -693,12 +723,7 @@ class HelpDeskTicketController extends Controller
             'total_hours'     => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
         ]);
         // Minutos trabalhados: total_hours prevalece; senão deriva de início→fim.
-        $effortMinutes = \App\Models\Timesheet::parseTotalHoursToMinutes($v['total_hours'] ?? null);
-        if (($effortMinutes === null || $effortMinutes <= 0) && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
-            $start = \Carbon\Carbon::createFromFormat('H:i', $v['start_time']);
-            $end   = \Carbon\Carbon::createFromFormat('H:i', $v['end_time']);
-            $effortMinutes = $end->greaterThan($start) ? $start->diffInMinutes($end) : null;
-        }
+        $effortMinutes = $this->computeEffortMinutes($v);
         $workedDate = filled($v['worked_date'] ?? null) ? $v['worked_date'] : null;
         // Idempotência: reenvio (erro→retry, duplo-clique, request lento) NÃO duplica a interação.
         $key = $v['idempotency_key'] ?? null;
@@ -788,8 +813,44 @@ class HelpDeskTicketController extends Controller
      * de aviso (string) quando NÃO foi possível movimentar as horas — a interação
      * já está gravada; o aviso apenas sinaliza que o apontamento não ocorreu.
      */
+    /** Minutos trabalhados: total_hours prevalece; senão deriva de início→fim. Null se ≤0. */
+    private function computeEffortMinutes(array $v): ?int
+    {
+        $m = \App\Models\Timesheet::parseTotalHoursToMinutes($v['total_hours'] ?? null);
+        if (($m === null || $m <= 0) && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
+            $start = \Carbon\Carbon::createFromFormat('H:i', $v['start_time']);
+            $end   = \Carbon\Carbon::createFromFormat('H:i', $v['end_time']);
+            $m = $end->greaterThan($start) ? $start->diffInMinutes($end) : null;
+        }
+        return ($m && $m > 0) ? (int) $m : null;
+    }
+
     private function maybeCreateInteractionTimesheet(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ?int $effortMinutes, ?string $workedDate, Request $request): ?string
     {
+        // EDIÇÃO — a interação JÁ tem apontamento vinculado: sincroniza horas/data/descrição
+        // (não recria, não duplica). Espelha os campos da interação no apontamento.
+        if ($comment->timesheet_id) {
+            $ts = \App\Models\Timesheet::find($comment->timesheet_id);
+            if (!$ts) {
+                return null; // apontamento sumiu (soft-delete): não recria automaticamente
+            }
+            if (!$effortMinutes || $effortMinutes <= 0) {
+                return 'Tempo removido da interação. O apontamento #' . $ts->id . ' vinculado foi mantido — ajuste ou remova manualmente se necessário.';
+            }
+            $obs = trim((string) $comment->body);
+            $ts->effort_minutes = $effortMinutes;
+            $ts->start_time     = $comment->start_time ?: null;
+            $ts->end_time       = $comment->end_time ?: null;
+            if ($workedDate) {
+                $ts->date = $workedDate;
+            }
+            if ($obs !== '') {
+                $ts->observation = $obs;
+            }
+            $ts->save();
+            return null;
+        }
+
         if (!$effortMinutes || $effortMinutes <= 0) {
             return null; // sem tempo → nada a movimentar
         }
