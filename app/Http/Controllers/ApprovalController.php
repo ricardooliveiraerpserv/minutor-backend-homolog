@@ -774,6 +774,18 @@ class ApprovalController extends Controller
             ->exists();
     }
 
+    /**
+     * Projeto de sustentação com "Gerenciado por outro coordenador" sai da fila do coord de
+     * sustentação e passa a ser do override — mesma regra do SustentacaoScopeService. Sem isto
+     * o card do Meu Dia e a tela de Aprovações contam despesa/apontamento de projeto alheio.
+     */
+    private function excludeOverriddenProjects($query, User $user): void
+    {
+        $query->whereHas('project', fn ($pq) => $pq
+            ->whereNull('kanban_coordinator_override_id')
+            ->orWhere('kanban_coordinator_override_id', $user->id));
+    }
+
     private function buildTimesheetQuery(User $user, ?Request $request = null)
     {
         $query = Timesheet::with([
@@ -812,6 +824,7 @@ class ApprovalController extends Controller
                 $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
                       ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
             });
+            $this->excludeOverriddenProjects($query, $user);
         }
 
         // Executivo de conta SEM papel coordenador: vê investimento Comercial dos seus clientes
@@ -914,6 +927,7 @@ class ApprovalController extends Controller
                 $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
                       ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
             });
+            $this->excludeOverriddenProjects($query, $user);
         }
 
         // Executivo de conta que NÃO é coordenador/administrativo: só vê despesas de investimento
