@@ -27,12 +27,39 @@ class HelpDeskSlaService
     /** Cache por request das chaves de status pausados. */
     private ?array $pausedKeys = null;
 
+    /** Cache do calendário (windows/holidays/tz) por ticket. */
+    private array $calCache = [];
+
+    public function __construct(private SlaBusinessClock $clock)
+    {
+    }
+
     private function pausedKeys(): array
     {
         if ($this->pausedKeys === null) {
             $this->pausedKeys = HelpDeskStatus::where('sla_paused', true)->pluck('key')->all();
         }
         return $this->pausedKeys;
+    }
+
+    /**
+     * Calendário de horas úteis do ticket (da política aplicável): [windows, holidays, tz].
+     * Política sem business_hours → windows vazio → o relógio soma horas CORRIDAS (retrocompat).
+     */
+    private function calendarFor(HelpDeskTicket $t): array
+    {
+        $key = $t->id ?? spl_object_id($t);
+        if (!isset($this->calCache[$key])) {
+            $policy = $t->sla_policy_id
+                ? ($t->relationLoaded('slaPolicy') ? $t->slaPolicy : HelpDeskSlaPolicy::find($t->sla_policy_id))
+                : $this->resolvePolicy($t);
+            $this->calCache[$key] = [
+                'windows'  => $policy?->windowsByWeekday() ?? [],
+                'holidays' => $policy?->holidayDates() ?? [],
+                'tz'       => $policy?->slaTimezone() ?? 'America/Sao_Paulo',
+            ];
+        }
+        return $this->calCache[$key];
     }
 
     /**
@@ -70,10 +97,17 @@ class HelpDeskSlaService
         $base   = $t->created_at ? Carbon::parse($t->created_at) : now();
         $target = $policy?->targetFor($t->priority);
 
+        // Prazos BRUTOS em HORAS ÚTEIS (calendário da política + feriados). Sem calendário → corridas.
+        $win = $policy?->windowsByWeekday() ?? [];
+        $hol = $policy?->holidayDates() ?? [];
+        $tz  = $policy?->slaTimezone() ?? 'America/Sao_Paulo';
+
+        // Grava em UTC: o relógio devolve Carbon no fuso da política (SP); sem normalizar,
+        // o Laravel formataria a hora-local como se fosse UTC (deslocamento de -3h na leitura).
         $t->first_response_due_at = ($target && $target->first_response_minutes !== null)
-            ? (clone $base)->addMinutes($target->first_response_minutes) : null;
+            ? $this->clock->addBusinessMinutes($base, (int) $target->first_response_minutes, $win, $hol, $tz)->setTimezone('UTC') : null;
         $t->resolution_due_at = ($target && $target->resolution_minutes !== null)
-            ? (clone $base)->addMinutes($target->resolution_minutes) : null;
+            ? $this->clock->addBusinessMinutes($base, (int) $target->resolution_minutes, $win, $hol, $tz)->setTimezone('UTC') : null;
 
         $this->computeBreaches($t);
         if ($persist) $t->save();
@@ -114,6 +148,7 @@ class HelpDeskSlaService
             }
         }
 
+        $cal = $this->calendarFor($t);
         $total = 0;
         $n = count($segments);
         for ($i = 0; $i < $n; $i++) {
@@ -122,17 +157,21 @@ class HelpDeskSlaService
             if ($end->lessThanOrEqualTo($start)) continue;
             $key = $segments[$i][1];
             if ($key !== null && in_array($key, $paused, true)) {
-                $total += $start->diffInMinutes($end);
+                // Conta só o tempo ÚTIL em pausa (janelas + feriados) — coerente com o prazo em horas úteis.
+                $total += $this->clock->businessMinutesBetween($start, $end, $cal['windows'], $cal['holidays'], $cal['tz']);
             }
         }
         return (int) $total;
     }
 
-    /** Prazo EFETIVO (bruto + pausa até a referência). */
+    /** Prazo EFETIVO = bruto + minutos ÚTEIS pausados, empurrados pelo calendário. */
     private function effectiveDue(?Carbon $rawDue, HelpDeskTicket $t, Carbon $ref, ?Collection $events): ?Carbon
     {
         if (!$rawDue) return null;
-        return (clone $rawDue)->addMinutes($this->pausedMinutesUntil($t, $ref, $events));
+        $paused = $this->pausedMinutesUntil($t, $ref, $events);
+        if ($paused <= 0) return clone $rawDue;
+        $cal = $this->calendarFor($t);
+        return $this->clock->addBusinessMinutes($rawDue, $paused, $cal['windows'], $cal['holidays'], $cal['tz']);
     }
 
     /** (Re)calcula as flags de violação considerando a pausa de SLA. */

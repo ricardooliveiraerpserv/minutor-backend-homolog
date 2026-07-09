@@ -16,7 +16,7 @@ class HelpDeskSlaPolicy extends Model
 
     protected $fillable = [
         'name', 'description', 'customer_id', 'contract_id',
-        'business_hours', 'is_default', 'active',
+        'business_hours', 'timezone', 'is_default', 'active',
     ];
 
     protected $casts = [
@@ -24,6 +24,49 @@ class HelpDeskSlaPolicy extends Model
         'is_default'     => 'boolean',
         'active'         => 'boolean',
     ];
+
+    /** Fuso para o cálculo de horas úteis (janelas em horário local). */
+    public function slaTimezone(): string
+    {
+        return $this->timezone ?: 'America/Sao_Paulo';
+    }
+
+    /**
+     * Janelas de atendimento normalizadas: isoWeekday (1=Seg…7=Dom) → [[inícioMin,fimMin], …].
+     * business_hours esperado: { "1": [["09:00","12:00"],["13:00","18:00"]], …, "6": [], "7": [] }.
+     * Vazio/null → [] (o relógio trata como 24x7 = horas corridas, retrocompat).
+     */
+    public function windowsByWeekday(): array
+    {
+        $bh = $this->business_hours;
+        if (!is_array($bh) || empty($bh)) return [];
+        $out = [];
+        foreach ($bh as $iso => $wins) {
+            $day = (int) $iso;
+            $out[$day] = [];
+            foreach ((array) $wins as $w) {
+                $s = $w[0] ?? null; $e = $w[1] ?? null;
+                if (!$s || !$e) continue;
+                $out[$day][] = [self::hhmmToMin($s), self::hhmmToMin($e)];
+            }
+        }
+        return $out;
+    }
+
+    /** Datas de feriado (Y-m-d) que não contam no SLA. Fase 1: feriados nacionais globais. */
+    public function holidayDates(): array
+    {
+        return Holiday::query()->active()
+            ->pluck('date')
+            ->map(fn ($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
+            ->unique()->values()->all();
+    }
+
+    private static function hhmmToMin(string $hhmm): int
+    {
+        [$h, $m] = array_pad(array_map('intval', explode(':', $hhmm)), 2, 0);
+        return $h * 60 + $m;
+    }
 
     public function customer(): BelongsTo { return $this->belongsTo(Customer::class); }
     public function contract(): BelongsTo { return $this->belongsTo(Contract::class); }
