@@ -128,6 +128,45 @@ class ProjectStageController extends Controller
     }
 
     /**
+     * Lista PLANA de atividades (deliveries) do projeto, para o seletor de
+     * atividade no formulário geral de apontamento. Consultor só enxerga as
+     * atividades onde é responsável OU está alocado (mesma regra do cronograma).
+     */
+    public function projectDeliveries(Project $project, Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $isConsultor = $user && method_exists($user, 'isConsultor') && $user->isConsultor();
+
+        $stages = $project->stages()
+            ->with(['deliveries' => function ($q) use ($isConsultor, $user) {
+                $q->select('id', 'stage_id', 'title', 'status', 'order_index')
+                  ->orderBy('order_index');
+                if ($isConsultor) {
+                    $q->where(function ($w) use ($user) {
+                        $w->where('responsible_user_id', $user->id)
+                          ->orWhereHas('allocations', fn ($a) => $a->where('user_id', $user->id));
+                    });
+                }
+            }])
+            ->orderBy('order_index')
+            ->get(['id', 'name', 'order_index', 'project_id']);
+
+        $items = [];
+        foreach ($stages as $stage) {
+            foreach ($stage->deliveries as $d) {
+                $items[] = [
+                    'id'         => $d->id,
+                    'title'      => $d->title,
+                    'stage_name' => $stage->name,
+                    'status'     => $d->status,
+                ];
+            }
+        }
+
+        return response()->json(['items' => $items]);
+    }
+
+    /**
      * Soma de horas consumidas por etapa (timesheets approved + released).
      * Retorna map [stage_id => actual_hours].
      */
