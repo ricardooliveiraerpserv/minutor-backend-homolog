@@ -855,6 +855,7 @@ Route::prefix('v1')->group(function () {
         // Autorização granular via Policy do Project (read/update do Project).
         Route::middleware(['permission.or.admin:projects.view', 'block.cliente'])->group(function () {
             Route::get('/projects/{project}/stages', [ProjectStageController::class, 'index'])->name('stages.index');
+            Route::get('/projects/{project}/deliveries', [ProjectStageController::class, 'projectDeliveries'])->name('projects.deliveries.flat');
             Route::get('/projects/{project}/delay-risk', [ProjectStageController::class, 'delayRisk'])->name('projects.delay-risk');
             Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
             Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
