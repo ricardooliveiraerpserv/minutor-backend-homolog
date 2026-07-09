@@ -278,6 +278,12 @@ class ProjectController extends Controller
                         $subQ->where('users.id', $targetUserId);
                     })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
                         $subQ->where('user_id', $targetUserId);
+                    })->orWhereHas('stages.deliveries', function ($subQ) use ($targetUserId) {
+                        // Responsável por atividade do cronograma (mesmo sem estar em project_consultants).
+                        $subQ->where('responsible_user_id', $targetUserId);
+                    })->orWhereHas('stages.allocations', function ($subQ) use ($targetUserId) {
+                        // Alocado numa atividade do cronograma.
+                        $subQ->where('user_id', $targetUserId);
                     });
                 });
             }
