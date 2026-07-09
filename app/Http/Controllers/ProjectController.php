@@ -266,12 +266,14 @@ class ProjectController extends Controller
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
-                // Modo "Meus Projetos" (activity_allocated): SÓ projetos onde o consultor
-                // está ALOCADO em ATIVIDADE (stage_allocations.delivery_id) — mesmo critério
-                // do board do cronograma. Não entra por project_consultant/responsável.
+                // Modo "Meus Projetos" (activity_allocated): projetos onde o consultor participa do
+                // CRONOGRAMA — MESMO critério de acesso do ProjectStageController (allocations.user_id,
+                // com ou sem delivery, OU responsável por atividade). Antes exigia delivery_id NOT NULL,
+                // então quem estava na EQUIPE da etapa (alocação delivery=null) sumia do "Meus Projetos".
                 if ($request->boolean('activity_allocated')) {
-                    $query->whereHas('stages.allocations', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId)->whereNotNull('delivery_id');
+                    $query->where(function ($q) use ($targetUserId) {
+                        $q->whereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId))
+                          ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId));
                     });
                 } else {
                 $query->where(function ($q) use ($targetUserId) {
