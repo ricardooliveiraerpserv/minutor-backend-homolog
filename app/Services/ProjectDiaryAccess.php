@@ -36,8 +36,23 @@ class ProjectDiaryAccess
         }
         // Consultor (e parceiro): precisa estar alocado no projeto E ter a Liberação de
         // Visualização cobrindo o cliente daquele projeto.
-        return $project->consultants()->where('users.id', $user->id)->exists()
+        return self::isAllocated($user, $project)
             && self::pipelineAllowsProject($user, $project);
+    }
+
+    /**
+     * Alocado no projeto: consultor direto (project_consultants) OU membro de um grupo
+     * de consultores vinculado ao projeto (project_consultant_groups). A alocação por
+     * GRUPO é invisível em project_consultants — esquecer dela some com a aba do Diário.
+     */
+    public static function isAllocated($user, Project $project): bool
+    {
+        if ($project->consultants()->where('users.id', $user->id)->exists()) {
+            return true;
+        }
+        return $project->consultantGroups()
+            ->whereHas('consultants', fn ($q) => $q->where('users.id', $user->id))
+            ->exists();
     }
 
     /** A Liberação de Visualização (pipeline_view_permissions) cobre o cliente deste projeto? */
