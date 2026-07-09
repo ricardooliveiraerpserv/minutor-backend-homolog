@@ -16,13 +16,14 @@ class HelpDeskSlaPolicy extends Model
 
     protected $fillable = [
         'name', 'description', 'customer_id', 'contract_id',
-        'business_hours', 'timezone', 'is_default', 'active',
+        'business_hours', 'timezone', 'use_national_holidays', 'is_default', 'active',
     ];
 
     protected $casts = [
-        'business_hours' => 'array',
-        'is_default'     => 'boolean',
-        'active'         => 'boolean',
+        'business_hours'        => 'array',
+        'use_national_holidays' => 'boolean',
+        'is_default'            => 'boolean',
+        'active'                => 'boolean',
     ];
 
     /** Fuso para o cálculo de horas úteis (janelas em horário local). */
@@ -53,13 +54,20 @@ class HelpDeskSlaPolicy extends Model
         return $out;
     }
 
-    /** Datas de feriado (Y-m-d) que não contam no SLA. Fase 1: feriados nacionais globais. */
+    /**
+     * Datas de feriado (Y-m-d) que não contam no SLA: nacionais globais (se use_national_holidays)
+     * + feriados específicos desta política/contrato.
+     */
     public function holidayDates(): array
     {
-        return Holiday::query()->active()
-            ->pluck('date')
-            ->map(fn ($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))
-            ->unique()->values()->all();
+        $dates = [];
+        if ($this->use_national_holidays ?? true) {
+            $dates = Holiday::query()->active()
+                ->pluck('date')->map(fn ($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))->all();
+        }
+        $own = ($this->relationLoaded('holidays') ? $this->holidays : $this->holidays()->get())
+            ->map(fn ($h) => \Carbon\Carbon::parse($h->date)->format('Y-m-d'))->all();
+        return array_values(array_unique(array_merge($dates, $own)));
     }
 
     private static function hhmmToMin(string $hhmm): int
@@ -72,6 +80,7 @@ class HelpDeskSlaPolicy extends Model
     public function contract(): BelongsTo { return $this->belongsTo(Contract::class); }
     public function targets(): HasMany    { return $this->hasMany(HelpDeskSlaTarget::class, 'sla_policy_id'); }
     public function tickets(): HasMany    { return $this->hasMany(HelpDeskTicket::class, 'sla_policy_id'); }
+    public function holidays(): HasMany   { return $this->hasMany(HelpDeskSlaHoliday::class, 'sla_policy_id'); }
 
     /** Meta de SLA para uma prioridade. */
     public function targetFor(string $priority): ?HelpDeskSlaTarget
