@@ -24,10 +24,14 @@ class HelpDeskTicketComment extends Model
     protected $fillable = [
         'ticket_id', 'author_user_id', 'author_contact_id',
         'body', 'visibility', 'is_system', 'channel', 'idempotency_key',
+        // Tempo trabalhado por interação (movimenta horas como o Movidesk)
+        'worked_date', 'start_time', 'end_time', 'effort_minutes', 'timesheet_id',
     ];
 
     protected $casts = [
-        'is_system' => 'boolean',
+        'is_system'      => 'boolean',
+        'worked_date'    => 'date:Y-m-d',
+        'effort_minutes' => 'integer',
     ];
 
     public const VISIBILITIES = ['internal', 'customer'];
@@ -35,6 +39,7 @@ class HelpDeskTicketComment extends Model
     public function ticket(): BelongsTo  { return $this->belongsTo(HelpDeskTicket::class, 'ticket_id'); }
     public function author(): BelongsTo  { return $this->belongsTo(User::class, 'author_user_id'); }
     public function contact(): BelongsTo { return $this->belongsTo(CustomerContact::class, 'author_contact_id'); }
+    public function timesheet(): BelongsTo { return $this->belongsTo(Timesheet::class, 'timesheet_id'); }
 
     public function scopeVisibleToCustomer($query)
     {
