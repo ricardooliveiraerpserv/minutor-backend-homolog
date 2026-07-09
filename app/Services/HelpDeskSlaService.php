@@ -119,6 +119,10 @@ class HelpDeskSlaService
             if ($p) return $p;
         }
         if ($t->customer_id) {
+            // Vínculo N:N (principal): política que tem este cliente na lista.
+            $p = $active()->whereHas('customers', fn ($q) => $q->where('customers.id', $t->customer_id))->first();
+            if ($p) return $p;
+            // Legado: customer_id único na própria política.
             $p = $active()->whereNull('contract_id')->where('customer_id', $t->customer_id)->first();
             if ($p) return $p;
         }

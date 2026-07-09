@@ -16,13 +16,14 @@ class HelpDeskSlaController extends Controller
         $policies = HelpDeskSlaPolicy::query()
             ->when(!$request->boolean('all'), fn ($q) => $q->where('active', true))
             ->with(['targets', 'customer:id,name', 'contract:id'])
+            ->withCount('customers')
             ->orderByDesc('is_default')->orderBy('name')->get();
         return response()->json(['data' => $policies]);
     }
 
     public function show(HelpDeskSlaPolicy $policy): JsonResponse
     {
-        return response()->json(['data' => $policy->load(['targets.pauses', 'holidays'])]);
+        return response()->json(['data' => $policy->load(['targets.pauses', 'holidays', 'customers:id,name'])]);
     }
 
     private function rules(bool $creating): array
@@ -37,6 +38,9 @@ class HelpDeskSlaController extends Controller
             'use_national_holidays' => 'nullable|boolean',
             'is_default'            => 'nullable|boolean',
             'active'                => 'nullable|boolean',
+            // Clientes vinculados (usam este SLA). Um cliente = uma política.
+            'customer_ids'          => 'nullable|array',
+            'customer_ids.*'        => 'integer|exists:customers,id',
             // Metas por prioridade (upsert): [{priority, first_response_minutes, resolution_minutes, pauses:[status_key]}]
             'targets'                          => 'nullable|array',
             'targets.*.priority'               => 'required|in:' . implode(',', HelpDeskTicket::PRIORITIES),
@@ -63,12 +67,14 @@ class HelpDeskSlaController extends Controller
         $v = $request->validate($this->rules(true));
         $targets = $v['targets'] ?? []; unset($v['targets']);
         $holidays = $v['holidays'] ?? null; unset($v['holidays']);
-        return DB::transaction(function () use ($v, $targets, $holidays) {
+        $customerIds = $v['customer_ids'] ?? null; unset($v['customer_ids']);
+        return DB::transaction(function () use ($v, $targets, $holidays, $customerIds) {
             if (!empty($v['is_default'])) HelpDeskSlaPolicy::where('is_default', true)->update(['is_default' => false]);
             $policy = HelpDeskSlaPolicy::create($v);
             $this->upsertTargets($policy, $targets);
             if ($holidays !== null) $this->syncHolidays($policy, $holidays);
-            return response()->json(['data' => $policy->load(['targets.pauses', 'holidays'])], 201);
+            if ($customerIds !== null) $this->syncCustomers($policy, $customerIds);
+            return response()->json(['data' => $policy->load(['targets.pauses', 'holidays', 'customers:id,name'])], 201);
         });
     }
 
@@ -77,12 +83,14 @@ class HelpDeskSlaController extends Controller
         $v = $request->validate($this->rules(false));
         $targets = $v['targets'] ?? null; unset($v['targets']);
         $holidays = $v['holidays'] ?? null; unset($v['holidays']);
-        return DB::transaction(function () use ($v, $targets, $holidays, $policy) {
+        $customerIds = $v['customer_ids'] ?? null; unset($v['customer_ids']);
+        return DB::transaction(function () use ($v, $targets, $holidays, $customerIds, $policy) {
             if (!empty($v['is_default'])) HelpDeskSlaPolicy::where('id', '!=', $policy->id)->where('is_default', true)->update(['is_default' => false]);
             $policy->update($v);
             if ($targets !== null) $this->upsertTargets($policy, $targets);
             if ($holidays !== null) $this->syncHolidays($policy, $holidays);
-            return response()->json(['data' => $policy->fresh()->load(['targets.pauses', 'holidays'])]);
+            if ($customerIds !== null) $this->syncCustomers($policy, $customerIds);
+            return response()->json(['data' => $policy->fresh()->load(['targets.pauses', 'holidays', 'customers:id,name'])]);
         });
     }
 
@@ -117,6 +125,23 @@ class HelpDeskSlaController extends Controller
                 }
             }
         }
+    }
+
+    /**
+     * Vincula os clientes a esta política. Um cliente só pode estar em UMA política — ao
+     * vincular aqui, ele é removido de qualquer outra (passa a usar este SLA). Clientes que
+     * saíram da lista voltam a usar o SLA padrão (sem vínculo).
+     */
+    private function syncCustomers(HelpDeskSlaPolicy $policy, array $customerIds): void
+    {
+        $ids = array_values(array_unique(array_filter(array_map('intval', $customerIds))));
+        // Tira os alvos de QUALQUER outra política (um cliente = uma política).
+        if (!empty($ids)) {
+            DB::table('helpdesk_sla_policy_customers')
+                ->whereIn('customer_id', $ids)->where('sla_policy_id', '!=', $policy->id)->delete();
+        }
+        // Adiciona os novos e remove os que saíram desta política.
+        $policy->customers()->sync($ids);
     }
 
     /** Substitui a lista de feriados específicos da política. */
