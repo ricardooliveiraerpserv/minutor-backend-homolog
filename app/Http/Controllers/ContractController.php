@@ -673,6 +673,7 @@ class ContractController extends Controller
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
             'project_code_preview'   => 'nullable|string|max:20',
+            'helpdesk_integration_enabled' => 'boolean',
             'contacts'               => 'nullable|array',
             'contacts.*.id'          => 'nullable|exists:contract_contacts,id',
             'contacts.*.name'        => 'required|string',
@@ -695,6 +696,22 @@ class ContractController extends Controller
         });
 
         return response()->json($contract->fresh()->load(['customer:id,name', 'contacts', 'attachments']));
+    }
+
+    /**
+     * Liga/desliga a CHAVE DE INTEGRAÇÃO Help Desk do contrato (substitui o Movidesk).
+     * Operacional: funciona MESMO após o projeto ter sido gerado (diferente do update, que
+     * trava contratos com projeto). Quando LIGADA, as interações dos chamados vinculados a
+     * este contrato movimentam horas (geram apontamento oficial).
+     */
+    public function toggleHelpdeskIntegration(Request $request, Contract $contract): JsonResponse
+    {
+        $v = $request->validate(['enabled' => 'required|boolean']);
+        $contract->update(['helpdesk_integration_enabled' => $v['enabled']]);
+        return response()->json([
+            'id' => $contract->id,
+            'helpdesk_integration_enabled' => (bool) $contract->helpdesk_integration_enabled,
+        ]);
     }
 
     /**
