@@ -2501,10 +2501,11 @@ class ProjectController extends Controller
             ->orderBy('order_index')
             ->get();
 
-        // Consultor: vê SOMENTE as atividades onde está ALOCADO (alocação por atividade
-        // = stage_allocations.delivery_id, mesmo critério do "+ Apontar") — não o board
-        // completo. Descarta etapas sem atividade dele; contadores/resumo refletem só o
-        // escopo dele. Admin/coordenador (ou com hours.view_all) seguem vendo tudo.
+        // Consultor: vê SOMENTE as atividades onde está ALOCADO (por atividade =
+        // stage_allocations.delivery_id, mesmo critério do "+ Apontar") OU é o RESPONSÁVEL
+        // por ela (responsible_user_id) — não o board completo. Descarta etapas sem atividade
+        // dele; contadores/resumo refletem só o escopo dele. Admin/coordenador (ou com
+        // hours.view_all) seguem vendo tudo.
         $viewer = auth()->user();
         if ($viewer && method_exists($viewer, 'isConsultor') && $viewer->isConsultor()
             && !(method_exists($viewer, 'hasAccess') && $viewer->hasAccess('hours.view_all'))) {
@@ -2517,7 +2518,7 @@ class ProjectController extends Controller
                 ->flip();
             $stages->each(fn ($st) => $st->setRelation(
                 'deliveries',
-                $st->deliveries->filter(fn ($d) => isset($allocatedSet[$d->id]))->values()
+                $st->deliveries->filter(fn ($d) => isset($allocatedSet[$d->id]) || (int) $d->responsible_user_id === $vid)->values()
             ));
             $stages = $stages->filter(fn ($st) => $st->deliveries->isNotEmpty())->values();
         }
