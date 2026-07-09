@@ -794,6 +794,12 @@ class HelpDeskTicketController extends Controller
             return null; // sem tempo → nada a movimentar
         }
 
+        // Só RESPOSTA AO CLIENTE movimenta horas. Nota interna registra o tempo na
+        // interação (histórico), mas NÃO gera apontamento.
+        if ($comment->visibility !== 'customer') {
+            return null;
+        }
+
         $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
         if (!$contract || !$contract->helpdesk_integration_enabled) {
             return null; // integração desligada: guarda o tempo na interação, mas não movimenta horas
