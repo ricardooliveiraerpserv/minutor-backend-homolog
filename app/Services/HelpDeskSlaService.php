@@ -42,6 +42,51 @@ class HelpDeskSlaService
         return $this->pausedKeys;
     }
 
+    /** Cache das chaves pausantes POR ticket (dependem da regra/prioridade). */
+    private array $pausingKeysCache = [];
+
+    /** Cache: a política tem ALGUMA pausa por regra configurada? (por policy id). */
+    private array $policyConfiguredCache = [];
+
+    private function policyHasRulePauses(int $policyId): bool
+    {
+        if (!isset($this->policyConfiguredCache[$policyId])) {
+            $this->policyConfiguredCache[$policyId] = \App\Models\HelpDeskSlaTargetPause::query()
+                ->whereHas('target', fn ($q) => $q->where('sla_policy_id', $policyId))->exists();
+        }
+        return $this->policyConfiguredCache[$policyId];
+    }
+
+    /**
+     * Status que pausam o SLA DESTE ticket (Fase 2):
+     *  - Se a POLÍTICA tem pausas por regra configuradas → usa a lista PRÓPRIA do target
+     *    da prioridade (vazio = a regra NÃO pausa em nada).
+     *  - Se a política não tem nenhuma pausa por regra → cai no `sla_paused` GLOBAL (retrocompat).
+     */
+    private function pausingKeysFor(HelpDeskTicket $t): array
+    {
+        $key = $t->id ?? spl_object_id($t);
+        if (!isset($this->pausingKeysCache[$key])) {
+            $policy = $t->sla_policy_id
+                ? ($t->relationLoaded('slaPolicy') ? $t->slaPolicy : HelpDeskSlaPolicy::find($t->sla_policy_id))
+                : $this->resolvePolicy($t);
+
+            if ($policy && $this->policyHasRulePauses($policy->id)) {
+                $target = $policy->targetFor((string) $t->priority);
+                $this->pausingKeysCache[$key] = $target ? $target->pauseKeys() : [];
+            } else {
+                $this->pausingKeysCache[$key] = $this->pausedKeys(); // global (legado)
+            }
+        }
+        return $this->pausingKeysCache[$key];
+    }
+
+    /** O ticket está pausado AGORA (status atual na lista pausante da sua regra)? */
+    private function isPausedNow(HelpDeskTicket $t): bool
+    {
+        return $t->status && in_array($t->status->key, $this->pausingKeysFor($t), true);
+    }
+
     /**
      * Calendário de horas úteis do ticket (da política aplicável): [windows, holidays, tz].
      * Política sem business_hours → windows vazio → o relógio soma horas CORRIDAS (retrocompat).
@@ -130,7 +175,7 @@ class HelpDeskSlaService
     public function pausedMinutesUntil(HelpDeskTicket $t, Carbon $until, ?Collection $events = null): int
     {
         if (!$t->created_at) return 0;
-        $paused = $this->pausedKeys();
+        $paused = $this->pausingKeysFor($t);
         if (empty($paused)) return 0;
 
         $events ??= $t->events()->where('event_type', 'status_changed')
@@ -195,7 +240,7 @@ class HelpDeskSlaService
     public function summary(HelpDeskTicket $t, ?Collection $events = null): array
     {
         $now = now();
-        $isPaused = $t->status && $t->status->sla_paused;
+        $isPaused = $this->isPausedNow($t);
         // Enquanto pausado, o "relógio" congela: referência de cálculo é o instante de entrada
         // na pausa não é necessário pois effectiveDue já desconta a pausa até $now.
         $effFr  = $this->effectiveDue(optional($t->first_response_due_at) ? Carbon::parse($t->first_response_due_at) : null, $t, $now, $events);
@@ -231,7 +276,7 @@ class HelpDeskSlaService
             'previsao_resolucao' => optional($effRes)->toIso8601String(),
             'respondido'         => (bool) $t->first_responded_at,
             'resolvido_em'       => optional($t->resolved_at)->toIso8601String(),
-            'em_pausa'           => (bool) ($t->status && $t->status->sla_paused),
+            'em_pausa'           => $this->isPausedNow($t),
         ];
     }
 }
