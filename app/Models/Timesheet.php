@@ -73,6 +73,7 @@ class Timesheet extends Model
         'reviewed_at',
         'manual_project_edit',
         'date_locked',
+        'helpdesk_ticket_id',
     ];
 
     /**
