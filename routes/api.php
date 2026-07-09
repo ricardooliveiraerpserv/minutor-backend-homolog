@@ -1642,6 +1642,7 @@ Route::prefix('v1')->group(function () {
 
         // 📄 CONTRATOS
         Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');
+        Route::patch('/contracts/{contract}/helpdesk-integration',   [ContractController::class, 'toggleHelpdeskIntegration'])->name('contracts.helpdesk-integration');
         Route::patch('/contracts/{contract}/kanban-move',            [ContractController::class, 'kanbanMove'])->name('contracts.kanban-move');
         Route::patch('/contracts/{contract}/sustentacao-move',       [ContractController::class, 'sustentacaoMove'])->name('contracts.sustentacao-move');
         Route::patch('/projects/{project}/kanban-move',              [ContractController::class, 'projectMove'])->name('projects.kanban-move');

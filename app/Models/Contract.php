@@ -32,6 +32,8 @@ class Contract extends Model
         // Fase 4.1 — liberação/bloqueio operacional + hierarquia de contratos
         'liberado_por', 'liberado_em', 'liberacao_observacao',
         'bloqueado_por', 'bloqueado_em', 'motivo_bloqueio', 'parent_contract_id',
+        // Help Desk — chave de integração: interações dos chamados movimentam horas (substitui Movidesk)
+        'helpdesk_integration_enabled',
     ];
 
     protected $casts = [
@@ -40,6 +42,7 @@ class Contract extends Model
         'liberado_em'            => 'datetime',
         'bloqueado_em'           => 'datetime',
         'cobra_despesa_cliente'  => 'boolean',
+        'helpdesk_integration_enabled' => 'boolean',
         'expectativa_inicio'     => 'date:Y-m-d',
         'generated_at'           => 'datetime',
         'approved_at'            => 'datetime',

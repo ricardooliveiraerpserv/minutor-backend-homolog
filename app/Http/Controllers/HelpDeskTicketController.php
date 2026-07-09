@@ -26,7 +26,8 @@ class HelpDeskTicketController extends Controller
         return $q->with([
             'customer:id,name', 'contact:id,name,email', 'requester:id,name',
             'category:id,name,color', 'status:id,key,label,color,is_open,is_resolved,is_terminal',
-            'assignee:id,name', 'team:id,name', 'contract:id', 'project:id,name',
+            'assignee:id,name', 'team:id,name',
+            'contract:id,categoria,helpdesk_integration_enabled', 'project:id,name',
             'service:id,name,code', 'justification:id,name,status_id',
         ]);
     }
@@ -684,7 +685,21 @@ class HelpDeskTicketController extends Controller
             'files'           => 'nullable|array',
             'files.*'         => 'file|max:25600',
             'idempotency_key' => 'nullable|string|max:80',
+            // Tempo trabalhado nesta interação (opcional). Movimenta horas quando a
+            // integração do contrato está ligada. total_hours: HH:MM ou decimal.
+            'worked_date'     => 'nullable|date|before_or_equal:today',
+            'start_time'      => 'nullable|date_format:H:i',
+            'end_time'        => 'nullable|date_format:H:i|after:start_time',
+            'total_hours'     => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
         ]);
+        // Minutos trabalhados: total_hours prevalece; senão deriva de início→fim.
+        $effortMinutes = \App\Models\Timesheet::parseTotalHoursToMinutes($v['total_hours'] ?? null);
+        if (($effortMinutes === null || $effortMinutes <= 0) && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
+            $start = \Carbon\Carbon::createFromFormat('H:i', $v['start_time']);
+            $end   = \Carbon\Carbon::createFromFormat('H:i', $v['end_time']);
+            $effortMinutes = $end->greaterThan($start) ? $start->diffInMinutes($end) : null;
+        }
+        $workedDate = filled($v['worked_date'] ?? null) ? $v['worked_date'] : null;
         // Idempotência: reenvio (erro→retry, duplo-clique, request lento) NÃO duplica a interação.
         $key = $v['idempotency_key'] ?? null;
         if ($key) {
@@ -698,13 +713,17 @@ class HelpDeskTicketController extends Controller
         // ATÔMICO: comentário + anexos numa transação. Se um arquivo for inválido (MIME/tamanho),
         // tudo é revertido — NUNCA fica comentário órfão sem o anexo.
         try {
-            $comment = \Illuminate\Support\Facades\DB::transaction(function () use ($ticket, $v, $key, $request, $svc) {
+            $comment = \Illuminate\Support\Facades\DB::transaction(function () use ($ticket, $v, $key, $request, $svc, $effortMinutes, $workedDate) {
                 $comment = $ticket->comments()->create([
                     'author_user_id'  => $request->user()?->id,
                     'body'            => $v['body'] ?? '',
                     'visibility'      => $v['visibility'] ?? 'internal',
                     'channel'         => $v['channel'] ?? 'interno',
                     'idempotency_key' => $key,
+                    'worked_date'     => $workedDate,
+                    'start_time'      => $v['start_time'] ?? null,
+                    'end_time'        => $v['end_time'] ?? null,
+                    'effort_minutes'  => ($effortMinutes && $effortMinutes > 0) ? $effortMinutes : null,
                 ]);
                 // Anexos da interação (estilo e-mail: texto + arquivos/prints juntos). Reúsa o motor de anexos.
                 foreach ((array) $request->file('files', []) as $file) {
@@ -733,6 +752,11 @@ class HelpDeskTicketController extends Controller
             throw $e;
         }
 
+        // Integração de horas (substitui Movidesk): interação com tempo + contrato com a
+        // chave ligada → gera o apontamento oficial FORA da transação da interação. Best-effort:
+        // uma falha de saldo/projeto avisa o usuário, mas nunca perde a interação já gravada.
+        $apontamentoWarning = $this->maybeCreateInteractionTimesheet($ticket, $comment, $effortMinutes, $workedDate, $request);
+
         // Resposta pública → e-mail ao solicitante pelo mesmo OAuth/Graph (Mail.Send).
         // Best-effort: nunca derruba a gravação do comentário.
         try {
@@ -740,15 +764,6 @@ class HelpDeskTicketController extends Controller
             if ($sent) {
                 HelpDeskTicketEvent::log($ticket->id, 'email_sent', ['meta' => ['comment_id' => $comment->id]]);
             }
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('HelpDesk: envio de resposta lançou: ' . $e->getMessage());
-        }
-
-        // Resposta pública → e-mail ao solicitante pelo mesmo OAuth/Graph (Mail.Send).
-        // Best-effort: nunca derruba a gravação do comentário.
-        try {
-            [$sent] = \App\Services\HelpDeskReplyMailer::sendPublicComment($ticket, $comment);
-            if ($sent) HelpDeskTicketEvent::log($ticket->id, 'email_sent', ['meta' => ['comment_id' => $comment->id]]);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('HelpDesk: envio de resposta lançou: ' . $e->getMessage());
         }
@@ -761,7 +776,74 @@ class HelpDeskTicketController extends Controller
 
         $arr = $comment->load('author:id,name')->toArray();
         $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $comment->id, $request->user())->values();
+        if ($apontamentoWarning) {
+            $arr['apontamento_warning'] = $apontamentoWarning;
+        }
         return response()->json(['data' => $arr], 201);
+    }
+
+    /**
+     * Gera o apontamento oficial a partir de uma interação com tempo, quando o
+     * contrato do chamado tem a chave de integração ligada. Retorna uma mensagem
+     * de aviso (string) quando NÃO foi possível movimentar as horas — a interação
+     * já está gravada; o aviso apenas sinaliza que o apontamento não ocorreu.
+     */
+    private function maybeCreateInteractionTimesheet(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ?int $effortMinutes, ?string $workedDate, Request $request): ?string
+    {
+        if (!$effortMinutes || $effortMinutes <= 0) {
+            return null; // sem tempo → nada a movimentar
+        }
+
+        $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
+        if (!$contract || !$contract->helpdesk_integration_enabled) {
+            return null; // integração desligada: guarda o tempo na interação, mas não movimenta horas
+        }
+
+        $projectId = $this->resolveProjectForApontamento($ticket);
+        if (!$projectId) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: interação com tempo sem projeto para apontamento', [
+                'ticket_id' => $ticket->id, 'comment_id' => $comment->id,
+            ]);
+            return 'Tempo registrado na interação, mas não foi possível identificar o projeto para movimentar as horas. Vincule o chamado a um projeto ativo.';
+        }
+
+        $hhmm = sprintf('%d:%02d', intdiv($effortMinutes, 60), $effortMinutes % 60);
+        $obs  = trim((string) $comment->body);
+        if ($obs === '') {
+            $obs = 'Atendimento Help Desk — chamado ' . $ticket->ticket_number;
+        }
+
+        try {
+            $tsReq = Request::create('', 'POST', [
+                'project_id'         => $projectId,
+                'date'               => $workedDate ?: now()->toDateString(),
+                'total_hours'        => $hhmm,
+                'observation'        => $obs,
+                'ticket'             => $ticket->ticket_number,
+                'helpdesk_ticket_id' => $ticket->id,
+            ]);
+            $tsReq->setUserResolver(fn () => $request->user());
+            $tsResp = app(\App\Http\Controllers\TimesheetController::class)->store($tsReq);
+
+            if ($tsResp->getStatusCode() === 201) {
+                $data = json_decode($tsResp->getContent(), true);
+                $tsId = $data['data']['id'] ?? $data['id'] ?? null;
+                if ($tsId) {
+                    $comment->timesheet_id = $tsId;
+                    $comment->save();
+                }
+                return null;
+            }
+
+            $body = json_decode($tsResp->getContent(), true);
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: apontamento da interação falhou', [
+                'ticket_id' => $ticket->id, 'status' => $tsResp->getStatusCode(), 'body' => $body,
+            ]);
+            return ($body['message'] ?? null) ?: 'Não foi possível movimentar as horas desta interação.';
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: exceção ao apontar interação: ' . $e->getMessage());
+            return 'Tempo registrado, mas houve um erro ao movimentar as horas. Verifique o saldo do contrato.';
+        }
     }
 
     /** Download de anexo de uma interação (HELPDESK_TICKET_COMMENT). */
