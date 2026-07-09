@@ -171,6 +171,7 @@ class HelpDeskTicketController extends Controller
             'status_id'           => 'nullable|exists:helpdesk_statuses,id',
             'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
             'channel'             => 'nullable|in:' . implode(',', HelpDeskTicket::CHANNELS),
+            'level'               => 'nullable|in:N1,N2,N3',
             'assignee_id'         => 'nullable|exists:users,id',
             'team_id'             => 'nullable|exists:helpdesk_teams,id',
             'sla_policy_id'       => 'nullable|exists:helpdesk_sla_policies,id',
