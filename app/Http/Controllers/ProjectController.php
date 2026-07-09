@@ -271,14 +271,13 @@ class ProjectController extends Controller
                 // com ou sem delivery, OU responsável por atividade). Antes exigia delivery_id NOT NULL,
                 // então quem estava na EQUIPE da etapa (alocação delivery=null) sumia do "Meus Projetos".
                 if ($request->boolean('activity_allocated')) {
-                    // "Meus Projetos" = MESMO conjunto da EQUIPE do projeto (ProjectTeamController::team):
-                    // project_consultants ∪ coordinators ∪ stage_allocations ∪ responsável por atividade.
-                    // (Antes só stage_allocations com delivery → quem estava na EQUIPE como consultor do
-                    // projeto — ex.: quem só apontou horas — não via o projeto.)
+                    // "Meus Projetos" = EXATAMENTE o critério de visibilidade do CRONOGRAMA do consultor
+                    // (ProjectStageController::index, ADR 0004): alocado numa etapa OU responsável por
+                    // atividade. Consistência total: se o projeto aparece na lista, o cronograma tem
+                    // conteúdo pra ele (nunca abre vazio). NÃO inclui "consultor do projeto" puro nem
+                    // coordenador sem alocação — esses veriam o cronograma vazio.
                     $query->where(function ($q) use ($targetUserId) {
-                        $q->whereHas('consultants', fn ($c) => $c->where('user_id', $targetUserId))
-                          ->orWhereHas('coordinators', fn ($c) => $c->where('user_id', $targetUserId))
-                          ->orWhereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId))
+                        $q->whereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId))
                           ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId));
                     });
                 } else {
