@@ -1272,16 +1272,9 @@ class ProjectController extends Controller
         }
 
         // Acesso ao Diário do Projeto (chat) — o FE esconde a aba quando false, evitando o
-        // "Erro ao carregar mensagens". Mesma regra do ProjectMessageController::userCanAccessProject:
-        // admin/administrativo, coordenador OU consultor do projeto, ou participante convidado.
-        $du = request()->user();
-        $project->diary_access = $du ? (
-            $du->isAdmin()
-            || (method_exists($du, 'isAdministrativo') && $du->isAdministrativo())
-            || $project->coordinators->contains('id', $du->id)
-            || $project->consultants->contains('id', $du->id)
-            || \App\Models\ProjectMessageParticipant::where('project_id', $project->id)->where('user_id', $du->id)->exists()
-        ) : false;
+        // "Erro ao carregar mensagens". Regra única em ProjectDiaryAccess, a mesma que o
+        // ProjectMessageController usa pra barrar a API (senão a aba aparece e dá 403).
+        $project->diary_access = \App\Services\ProjectDiaryAccess::allows(request()->user(), $project);
 
         return response()->json($project);
     }
