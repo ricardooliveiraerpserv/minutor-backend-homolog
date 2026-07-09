@@ -658,9 +658,13 @@ class HelpDeskTicketController extends Controller
             'end_time'    => 'nullable|date_format:H:i|after:start_time',
             'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'no_charge'   => 'nullable|boolean',
+            'solution'    => 'nullable|array',
         ]);
 
         $update = ['body' => $v['body'] ?? $comment->body];
+        if ($request->has('solution')) {
+            $update['solution'] = $v['solution'] ?? null;
+        }
         // Só mexe no tempo se o request trouxe algum campo de tempo (edições antigas só de corpo não zeram).
         $touchedTime = $request->hasAny(['worked_date', 'start_time', 'end_time', 'total_hours', 'no_charge']);
         if ($request->has('no_charge')) {
@@ -739,6 +743,7 @@ class HelpDeskTicketController extends Controller
             'end_time'        => 'nullable|date_format:H:i|after:start_time',
             'total_hours'     => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'no_charge'       => 'nullable|boolean',
+            'solution'        => 'nullable|array', // Detalhamento da Solução {diagnostico, acao, validacao}
         ]);
         // Minutos trabalhados: total_hours prevalece; senão deriva de início→fim.
         $effortMinutes = $this->computeEffortMinutes($v);
@@ -782,6 +787,7 @@ class HelpDeskTicketController extends Controller
                     'end_time'        => $v['end_time'] ?? null,
                     'effort_minutes'  => ($effortMinutes && $effortMinutes > 0) ? $effortMinutes : null,
                     'no_charge'       => (bool) ($v['no_charge'] ?? false),
+                    'solution'        => $v['solution'] ?? null,
                 ]);
                 // Anexos da interação (estilo e-mail: texto + arquivos/prints juntos). Reúsa o motor de anexos.
                 foreach ((array) $request->file('files', []) as $file) {
