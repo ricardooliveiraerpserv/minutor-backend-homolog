@@ -195,6 +195,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/justifications',                      [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'index']);
         Route::post('/help-desk/justifications',                     [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'store']);
         Route::get('/help-desk/meta',   [\App\Http\Controllers\HelpDeskController::class, 'meta']);
+        Route::get('/help-desk/integration-customers', [\App\Http\Controllers\HelpDeskController::class, 'integrationCustomers']);
         Route::get('/help-desk/ops', [\App\Http\Controllers\HelpDeskOpsController::class, 'index']);
         Route::get('/help-desk/people',                              [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'people']);
         Route::get('/help-desk/playbooks', [\App\Http\Controllers\HelpDeskPlaybookController::class, 'index']);
