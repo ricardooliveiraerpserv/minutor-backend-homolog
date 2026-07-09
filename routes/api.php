@@ -202,6 +202,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/playbooks',              [\App\Http\Controllers\HelpDeskPlaybookController::class, 'store']);
         Route::get('/help-desk/services',                [\App\Http\Controllers\HelpDeskServiceController::class, 'index']);
         Route::post('/help-desk/services',               [\App\Http\Controllers\HelpDeskServiceController::class, 'store']);
+        Route::get('/help-desk/forms',                   [\App\Http\Controllers\HelpDeskFormController::class, 'index']);
+        Route::post('/help-desk/forms',                  [\App\Http\Controllers\HelpDeskFormController::class, 'store']);
+        Route::get('/help-desk/forms/{form}',            [\App\Http\Controllers\HelpDeskFormController::class, 'show']);
+        Route::put('/help-desk/forms/{form}',            [\App\Http\Controllers\HelpDeskFormController::class, 'update']);
+        Route::delete('/help-desk/forms/{form}',         [\App\Http\Controllers\HelpDeskFormController::class, 'destroy']);
         Route::get('/help-desk/sla-policies',            [\App\Http\Controllers\HelpDeskSlaController::class, 'index']);
         Route::post('/help-desk/sla-policies',           [\App\Http\Controllers\HelpDeskSlaController::class, 'store']);
         Route::get('/help-desk/statuses',                [\App\Http\Controllers\HelpDeskStatusController::class, 'index']);
