@@ -78,6 +78,12 @@ class HelpDeskSlaPolicy extends Model
 
     public function customer(): BelongsTo { return $this->belongsTo(Customer::class); }
     public function contract(): BelongsTo { return $this->belongsTo(Contract::class); }
+
+    /** Clientes vinculados a esta política (usam este SLA). N:N. */
+    public function customers(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Customer::class, 'helpdesk_sla_policy_customers', 'sla_policy_id', 'customer_id')->withTimestamps();
+    }
     public function targets(): HasMany    { return $this->hasMany(HelpDeskSlaTarget::class, 'sla_policy_id'); }
     public function tickets(): HasMany    { return $this->hasMany(HelpDeskTicket::class, 'sla_policy_id'); }
     public function holidays(): HasMany   { return $this->hasMany(HelpDeskSlaHoliday::class, 'sla_policy_id'); }
