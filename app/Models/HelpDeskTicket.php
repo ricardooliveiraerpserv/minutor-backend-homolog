@@ -26,7 +26,7 @@ class HelpDeskTicket extends Model
     protected $fillable = [
         'ticket_number', 'subject', 'description',
         'customer_id', 'customer_contact_id', 'requester_user_id', 'requester_name', 'requester_email', 'cc_emails', 'contract_id', 'project_id',
-        'category_id', 'service_id', 'justification_id', 'status_id', 'priority', 'channel', 'assignee_id', 'team_id',
+        'category_id', 'service_id', 'justification_id', 'status_id', 'priority', 'channel', 'level', 'assignee_id', 'team_id',
         'sla_policy_id', 'first_response_due_at', 'resolution_due_at',
         'first_responded_at', 'resolved_at', 'closed_at', 'reopened_at',
         'first_response_breached', 'resolution_breached', 'reopen_count',
