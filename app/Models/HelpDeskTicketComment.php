@@ -26,6 +26,8 @@ class HelpDeskTicketComment extends Model
         'body', 'visibility', 'is_system', 'channel', 'idempotency_key',
         // Tempo trabalhado por interação (movimenta horas como o Movidesk)
         'worked_date', 'start_time', 'end_time', 'effort_minutes', 'timesheet_id', 'no_charge',
+        // Detalhamento da Solução (form estruturado ao resolver)
+        'solution',
     ];
 
     protected $casts = [
@@ -33,6 +35,7 @@ class HelpDeskTicketComment extends Model
         'worked_date'    => 'date:Y-m-d',
         'effort_minutes' => 'integer',
         'no_charge'      => 'boolean',
+        'solution'       => 'array',
     ];
 
     public const VISIBILITIES = ['internal', 'customer'];
