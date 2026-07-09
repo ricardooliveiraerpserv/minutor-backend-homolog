@@ -14,6 +14,8 @@ use App\Models\CrmProposal;
 use App\Models\Document;
 use App\Models\Expense;
 use App\Models\FechamentoNota;
+use App\Models\HelpDeskTicket;
+use App\Models\HelpDeskTicketComment;
 use App\Models\HourContribution;
 use App\Models\Project;
 use App\Models\ProjectMessage;
@@ -239,6 +241,43 @@ class AttachableEntitiesRegistry
                 },
                 'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
                 'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt'],
+                'max_size_mb' => 25,
+            ],
+
+            // ── HELPDESK_TICKET (anexos do chamado) ───────────────────────────
+            'HELPDESK_TICKET' => [
+                'model' => HelpDeskTicket::class,
+                'categories' => ['attachment', 'image', 'evidence'],
+                'default_visibility' => 'internal',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
+                    if ($internalStaff($user)) return true;
+                    // Cliente (portal) vê anexos do próprio chamado.
+                    if ($action !== 'delete' && $entity !== null) {
+                        return $isClienteOfCustomer($user, $entity, optional($entity)->customer_id);
+                    }
+                    return false;
+                },
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv'],
+                'max_size_mb' => 25,
+            ],
+
+            // ── HELPDESK_TICKET_COMMENT (anexos por interação, estilo e-mail) ──
+            'HELPDESK_TICKET_COMMENT' => [
+                'model' => HelpDeskTicketComment::class,
+                'categories' => ['attachment', 'image'],
+                'default_visibility' => 'internal',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
+                    if ($internalStaff($user)) return true;
+                    // Cliente só enxerga anexo de interação VISÍVEL ao cliente, do próprio customer.
+                    if ($action !== 'delete' && $entity !== null) {
+                        if ((optional($entity)->visibility) !== 'customer') return false;
+                        return $isClienteOfCustomer($user, $entity, optional(optional($entity)->ticket)->customer_id);
+                    }
+                    return false;
+                },
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv'],
                 'max_size_mb' => 25,
             ],
 
