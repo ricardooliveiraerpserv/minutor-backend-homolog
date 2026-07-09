@@ -461,7 +461,8 @@ class ProjectMessageController extends Controller
 
     private function userCanAccessProject($user, Project $project): bool
     {
-        // Participante CONVIDADO (liberado explicitamente por admin/coord na aba do Diário).
+        // Legado: convites explícitos criados antes de o Diário passar a derivar o acesso
+        // de alocação + Liberação de Visualização. Ninguém perde acesso já concedido.
         if (\App\Models\ProjectMessageParticipant::where('project_id', $project->id)->where('user_id', $user->id)->exists()) {
             return true;
         }
@@ -471,7 +472,23 @@ class ProjectMessageController extends Controller
         if ($user->isCliente() && $user->customer_id) {
             return $project->customer_id === $user->customer_id;
         }
-        return $project->consultants()->where('users.id', $user->id)->exists();
+        // Consultor: entra automaticamente nos projetos em que está alocado, desde que a
+        // Liberação de Visualização o autorize a ver o cliente daquele projeto.
+        return $project->consultants()->where('users.id', $user->id)->exists()
+            && $this->pipelineAllowsProject($user, $project);
+    }
+
+    /** A Liberação de Visualização (pipeline_view_permissions) cobre o cliente deste projeto? */
+    private function pipelineAllowsProject($user, Project $project): bool
+    {
+        $perm = \App\Models\PipelineViewPermission::effectiveFor($user)['project'];
+        if (!$perm['visible']) {
+            return false;
+        }
+        if (($perm['scope'] ?? 'all') === 'all') {
+            return true;
+        }
+        return in_array((int) $project->customer_id, $perm['customer_ids'], true);
     }
 
     /** Quem pode gerir os participantes convidados do Diário: admin ou coordenador do projeto. */
