@@ -12,12 +12,19 @@ class HelpDeskSlaTarget extends Model
     protected $table = 'helpdesk_sla_targets';
 
     protected $fillable = [
-        'sla_policy_id', 'priority', 'first_response_minutes', 'resolution_minutes',
+        'sla_policy_id', 'priority', 'name', 'enabled',
+        'first_response_minutes', 'resolution_minutes',
+        'first_response_channels', 'pause_on_approval', 'max_agent_actions', 'conditions',
     ];
 
     protected $casts = [
-        'first_response_minutes' => 'integer',
-        'resolution_minutes'     => 'integer',
+        'enabled'                 => 'boolean',
+        'first_response_minutes'  => 'integer',
+        'resolution_minutes'      => 'integer',
+        'first_response_channels' => 'array',
+        'pause_on_approval'       => 'boolean',
+        'max_agent_actions'       => 'integer',
+        'conditions'              => 'array',
     ];
 
     public function policy(): BelongsTo { return $this->belongsTo(HelpDeskSlaPolicy::class, 'sla_policy_id'); }

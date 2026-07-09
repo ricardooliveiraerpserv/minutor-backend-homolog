@@ -131,6 +131,17 @@ class HelpDeskSlaService
     }
 
     /**
+     * O canal de abertura do ticket dispara o SLA de 1ª resposta desta regra?
+     * Lista vazia/null = todos os canais (sem filtro).
+     */
+    private function channelTriggersFirstResponse(\App\Models\HelpDeskSlaTarget $target, HelpDeskTicket $t): bool
+    {
+        $chs = $target->first_response_channels;
+        if (empty($chs)) return true;
+        return in_array((string) $t->channel, $chs, true);
+    }
+
+    /**
      * Aplica SLA ao ticket: política + prazos BRUTOS por prioridade. Respeita override
      * (ticket.sla_policy_id já setado). Base = created_at (ou agora, se ainda não persistido).
      */
@@ -141,15 +152,21 @@ class HelpDeskSlaService
 
         $base   = $t->created_at ? Carbon::parse($t->created_at) : now();
         $target = $policy?->targetFor($t->priority);
+        if ($target && $target->enabled === false) {
+            $target = null; // regra desabilitada não aplica SLA
+        }
 
         // Prazos BRUTOS em HORAS ÚTEIS (calendário da política + feriados). Sem calendário → corridas.
         $win = $policy?->windowsByWeekday() ?? [];
         $hol = $policy?->holidayDates() ?? [];
         $tz  = $policy?->slaTimezone() ?? 'America/Sao_Paulo';
 
+        // 1ª resposta só conta se o canal de abertura do ticket dispara o SLA desta regra.
+        $frApplies = $target && $target->first_response_minutes !== null && $this->channelTriggersFirstResponse($target, $t);
+
         // Grava em UTC: o relógio devolve Carbon no fuso da política (SP); sem normalizar,
         // o Laravel formataria a hora-local como se fosse UTC (deslocamento de -3h na leitura).
-        $t->first_response_due_at = ($target && $target->first_response_minutes !== null)
+        $t->first_response_due_at = $frApplies
             ? $this->clock->addBusinessMinutes($base, (int) $target->first_response_minutes, $win, $hol, $tz)->setTimezone('UTC') : null;
         $t->resolution_due_at = ($target && $target->resolution_minutes !== null)
             ? $this->clock->addBusinessMinutes($base, (int) $target->resolution_minutes, $win, $hol, $tz)->setTimezone('UTC') : null;

@@ -40,8 +40,15 @@ class HelpDeskSlaController extends Controller
             // Metas por prioridade (upsert): [{priority, first_response_minutes, resolution_minutes, pauses:[status_key]}]
             'targets'                          => 'nullable|array',
             'targets.*.priority'               => 'required|in:' . implode(',', HelpDeskTicket::PRIORITIES),
+            'targets.*.name'                   => 'nullable|string|max:120',
+            'targets.*.enabled'                => 'nullable|boolean',
             'targets.*.first_response_minutes' => 'nullable|integer|min:0',
             'targets.*.resolution_minutes'     => 'nullable|integer|min:0',
+            'targets.*.first_response_channels'   => 'nullable|array',    // canais de abertura que disparam 1ª resposta
+            'targets.*.first_response_channels.*' => 'string|max:30',
+            'targets.*.pause_on_approval'      => 'nullable|boolean',
+            'targets.*.max_agent_actions'      => 'nullable|integer|min:0',
+            'targets.*.conditions'             => 'nullable|array',
             'targets.*.pauses'                 => 'nullable|array',       // status que pausam ESTA regra
             'targets.*.pauses.*'               => 'string|max:60',
             // Feriados por contrato: [{date, name}]
@@ -92,8 +99,14 @@ class HelpDeskSlaController extends Controller
             $target = $policy->targets()->updateOrCreate(
                 ['priority' => $t['priority']],
                 [
-                    'first_response_minutes' => $t['first_response_minutes'] ?? null,
-                    'resolution_minutes'     => $t['resolution_minutes'] ?? null,
+                    'name'                    => $t['name'] ?? null,
+                    'enabled'                 => $t['enabled'] ?? true,
+                    'first_response_minutes'  => $t['first_response_minutes'] ?? null,
+                    'resolution_minutes'      => $t['resolution_minutes'] ?? null,
+                    'first_response_channels' => $t['first_response_channels'] ?? null,
+                    'pause_on_approval'       => $t['pause_on_approval'] ?? false,
+                    'max_agent_actions'       => $t['max_agent_actions'] ?? null,
+                    'conditions'              => $t['conditions'] ?? null,
                 ]
             );
             // Pausas POR REGRA (substitui a lista inteira quando 'pauses' vier no payload).
