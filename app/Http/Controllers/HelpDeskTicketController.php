@@ -673,6 +673,18 @@ class HelpDeskTicketController extends Controller
             $update['start_time']     = $v['start_time'] ?? null;
             $update['end_time']       = $v['end_time'] ?? null;
             $update['effort_minutes'] = $effortMinutes;
+
+            // Conflito de horário (mesmo cliente) — exclui o próprio apontamento vinculado.
+            $noCharge = $request->has('no_charge') ? (bool) $v['no_charge'] : (bool) $comment->no_charge;
+            if ($this->apontamentoEligible($ticket, $comment->visibility, $noCharge, $effortMinutes)
+                && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
+                $conflict = $this->findInteractionTimeConflict(
+                    $ticket->customer_id, $workedDate ?: now()->toDateString(), $v['start_time'], $v['end_time'], $comment->timesheet_id
+                );
+                if ($conflict) {
+                    return $this->timeConflictResponse($conflict);
+                }
+            }
         }
         $comment->update($update);
 
@@ -740,6 +752,20 @@ class HelpDeskTicketController extends Controller
                 return response()->json(['data' => $arr], 200);
             }
         }
+
+        // Conflito de horário (mesmo CLIENTE): se esta interação for gerar apontamento e
+        // tiver início/fim, bloqueia ANTES de gravar quando sobrepõe outro apontamento do
+        // mesmo cliente na mesma data.
+        if ($this->apontamentoEligible($ticket, $v['visibility'] ?? 'internal', (bool) ($v['no_charge'] ?? false), $effortMinutes)
+            && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
+            $conflict = $this->findInteractionTimeConflict(
+                $ticket->customer_id, $workedDate ?: now()->toDateString(), $v['start_time'], $v['end_time'], null
+            );
+            if ($conflict) {
+                return $this->timeConflictResponse($conflict);
+            }
+        }
+
         // ATÔMICO: comentário + anexos numa transação. Se um arquivo for inválido (MIME/tamanho),
         // tudo é revertido — NUNCA fica comentário órfão sem o anexo.
         try {
@@ -819,6 +845,62 @@ class HelpDeskTicketController extends Controller
      * de aviso (string) quando NÃO foi possível movimentar as horas — a interação
      * já está gravada; o aviso apenas sinaliza que o apontamento não ocorreu.
      */
+    /**
+     * Retorna o projectId se a interação GERARIA apontamento (movimenta horas); senão null.
+     * Mesmo gate do maybeCreateInteractionTimesheet — usado pelo pré-check de conflito.
+     */
+    private function apontamentoEligible(HelpDeskTicket $ticket, string $visibility, bool $noCharge, ?int $effortMinutes): ?int
+    {
+        if (!$effortMinutes || $effortMinutes <= 0) return null;
+        if ($noCharge) return null;
+        if ($visibility !== 'customer') return null;
+        $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
+        if (!$contract || !$contract->helpdesk_integration_enabled) return null;
+        return $this->resolveProjectForApontamento($ticket);
+    }
+
+    /**
+     * Conflito de horário do MESMO CLIENTE: procura um apontamento (timesheet) do cliente na
+     * mesma data cujo intervalo [start,end] sobreponha [start,end] informado. Compara em PHP
+     * (H:i) p/ ser robusto ao tipo da coluna. Retorna o conflitante ou null.
+     */
+    private function findInteractionTimeConflict(?int $customerId, ?string $date, ?string $start, ?string $end, ?int $excludeTimesheetId): ?\App\Models\Timesheet
+    {
+        if (!$customerId || !$date || !$start || !$end) return null;
+
+        $candidates = \App\Models\Timesheet::query()
+            ->where('customer_id', $customerId)
+            ->whereDate('date', $date)
+            ->whereNull('deleted_at')
+            ->whereNotIn('status', ['rejected'])
+            ->whereNotNull('start_time')->whereNotNull('end_time')
+            ->when($excludeTimesheetId, fn ($q) => $q->where('id', '!=', $excludeTimesheetId))
+            ->with('user:id,name')
+            ->get();
+
+        foreach ($candidates as $ts) {
+            $s = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i') : substr((string) $ts->start_time, 0, 5);
+            $e = $ts->end_time instanceof \Carbon\Carbon ? $ts->end_time->format('H:i') : substr((string) $ts->end_time, 0, 5);
+            // Sobreposição: existe.start < novo.end  E  novo.start < existe.end
+            if ($s < $end && $start < $e) {
+                return $ts;
+            }
+        }
+        return null;
+    }
+
+    /** Resposta 422 padronizada de conflito de horário. */
+    private function timeConflictResponse(\App\Models\Timesheet $ts): JsonResponse
+    {
+        $s = $ts->start_time instanceof \Carbon\Carbon ? $ts->start_time->format('H:i') : substr((string) $ts->start_time, 0, 5);
+        $e = $ts->end_time instanceof \Carbon\Carbon ? $ts->end_time->format('H:i') : substr((string) $ts->end_time, 0, 5);
+        return response()->json([
+            'code'    => 'TIMESHEET_CONFLICT',
+            'message' => "Conflito de horário: este cliente já tem um apontamento das {$s} às {$e}"
+                . ($ts->user?->name ? " ({$ts->user->name})" : '') . '. Ajuste o horário.',
+        ], 422);
+    }
+
     /** Minutos trabalhados: total_hours prevalece; senão deriva de início→fim. Null se ≤0. */
     private function computeEffortMinutes(array $v): ?int
     {
@@ -899,6 +981,9 @@ class HelpDeskTicketController extends Controller
         }
 
         try {
+            // Cria pelo total_hours (não passa início/fim ao store p/ NÃO acionar o conflito
+            // por-usuário dele — a regra aqui é por CLIENTE, já pré-checada acima). O intervalo
+            // início/fim é gravado no timesheet logo após, p/ conflitos futuros detectarem.
             $tsReq = Request::create('', 'POST', [
                 'project_id'         => $projectId,
                 'date'               => $workedDate ?: now()->toDateString(),
@@ -916,6 +1001,13 @@ class HelpDeskTicketController extends Controller
                 if ($tsId) {
                     $comment->timesheet_id = $tsId;
                     $comment->save();
+                    // Grava o intervalo no apontamento (p/ o conflito por cliente enxergá-lo).
+                    if ($comment->start_time && $comment->end_time) {
+                        \App\Models\Timesheet::where('id', $tsId)->update([
+                            'start_time' => $comment->start_time,
+                            'end_time'   => $comment->end_time,
+                        ]);
+                    }
                 }
                 return null;
             }
