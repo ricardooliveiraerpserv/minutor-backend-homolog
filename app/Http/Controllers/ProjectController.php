@@ -266,9 +266,14 @@ class ProjectController extends Controller
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
-                // $query->whereHas('consultants', function ($q) use ($targetUserId) {
-                //     $q->where('user_id', $targetUserId);
-                // });
+                // Modo "Meus Projetos" (activity_allocated): SÓ projetos onde o consultor
+                // está ALOCADO em ATIVIDADE (stage_allocations.delivery_id) — mesmo critério
+                // do board do cronograma. Não entra por project_consultant/responsável.
+                if ($request->boolean('activity_allocated')) {
+                    $query->whereHas('stages.allocations', function ($subQ) use ($targetUserId) {
+                        $subQ->where('user_id', $targetUserId)->whereNotNull('delivery_id');
+                    });
+                } else {
                 $query->where(function ($q) use ($targetUserId) {
                     $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
                         $subQ->where('user_id', $targetUserId);
@@ -286,6 +291,7 @@ class ProjectController extends Controller
                         $subQ->where('user_id', $targetUserId);
                     });
                 });
+                }
             }
             // Se o usuário alvo for Administrator, não aplica filtro (vê todos os projetos)
         }
