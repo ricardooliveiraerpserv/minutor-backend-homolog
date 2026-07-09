@@ -52,14 +52,14 @@ class HelpDeskController extends Controller
     }
 
     /**
-     * Clientes elegíveis ao Help Desk: têm contrato de SUSTENTAÇÃO com a chave de
-     * integração de horas LIGADA (helpdesk_integration_enabled). Usado na Regra de
-     * Associação — só esses clientes fazem sentido vincular a um domínio.
+     * Clientes elegíveis ao Help Desk = têm contrato de SUSTENTAÇÃO. Usado na Regra de
+     * Associação para mostrar as PENDÊNCIAS: cliente de sustentação sem domínio vinculado.
+     * (Roteamento de e-mail → cliente vale para qualquer cliente de sustentação; a chave de
+     * integração de HORAS é outra funcionalidade e não filtra aqui.)
      */
     public function integrationCustomers(): JsonResponse
     {
         $customerIds = \App\Models\Contract::query()
-            ->where('helpdesk_integration_enabled', true)
             ->where('categoria', 'sustentacao')
             ->whereNotNull('customer_id')
             ->distinct()->pluck('customer_id');
