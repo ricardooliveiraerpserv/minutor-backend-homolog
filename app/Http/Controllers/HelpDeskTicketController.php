@@ -656,11 +656,15 @@ class HelpDeskTicketController extends Controller
             'start_time'  => 'nullable|date_format:H:i',
             'end_time'    => 'nullable|date_format:H:i|after:start_time',
             'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
+            'no_charge'   => 'nullable|boolean',
         ]);
 
         $update = ['body' => $v['body'] ?? $comment->body];
         // Só mexe no tempo se o request trouxe algum campo de tempo (edições antigas só de corpo não zeram).
-        $touchedTime = $request->hasAny(['worked_date', 'start_time', 'end_time', 'total_hours']);
+        $touchedTime = $request->hasAny(['worked_date', 'start_time', 'end_time', 'total_hours', 'no_charge']);
+        if ($request->has('no_charge')) {
+            $update['no_charge'] = (bool) $v['no_charge'];
+        }
         $effortMinutes = null;
         $workedDate = filled($v['worked_date'] ?? null) ? $v['worked_date'] : null;
         if ($touchedTime) {
@@ -721,6 +725,7 @@ class HelpDeskTicketController extends Controller
             'start_time'      => 'nullable|date_format:H:i',
             'end_time'        => 'nullable|date_format:H:i|after:start_time',
             'total_hours'     => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
+            'no_charge'       => 'nullable|boolean',
         ]);
         // Minutos trabalhados: total_hours prevalece; senão deriva de início→fim.
         $effortMinutes = $this->computeEffortMinutes($v);
@@ -749,6 +754,7 @@ class HelpDeskTicketController extends Controller
                     'start_time'      => $v['start_time'] ?? null,
                     'end_time'        => $v['end_time'] ?? null,
                     'effort_minutes'  => ($effortMinutes && $effortMinutes > 0) ? $effortMinutes : null,
+                    'no_charge'       => (bool) ($v['no_charge'] ?? false),
                 ]);
                 // Anexos da interação (estilo e-mail: texto + arquivos/prints juntos). Reúsa o motor de anexos.
                 foreach ((array) $request->file('files', []) as $file) {
@@ -827,6 +833,18 @@ class HelpDeskTicketController extends Controller
 
     private function maybeCreateInteractionTimesheet(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ?int $effortMinutes, ?string $workedDate, Request $request): ?string
     {
+        // "NÃO GERA COBRANÇA": nunca movimenta horas, mesmo sendo resposta ao cliente.
+        // Se já havia um apontamento (marcado como não-cobrança depois), mantém e avisa.
+        if ($comment->no_charge) {
+            if ($comment->timesheet_id) {
+                $ts = \App\Models\Timesheet::find($comment->timesheet_id);
+                return $ts
+                    ? 'Interação marcada como "não gera cobrança". O apontamento #' . $ts->id . ' vinculado foi mantido — remova-o manualmente se necessário.'
+                    : null;
+            }
+            return null;
+        }
+
         // EDIÇÃO — a interação JÁ tem apontamento vinculado: sincroniza horas/data/descrição
         // (não recria, não duplica). Espelha os campos da interação no apontamento.
         if ($comment->timesheet_id) {

@@ -25,13 +25,14 @@ class HelpDeskTicketComment extends Model
         'ticket_id', 'author_user_id', 'author_contact_id',
         'body', 'visibility', 'is_system', 'channel', 'idempotency_key',
         // Tempo trabalhado por interação (movimenta horas como o Movidesk)
-        'worked_date', 'start_time', 'end_time', 'effort_minutes', 'timesheet_id',
+        'worked_date', 'start_time', 'end_time', 'effort_minutes', 'timesheet_id', 'no_charge',
     ];
 
     protected $casts = [
         'is_system'      => 'boolean',
         'worked_date'    => 'date:Y-m-d',
         'effort_minutes' => 'integer',
+        'no_charge'      => 'boolean',
     ];
 
     public const VISIBILITIES = ['internal', 'customer'];
