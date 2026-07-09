@@ -50,4 +50,23 @@ class HelpDeskController extends Controller
             'can_open'   => app(\App\Services\HelpDeskAccessPolicy::class)->canOpen(auth()->user()),
         ]]);
     }
+
+    /**
+     * Clientes elegíveis ao Help Desk: têm contrato de SUSTENTAÇÃO com a chave de
+     * integração de horas LIGADA (helpdesk_integration_enabled). Usado na Regra de
+     * Associação — só esses clientes fazem sentido vincular a um domínio.
+     */
+    public function integrationCustomers(): JsonResponse
+    {
+        $customerIds = \App\Models\Contract::query()
+            ->where('helpdesk_integration_enabled', true)
+            ->where('categoria', 'sustentacao')
+            ->whereNotNull('customer_id')
+            ->distinct()->pluck('customer_id');
+
+        $customers = \App\Models\Customer::whereIn('id', $customerIds)
+            ->orderBy('name')->get(['id', 'name']);
+
+        return response()->json(['data' => $customers]);
+    }
 }
