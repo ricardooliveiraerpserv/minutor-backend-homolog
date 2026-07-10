@@ -156,7 +156,7 @@ class SignatureRenderer
             . $row(6, 0, 0, $p(13, 6, 29))
             . '</span>';
         $dash = '<span style="display:inline-block;vertical-align:middle;width:13px;height:5px;border-radius:2px;background:' . $c . ';margin:0 7px"></span>';
-        $text = '<span style="display:inline-block;vertical-align:middle;font-family:\'Century Gothic\',\'Twentieth Century\',\'Trebuchet MS\',Arial,sans-serif;font-size:20px;font-weight:400;letter-spacing:1px;color:' . $c . ';line-height:1">LET&#8217;S&nbsp;DO&nbsp;<span style="font-weight:800">IT</span></span>';
+        $text = '<span style="display:inline-block;vertical-align:middle;font-family:\'Century Gothic\',\'Twentieth Century\',\'Trebuchet MS\',Arial,sans-serif;font-size:17px;font-weight:400;letter-spacing:1px;color:' . $c . ';line-height:1">LET&#8217;S&nbsp;DO&nbsp;<span style="font-weight:800">IT</span></span>';
         return '<span style="display:inline-block;vertical-align:middle;font-size:0;line-height:0;white-space:nowrap">'
             . $left . $dash . $text . $right . '</span>';
     }
@@ -164,8 +164,8 @@ class SignatureRenderer
     /** Uma linha de contato (ícone PNG + conteúdo) com cor de texto do tema. */
     private static function contactLine(string $icon, string $mode, string $html, string $textColor): string
     {
-        $img = '<img src="' . self::iconSrc($icon, $mode) . '" width="24" height="24" alt="" border="0" style="width:24px;height:24px;display:inline-block;vertical-align:middle;border:0;outline:none;text-decoration:none;margin-right:8px" />';
-        return '<div style="margin:0 0 8px;font-size:13px;color:' . $textColor . ';line-height:24px;white-space:nowrap">' . $img . $html . '</div>';
+        $img = '<img src="' . self::iconSrc($icon, $mode) . '" width="20" height="20" alt="" border="0" style="width:20px;height:20px;display:inline-block;vertical-align:middle;border:0;outline:none;text-decoration:none;margin-right:8px" />';
+        return '<div style="margin:0 0 7px;font-size:11px;color:' . $textColor . ';line-height:24px;white-space:nowrap">' . $img . $html . '</div>';
     }
 
     /**
@@ -207,11 +207,11 @@ class SignatureRenderer
         $userBlock = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px"><tr>'
             . $photoCell
             . '<td valign="top" style="vertical-align:top">'
-            .   '<div style="font-size:14px;font-weight:bold;color:' . $nameColor . ';text-transform:uppercase;line-height:1.2;white-space:nowrap">' . e($name) . '</div>'
+            .   '<div style="font-size:13px;font-weight:bold;color:' . $nameColor . ';text-transform:uppercase;line-height:1.2;white-space:nowrap">' . e($name) . '</div>'
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
         $left = '<td valign="top" style="vertical-align:top;padding-right:12px">'
-            . '<img src="' . $logoSrc . '" alt="ERPSERV" width="184" border="0" style="width:184px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
+            . '<img src="' . $logoSrc . '" alt="ERPSERV" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
             . $userBlock
             . '</td>';
 
@@ -220,8 +220,8 @@ class SignatureRenderer
         $banner = $showTagline ? self::taglineHtml($dark ? '#C4B5FD' : '#4a2583') : '';
         $social = '';
         foreach (self::SOCIAL as $s) {
-            $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:6px;display:inline-block">'
-                . '<img src="' . self::iconSrc($s['icon'], $iconMode) . '" width="26" height="26" alt="' . $s['label'] . '" border="0" style="width:26px;height:26px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
+            $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:4px;display:inline-block">'
+                . '<img src="' . self::iconSrc($s['icon'], $iconMode) . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
         }
         $topRow = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px"><tr>'
             . '<td valign="middle" style="vertical-align:middle">' . $banner . '</td>'
@@ -240,13 +240,13 @@ class SignatureRenderer
             $colB .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor);
         }
         $grid = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-            . '<td valign="top" style="vertical-align:top;padding-right:14px">' . $colA . '</td>'
+            . '<td valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
             . '<td valign="top" style="vertical-align:top">' . $colB . '</td>'
             . '</tr></table>';
 
         $right = '<td valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
 
-        return '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
+        return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
             . '<tr>' . $left . $right . '</tr></table>';
     }
 }
