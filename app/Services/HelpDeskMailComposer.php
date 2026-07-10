@@ -248,6 +248,22 @@ class HelpDeskMailComposer
             },
             $html
         ) ?? $html;
+        // background-image:url('data:image/...') → cid. É o caso da FOTO redonda da assinatura,
+        // que virou background de <span> (p/ o Apple Mail não pôr borda no dark mode). O Exchange
+        // descarta data: em CSS, então convertemos aqui como já fazemos com <img>.
+        $html = preg_replace_callback(
+            '/background-image:\s*url\(\s*([\'"]?)data:(image\/[a-zA-Z0-9.+-]+);base64,([^\'")]+)\1\s*\)/i',
+            function ($m) use (&$atts, &$i) {
+                $bytes = base64_decode($m[3], true);
+                if ($bytes === false || $bytes === '') return $m[0];
+                $i++;
+                $ext = match (strtolower($m[2])) { 'image/png' => 'png', 'image/jpeg', 'image/jpg' => 'jpg', 'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img' };
+                $cid = "ticketbg{$i}@minutor";
+                $atts[] = ['name' => "bg{$i}.{$ext}", 'mime' => strtolower($m[2]), 'bytes' => $bytes, 'cid' => $cid];
+                return "background-image:url('cid:{$cid}')";
+            },
+            $html
+        ) ?? $html;
         return [$html, $atts];
     }
 }
