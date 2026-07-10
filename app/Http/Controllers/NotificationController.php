@@ -11,12 +11,27 @@ use Illuminate\Http\Request;
 class NotificationController extends Controller
 {
     private const INTERNAL = ['admin', 'administrativo', 'coordenador', 'consultor'];
+    /** Perfis que podem publicar/gerir publicações internas (avisos, enquetes, presença). */
+    private const MANAGERS = ['admin', 'administrativo', 'coordenador'];
 
     private function internalOrAbort(Request $request): \App\Models\User
     {
         $u = $request->user();
         abort_if(!$u || $u->type === 'cliente' || !in_array($u->type, self::INTERNAL, true), 403, 'Central de Notificações disponível apenas para usuários internos.');
         return $u;
+    }
+
+    /** Pode publicar/gerenciar publicações (admin, coordenador, administrativo). */
+    private function canManage(?\App\Models\User $u): bool
+    {
+        return $u && in_array($u->type, self::MANAGERS, true);
+    }
+
+    /** Admin gerencia qualquer publicação; coordenador/administrativo só as que criou. */
+    private function authorizeOwnOrAdmin(?\App\Models\User $u, AppNotification $n): void
+    {
+        abort_unless($this->canManage($u), 403);
+        abort_if(!$u->isAdmin() && (int) $n->created_by !== (int) $u->id, 403, 'Você só pode gerenciar as publicações que criou.');
     }
 
     /** Notificações visíveis ao usuário + estado de leitura/aceite + flags computadas. */
@@ -220,7 +235,7 @@ class NotificationController extends Controller
      */
     public function log(Request $request, AppNotification $notification): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
         $recipients = $this->resolveRecipientUsers($notification);
         $reads = NotificationRead::where('notification_id', $notification->id)->get()->keyBy('user_id');
 
@@ -275,12 +290,14 @@ class NotificationController extends Controller
     public function manage(Request $request): JsonResponse
     {
         $admin = $request->user();
-        abort_unless($admin?->isAdmin(), 403);
+        abort_unless($this->canManage($admin), 403);
         // Avisos AUTO-GERADOS pelos lembretes de ação têm bloco próprio na Central — não duplicar na lista.
         $reminderIds = \App\Models\ActionReminderRule::whereNotNull('notification_id')->pluck('notification_id')->all();
         $rows = AppNotification::withCount(['reads as acks_count' => fn ($q) => $q->whereNotNull('ack_at')])
             ->with('poll.options')
             ->when($reminderIds, fn ($q) => $q->whereNotIn('id', $reminderIds))
+            // Não-admin (coordenador/administrativo) só enxerga/gerencia as publicações que criou.
+            ->when(!$admin->isAdmin(), fn ($q) => $q->where('created_by', $admin->id))
             ->orderByDesc('created_at')->get()
             ->map(function (AppNotification $n) use ($admin) {
                 $arr = $n->toArray();
@@ -294,7 +311,7 @@ class NotificationController extends Controller
 
     public function update(Request $request, AppNotification $notification): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
         $v = $this->validatePayload($request, false);
         $pollPayload = $v['poll'] ?? null;
         unset($v['poll']);
@@ -311,7 +328,7 @@ class NotificationController extends Controller
 
     public function destroy(Request $request, AppNotification $notification): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
         $notification->delete();
         return response()->json(null, 204);
     }
@@ -319,7 +336,7 @@ class NotificationController extends Controller
     /** Reenvia o aviso AGORA (admin): reabre p/ todos (limpa leituras) + reenvia e-mail + re-popa. */
     public function resend(Request $request, AppNotification $notification): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
         abort_if($notification->is_template, 422, 'Modelos não podem ser reenviados — use "Usar modelo" para publicar.');
         // channel: 'popup' = só reabre o pop-up (sem e-mail); qualquer outro (padrão) = e-mail + pop-up.
         $sendEmail = $request->input('channel') !== 'popup';
@@ -348,7 +365,7 @@ class NotificationController extends Controller
     public function store(Request $request): JsonResponse
     {
         $u = $request->user();
-        abort_unless($u && $u->isAdmin(), 403, 'Apenas administradores podem publicar notificações.');
+        abort_unless($this->canManage($u), 403, 'Apenas administradores, coordenadores e administrativos podem publicar.');
         $v = $this->validatePayload($request, true);
         $pollPayload = $v['poll'] ?? null;
         unset($v['poll']);
@@ -621,7 +638,7 @@ class NotificationController extends Controller
     /** Prévia do e-mail (layout institucional) + nº de destinatários. */
     public function preview(Request $request): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        abort_unless($this->canManage($request->user()), 403);
         $v = $this->validatePayload($request, true);
         $pollPayload = $v['poll'] ?? null;
         unset($v['poll']);
@@ -633,7 +650,7 @@ class NotificationController extends Controller
     /** Metadados p/ o form: tipos de contratação + clientes (select). */
     public function meta(Request $request): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        abort_unless($this->canManage($request->user()), 403);
         return response()->json(['data' => [
             'contract_types' => [['id' => 'clt', 'name' => 'CLT'], ['id' => 'cooperado', 'name' => 'Cooperado'], ['id' => 'pj', 'name' => 'PJ']],
             'customers'      => \App\Models\Customer::orderBy('name')->limit(1000)->get(['id', 'name']),
@@ -643,7 +660,7 @@ class NotificationController extends Controller
     /** Busca de usuários p/ destinatários específicos. */
     public function searchUsers(Request $request): JsonResponse
     {
-        abort_unless($request->user()?->isAdmin(), 403);
+        abort_unless($this->canManage($request->user()), 403);
         $q = trim((string) $request->query('search', ''));
         $type = trim((string) $request->query('type', ''));               // filtra por perfil (aba do Configurador)
         $coord = trim((string) $request->query('coordinator_type', ''));   // coordenador projetos/sustentação
