@@ -176,8 +176,13 @@ class CalendarController extends Controller
             ->map(fn ($e) => array_merge($e, ['is_today' => $e['data'] === $now->toDateString()]))
             ->values();
 
+        // Tipos que ESTE perfil pode ver (matriz de visibilidade) — a legenda do FE usa isto,
+        // independente de haver evento no mês, senão some tipo que o usuário tem permissão de ver.
+        $tiposVisiveis = array_values(array_filter(array_keys(self::TYPE_LABELS), $canSee));
+
         return response()->json(['data' => [
             'eventos'  => $ordered,
+            'tipos'    => $tiposVisiveis,
             'mes'      => $ref->locale('pt_BR')->isoFormat('MMMM'),
             'mes_num'  => $month,
             'ano'      => $year,
