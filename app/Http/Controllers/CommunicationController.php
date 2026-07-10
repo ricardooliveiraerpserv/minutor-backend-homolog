@@ -184,9 +184,12 @@ class CommunicationController extends Controller
     /** Histórico de envios. */
     public function index(Request $request): JsonResponse
     {
-        $this->authorizeManager($request);
+        $u = $this->authorizeManager($request);
         $theme = $request->query('theme') === 'dark' ? 'dark' : 'light';
-        $rows = Communication::with('sentBy:id,name')->orderByDesc('id')->limit(200)->get();
+        // Não-admin (coordenador/administrativo) só vê os comunicados que ELE enviou.
+        $rows = Communication::with('sentBy:id,name')
+            ->when(!$u->isAdmin(), fn ($q) => $q->where('sent_by', $u->id))
+            ->orderByDesc('id')->limit(200)->get();
         $custNames = Customer::pluck('name', 'id');
         $data = $rows->map(fn (Communication $c) => [
             'id'           => $c->id,
@@ -281,7 +284,8 @@ class CommunicationController extends Controller
     /** LOG de um comunicado (admin): destinatários (inclui clientes) × leu/quando. Mesmo formato do log de notificações. */
     public function log(Request $request, Communication $communication): JsonResponse
     {
-        $this->authorizeManager($request);
+        $u = $this->authorizeManager($request);
+        abort_if(!$u->isAdmin() && (int) $communication->sent_by !== (int) $u->id, 403, 'Você só pode ver o log dos comunicados que enviou.');
 
         $userIds = collect();
         if ($communication->all_customers) {
