@@ -48,7 +48,19 @@ return [
 
     'anthropic' => [
         'api_key'   => env('ANTHROPIC_API_KEY'),
+        'model'     => env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+        'base_url'  => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
         'ocr_model' => env('ANTHROPIC_OCR_MODEL', 'claude-haiku-4-5-20251001'),
+    ],
+
+    'openai' => [
+        'api_key'  => env('OPENAI_API_KEY'),
+        'model'    => env('OPENAI_MODEL', 'gpt-4o-mini'),
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+    ],
+
+    'ai' => [
+        'default_provider' => env('AI_DEFAULT_PROVIDER', 'anthropic'),
     ],
 
     /*
