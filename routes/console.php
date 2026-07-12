@@ -133,6 +133,24 @@ $alertTz   = 'America/Sao_Paulo';
 $alertFrom = '08:00';
 $alertTo   = '18:00';
 
+// Health Engine — varre customers e gera eventos de risco/oportunidade no Operational Feed
+// Roda toda segunda-feira às 06:00 (espelha cadência semanal do n8n original)
+Schedule::command('health:scan')
+  ->weeklyOn(1, '06:00')
+  ->name('operational-feed-health-scan')
+  ->description('Health Engine: tickets + saldo de horas → eventos no Operational Feed')
+  ->withoutOverlapping(30)
+  ->runInBackground();
+
+// IA diagnóstico — após o Health Engine, dispara IA para os top-20 customers em risco
+// Roda toda segunda-feira às 07:00 (1h depois do health:scan, dá tempo de eventos estarem gravados)
+Schedule::command('ai:scan-customers-at-risk --days=7 --max=20 --sync')
+  ->weeklyOn(1, '07:00')
+  ->name('operational-feed-ai-insights')
+  ->description('IA: gera diagnóstico para customers com eventos recentes de risco no Operational Feed')
+  ->withoutOverlapping(60)
+  ->runInBackground();
+
 // Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
 // só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
 // Aviso prévio: 1 mês antes do vencimento, avisa o administrativo p/ enviar o comunicado.
@@ -166,6 +184,26 @@ Schedule::command('attachments:integrity-check')
   ->dailyAt('03:00')
   ->name('attachments-integrity-check')
   ->description('FASE 11: verifica integridade dos anexos (entidade-dona, arquivo, checksum)')
+  ->withoutOverlapping()
+  ->runInBackground();
+
+// Digest de mensagens não lidas do chat — roda a cada 30 minutos
+// e envia email pra cada user que ficou com mensagens não lidas há
+// pelo menos 15 minutos, respeitando cooldown de 60 minutos por user.
+Schedule::command('inbox:digest --min-quiet=15 --cooldown=60')
+  ->everyThirtyMinutes()
+  ->name('inbox-digest')
+  ->description('Envia digest por email das mensagens não lidas do chat')
+  ->withoutOverlapping()
+  ->runInBackground();
+
+// Alertas proativos do BOT (banco de horas crítico, despesas/timesheets pendentes,
+// tickets parados). Roda 1x ao dia às 8h e popula o OperationalFeed — a partir
+// daí, as notification_rules existentes encaminham pros responsáveis.
+Schedule::command('bot:proactive-alerts')
+  ->dailyAt('08:00')
+  ->name('bot-proactive-alerts')
+  ->description('Detecta anomalias e cria alertas no OperationalFeed')
   ->withoutOverlapping()
   ->runInBackground();
 
