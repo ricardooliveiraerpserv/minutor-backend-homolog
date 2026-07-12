@@ -7,6 +7,7 @@ use App\Models\Attachment;
 use App\Models\HelpDeskCategory;
 use App\Models\HelpDeskStatus;
 use App\Models\HelpDeskTeam;
+use App\Models\HelpDeskTrigger;
 use App\Models\HelpDeskTicket;
 use App\Models\HelpDeskTicketComment;
 use App\Models\HelpDeskTicketEvent;
@@ -32,9 +33,20 @@ class HelpDeskTicketController extends Controller
         ]);
     }
 
-    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null): array
+    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null): array
     {
-        return array_merge($t->toArray(), ['sla' => $this->sla->summary($t, $events)]);
+        // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
+        $solicitante = optional($t->contact)->name ?: optional($t->requester)->name ?: $t->requester_name;
+        // Dias ÚTEIS sem interação da EQUIPE: referência = última interação de agente OU abertura.
+        $ref = $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt) : $t->created_at;
+        $diasSemInteracao = ($ref && $cal) ? max(0, $cal->businessDaysBetween($ref, now()) - 1) : 0;
+
+        return array_merge($t->toArray(), [
+            'sla'                    => $this->sla->summary($t, $events),
+            'solicitante_nome'       => $solicitante,
+            'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
+            'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
+        ]);
     }
 
     /** Carrega os eventos status_changed de vários tickets em UMA query (anti-N+1 do SLA pausado). */
@@ -47,10 +59,30 @@ class HelpDeskTicketController extends Controller
             ->groupBy('ticket_id');
     }
 
+    /**
+     * Última interação DA EQUIPE por ticket, em UMA query (anti-N+1). Interação de equipe = comment
+     * com autor sendo um usuário NÃO-cliente (agente) e não-sistema. Resposta do cliente (portal/e-mail)
+     * NÃO conta. Retorna mapa ticket_id => timestamp da última interação de agente.
+     */
+    private function lastAgentCommentByTicket(\Illuminate\Support\Collection $tickets): \Illuminate\Support\Collection
+    {
+        if ($tickets->isEmpty()) return collect();
+        return HelpDeskTicketComment::query()
+            ->join('users', 'users.id', '=', 'helpdesk_ticket_comments.author_user_id')
+            ->whereIn('helpdesk_ticket_comments.ticket_id', $tickets->pluck('id'))
+            ->where('users.type', '<>', 'cliente')
+            ->where('helpdesk_ticket_comments.is_system', false)
+            ->whereNull('helpdesk_ticket_comments.deleted_at')
+            ->groupBy('helpdesk_ticket_comments.ticket_id')
+            ->selectRaw('helpdesk_ticket_comments.ticket_id as tid, MAX(helpdesk_ticket_comments.created_at) as last_agent_at')
+            ->pluck('last_agent_at', 'tid');
+    }
+
     private function filtered(Request $request)
     {
         $user = $request->user();
         return $this->access->applyViewScope($this->withRels(HelpDeskTicket::query()), $user) // perfil: escopo de visão
+            ->whereNull('merged_into_id') // chamados mesclados somem das listagens (ficam no destino)
             ->when($request->filled('status_id'), fn ($q) => $q->where('status_id', $request->status_id))
             ->when($request->filled('status_key'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('key', $request->status_key)))
             ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
@@ -68,6 +100,7 @@ class HelpDeskTicketController extends Controller
                 $s = '%' . $request->search . '%';
                 $q->where(fn ($w) => $w->where('subject', 'ilike', $s)->orWhere('ticket_number', 'ilike', $s)->orWhere('description', 'ilike', $s));
             })
+            ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
             ->orderByDesc('updated_at');
     }
 
@@ -75,7 +108,645 @@ class HelpDeskTicketController extends Controller
     {
         $tickets = $this->filtered($request)->limit((int) $request->input('limit', 200))->get();
         $events = $this->eventsByTicket($tickets);
-        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect()))]);
+        $lastAgent = $this->lastAgentCommentByTicket($tickets);
+        $cal = app(\App\Services\BusinessCalendarService::class);
+        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal))]);
+    }
+
+    /**
+     * Busca GLOBAL (lupa) — pesquisa QUALQUER chamado por número, assunto, descrição, cliente,
+     * solicitante/responsável e CONTEÚDO das interações. Ignora o escopo da fila de propósito: o
+     * agente encontra chamados de outros para abrir e assumir. Gated por perfil (canGlobalSearch).
+     */
+    public function search(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($this->access->canGlobalSearch($user), 403, 'Seu perfil de acesso não permite a busca global.');
+        $term = trim((string) $request->input('q', ''));
+        if (mb_strlen($term) < 2) return response()->json(['data' => []]);
+
+        $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term) . '%';
+
+        $tickets = HelpDeskTicket::query()
+            ->with(['customer:id,name', 'assignee:id,name', 'status:id,label,color', 'contact:id,name', 'requester:id,name'])
+            ->whereNull('merged_into_id')
+            ->where(function ($w) use ($like) {
+                $w->where('ticket_number', 'ilike', $like)
+                  ->orWhere('subject', 'ilike', $like)
+                  ->orWhere('description', 'ilike', $like)
+                  ->orWhere('requester_name', 'ilike', $like)
+                  ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $like))
+                  ->orWhereHas('assignee', fn ($a) => $a->where('name', 'ilike', $like))
+                  ->orWhereHas('contact', fn ($c) => $c->where('name', 'ilike', $like))
+                  ->orWhereHas('comments', fn ($cm) => $cm->whereNull('deleted_at')->where('body', 'ilike', $like));
+            })
+            ->orderByDesc('updated_at')
+            ->limit(25)
+            ->get();
+
+        $data = $tickets->map(function (HelpDeskTicket $t) use ($term) {
+            $snippet = null;
+            foreach ([$t->subject, $t->description] as $txt) {
+                if ($txt && ($s = $this->searchSnippet($txt, $term))) { $snippet = $s; break; }
+            }
+            if (!$snippet) {
+                $c = $t->comments()->whereNull('deleted_at')->where('body', 'ilike', '%' . $term . '%')->latest()->first(['body']);
+                if ($c) $snippet = $this->searchSnippet($c->body, $term);
+            }
+            return [
+                'id'            => $t->id,
+                'ticket_number' => $t->ticket_number,
+                'subject'       => $t->subject,
+                'customer'      => optional($t->customer)->name,
+                'person'        => $t->requester_name ?: optional($t->contact)->name ?: optional($t->requester)->name ?: optional($t->assignee)->name,
+                'assignee'      => optional($t->assignee)->name,
+                'status'        => $t->status ? ['label' => $t->status->label, 'color' => $t->status->color] : null,
+                'snippet'       => $snippet,
+            ];
+        });
+
+        return response()->json(['data' => $data]);
+    }
+
+    /** Trecho de texto (sem HTML) em volta do termo — para pré-visualizar onde casou. */
+    private function searchSnippet(?string $html, string $term): ?string
+    {
+        if (!$html) return null;
+        $text = trim(preg_replace('/\s+/', ' ', strip_tags($html)));
+        if ($text === '') return null;
+        $pos = mb_stripos($text, $term);
+        if ($pos === false) return mb_substr($text, 0, 140);
+        $start = max(0, $pos - 40);
+        $snippet = mb_substr($text, $start, 160);
+        return ($start > 0 ? '…' : '') . $snippet . (mb_strlen($text) > $start + 160 ? '…' : '');
+    }
+
+    /**
+     * "Detalhes do ticket" — datas, tempo de vida (corrido e útil) e HISTÓRICO com o tempo de
+     * PERMANÊNCIA em cada etapa (status), responsável e equipe. Só leitura (agrega dos eventos).
+     */
+    public function details(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+        $ticket->loadMissing('status:id,key,label,color', 'assignee:id,name', 'team:id,name');
+        $cal = app(\App\Services\BusinessCalendarService::class);
+
+        // Resolvedores (status por id/key; usuários e equipes por id).
+        $statuses = HelpDeskStatus::get(['id', 'key', 'label', 'color']);
+        $stById = $statuses->keyBy('id'); $stByKey = $statuses->keyBy('key');
+        $resolveStatus = function ($v) use ($stById, $stByKey) {
+            if ($v === null || $v === '') return null;
+            $s = $stById->get((int) $v) ?: $stByKey->get((string) $v);
+            return $s ? ['key' => $s->key, 'label' => $s->label, 'color' => $s->color] : ['key' => null, 'label' => (string) $v, 'color' => null];
+        };
+
+        $evs = $ticket->events()->orderBy('created_at')->orderBy('id')->get(['event_type', 'from_value', 'to_value', 'created_at']);
+        $statusEvs = $evs->whereIn('event_type', ['status', 'status_changed'])->values();
+        $assignEvs = $evs->where('event_type', 'assigned')->values();
+        $teamEvs   = $evs->where('event_type', 'team_changed')->values();
+
+        // Mapas de nome p/ usuários e equipes citados nos eventos.
+        $userIds = $assignEvs->flatMap(fn ($e) => [$e->from_value, $e->to_value])->filter()->map(fn ($v) => (int) $v)->unique()->all();
+        $teamIds = $teamEvs->flatMap(fn ($e) => [$e->from_value, $e->to_value])->filter()->map(fn ($v) => (int) $v)->unique()->all();
+        $userNames = $userIds ? \App\Models\User::whereIn('id', $userIds)->pluck('name', 'id') : collect();
+        $teamNames = $teamIds ? HelpDeskTeam::whereIn('id', $teamIds)->pluck('name', 'id') : collect();
+
+        $opened = $ticket->created_at;
+        $endLife = $ticket->resolved_at ?? $ticket->closed_at; // fim do ciclo (null = ainda aberto)
+        $lifeEnd = $endLife ?? now();
+        $lifeSecs = $opened ? max(0, $lifeEnd->diffInSeconds($opened)) : 0;
+
+        // Constrói segmentos (o que estava valendo, de A até B) com tempo de permanência.
+        $seg = function ($label, $meta, $from, $to, $current) use ($cal) {
+            $secs = ($from && $to) ? max(0, $to->diffInSeconds($from)) : 0;
+            return [
+                'label' => $label, 'meta' => $meta,
+                'from' => optional($from)->toIso8601String(), 'to' => $current ? null : optional($to)->toIso8601String(),
+                'seconds' => $secs, 'human' => self::humanDur($secs),
+                'business_days' => ($from && $to) ? $cal->businessDaysBetween($from, $to) : 0,
+                'current' => $current,
+            ];
+        };
+        $timeline = function ($events, $initialResolve, $currentValue, $resolver, $labeler) use ($opened, $endLife, $seg) {
+            $out = []; $segStart = $opened; $segVal = $initialResolve;
+            foreach ($events as $e) {
+                $at = $e->created_at;
+                $out[] = $seg($labeler($segVal), $segVal, $segStart, $at, false);
+                $segVal = $resolver($e->to_value); $segStart = $at;
+            }
+            $out[] = $seg($labeler($segVal), $segVal, $segStart, $endLife ?? now(), $endLife === null);
+            return $out;
+        };
+
+        // Status: inicial = from do 1º evento; senão o status atual.
+        $statusInit = $statusEvs->isNotEmpty() ? $resolveStatus($statusEvs->first()->from_value) : $resolveStatus(optional($ticket->status)->id);
+        $statusHistory = $timeline($statusEvs, $statusInit, null, $resolveStatus, fn ($s) => $s['label'] ?? '—');
+
+        // Responsável: inicial = from do 1º 'assigned'; senão nenhum.
+        $nameOf = fn ($v) => $v ? ($userNames[(int) $v] ?? ('Usuário #' . $v)) : 'Não atribuído';
+        $assignInit = $assignEvs->isNotEmpty() ? $nameOf($assignEvs->first()->from_value) : $nameOf(optional($ticket->assignee)->id);
+        $assigneeHistory = $timeline($assignEvs, $assignInit, null, fn ($v) => $nameOf($v), fn ($n) => $n);
+
+        // Equipe.
+        $teamOf = fn ($v) => $v ? ($teamNames[(int) $v] ?? ('Equipe #' . $v)) : 'Sem equipe';
+        $teamInit = $teamEvs->isNotEmpty() ? $teamOf($teamEvs->first()->from_value) : $teamOf(optional($ticket->team)->id);
+        $teamHistory = $timeline($teamEvs, $teamInit, null, fn ($v) => $teamOf($v), fn ($n) => $n);
+
+        return response()->json(['data' => [
+            'dates' => [
+                'opened_at'    => optional($opened)->toIso8601String(),
+                'due_at'       => optional($ticket->resolution_due_at)->toIso8601String(),
+                'first_due_at' => optional($ticket->first_response_due_at)->toIso8601String(),
+                'resolved_at'  => optional($ticket->resolved_at)->toIso8601String(),
+                'closed_at'    => optional($ticket->closed_at)->toIso8601String(),
+            ],
+            'life' => [
+                'open'          => $endLife === null,
+                'seconds'       => $lifeSecs,
+                'human'         => self::humanDur($lifeSecs),
+                'business_days' => $opened ? $cal->businessDaysBetween($opened, $lifeEnd) : 0,
+            ],
+            'status_history'   => $statusHistory,
+            'assignee_history' => $assigneeHistory,
+            'team_history'     => $teamHistory,
+            'reopen_count'     => (int) $ticket->reopen_count,
+        ]]);
+    }
+
+    /**
+     * Detalhes do SLA aplicado ao chamado: política, calendário, regra por prioridade,
+     * prazos efetivos (descontando pausas/agendamentos) com situação/severidade, e alertas
+     * automáticos configurados. Só leitura — reaproveita HelpDeskSlaService::summary.
+     */
+    public function sla(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+        $ticket->loadMissing('status:id,key,label,color', 'category:id,name,sla_policy_id', 'slaPolicy');
+
+        $policy = $ticket->sla_policy_id ? $ticket->slaPolicy : null;
+        $target = $policy?->targetFor($ticket->priority);
+        if ($target && $target->enabled === false) $target = null;
+
+        // Origem da política (por que este SLA foi aplicado ao chamado).
+        $source = null;
+        if ($policy) {
+            if ($policy->customer_id && $policy->customer_id === $ticket->customer_id) $source = 'Cliente';
+            elseif ($policy->contract_id) $source = 'Contrato';
+            elseif ($ticket->category && $ticket->category->sla_policy_id === $policy->id) $source = 'Categoria';
+            elseif ($policy->is_default) $source = 'Padrão';
+            else $source = 'Definido no chamado';
+        }
+
+        // Calendário: horas úteis (janelas por dia) x corridas (24×7).
+        $wins = $policy?->windowsByWeekday() ?? [];
+        $active = array_filter($wins, fn ($d) => !empty($d));
+        $calendarMode = empty($active) ? 'corrido' : 'util';
+        $hoursLabel = 'Horas corridas (24×7)';
+        if (!empty($active)) {
+            $DOW = [1 => 'Seg', 2 => 'Ter', 3 => 'Qua', 4 => 'Qui', 5 => 'Sex', 6 => 'Sáb', 7 => 'Dom'];
+            $days = array_keys($active); sort($days);
+            $dayLabel = (count($days) === 5 && $days === [1, 2, 3, 4, 5]) ? 'Seg–Sex'
+                : implode(', ', array_map(fn ($d) => $DOW[$d] ?? $d, $days));
+            $mins = []; foreach ($active as $ranges) foreach ($ranges as $r) { $mins[] = $r[0]; $mins[] = $r[1]; }
+            $toHHMM = fn ($m) => sprintf('%02d:%02d', intdiv($m, 60), $m % 60);
+            $hoursLabel = $days ? ($dayLabel . ' · ' . $toHHMM(min($mins)) . '–' . $toHHMM(max($mins))) : $hoursLabel;
+        }
+
+        // Resumo de prazos EFETIVOS (já desconta pausa/agendamento).
+        $s = $this->sla->summary($ticket);
+        $now = now();
+
+        // Constrói uma "meta" de SLA (1ª resposta ou resolução) com situação + severidade.
+        $meta = function (string $key, string $label, ?int $targetMinutes, ?string $dueIso, bool $done, ?string $doneAt, bool $overdue, bool $breached, ?int $minsLeft) use ($now) {
+            $applies = $targetMinutes !== null && $dueIso !== null;
+            $severity = 'none'; $situacao = 'Sem SLA';
+            if ($applies) {
+                if ($done) { $severity = 'ok'; $situacao = 'Cumprido'; }
+                elseif ($overdue || $breached) { $severity = 'danger'; $situacao = 'Vencido'; }
+                else {
+                    // Amarelo quando faltam ≤60min OU ≤20% do prazo total.
+                    $threshold = $targetMinutes ? min(60, max(15, (int) round($targetMinutes * 0.2))) : 60;
+                    if ($minsLeft !== null && $minsLeft <= $threshold) { $severity = 'warning'; $situacao = 'Vence em breve'; }
+                    else { $severity = 'ok'; $situacao = 'No prazo'; }
+                }
+            }
+            // Progresso 0–1 do consumo do prazo (para a barra), quando aplicável.
+            $progress = null;
+            if ($applies && $targetMinutes > 0) {
+                if ($done) $progress = 1.0;
+                elseif ($minsLeft !== null) $progress = max(0.0, min(1.0, ($targetMinutes - $minsLeft) / $targetMinutes));
+            }
+            return [
+                'key' => $key, 'label' => $label, 'applies' => $applies,
+                'target_minutes' => $targetMinutes, 'due_at' => $dueIso,
+                'done' => $done, 'done_at' => $doneAt, 'breached' => $breached,
+                'minutes_left' => $applies && !$done ? $minsLeft : null,
+                'situacao' => $situacao, 'severity' => $severity, 'progress' => $progress,
+            ];
+        };
+
+        $metas = [
+            $meta('first', '1ª resposta', $target?->first_response_minutes,
+                $s['first_response_due_at'], (bool) $s['first_responded_at'], $s['first_responded_at'],
+                (bool) $s['first_response_overdue'], (bool) $s['first_response_breached'], $s['first_response_minutes_left']),
+            $meta('resolution', 'Resolução', $target?->resolution_minutes,
+                $s['resolution_due_at'], (bool) $s['resolved_at'], $s['resolved_at'],
+                (bool) $s['resolution_overdue'], (bool) $s['resolution_breached'], $s['resolution_minutes_left']),
+        ];
+
+        // Alertas automáticos configurados relacionados a SLA (dado real: gatilhos ativos).
+        $alerts = HelpDeskTrigger::where('enabled', true)
+            ->get(['id', 'name', 'event', 'conditions'])
+            ->filter(function ($t) {
+                $c = is_array($t->conditions) ? $t->conditions : (json_decode($t->conditions, true) ?: []);
+                return $t->event === 'idle_in_status' || array_key_exists('resolution_breached', $c) || array_key_exists('idle_hours', $c);
+            })
+            ->map(fn ($t) => ['name' => $t->name, 'event' => $t->event])
+            ->values();
+
+        return response()->json(['data' => [
+            'policy' => $policy ? [
+                'name'        => $policy->name,
+                'description' => $policy->description,
+                'source'      => $source,
+                'timezone'    => $policy->slaTimezone(),
+                'calendar_mode' => $calendarMode,
+                'hours_label' => $hoursLabel,
+                'national_holidays' => (bool) ($policy->use_national_holidays ?? true),
+                'holidays_count'    => count($policy->holidayDates()),
+            ] : null,
+            'target' => $target ? [
+                'name'                   => $target->name,
+                'priority'               => $target->priority,
+                'first_response_minutes' => $target->first_response_minutes,
+                'resolution_minutes'     => $target->resolution_minutes,
+            ] : null,
+            'priority' => $ticket->priority,
+            'metas'    => $metas,
+            'paused'   => (bool) $s['paused'],
+            'scheduled' => (bool) $s['scheduled'],
+            'scheduled_until'   => $s['scheduled_until'],
+            'scheduled_all_day' => (bool) $s['scheduled_all_day'],
+            'generated_at' => $now->toIso8601String(),
+            'alerts'   => $alerts,
+        ]]);
+    }
+
+    /**
+     * Relatório de Serviço (PDF) — documento formal do atendimento: capa, dados do chamado,
+     * SLA, descrição e histórico de interações PÚBLICAS (client-safe) + apontamentos por consultor.
+     * Notas internas ficam de fora (deliverable ao cliente). Gate: mesma permissão de impressão.
+     */
+    public function report(Request $request, HelpDeskTicket $ticket)
+    {
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+        abort_unless($this->access->canPrint($request->user()), 403, 'Seu perfil de acesso não permite gerar o relatório.');
+        $ticket->loadMissing('status:id,key,label,color', 'category:id,name', 'service:id,name', 'customer:id,name', 'contact:id,name', 'requester:id,name', 'assignee:id,name', 'team:id,name');
+
+        $PRIO = ['baixa' => 'Baixa', 'normal' => 'Normal', 'alta' => 'Alta', 'urgente' => 'Urgente'];
+        $CH   = ['portal' => 'Portal', 'email' => 'E-mail', 'telefone' => 'Telefone', 'interno' => 'Interno', 'movidesk' => 'Movidesk'];
+        $fmt  = fn ($d) => $d ? \Carbon\Carbon::parse($d)->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—';
+        // Corpo FIEL ao chamado: se já é HTML (inclui a assinatura renderizada), mantém o HTML
+        // para o dompdf renderizar igual ao chamado; se é texto puro, preserva quebras de linha.
+        $bodyHtml = function (?string $html) {
+            $html = (string) $html;
+            if (trim($html) === '') return '';
+            if (strip_tags($html) === $html) {
+                // Texto puro: remove emojis (tofu no DejaVu), escapa e converte quebras.
+                $t = preg_replace('/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2300}-\x{23FF}\x{2B00}-\x{2BFF}\x{FE00}-\x{FE0F}\x{200D}]/u', '', $html);
+                return nl2br(e(trim($t)));
+            }
+            return $html; // já é HTML (mensagem + assinatura) — renderiza como está
+        };
+
+        $withApontamentos = $request->boolean('apontamentos');
+        $hhmm = fn (?string $t) => $t ? substr($t, 0, 5) : null;
+
+        // TODAS as interações do chamado (cliente + notas internas), sem eventos de sistema —
+        // fiel ao que aparece no chamado.
+        // Mais recente primeiro (igual ao chamado).
+        $comments = $ticket->comments()->with(['author:id,name,type', 'contact:id,name'])
+            ->where('is_system', false)
+            ->whereNull('deleted_at')->orderByDesc('created_at')->orderByDesc('id')->get();
+        $interactions = $comments->map(function ($c) use ($bodyHtml, $fmt, $withApontamentos) {
+            $isAgent = $c->author && in_array($c->author->type, ['admin', 'coordenador', 'consultor'], true);
+            $who = $c->author?->name ?: $c->contact?->name ?: 'Cliente';
+            return [
+                'who' => $who, 'is_agent' => $isAgent, 'internal' => $c->visibility === 'internal',
+                'solution' => (bool) $c->solution,
+                'when' => $fmt($c->created_at), 'body' => $bodyHtml($c->body),
+                // Horas por interação só quando o relatório inclui apontamentos.
+                'effort' => ($withApontamentos && $c->effort_minutes) ? self::humanDur((int) $c->effort_minutes * 60) : null,
+            ];
+        })->values()->all();
+
+        // Apontamentos (uma linha por interação com tempo) — para a tabela final + totais.
+        $apontRows = $ticket->comments()->whereNull('deleted_at')->where('effort_minutes', '>', 0)
+            ->with('author:id,name')->orderBy('worked_date')->orderBy('start_time')->orderBy('created_at')->get();
+        $apontamentos = []; $hoursBy = []; $totalMin = 0; $byUserMin = [];
+        foreach ($apontRows as $c) {
+            $mins = (int) $c->effort_minutes; $totalMin += $mins;
+            $nome = $c->author?->name ?? 'Consultor';
+            $byUserMin[$nome] = ($byUserMin[$nome] ?? 0) + $mins;
+            $apontamentos[] = [
+                'date'       => optional($c->worked_date ?: $c->created_at)->format('d/m/Y'),
+                'consultant' => $nome,
+                'interval'   => ($c->start_time || $c->end_time) ? (($hhmm($c->start_time) ?? '—') . '–' . ($hhmm($c->end_time) ?? '—')) : '—',
+                'duration'   => self::humanDur($mins * 60),
+                'billable'   => !$c->no_charge,
+            ];
+        }
+        foreach ($byUserMin as $nome => $mins) $hoursBy[] = ['name' => $nome, 'h' => self::humanDur($mins * 60)];
+
+        // SLA (situação de resolução).
+        $slaData = null;
+        if ($ticket->sla_policy_id) {
+            $s = $this->sla->summary($ticket);
+            $ticket->loadMissing('slaPolicy:id,name');
+            $resColor = '#111827'; $resTxt = $fmt($s['resolution_due_at']);
+            if ($s['resolved_at']) { $resColor = '#16a34a'; $resTxt = 'Resolvido em ' . $fmt($s['resolved_at']); }
+            elseif ($s['resolution_overdue'] || $s['resolution_breached']) { $resColor = '#dc2626'; $resTxt = 'Vencido — prazo era ' . $fmt($s['resolution_due_at']); }
+            $slaData = ['policy' => $ticket->slaPolicy?->name ?? '—', 'res' => $resTxt, 'res_color' => $resColor];
+        }
+
+        $opened = $ticket->created_at;
+        $endLife = $ticket->resolved_at ?? $ticket->closed_at;
+        $lifeSecs = $opened ? max(0, ($endLife ?? now())->diffInSeconds($opened)) : 0;
+
+        $st = $ticket->status;
+        $logoPath = public_path('logo-erpserv.png');
+        $logo = is_file($logoPath) ? 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath)) : null;
+
+        $data = [
+            'with_apontamentos' => $withApontamentos,
+            'apontamentos' => $apontamentos,
+            'brand'        => '#7c3aed',
+            'logo'         => $logo,
+            'ticket_number' => $ticket->ticket_number ?: ('#' . $ticket->id),
+            'generated_at' => now()->timezone('America/Sao_Paulo')->format('d/m/Y H:i'),
+            'subject'      => $ticket->subject ?: '—',
+            'status'       => $st?->label ?? '—',
+            'status_bg'    => ($st?->color ?: '#6b7280') . '22',
+            'status_fg'    => $st?->color ?: '#374151',
+            'priority'     => $PRIO[$ticket->priority] ?? ucfirst((string) $ticket->priority),
+            'channel'      => $CH[$ticket->channel] ?? ucfirst((string) $ticket->channel),
+            'category'     => $ticket->category?->name ?? ($ticket->service?->name ?? '—'),
+            'customer'     => $ticket->customer?->name ?? '—',
+            'requester'    => $ticket->contact?->name ?: ($ticket->requester?->name ?: ($ticket->requester_name ?: '—')),
+            'assignee'     => $ticket->assignee?->name ?? 'Não atribuído',
+            'team'         => $ticket->team?->name ?? '—',
+            'opened_at'    => $fmt($opened),
+            'first_at'     => $fmt($ticket->first_responded_at),
+            'resolved_at'  => $fmt($ticket->resolved_at),
+            'life'         => self::humanDur($lifeSecs),
+            'description'  => $bodyHtml($ticket->description),
+            'sla'          => $slaData,
+            'interactions' => $interactions,
+            'hours'        => ['total' => $totalMin ? self::humanDur($totalMin * 60) : null, 'by' => $hoursBy],
+        ];
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.helpdesk-service-report', $data)
+            ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print', 'isRemoteEnabled' => true]);
+        $fname = 'relatorio-servico-' . preg_replace('/[^A-Za-z0-9_-]/', '', $data['ticket_number']) . '.pdf';
+        return $pdf->stream($fname);
+    }
+
+    /**
+     * Listagem COMPLETA de apontamentos do chamado: cada interação com horas apontadas
+     * (data, intervalo, duração, consultor, cobrável, vínculo com o apontamento na tela
+     * de Apontamentos). Total geral + por consultor. Só leitura.
+     */
+    public function apontamentos(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+
+        // Escopo por perfil: todos os apontamentos ou só os do usuário logado.
+        $scope = $this->access->apontamentosScope($request->user());
+        $rows = $ticket->comments()->whereNull('deleted_at')->where('effort_minutes', '>', 0)
+            ->when($scope === 'own', fn ($q) => $q->where('author_user_id', $request->user()?->id))
+            ->with('author:id,name')->orderBy('worked_date')->orderBy('start_time')->orderBy('created_at')->get();
+
+        $hhmm = fn (?string $t) => $t ? substr($t, 0, 5) : null;
+        $items = $rows->map(function ($c) use ($hhmm) {
+            $mins = (int) $c->effort_minutes;
+            return [
+                'id'            => $c->id,
+                'date'          => optional($c->worked_date ?: $c->created_at)->toDateString(),
+                'start'         => $hhmm($c->start_time),
+                'end'           => $hhmm($c->end_time),
+                'minutes'       => $mins,
+                'duration'      => self::humanDur($mins * 60),
+                'consultant'    => $c->author?->name ?? 'Consultor',
+                'consultant_id' => $c->author_user_id,
+                'no_charge'     => (bool) $c->no_charge,
+                'solution'      => (bool) $c->solution,
+                'visibility'    => $c->visibility,
+                'timesheet_id'  => $c->timesheet_id,
+            ];
+        })->values();
+
+        $totalMin = (int) $rows->sum('effort_minutes');
+        $chargeMin = (int) $rows->where('no_charge', false)->sum('effort_minutes');
+        $byConsultant = $rows->groupBy('author_user_id')->map(function ($set) {
+            $mins = (int) $set->sum('effort_minutes');
+            return ['name' => $set->first()->author?->name ?? 'Consultor', 'minutes' => $mins, 'duration' => self::humanDur($mins * 60)];
+        })->values();
+
+        return response()->json(['data' => [
+            'items' => $items,
+            'total_minutes'    => $totalMin,
+            'total_duration'   => self::humanDur($totalMin * 60),
+            'billable_minutes' => $chargeMin,
+            'billable_duration' => self::humanDur($chargeMin * 60),
+            'count' => $items->count(),
+            'by_consultant' => $byConsultant,
+            'scope' => $scope, // 'all' | 'own'
+        ]]);
+    }
+
+    /**
+     * Clonar chamado: abre um NOVO chamado com a mesma classificação (cliente, contrato, categoria,
+     * serviço, prioridade, fila…). Sem histórico/interações/SLA da origem — nasce em "Novo", sem
+     * responsável, com número próprio. Solicitante/descrição/tags são opcionais.
+     */
+    public function clone(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+        abort_unless($this->access->canClone($request->user()) && $this->access->canOpen($request->user()), 403, 'Seu perfil de acesso não permite clonar chamados.');
+
+        $v = $request->validate([
+            'subject'          => 'nullable|string|max:255',
+            'copy_description' => 'boolean',
+            'copy_requester'   => 'boolean',
+            'copy_tags'        => 'boolean',
+        ]);
+        $copyDesc = $v['copy_description'] ?? true;
+        $copyReq  = $v['copy_requester'] ?? true;
+        $copyTags = $v['copy_tags'] ?? true;
+        $u = $request->user();
+
+        // Classificação herdada da origem.
+        $data = [
+            'subject'      => $v['subject'] ?? $ticket->subject,
+            'description'  => $copyDesc ? $ticket->description : null,
+            'customer_id'  => $ticket->customer_id,
+            'contract_id'  => $ticket->contract_id,
+            'project_id'   => $ticket->project_id,
+            'category_id'  => $ticket->category_id,
+            'service_id'   => $ticket->service_id,
+            'justification_id' => $ticket->justification_id,
+            'priority'     => $ticket->priority ?: 'normal',
+            'channel'      => 'interno', // clone é aberto internamente
+            'level'        => $ticket->level,
+            'team_id'      => $ticket->team_id,
+            'status_id'    => optional(HelpDeskStatus::default())->id,
+            'created_by_id' => $u?->id,
+            'last_activity_at' => now(),
+        ];
+        if ($copyReq) {
+            $data['customer_contact_id'] = $ticket->customer_contact_id;
+            $data['requester_user_id']   = $ticket->requester_user_id;
+            $data['requester_name']      = $ticket->requester_name;
+            $data['requester_email']     = $ticket->requester_email;
+            $data['cc_emails']           = $ticket->cc_emails;
+        }
+
+        $new = HelpDeskTicket::create($data);
+        $new->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next()]);
+        if ($copyTags) {
+            $tagIds = $ticket->tags()->pluck('helpdesk_tags.id')->all();
+            if ($tagIds) $new->tags()->sync($tagIds);
+        }
+
+        $this->sla->apply($new);
+        HelpDeskTicketEvent::log($new->id, 'created', ['to_value' => $new->subject, 'meta' => ['cloned_from' => $ticket->id, 'cloned_from_number' => $ticket->ticket_number]]);
+        \App\Services\HelpDeskTriggerEngine::dispatch('ticket_created', $new, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+
+        return response()->json(['data' => ['id' => $new->id, 'ticket_number' => $new->ticket_number]], 201);
+    }
+
+    /**
+     * Candidatar uma interação como artigo da Base de Conhecimento: cria um RASCUNHO com o corpo
+     * da interação (título = assunto do chamado), pra revisão/publicação depois. Gate por perfil.
+     */
+    public function commentToKb(Request $request, HelpDeskTicket $ticket, HelpDeskTicketComment $comment): JsonResponse
+    {
+        abort_unless((int) $comment->ticket_id === (int) $ticket->id, 404);
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+        abort_unless($this->access->canCandidateKb($request->user(), $comment), 403, 'Seu perfil de acesso não permite candidatar artigos.');
+
+        $title = mb_substr(trim((string) ($ticket->subject ?: 'Artigo')), 0, 200);
+        $article = \App\Models\HelpDeskKbArticle::create([
+            'title'          => $title,
+            'slug'           => \Illuminate\Support\Str::slug($title) . '-' . \Illuminate\Support\Str::lower(\Illuminate\Support\Str::random(6)),
+            'excerpt'        => mb_substr(trim(strip_tags((string) $comment->body)), 0, 200),
+            'body'           => (string) $comment->body,
+            'status'         => 'draft',
+            'visibility'     => $comment->visibility === 'internal' ? 'internal' : 'customer',
+            'author_user_id' => $request->user()?->id,
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'note', ['to_value' => 'Artigo KB (rascunho) criado', 'meta' => ['kb_article_id' => $article->id, 'from_comment' => $comment->id]]);
+
+        return response()->json(['data' => ['id' => $article->id, 'title' => $article->title, 'status' => 'draft']], 201);
+    }
+
+    /**
+     * Enviar e-mail avulso a partir do chamado: destinatários/assunto/corpo livres, enviado COMO a
+     * conta do Help Desk. Registra uma nota interna com o conteúdo + evento de e-mail enviado.
+     */
+    public function sendEmail(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canSee($request->user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
+        abort_unless($this->access->canSendEmail($request->user()), 403, 'Seu perfil de acesso não permite enviar e-mails.');
+
+        $v = $request->validate([
+            'to'      => 'required|array|min:1',
+            'to.*'    => 'email',
+            'cc'      => 'nullable|array',
+            'cc.*'    => 'email',
+            'subject' => 'required|string|max:255',
+            'body'    => 'required|string',
+        ]);
+        $cc = $v['cc'] ?? [];
+
+        [$ok, $err] = \App\Services\HelpDeskReplyMailer::sendStandalone($ticket, $v['to'], $cc, $v['subject'], $v['body']);
+        abort_unless($ok, 422, 'Não foi possível enviar o e-mail: ' . ($err ?? 'erro desconhecido'));
+
+        // Registro no chamado: nota INTERNA (destinatários podem ser terceiros) + evento.
+        $u = $request->user();
+        $header = '<p style="margin:0 0 8px"><strong>E-mail enviado</strong><br>'
+            . 'Para: ' . e(implode(', ', $v['to']))
+            . ($cc ? '<br>CC: ' . e(implode(', ', $cc)) : '')
+            . '<br>Assunto: ' . e($v['subject']) . '</p><hr>';
+        $comment = $ticket->comments()->create([
+            'author_user_id' => $u?->id,
+            'body'           => $header . $v['body'],
+            'visibility'     => 'internal',
+            'channel'        => 'email',
+            'is_system'      => false,
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'email_sent', [
+            'meta' => ['to' => $v['to'], 'cc' => $cc, 'subject' => $v['subject'], 'comment_id' => $comment->id],
+        ]);
+        $ticket->last_activity_at = now();
+        $ticket->save();
+
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    /**
+     * Reabertura agendada: agenda um chamado RESOLVIDO/ENCERRADO para reabrir automaticamente
+     * numa data/hora futura. Um job (help-desk:run-scheduled-reopens) reabre quando a hora chega.
+     */
+    public function scheduleReopen(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        abort_unless($this->access->canReopen($request->user()), 403, 'Seu perfil de acesso não permite reabrir chamados.');
+        $ticket->loadMissing('status');
+        abort_unless($ticket->status && ($ticket->status->is_resolved || $ticket->status->is_terminal), 422, 'Só é possível agendar reabertura de chamados resolvidos ou encerrados.');
+
+        $v = $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+            'time' => 'required|date_format:H:i',
+            'note' => 'nullable|string|max:500',
+        ]);
+        $tz   = $this->sla->resolvePolicy($ticket)?->slaTimezone() ?? 'America/Sao_Paulo';
+        $when = \Illuminate\Support\Carbon::parse($v['date'] . ' ' . $v['time'], $tz)->setTimezone('UTC');
+        abort_if($when->isPast(), 422, 'A data/hora da reabertura deve ser no futuro.');
+
+        $ticket->reopen_scheduled_at    = $when;
+        $ticket->reopen_scheduled_note  = $v['note'] ?? null;
+        $ticket->reopen_scheduled_by_id = $request->user()?->id;
+        $ticket->save();
+
+        HelpDeskTicketEvent::log($ticket->id, 'reopen_scheduled', [
+            'to_value' => $when->toIso8601String(),
+            'meta'     => ['note' => $v['note'] ?? null],
+        ]);
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
+    }
+
+    /** Cancela uma reabertura agendada pendente. */
+    public function cancelScheduledReopen(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        if ($ticket->reopen_scheduled_at) {
+            $ticket->reopen_scheduled_at    = null;
+            $ticket->reopen_scheduled_note  = null;
+            $ticket->reopen_scheduled_by_id = null;
+            $ticket->save();
+            HelpDeskTicketEvent::log($ticket->id, 'reopen_schedule_canceled', ['meta' => ['by' => $request->user()?->id]]);
+        }
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
+    }
+
+    /** Duração legível a partir de segundos: "45s" / "12min" / "3h 20min" / "2d 4h". */
+    private static function humanDur(int $s): string
+    {
+        if ($s < 60) return $s . 's';
+        $m = intdiv($s, 60); if ($m < 60) return $m . 'min';
+        $h = intdiv($m, 60); $mm = $m % 60; if ($h < 24) return $h . 'h' . ($mm ? ' ' . $mm . 'min' : '');
+        $d = intdiv($h, 24); $hh = $h % 24; return $d . 'd' . ($hh ? ' ' . $hh . 'h' : '');
     }
 
     public function show(HelpDeskTicket $ticket): JsonResponse
@@ -87,10 +758,22 @@ class HelpDeskTicketController extends Controller
             'slaPolicy:id,name', 'contract:id', 'project:id,name',
             'service:id,name,code', 'justification:id,name,status_id',
             'tags:id,name,color', 'watchers',
+            'previousTicket:id,ticket_number,subject',                       // continuação de chamado encerrado
+            'continuations:id,ticket_number,previous_ticket_id',            // chamado(s) abertos a partir DESTE
         ]);
         $events = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
         $data = $this->decorate($ticket, $events);
+        // Chamado ATUAL (continuação mais recente aberta a partir deste, quando encerrado).
+        $data['continuation_ticket'] = optional($ticket->continuations->sortByDesc('id')->first())->only(['id', 'ticket_number']) ?: null;
         $data['can_edit_description'] = $this->access->canEditActions(\Illuminate\Support\Facades\Auth::user());
+        $data['can_merge'] = $this->access->canMerge(\Illuminate\Support\Facades\Auth::user());
+        $data['can_delete'] = $this->access->canDelete(\Illuminate\Support\Facades\Auth::user());
+        $data['can_print'] = $this->access->canPrint(\Illuminate\Support\Facades\Auth::user());
+        $data['can_view_sla'] = $this->access->canViewSla(\Illuminate\Support\Facades\Auth::user());
+        $data['can_clone'] = $this->access->canClone(\Illuminate\Support\Facades\Auth::user());
+        $data['can_send_email'] = $this->access->canSendEmail(\Illuminate\Support\Facades\Auth::user());
+        $data['can_reopen'] = $this->access->canReopen(\Illuminate\Support\Facades\Auth::user());
+        $data['can_close'] = $this->access->canClose(\Illuminate\Support\Facades\Auth::user());
         // Solicitante resolvido: se o e-mail estiver cadastrado, traz o NOME do contato.
         $data['solicitante'] = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail()];
         return response()->json(['data' => $data]);
@@ -238,7 +921,8 @@ class HelpDeskTicketController extends Controller
         $v['last_activity_at'] = now();
 
         $ticket = HelpDeskTicket::create($v);
-        $ticket->update(['ticket_number' => 'HD-' . str_pad((string) $ticket->id, 6, '0', STR_PAD_LEFT)]);
+        // Número no formato CONFIGURADO (prefixo + dígitos + sequência) — não hardcoded HD-######.
+        $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next()]);
         if ($tagIds) $ticket->tags()->sync($tagIds);
 
         // SLA: resolve política + prazos a partir da prioridade.
@@ -307,6 +991,9 @@ class HelpDeskTicketController extends Controller
         // Reabertura: status alvo aberto vindo de resolvido/encerrado.
         $isReopen = $new && $new->is_open && ($ticket->status && ($ticket->status->is_resolved || $ticket->status->is_terminal));
         abort_if($isReopen && !$this->access->canReopen($request->user()), 422, 'Seu perfil não permite reabrir chamados.');
+        // Encerrar = mover para status terminal (Fechado/Cancelado). Só coordenador/admin por padrão.
+        $isClose = $new && $new->is_terminal && !(optional($ticket->status)->is_terminal);
+        abort_if($isClose && !$this->access->canClose($request->user()), 422, 'Seu perfil de acesso não permite encerrar chamados.');
         if (array_key_exists('justification_id', $v)) {
             $ticket->justification_id = $v['justification_id'];
             $ticket->save();
@@ -314,6 +1001,53 @@ class HelpDeskTicketController extends Controller
         $this->transitionStatus($ticket, $new, $v['note'] ?? null);
         $u = $request->user();
         \App\Services\HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
+    }
+
+    /**
+     * Agenda o chamado: define DATA (obrigatória) + HORA (opcional) de retomada e PAUSA o SLA.
+     * Enquanto agendado, o relógio de SLA congela; a retomada empurra o prazo (resumeSchedule).
+     */
+    public function schedule(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $v = $request->validate([
+            'date' => 'required|date_format:Y-m-d|after_or_equal:today',
+            'time' => 'nullable|date_format:H:i',
+            'note' => 'nullable|string|max:500',
+        ]);
+        abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
+
+        $allDay = empty($v['time']);
+        // Data/hora informada é LOCAL (fuso da política, ex.: SP). Sem hora → fim do dia agendado.
+        $tz   = $this->sla->resolvePolicy($ticket)?->slaTimezone() ?? 'America/Sao_Paulo';
+        $when = \Illuminate\Support\Carbon::parse($v['date'] . ' ' . ($v['time'] ?? '23:59'), $tz)->setTimezone('UTC');
+
+        // Reagendar sobre um agendamento vigente: retoma antes (assa a pausa anterior no prazo).
+        if ($ticket->sla_paused_at || $ticket->scheduled_until) $this->sla->resumeSchedule($ticket);
+
+        // Se o status atual JÁ pausa o SLA (ex.: Aguardando cliente), NÃO seta sla_paused_at
+        // (senão a pausa contaria em dobro). O agendamento só guarda a data + retomada.
+        $statusPauses = $this->sla->isPausedByStatus($ticket);
+        $ticket->scheduled_until   = $when;
+        $ticket->scheduled_all_day = $allDay;
+        $ticket->sla_paused_at     = $statusPauses ? null : now();
+        $ticket->save();
+
+        HelpDeskTicketEvent::log($ticket->id, 'scheduled', [
+            'to_value' => $when->toIso8601String(),
+            'meta'     => ['note' => $v['note'] ?? null, 'all_day' => $allDay],
+        ]);
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
+    }
+
+    /** Cancela o agendamento e RETOMA o SLA (empurra o prazo pelos minutos úteis pausados). */
+    public function unschedule(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        if ($ticket->sla_paused_at || $ticket->scheduled_until) {
+            $this->sla->resumeSchedule($ticket);
+            HelpDeskTicketEvent::log($ticket->id, 'schedule_resumed', []);
+        }
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
 
@@ -630,7 +1364,7 @@ class HelpDeskTicketController extends Controller
     // ── Interações (respostas/notas) ──────────────────────────────────────────
     public function comments(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
-        $q = $ticket->comments()->with(['author:id,name', 'contact:id,name'])->orderBy('created_at');
+        $q = $ticket->comments()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
         // Cliente só enxerga as respostas marcadas como visíveis ao cliente.
         if ($request->user()?->isCliente()) {
             $q->where('visibility', 'customer');
@@ -641,6 +1375,9 @@ class HelpDeskTicketController extends Controller
             $arr = $c->toArray();
             $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $c->id, $user)->values();
             $arr['can_edit'] = $this->access->canEditComment($user, $c);
+            // Só faz sentido "virar artigo" a partir de interação da EQUIPE (não do cliente/sistema).
+            $arr['can_candidate_kb'] = !$c->is_system && $c->author_user_id
+                && $this->access->canCandidateKb($user, $c);
             return $arr;
         });
         return response()->json(['data' => $data]);
@@ -781,9 +1518,21 @@ class HelpDeskTicketController extends Controller
         // tudo é revertido — NUNCA fica comentário órfão sem o anexo.
         try {
             $comment = \Illuminate\Support\Facades\DB::transaction(function () use ($ticket, $v, $key, $request, $svc, $effortMinutes, $workedDate) {
+                // Assinatura do usuário LOGADO (a MESMA do cadastro: foto/cargo/fallback institucional)
+                // ao final da RESPOSTA AO CLIENTE com texto. Nota interna e anexo-só não assinam.
+                $body = $v['body'] ?? '';
+                if (($v['visibility'] ?? 'internal') === 'customer' && trim((string) $body) !== '') {
+                    $sig = \App\Services\SignatureRenderer::resolveFor($request->user());
+                    if (\App\Services\SignatureRenderer::hasData($sig)) {
+                        // Assinatura COMPLETA (com a faixa "LET'S DO IT"). No dark mode do Apple Mail a
+                        // faixa transparente ganha uma moldura fina (placa do cliente) — comportamento
+                        // aceito pelo usuário, que quer todos os componentes da assinatura no e-mail.
+                        $body .= '<div style="margin-top:16px;">' . \App\Services\SignatureRenderer::render($sig, 'data', true, 'light') . '</div>';
+                    }
+                }
                 $comment = $ticket->comments()->create([
                     'author_user_id'  => $request->user()?->id,
-                    'body'            => $v['body'] ?? '',
+                    'body'            => $body,
                     'visibility'      => $v['visibility'] ?? 'internal',
                     'channel'         => $v['channel'] ?? 'interno',
                     'idempotency_key' => $key,

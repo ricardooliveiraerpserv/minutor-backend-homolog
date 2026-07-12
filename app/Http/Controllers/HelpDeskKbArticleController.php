@@ -24,6 +24,37 @@ class HelpDeskKbArticleController extends Controller
         return response()->json(['data' => $arts]);
     }
 
+    /**
+     * Sugestão de artigos na abertura do chamado: publicados, por relevância no texto digitado.
+     * Cliente só vê visibility=customer; agente vê customer+internal (se o perfil permitir sugestões).
+     */
+    public function suggest(Request $request, \App\Services\HelpDeskAccessPolicy $access): JsonResponse
+    {
+        $q = trim((string) $request->query('q', ''));
+        if (mb_strlen($q) < 3) return response()->json(['data' => []]);
+
+        $user = $request->user();
+        $isClient = $user && ($user->isCliente() || $user->isParceiroAdmin());
+        if (!$isClient && !$access->kbSuggestionsEnabled($user)) return response()->json(['data' => []]);
+
+        // Tokeniza: casa por PALAVRA (recall) — "erro CTE" acha "erro ao processar CTE".
+        $terms = collect(preg_split('/\s+/', $q))->filter(fn ($t) => mb_strlen($t) >= 3)->take(6)->values();
+        if ($terms->isEmpty()) $terms = collect([$q]);
+
+        $arts = HelpDeskKbArticle::published()
+            ->when($isClient, fn ($x) => $x->where('visibility', 'customer'))
+            ->where(function ($w) use ($terms) {
+                foreach ($terms as $t) {
+                    $w->orWhere('title', 'ilike', "%{$t}%")
+                      ->orWhere('excerpt', 'ilike', "%{$t}%")->orWhere('body', 'ilike', "%{$t}%");
+                }
+            })
+            ->orderByDesc('pinned')->orderByDesc('helpful_count')->orderByDesc('views_count')
+            ->limit(6)->get(['id', 'title', 'excerpt', 'slug', 'visibility']);
+
+        return response()->json(['data' => $arts]);
+    }
+
     public function show(HelpDeskKbArticle $article): JsonResponse
     {
         return response()->json(['data' => $article->load(['category:id,name', 'author:id,name'])]);

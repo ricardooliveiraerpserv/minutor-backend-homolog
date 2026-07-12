@@ -30,16 +30,20 @@ class HelpDeskFormController extends Controller
             'name'      => ($creating ? 'required' : 'sometimes') . '|string|max:140',
             'status_id' => 'nullable|exists:helpdesk_statuses,id',
             'title'     => 'nullable|string|max:200',
+            'subtitle'  => 'nullable|string|max:200',
             'intro'     => 'nullable|string',
             'show_logo' => 'nullable|boolean',
             'active'    => 'nullable|boolean',
             'fields'                => 'nullable|array',
             'fields.*.key'          => 'required|string|max:60',
-            'fields.*.ftype'        => 'required|in:section,text,richtext,checkbox,date,time',
+            'fields.*.ftype'        => 'required|in:title,section,text,richtext,checkbox,date,time,user',
             'fields.*.label'        => 'required|string|max:200',
             'fields.*.hint'         => 'nullable|string',
             'fields.*.required'     => 'nullable|boolean',
             'fields.*.min_chars'    => 'nullable|integer|min:0',
+            'fields.*.rule'         => 'nullable|array',
+            'fields.*.rule.when'    => 'nullable|string|max:60',
+            'fields.*.rule.value'   => 'nullable|string|max:200',
         ];
     }
 
@@ -84,6 +88,8 @@ class HelpDeskFormController extends Controller
                 'hint'        => $f['hint'] ?? null,
                 'required'    => (bool) ($f['required'] ?? false),
                 'min_chars'   => $f['min_chars'] ?? null,
+                // Só grava a regra se tiver um checkbox de gatilho (`when`); senão null.
+                'rule'        => !empty($f['rule']['when'] ?? null) ? ['when' => $f['rule']['when'], 'value' => $f['rule']['value'] ?? 'não se aplica'] : null,
             ]);
         }
     }

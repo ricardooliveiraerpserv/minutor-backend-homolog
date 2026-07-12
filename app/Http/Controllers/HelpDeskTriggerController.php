@@ -62,12 +62,13 @@ class HelpDeskTriggerController extends Controller
             'catalog'     => HelpDeskTrigger::conditionCatalog(),
             'operators'   => HelpDeskTrigger::OPERATORS,
             'actionTypes' => HelpDeskTrigger::ACTION_TYPES,
-            'recipients'  => ['responsavel' => 'Responsável pelo chamado', 'cliente' => 'Cliente (solicitante)', 'requester' => 'Usuário solicitante'],
+            'recipients'  => ['responsavel' => 'Responsável pelo chamado', 'cliente' => 'Cliente (solicitante)', 'requester' => 'Usuário solicitante', 'coordenador_sustentacao' => 'Coordenador de Sustentação'],
             'blocks'      => \App\Services\HelpDeskMailComposer::BLOCKS,
             // Fontes de opções (referenciadas por 'source' no catálogo).
             'channels'     => collect(\App\Models\HelpDeskTicket::CHANNELS)->map(fn ($c) => ['id' => $c, 'name' => $c]),
             'priorities'   => collect(\App\Models\HelpDeskTicket::PRIORITIES)->map(fn ($p) => ['id' => $p, 'name' => $p]),
             'commentBy'    => [['id' => 'client', 'name' => 'Cliente'], ['id' => 'agent', 'name' => 'Agente']],
+            'visibilities' => [['id' => 'customer', 'name' => 'Pública (cliente vê)'], ['id' => 'internal', 'name' => 'Nota interna']],
             'statuses'     => HelpDeskStatus::orderBy('sort_order')->get(['id', 'label as name']),
             'categories'   => HelpDeskCategory::orderBy('name')->get(['id', 'name']),
             'services'     => \App\Models\HelpDeskService::orderBy('name')->get(['id', 'parent_id', 'name']),
@@ -91,6 +92,7 @@ class HelpDeskTriggerController extends Controller
     {
         $v = $request->validate([
             'subject' => 'nullable|string', 'body' => 'nullable|string',
+            'notification_title' => 'nullable|string', 'notification_subtitle' => 'nullable|string',
             'message' => 'nullable|string', 'blocks' => 'nullable|array', 'to' => 'nullable|array',
         ]);
         $ticket = \App\Models\HelpDeskTicket::orderByDesc('id')->first()
@@ -100,10 +102,14 @@ class HelpDeskTriggerController extends Controller
         $isTemplate = $request->has('message') || $request->has('blocks');
 
         if ($isTemplate) {
-            $audience = in_array('responsavel', (array) ($v['to'] ?? []), true) ? 'responsavel' : 'cliente';
+            $toList = (array) ($v['to'] ?? []);
+            $audience = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'cliente'
+                : (in_array('responsavel', $toList, true) ? 'responsavel' : 'interno');
             $html = \App\Services\HelpDeskMailComposer::compose(
                 (string) ($v['message'] ?? ''), (array) ($v['blocks'] ?? []), $ticket,
-                \App\Services\HelpDeskMailFooter::logoDataUri(), $audience
+                \App\Services\HelpDeskMailFooter::logoDataUri(), $audience,
+                isset($v['notification_title']) ? (string) $v['notification_title'] : null,
+                isset($v['notification_subtitle']) ? (string) $v['notification_subtitle'] : null,
             );
             return response()->json(['data' => ['mode' => 'template', 'subject' => $subject, 'html' => $html, 'sample' => $ticket->ticket_number]]);
         }

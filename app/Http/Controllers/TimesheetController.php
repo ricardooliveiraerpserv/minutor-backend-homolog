@@ -1225,7 +1225,9 @@ class TimesheetController extends Controller
             }
             $timesheet->real_project_id = $realProjectId; // só preenchido em investimento
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
-            $timesheet->origin = 'web'; // Origem: criação manual via webapp
+            // Origem: 'help_desk' quando o apontamento vem de uma interação do Help Desk (substitui o
+            // Movidesk); senão 'web' (criação manual via webapp).
+            $timesheet->origin = $request->filled('helpdesk_ticket_id') ? 'help_desk' : 'web';
             $timesheet->is_billable_only = $user->isAdmin()
                 && $timesheetUserId !== Auth::id()
                 && $request->boolean('is_billable_only', false);

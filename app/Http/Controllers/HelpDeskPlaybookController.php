@@ -22,6 +22,9 @@ class HelpDeskPlaybookController extends Controller
                 'color'          => $p->color,
                 'icon'           => $p->icon,
                 'start_finalize' => (bool) ($p->actions['start_finalize'] ?? false),
+                // Macro passou a APENAS preencher o texto da interação (client-side) — expõe o texto.
+                'reply'          => $p->actions['reply'] ?? null,
+                'internal'       => $p->actions['internal_comment'] ?? null,
             ]);
         return response()->json(['data' => $pbs]);
     }

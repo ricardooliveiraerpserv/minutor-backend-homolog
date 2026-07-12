@@ -23,9 +23,13 @@ class HelpDeskPortalPresenter
             'numero'        => $t->ticket_number,
             'assunto'       => $t->subject,
             'prioridade'    => $t->priority,
-            'status'        => $t->status ? ['label' => $t->status->label, 'cor' => $t->status->color] : null,
+            'status'        => $t->status ? ['key' => $t->status->key, 'label' => $t->status->label, 'cor' => $t->status->color, 'is_resolved' => (bool) $t->status->is_resolved, 'is_terminal' => (bool) $t->status->is_terminal] : null,
+            'solicitante'   => $t->requester_name ?: optional($t->contact)->name,
+            'agente'        => optional($t->assignee)->name,
             'criado_em'     => optional($t->created_at)->toIso8601String(),
             'atualizado_em' => optional($t->updated_at)->toIso8601String(),
+            'agendamento'   => optional($t->scheduled_until)->toIso8601String(), // p/ coluna "Agendados" e badge no card
+            'agendamento_dia_inteiro' => (bool) $t->scheduled_all_day,
             'sla'           => $clientSla, // resumo voltado ao cliente (sem flags internas)
         ];
     }
@@ -43,11 +47,34 @@ class HelpDeskPortalPresenter
         if (($view['sla_due'] ?? true) === false)  $base['sla'] = null;
         if (($view['subject'] ?? true) === false)  unset($base['assunto']);
 
-        // Campos NOVOS (opt-in: só aparecem se o perfil habilitar).
+        // Detalhes do CHAMADO visíveis ao cliente (dados do próprio chamado). Perfil de acesso
+        // pode ocultar campos específicos com a flag = false.
         $extra = [];
-        if ($view['service'] ?? false)       $extra['servico']             = optional($t->service)->name;
-        if ($view['responsible'] ?? false)   $extra['responsavel']         = optional($t->assignee)->name;
-        if ($view['category'] ?? false)      $extra['categoria']           = optional($t->category)->name;
+        if (($view['customer'] ?? true) !== false)    $extra['cliente']     = optional($t->customer)->name;
+        if (($view['requester'] ?? true) !== false)   $extra['solicitante'] = $t->requester_name ?: optional($t->contact)->name ?: optional($t->requester)->name;
+        if (($view['agent'] ?? true) !== false)       $extra['agente']      = optional($t->assignee)->name;
+        if (($view['team'] ?? true) !== false)        $extra['equipe']      = optional($t->team)->name;
+        if (($view['category'] ?? true) !== false)    $extra['categoria']   = optional($t->category)->name;
+        if (($view['service'] ?? true) !== false)     $extra['servico']     = optional($t->service)->name;
+        if (($view['level'] ?? true) !== false)       $extra['nivel']       = $t->level;
+        if (($view['reopens'] ?? true) !== false)     $extra['reaberturas'] = (int) $t->reopen_count;
+        if (($view['cc'] ?? true) !== false)          $extra['cc']          = $t->cc_emails ?? [];
+
+        // Continuação: menção ao chamado ANTERIOR (encerrado) do qual este é continuidade. Só expõe
+        // se for do mesmo cliente (o cliente pode abrir o histórico dele no próprio portal).
+        if ($t->previous_ticket_id && $t->relationLoaded('previousTicket') && $t->previousTicket
+            && (int) $t->previousTicket->customer_id === (int) $t->customer_id) {
+            $extra['chamado_anterior'] = ['id' => $t->previousTicket->id, 'numero' => $t->previousTicket->ticket_number];
+        }
+        // Inverso: se ESTE chamado (encerrado) teve continuidade, aponta pro chamado ATUAL (o mais recente).
+        if ($t->relationLoaded('continuations') && $t->continuations->isNotEmpty()) {
+            $cur = $t->continuations->sortByDesc('id')->first();
+            if ($cur && (int) $cur->customer_id === (int) $t->customer_id) {
+                $extra['chamado_atual'] = ['id' => $cur->id, 'numero' => $cur->ticket_number];
+            }
+        }
+
+        // Extras ainda opt-in (mais internos): só aparecem se o perfil habilitar.
         if ($view['justification'] ?? false) $extra['justificativa']       = optional($t->justification)->name;
         if ($view['agent_times'] ?? false)   $extra['horas_apontadas']     = $agentHours;
         if ($view['tags'] ?? false)          $extra['tags']                = $t->relationLoaded('tags') ? $t->tags->pluck('name')->values() : [];
@@ -60,14 +87,28 @@ class HelpDeskPortalPresenter
         ]);
     }
 
-    /** Comentário público — identidade do atendente NÃO é exposta (só "atendimento" × "você"). */
+    /** Comentário público — identidade do atendente NÃO é exposta (só "atendimento" × "você").
+     *  Inclui os anexos DA INTERAÇÃO (visíveis ao cliente). */
     public static function comment(HelpDeskTicketComment $c, int $clientUserId): array
     {
+        $anexos = Attachment::where('entity_type', 'HELPDESK_TICKET_COMMENT')
+            ->where('entity_id', $c->id)->where('visibility', 'customer')->whereNull('deleted_at')
+            ->orderBy('id')->get()
+            ->map(fn (Attachment $a) => [
+                'id'       => $a->id,
+                'nome'     => $a->original_name,
+                'tamanho'  => $a->human_size ?? null,
+                'is_image' => $a->category === 'image',
+                'download' => "/api/v1/help-desk/portal/tickets/{$c->ticket_id}/comments/{$c->id}/attachments/{$a->id}/download",
+            ])->values();
+        $ehVoce = $c->author_user_id !== null && (int) $c->author_user_id === $clientUserId;
         return [
             'id'        => $c->id,
-            'de'        => ($c->author_user_id !== null && (int) $c->author_user_id === $clientUserId) ? 'voce' : 'atendimento',
+            'de'        => $ehVoce ? 'voce' : 'atendimento',
+            'autor'     => $ehVoce ? 'Você' : (optional($c->author)->name ?: 'Atendimento'),
             'mensagem'  => $c->body,
             'criado_em' => optional($c->created_at)->toIso8601String(),
+            'anexos'    => $anexos,
         ];
     }
 
@@ -78,6 +119,7 @@ class HelpDeskPortalPresenter
             'id'        => $a->id,
             'nome'      => $a->original_name,
             'tamanho'   => $a->human_size ?? null,
+            'is_image'  => $a->category === 'image',
             'criado_em' => optional($a->created_at)->toIso8601String(),
             'download'  => "/api/v1/help-desk/portal/tickets/{$ticketId}/attachments/{$a->id}/download",
         ];
