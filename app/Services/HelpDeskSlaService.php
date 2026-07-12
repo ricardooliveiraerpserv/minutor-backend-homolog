@@ -196,38 +196,102 @@ class HelpDeskSlaService
     public function pausedMinutesUntil(HelpDeskTicket $t, Carbon $until, ?Collection $events = null): int
     {
         if (!$t->created_at) return 0;
+        $cal = $this->calendarFor($t);
+        $total = 0;
+
+        // (a) Pausa por STATUS (event-sourced): tempo útil em status pausante.
         $paused = $this->pausingKeysFor($t);
-        if (empty($paused)) return 0;
+        if (!empty($paused)) {
+            $events ??= $t->events()->where('event_type', 'status_changed')
+                ->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
 
-        $events ??= $t->events()->where('event_type', 'status_changed')
-            ->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
-
-        // Segmentos [início, statusKey] na ordem cronológica.
-        $segments = [];
-        if ($events->isEmpty()) {
-            // Nunca mudou de status → vida inteira no status atual.
-            $segments[] = [Carbon::parse($t->created_at), $t->status?->key];
-        } else {
-            $segments[] = [Carbon::parse($t->created_at), $events->first()->from_value]; // status inicial (antes da 1ª troca)
-            foreach ($events as $e) {
-                $segments[] = [Carbon::parse($e->created_at), $e->to_value];
+            // Segmentos [início, statusKey] na ordem cronológica.
+            $segments = [];
+            if ($events->isEmpty()) {
+                $segments[] = [Carbon::parse($t->created_at), $t->status?->key];
+            } else {
+                $segments[] = [Carbon::parse($t->created_at), $events->first()->from_value];
+                foreach ($events as $e) {
+                    $segments[] = [Carbon::parse($e->created_at), $e->to_value];
+                }
+            }
+            $n = count($segments);
+            for ($i = 0; $i < $n; $i++) {
+                $start = $segments[$i][0];
+                $end   = ($i + 1 < $n) ? $segments[$i + 1][0] : $until;
+                if ($end->lessThanOrEqualTo($start)) continue;
+                $key = $segments[$i][1];
+                if ($key !== null && in_array($key, $paused, true)) {
+                    $total += $this->clock->businessMinutesBetween($start, $end, $cal['windows'], $cal['holidays'], $cal['tz']);
+                }
             }
         }
 
-        $cal = $this->calendarFor($t);
-        $total = 0;
-        $n = count($segments);
-        for ($i = 0; $i < $n; $i++) {
-            $start = $segments[$i][0];
-            $end   = ($i + 1 < $n) ? $segments[$i + 1][0] : $until;
-            if ($end->lessThanOrEqualTo($start)) continue;
-            $key = $segments[$i][1];
-            if ($key !== null && in_array($key, $paused, true)) {
-                // Conta só o tempo ÚTIL em pausa (janelas + feriados) — coerente com o prazo em horas úteis.
-                $total += $this->clock->businessMinutesBetween($start, $end, $cal['windows'], $cal['holidays'], $cal['tz']);
+        // (b) Pausa por AGENDAMENTO: enquanto `sla_paused_at` estiver setado, o relógio congela
+        // de sla_paused_at até min(until, agora, scheduled_until). Ao retomar, o prazo é empurrado
+        // (resumeSchedule) e sla_paused_at é limpo — sem dupla contagem.
+        if ($t->sla_paused_at) {
+            $pauseStart = Carbon::parse($t->sla_paused_at);
+            $pauseEnd = $until->copy();
+            if ($pauseEnd->greaterThan(now())) $pauseEnd = now();
+            if ($t->scheduled_until && $pauseEnd->greaterThan(Carbon::parse($t->scheduled_until))) {
+                $pauseEnd = Carbon::parse($t->scheduled_until);
+            }
+            if ($pauseEnd->greaterThan($pauseStart)) {
+                $total += $this->clock->businessMinutesBetween($pauseStart, $pauseEnd, $cal['windows'], $cal['holidays'], $cal['tz']);
             }
         }
         return (int) $total;
+    }
+
+    /** Pausado AGORA pelo STATUS atual (público p/ o controller decidir a pausa por agendamento). */
+    public function isPausedByStatus(HelpDeskTicket $t): bool
+    {
+        return $this->isPausedNow($t);
+    }
+
+    /** Existe agendamento vigente (a data ainda não venceu)? — independe da pausa por status. */
+    public function hasActiveSchedule(HelpDeskTicket $t): bool
+    {
+        return $t->scheduled_until !== null && now()->lessThan(Carbon::parse($t->scheduled_until));
+    }
+
+    /** Pausado AGORA por agendamento? (sla_paused_at setado e a janela ainda não venceu). */
+    public function isSchedulePaused(HelpDeskTicket $t): bool
+    {
+        return $t->sla_paused_at !== null && (!$t->scheduled_until || now()->lessThan(Carbon::parse($t->scheduled_until)));
+    }
+
+    /**
+     * Retoma o SLA de um chamado agendado: assa a pausa (minutos úteis de sla_paused_at até a
+     * retomada) nos prazos brutos e limpa o agendamento. Retomada manual pode ocorrer antes da data.
+     */
+    public function resumeSchedule(HelpDeskTicket $t, bool $persist = true): void
+    {
+        // Só ASSA a pausa se o SLA estava parado POR AGENDAMENTO (sla_paused_at). Se a pausa era
+        // por STATUS, o próprio timeline já cuida — aqui só limpamos o agendamento.
+        if ($t->sla_paused_at) {
+            $cal = $this->calendarFor($t);
+            $pauseStart = Carbon::parse($t->sla_paused_at);
+            $pauseEnd = $t->scheduled_until ? Carbon::parse($t->scheduled_until) : now();
+            if ($pauseEnd->greaterThan(now())) $pauseEnd = now(); // retomada antecipada
+            if ($pauseEnd->greaterThan($pauseStart)) {
+                $mins = (int) $this->clock->businessMinutesBetween($pauseStart, $pauseEnd, $cal['windows'], $cal['holidays'], $cal['tz']);
+                if ($mins > 0) {
+                    if ($t->first_response_due_at && !$t->first_responded_at) {
+                        $t->first_response_due_at = $this->clock->addBusinessMinutes(Carbon::parse($t->first_response_due_at), $mins, $cal['windows'], $cal['holidays'], $cal['tz'])->setTimezone('UTC');
+                    }
+                    if ($t->resolution_due_at && !$t->resolved_at) {
+                        $t->resolution_due_at = $this->clock->addBusinessMinutes(Carbon::parse($t->resolution_due_at), $mins, $cal['windows'], $cal['holidays'], $cal['tz'])->setTimezone('UTC');
+                    }
+                }
+            }
+            $t->sla_paused_at = null;
+            $this->computeBreaches($t);
+        }
+        $t->scheduled_until = null;
+        $t->scheduled_all_day = false;
+        if ($persist) $t->save();
     }
 
     /** Prazo EFETIVO = bruto + minutos ÚTEIS pausados, empurrados pelo calendário. */
@@ -261,7 +325,7 @@ class HelpDeskSlaService
     public function summary(HelpDeskTicket $t, ?Collection $events = null): array
     {
         $now = now();
-        $isPaused = $this->isPausedNow($t);
+        $isPaused = $this->isPausedNow($t) || $this->isSchedulePaused($t);
         // Enquanto pausado, o "relógio" congela: referência de cálculo é o instante de entrada
         // na pausa não é necessário pois effectiveDue já desconta a pausa até $now.
         $effFr  = $this->effectiveDue(optional($t->first_response_due_at) ? Carbon::parse($t->first_response_due_at) : null, $t, $now, $events);
@@ -271,6 +335,9 @@ class HelpDeskSlaService
         return [
             'policy_id'                   => $t->sla_policy_id,
             'paused'                      => (bool) $isPaused,
+            'scheduled'                   => $this->hasActiveSchedule($t),
+            'scheduled_until'             => optional($t->scheduled_until)->toIso8601String(),
+            'scheduled_all_day'           => (bool) $t->scheduled_all_day,
             'first_response_due_at'       => optional($effFr)->toIso8601String(),
             'resolution_due_at'           => optional($effRes)->toIso8601String(),
             'first_responded_at'          => optional($t->first_responded_at)->toIso8601String(),

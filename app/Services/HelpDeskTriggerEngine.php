@@ -101,6 +101,7 @@ class HelpDeskTriggerEngine
             'resolution_breached'     => (bool) $ticket->resolution_breached,
             'has_assignee'            => !empty($ticket->assignee_id),
             'is_reassignment'         => !empty($context['was_assigned']), // já tinha responsável antes = transferência
+            'is_continuation'         => !empty($ticket->previous_ticket_id), // novo chamado gerado de um encerrado
         ];
         if (array_key_exists($field, $boolMap)) {
             return $op === 'is_false' ? !$boolMap[$field] : $boolMap[$field];
@@ -132,6 +133,7 @@ class HelpDeskTriggerEngine
             'justification_id' => $ticket->justification_id,
             'reopen_count'     => $ticket->reopen_count,
             'comment_by'       => $context['comment_by'] ?? null,
+            'visibility'       => $context['visibility'] ?? null, // interação: 'customer' (pública) | 'internal'
             'idle_hours'       => $ticket->last_activity_at ? abs(now()->diffInHours($ticket->last_activity_at)) : 0,
             default            => null,
         };
@@ -219,8 +221,9 @@ class HelpDeskTriggerEngine
 
         $to = [];
         foreach ((array) ($params['to'] ?? []) as $target) {
-            $addr = self::resolveRecipient((string) $target, $ticket);
-            if ($addr) $to[] = $addr;
+            foreach (self::resolveRecipients((string) $target, $ticket) as $addr) {
+                if ($addr) $to[] = $addr;
+            }
         }
         // "não enviar p/ quem disparou"
         if (!empty($params['skip_actor']) && !empty($context['actor_email'])) {
@@ -239,8 +242,16 @@ class HelpDeskTriggerEngine
         // Modo RAW (legado): body HTML/texto renderizado direto + footer padrão. Compat preservada.
         $layout = $params['layout'] ?? (array_key_exists('message', $params) ? 'template' : 'raw');
         if ($layout === 'template') {
-            $audience = in_array('responsavel', (array) ($params['to'] ?? []), true) ? 'responsavel' : 'cliente';
-            $html = HelpDeskMailComposer::compose((string) ($params['message'] ?? ''), (array) ($params['blocks'] ?? []), $ticket, null, $audience);
+            // Público da saudação: cliente (nome do solicitante) · responsável (nome do agente) ·
+            // interno (coordenador/equipe → saudação genérica "Olá,", não parece ser para o cliente).
+            $toList = (array) ($params['to'] ?? []);
+            $audience = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'cliente'
+                : (in_array('responsavel', $toList, true) ? 'responsavel' : 'interno');
+            $html = HelpDeskMailComposer::compose(
+                (string) ($params['message'] ?? ''), (array) ($params['blocks'] ?? []), $ticket, null, $audience,
+                isset($params['notification_title']) ? (string) $params['notification_title'] : null,
+                isset($params['notification_subtitle']) ? (string) $params['notification_subtitle'] : null,
+            );
             // Imagens/assinatura do chamado (data:) → cid inline, pra renderizarem no e-mail.
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
@@ -253,6 +264,17 @@ class HelpDeskTriggerEngine
     }
 
     /** Resolve um destinatário simbólico em e-mail. Aceita também e-mail fixo (contém @). */
+    /** Resolve um alvo para 1..N e-mails (alvos de GRUPO, ex.: coordenadores, retornam vários). */
+    private static function resolveRecipients(string $target, HelpDeskTicket $ticket): array
+    {
+        if ($target === 'coordenador_sustentacao') {
+            return \App\Models\User::where('type', 'coordenador')->where('coordinator_type', 'sustentacao')
+                ->pluck('email')->filter()->values()->all();
+        }
+        $one = self::resolveRecipient($target, $ticket);
+        return $one ? [$one] : [];
+    }
+
     private static function resolveRecipient(string $target, HelpDeskTicket $ticket): ?string
     {
         if (str_contains($target, '@')) return $target; // e-mail fixo

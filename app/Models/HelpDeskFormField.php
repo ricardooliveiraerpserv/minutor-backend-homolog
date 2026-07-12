@@ -10,9 +10,9 @@ class HelpDeskFormField extends Model
 {
     protected $table = 'helpdesk_form_fields';
 
-    protected $fillable = ['form_id', 'order_index', 'key', 'ftype', 'label', 'hint', 'required', 'min_chars'];
+    protected $fillable = ['form_id', 'order_index', 'key', 'ftype', 'label', 'hint', 'required', 'min_chars', 'rule'];
 
-    protected $casts = ['order_index' => 'integer', 'required' => 'boolean', 'min_chars' => 'integer'];
+    protected $casts = ['order_index' => 'integer', 'required' => 'boolean', 'min_chars' => 'integer', 'rule' => 'array'];
 
     public function form(): BelongsTo { return $this->belongsTo(HelpDeskForm::class, 'form_id'); }
 }

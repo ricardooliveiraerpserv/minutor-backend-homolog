@@ -11,6 +11,19 @@ class HelpDeskMailFooter
 {
     public const LOGO_CID = 'erpserv_logo@minutor';
     public const LOGO_WHITE_CID = 'erpserv_logo_white@minutor';
+    public const WHITE_PX_CID = 'white_px@minutor';
+
+    /**
+     * Pixel branco 1x1 (cid) usado como BACKGROUND-IMAGE dos e-mails: o Apple Mail (e iOS) não
+     * altera a cor de elementos que têm imagem de fundo no dark mode — é o único jeito confiável
+     * de manter o fundo BRANCO quando o Exchange remove doctype/style/color-scheme.
+     */
+    public static function inlineWhitePixel(): ?array
+    {
+        $p = public_path('white-px.png');
+        if (!is_file($p)) return null;
+        return ['name' => 'bg.png', 'mime' => 'image/png', 'bytes' => (string) file_get_contents($p), 'cid' => self::WHITE_PX_CID];
+    }
 
     private static function logoPath(): string
     {

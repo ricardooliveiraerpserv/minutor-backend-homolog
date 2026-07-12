@@ -124,6 +124,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/p/{token}/iniciar-assinatura', [\App\Http\Controllers\ProposalPortalController::class, 'iniciarAssinatura']);
         Route::post('/p/{token}/sincronizar', [\App\Http\Controllers\ProposalPortalController::class, 'sincronizar']);
         Route::post('/p/{token}/reject',   [\App\Http\Controllers\ProposalPortalController::class, 'reject']);
+
+        // 🎫 HELP DESK — aceite/recusa da solução pelo cliente via link ASSINADO (sem login).
+        Route::get('/hd/aceite/{ticket}',          [\App\Http\Controllers\HelpDeskAcceptController::class, 'show'])->name('hd.accept');
+        Route::post('/hd/aceite/{ticket}/encerrar', [\App\Http\Controllers\HelpDeskAcceptController::class, 'accept'])->name('hd.accept.do');
+        Route::post('/hd/aceite/{ticket}/recusar',  [\App\Http\Controllers\HelpDeskAcceptController::class, 'reject'])->name('hd.reject.do');
     });
 
     /**
@@ -300,6 +305,32 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/kb/articles/{article}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'downloadAttachment']);
         Route::get('/help-desk/portal/tickets/{ticket}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskPortalController::class, 'downloadAttachment']);
         Route::get('/help-desk/tickets/{ticket}/comments/{comment}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskTicketController::class, 'downloadCommentAttachment']);
+
+        // 🎫 HELP DESK — rotas trazidas da Replica (menu Opções, SLA, relatório, clone, agendamento,
+        // e-mail avulso, mesclagem, portal, colunas, KB suggest/candidatar). Promoção pra homolog.
+        Route::get('/help-desk/tickets/search',          [\App\Http\Controllers\HelpDeskTicketController::class, 'search']);
+        Route::get('/help-desk/tickets/{ticket}/details', [\App\Http\Controllers\HelpDeskTicketController::class, 'details']);
+        Route::get('/help-desk/tickets/{ticket}/sla',    [\App\Http\Controllers\HelpDeskTicketController::class, 'sla']);
+        Route::get('/help-desk/tickets/{ticket}/apontamentos', [\App\Http\Controllers\HelpDeskTicketController::class, 'apontamentos']);
+        Route::get('/help-desk/tickets/{ticket}/report', [\App\Http\Controllers\HelpDeskTicketController::class, 'report']);
+        Route::post('/help-desk/tickets/{ticket}/clone', [\App\Http\Controllers\HelpDeskTicketController::class, 'clone']);
+        Route::post('/help-desk/tickets/{ticket}/send-email', [\App\Http\Controllers\HelpDeskTicketController::class, 'sendEmail']);
+        Route::post('/help-desk/tickets/{ticket}/schedule', [\App\Http\Controllers\HelpDeskTicketController::class, 'schedule']);
+        Route::delete('/help-desk/tickets/{ticket}/schedule', [\App\Http\Controllers\HelpDeskTicketController::class, 'unschedule']);
+        Route::post('/help-desk/tickets/{ticket}/schedule-reopen', [\App\Http\Controllers\HelpDeskTicketController::class, 'scheduleReopen']);
+        Route::delete('/help-desk/tickets/{ticket}/schedule-reopen', [\App\Http\Controllers\HelpDeskTicketController::class, 'cancelScheduledReopen']);
+        Route::post('/help-desk/tickets/{ticket}/comments/{comment}/to-kb', [\App\Http\Controllers\HelpDeskTicketController::class, 'commentToKb']);
+        Route::get('/help-desk/kb/suggest',              [\App\Http\Controllers\HelpDeskKbArticleController::class, 'suggest']);
+        Route::post('/help-desk/tickets/merge',          [\App\Http\Controllers\HelpDeskMergeController::class, 'merge']);
+        Route::post('/help-desk/tickets/{target}/unmerge/{source}', [\App\Http\Controllers\HelpDeskMergeController::class, 'unmerge']);
+        Route::get('/help-desk/tickets/{target}/merged', [\App\Http\Controllers\HelpDeskMergeController::class, 'mergedList']);
+        Route::get('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'index']);
+        Route::put('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'update']);
+        Route::get('/help-desk/portal/columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'portal']);
+        Route::get('/help-desk/portal/statuses',         [\App\Http\Controllers\HelpDeskPortalController::class, 'statuses']);
+        Route::post('/help-desk/portal/tickets/{ticket}/accept', [\App\Http\Controllers\HelpDeskPortalController::class, 'accept']);
+        Route::post('/help-desk/portal/tickets/{ticket}/reject', [\App\Http\Controllers\HelpDeskPortalController::class, 'reject']);
+        Route::get('/help-desk/portal/tickets/{ticket}/comments/{comment}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskPortalController::class, 'downloadCommentAttachment']);
 
         // ===== Meu Dia: Central de Notificações + Ações + Tarefas + Calendário + Comunicações =====
         // Central de Notificações (tela inicial — só usuários internos)
