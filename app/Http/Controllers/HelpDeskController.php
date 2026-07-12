@@ -48,6 +48,13 @@ class HelpDeskController extends Controller
             // Perfil de acesso do agente logado: o que pode informar na abertura + se pode abrir.
             'my_inform'  => app(\App\Services\HelpDeskAccessPolicy::class)->informMap(auth()->user(), ['service', 'category', 'urgency', 'subject', 'tags']),
             'can_open'   => app(\App\Services\HelpDeskAccessPolicy::class)->canOpen(auth()->user()),
+            // Fila (Kanban): exibir a coluna "Novo" (tickets ainda não distribuídos) p/ este perfil?
+            'see_new_column' => app(\App\Services\HelpDeskAccessPolicy::class)->seeNewColumn(auth()->user()),
+            // Busca global (lupa) liberada para este perfil?
+            'can_search'     => app(\App\Services\HelpDeskAccessPolicy::class)->canGlobalSearch(auth()->user()),
+            // Escopo de visão na fila: 'all' vê os de outros; 'assigned' só os próprios → esconde o
+            // toggle "apenas meus chamados" (redundante), 'none' não vê nada.
+            'view_scope'     => app(\App\Services\HelpDeskAccessPolicy::class)->viewScope(auth()->user()),
         ]]);
     }
 

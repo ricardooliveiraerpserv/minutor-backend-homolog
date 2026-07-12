@@ -58,6 +58,21 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? 'all' : (string) $this->perm($user, 'policies.edit_tickets', 'all');
     }
 
+    /** Exibe a coluna "Novo" (tickets ainda não distribuídos) na fila? Default: sim. */
+    public function seeNewColumn(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'policies.see_new_column', true);
+    }
+
+    /**
+     * Busca global: pesquisa QUALQUER chamado (fora do escopo da fila) para abrir e assumir.
+     * O agente não vê tickets de outros na fila dele, mas pode encontrá-los pela lupa. Default: sim.
+     */
+    public function canGlobalSearch(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'policies.global_search', true);
+    }
+
     public function canOpen(?User $user): bool
     {
         return $this->unrestricted($user) ? true : $this->perm($user, 'tickets.open', 'public_and_internal') !== 'none';
@@ -68,9 +83,94 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.delete_tickets', true);
     }
 
+    /** Pode gerar a versão para impressão/PDF do chamado. Default: sim. */
+    public function canPrint(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.print_ticket', true);
+    }
+
+    /** Pode abrir o painel "Detalhes do SLA" (política, prazos, situação). Default: sim. */
+    public function canViewSla(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.view_sla', true);
+    }
+
+    /** Pode clonar um chamado (abrir uma cópia com a mesma classificação). Default: sim. */
+    public function canClone(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.clone_tickets', true);
+    }
+
+    /** Pode enviar e-mail avulso a partir do chamado. Default: sim. */
+    public function canSendEmail(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.send_email', true);
+    }
+
+    /** Recebe sugestões de artigos da Base de Conhecimento na abertura do chamado. Default: sim. */
+    public function kbSuggestionsEnabled(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.kb_suggestions', true);
+    }
+
+    /**
+     * Escopo p/ candidatar uma interação como artigo da KB: 'none' | 'own' | 'any_any'.
+     * Default: none (não permite) — precisa liberar no perfil.
+     */
+    public function kbCandidateScope(?User $user): string
+    {
+        if ($this->unrestricted($user)) return 'any_any';
+        return (string) ($this->perm($user, 'service.candidate_kb', 'none') ?: 'none');
+    }
+
+    /** Pode transformar ESTA interação em artigo (respeita own/any). */
+    public function canCandidateKb(?User $user, ?\App\Models\HelpDeskTicketComment $comment = null): bool
+    {
+        $scope = $this->kbCandidateScope($user);
+        if ($scope === 'none') return false;
+        if ($scope === 'own' && $comment && (int) $comment->author_user_id !== (int) ($user->id ?? 0)) return false;
+        return true;
+    }
+
+    /** Pode ver o bloco de CONTRATO (tipo + saldo/banco de horas) no resumo do chamado. Default: sim. */
+    public function canViewContract(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'time.view_contract', true);
+    }
+
+    /**
+     * Escopo do "Ver apontamentos" do chamado: 'all' (todos) ou 'own' (só os do usuário logado).
+     * Default: todos. Configurável no perfil de acesso (time.apontamentos_scope).
+     */
+    public function apontamentosScope(?User $user): string
+    {
+        if ($this->unrestricted($user)) return 'all';
+        return $this->perm($user, 'time.apontamentos_scope', 'all') === 'own' ? 'own' : 'all';
+    }
+
     public function canReopen(?User $user): bool
     {
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.reopen_tickets', true);
+    }
+
+    /**
+     * Pode ENCERRAR (fechar/cancelar) um chamado — mover para um status terminal.
+     * Baseline: coordenador + admin SEMPRE podem. Para os demais (consultor/agente), só se o
+     * perfil de acesso liberar explicitamente (service.close_tickets). Assim, por padrão só
+     * coordenador e admin têm a opção, mas ela fica configurável no perfil.
+     */
+    public function canClose(?User $user): bool
+    {
+        if (!$user) return false;
+        if ($user->isAdmin() || $user->isCoordenador() || !$this->profile($user)) return true;
+        return (bool) $this->perm($user, 'service.close_tickets', false);
+    }
+
+    /** Pode mesclar/desmesclar chamados? */
+    public function canMerge(?User $user): bool
+    {
+        if (!$user) return false;
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.merge_tickets', true);
     }
 
     public function canBeAssignee(?User $user): bool
@@ -94,6 +194,8 @@ class HelpDeskAccessPolicy
     public function canEditComment(?User $user, \App\Models\HelpDeskTicketComment $comment): bool
     {
         if (!$user) return false;
+        // Interações vindas do CLIENTE (portal ou e-mail) NUNCA são editáveis — nem por admin.
+        if ($this->isCustomerComment($comment)) return false;
         if ($this->unrestricted($user)) return true;
         $scope = (string) $this->perm($user, 'service.edit_actions', 'last_own');
         if ($scope === 'none') return false;
@@ -108,6 +210,14 @@ class HelpDeskAccessPolicy
             'any_any'  => true,
             default    => false,
         };
+    }
+
+    /** Interação escrita pelo CLIENTE: contato externo (e-mail) ou autor com perfil cliente. */
+    private function isCustomerComment(\App\Models\HelpDeskTicketComment $comment): bool
+    {
+        if ($comment->author_contact_id) return true;
+        $author = $comment->relationLoaded('author') ? $comment->author : $comment->author()->first();
+        return $author && $author->type === 'cliente';
     }
 
     // ── Aplicação ────────────────────────────────────────────────────────────
@@ -179,7 +289,11 @@ class HelpDeskAccessPolicy
     public function canSee(?User $user, HelpDeskTicket $t): bool
     {
         $s = $this->viewScope($user);
-        return $s === 'all' ? true : ($s === 'none' ? false : (int) $t->assignee_id === (int) $user?->id);
+        if ($s === 'all') return true;
+        if ($s === 'none') return false;
+        if ((int) $t->assignee_id === (int) $user?->id) return true;
+        // Fora do escopo da fila, mas a busca global permite ABRIR e ASSUMIR chamados de outros.
+        return $this->canGlobalSearch($user);
     }
 
     public function canEdit(?User $user, HelpDeskTicket $t): bool

@@ -262,3 +262,18 @@ Schedule::command('tasks:notify-overdue')
   ->name('tasks-notify-overdue')
   ->description('Notifica o responsável sobre tarefas atrasadas')
   ->withoutOverlapping();
+
+// 🎫 HELP DESK — retoma SLA de agendados vencidos + reabre chamados com reabertura agendada.
+Schedule::command('help-desk:resume-scheduled')
+  ->cron('*/5 * * * *')
+  ->name('help-desk-resume-scheduled')
+  ->description('Retoma o SLA de chamados agendados cuja data/hora já passou')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
+Schedule::command('help-desk:run-scheduled-reopens')
+  ->cron('*/5 * * * *')
+  ->name('help-desk-run-scheduled-reopens')
+  ->description('Reabre chamados resolvidos/encerrados com reabertura agendada vencida')
+  ->withoutOverlapping(10)
+  ->runInBackground();

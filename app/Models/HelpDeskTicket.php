@@ -31,6 +31,9 @@ class HelpDeskTicket extends Model
         'first_responded_at', 'resolved_at', 'closed_at', 'reopened_at',
         'first_response_breached', 'resolution_breached', 'reopen_count',
         'last_activity_at', 'source_system', 'external_ref', 'created_by_id',
+        'scheduled_until', 'scheduled_all_day', 'sla_paused_at',
+        'reopen_scheduled_at', 'reopen_scheduled_note', 'reopen_scheduled_by_id',
+        'previous_ticket_id', 'merged_into_id',
     ];
 
     protected $casts = [
@@ -41,6 +44,10 @@ class HelpDeskTicket extends Model
         'closed_at'               => 'datetime',
         'reopened_at'             => 'datetime',
         'last_activity_at'        => 'datetime',
+        'scheduled_until'         => 'datetime',
+        'scheduled_all_day'       => 'boolean',
+        'sla_paused_at'           => 'datetime',
+        'reopen_scheduled_at'     => 'datetime',
         'first_response_breached' => 'boolean',
         'resolution_breached'     => 'boolean',
         'reopen_count'            => 'integer',
@@ -91,6 +98,16 @@ class HelpDeskTicket extends Model
     public function service(): BelongsTo   { return $this->belongsTo(HelpDeskService::class, 'service_id'); }
     public function justification(): BelongsTo { return $this->belongsTo(HelpDeskTicketJustification::class, 'justification_id'); }
     public function status(): BelongsTo    { return $this->belongsTo(HelpDeskStatus::class, 'status_id'); }
+    /** Chamado ANTERIOR (encerrado) do qual este é continuação — resposta de e-mail a ticket fechado. */
+    public function previousTicket(): BelongsTo { return $this->belongsTo(HelpDeskTicket::class, 'previous_ticket_id'); }
+    /** Chamados de CONTINUAÇÃO abertos a partir DESTE (quando ele estava encerrado). */
+    public function continuations(): HasMany { return $this->hasMany(HelpDeskTicket::class, 'previous_ticket_id'); }
+    /** Chamado de DESTINO ao qual ESTE foi mesclado (null = não mesclado). */
+    public function mergedInto(): BelongsTo { return $this->belongsTo(HelpDeskTicket::class, 'merged_into_id'); }
+    /** Chamados de ORIGEM mesclados NESTE (o "Tickets Mesclados" do destino). */
+    public function mergedTickets(): HasMany { return $this->hasMany(HelpDeskTicket::class, 'merged_into_id'); }
+    /** Está mesclado a outro chamado? */
+    public function isMerged(): bool { return $this->merged_into_id !== null; }
     public function assignee(): BelongsTo  { return $this->belongsTo(User::class, 'assignee_id'); }
     public function team(): BelongsTo      { return $this->belongsTo(HelpDeskTeam::class, 'team_id'); }
     public function slaPolicy(): BelongsTo { return $this->belongsTo(HelpDeskSlaPolicy::class, 'sla_policy_id'); }
