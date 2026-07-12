@@ -367,6 +367,12 @@ class UserController extends Controller
             'signature.show_photo' => 'nullable|boolean',
             'signature.custom_cargo' => 'nullable|boolean',
             'enabled' => 'sometimes|boolean',
+            'can_use_bot' => 'sometimes|boolean',
+            'bot_allowed_scopes' => 'sometimes|nullable|array',
+            'bot_allowed_scopes.*' => 'string|in:' . implode(',', \App\Services\Ai\Tools\MinutorToolRegistry::ALL_SCOPES),
+            'bot_visibility' => 'sometimes|in:self,team,all',
+            'bot_scope_overrides' => 'sometimes|nullable|array',
+            'inbox_email_disabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'hourly_rate_effective_from' => 'nullable|date',
             'rate_type' => 'nullable|in:hourly,monthly',
@@ -424,6 +430,21 @@ class UserController extends Controller
 
             // Criar usuário com senha placeholder (setTemporaryPassword irá sobrescrever com hash correto)
             $userData['password'] = 'placeholder';
+
+            // Aplica defaults do BOT da política do perfil — somente quando o
+            // payload não envia os campos explicitamente (admin pode sobrescrever no form).
+            $profileType = $userData['type'] ?? null;
+            if ($profileType) {
+                $policy = \App\Models\BotPermissionProfile::forType($profileType);
+                if ($policy) {
+                    foreach (['can_use_bot', 'allowed_scopes' => 'bot_allowed_scopes', 'visibility' => 'bot_visibility', 'scope_overrides' => 'bot_scope_overrides'] as $src => $dst) {
+                        $srcKey = is_int($src) ? $dst : $src;
+                        if (! array_key_exists($dst, $userData)) {
+                            $userData[$dst] = $policy->{$srcKey};
+                        }
+                    }
+                }
+            }
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($userData, array_flip(User::PROTECTED_FIELDS));
@@ -603,6 +624,12 @@ class UserController extends Controller
             'signature.show_photo' => 'nullable|boolean',
             'signature.custom_cargo' => 'nullable|boolean',
             'enabled' => 'sometimes|boolean',
+            'can_use_bot' => 'sometimes|boolean',
+            'bot_allowed_scopes' => 'sometimes|nullable|array',
+            'bot_allowed_scopes.*' => 'string|in:' . implode(',', \App\Services\Ai\Tools\MinutorToolRegistry::ALL_SCOPES),
+            'bot_visibility' => 'sometimes|in:self,team,all',
+            'bot_scope_overrides' => 'sometimes|nullable|array',
+            'inbox_email_disabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
             'hourly_rate_effective_from' => 'nullable|date',
             'rate_type' => 'nullable|in:hourly,monthly',
