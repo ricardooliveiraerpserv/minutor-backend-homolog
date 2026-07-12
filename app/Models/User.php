@@ -46,6 +46,12 @@ class User extends Authenticatable
         'email',
         'password',
         'enabled',
+        'can_use_bot',
+        'bot_allowed_scopes',
+        'bot_visibility',
+        'bot_scope_overrides',
+        'inbox_email_last_sent_at',
+        'inbox_email_disabled',
         'hourly_rate',
         'rate_type',
         'daily_hours',
@@ -126,6 +132,11 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'enabled' => 'boolean',
+            'can_use_bot' => 'boolean',
+            'bot_allowed_scopes' => 'array',
+            'bot_scope_overrides' => 'array',
+            'inbox_email_last_sent_at' => 'datetime',
+            'inbox_email_disabled' => 'boolean',
             'hourly_rate' => 'decimal:2',
             'daily_hours' => 'decimal:2',
             'has_temporary_password' => 'boolean',
@@ -238,6 +249,86 @@ class User extends Authenticatable
         return [(string) $this->type];
     }
     public function isParceiroAdmin(): bool { return $this->type === 'parceiro_admin'; }
+
+    // ── BOT: equipe e clientes acessíveis ─────────────────────────────
+    // Usados pelo BotAccessControl quando bot_visibility = 'team'.
+
+    /** IDs dos clientes onde este user atua (projetos alocados, coordenados ou liderados). */
+    public function botTeamCustomerIds(): array
+    {
+        $ids = collect();
+
+        // Clientes do customer_id (caso seja user de cliente)
+        if ($this->customer_id) {
+            $ids->push($this->customer_id);
+        }
+
+        // Clientes de projetos onde sou consultor
+        $ids = $ids->merge(
+            \DB::table('project_consultants')
+                ->join('projects', 'project_consultants.project_id', '=', 'projects.id')
+                ->where('project_consultants.user_id', $this->id)
+                ->pluck('projects.customer_id')
+        );
+
+        // Clientes de projetos onde sou coordenador (pivot project_coordinators)
+        $ids = $ids->merge(
+            \DB::table('project_coordinators')
+                ->join('projects', 'project_coordinators.project_id', '=', 'projects.id')
+                ->where('project_coordinators.user_id', $this->id)
+                ->pluck('projects.customer_id')
+        );
+
+        // Clientes de projetos onde sou architect / executivo_conta / vendedor
+        $ids = $ids->merge(
+            \DB::table('projects')
+                ->where(function ($q) {
+                    $q->where('architect_id', $this->id)
+                      ->orWhere('executivo_conta_id', $this->id)
+                      ->orWhere('vendedor_id', $this->id);
+                })
+                ->pluck('customer_id')
+        );
+
+        // Clientes de contratos onde sou kanban_coordinator
+        $ids = $ids->merge(
+            \DB::table('contracts')
+                ->where('kanban_coordinator_id', $this->id)
+                ->whereNull('deleted_at')
+                ->pluck('customer_id')
+        );
+
+        return $ids->filter()->unique()->values()->all();
+    }
+
+    /** IDs dos users (consultores) que estão na equipe deste user (compartilham projetos onde ele coordena). */
+    public function botTeamUserIds(): array
+    {
+        // Projetos onde sou coordenador / arquiteto / exec conta / vendedor
+        $myProjects = \DB::table('project_coordinators')
+            ->where('user_id', $this->id)->pluck('project_id')
+            ->merge(
+                \DB::table('projects')
+                    ->where(function ($q) {
+                        $q->where('architect_id', $this->id)
+                          ->orWhere('executivo_conta_id', $this->id)
+                          ->orWhere('vendedor_id', $this->id);
+                    })
+                    ->pluck('id')
+            )
+            ->unique();
+
+        if ($myProjects->isEmpty()) {
+            return [$this->id];
+        }
+
+        // Consultores alocados nesses projetos
+        $consultants = \DB::table('project_consultants')
+            ->whereIn('project_id', $myProjects)
+            ->pluck('user_id');
+
+        return $consultants->push($this->id)->unique()->values()->all();
+    }
 
     /**
      * Verifica se o usuário tem acesso a uma permissão específica via PermissionService.
