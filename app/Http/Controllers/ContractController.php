@@ -1250,15 +1250,7 @@ class ContractController extends Controller
                 $q->where(function ($inner) {
                     $inner->where('type', 'coordenador')
                           ->whereIn('coordinator_type', ['projetos', 'sustentacao']);
-                })->orWhere(function ($inner) {
-                    $inner->where('type', 'admin')
-                          ->whereHas('coordinatorProjects');
-                })->orWhereExists(function ($sub) {
-                    $sub->select(DB::raw(1))
-                        ->from('projects')
-                        ->whereColumn('projects.kanban_coordinator_override_id', 'users.id')
-                        ->whereNull('projects.deleted_at');
-                })->orWhere('is_coordinator', true);
+                })->orWhere('is_coordinator', true);   // nativo (proj/sust) OU marcado no cadastro — sem detecção implícita
             })
             ->select('id', 'name', 'coordinator_type')
             ->orderBy('name')
@@ -1410,15 +1402,7 @@ class ContractController extends Controller
                 $q->where(function ($inner) {
                     $inner->where('type', 'coordenador')
                           ->whereIn('coordinator_type', ['projetos', 'sustentacao']);
-                })->orWhere(function ($inner) {
-                    $inner->where('type', 'admin')
-                          ->whereHas('coordinatorProjects');
-                })->orWhereExists(function ($sub) {
-                    $sub->select(DB::raw(1))
-                        ->from('projects')
-                        ->whereColumn('projects.kanban_coordinator_override_id', 'users.id')
-                        ->whereNull('projects.deleted_at');
-                })->orWhere('is_coordinator', true);   // marcados explicitamente como coordenador no cadastro
+                })->orWhere('is_coordinator', true);   // nativo (proj/sust) OU marcado no cadastro — sem detecção implícita
             })
             ->select('id', 'name', 'coordinator_type')
             ->orderBy('name')
