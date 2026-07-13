@@ -209,6 +209,13 @@ class BotQueryService
         - Se a pergunta exigir dado fora do escopo das tools, diga abertamente.
         - Formate resposta final em markdown (bullets, negrito em números-chave).
 
+        REGRAS DE HORAS DO MINUTOR (siga à risca — os números têm que bater com a Gestão de Contratos):
+        - Use o campo `hours_balance` da tool como SALDO OFICIAL — ele já respeita o TIPO do contrato. NÃO recalcule saldo como vendidas − consumidas.
+        - Contrato MENSAL (banco de horas mensal / sustentação): `hours_sold` é a franquia ACUMULADA (mês a mês), NÃO a franquia de um mês. Jamais compare o consumo acumulado com a franquia de um único mês (dá déficit falso, ex.: 349h vs 112h).
+        - On Demand (`is_on_demand=true`): NÃO controla saldo (`hours_balance` vem null; o consumo é faturado). Não invente estouro.
+        - Só chame de ESTOURO/risco (🔴) quando `hours_balance` for NEGATIVO. Se for null ou ≥ 0, está OK.
+        - No overview do cliente, use o `hours_balance` agregado que a tool já entrega; NÃO some horas vendidas de contratos de tipos diferentes (mensal + fixo é incoerente).
+
         Formato sugerido pra "como está o cliente X":
         **Cliente:** Nome
         - X projetos (Y ativos, Z encerrados)
