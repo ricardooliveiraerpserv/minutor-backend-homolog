@@ -23,13 +23,14 @@ use App\Services\Customer360Service;
  */
 class Customer360HelpDeskPresenter
 {
-    public function __construct(private Customer360Service $svc)
+    public function __construct(private Customer360Service $svc, private \App\Services\HelpDeskAccessPolicy $access)
     {
     }
 
     public function present(Customer $customer, ?HelpDeskTicket $ticket, User $user): array
     {
         $financeiro = $this->canSeeFinancial($user);
+        $contratoVisivel = $this->access->canViewContract($user);
 
         $blocos = [
             'cliente'   => $this->svc->cliente($customer, $ticket),
@@ -47,9 +48,14 @@ class Customer360HelpDeskPresenter
         if (!$financeiro) {
             $blocos = $this->stripFinancial($blocos);
         }
+        // Sem permissão de contrato: remove tipo/saldo/banco de horas do payload (não só oculta na UI).
+        if (!$contratoVisivel) {
+            $blocos['contrato'] = ['tipo' => null, 'nome' => null, 'banco_horas' => ['contratadas' => 0, 'consumidas' => 0, 'saldo' => 0]];
+        }
 
         return [
             'financeiro_visivel' => $financeiro,
+            'contrato_visivel'   => $contratoVisivel,
             'atencoes'           => $atencoes,
             'blocos'             => $blocos,
         ];

@@ -31,6 +31,7 @@ class HelpDeskStatusController extends Controller
             'is_resolved' => 'nullable|boolean',
             'is_terminal' => 'nullable|boolean',
             'sla_paused'  => 'nullable|boolean',
+            'allows_scheduling' => 'nullable|boolean',
             'active'      => 'nullable|boolean',
         ];
     }
