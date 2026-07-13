@@ -11,7 +11,7 @@ class HelpDeskForm extends Model
 {
     protected $table = 'helpdesk_forms';
 
-    protected $fillable = ['name', 'status_id', 'title', 'intro', 'show_logo', 'active'];
+    protected $fillable = ['name', 'status_id', 'title', 'subtitle', 'intro', 'show_logo', 'active'];
 
     protected $casts = ['show_logo' => 'boolean', 'active' => 'boolean'];
 

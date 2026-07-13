@@ -33,6 +33,7 @@ class HelpDeskTrigger extends Model
         'field_changed'   => 'Quando um campo é alterado',
         'assigned'        => 'Quando o responsável muda',
         'idle_in_status'  => 'Quando fica parado num status por X tempo',
+        'merged'          => 'Quando chamados são mesclados',
     ];
 
     public const OPERATORS = [
@@ -74,6 +75,8 @@ class HelpDeskTrigger extends Model
             ['key' => 'resolution_breached',     'label' => 'SLA resolução estourado',    'type' => 'bool',   'operators' => ['is_true', 'is_false']],
             ['key' => 'reopen_count',            'label' => 'Nº de reaberturas',          'type' => 'number', 'operators' => ['gte', 'lte', 'eq']],
             ['key' => 'comment_by',              'label' => 'Interação feita por',        'type' => 'enum',   'source' => 'commentBy',      'operators' => ['eq', 'neq']],
+            ['key' => 'visibility',              'label' => 'Visibilidade da interação',  'type' => 'enum',   'source' => 'visibilities',   'operators' => ['eq', 'neq']],
+            ['key' => 'is_continuation',         'label' => 'É continuação (de chamado encerrado)', 'type' => 'bool', 'operators' => ['is_true', 'is_false']],
             ['key' => 'idle_hours',              'label' => 'Tempo parado (horas)',       'type' => 'number', 'operators' => ['gte', 'lte']],
         ];
     }

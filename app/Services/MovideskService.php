@@ -967,27 +967,36 @@ class MovideskService
                 return null;
             }
 
-            // 2. Fallback: busca projeto de sustentação do cliente
-            $project = Project::where('customer_id', $customerId)
+            // 3. Fallback: projeto de sustentação ATIVO do cliente (determinístico:
+            // On Demand primeiro, depois o mais antigo). A escolha definitiva é o flag
+            // (passo 1); este fallback só decide quando NENHUM projeto tem o flag.
+            $candidates = Project::where('projects.customer_id', $customerId)
                 ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+                ->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id')
                 ->where(function ($q) {
                     $q->where('service_types.code', 'sustentacao')
                       ->orWhere('service_types.name', 'ilike', '%sustenta%');
                 })
+                ->whereNotIn('projects.status', [
+                    Project::STATUS_CANCELLED,
+                    Project::STATUS_FINISHED,
+                    Project::STATUS_PAUSED,
+                ])
+                ->orderByRaw("(contract_types.code = 'on_demand') DESC")
+                ->orderBy('projects.id')
                 ->select('projects.*')
-                ->first();
+                ->get();
 
-            if ($project) {
-                if ($project->isActive()) {
-                    return $project->id;
-                }
-
-                Log::warning('⚠️ [MOVIDESK] Projeto de sustentação do cliente está inativo — usando projeto padrão', [
-                    'project_id'   => $project->id,
-                    'project_name' => $project->name,
-                    'status'       => $project->status,
-                    'customer_id'  => $customerId,
+            if ($candidates->count() > 1) {
+                Log::warning('⚠️ [MOVIDESK] Cliente com múltiplos projetos de sustentação ativos e NENHUM com movidesk_integration_enabled — fallback determinístico (On Demand > mais antigo).', [
+                    'customer_id' => $customerId,
+                    'candidates'  => $candidates->pluck('id')->all(),
+                    'chosen'      => $candidates->first()->id,
                 ]);
+            }
+
+            if ($project = $candidates->first()) {
+                return $project->id;
             }
         }
 

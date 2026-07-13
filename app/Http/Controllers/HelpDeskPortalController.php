@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Attachments\AttachmentService;
 use App\Http\Portal\HelpDeskPortalPresenter;
 use App\Models\Attachment;
+use App\Models\HelpDeskTicketComment;
 use App\Models\HelpDeskKbArticle;
 use App\Models\HelpDeskStatus;
 use App\Models\HelpDeskTicket;
@@ -68,14 +69,23 @@ class HelpDeskPortalController extends Controller
         ]]);
     }
 
+    /** Colunas do Kanban do cliente: status ATIVOS e não-terminais (ordem do cadastro). */
+    public function statuses(): JsonResponse
+    {
+        $rows = HelpDeskStatus::where('active', true)->where('is_terminal', false)
+            ->orderBy('sort_order')->orderBy('id')->get(['label', 'color']);
+        return response()->json(['data' => $rows->map(fn ($s) => ['label' => $s->label, 'cor' => $s->color])->values()]);
+    }
+
     public function myTickets(Request $request): JsonResponse
     {
         $cid = $this->customerId($request);
         $scope = $this->access->clientViewScope($request->user()); // own | same_org | none
         $tickets = HelpDeskTicket::where('customer_id', $cid)
+            ->whereNull('merged_into_id') // chamados mesclados não aparecem na lista do cliente
             ->when($scope === 'own', fn ($q) => $q->where('requester_user_id', $request->user()->id)) // só os que ELE abriu
             ->when($scope === 'none', fn ($q) => $q->whereRaw('1 = 0'))
-            ->with('status:id,key,label,color,is_open,sla_paused')
+            ->with(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'assignee:id,name', 'contact:id,name'])
             ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
             ->orderByDesc('updated_at')->get();
         $events = $this->eventsByTicket($tickets);
@@ -90,9 +100,9 @@ class HelpDeskPortalController extends Controller
         $scope = $this->access->clientViewScope($u);
         abort_if($scope === 'none', 403, 'Seu perfil de acesso não permite visualizar chamados.');
         abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
-        $ticket->load(['status:id,key,label,color,is_open,sla_paused', 'service:id,name', 'assignee:id,name', 'category:id,name', 'justification:id,name', 'tags:id,name']);
+        $ticket->load(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'service:id,name', 'assignee:id,name', 'category:id,name', 'justification:id,name', 'tags:id,name', 'customer:id,name', 'team:id,name', 'contact:id,name', 'requester:id,name', 'previousTicket:id,ticket_number,customer_id', 'continuations:id,ticket_number,customer_id,previous_ticket_id']);
         $events   = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
-        $comments = $ticket->comments()->where('visibility', 'customer')->orderBy('created_at')->get();
+        $comments = $ticket->comments()->where('visibility', 'customer')->with('author:id,name')->orderBy('created_at')->get();
         $atts     = $this->publicAttachments($ticket);
         $agentHours = round((float) $ticket->timesheets()->whereNull('deleted_at')->sum('effort_minutes') / 60, 2);
         // Campos visíveis ao cliente (perfil). Legados default visível; novos default oculto.
@@ -101,9 +111,17 @@ class HelpDeskPortalController extends Controller
             'status'        => $this->access->clientViewField($u, 'status', true),
             'sla_due'       => $this->access->clientViewField($u, 'sla_due', true),
             'subject'       => $this->access->clientViewField($u, 'subject', true),
-            'service'       => $this->access->clientViewField($u, 'service', false),
-            'responsible'   => $this->access->clientViewField($u, 'responsible', false),
-            'category'      => $this->access->clientViewField($u, 'category', false),
+            // Detalhes do chamado — VISÍVEIS por padrão (o cliente vê os dados do próprio chamado).
+            'customer'      => $this->access->clientViewField($u, 'customer', true),
+            'requester'     => $this->access->clientViewField($u, 'requester', true),
+            'agent'         => $this->access->clientViewField($u, 'agent', true),
+            'team'          => $this->access->clientViewField($u, 'team', true),
+            'category'      => $this->access->clientViewField($u, 'category', true),
+            'service'       => $this->access->clientViewField($u, 'service', true),
+            'level'         => $this->access->clientViewField($u, 'level', true),
+            'reopens'       => $this->access->clientViewField($u, 'reopens', true),
+            'cc'            => $this->access->clientViewField($u, 'cc', true),
+            // Extras opt-in (mais internos).
             'justification' => $this->access->clientViewField($u, 'justification', false),
             'agent_times'   => $this->access->clientViewField($u, 'agent_times', false),
             'tags'          => $this->access->clientViewField($u, 'tags', false),
@@ -148,7 +166,8 @@ class HelpDeskPortalController extends Controller
             'created_by_id'     => $request->user()->id,
             'last_activity_at'  => now(),
         ]));
-        $ticket->update(['ticket_number' => 'HD-' . str_pad((string) $ticket->id, 6, '0', STR_PAD_LEFT)]);
+        // Número no formato CONFIGURADO (prefixo + dígitos + sequência) — não hardcoded HD-######.
+        $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next()]);
         $this->sla->apply($ticket);
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
 
@@ -156,20 +175,87 @@ class HelpDeskPortalController extends Controller
         return response()->json(['data' => HelpDeskPortalPresenter::ticket($ticket, $this->sla->clientSummary($ticket))], 201);
     }
 
-    /** Cliente responde ao próprio chamado (sempre visível ao cliente). */
-    public function addComment(Request $request, HelpDeskTicket $ticket): JsonResponse
+    /** Cliente responde ao próprio chamado (sempre visível ao cliente). Anexos vão JUNTO da interação. */
+    public function addComment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
         $this->ownTicket($request, $ticket);
-        $v = $request->validate(['body' => 'required|string']);
+        $v = $request->validate([
+            'body'    => 'required_without:files|nullable|string',
+            'files'   => 'nullable|array',
+            'files.*' => 'file|max:25600',
+        ]);
         $comment = $ticket->comments()->create([
             'author_user_id' => $request->user()->id,
-            'body'           => $v['body'],
+            'body'           => $v['body'] ?? '',
             'visibility'     => 'customer',
             'channel'        => 'portal',
         ]);
+        // Anexos/prints DA INTERAÇÃO (entity_type do COMENTÁRIO, não solto no chamado).
+        foreach ((array) $request->file('files', []) as $file) {
+            $svc->store($request->user(), [
+                'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
+                'category'    => str_starts_with((string) $file->getMimeType(), 'image/') ? 'image' : 'attachment',
+                'file'        => $file, 'visibility' => 'customer',
+            ], $request);
+        }
         $ticket->update(['last_activity_at' => now()]);
         HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
-        return response()->json(['data' => HelpDeskPortalPresenter::comment($comment, $request->user()->id)], 201);
+        return response()->json(['data' => HelpDeskPortalPresenter::comment($comment->fresh()->load('author:id,name'), $request->user()->id)], 201);
+    }
+
+    /** Download de anexo de uma INTERAÇÃO (comentário) do chamado do cliente. */
+    public function downloadCommentAttachment(Request $request, HelpDeskTicket $ticket, HelpDeskTicketComment $comment, Attachment $attachment, AttachmentService $svc)
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless((int) $comment->ticket_id === $ticket->id, 404);
+        abort_unless($attachment->entity_type === 'HELPDESK_TICKET_COMMENT' && (int) $attachment->entity_id === $comment->id && $attachment->visibility === 'customer', 404);
+        return $svc->downloadStream($attachment, $request->user(), $request);
+    }
+
+    /** Cliente ACEITA a solução → chamado é ENCERRADO (fechado). Só se estiver resolvido. */
+    public function accept(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless(optional($ticket->status)->is_resolved, 422, 'O chamado não está resolvido.');
+        $fechado = HelpDeskStatus::where('key', 'fechado')->first();
+        abort_unless($fechado, 500, 'Status "fechado" não configurado.');
+        $old = $ticket->status;
+        $ticket->status_id = $fechado->id;
+        if (!$ticket->closed_at) $ticket->closed_at = now();
+        $ticket->last_activity_at = now();
+        $this->sla->computeBreaches($ticket);
+        $ticket->save();
+        HelpDeskTicketEvent::log($ticket->id, 'closed', ['to_value' => $fechado->label, 'meta' => ['via' => 'portal', 'aceite_cliente' => true]]);
+        HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $fechado->key, 'meta' => ['via' => 'portal']]);
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    /** Cliente RECUSA a solução → volta para "Em atendimento" + registra o motivo como interação. */
+    public function reject(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless(optional($ticket->status)->is_resolved, 422, 'O chamado não está resolvido.');
+        $v = $request->validate(['reason' => 'required|string|max:2000']);
+        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        abort_unless($em, 500, 'Status "em andamento" não configurado.');
+        $old = $ticket->status;
+        $ticket->status_id   = $em->id;
+        $ticket->reopened_at = now();
+        $ticket->resolved_at = null;
+        $ticket->reopen_count = (int) $ticket->reopen_count + 1;
+        $ticket->last_activity_at = now();
+        $this->sla->computeBreaches($ticket);
+        $ticket->save();
+        $comment = $ticket->comments()->create([
+            'author_user_id' => $request->user()->id,
+            'body'           => 'Solução recusada pelo cliente: ' . $v['reason'],
+            'visibility'     => 'customer',
+            'channel'        => 'portal',
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'portal', 'motivo' => $v['reason']]]);
+        HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'portal']]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
+        return response()->json(['data' => ['ok' => true]]);
     }
 
     // ── Anexos do chamado pelo cliente (R5) — Attachment Engine global ────────
