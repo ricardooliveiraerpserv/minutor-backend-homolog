@@ -74,16 +74,11 @@ jobs:
             docker compose pull backend queue-worker scheduler
             docker compose up -d --no-deps backend queue-worker scheduler
             sleep 6
-            echo "=== DB que o container enxerga ==="
-            docker exec minutor-backend sh -c 'echo "DB_CONNECTION=$DB_CONNECTION DB_HOST=$DB_HOST DB_PORT=$DB_PORT DB_DATABASE=$DB_DATABASE"' || true
-            echo "=== host que a config (CLI/migrate) resolve ==="
-            docker exec minutor-backend php artisan tinker --execute="echo config('database.connections.pgsql.host').':'.config('database.connections.pgsql.port');" 2>&1 | tail -1 || true
-            echo "=== TCP do CONTAINER -> banco (5432) ==="
-            docker exec minutor-backend php -r '$c=@fsockopen(getenv("DB_HOST")?:"92.246.128.96",5432,$e,$m,5); echo $c?"TCP OK do container
-":"TCP FALHOU do container: $m ($e)
-";' 2>&1 || true
-            echo "=== TCP do HOST VPS -> banco (5432) ==="
-            (echo > /dev/tcp/92.246.128.96/5432) 2>/dev/null && echo "TCP OK do host" || echo "TCP FALHOU do host"
-            docker exec minutor-backend php artisan migrate --force || echo "::warning:: MIGRATE FALHOU (ver DB host acima)"
+            echo "=== DB host (container) ==="
+            docker exec minutor-backend sh -c 'echo "DB_HOST=$DB_HOST DB_PORT=$DB_PORT DB_DATABASE=$DB_DATABASE"' || true
+            echo "=== TCP container -> banco 5432 ==="
+            docker exec minutor-backend php -r '$c=@fsockopen("92.246.128.96",5432,$e,$m,5); echo $c ? "TCP_OK_CONTAINER" : "TCP_FALHOU_CONTAINER: $m ($e)"; echo PHP_EOL;' || true
+            echo "=== migrate ==="
+            docker exec minutor-backend php artisan migrate --force || echo "MIGRATE_FALHOU"
             docker exec minutor-backend php artisan optimize
             docker image prune -af || true
