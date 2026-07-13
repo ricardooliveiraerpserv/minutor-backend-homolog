@@ -56,6 +56,7 @@ class PresenceController extends Controller
 
         $users = User::whereIn('id', $rows->pluck('user_id'))
             ->where('enabled', true)
+            ->where('can_use_bot', true) // só quem está habilitado para o BOT/chat no cadastro
             ->get()
             ->keyBy('id');
 
