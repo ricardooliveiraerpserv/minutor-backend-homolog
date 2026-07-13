@@ -196,6 +196,8 @@ class SystemSettingController extends Controller
                 'movidesk_sync_orgs_interval_minutes'   => 'nullable|integer|in:5,10,15,20,30,60',
                 'movidesk_portal_sync_interval_minutes' => 'nullable|integer|in:5,10,15,20,30,60',
                 'movidesk_import_start_date'            => 'nullable|date',
+                'chat_notification_sound'               => 'nullable|string|in:ding,tri,chime,pop,alerta,suave',
+                'chat_notification_volume'              => 'nullable|integer|min:0|max:100',
             ], [
                 'timesheet_retroactive_limit_days.integer'         => 'O prazo deve ser um número inteiro.',
                 'timesheet_retroactive_limit_days.min'             => 'O prazo não pode ser negativo.',
@@ -281,6 +283,8 @@ class SystemSettingController extends Controller
             'movidesk_sync_orgs_interval_minutes'   => 'integer',
             'movidesk_portal_sync_interval_minutes' => 'integer',
             'movidesk_import_start_date'            => 'string',
+            'chat_notification_volume'              => 'integer',
+            'chat_notification_sound'               => 'string',
             default => 'string',
         };
     }
@@ -299,6 +303,8 @@ class SystemSettingController extends Controller
             'movidesk_sync_orgs_interval_minutes'   => 'movidesk',
             'movidesk_portal_sync_interval_minutes' => 'movidesk',
             'movidesk_import_start_date'            => 'movidesk',
+            'chat_notification_sound'               => 'chat',
+            'chat_notification_volume'              => 'chat',
             default => 'general',
         };
     }
@@ -317,6 +323,8 @@ class SystemSettingController extends Controller
             'movidesk_sync_orgs_interval_minutes'   => 'Intervalo em minutos para sincronização de organizações do Movidesk (5, 10, 15, 20, 30 ou 60)',
             'movidesk_portal_sync_interval_minutes' => 'Intervalo em minutos para sincronização do Portal de Sustentação do Movidesk (5, 10, 15, 20, 30 ou 60)',
             'movidesk_import_start_date'            => 'Data a partir da qual apontamentos Movidesk serão importados (filtro por data do apontamento)',
+            'chat_notification_sound'               => 'Toque global de notificação do chat (ding, tri, chime, pop, alerta, suave)',
+            'chat_notification_volume'              => 'Volume global do som de notificação do chat (0 a 100)',
             default => '',
         };
     }
