@@ -3,24 +3,79 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Services\AccessControl;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Módulo "Ver como" (SOMENTE fora de produção — ferramenta de simulação da Replica).
+ * Módulo "Ver como" (impersonation) — habilitado em produção como ferramenta de suporte.
  * Impersonation real: gera um token Sanctum do usuário-alvo. O app inteiro passa a
  * renderizar a visão REAL dele (nunca diverge, pois é o mesmo app rodando como ele).
+ *
+ * Autorização em 2 camadas:
+ *  1. BLOCO (cliente/consultor/parceiro) liberado por perfil no Configurador → tela `/ver-como`,
+ *     ação `ver_como.<bloco>` (AccessControl::allows). Admin/administrativo têm todos os blocos.
+ *  2. TRAVA DE NÍVEL (hardcoded, não configurável): você só impersona privilégio ESTRITAMENTE
+ *     menor que o seu. Admin/administrativo (topo) impersonam qualquer um. Evita escalar
+ *     privilégio (ex.: coordenador virando admin, ou vendo outro coordenador).
  */
 class ImpersonationController extends Controller
 {
-    /** Exige admin. (Habilitado em produção — "Ver como" é ferramenta de suporte do admin.) */
-    private function guard(): ?JsonResponse
+    /** Perfis do topo: veem/impersonam qualquer um, sem trava de nível. */
+    private const TOP_TYPES = ['admin', 'administrativo'];
+
+    /** Rank de privilégio p/ "Ver como" (maior = mais poder). */
+    private static function privRank(string $type): int
     {
-        if (!Auth::user()?->isAdmin()) {
-            return response()->json(['message' => 'Acesso negado.'], 403);
+        return match ($type) {
+            'admin', 'administrativo' => 4,
+            'coordenador'             => 3,
+            'consultor'               => 2,
+            default                   => 1, // cliente, parceiro_admin, …
+        };
+    }
+
+    /** Requester pode impersonar alguém deste `type`? (topo = sempre; demais = só nível abaixo). */
+    private function canImpersonateType(User $requester, string $targetType): bool
+    {
+        if (in_array($requester->type, self::TOP_TYPES, true)) return true;
+        return self::privRank($targetType) < self::privRank($requester->type);
+    }
+
+    /** Types que o requester NÃO pode impersonar (rank >= o dele) — p/ filtrar a busca. */
+    private function blockedTargetTypes(User $requester): array
+    {
+        if (in_array($requester->type, self::TOP_TYPES, true)) return [];
+        $rank = self::privRank($requester->type);
+        $all  = ['admin', 'administrativo', 'coordenador', 'consultor', 'cliente', 'parceiro_admin'];
+        return array_values(array_filter($all, fn ($t) => self::privRank($t) >= $rank));
+    }
+
+    /** Blocos liberados ao requester (topo = todos; demais = por AccessControl da tela /ver-como). */
+    private function allowedKinds(User $user): array
+    {
+        $kinds = ['cliente', 'consultor', 'parceiro'];
+        if (in_array($user->type, self::TOP_TYPES, true)) return $kinds;
+        return array_values(array_filter(
+            $kinds,
+            fn ($k) => AccessControl::allows($user, '/ver-como', "ver_como.$k")
+        ));
+    }
+
+    /** Bloqueia se o usuário não tiver o bloco `$kind` liberado. */
+    private function kindGuard(User $user, string $kind): ?JsonResponse
+    {
+        if (!in_array($kind, $this->allowedKinds($user), true)) {
+            return response()->json(['message' => 'Acesso negado a este tipo de visão.'], 403);
         }
         return null;
+    }
+
+    /** Blocos liberados ao usuário logado — o FE usa p/ mostrar só os tiles permitidos. */
+    public function kinds(Request $request): JsonResponse
+    {
+        return response()->json(['data' => $this->allowedKinds($request->user())]);
     }
 
     /**
@@ -29,15 +84,22 @@ class ImpersonationController extends Controller
      */
     public function candidates(Request $request): JsonResponse
     {
-        if ($resp = $this->guard()) return $resp;
-
+        $me        = $request->user();
         $kind      = (string) $request->query('kind', 'consultor');
+        if ($resp = $this->kindGuard($me, $kind)) return $resp;
+
         $q         = trim((string) $request->query('q', ''));
         $admin     = $request->boolean('admin');
         $filter    = (string) $request->query('filter', '');   // consultor: consultant_type OU type (bh/horista/fixo/coordenador/…)
         $partnerId = $request->query('partner_id');            // parceiro: filtrar por empresa parceira
 
         $query = User::query()->where('enabled', true);
+
+        // Trava de nível: some da lista quem tem privilégio igual/maior que o do solicitante
+        // (topo = sem restrição). Impede o coordenador de "ver como" admin/administrativo/coordenador.
+        if ($blocked = $this->blockedTargetTypes($me)) {
+            $query->whereNotIn('type', $blocked);
+        }
 
         switch ($kind) {
             case 'cliente':
@@ -108,7 +170,7 @@ class ImpersonationController extends Controller
      */
     public function partners(Request $request): JsonResponse
     {
-        if ($resp = $this->guard()) return $resp;
+        if ($resp = $this->kindGuard($request->user(), 'parceiro')) return $resp;
 
         $partners = \App\Models\Partner::whereHas('users', fn ($q) => $q->where('type', 'parceiro_admin')->where('enabled', true))
             ->orderBy('name')
@@ -123,8 +185,7 @@ class ImpersonationController extends Controller
      */
     public function impersonate(Request $request): JsonResponse
     {
-        if ($resp = $this->guard()) return $resp;
-
+        $me   = $request->user();
         $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
 
         /** @var User $target */
@@ -132,6 +193,16 @@ class ImpersonationController extends Controller
 
         if ($target->id === Auth::id()) {
             return response()->json(['message' => 'Você já é este usuário.'], 422);
+        }
+
+        // Bloco do tipo do alvo tem que estar liberado ao solicitante.
+        $targetKind = $target->type === 'cliente' ? 'cliente'
+            : ($target->type === 'parceiro_admin' ? 'parceiro' : 'consultor');
+        if ($resp = $this->kindGuard($me, $targetKind)) return $resp;
+
+        // Trava de nível (hardcoded): nunca impersona privilégio igual/maior (topo é exceção).
+        if (!$this->canImpersonateType($me, $target->type)) {
+            return response()->json(['message' => 'Você não pode ver como um usuário deste nível.'], 403);
         }
 
         // No máximo 1 token de impersonation por usuário-alvo.
