@@ -126,9 +126,12 @@ class FechamentoParceiroController extends Controller
 
             $ajuste       = $ajustesMap->get($partner->id);
             $desconto     = round((float) ($ajuste->desconto ?? 0), 2);
-            // Adiantamento = ajuste manual + parcelas da rotina de adiantamento no mês.
+            // Adiantamento = ajuste manual + parcelas da rotina (adiantamento E quitação
+            // de empréstimo — ambos descontam).
             $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2)
                 + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            // Empréstimo = aporte que SOMA no mês em que foi feito.
+            $emprestimo   = \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partner->id, $yearMonth);
             $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
 
             // Quebra serviços × despesas. O pagamento de SERVIÇOS (mão de obra) é sem despesas —
@@ -148,10 +151,10 @@ class FechamentoParceiroController extends Controller
             // No snapshot fechado o total_a_pagar gravado JÁ inclui os ajustes (= recebimento); reconstrói a base p/ exibição.
             if ($f?->isClosed()) {
                 $recebimento = round((float) ($f->total_a_pagar ?? 0), 2);
-                $totalAPagar = round($recebimento + $desconto + $adiantamento - $adicional, 2);
+                $totalAPagar = round($recebimento + $desconto + $adiantamento - $adicional - $emprestimo, 2);
             } else {
                 $totalAPagar = round($servicos + $despesasReais, 2);
-                $recebimento = round($totalAPagar - $desconto - $adiantamento + $adicional, 2);
+                $recebimento = round($totalAPagar - $desconto - $adiantamento + $adicional + $emprestimo, 2);
             }
             $recebimentoSemDespesas = round($recebimento - $despesasReais, 2);
 
@@ -178,6 +181,7 @@ class FechamentoParceiroController extends Controller
                 'desconto_desc'  => $ajuste->desconto_desc ?? null,
                 'adiantamento'   => $adiantamento,
                 'adiantamento_desc' => \App\Models\Adiantamento::descricaoNoMes('parceiro', (int) $partner->id, $yearMonth),
+                'emprestimo_aporte' => $emprestimo,
                 'adicional'      => $adicional,
                 'adicional_desc' => $ajuste->adicional_desc ?? null,
                 'recebimento'    => $recebimento,
@@ -250,6 +254,7 @@ class FechamentoParceiroController extends Controller
         // Adiantamento = ajuste manual + parcelas da rotina (congeladas no snapshot ao fechar).
         $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2)
             + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partnerId, $yearMonth);
+        $emprestimo    = \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partnerId, $yearMonth);
         $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
 
         $fechamento->fill([
@@ -258,7 +263,7 @@ class FechamentoParceiroController extends Controller
             'snapshot_despesas'    => $despesas,
             'total_horas'          => $totalHoras,
             'total_despesas'       => $totalDespesas,
-            'total_a_pagar'        => round($totalServicos + $totalDespesas - $desconto - $adiantamento + $adicional, 2),
+            'total_a_pagar'        => round($totalServicos + $totalDespesas - $desconto - $adiantamento + $adicional + $emprestimo, 2),
             'closed_at'            => now(),
             'closed_by'            => $request->user()->id,
             'notes'                => $request->input('notes'),
@@ -966,7 +971,8 @@ class FechamentoParceiroController extends Controller
             - (float) $ajuste->desconto
             - (float) $ajuste->adiantamento
             - \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partnerId, $yearMonth)
-            + (float) $ajuste->adicional,
+            + (float) $ajuste->adicional
+            + \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partnerId, $yearMonth),
             2
         );
 
