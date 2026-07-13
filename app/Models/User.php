@@ -30,6 +30,7 @@ class User extends Authenticatable
      */
     public const PROTECTED_FIELDS = [
         'is_executive',
+        'is_coordinator',
         'type',
         'coordinator_type',
         'can_timesheet_sustentacao',
@@ -75,6 +76,7 @@ class User extends Authenticatable
         'type',
         'coordinator_type',
         'is_executive',
+        'is_coordinator',
         'is_crm_responsavel',
         'can_timesheet_sustentacao',
         'extra_permissions',
@@ -143,6 +145,7 @@ class User extends Authenticatable
             'has_temporary_password' => 'boolean',
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
+            'is_coordinator' => 'boolean',
             'is_crm_responsavel' => 'boolean',
             'is_bizify' => 'boolean',
             'is_diretor' => 'boolean',
