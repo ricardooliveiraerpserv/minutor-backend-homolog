@@ -1374,12 +1374,19 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Consultor não encontrado.'], 404);
         }
 
+        // O input de "adiantamento" do FE traz o TOTAL do mês (avulso manual + parcelas da rotina).
+        // Persistimos SÓ o avulso — a rotina é somada de volta por descontoNoMes na exibição e no
+        // recebimento. Sem subtrair aqui, salvar re-grava a parcela da rotina como "manual" e ela
+        // passa a ser contada em dobro (bug: fechamento cobrava o total no 1º mês).
+        $rotinaAdto         = \App\Models\Adiantamento::descontoNoMes('consultor', (int) $userId, $yearMonth);
+        $adiantamentoManual = max(0, round((float) ($data['adiantamento'] ?? 0), 2) - $rotinaAdto);
+
         $ajuste = \App\Models\FechamentoConsultorAjuste::updateOrCreate(
             ['user_id' => (int) $userId, 'year_month' => $yearMonth],
             [
                 'desconto'       => round((float) ($data['desconto'] ?? 0), 2),
                 'desconto_desc'  => $data['desconto_desc'] ?? null,
-                'adiantamento'   => round((float) ($data['adiantamento'] ?? 0), 2),
+                'adiantamento'   => $adiantamentoManual,
                 'adicional'      => round((float) ($data['adicional'] ?? 0), 2),
                 'adicional_desc' => $data['adicional_desc'] ?? null,
             ]
