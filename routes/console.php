@@ -187,15 +187,18 @@ Schedule::command('attachments:integrity-check')
   ->withoutOverlapping()
   ->runInBackground();
 
+// DESATIVADO (2026-07-13): não enviamos mais e-mail de mensagens do chat.
+// Em vez do digest por e-mail, as conversas pendentes aparecem no Meu Dia
+// (card PendingChatsCard). Para reativar, descomente o bloco abaixo.
 // Digest de mensagens não lidas do chat — roda a cada 30 minutos
 // e envia email pra cada user que ficou com mensagens não lidas há
 // pelo menos 15 minutos, respeitando cooldown de 60 minutos por user.
-Schedule::command('inbox:digest --min-quiet=15 --cooldown=60')
-  ->everyThirtyMinutes()
-  ->name('inbox-digest')
-  ->description('Envia digest por email das mensagens não lidas do chat')
-  ->withoutOverlapping()
-  ->runInBackground();
+// Schedule::command('inbox:digest --min-quiet=15 --cooldown=60')
+//   ->everyThirtyMinutes()
+//   ->name('inbox-digest')
+//   ->description('Envia digest por email das mensagens não lidas do chat')
+//   ->withoutOverlapping()
+//   ->runInBackground();
 
 // Alertas proativos do BOT (banco de horas crítico, despesas/timesheets pendentes,
 // tickets parados). Roda 1x ao dia às 8h e popula o OperationalFeed — a partir
