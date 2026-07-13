@@ -61,8 +61,9 @@ jobs:
           script: |
             set -e
             cd /opt/minutor
-            docker image prune -af || true
-            docker compose pull
-            docker compose up -d
+            # Só backend (frontend é Vercel; sua imagem no GHCR dá 'denied' e abortaria o pull).
+            docker compose pull backend queue-worker scheduler
+            docker compose up -d --no-deps backend queue-worker scheduler
             docker exec minutor-backend php artisan migrate --force
             docker exec minutor-backend php artisan optimize
+            docker image prune -af || true
