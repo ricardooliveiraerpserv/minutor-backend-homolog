@@ -126,16 +126,33 @@ class NotificationController extends Controller
             @flush();
 
             $last = $since;
+            // Chat: linha de base do maior id de mensagem visível ao usuário (exceto as dele).
+            $lastMsg = $this->maxInboxMessageId($u);
             $deadline = time() + 30;
             while (time() < $deadline) {
                 if (connection_aborted()) break;
+                $emitted = false;
+
                 $max = (int) $this->visibleQuery($u)->max('id');
                 if ($max > $last) {
                     $last = $max;
                     echo "id: {$max}\n";
                     echo "event: notify\n";
                     echo 'data: {"max":' . $max . "}\n\n";
-                } else {
+                    $emitted = true;
+                }
+
+                // Mensagem de chat nova (id maior) → evento "inbox" SEM linha "id:"
+                // (não pode mexer no Last-Event-ID das notificações).
+                $maxMsg = $this->maxInboxMessageId($u);
+                if ($maxMsg > $lastMsg) {
+                    $lastMsg = $maxMsg;
+                    echo "event: inbox\n";
+                    echo 'data: {"max":' . $maxMsg . "}\n\n";
+                    $emitted = true;
+                }
+
+                if (! $emitted) {
                     echo ": ping\n\n"; // heartbeat mantém a conexão viva
                 }
                 @flush();
@@ -148,6 +165,22 @@ class NotificationController extends Controller
             'X-Accel-Buffering' => 'no',
             'Connection'        => 'keep-alive',
         ]);
+    }
+
+    /**
+     * Maior id de mensagem de chat visível ao usuário, ignorando as que ele mesmo enviou.
+     * Mensagens do BOT (sender_user_id NULL) contam. Usado pelo stream SSE (evento "inbox").
+     */
+    private function maxInboxMessageId(\App\Models\User $u): int
+    {
+        return (int) \Illuminate\Support\Facades\DB::table('messages as m')
+            ->join('conversation_participants as p', 'p.conversation_id', '=', 'm.conversation_id')
+            ->where('p.user_id', $u->id)
+            ->whereNull('m.deleted_at')
+            ->where(function ($q) use ($u) {
+                $q->whereNull('m.sender_user_id')->orWhere('m.sender_user_id', '!=', $u->id);
+            })
+            ->max('m.id');
     }
 
     /** Registra visualização (não-bloqueante). */
