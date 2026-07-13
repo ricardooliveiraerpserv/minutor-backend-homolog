@@ -2224,7 +2224,8 @@ class ProjectController extends Controller
         if ($ctNameCs === 'fechado' || $ctCodeCs === 'fixed_hours' || $ctNameCs === 'banco de horas fixo') {
             $aporteHrs         = max(0.0, round($totalAvailableHours - (float) $soldHours, 2));
             $apontaveisHours   = round((float) ($project->coordination_hours ?? 0) + $aporteHrs, 2);
-            $apontaveisBalance = round(max(0.0, $generalBalance - (float) $soldHours + (float) ($project->coordination_hours ?? 0)), 2);
+            // Saldo = Horas Apontáveis − apontadas (gestão não consome o banco apontável).
+            $apontaveisBalance = round(max(0.0, $project->getApontaveisBalance()), 2);
             $apontaveisPct     = $apontaveisHours > 0 ? round((($apontaveisHours - $apontaveisBalance) / $apontaveisHours) * 100, 2) : 0;
         } else {
             $apontaveisHours   = round($totalAvailableHours, 2);
