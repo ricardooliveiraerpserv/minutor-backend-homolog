@@ -770,6 +770,29 @@ class Project extends Model
     }
 
     /**
+     * Saldo APONTÁVEL (Fechado/BH Fixo): teto = "Horas Apontáveis" (coordination_hours)
+     * + aporte, consumido = horas apontadas. O overhead de gestão (coordinator_hours %)
+     * NÃO consome o banco apontável. Reaproveita getGeneralHoursBalance (que já trata
+     * aportes, subprojetos e saldo inicial) trocando o teto vendidas→apontáveis e
+     * devolvendo o overhead de gestão que ele desconta.
+     */
+    public function getApontaveisBalance(?int $excludeTimesheetId = null): float
+    {
+        $general = $this->getGeneralHoursBalance(false, $excludeTimesheetId);
+
+        $loggedMinutes = $this->timesheets()
+            ->whereNotIn('status', [
+                Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED,
+                Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE,
+            ])
+            ->when($excludeTimesheetId, fn ($q) => $q->where('id', '!=', $excludeTimesheetId))
+            ->sum('effort_minutes') ?? 0;
+        $gestao = $this->calculateCoordinationHours(round($loggedMinutes / 60, 2));
+
+        return round($general - (float) ($this->sold_hours ?? 0) + (float) ($this->coordination_hours ?? 0) + $gestao, 2);
+    }
+
+    /**
      * Verificar se o projeto é do tipo On Demand
      */
     public function isOnDemand(): bool

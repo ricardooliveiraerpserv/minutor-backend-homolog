@@ -2849,8 +2849,8 @@ class TimesheetController extends Controller
         $ctNameBlock = strtolower(trim((string) ($project->contractType->name ?? '')));
         $ctCodeBlock = (string) ($project->contractType->code ?? '');
         if ($ctNameBlock === 'fechado' || $ctCodeBlock === 'fixed_hours' || $ctNameBlock === 'banco de horas fixo') {
-            $generalBalance    = $project->getGeneralHoursBalance(false, $excludeTimesheetId);
-            $apontaveisBalance = $generalBalance - (float) ($project->sold_hours ?? 0) + (float) ($project->coordination_hours ?? 0);
+            // Saldo apontável = Horas Apontáveis − apontadas (gestão NÃO consome o banco).
+            $apontaveisBalance = $project->getApontaveisBalance($excludeTimesheetId);
             if ($apontaveisBalance < $hoursToAdd && !$project->allow_negative_balance) {
                 Log::warning('Apontamento bloqueado — Horas Apontáveis insuficientes', [
                     'project_id' => $project->id, 'user_id' => $userId,
