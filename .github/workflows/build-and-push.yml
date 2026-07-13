@@ -49,19 +49,28 @@ jobs:
     needs: build
     if: github.repository == 'Leonardo-almd/minutor-backend'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - name: Deploy no VPS (pull + up + migrate)
+      - name: Deploy no VPS (login GHCR + pull + up + migrate)
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           password: ${{ secrets.VPS_PASSWORD }}
           port: ${{ secrets.VPS_PORT || 22 }}
           command_timeout: 15m
+          envs: GHCR_USER,GHCR_TOKEN
           script: |
             set -e
+            # VPS pode estar deslogado do GHCR (pull dava 'denied'). Loga com o token do workflow.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             cd /opt/minutor
-            # Só backend (frontend é Vercel; sua imagem no GHCR dá 'denied' e abortaria o pull).
+            # Só backend (frontend é Vercel; sua imagem no GHCR nem existe).
             docker compose pull backend queue-worker scheduler
             docker compose up -d --no-deps backend queue-worker scheduler
             docker exec minutor-backend php artisan migrate --force
