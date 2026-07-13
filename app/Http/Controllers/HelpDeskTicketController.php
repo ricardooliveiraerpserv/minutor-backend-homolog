@@ -1057,6 +1057,16 @@ class HelpDeskTicketController extends Controller
         if ((int) $new->id === (int) $ticket->status_id) {
             return;
         }
+        // Classificação obrigatória para CONCLUIR (resolver): Categoria, Serviço, Urgência e Nível
+        // precisam estar preenchidos antes de mover o chamado para um status resolvido.
+        if ($new->is_resolved && !optional($ticket->status)->is_resolved) {
+            $faltando = [];
+            if (!$ticket->category_id) $faltando[] = 'Categoria';
+            if (!$ticket->service_id)  $faltando[] = 'Serviço';
+            if (!$ticket->priority)    $faltando[] = 'Urgência';
+            if (!$ticket->level)       $faltando[] = 'Nível';
+            abort_if(!empty($faltando), 422, 'Preencha antes de concluir o atendimento: ' . implode(', ', $faltando) . '.');
+        }
         $old = $ticket->status;
         $ticket->status_id = $new->id;
 
@@ -1470,6 +1480,8 @@ class HelpDeskTicketController extends Controller
 
     public function addComment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
+        // Chamado FECHADO (status terminal) não recebe novas interações — reabrir antes.
+        abort_if(optional($ticket->status)->is_terminal, 422, 'Chamado fechado — reabra o chamado para adicionar interações.');
         $v = $request->validate([
             'body'            => 'required_without:files|nullable|string', // interação pode ser só anexo/print (estilo e-mail)
             'visibility'      => 'nullable|in:internal,customer',
