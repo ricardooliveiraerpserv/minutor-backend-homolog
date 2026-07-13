@@ -2215,6 +2215,23 @@ class ProjectController extends Controller
         // Calcular saldo real disponível usando getGeneralHoursBalance (considera lógica de contratos fechados)
         $generalBalance = $project->getGeneralHoursBalance();
 
+        // ── Horas APONTÁVEIS (teto/saldo/% coerentes com o bloqueio de apontamento) ──
+        // Para Fechado/BH Fixo o teto de apontamento NÃO são as vendidas e sim "Horas
+        // Apontáveis" (coordination_hours) + aporte. Expõe os valores apontáveis para o
+        // tooltip refletir exatamente o que a validação bloqueia. Demais tipos = disponível.
+        $ctNameCs = strtolower(trim((string) ($project->contractType->name ?? '')));
+        $ctCodeCs = (string) ($project->contractType->code ?? '');
+        if ($ctNameCs === 'fechado' || $ctCodeCs === 'fixed_hours' || $ctNameCs === 'banco de horas fixo') {
+            $aporteHrs         = max(0.0, round($totalAvailableHours - (float) $soldHours, 2));
+            $apontaveisHours   = round((float) ($project->coordination_hours ?? 0) + $aporteHrs, 2);
+            $apontaveisBalance = round(max(0.0, $generalBalance - (float) $soldHours + (float) ($project->coordination_hours ?? 0)), 2);
+            $apontaveisPct     = $apontaveisHours > 0 ? round((($apontaveisHours - $apontaveisBalance) / $apontaveisHours) * 100, 2) : 0;
+        } else {
+            $apontaveisHours   = round($totalAvailableHours, 2);
+            $apontaveisBalance = round(max(0.0, $generalBalance), 2);
+            $apontaveisPct     = $hoursPercentage;
+        }
+
         $hoursSummary = [
             'total_logged_hours' => $totalLoggedHours,
             'approved_hours' => $approvedHours,
@@ -2223,6 +2240,10 @@ class ProjectController extends Controller
             'general_balance' => round($generalBalance, 2), // Saldo real disponível calculado
             'total_available_hours' => round($totalAvailableHours, 2), // Horas vendidas + aporte de horas
             'hours_percentage' => $hoursPercentage,
+            // Apontáveis = teto real de apontamento (Fechado/BH Fixo usa Horas Apontáveis).
+            'apontaveis_hours' => $apontaveisHours,
+            'apontaveis_balance' => $apontaveisBalance,
+            'apontaveis_percentage' => $apontaveisPct,
             'parent_project_hours' => round($parentLoggedMinutes / 60, 2),
             'child_projects_hours' => round($childLoggedMinutes / 60, 2),
         ];
