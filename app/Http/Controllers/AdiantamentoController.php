@@ -49,7 +49,10 @@ class AdiantamentoController extends Controller
             'beneficiario_nome'    => $a->beneficiario_tipo === Adiantamento::TIPO_PARCEIRO
                 ? ($partners[$a->beneficiario_id] ?? '—')
                 : ($users[$a->beneficiario_id] ?? '—'),
+            'tipo'                 => $a->tipo ?? Adiantamento::NATUREZA_ADIANTAMENTO,
             'valor_total'          => (float) $a->valor_total,
+            'data_realizado'       => $a->data_realizado?->format('Y-m-d'),
+            'disponibilizado'      => (bool) $a->disponibilizado,
             'num_parcelas'         => (int) $a->num_parcelas,
             'primeira_competencia' => $a->primeira_competencia,
             'descricao'            => $a->descricao,
@@ -103,10 +106,17 @@ class AdiantamentoController extends Controller
         }
 
         $adiantamento = DB::transaction(function () use ($validated, $request) {
+            $tipo = $validated['tipo'] ?? Adiantamento::NATUREZA_ADIANTAMENTO;
             $a = Adiantamento::create([
                 'beneficiario_tipo'    => $validated['beneficiario_tipo'],
                 'beneficiario_id'      => (int) $validated['beneficiario_id'],
+                'tipo'                 => $tipo,
                 'valor_total'          => round((float) $validated['valor_total'], 2),
+                'data_realizado'       => $validated['data_realizado'],
+                // Adiantamento é sempre entregue; empréstimo respeita o flag (não conta enquanto false).
+                'disponibilizado'      => $tipo === Adiantamento::NATUREZA_EMPRESTIMO
+                    ? (bool) ($validated['disponibilizado'] ?? false)
+                    : true,
                 'num_parcelas'         => (int) $validated['num_parcelas'],
                 'primeira_competencia' => $validated['primeira_competencia'],
                 'descricao'            => $validated['descricao'] ?? null,
@@ -135,10 +145,16 @@ class AdiantamentoController extends Controller
         }
 
         DB::transaction(function () use ($adiantamento, $validated) {
+            $tipo = $validated['tipo'] ?? Adiantamento::NATUREZA_ADIANTAMENTO;
             $adiantamento->update([
                 'beneficiario_tipo'    => $validated['beneficiario_tipo'],
                 'beneficiario_id'      => (int) $validated['beneficiario_id'],
+                'tipo'                 => $tipo,
                 'valor_total'          => round((float) $validated['valor_total'], 2),
+                'data_realizado'       => $validated['data_realizado'],
+                'disponibilizado'      => $tipo === Adiantamento::NATUREZA_EMPRESTIMO
+                    ? (bool) ($validated['disponibilizado'] ?? false)
+                    : true,
                 'num_parcelas'         => (int) $validated['num_parcelas'],
                 'primeira_competencia' => $validated['primeira_competencia'],
                 'descricao'            => $validated['descricao'] ?? null,
@@ -173,7 +189,10 @@ class AdiantamentoController extends Controller
         return $request->validate([
             'beneficiario_tipo'    => ['required', 'in:consultor,parceiro'],
             'beneficiario_id'      => ['required', 'integer'],
+            'tipo'                 => ['nullable', 'in:adiantamento,emprestimo'],
             'valor_total'          => ['required', 'numeric', 'min:0.01'],
+            'data_realizado'       => ['required', 'date'],
+            'disponibilizado'      => ['nullable', 'boolean'],
             'num_parcelas'         => ['required', 'integer', 'min:1', 'max:120'],
             'primeira_competencia' => ['required', 'regex:/^\d{4}-\d{2}$/'],
             'descricao'            => ['nullable', 'string', 'max:1000'],

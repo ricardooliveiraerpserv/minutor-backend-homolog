@@ -466,9 +466,10 @@ class FechamentoConsultorController extends Controller
 
         $desconto     = round((float) ($consultor['desconto'] ?? 0), 2);
         $adiantamento = round((float) ($consultor['adiantamento'] ?? 0), 2);
+        $emprestimo   = round((float) ($consultor['emprestimo_aporte'] ?? 0), 2);
         $adicional    = round((float) ($consultor['adicional'] ?? 0), 2);
-        $temAjustes   = !$soDespesa && ($desconto != 0 || $adiantamento != 0 || $adicional != 0);
-        $recebimento  = round($baseValor - $desconto - $adiantamento + $adicional, 2);
+        $temAjustes   = !$soDespesa && ($desconto != 0 || $adiantamento != 0 || $emprestimo != 0 || $adicional != 0);
+        $recebimento  = round($baseValor - $desconto - $adiantamento + $adicional + $emprestimo, 2);
 
         // Adiantamento: UMA linha por adiantamento da rotina (não somadas) + eventual ajuste
         // manual avulso. O total ($adiantamento) segue igual no cálculo do recebimento.
@@ -482,6 +483,12 @@ class FechamentoConsultorController extends Controller
         foreach ($adtoParcelas as $a) {
             $adiantamentoLinhas[] = ['legenda' => $a['legenda'], 'valor_fmt' => $this->brl($a['valor'])];
         }
+
+        // Empréstimo: UMA linha por empréstimo cujo aporte cai no mês (crédito verde "+").
+        $emprestimoLinhas = array_map(
+            fn ($e) => ['legenda' => $e['legenda'], 'valor_fmt' => $this->brl($e['valor'])],
+            \App\Models\Adiantamento::aportesEmprestimoNoMes('consultor', $userId, $yearMonth),
+        );
 
         // ── Resumo (cards) — espelha o summaryExtra por tipo do buildReport ──
         $rate4 = fn ($v) => 'R$ ' . number_format((float) $v, ((float) $v == floor((float) $v)) ? 2 : 4, ',', '.');
@@ -578,6 +585,8 @@ class FechamentoConsultorController extends Controller
             'adiantamentoFmt' => $this->brl($adiantamento),
             'adiantamentoDesc'=> \App\Models\Adiantamento::descricaoNoMes('consultor', $userId, $yearMonth),
             'adiantamentoLinhas' => $adiantamentoLinhas,
+            'emprestimoFmt'   => $this->brl($emprestimo),
+            'emprestimoLinhas'=> $emprestimoLinhas,
             'adicionalFmt'    => $this->brl($adicional),
             'adicionalDesc'   => $consultor['adicional_desc'] ?? null,
             'baseValorFmt'    => $this->brl($baseValor),
@@ -610,8 +619,9 @@ class FechamentoConsultorController extends Controller
         $desconto     = round((float) ($ajuste->desconto ?? 0), 2);
         $adiantamento = round((float) ($ajuste->adiantamento ?? 0), 2)
             + \App\Models\Adiantamento::descontoNoMes('consultor', $userId, $yearMonth);
+        $emprestimo   = \App\Models\Adiantamento::aporteEmprestimoNoMes('consultor', $userId, $yearMonth);
         $adicional    = round((float) ($ajuste->adicional ?? 0), 2);
-        return round($baseValor - $desconto - $adiantamento + $adicional, 2);
+        return round($baseValor - $desconto - $adiantamento + $adicional + $emprestimo, 2);
     }
 
     private function generateFechamentoFiles(User $consultant, string $yearMonth, string $mode = 'ambos'): array
@@ -1257,6 +1267,7 @@ class FechamentoConsultorController extends Controller
                 $totalDespesas = round((float) ($row['total_despesas'] ?? 0), 2);
                 $desconto      = round((float) ($row['desconto'] ?? 0), 2);
                 $adiantamento  = round((float) ($row['adiantamento'] ?? 0), 2);
+                $emprestimo    = round((float) ($row['emprestimo_aporte'] ?? 0), 2);
                 $adicional     = round((float) ($row['adicional'] ?? 0), 2);
 
                 return response()->json(['data' => [
@@ -1268,9 +1279,10 @@ class FechamentoConsultorController extends Controller
                     'desconto_desc'  => $row['desconto_desc'] ?? null,
                     'adiantamento'   => $adiantamento,
                     'adiantamento_desc' => $row['adiantamento_desc'] ?? null,
+                    'emprestimo_aporte' => $emprestimo,
                     'adicional'      => $adicional,
                     'adicional_desc' => $row['adicional_desc'] ?? null,
-                    'recebimento'    => round((float) ($row['recebimento'] ?? ($totalBase - $desconto - $adiantamento + $adicional)), 2),
+                    'recebimento'    => round((float) ($row['recebimento'] ?? ($totalBase - $desconto - $adiantamento + $adicional + $emprestimo)), 2),
                 ]]);
             }
         }
@@ -1292,6 +1304,7 @@ class FechamentoConsultorController extends Controller
             $totalDespesas = round((float) ($row['total_despesas'] ?? 0), 2);
             $desconto      = round((float) ($row['desconto'] ?? 0), 2);
             $adiantamento  = round((float) ($row['adiantamento'] ?? 0), 2);
+            $emprestimo    = round((float) ($row['emprestimo_aporte'] ?? 0), 2);
             $adicional     = round((float) ($row['adicional'] ?? 0), 2);
 
             return response()->json(['data' => [
@@ -1303,9 +1316,10 @@ class FechamentoConsultorController extends Controller
                 'desconto_desc'  => $row['desconto_desc'] ?? null,
                 'adiantamento'   => $adiantamento,
                 'adiantamento_desc' => $row['adiantamento_desc'] ?? null,
+                'emprestimo_aporte' => $emprestimo,
                 'adicional'      => $adicional,
                 'adicional_desc' => $row['adicional_desc'] ?? null,
-                'recebimento'    => round((float) ($row['recebimento'] ?? ($totalServico + $totalDespesas - $desconto - $adiantamento + $adicional)), 2),
+                'recebimento'    => round((float) ($row['recebimento'] ?? ($totalServico + $totalDespesas - $desconto - $adiantamento + $adicional + $emprestimo)), 2),
             ]]);
         }
 
@@ -1315,6 +1329,7 @@ class FechamentoConsultorController extends Controller
         $desconto      = round((float) ($ajuste->desconto ?? 0), 2);
         $adiantamento  = round((float) ($ajuste->adiantamento ?? 0), 2)
             + \App\Models\Adiantamento::descontoNoMes('consultor', $user->id, $yearMonth);
+        $emprestimo    = \App\Models\Adiantamento::aporteEmprestimoNoMes('consultor', $user->id, $yearMonth);
         $adicional     = round((float) ($ajuste->adicional ?? 0), 2);
 
         return response()->json(['data' => [
@@ -1326,9 +1341,10 @@ class FechamentoConsultorController extends Controller
             'desconto_desc'  => $ajuste->desconto_desc ?? null,
             'adiantamento'   => $adiantamento,
             'adiantamento_desc' => \App\Models\Adiantamento::descricaoNoMes('consultor', $user->id, $yearMonth),
+            'emprestimo_aporte' => $emprestimo,
             'adicional'      => $adicional,
             'adicional_desc' => $ajuste->adicional_desc ?? null,
-            'recebimento'    => round(0 - $desconto - $adiantamento + $adicional, 2),
+            'recebimento'    => round(0 - $desconto - $adiantamento + $adicional + $emprestimo, 2),
         ]]);
     }
 
@@ -1378,7 +1394,8 @@ class FechamentoConsultorController extends Controller
             - (float) $ajuste->desconto
             - (float) $ajuste->adiantamento
             - \App\Models\Adiantamento::descontoNoMes('consultor', (int) $userId, $yearMonth)
-            + (float) $ajuste->adicional,
+            + (float) $ajuste->adicional
+            + \App\Models\Adiantamento::aporteEmprestimoNoMes('consultor', (int) $userId, $yearMonth),
             2
         );
 
@@ -1486,9 +1503,12 @@ class FechamentoConsultorController extends Controller
 
             $ajuste            = $ajustesMap->get($user->id);
             $descontoAjuste    = round((float) ($ajuste->desconto ?? 0), 2);
-            // Adiantamento = ajuste manual do mês + parcelas da rotina de adiantamento.
+            // Adiantamento = ajuste manual do mês + parcelas da rotina (adiantamento E
+            // quitação de empréstimo — ambos descontam).
             $adiantamentoAjuste= round((float) ($ajuste->adiantamento ?? 0), 2)
                 + \App\Models\Adiantamento::descontoNoMes('consultor', $user->id, $yearMonth);
+            // Empréstimo = aporte que SOMA no mês em que foi feito (data_realizado).
+            $emprestimoAporte  = \App\Models\Adiantamento::aporteEmprestimoNoMes('consultor', $user->id, $yearMonth);
             $adicionalAjuste   = round((float) ($ajuste->adicional ?? 0), 2);
 
             $base = [
@@ -1509,6 +1529,7 @@ class FechamentoConsultorController extends Controller
                 'desconto_desc'     => $ajuste->desconto_desc ?? null,
                 'adiantamento'      => $adiantamentoAjuste,
                 'adiantamento_desc' => \App\Models\Adiantamento::descricaoNoMes('consultor', $user->id, $yearMonth),
+                'emprestimo_aporte' => $emprestimoAporte,
                 'adicional'         => $adicionalAjuste,
                 'adicional_desc'    => $ajuste->adicional_desc ?? null,
                 'envio_em'          => $envioMap[$user->id]['envio_em'] ?? null,
@@ -1629,14 +1650,16 @@ class FechamentoConsultorController extends Controller
             }
         }
 
-        // Recebimento = total (serviços) + despesas − desconto − adiantamento + adicional.
+        // Recebimento = total (serviços) + despesas − desconto − adiantamento
+        //              + adicional + aporte de empréstimo.
         $addRecebimento = function (array $c): array {
             $c['recebimento'] = round(
                 (float) ($c['total'] ?? 0)
                 + (float) ($c['total_despesas'] ?? 0)
                 - (float) ($c['desconto'] ?? 0)
                 - (float) ($c['adiantamento'] ?? 0)
-                + (float) ($c['adicional'] ?? 0),
+                + (float) ($c['adicional'] ?? 0)
+                + (float) ($c['emprestimo_aporte'] ?? 0),
                 2
             );
             return $c;
