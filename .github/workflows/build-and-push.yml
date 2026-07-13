@@ -73,6 +73,9 @@ jobs:
             # Só backend (frontend é Vercel; sua imagem no GHCR nem existe).
             docker compose pull backend queue-worker scheduler
             docker compose up -d --no-deps backend queue-worker scheduler
-            docker exec minutor-backend php artisan migrate --force
+            sleep 6
+            echo "=== DB que o container enxerga ==="
+            docker exec minutor-backend sh -c 'echo "DB_CONNECTION=$DB_CONNECTION DB_HOST=$DB_HOST DB_PORT=$DB_PORT DB_DATABASE=$DB_DATABASE"' || true
+            docker exec minutor-backend php artisan migrate --force || echo "::warning:: MIGRATE FALHOU (ver DB host acima)"
             docker exec minutor-backend php artisan optimize
             docker image prune -af || true
