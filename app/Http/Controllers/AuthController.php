@@ -158,6 +158,8 @@ class AuthController extends Controller
                 'daily_hours'             => $user->daily_hours,
                 'bank_hours_start_date'   => $user->bank_hours_start_date,
                 'guaranteed_hours'        => $user->guaranteed_hours,
+                'chat_sound'              => \App\Models\SystemSetting::get('chat_notification_sound', 'ding'),
+                'chat_sound_volume'       => (int) \App\Models\SystemSetting::get('chat_notification_volume', 70),
             ]),
             'token'                    => $token,
             'token_type'               => 'Bearer',
@@ -278,6 +280,8 @@ class AuthController extends Controller
                 'daily_hours'           => $user->daily_hours,
                 'bank_hours_start_date' => $user->bank_hours_start_date,
                 'guaranteed_hours'      => $user->guaranteed_hours,
+                'chat_sound'            => \App\Models\SystemSetting::get('chat_notification_sound', 'ding'),
+                'chat_sound_volume'     => (int) \App\Models\SystemSetting::get('chat_notification_volume', 70),
             ])
         ], 200);
     }
