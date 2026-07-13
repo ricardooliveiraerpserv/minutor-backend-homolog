@@ -152,17 +152,33 @@ class MovideskSyncOrgsCommand extends Command
         // ── 3. Revincular timesheets ao projeto de sustentação correto ─────────
         $this->info('Revinculando apontamentos Movidesk ao projeto correto...');
 
-        // Mesma lógica do SustentacaoController: ilike '%sustenta%'
-        $projectMap = Project::join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+        // Resolução do projeto por cliente — MESMA regra do extractProjectId:
+        // (1) PRIORIDADE ABSOLUTA ao projeto com movidesk_integration_enabled;
+        // (2) fallback determinístico de sustentação (On Demand > mais antigo).
+        $sustMap = Project::join('service_types', 'service_types.id', '=', 'projects.service_type_id')
+            ->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id')
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%');
             })
+            ->whereNotIn('projects.status', [
+                Project::STATUS_CANCELLED,
+                Project::STATUS_FINISHED,
+                Project::STATUS_PAUSED,
+            ])
+            ->orderByRaw("(contract_types.code = 'on_demand') DESC")
+            ->orderBy('projects.id')
             ->select('projects.*')
+            ->get()
+            ->groupBy('customer_id')
+            ->map(fn($grp) => $grp->first()->id)
+            ->toArray();
+        $flaggedMap = Project::where('movidesk_integration_enabled', true)
             ->get()
             ->filter(fn($p) => $p->isActive())
             ->mapWithKeys(fn($p) => [$p->customer_id => $p->id])
             ->toArray();
+        $projectMap = array_replace($sustMap, $flaggedMap);
 
         $defaultProjectId = (int) SystemSetting::get('movidesk_default_project_id');
 

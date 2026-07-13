@@ -22,7 +22,7 @@ class HelpDeskTicketComment extends Model
     }
 
     protected $fillable = [
-        'ticket_id', 'author_user_id', 'author_contact_id',
+        'ticket_id', 'origin_ticket_id', 'author_user_id', 'author_contact_id',
         'body', 'visibility', 'is_system', 'channel', 'idempotency_key',
         // Tempo trabalhado por interação (movimenta horas como o Movidesk)
         'worked_date', 'start_time', 'end_time', 'effort_minutes', 'timesheet_id', 'no_charge',

@@ -12,7 +12,7 @@ class HelpDeskStatus extends Model
 
     protected $fillable = [
         'key', 'label', 'color', 'sort_order',
-        'is_default', 'is_open', 'is_resolved', 'is_terminal', 'sla_paused', 'active',
+        'is_default', 'is_open', 'is_resolved', 'is_terminal', 'sla_paused', 'allows_scheduling', 'active',
     ];
 
     protected $casts = [
@@ -22,6 +22,7 @@ class HelpDeskStatus extends Model
         'is_resolved' => 'boolean',
         'is_terminal' => 'boolean',
         'sla_paused'  => 'boolean',
+        'allows_scheduling' => 'boolean',
         'active'      => 'boolean',
     ];
 
