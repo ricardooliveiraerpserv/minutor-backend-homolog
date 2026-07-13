@@ -1148,6 +1148,28 @@ class ContractController extends Controller
 
     // ─── Kanban Unificado ────────────────────────────────────────────────────
 
+    /**
+     * Lista enxuta de coordenadores — MESMA regra das colunas do Kanban:
+     * coordenador nativo (projetos/sustentação), admin com projeto coordenado,
+     * override em projeto, OU marcado como is_coordinator no cadastro.
+     * Usado por filtros (ex.: Gestão de Contratos) para bater com o Kanban.
+     */
+    public function coordinators(Request $request): JsonResponse
+    {
+        $coordinators = User::where('enabled', true)
+            ->where(function ($q) {
+                $q->where(function ($inner) {
+                    $inner->where('type', 'coordenador')
+                          ->whereIn('coordinator_type', ['projetos', 'sustentacao']);
+                })->orWhere('is_coordinator', true);   // nativo (proj/sust) OU marcado no cadastro — sem detecção implícita
+            })
+            ->select('id', 'name', 'coordinator_type')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json(['data' => $coordinators]);
+    }
+
     public function kanban(Request $request): JsonResponse
     {
         $user      = auth()->user();
@@ -1291,15 +1313,7 @@ class ContractController extends Controller
                 $q->where(function ($inner) {
                     $inner->where('type', 'coordenador')
                           ->whereIn('coordinator_type', ['projetos', 'sustentacao']);
-                })->orWhere(function ($inner) {
-                    $inner->where('type', 'admin')
-                          ->whereHas('coordinatorProjects');
-                })->orWhereExists(function ($sub) {
-                    $sub->select(DB::raw(1))
-                        ->from('projects')
-                        ->whereColumn('projects.kanban_coordinator_override_id', 'users.id')
-                        ->whereNull('projects.deleted_at');
-                });
+                })->orWhere('is_coordinator', true);   // nativo (proj/sust) OU marcado no cadastro — sem detecção implícita
             })
             ->select('id', 'name', 'coordinator_type')
             ->orderBy('name')
