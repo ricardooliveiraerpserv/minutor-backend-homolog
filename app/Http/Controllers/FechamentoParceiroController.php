@@ -953,12 +953,17 @@ class FechamentoParceiroController extends Controller
             return response()->json(['success' => false, 'message' => 'Parceiro não encontrado.'], 404);
         }
 
+        // Idem consultor: o input traz o TOTAL (avulso + parcelas da rotina). Persistimos só o
+        // avulso — a rotina volta por descontoNoMes — senão a parcela é contada em dobro.
+        $rotinaAdto         = \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partnerId, $yearMonth);
+        $adiantamentoManual = max(0, round((float) ($data['adiantamento'] ?? 0), 2) - $rotinaAdto);
+
         $ajuste = \App\Models\FechamentoParceiroAjuste::updateOrCreate(
             ['partner_id' => (int) $partnerId, 'year_month' => $yearMonth],
             [
                 'desconto'       => round((float) ($data['desconto'] ?? 0), 2),
                 'desconto_desc'  => $data['desconto_desc'] ?? null,
-                'adiantamento'   => round((float) ($data['adiantamento'] ?? 0), 2),
+                'adiantamento'   => $adiantamentoManual,
                 'adicional'      => round((float) ($data['adicional'] ?? 0), 2),
                 'adicional_desc' => $data['adicional_desc'] ?? null,
             ]
