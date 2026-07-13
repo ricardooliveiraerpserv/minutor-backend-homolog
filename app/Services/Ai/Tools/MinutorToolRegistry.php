@@ -460,13 +460,13 @@ class MinutorToolRegistry
             })
             ->orderBy('name')
             ->limit(5)
-            ->get(['id', 'name', 'company_name', 'cnpj', 'active']);
+            ->get(['id', 'name', 'company_name', 'cgc', 'active']);
 
         return ['count' => $rows->count(), 'customers' => $rows->map(fn ($c) => [
             'id'           => $c->id,
             'name'         => $c->name,
             'company_name' => $c->company_name,
-            'cnpj'         => $c->cnpj,
+            'cnpj'         => $c->cgc,
             'active'       => (bool) $c->active,
         ])->all()];
     }
