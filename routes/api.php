@@ -1895,6 +1895,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('presence')->group(function () {
             Route::post('/heartbeat', [\App\Http\Controllers\PresenceController::class, 'heartbeat'])->name('presence.heartbeat');
             Route::get('/',           [\App\Http\Controllers\PresenceController::class, 'index'])->name('presence.index');
+            Route::get('/online',     [\App\Http\Controllers\PresenceController::class, 'online'])->name('presence.online');
         });
 
         // 💬 CONVERSATIONS — criar DM/grupo, gerenciar participantes, listar usuários para abrir chat
