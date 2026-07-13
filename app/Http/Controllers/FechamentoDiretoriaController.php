@@ -103,9 +103,13 @@ class FechamentoDiretoriaController extends Controller
         $adiantamento     = round(collect($adiantamentos)->sum('valor'), 2);
         $adiantamentoDesc = $this->adiantamentoLegenda((int) $userId, $yearMonth);
 
-        // Valor a Receber = soma dos lançamentos − adiantamento; REPASSE = valor a receber + Taxa+INSS.
+        // Empréstimo: aporte que SOMA no mês em que foi feito (crédito ao repasse).
+        $emprestimos      = \App\Models\Adiantamento::aportesEmprestimoNoMes('consultor', (int) $userId, $yearMonth);
+        $emprestimo       = round(collect($emprestimos)->sum('valor'), 2);
+
+        // Valor a Receber = soma dos lançamentos − adiantamento + empréstimo; REPASSE = + Taxa+INSS.
         $taxa  = (float) ($header?->taxa_inss ?? 0);
-        $total = round(collect($lancamentos)->sum(fn ($l) => (float) ($l['valor'] ?? 0)) - $adiantamento + $taxa, 2);
+        $total = round(collect($lancamentos)->sum(fn ($l) => (float) ($l['valor'] ?? 0)) - $adiantamento + $emprestimo + $taxa, 2);
 
         $envio = FechamentoSendStatus::mapFor(FechamentoSendStatus::TIPO_DIRETORIA, $yearMonth, [(int) $userId])[(int) $userId] ?? null;
 
@@ -126,6 +130,8 @@ class FechamentoDiretoriaController extends Controller
             'adiantamento' => $adiantamento,
             'adiantamento_desc' => $adiantamentoDesc,
             'adiantamentos' => $adiantamentos,
+            'emprestimo_aporte' => $emprestimo,
+            'emprestimos'  => $emprestimos,
             'total'        => $total,
         ]);
     }
@@ -389,6 +395,10 @@ class FechamentoDiretoriaController extends Controller
         // por adiantamento (nunca vem do payload da tela, evitando dupla contagem).
         foreach (\App\Models\Adiantamento::parcelasNoMes('consultor', $userId, $yearMonth) as $a) {
             $lancs[] = ['descricao' => 'Adiantamento' . ($a['legenda'] ? " ({$a['legenda']})" : ''), 'valor' => -$a['valor']];
+        }
+        // Empréstimo: aporte que SOMA no mês em que foi feito (crédito positivo).
+        foreach (\App\Models\Adiantamento::aportesEmprestimoNoMes('consultor', $userId, $yearMonth) as $e) {
+            $lancs[] = ['descricao' => 'Empréstimo' . ($e['legenda'] ? " ({$e['legenda']})" : ''), 'valor' => $e['valor']];
         }
 
         // Lançamentos (salário − descontos) somam o VALOR A RECEBER (líquido do diretor).

@@ -171,6 +171,7 @@ class FolhaPagamentoController extends Controller
                 'fech_serv'          => round((float) ($c['total'] ?? 0), 2),
                 'fech_desconto'      => $aj ? (float) $aj->desconto : 0.0,
                 'fech_adiantamento'  => $aj ? (float) $aj->adiantamento : 0.0,
+                'fech_emprestimo'    => round((float) ($c['emprestimo_aporte'] ?? 0), 2),
                 'fech_adicional'     => $aj ? (float) $aj->adicional : 0.0,
                 'fech_desp'          => $fechDesp, // despesa já incorporada à produção
                 'variavel'           => $variavel,
