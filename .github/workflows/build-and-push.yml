@@ -61,24 +61,18 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          password: ${{ secrets.VPS_PASSWORD }}
+          key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
           command_timeout: 15m
           envs: GHCR_USER,GHCR_TOKEN
           script: |
             set -e
-            # VPS pode estar deslogado do GHCR (pull dava 'denied'). Loga com o token do workflow.
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || true
             cd /opt/minutor
-            # Só backend (frontend é Vercel; sua imagem no GHCR nem existe).
+            # Só backend (frontend é Vercel; imagem do front no GHCR nem existe).
             docker compose pull backend queue-worker scheduler
             docker compose up -d --no-deps backend queue-worker scheduler
-            sleep 6
-            echo "=== DB host (container) ==="
-            docker exec minutor-backend sh -c 'echo "DB_HOST=$DB_HOST DB_PORT=$DB_PORT DB_DATABASE=$DB_DATABASE"' || true
-            echo "=== TCP container -> banco 5432 ==="
-            docker exec minutor-backend php -r '$c=@fsockopen("92.246.128.96",5432,$e,$m,5); echo $c ? "TCP_OK_CONTAINER" : "TCP_FALHOU_CONTAINER: $m ($e)"; echo PHP_EOL;' || true
-            echo "=== migrate ==="
-            docker exec minutor-backend php artisan migrate --force || echo "MIGRATE_FALHOU"
+            # entrypoint do container já roda migrate no start; este é reforço idempotente.
+            docker exec minutor-backend php artisan migrate --force || true
             docker exec minutor-backend php artisan optimize
             docker image prune -af || true
