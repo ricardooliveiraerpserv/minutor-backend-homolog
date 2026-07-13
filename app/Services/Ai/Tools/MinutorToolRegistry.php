@@ -477,9 +477,18 @@ class MinutorToolRegistry
         $customer = Customer::find($customerId);
         if (! $customer) return ['error' => 'cliente não encontrado'];
 
-        $projects = Project::where('customer_id', $customerId)->get(['id', 'status', 'sold_hours']);
+        $projects = Project::where('customer_id', $customerId)->with('contractType')->get();
         $byStatus = $projects->groupBy('status')->map->count();
-        $totalSold = $projects->sum(fn ($p) => (float) ($p->sold_hours ?? 0));
+
+        // Saldo OFICIAL: soma o saldo de cada projeto pela regra do Minutor
+        // (mensal = franquia acumulada; on demand = não entra; fixo = sold-consumido).
+        // NÃO somar sold_hours de tipos diferentes (mensal do mês vs fixo total é incoerente).
+        $totalBalance = 0.0; $hasMonthly = false; $hasOnDemand = false;
+        foreach ($projects as $p) {
+            if ($p->isBankHoursMonthly()) $hasMonthly = true;
+            if ($p->isOnDemand()) { $hasOnDemand = true; continue; }
+            $totalBalance += $p->getGeneralHoursBalance();
+        }
 
         $consumed = (float) Timesheet::query()
             ->where('customer_id', $customerId)
@@ -490,9 +499,11 @@ class MinutorToolRegistry
             'customer'         => ['id' => $customer->id, 'name' => $customer->name],
             'projects_by_status' => $byStatus,
             'projects_total'   => $projects->count(),
-            'hours_sold'       => round($totalSold, 2),
             'hours_consumed'   => round($consumed, 2),
-            'hours_balance'    => round($totalSold - $consumed, 2),
+            'hours_balance'    => round($totalBalance, 2),
+            'has_monthly_contract' => $hasMonthly,
+            'has_on_demand'    => $hasOnDemand,
+            'balance_note'     => 'hours_balance = soma dos saldos por projeto pela regra do Minutor (mensal usa franquia ACUMULADA, on demand não controla saldo). Só é ESTOURO se hours_balance < 0. Não some horas de contratos de tipos diferentes.',
             'contracts_total'  => Contract::where('customer_id', $customerId)->count(),
         ];
     }
@@ -513,23 +524,46 @@ class MinutorToolRegistry
             ->groupBy('project_id')
             ->pluck('hours', 'project_id');
 
-        $projects = $q->orderBy('name')->get();
+        $projects = $q->with('contractType')->orderBy('name')->get();
 
         return [
             'count' => $projects->count(),
+            // ⚠️ Regra Minutor: 'hours_balance' é o SALDO OFICIAL (getGeneralHoursBalance):
+            //   - Banco de Horas Mensal → franquia ACUMULADA (mês a mês), não a do mês.
+            //   - On Demand → não controla saldo (balance = null).
+            //   - Fixo → sold_hours - consumido.
+            // NÃO recalcule saldo por conta própria; use hours_balance.
             'projects' => $projects->map(function (Project $p) use ($consumedByProject) {
                 $consumed = (float) ($consumedByProject[$p->id] ?? 0);
-                $sold = (float) ($p->sold_hours ?? 0);
-                return [
-                    'id'              => $p->id,
-                    'name'            => $p->name,
-                    'code'            => $p->code,
-                    'status'          => $p->status,
-                    'hours_sold'      => round($sold, 2),
-                    'hours_consumed'  => round($consumed, 2),
-                    'hours_balance'   => round($sold - $consumed, 2),
-                ];
+                return array_merge([
+                    'id'     => $p->id,
+                    'name'   => $p->name,
+                    'code'   => $p->code,
+                    'status' => $p->status,
+                ], $this->projectHoursBlock($p, $consumed));
             })->all(),
+        ];
+    }
+
+    /**
+     * Bloco de horas de um projeto usando a MESMA regra do Minutor (getGeneralHoursBalance).
+     * Mensal usa franquia acumulada; On Demand não tem saldo; Fixo usa sold_hours.
+     */
+    private function projectHoursBlock(Project $p, float $consumed): array
+    {
+        $p->loadMissing('contractType');
+        $isMonthly  = $p->isBankHoursMonthly();
+        $isOnDemand = $p->isOnDemand();
+        $sold = $isMonthly
+            ? (float) ($p->accumulated_sold_hours ?? $p->sold_hours ?? 0)
+            : (float) ($p->sold_hours ?? 0);
+        return [
+            'billing_type'   => $p->contractType->name ?? ($isOnDemand ? 'On Demand' : null),
+            'is_monthly'     => $isMonthly,
+            'is_on_demand'   => $isOnDemand,
+            'hours_sold'     => $isOnDemand ? null : round($sold, 2),
+            'hours_consumed' => round($consumed, 2),
+            'hours_balance'  => $isOnDemand ? null : round($p->getGeneralHoursBalance(), 2),
         ];
     }
 
@@ -544,7 +578,7 @@ class MinutorToolRegistry
             ->whereIn('status', ['approved', 'pending', 'conflicted'])
             ->sum(DB::raw('effort_minutes::numeric / 60'));
 
-        return [
+        return array_merge([
             'id'             => $p->id,
             'name'           => $p->name,
             'code'           => $p->code,
@@ -556,11 +590,9 @@ class MinutorToolRegistry
                 'project_code' => $p->contract->project_code_preview,
                 'status'       => $p->contract->status,
             ] : null,
-            'hours_sold'     => round((float) ($p->sold_hours ?? 0), 2),
-            'hours_consumed' => round($consumed, 2),
             'start_date'     => $p->start_date,
             'end_date'       => $p->end_date,
-        ];
+        ], $this->projectHoursBlock($p, $consumed));
     }
 
     private function listContracts(int $customerId): array
