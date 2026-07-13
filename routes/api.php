@@ -137,7 +137,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/notifications/meta',         [\App\Http\Controllers\NotificationController::class, 'meta']);
         Route::get('/notifications/users',        [\App\Http\Controllers\NotificationController::class, 'searchUsers']);
 
-        // "Ver como" (impersonation) — admin vê o sistema como outro usuário (suporte).
+        // "Ver como" (impersonation) — ver o sistema como outro usuário (suporte).
+        // Acesso por bloco (cliente/consultor/parceiro) liberado no Configurador + trava de nível.
+        Route::get('/impersonate/kinds',      [\App\Http\Controllers\ImpersonationController::class, 'kinds'])->name('impersonate.kinds');
         Route::get('/impersonate/candidates', [\App\Http\Controllers\ImpersonationController::class, 'candidates'])->name('impersonate.candidates');
         Route::get('/impersonate/partners',   [\App\Http\Controllers\ImpersonationController::class, 'partners'])->name('impersonate.partners');
         Route::post('/impersonate',           [\App\Http\Controllers\ImpersonationController::class, 'impersonate'])->name('impersonate.start');
