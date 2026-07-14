@@ -146,7 +146,7 @@ class MicrosoftCalendarService
             $url = self::GRAPH_BASE . '/me/calendarView?' . http_build_query([
                 'startDateTime' => $start->toIso8601String(),
                 'endDateTime'   => $end->toIso8601String(),
-                '$select'       => 'id,subject,start,end,isAllDay,isOnlineMeeting,onlineMeeting',
+                '$select'       => 'id,subject,start,end,isAllDay,isOnlineMeeting,onlineMeeting,location,organizer,attendees,webLink,bodyPreview',
                 '$orderby'      => 'start/dateTime',
                 '$top'          => 200,
             ]);
@@ -158,6 +158,9 @@ class MicrosoftCalendarService
             return collect($r->json('value', []))->map(function ($e) {
                 $startDt = data_get($e, 'start.dateTime');
                 $endDt   = data_get($e, 'end.dateTime');
+                $attendees = collect(data_get($e, 'attendees', []))
+                    ->map(fn ($a) => data_get($a, 'emailAddress.name') ?: data_get($a, 'emailAddress.address'))
+                    ->filter()->take(20)->values()->all();
                 return [
                     'id'         => (string) (data_get($e, 'id') ?: ''),
                     'subject'    => (string) (data_get($e, 'subject') ?: 'Compromisso'),
@@ -166,6 +169,11 @@ class MicrosoftCalendarService
                     'is_all_day' => (bool) data_get($e, 'isAllDay'),
                     'is_online'  => (bool) data_get($e, 'isOnlineMeeting'),
                     'join_url'   => data_get($e, 'onlineMeeting.joinUrl'),
+                    'location'   => data_get($e, 'location.displayName') ?: null,
+                    'organizer'  => data_get($e, 'organizer.emailAddress.name') ?: null,
+                    'attendees'  => $attendees,
+                    'web_link'   => data_get($e, 'webLink') ?: null,
+                    'preview'    => trim((string) data_get($e, 'bodyPreview')) ?: null,
                 ];
             })->filter(fn ($e) => $e['starts_at'] !== null)->values()->all();
         } catch (\Throwable) {
