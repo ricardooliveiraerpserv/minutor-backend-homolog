@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class FechamentoAdministrativo extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'fechamento_administrativos';
 
     protected $fillable = [
