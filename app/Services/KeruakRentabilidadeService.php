@@ -25,24 +25,86 @@ class KeruakRentabilidadeService
      */
     public function recebido(bool $fresh = false): array
     {
+        // Fonte de "recebido" é POR EMPRESA (multi-empresa): ERPSERV puxa do Keruak;
+        // outras empresas (ex.: BIZIFY) vêm de URL própria OU de um JSON estático.
+        // Sem fonte configurada → vazio (não vaza o recebido de outra empresa).
+        $slug     = $this->companySlug();
+        $cacheKey = self::CACHE_KEY . ':' . $slug;
+
         if ($fresh) {
-            Cache::forget(self::CACHE_KEY);
+            Cache::forget($cacheKey);
         }
 
-        return Cache::remember(self::CACHE_KEY, now()->addHours(3), function () {
-            $url = SystemSetting::get('keruak_rentabilidade_url') ?: self::DEFAULT_URL;
-            try {
-                $resp = Http::timeout(60)->get($url);
-                if (!$resp->successful()) {
-                    Log::warning('[KERUAK] resposta não-ok', ['status' => $resp->status()]);
+        return Cache::remember($cacheKey, now()->addHours(3), function () use ($slug) {
+            // 1) URL do Keruak da empresa (config por slug; erpserv tem a URL legada/default).
+            $url = SystemSetting::get("keruak_rentabilidade_url:{$slug}")
+                ?: ($slug === 'erpserv'
+                    ? (SystemSetting::get('keruak_rentabilidade_url') ?: self::DEFAULT_URL)
+                    : null);
+
+            if ($url) {
+                try {
+                    $resp = Http::timeout(60)->get($url);
+                    if (!$resp->successful()) {
+                        Log::warning('[KERUAK] resposta não-ok', ['status' => $resp->status(), 'company' => $slug]);
+                        return [];
+                    }
+                    return $this->parse($resp->body());
+                } catch (\Throwable $e) {
+                    Log::warning('[KERUAK] falha ao buscar recebimentos', ['error' => $e->getMessage(), 'company' => $slug]);
                     return [];
                 }
-                return $this->parse($resp->body());
-            } catch (\Throwable $e) {
-                Log::warning('[KERUAK] falha ao buscar recebimentos', ['error' => $e->getMessage()]);
-                return [];
             }
+
+            // 2) JSON estático da empresa (ex.: BIZIFY fornece um JSON de recebimentos).
+            $json = SystemSetting::get("keruak_recebido_json:{$slug}");
+            if ($json) {
+                $decoded = is_array($json) ? $json : json_decode((string) $json, true);
+                if (is_array($decoded)) {
+                    return $this->normalizeJson($decoded);
+                }
+            }
+
+            return []; // empresa sem fonte de recebido → vazio (não vaza de outra empresa)
         });
+    }
+
+    /** Slug da empresa ATIVA (default erpserv fora de contexto de empresa). */
+    private function companySlug(): string
+    {
+        $id = app(\App\Services\CompanyContext::class)->id();
+        if (!$id) {
+            return 'erpserv';
+        }
+        return \App\Models\Company::whereKey($id)->value('slug') ?: 'erpserv';
+    }
+
+    /**
+     * Normaliza um JSON de recebidos da empresa para o formato interno
+     * `{ CNPJ(dígitos): { name, receb: { 'YYYY-MM': float } } }`. Aceita já nesse
+     * formato; se vier como lista de {cnpj,name,receb} também converte.
+     */
+    private function normalizeJson(array $data): array
+    {
+        // Já no formato final (chaveado por CNPJ)?
+        $first = reset($data);
+        if (is_array($first) && array_key_exists('receb', $first)) {
+            $out = [];
+            foreach ($data as $cnpj => $row) {
+                $key = preg_replace('/\D/', '', (string) ($row['cnpj'] ?? $cnpj));
+                $out[$key] = ['name' => $row['name'] ?? '', 'receb' => (array) ($row['receb'] ?? [])];
+            }
+            return $out;
+        }
+        // Lista de linhas [{cnpj,name,receb:{...}}]
+        $out = [];
+        foreach ($data as $row) {
+            if (!is_array($row)) continue;
+            $key = preg_replace('/\D/', '', (string) ($row['cnpj'] ?? ''));
+            if ($key === '') continue;
+            $out[$key] = ['name' => $row['name'] ?? '', 'receb' => (array) ($row['receb'] ?? [])];
+        }
+        return $out;
     }
 
     private function parse(string $html): array
