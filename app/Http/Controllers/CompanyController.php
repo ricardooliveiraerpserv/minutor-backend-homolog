@@ -26,6 +26,7 @@ class CompanyController extends Controller
                 'id'     => $c->id,
                 'name'   => $c->name,
                 'slug'   => $c->slug,
+                'color'  => $c->color,
                 'type'   => $c->type,
                 'role'   => $c->pivot->role,
                 'active' => $c->id === $user->current_company_id,
@@ -72,7 +73,7 @@ class CompanyController extends Controller
         if ($r = $this->denyNonAdmin($request)) return $r;
 
         $data = Company::withCount('users')->orderBy('name')->get()->map(fn (Company $c) => [
-            'id' => $c->id, 'name' => $c->name, 'slug' => $c->slug, 'cnpj' => $c->cnpj,
+            'id' => $c->id, 'name' => $c->name, 'slug' => $c->slug, 'color' => $c->color, 'cnpj' => $c->cnpj,
             'type' => $c->type, 'status' => $c->status, 'users_count' => $c->users_count,
         ]);
         return response()->json(['data' => $data]);
@@ -84,6 +85,7 @@ class CompanyController extends Controller
 
         $data = $request->validate([
             'name'   => 'required|string|max:255',
+            'color'  => 'nullable|string|max:9',
             'cnpj'   => 'nullable|string|max:20',
             'type'   => 'required|in:internal,external',
             'status' => 'required|in:active,inactive',
@@ -98,6 +100,7 @@ class CompanyController extends Controller
 
         $data = $request->validate([
             'name'   => 'sometimes|string|max:255',
+            'color'  => 'nullable|string|max:9',
             'cnpj'   => 'nullable|string|max:20',
             'type'   => 'sometimes|in:internal,external',
             'status' => 'sometimes|in:active,inactive',
