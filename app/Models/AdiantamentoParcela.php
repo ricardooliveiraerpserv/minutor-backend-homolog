@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AdiantamentoParcela extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'adiantamento_parcelas';
 
     protected $fillable = [

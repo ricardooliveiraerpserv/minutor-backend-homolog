@@ -1,50 +1,54 @@
-[49756] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49757] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49758] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49759] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49760] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49761] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49762] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49763] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49764] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49754] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49765] [Mon Jul 13 23:05:33 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
-[49754] [Mon Jul 13 23:05:33 2026] 127.0.0.1:62085 Accepted
-[Tue Jul 14 02:05:33 2026] 127.0.0.1:62085 [GET] URI: /api/v1/notifications/stream
-[49754] [Mon Jul 13 23:05:33 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49756] [Mon Jul 13 23:05:35 2026] 127.0.0.1:62112 Accepted
-[Tue Jul 14 02:05:35 2026] 127.0.0.1:62112 [GET] URI: /api/v1/health
-[49756] [Mon Jul 13 23:05:35 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49756] [Mon Jul 13 23:05:35 2026] 127.0.0.1:62112 Closing
-[49764] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62154 Accepted
-[49765] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62155 Accepted
-[49761] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62157 Accepted
-[49758] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62159 Accepted
-[49762] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62160 Accepted
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62154 [GET] URI: /api/v1/notifications
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62157 [GET] URI: /api/v1/notifications
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62155 [GET] URI: /api/v1/me/badges
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62159 [GET] URI: /api/v1/notifications/actions
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62160 [GET] URI: /api/v1/me/badges
-[49761] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49765] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49764] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49758] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49762] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49765] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62155 Closing
-[49764] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62154 Closing
-[49762] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62160 Closing
-[49761] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62157 Closing
-[49765] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62170 Accepted
-[49761] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62171 Accepted
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62170 [GET] URI: /api/v1/me/mentions
-[Tue Jul 14 02:05:53 2026] 127.0.0.1:62171 [GET] URI: /api/v1/messages/notifications
-[49765] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49761] [Mon Jul 13 23:05:53 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
-[49758] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62159 Closing
-[49765] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62170 Closing
-[49761] [Mon Jul 13 23:05:53 2026] 127.0.0.1:62171 Closing
-[49754] [Mon Jul 13 23:06:04 2026] 127.0.0.1:62085 Closing
-[49758] [Mon Jul 13 23:06:05 2026] 127.0.0.1:62230 Accepted
-[Tue Jul 14 02:06:05 2026] 127.0.0.1:62230 [GET] URI: /api/v1/notifications/stream
-[49758] [Mon Jul 13 23:06:05 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50736] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50737] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50738] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50739] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50740] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50741] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50742] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50743] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50744] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50734] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50745] [Mon Jul 13 23:10:34 2026] PHP 8.5.6 Development Server (http://127.0.0.1:8000) started
+[50744] [Mon Jul 13 23:10:34 2026] 127.0.0.1:63270 Accepted
+[Tue Jul 14 02:10:34 2026] 127.0.0.1:63270 [GET] URI: /api/v1/notifications/stream
+[50744] [Mon Jul 13 23:10:34 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50734] [Mon Jul 13 23:10:35 2026] 127.0.0.1:63279 Accepted
+[50741] [Mon Jul 13 23:10:35 2026] 127.0.0.1:63277 Accepted
+[50745] [Mon Jul 13 23:10:35 2026] 127.0.0.1:63280 Accepted
+[Tue Jul 14 02:10:35 2026] 127.0.0.1:63279 [GET] URI: /api/v1/notifications/actions
+[50734] [Mon Jul 13 23:10:35 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[Tue Jul 14 02:10:35 2026] 127.0.0.1:63277 [GET] URI: /api/v1/notifications
+[Tue Jul 14 02:10:35 2026] 127.0.0.1:63280 [GET] URI: /api/v1/me/badges
+[50741] [Mon Jul 13 23:10:35 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50745] [Mon Jul 13 23:10:35 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50741] [Mon Jul 13 23:10:35 2026] 127.0.0.1:63277 Closing
+[50745] [Mon Jul 13 23:10:35 2026] 127.0.0.1:63280 Closing
+[50734] [Mon Jul 13 23:10:35 2026] 127.0.0.1:63279 Closing
+[50745] [Mon Jul 13 23:10:36 2026] 127.0.0.1:63298 Accepted
+[Tue Jul 14 02:10:36 2026] 127.0.0.1:63298 [GET] URI: /api/v1/adiantamentos
+[50745] [Mon Jul 13 23:10:36 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50745] [Mon Jul 13 23:10:36 2026] 127.0.0.1:63298 Closing
+[50734] [Mon Jul 13 23:10:37 2026] 127.0.0.1:63302 Accepted
+[Tue Jul 14 02:10:37 2026] 127.0.0.1:63302 [GET] URI: /api/v1/adiantamentos
+[50734] [Mon Jul 13 23:10:37 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50734] [Mon Jul 13 23:10:37 2026] 127.0.0.1:63302 Closing
+[50738] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63311 Accepted
+[Tue Jul 14 02:10:50 2026] 127.0.0.1:63311 [POST] URI: /api/v1/presence/heartbeat
+[50741] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63316 Accepted
+[50743] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63315 Accepted
+[50739] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63317 Accepted
+[50738] [Mon Jul 13 23:10:50 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[Tue Jul 14 02:10:50 2026] 127.0.0.1:63316 [GET] URI: /api/v1/me/badges
+[50741] [Mon Jul 13 23:10:50 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[Tue Jul 14 02:10:50 2026] 127.0.0.1:63315 [GET] URI: /api/v1/notifications
+[Tue Jul 14 02:10:50 2026] 127.0.0.1:63317 [GET] URI: /api/v1/me/mentions
+[50743] [Mon Jul 13 23:10:50 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50739] [Mon Jul 13 23:10:50 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50741] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63316 Closing
+[50743] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63315 Closing
+[50739] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63317 Closing
+[50738] [Mon Jul 13 23:10:50 2026] 127.0.0.1:63311 Closing
+[50741] [Mon Jul 13 23:10:51 2026] 127.0.0.1:63324 Accepted
+[Tue Jul 14 02:10:51 2026] 127.0.0.1:63324 [GET] URI: /api/v1/inbox/conversations
+[50741] [Mon Jul 13 23:10:51 2026] PHP Deprecated:  Constant E_STRICT is deprecated since 8.4, the error level was removed in /Users/ricardooliveira/PROJETOS/Minutor-desenvolvimento/Backend/public/index.php on line 5
+[50741] [Mon Jul 13 23:10:51 2026] 127.0.0.1:63324 Closing
