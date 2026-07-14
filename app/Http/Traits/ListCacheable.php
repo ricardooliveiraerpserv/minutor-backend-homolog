@@ -26,8 +26,11 @@ trait ListCacheable
 {
     protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60): mixed
     {
-        $userId   = Auth::id() ?? 'guest';
-        $cacheKey = "{$resource}:list:{$userId}:" . md5($request->getQueryString() ?? '');
+        $userId    = Auth::id() ?? 'guest';
+        // Multi-empresa: a empresa ativa ENTRA na chave — senão o mesmo user/query
+        // em empresas diferentes reusa o cache da outra (vazamento entre empresas).
+        $companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
+        $cacheKey  = "{$resource}:list:{$userId}:c{$companyId}:" . md5($request->getQueryString() ?? '');
 
         // 1. Redis com tags (cache compartilhado e invalidável por resource)
         if ($this->redisAvailable()) {

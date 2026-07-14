@@ -20,13 +20,23 @@ class ResolveActiveCompany
 
     public function handle(Request $request, Closure $next)
     {
+        // $request->user() usa o guard que autenticou (sanctum) — ao contrário de
+        // auth()->user() (guard web/sessão), que é null em request por token.
         $user = $request->user();
-        $header = $request->header('X-Company-ID');
 
-        if ($user && $header !== null && is_numeric($header)) {
-            $companyId = (int) $header;
-            if ($companyId > 0 && $user->belongsToCompany($companyId)) {
-                $this->context->set($companyId);
+        if ($user) {
+            // Default = empresa ativa persistida do usuário.
+            $active = $user->current_company_id;
+
+            // Override pontual via header X-Company-ID (só se vinculado).
+            $header = $request->header('X-Company-ID');
+            if ($header !== null && is_numeric($header) && (int) $header > 0
+                && $user->belongsToCompany((int) $header)) {
+                $active = (int) $header;
+            }
+
+            if ($active) {
+                $this->context->set((int) $active);
             }
         }
 
