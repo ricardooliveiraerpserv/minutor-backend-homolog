@@ -53,7 +53,7 @@ class MicrosoftCalendarService
     public static function exchangeCode(string $code): array
     {
         $c = self::cfg();
-        $resp = Http::asForm()->post(self::tokenUrl(), [
+        $resp = Http::asForm()->timeout(10)->post(self::tokenUrl(), [
             'client_id'     => $c['client_id'],
             'client_secret' => $c['client_secret'],
             'grant_type'    => 'authorization_code',
@@ -68,7 +68,7 @@ class MicrosoftCalendarService
     public static function refresh(string $refreshToken): array
     {
         $c = self::cfg();
-        $resp = Http::asForm()->post(self::tokenUrl(), [
+        $resp = Http::asForm()->timeout(10)->post(self::tokenUrl(), [
             'client_id'     => $c['client_id'],
             'client_secret' => $c['client_secret'],
             'grant_type'    => 'refresh_token',
@@ -106,7 +106,7 @@ class MicrosoftCalendarService
     public static function createEvent(string $accessToken, array $payload): ?array
     {
         try {
-            $r = Http::withToken($accessToken)->acceptJson()->post(self::GRAPH_BASE . '/me/events', $payload);
+            $r = Http::withToken($accessToken)->timeout(8)->acceptJson()->post(self::GRAPH_BASE . '/me/events', $payload);
             if ($r->successful()) return $r->json();
             \Illuminate\Support\Facades\Log::warning('📅 [MS-CAL] createEvent falhou', ['status' => $r->status(), 'body' => mb_substr($r->body(), 0, 300)]);
         } catch (\Throwable $e) {
@@ -119,7 +119,7 @@ class MicrosoftCalendarService
     public static function updateEvent(string $accessToken, string $eventId, array $patch): bool
     {
         try {
-            return Http::withToken($accessToken)->acceptJson()->patch(self::GRAPH_BASE . "/me/events/{$eventId}", $patch)->successful();
+            return Http::withToken($accessToken)->timeout(10)->acceptJson()->patch(self::GRAPH_BASE . "/me/events/{$eventId}", $patch)->successful();
         } catch (\Throwable) {
             return false;
         }
@@ -129,7 +129,7 @@ class MicrosoftCalendarService
     public static function deleteEvent(string $accessToken, string $eventId): bool
     {
         try {
-            return Http::withToken($accessToken)->delete(self::GRAPH_BASE . "/me/events/{$eventId}")->successful();
+            return Http::withToken($accessToken)->timeout(10)->delete(self::GRAPH_BASE . "/me/events/{$eventId}")->successful();
         } catch (\Throwable) {
             return false;
         }
@@ -150,7 +150,7 @@ class MicrosoftCalendarService
                 '$orderby'      => 'start/dateTime',
                 '$top'          => 200,
             ]);
-            $r = Http::withToken($accessToken)->acceptJson()
+            $r = Http::withToken($accessToken)->timeout(8)->acceptJson()
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->get($url);
             if (!$r->successful()) return [];
@@ -185,7 +185,7 @@ class MicrosoftCalendarService
     public static function me(string $accessToken): ?string
     {
         try {
-            $r = Http::withToken($accessToken)->acceptJson()->get(self::GRAPH_BASE . '/me?$select=mail,userPrincipalName');
+            $r = Http::withToken($accessToken)->timeout(8)->acceptJson()->get(self::GRAPH_BASE . '/me?$select=mail,userPrincipalName');
             if ($r->successful()) return $r->json('mail') ?: $r->json('userPrincipalName');
         } catch (\Throwable) {}
         return null;
@@ -205,7 +205,7 @@ class MicrosoftCalendarService
                 '$orderby'      => 'start/dateTime',
                 '$top'          => 100,
             ]);
-            $r = Http::withToken($accessToken)->acceptJson()
+            $r = Http::withToken($accessToken)->timeout(8)->acceptJson()
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->get($url);
             if (!$r->successful()) return [];
