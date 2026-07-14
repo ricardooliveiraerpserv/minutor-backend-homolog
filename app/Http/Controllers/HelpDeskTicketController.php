@@ -101,6 +101,19 @@ class HelpDeskTicketController extends Controller
                 $q->where(fn ($w) => $w->where('subject', 'ilike', $s)->orWhere('ticket_number', 'ilike', $s)->orWhere('description', 'ilike', $s));
             })
             ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
+            // ESCALA: filtro de DATA no banco (usa índice created_at) — a fila deixa de carregar "os N
+            // mais recentes de toda a história" e passa a varrer só o período pedido.
+            ->when($request->filled('created_from'), fn ($q) => $q->where('created_at', '>=', $request->input('created_from')))
+            ->when($request->filled('created_to'), fn ($q) => $q->where('created_at', '<=', $request->input('created_to')))
+            // Modo FILA (sem período): ativos SEMPRE + encerrados só recentes → conjunto limitado,
+            // independente de quantos encerrados existam no histórico. Encerrados antigos ficam no Histórico.
+            // Usa status_id (índice) em vez de whereHas (subquery) p/ o planner fazer bitmap-OR de índices.
+            ->when($request->boolean('queue'), function ($q) use ($request) {
+                $activeIds = HelpDeskStatus::where('is_terminal', false)->where('is_resolved', false)->pluck('id')->all();
+                $q->where(fn ($w) => $w
+                    ->whereIn('status_id', $activeIds)
+                    ->orWhere('updated_at', '>=', now()->subDays((int) $request->input('queue_recent_days', 45))));
+            })
             ->orderByDesc('updated_at');
     }
 
