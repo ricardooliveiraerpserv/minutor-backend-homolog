@@ -29,6 +29,7 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
+    use \App\Http\Traits\FiltersByActiveCompany;
 
     /**
      * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico).
@@ -3076,6 +3077,7 @@ class ProjectController extends Controller
 
         $base = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('customers', 'customers.id', '=', 'projects.customer_id')
             ->join('users', 'users.id', '=', 'timesheets.user_id')
             ->where('projects.is_investimento_comercial', true)
