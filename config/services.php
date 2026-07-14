@@ -47,10 +47,11 @@ return [
     ],
 
     'anthropic' => [
-        'api_key'   => env('ANTHROPIC_API_KEY'),
-        'model'     => env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
-        'base_url'  => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
-        'ocr_model' => env('ANTHROPIC_OCR_MODEL', 'claude-haiku-4-5-20251001'),
+        'api_key'        => env('ANTHROPIC_API_KEY'),
+        'model'          => env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+        'base_url'       => env('ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
+        'ocr_model'      => env('ANTHROPIC_OCR_MODEL', 'claude-haiku-4-5-20251001'),
+        'meetings_model' => env('ANTHROPIC_MEETINGS_MODEL', 'claude-sonnet-5'),
     ],
 
     'openai' => [
@@ -99,6 +100,29 @@ return [
         'tenant_id'     => env('GRAPH_TENANT_ID', env('MAIL_GRAPH_TENANT_ID')),
         'client_id'     => env('GRAPH_CLIENT_ID', env('MAIL_GRAPH_CLIENT_ID')),
         'client_secret' => env('GRAPH_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
+    ],
+
+    /*
+     * Integração Microsoft 365 por USUÁRIO (OAuth2 delegado) — a MESMA credencial da Agenda do
+     * "Meu Dia". Central de Reuniões (Teams) cria a reunião como EVENTO no calendário do usuário
+     * logado, reusando este token — por isso os scopes incluem escrita de calendário.
+     * Por padrão reusa as credenciais do graph_reader (mesmo app dos e-mails). O INTERRUPTOR é o
+     * redirect_uri: sem ele, configured()=false e nada aparece.
+     */
+    'microsoft_calendar' => [
+        'tenant_id'     => env('MS_CAL_TENANT_ID', env('GRAPH_READER_TENANT_ID', env('GRAPH_TENANT_ID', 'common'))),
+        'client_id'     => env('MS_CAL_CLIENT_ID', env('GRAPH_READER_CLIENT_ID', env('GRAPH_CLIENT_ID'))),
+        'client_secret' => env('MS_CAL_CLIENT_SECRET', env('GRAPH_READER_CLIENT_SECRET', env('GRAPH_CLIENT_SECRET'))),
+        'redirect_uri'  => env('MS_CAL_REDIRECT_URI'),
+        'scopes'        => env('MS_CAL_SCOPES', 'offline_access openid profile email User.Read Calendars.ReadWrite'),
+    ],
+
+    // Central de Reuniões — Teams. A reunião é criada como evento (isOnlineMeeting) no calendário do
+    // organizador usando a credencial DELEGADA do Meu Dia (microsoft_calendar). Sem app-only / policy.
+    'meetings' => [
+        'teams_enabled'  => filter_var(env('MEETINGS_TEAMS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'organizer'      => env('MEETINGS_ORGANIZER', env('MAIL_GRAPH_MAILBOX', env('GRAPH_MAILBOX'))),
+        'organizer_mode' => env('MEETINGS_ORGANIZER_MODE', 'service'),
     ],
 
     /*
