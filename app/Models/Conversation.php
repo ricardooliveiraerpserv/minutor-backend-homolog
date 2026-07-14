@@ -11,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Conversation extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $fillable = [
         'type', 'title', 'customer_id', 'contract_id', 'project_id',
         'created_by', 'last_message_at', 'avatar_path',

@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\DB;
 
 class SustentacaoController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     /** Query base que exclui tickets cujo responsável é @promax.bardahl.com.br */
     private function tickets(): \Illuminate\Database\Eloquent\Builder
     {
@@ -302,6 +304,7 @@ class SustentacaoController extends Controller
 
         $hoursFromTimesheets = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
@@ -338,6 +341,7 @@ class SustentacaoController extends Controller
 
         $byProject = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->join('customers', 'customers.id', '=', 'projects.customer_id')
             ->where(function ($q) {
@@ -825,6 +829,7 @@ class SustentacaoController extends Controller
         // 7. Financeiro por cliente
         $clientHours = DB::table('timesheets')
             ->join('projects',      'projects.id',      '=', 'timesheets.project_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->join('customers',     'customers.id',     '=', 'projects.customer_id')
             ->where(fn($q) => $q->where('service_types.code', 'sustentacao')

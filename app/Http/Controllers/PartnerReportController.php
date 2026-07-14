@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 class PartnerReportController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     public function index(Request $request): JsonResponse
     {
         $auth = $request->user();
@@ -44,6 +46,7 @@ class PartnerReportController extends Controller
         // Timesheets aprovados dos consultores
         $query = DB::table('timesheets')
             ->whereIn('user_id', $consultantIds)
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('timesheets.company_id', $cid))
             ->whereIn('status', ['approved', 'pending'])
             ->whereNull('deleted_at');
 
