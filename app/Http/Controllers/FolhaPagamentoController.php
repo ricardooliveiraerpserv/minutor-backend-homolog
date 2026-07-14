@@ -659,7 +659,18 @@ class FolhaPagamentoController extends Controller
             return $r;
         }
         $empresa = $request->query('empresa') === 'bizify' ? 'bizify' : 'erpserv';
-        return response()->json(['data' => $this->buildRows($yearMonth, $empresa)]);
+
+        // Multi-empresa (flag ON): a Folha Cooperativa é ÚNICA por EMPRESA BASE (a ativa) —
+        // ignora o param das abas e usa a empresa ativa. O FE esconde as abas quando vier `company`.
+        $companyName = null;
+        if (config('multiempresa.scoping_enabled')) {
+            $active = \App\Models\Company::find(app(\App\Services\CompanyContext::class)->id());
+            if ($active) {
+                $empresa     = $active->slug === 'bizify' ? 'bizify' : 'erpserv';
+                $companyName = $active->name;
+            }
+        }
+        return response()->json(['data' => $this->buildRows($yearMonth, $empresa), 'company' => $companyName, 'empresa' => $companyName ? $empresa : null]);
     }
 
     /**
