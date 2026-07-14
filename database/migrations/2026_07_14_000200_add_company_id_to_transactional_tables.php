@@ -47,22 +47,21 @@ return new class extends Migration
             }
         }
 
-        // Backfill a partir do pai.
+        // Backfill a partir do pai — subquery correlacionada (portável sqlite+postgres).
+        $fromParent = function (string $table, string $fk, string $parent) {
+            DB::statement("UPDATE {$table} SET company_id = (SELECT company_id FROM {$parent} WHERE {$parent}.id = {$table}.{$fk}) WHERE company_id IS NULL AND {$fk} IS NOT NULL");
+        };
         foreach ($this->byProject as $table) {
-            if (Schema::hasTable($table)) {
-                DB::statement("UPDATE {$table} c SET company_id = p.company_id FROM projects p WHERE p.id = c.project_id AND c.company_id IS NULL");
-            }
+            if (Schema::hasTable($table)) $fromParent($table, 'project_id', 'projects');
         }
-        foreach (array_merge($this->byContract, $this->byBoth) as $table) {
-            if (Schema::hasTable($table) && $table !== 'operational_feed' && $table !== 'contract_flow_snapshots' && $table !== 'conversations') {
-                DB::statement("UPDATE {$table} c SET company_id = ct.company_id FROM contracts ct WHERE ct.id = c.contract_id AND c.company_id IS NULL");
-            }
+        foreach ($this->byContract as $table) {
+            if (Schema::hasTable($table)) $fromParent($table, 'contract_id', 'contracts');
         }
         // byBoth: primeiro por project, depois o resto por contract.
         foreach ($this->byBoth as $table) {
             if (Schema::hasTable($table)) {
-                DB::statement("UPDATE {$table} c SET company_id = p.company_id FROM projects p WHERE p.id = c.project_id AND c.company_id IS NULL");
-                DB::statement("UPDATE {$table} c SET company_id = ct.company_id FROM contracts ct WHERE ct.id = c.contract_id AND c.company_id IS NULL");
+                $fromParent($table, 'project_id', 'projects');
+                $fromParent($table, 'contract_id', 'contracts');
             }
         }
         // Fallback: qualquer sobra → ERPSERV.
