@@ -48,6 +48,7 @@ class User extends Authenticatable
         'password',
         'enabled',
         'current_company_id',
+        'home_company_id',
         'can_use_bot',
         'bot_allowed_scopes',
         'bot_visibility',
@@ -222,6 +223,40 @@ class User extends Authenticatable
     public function currentCompany(): BelongsTo
     {
         return $this->belongsTo(Company::class, 'current_company_id');
+    }
+
+    /** Empresa da FOLHA do funcionário (fonte única; is_bizify deriva daqui). */
+    public function homeCompany(): BelongsTo
+    {
+        return $this->belongsTo(Company::class, 'home_company_id');
+    }
+
+    /**
+     * Mantém `is_bizify` (legado) sincronizado com a empresa da folha: is_bizify =
+     * home_company é a BIZIFY. Assim a folha/fechamento legada segue funcionando,
+     * mas a FONTE ÚNICA é o home_company_id (definido pelo vínculo/cadastro).
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (User $u) {
+            if ($u->isDirty('home_company_id')) {
+                $bizId = \Illuminate\Support\Facades\Cache::rememberForever(
+                    'company_id:bizify',
+                    fn () => Company::where('slug', 'bizify')->value('id')
+                );
+                $u->is_bizify = $bizId !== null && (int) $u->home_company_id === (int) $bizId;
+            }
+        });
+
+        // A empresa da folha tem que ser uma das empresas VINCULADAS — garante o vínculo.
+        static::saved(function (User $u) {
+            if ($u->wasChanged('home_company_id') && $u->home_company_id
+                && !$u->companies()->where('companies.id', $u->home_company_id)->exists()) {
+                $u->companies()->syncWithoutDetaching([
+                    $u->home_company_id => ['role' => $u->type ?: 'consultor'],
+                ]);
+            }
+        });
     }
 
     /** Está vinculado a esta empresa? */
