@@ -177,6 +177,12 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:30,1')->name('integrations.microsoft.callback');
 
     Route::middleware('auth:sanctum')->group(function () {
+        // ===== Ver como (impersonation) =====
+        Route::get('/impersonate/kinds',      [\App\Http\Controllers\ImpersonationController::class, 'kinds'])->name('impersonate.kinds');
+        Route::get('/impersonate/candidates', [\App\Http\Controllers\ImpersonationController::class, 'candidates'])->name('impersonate.candidates');
+        Route::get('/impersonate/partners',   [\App\Http\Controllers\ImpersonationController::class, 'partners'])->name('impersonate.partners');
+        Route::post('/impersonate',           [\App\Http\Controllers\ImpersonationController::class, 'impersonate'])->name('impersonate.start');
+
         // ===== Work Sessions (Modo Atendimento) =====
         Route::post('/work-sessions',                    [\App\Http\Controllers\WorkSessionController::class, 'start']);
         Route::post('/work-sessions/{session}/events',   [\App\Http\Controllers\WorkSessionController::class, 'event']);
