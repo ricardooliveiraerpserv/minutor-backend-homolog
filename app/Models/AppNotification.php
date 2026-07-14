@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Notificação da Central (tela inicial). Nome AppNotification p/ não colidir com o Notification do Laravel. */
 class AppNotification extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes, \App\Models\Concerns\BelongsToCompany;
 
     protected $table = 'notifications_center';
 
