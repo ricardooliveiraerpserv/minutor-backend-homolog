@@ -47,6 +47,7 @@ class User extends Authenticatable
         'email',
         'password',
         'enabled',
+        'current_company_id',
         'can_use_bot',
         'bot_allowed_scopes',
         'bot_visibility',
@@ -206,6 +207,34 @@ class User extends Authenticatable
     public function partner(): BelongsTo
     {
         return $this->belongsTo(Partner::class);
+    }
+
+    // ── Multi-empresa (fase 1) ───────────────────────────────────────────────
+    /** Empresas a que o usuário está vinculado, com o papel em cada uma (pivot role). */
+    public function companies(): BelongsToMany
+    {
+        return $this->belongsToMany(Company::class, 'company_user')
+            ->withPivot('role')
+            ->withTimestamps();
+    }
+
+    /** Empresa ativa persistida (default do usuário). */
+    public function currentCompany(): BelongsTo
+    {
+        return $this->belongsTo(Company::class, 'current_company_id');
+    }
+
+    /** Está vinculado a esta empresa? */
+    public function belongsToCompany(int $companyId): bool
+    {
+        return $this->companies()->where('companies.id', $companyId)->exists();
+    }
+
+    /** Papel do usuário NA empresa dada (null se não vinculado). */
+    public function roleInCompany(int $companyId): ?string
+    {
+        $c = $this->companies()->where('companies.id', $companyId)->first();
+        return $c?->pivot->role;
     }
 
     /**
