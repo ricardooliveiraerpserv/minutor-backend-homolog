@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Adiantamento extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'adiantamentos';
 
     // beneficiario_tipo
