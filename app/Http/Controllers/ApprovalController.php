@@ -20,6 +20,8 @@ use Illuminate\Validation\ValidationException;
  */
 class ApprovalController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     use ListCacheable;
 
     /** Cards de ação da tela inicial (Meu Dia / aba Ações). */
@@ -289,6 +291,7 @@ class ApprovalController extends Controller
                 $totalsQ = DB::table('timesheets')
                     ->whereNull('deleted_at')
                     ->where('status', '!=', 'rejected')
+                    ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                     ->whereRaw("ticket ~ '^[0-9]{5}$'");
                 $totalsQ->where(function ($q) use ($ticketsByCustomer) {
                     foreach ($ticketsByCustomer as $cid => $tickets) {
@@ -304,6 +307,7 @@ class ApprovalController extends Controller
                 // Soma o saldo inicial cadastrado (ticket_initial_balances).
                 $initQ = DB::table('ticket_initial_balances')
                     ->whereNull('deleted_at')
+                    ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                     ->where(function ($q) use ($ticketsByCustomer) {
                         foreach ($ticketsByCustomer as $cid => $tickets) {
                             $q->orWhere(function ($qq) use ($cid, $tickets) {
