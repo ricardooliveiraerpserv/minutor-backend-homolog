@@ -721,6 +721,9 @@ class FolhaPagamentoController extends Controller
         ]);
 
         $empresa = $request->input('empresa') === 'bizify' ? 'bizify' : 'erpserv';
+        // Multi-empresa: company_id da linha SEMPRE deriva da `empresa` (não da empresa ativa do
+        // request) — senão um lançamento Bizify salvo com ERPSERV ativo pegaria company_id errado.
+        $folhaCompanyId = \App\Models\Company::where('slug', $empresa)->value('id');
         $saved = 0;
 
         // Usuários do Raho = linhas 100% editáveis (salvam cpf/nome/status/valor_hora/produção também).
@@ -747,6 +750,7 @@ class FolhaPagamentoController extends Controller
                 continue;
             }
             $comum = [
+                'company_id'         => $folhaCompanyId,
                 'dias_trabalhados'   => $e['dias_trabalhados'] ?? 0,
                 'horas_trabalhadas'  => $e['horas_trabalhadas'] ?? null,
                 'variavel'           => $e['variavel'] ?? 0,
