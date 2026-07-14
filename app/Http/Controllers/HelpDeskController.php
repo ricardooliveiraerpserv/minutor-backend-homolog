@@ -66,8 +66,11 @@ class HelpDeskController extends Controller
      */
     public function integrationCustomers(): JsonResponse
     {
+        // Sustentação = contrato com categoria 'sustentacao' OU já colocado no kanban de sustentação
+        // (sustentacao_column preenchido: On Demand/Cloud/Bizify/BH). O move p/ o kanban seta a coluna
+        // mas NÃO a categoria — então filtrar só por categoria deixava clientes de fora.
         $customerIds = \App\Models\Contract::query()
-            ->where('categoria', 'sustentacao')
+            ->where(fn ($q) => $q->where('categoria', 'sustentacao')->orWhereNotNull('sustentacao_column'))
             ->whereNotNull('customer_id')
             ->distinct()->pluck('customer_id');
 
