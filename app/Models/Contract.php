@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Contract extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes, \App\Models\Concerns\BelongsToCompany;
 
     protected $fillable = [
         'customer_id', 'project_name', 'status', 'categoria', 'service_type_id', 'contract_type_id',
