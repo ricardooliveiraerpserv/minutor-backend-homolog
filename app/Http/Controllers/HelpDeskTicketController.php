@@ -107,6 +107,9 @@ class HelpDeskTicketController extends Controller
     public function index(Request $request): JsonResponse
     {
         $tickets = $this->filtered($request)->limit((int) $request->input('limit', 200))->get();
+        // A lista/kanban NÃO usa o corpo do chamado — ocultar 'description' enxuga muito o payload
+        // (o detalhe usa o endpoint show, que mantém tudo).
+        $tickets->makeHidden(['description']);
         $events = $this->eventsByTicket($tickets);
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
         $cal = app(\App\Services\BusinessCalendarService::class);
