@@ -2473,7 +2473,7 @@ class ProjectController extends Controller
      *
      * Cronograma e Board são duas views da mesma entidade — sem dual store.
      */
-    public function schedule(Project $project): JsonResponse
+    public function schedule(Project $project, Request $request): JsonResponse
     {
         $project->loadMissing(['serviceType', 'coordinators:id,name,email']);
 
@@ -2506,9 +2506,14 @@ class ProjectController extends Controller
         // por ela (responsible_user_id) — não o board completo. Descarta etapas sem atividade
         // dele; contadores/resumo refletem só o escopo dele. Admin/coordenador (ou com
         // hours.view_all) seguem vendo tudo.
-        $viewer = auth()->user();
-        if ($viewer && method_exists($viewer, 'isConsultor') && $viewer->isConsultor()
-            && !(method_exists($viewer, 'hasAccess') && $viewer->hasAccess('hours.view_all'))) {
+        // $request->user() (não auth()->user()) — reflete corretamente o usuário do token,
+        // inclusive sob "Ver como" (impersonation emite token real do alvo).
+        $viewer = $request->user();
+        // Escopo ESTRITO por perfil: consultor só vê o cronograma dele, independentemente
+        // de hours.view_all — a visão de gestão (totais/horas do projeto) é exclusiva de
+        // admin/coordenador. Admin/coordenador seguem vendo tudo (isConsultor() = false).
+        $isConsultorScoped = $viewer && method_exists($viewer, 'isConsultor') && $viewer->isConsultor();
+        if ($isConsultorScoped) {
             $vid = $viewer->id;
             $deliveryIds = $stages->flatMap(fn ($st) => $st->deliveries->pluck('id'))->all();
             $allocatedSet = \App\Models\StageAllocation::where('user_id', $vid)
@@ -2996,8 +3001,9 @@ class ProjectController extends Controller
             'project' => [
                 'id'                  => $project->id,
                 'name'                => $project->name,
-                'sold_hours'          => (float) ($project->sold_hours ?? 0),
-                'coordination_hours'  => (float) ($project->coordination_hours ?? 0),
+                // Consultor não recebe as horas do projeto (vendidas/liberadas à gestão).
+                'sold_hours'          => $isConsultorScoped ? 0.0 : (float) ($project->sold_hours ?? 0),
+                'coordination_hours'  => $isConsultorScoped ? 0.0 : (float) ($project->coordination_hours ?? 0),
                 'start_date'          => $project->start_date?->toDateString(),
                 'expected_end_date'   => $project->expected_end_date?->toDateString(),
                 'allow_weekend_work'  => (bool) $project->allow_weekend_work,
@@ -3008,9 +3014,10 @@ class ProjectController extends Controller
                     'email' => $u->email,
                 ])->values(),
             ],
-            'executive'  => $executiveSummary,
-            'alerts'     => $alerts,
-            'team_load'  => $teamLoad,
+            // Executive/alertas/team_load são visão de gestão — omitidos pro consultor.
+            'executive'  => $isConsultorScoped ? null : $executiveSummary,
+            'alerts'     => $isConsultorScoped ? [] : $alerts,
+            'team_load'  => $isConsultorScoped ? [] : $teamLoad,
             'stages' => $stages,
         ]);
     }
