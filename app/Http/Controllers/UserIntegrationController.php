@@ -110,21 +110,10 @@ class UserIntegrationController extends Controller
         ]]);
     }
 
-    /** Garante um access_token válido (renova via refresh_token se expirado). Persiste o novo. */
+    /** Garante um access_token válido (renova via refresh_token se expirado). Fonte única no service. */
     private function freshToken(UserIntegration $i): ?string
     {
-        if (!$i->isExpired() && $i->access_token) return $i->access_token;
-        if (!$i->refresh_token) return null;
-
-        $tok = MicrosoftCalendarService::refresh($i->refresh_token);
-        if (!empty($tok['error']) || empty($tok['access_token'])) return null;
-
-        $i->update([
-            'access_token'  => $tok['access_token'],
-            'refresh_token' => $tok['refresh_token'] ?? $i->refresh_token, // MS pode rotacionar
-            'expires_at'    => now()->addSeconds((int) ($tok['expires_in'] ?? 3600)),
-        ]);
-        return $tok['access_token'];
+        return MicrosoftCalendarService::freshTokenFor($i);
     }
 
     private function integration(Request $request): ?UserIntegration

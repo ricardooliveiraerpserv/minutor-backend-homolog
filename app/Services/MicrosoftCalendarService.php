@@ -19,11 +19,11 @@ class MicrosoftCalendarService
         return config('services.microsoft_calendar', []);
     }
 
-    /** true só quando client_id + client_secret estão preenchidos. */
+    /** true só quando client_id + client_secret + redirect_uri estão preenchidos (redirect_uri = interruptor). */
     public static function configured(): bool
     {
         $c = self::cfg();
-        return !empty($c['client_id']) && !empty($c['client_secret']);
+        return !empty($c['client_id']) && !empty($c['client_secret']) && !empty($c['redirect_uri']);
     }
 
     private static function tokenUrl(): string
@@ -77,6 +77,100 @@ class MicrosoftCalendarService
             'scope'         => $c['scopes'],
         ]);
         return $resp->successful() ? $resp->json() : ['error' => $resp->json('error_description') ?: ('HTTP ' . $resp->status())];
+    }
+
+    /**
+     * Garante um access_token válido p/ uma integração, renovando via refresh_token se expirado e
+     * persistindo o novo. Fonte ÚNICA de renovação (usada pela Agenda e pela Central de Reuniões).
+     */
+    public static function freshTokenFor(\App\Models\UserIntegration $i): ?string
+    {
+        if (!$i->isExpired() && $i->access_token) return $i->access_token;
+        if (!$i->refresh_token) return null;
+
+        $tok = self::refresh($i->refresh_token);
+        if (!empty($tok['error']) || empty($tok['access_token'])) return null;
+
+        $i->update([
+            'access_token'  => $tok['access_token'],
+            'refresh_token' => $tok['refresh_token'] ?? $i->refresh_token, // MS pode rotacionar
+            'expires_at'    => now()->addSeconds((int) ($tok['expires_in'] ?? 3600)),
+        ]);
+        return $tok['access_token'];
+    }
+
+    /**
+     * Cria um EVENTO no calendário do usuário (delegado /me/events). Com isOnlineMeeting=true +
+     * teamsForBusiness, o Graph devolve o joinUrl do Teams. Retorna o evento (array) ou null.
+     */
+    public static function createEvent(string $accessToken, array $payload): ?array
+    {
+        try {
+            $r = Http::withToken($accessToken)->acceptJson()->post(self::GRAPH_BASE . '/me/events', $payload);
+            if ($r->successful()) return $r->json();
+            \Illuminate\Support\Facades\Log::warning('📅 [MS-CAL] createEvent falhou', ['status' => $r->status(), 'body' => mb_substr($r->body(), 0, 300)]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('📅 [MS-CAL] createEvent exceção', ['error' => $e->getMessage()]);
+        }
+        return null;
+    }
+
+    /** Atualiza (PATCH) um evento delegado. Best effort. */
+    public static function updateEvent(string $accessToken, string $eventId, array $patch): bool
+    {
+        try {
+            return Http::withToken($accessToken)->acceptJson()->patch(self::GRAPH_BASE . "/me/events/{$eventId}", $patch)->successful();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** Remove um evento delegado (cancela a reunião). Best effort. */
+    public static function deleteEvent(string $accessToken, string $eventId): bool
+    {
+        try {
+            return Http::withToken($accessToken)->delete(self::GRAPH_BASE . "/me/events/{$eventId}")->successful();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /**
+     * Agenda detalhada do usuário no intervalo — p/ a Central de Reuniões (start/end ISO + link do
+     * Teams quando for online meeting). Sempre array (vazio em falha; nunca trava a UI).
+     * @return array<int,array{id:string,subject:string,starts_at:?string,ends_at:?string,is_all_day:bool,is_online:bool,join_url:?string}>
+     */
+    public static function fetchAgenda(string $accessToken, Carbon $start, Carbon $end): array
+    {
+        try {
+            $url = self::GRAPH_BASE . '/me/calendarView?' . http_build_query([
+                'startDateTime' => $start->toIso8601String(),
+                'endDateTime'   => $end->toIso8601String(),
+                '$select'       => 'id,subject,start,end,isAllDay,isOnlineMeeting,onlineMeeting',
+                '$orderby'      => 'start/dateTime',
+                '$top'          => 200,
+            ]);
+            $r = Http::withToken($accessToken)->acceptJson()
+                ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
+                ->get($url);
+            if (!$r->successful()) return [];
+
+            return collect($r->json('value', []))->map(function ($e) {
+                $startDt = data_get($e, 'start.dateTime');
+                $endDt   = data_get($e, 'end.dateTime');
+                return [
+                    'id'         => (string) (data_get($e, 'id') ?: ''),
+                    'subject'    => (string) (data_get($e, 'subject') ?: 'Compromisso'),
+                    'starts_at'  => $startDt ? Carbon::parse($startDt, 'America/Sao_Paulo')->toIso8601String() : null,
+                    'ends_at'    => $endDt ? Carbon::parse($endDt, 'America/Sao_Paulo')->toIso8601String() : null,
+                    'is_all_day' => (bool) data_get($e, 'isAllDay'),
+                    'is_online'  => (bool) data_get($e, 'isOnlineMeeting'),
+                    'join_url'   => data_get($e, 'onlineMeeting.joinUrl'),
+                ];
+            })->filter(fn ($e) => $e['starts_at'] !== null)->values()->all();
+        } catch (\Throwable) {
+            return [];
+        }
     }
 
     /** Perfil básico (e-mail da conta conectada) — best effort. */

@@ -222,6 +222,23 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/teams',                  [\App\Http\Controllers\HelpDeskTeamController::class, 'store']);
         Route::get('/help-desk/tickets',                 [\App\Http\Controllers\HelpDeskTicketController::class, 'index']);
         Route::post('/help-desk/tickets',                [\App\Http\Controllers\HelpDeskTicketController::class, 'store']);
+
+        // Central de Reuniões
+        Route::get('/meetings/suggested-participants', [\App\Http\Controllers\MeetingController::class, 'suggestedParticipants']);
+        Route::get('/meetings/calendar',            [\App\Http\Controllers\MeetingController::class, 'calendarEvents']);
+        Route::get('/meetings',                     [\App\Http\Controllers\MeetingController::class, 'index']);
+        Route::post('/meetings',                    [\App\Http\Controllers\MeetingController::class, 'store']);
+        Route::get('/meetings/{meeting}',           [\App\Http\Controllers\MeetingController::class, 'show']);
+        Route::put('/meetings/{meeting}',           [\App\Http\Controllers\MeetingController::class, 'reschedule']);
+        Route::post('/meetings/{meeting}/cancel',   [\App\Http\Controllers\MeetingController::class, 'cancel']);
+        Route::delete('/meetings/{meeting}',        [\App\Http\Controllers\MeetingController::class, 'destroy']);
+        Route::post('/meetings/{meeting}/start',    [\App\Http\Controllers\MeetingController::class, 'start']);
+        Route::post('/meetings/{meeting}/end',      [\App\Http\Controllers\MeetingController::class, 'end']);
+        Route::post('/meetings/{meeting}/log-hours', [\App\Http\Controllers\MeetingController::class, 'logHours']);
+        Route::post('/meetings/{meeting}/summary',   [\App\Http\Controllers\MeetingController::class, 'saveSummary']);
+        Route::post('/meetings/{meeting}/ata',       [\App\Http\Controllers\MeetingController::class, 'saveAta']);
+        Route::post('/meetings/{meeting}/note-to-ticket', [\App\Http\Controllers\MeetingController::class, 'noteToTicket']);
+        Route::post('/meetings/{meeting}/generate-notes', [\App\Http\Controllers\MeetingController::class, 'generateNotes']);
         Route::get('/help-desk/triggers',             [\App\Http\Controllers\HelpDeskTriggerController::class, 'index']);
         Route::post('/help-desk/triggers',            [\App\Http\Controllers\HelpDeskTriggerController::class, 'store']);
         Route::post('/help-desk/usage', [\App\Http\Controllers\HelpDeskUsageController::class, 'record']);
@@ -245,6 +262,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/portal/kb',               [\App\Http\Controllers\HelpDeskPortalController::class, 'kbIndex']);
         Route::get('/help-desk/portal/permissions',      [\App\Http\Controllers\HelpDeskPortalController::class, 'permissions']);
         Route::get('/help-desk/portal/tickets',          [\App\Http\Controllers\HelpDeskPortalController::class, 'myTickets']);
+        Route::get('/help-desk/portal/meetings',          [\App\Http\Controllers\MeetingController::class, 'portalMeetings']);
         Route::post('/help-desk/portal/tickets',         [\App\Http\Controllers\HelpDeskPortalController::class, 'openTicket']);
         Route::put('/help-desk/services/{service}',      [\App\Http\Controllers\HelpDeskServiceController::class, 'update']);
         Route::delete('/help-desk/services/{service}',   [\App\Http\Controllers\HelpDeskServiceController::class, 'destroy']);
