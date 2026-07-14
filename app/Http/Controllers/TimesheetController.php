@@ -73,6 +73,8 @@ use Maatwebsite\Excel\Facades\Excel;
  */
 class TimesheetController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     use ResponseHelpers;
     use \App\Http\Traits\ListCacheable;
 
@@ -628,6 +630,7 @@ class TimesheetController extends Controller
                             Timesheet::STATUS_ADJUSTMENT_REQUESTED,
                             Timesheet::STATUS_INTERNAL,
                         ])
+                        ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                         ->whereRaw("ticket ~ '^[0-9]{5}$'");
                     $totalsQ->where(function ($q) use ($ticketsByCustomer) {
                         foreach ($ticketsByCustomer as $cid => $tickets) {
@@ -643,6 +646,7 @@ class TimesheetController extends Controller
                     // Soma o saldo inicial cadastrado (ticket_initial_balances).
                     $initQ = \Illuminate\Support\Facades\DB::table('ticket_initial_balances')
                         ->whereNull('deleted_at')
+                        ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                         ->where(function ($q) use ($ticketsByCustomer) {
                             foreach ($ticketsByCustomer as $cid => $tickets) {
                                 $q->orWhere(function ($qq) use ($cid, $tickets) {
@@ -2773,6 +2777,7 @@ class TimesheetController extends Controller
         $initialByTicket = \DB::table('ticket_initial_balances')
             ->whereNull('deleted_at')
             ->where('customer_id', $customerId)
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
             ->whereIn('ticket', $rows->pluck('ticket')->all())
             ->pluck('initial_minutes', 'ticket');
 

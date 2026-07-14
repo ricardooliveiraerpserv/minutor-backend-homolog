@@ -443,6 +443,7 @@ class GapController extends Controller
         DB::table('project_consultants')->insert([
             'project_id'             => $projectId,
             'user_id'                => $data['consultant_id'],
+            'company_id'             => DB::table('projects')->where('id', $projectId)->value('company_id'),
             'allow_manual_timesheet' => false,
             'risk_flag'              => $riskFlag,
             'risk_reason'            => $data['risk_reason'] ?? null,
@@ -668,12 +669,14 @@ class GapController extends Controller
         $toInsert = array_values(array_diff($ids, $existing));
 
         $now = now();
+        $projectCompanyId = DB::table('projects')->where('id', $projectId)->value('company_id');
         $rows = [];
         foreach ($toInsert as $i => $userId) {
             $idxInArray = array_search($userId, $ids);
             $rows[] = [
                 'project_id'             => $projectId,
                 'user_id'                => $userId,
+                'company_id'             => $projectCompanyId,
                 'allow_manual_timesheet' => false,
                 'risk_flag'              => (bool) ($data['risk_flags'][$idxInArray] ?? false),
                 'risk_reason'            => $data['risk_reasons'][$idxInArray] ?? null,

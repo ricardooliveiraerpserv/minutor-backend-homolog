@@ -3455,6 +3455,7 @@ class ProjectController extends Controller
                     'project_id'      => $project->id,
                     'user_id'         => $userId,
                     'real_project_id' => $realId,
+                    'company_id'      => $project->company_id,
                     'created_at'      => $now,
                     'updated_at'      => $now,
                 ];
