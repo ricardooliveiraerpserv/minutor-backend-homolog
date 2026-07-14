@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProjectSoldHoursHistory extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'project_sold_hours_history';
 
     protected $fillable = [
