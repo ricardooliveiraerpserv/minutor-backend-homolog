@@ -230,11 +230,15 @@ class User extends Authenticatable
         return $this->companies()->where('companies.id', $companyId)->exists();
     }
 
-    /** Papel do usuário NA empresa dada (null se não vinculado). */
+    /** Papel do usuário NA empresa dada (null se não vinculado). Memoizado por request. */
+    private array $roleInCompanyCache = [];
     public function roleInCompany(int $companyId): ?string
     {
-        $c = $this->companies()->where('companies.id', $companyId)->first();
-        return $c?->pivot->role;
+        if (!array_key_exists($companyId, $this->roleInCompanyCache)) {
+            $c = $this->companies()->where('companies.id', $companyId)->first();
+            $this->roleInCompanyCache[$companyId] = $c?->pivot->role;
+        }
+        return $this->roleInCompanyCache[$companyId];
     }
 
     /**
@@ -255,11 +259,30 @@ class User extends Authenticatable
     // ── Métodos semânticos de tipo ────────────────────────────────────────────
     // Fonte de verdade: users.type
 
-    public function isAdmin(): bool            { return $this->type === 'admin'; }
-    public function isAdministrativo(): bool   { return $this->type === 'administrativo'; }
-    public function isCoordenador(): bool      { return $this->type === 'coordenador'; }
-    public function isConsultor(): bool     { return $this->type === 'consultor'; }
-    public function isCliente(): bool       { return $this->type === 'cliente'; }
+    public function isAdmin(): bool            { return $this->effectiveType() === 'admin'; }
+    public function isAdministrativo(): bool   { return $this->effectiveType() === 'administrativo'; }
+    public function isCoordenador(): bool      { return $this->effectiveType() === 'coordenador'; }
+    public function isConsultor(): bool     { return $this->effectiveType() === 'consultor'; }
+    public function isCliente(): bool       { return $this->effectiveType() === 'cliente'; }
+
+    /**
+     * Papel EFETIVO p/ permissões (multi-empresa): com a flag ligada E empresa ativa,
+     * usa o papel do usuário NAQUELA empresa (company_user.role); senão, o users.type
+     * global. Memoizado por empresa. Fora de request/console (sem empresa ativa) → type.
+     */
+    public function effectiveType(): string
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $cid = app(\App\Services\CompanyContext::class)->id();
+            if ($cid) {
+                $role = $this->roleInCompany($cid);
+                if ($role) {
+                    return $role;
+                }
+            }
+        }
+        return (string) $this->type;
+    }
 
     /**
      * Chaves de perfil EFETIVAS p/ permissões. Coordenador é separado por coordinator_type:
@@ -267,20 +290,21 @@ class User extends Authenticatable
      */
     public function effectiveProfiles(): array
     {
-        if ($this->type === 'coordenador') {
+        $type = $this->effectiveType();
+        if ($type === 'coordenador') {
             return ['coordenador', 'coordenador_' . ($this->coordinator_type ?: 'projetos')];
         }
         // Consultor granular por vínculo (mantém 'consultor' p/ permissões de tela legadas).
-        if ($this->type === 'consultor' && $this->consultant_type) {
+        if ($type === 'consultor' && $this->consultant_type) {
             return ['consultor', 'consultor_' . $this->consultant_type];
         }
         // Parceiro: executivo (gestor) vs membro simples (mantém 'parceiro_admin').
-        if ($this->type === 'parceiro_admin') {
+        if ($type === 'parceiro_admin') {
             return ['parceiro_admin', $this->is_executive ? 'parceiro_gestor' : 'parceiro_simples'];
         }
-        return [(string) $this->type];
+        return [$type];
     }
-    public function isParceiroAdmin(): bool { return $this->type === 'parceiro_admin'; }
+    public function isParceiroAdmin(): bool { return $this->effectiveType() === 'parceiro_admin'; }
 
     // ── BOT: equipe e clientes acessíveis ─────────────────────────────
     // Usados pelo BotAccessControl quando bot_visibility = 'team'.
