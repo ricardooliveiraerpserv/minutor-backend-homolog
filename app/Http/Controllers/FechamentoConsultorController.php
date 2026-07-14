@@ -1428,7 +1428,7 @@ class FechamentoConsultorController extends Controller
                   ->orWhereDate('bank_hours_start_date', '<=', $to);
             })
             ->orderBy('name')
-            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours', 'is_bizify']);
+            ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours', 'is_bizify', 'home_company_id']);
 
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
@@ -1527,6 +1527,7 @@ class FechamentoConsultorController extends Controller
                 'consultant_type'   => $hist['consultant_type'] ?? $user->consultant_type,
                 'contract_type'     => $user->contract_type,
                 'is_bizify'         => (bool) $user->is_bizify,
+                'home_company_id'   => $user->home_company_id,
                 'horas_trabalhadas' => $horasTrabalhadas,
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
@@ -1675,17 +1676,6 @@ class FechamentoConsultorController extends Controller
         $bancoHoras = array_map($addRecebimento, $bancoHoras);
         $fixos      = array_map($addRecebimento, $fixos);
 
-        // Separar Bizify: quem for is_bizify=true sai dos cards/totais da ERPSERV e vai para um
-        // bloco próprio "bizify", com os MESMOS campos e cálculo (aba Bizify no front).
-        $partition = function (array $rows): array {
-            $erp = array_values(array_filter($rows, fn ($c) => empty($c['is_bizify'])));
-            $biz = array_values(array_filter($rows, fn ($c) => !empty($c['is_bizify'])));
-            return [$erp, $biz];
-        };
-        [$horistasErp, $horistasBiz] = $partition($horistas);
-        [$bancoErp, $bancoBiz]       = $partition($bancoHoras);
-        [$fixosErp, $fixosBiz]       = $partition($fixos);
-
         $buildTotais = fn (array $h, array $b, array $f): array => [
             'total_horistas'    => round(collect($h)->sum('total'), 2),
             'total_banco_horas' => round(collect($b)->sum('total'), 2),
@@ -1703,6 +1693,42 @@ class FechamentoConsultorController extends Controller
                 2
             ),
         ];
+
+        // MULTI-EMPRESA (flag ON): fechamento da EMPRESA ATIVA (Opção 1 — sem abas ERP/Biz).
+        // Horista/BH já vêm por PROJETO (Timesheet escopado por company_id) → mostra só quem teve
+        // MOVIMENTO na empresa ativa. Fixo não é por projeto → só quem tem a empresa BASE
+        // (home_company_id) igual à ativa. Diretor tem bloco próprio (FechamentoDiretoria), não aqui.
+        if (config('multiempresa.scoping_enabled')) {
+            $activeCompanyId = (int) app(\App\Services\CompanyContext::class)->id();
+            $hasMovement = fn (array $c) =>
+                (float) ($c['horas_trabalhadas'] ?? 0) > 0
+                || (float) ($c['total_despesas'] ?? 0) != 0
+                || (float) ($c['adiantamento'] ?? 0) != 0
+                || (float) ($c['adicional'] ?? 0) != 0
+                || (float) ($c['emprestimo_aporte'] ?? 0) != 0;
+            $horistas   = array_values(array_filter($horistas, $hasMovement));
+            $bancoHoras = array_values(array_filter($bancoHoras, $hasMovement));
+            $fixos      = array_values(array_filter($fixos, fn (array $c) => (int) ($c['home_company_id'] ?? 0) === $activeCompanyId));
+
+            $emptyTotais = $buildTotais([], [], []);
+            return [
+                'horistas'    => $horistas,
+                'banco_horas' => $bancoHoras,
+                'fixos'       => $fixos,
+                'totais'      => $buildTotais($horistas, $bancoHoras, $fixos),
+                'bizify'      => ['horistas' => [], 'banco_horas' => [], 'fixos' => [], 'totais' => $emptyTotais],
+            ];
+        }
+
+        // Flag OFF (comportamento atual): partição por is_bizify — ERPSERV × Bizify (aba Bizify).
+        $partition = function (array $rows): array {
+            $erp = array_values(array_filter($rows, fn ($c) => empty($c['is_bizify'])));
+            $biz = array_values(array_filter($rows, fn ($c) => !empty($c['is_bizify'])));
+            return [$erp, $biz];
+        };
+        [$horistasErp, $horistasBiz] = $partition($horistas);
+        [$bancoErp, $bancoBiz]       = $partition($bancoHoras);
+        [$fixosErp, $fixosBiz]       = $partition($fixos);
 
         return [
             'horistas'    => $horistasErp,
