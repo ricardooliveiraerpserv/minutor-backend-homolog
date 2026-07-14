@@ -42,6 +42,16 @@ class HelpDeskSlaService
         return $this->pausedKeys;
     }
 
+    /** IDs dos status que pausam o SLA (global) — p/ marcar sla_ever_paused sem depender da relação. */
+    private ?array $pausingStatusIds = null;
+    private function pausingStatusIds(): array
+    {
+        if ($this->pausingStatusIds === null) {
+            $this->pausingStatusIds = HelpDeskStatus::where('sla_paused', true)->pluck('id')->map(fn ($i) => (int) $i)->all();
+        }
+        return $this->pausingStatusIds;
+    }
+
     /** Cache das chaves pausantes POR ticket (dependem da regra/prioridade). */
     private array $pausingKeysCache = [];
 
@@ -354,6 +364,13 @@ class HelpDeskSlaService
     /** (Re)calcula as flags de violação considerando a pausa de SLA. */
     public function computeBreaches(HelpDeskTicket $t, ?Collection $events = null): void
     {
+        // Denormalização: marca (1x, irreversível) se o chamado entrou num status que pausa o SLA —
+        // a listagem carrega os eventos só de quem já pausou. Roda em toda transição (computeBreaches
+        // é chamado por transitionStatus/meeting-sync/resume), usando status_id (não a relação).
+        if (!$t->sla_ever_paused && $t->status_id && in_array((int) $t->status_id, $this->pausingStatusIds(), true)) {
+            $t->sla_ever_paused = true;
+        }
+
         if ($t->first_response_due_at) {
             $ref = $t->first_responded_at ? Carbon::parse($t->first_responded_at) : now();
             $eff = $this->effectiveDue(Carbon::parse($t->first_response_due_at), $t, $ref, $events);
