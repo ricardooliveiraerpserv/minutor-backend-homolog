@@ -48,6 +48,20 @@ class HelpDeskSlaService
     /** Cache: a política tem ALGUMA pausa por regra configurada? (por policy id). */
     private array $policyConfiguredCache = [];
 
+    /** Memo por REQUEST: política resolvida por escopo (contrato|cliente|categoria) e por id.
+     *  Evita N+1 ao listar — 200 tickets da mesma política resolvem/buscam 1x só. */
+    private array $policyScopeCache = [];
+    private array $policyByIdCache = [];
+
+    /** Busca uma política por id, memoizada por request. */
+    private function policyById(int $id): ?HelpDeskSlaPolicy
+    {
+        if (!array_key_exists($id, $this->policyByIdCache)) {
+            $this->policyByIdCache[$id] = HelpDeskSlaPolicy::find($id);
+        }
+        return $this->policyByIdCache[$id];
+    }
+
     private function policyHasRulePauses(int $policyId): bool
     {
         if (!isset($this->policyConfiguredCache[$policyId])) {
@@ -68,7 +82,7 @@ class HelpDeskSlaService
         $key = $t->id ?? spl_object_id($t);
         if (!isset($this->pausingKeysCache[$key])) {
             $policy = $t->sla_policy_id
-                ? ($t->relationLoaded('slaPolicy') ? $t->slaPolicy : HelpDeskSlaPolicy::find($t->sla_policy_id))
+                ? ($t->relationLoaded('slaPolicy') ? $t->slaPolicy : $this->policyById($t->sla_policy_id))
                 : $this->resolvePolicy($t);
 
             if ($policy && $this->policyHasRulePauses($policy->id)) {
@@ -93,11 +107,13 @@ class HelpDeskSlaService
      */
     private function calendarFor(HelpDeskTicket $t): array
     {
-        $key = $t->id ?? spl_object_id($t);
+        // Chaveia por POLÍTICA (não por ticket): tickets que compartilham a mesma política
+        // reaproveitam windows/holidays/tz — evita rodar holidayDates()/windowsByWeekday() por ticket.
+        $policy = $t->sla_policy_id
+            ? ($t->relationLoaded('slaPolicy') ? $t->slaPolicy : $this->policyById($t->sla_policy_id))
+            : $this->resolvePolicy($t);
+        $key = 'p' . ($policy?->id ?? 'none');
         if (!isset($this->calCache[$key])) {
-            $policy = $t->sla_policy_id
-                ? ($t->relationLoaded('slaPolicy') ? $t->slaPolicy : HelpDeskSlaPolicy::find($t->sla_policy_id))
-                : $this->resolvePolicy($t);
             $this->calCache[$key] = [
                 'windows'  => $policy?->windowsByWeekday() ?? [],
                 'holidays' => $policy?->holidayDates() ?? [],
@@ -112,26 +128,57 @@ class HelpDeskSlaService
      */
     public function resolvePolicy(HelpDeskTicket $t): ?HelpDeskSlaPolicy
     {
-        $active = fn () => HelpDeskSlaPolicy::query()->where('active', true);
-
-        if ($t->contract_id) {
-            $p = $active()->where('contract_id', $t->contract_id)->first();
-            if ($p) return $p;
+        // Memo por ESCOPO (contrato|cliente|categoria): tickets com o mesmo escopo resolvem 1x só.
+        $scope = 'ct' . ($t->contract_id ?? '-') . '|cu' . ($t->customer_id ?? '-') . '|ca' . ($t->category_id ?? '-');
+        if (!array_key_exists($scope, $this->policyScopeCache)) {
+            $this->policyScopeCache[$scope] = $this->resolvePolicyUncached($t);
         }
+        return $this->policyScopeCache[$scope];
+    }
+
+    /** Mapas de políticas ativas (contrato/cliente) carregados 1x por request — resolução O(1). */
+    private ?array $policyMaps = null;
+    private bool $defaultPolicyLoaded = false;
+    private ?HelpDeskSlaPolicy $defaultPolicyCache = null;
+
+    private function policyMaps(): array
+    {
+        if ($this->policyMaps === null) {
+            $byContract = []; $byCustomerNN = []; $byCustomerLegacy = [];
+            foreach (HelpDeskSlaPolicy::where('active', true)->with('customers:id')->get() as $p) {
+                if ($p->contract_id) $byContract[$p->contract_id] ??= $p;
+                foreach ($p->customers as $c) $byCustomerNN[$c->id] ??= $p;
+                if ($p->customer_id && !$p->contract_id) $byCustomerLegacy[$p->customer_id] ??= $p;
+            }
+            $this->policyMaps = compact('byContract', 'byCustomerNN', 'byCustomerLegacy');
+        }
+        return $this->policyMaps;
+    }
+
+    private function defaultPolicy(): ?HelpDeskSlaPolicy
+    {
+        if (!$this->defaultPolicyLoaded) {
+            $this->defaultPolicyCache = HelpDeskSlaPolicy::defaultPolicy();
+            $this->defaultPolicyLoaded = true;
+        }
+        return $this->defaultPolicyCache;
+    }
+
+    private function resolvePolicyUncached(HelpDeskTicket $t): ?HelpDeskSlaPolicy
+    {
+        // Resolução em memória (contrato → cliente N:N → cliente legado → categoria → default).
+        $m = $this->policyMaps();
+        if ($t->contract_id && isset($m['byContract'][$t->contract_id])) return $m['byContract'][$t->contract_id];
         if ($t->customer_id) {
-            // Vínculo N:N (principal): política que tem este cliente na lista.
-            $p = $active()->whereHas('customers', fn ($q) => $q->where('customers.id', $t->customer_id))->first();
-            if ($p) return $p;
-            // Legado: customer_id único na própria política.
-            $p = $active()->whereNull('contract_id')->where('customer_id', $t->customer_id)->first();
-            if ($p) return $p;
+            if (isset($m['byCustomerNN'][$t->customer_id])) return $m['byCustomerNN'][$t->customer_id];
+            if (isset($m['byCustomerLegacy'][$t->customer_id])) return $m['byCustomerLegacy'][$t->customer_id];
         }
         $catPolicyId = $t->category_id ? optional($t->category)->sla_policy_id : null;
         if ($catPolicyId) {
-            $p = $active()->whereKey($catPolicyId)->first(); // a política escolhida na categoria, independentemente do escopo
-            if ($p) return $p;
+            $p = $this->policyById($catPolicyId); // política escolhida na categoria
+            if ($p && $p->active) return $p;
         }
-        return HelpDeskSlaPolicy::defaultPolicy();
+        return $this->defaultPolicy();
     }
 
     /**
