@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class FechamentoParceiro extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'fechamento_parceiros';
 
     protected $fillable = [
