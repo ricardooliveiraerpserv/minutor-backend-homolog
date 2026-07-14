@@ -31,7 +31,7 @@ class HelpDeskTicket extends Model
         'first_responded_at', 'resolved_at', 'closed_at', 'reopened_at',
         'first_response_breached', 'resolution_breached', 'reopen_count',
         'last_activity_at', 'source_system', 'external_ref', 'created_by_id',
-        'scheduled_until', 'scheduled_all_day', 'sla_paused_at',
+        'scheduled_until', 'scheduled_all_day', 'sla_paused_at', 'sla_ever_paused',
         'reopen_scheduled_at', 'reopen_scheduled_note', 'reopen_scheduled_by_id',
         'previous_ticket_id', 'merged_into_id',
     ];
@@ -47,6 +47,7 @@ class HelpDeskTicket extends Model
         'scheduled_until'         => 'datetime',
         'scheduled_all_day'       => 'boolean',
         'sla_paused_at'           => 'datetime',
+        'sla_ever_paused'         => 'boolean',
         'reopen_scheduled_at'     => 'datetime',
         'first_response_breached' => 'boolean',
         'resolution_breached'     => 'boolean',

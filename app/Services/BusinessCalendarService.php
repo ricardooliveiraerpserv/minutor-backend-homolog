@@ -81,6 +81,25 @@ class BusinessCalendarService
         $a = $start instanceof Carbon ? $start->copy()->startOfDay() : Carbon::parse($start)->startOfDay();
         $b = $end instanceof Carbon ? $end->copy()->startOfDay() : Carbon::parse($end)->startOfDay();
         if ($b->lt($a)) return 0;
+
+        // Caminho O(1) para os opts PADRÃO (sem allow_weekend/allow_holiday) — evita o loop dia-a-dia
+        // em intervalos longos (listagem de chamados). Resultado idêntico ao loop.
+        if (empty($opts['allow_weekend']) && empty($opts['allow_holiday'])) {
+            $totalDays = (int) $a->diffInDays($b) + 1;      // inclusivo
+            $count = intdiv($totalDays, 7) * 5;             // cada semana cheia = 5 dias úteis
+            $rem = $totalDays % 7;
+            if ($rem > 0) {
+                $cursor = $a->copy();
+                for ($i = 0; $i < $rem; $i++) { if (!$cursor->isWeekend()) $count++; $cursor->addDay(); }
+            }
+            // desconta feriados que caem em dia de semana DENTRO do intervalo
+            $from = $a->toDateString(); $to = $b->toDateString();
+            foreach ($this->holidaySet as $ds => $_) {
+                if ($ds >= $from && $ds <= $to && !Carbon::parse($ds)->isWeekend()) $count--;
+            }
+            return max(0, $count);
+        }
+
         $count = 0;
         $cursor = $a->copy();
         while ($cursor->lte($b)) {
