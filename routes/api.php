@@ -130,6 +130,14 @@ Route::prefix('v1')->group(function () {
         // ===== Multi-empresa: contexto do usuário (troca de empresa sem logout) =====
         Route::get('/my-companies', [\App\Http\Controllers\CompanyController::class, 'myCompanies'])->name('companies.mine');
         Route::post('/set-company', [\App\Http\Controllers\CompanyController::class, 'setCompany'])->name('companies.set');
+        // Módulo Empresas (gestão administrativa — admin)
+        Route::get('/companies',                       [\App\Http\Controllers\CompanyController::class, 'index']);
+        Route::post('/companies',                      [\App\Http\Controllers\CompanyController::class, 'store']);
+        Route::put('/companies/{company}',             [\App\Http\Controllers\CompanyController::class, 'update']);
+        Route::get('/companies/{company}/users',       [\App\Http\Controllers\CompanyController::class, 'companyUsers']);
+        Route::post('/companies/{company}/users',      [\App\Http\Controllers\CompanyController::class, 'attachUser']);
+        Route::put('/companies/{company}/users/{user}',    [\App\Http\Controllers\CompanyController::class, 'updateUserRole']);
+        Route::delete('/companies/{company}/users/{user}', [\App\Http\Controllers\CompanyController::class, 'detachUser']);
 
         // ===== Meu Dia: Central de Notificações + Ações + Tarefas + Calendário + Comunicações =====
         // Central de Notificações (tela inicial — só usuários internos)
