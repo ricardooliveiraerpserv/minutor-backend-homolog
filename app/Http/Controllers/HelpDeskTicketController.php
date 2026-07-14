@@ -110,7 +110,9 @@ class HelpDeskTicketController extends Controller
         // A lista/kanban NÃO usa o corpo do chamado — ocultar 'description' enxuga muito o payload
         // (o detalhe usa o endpoint show, que mantém tudo).
         $tickets->makeHidden(['description']);
-        $events = $this->eventsByTicket($tickets);
+        // Só quem JÁ pausou precisa dos eventos p/ reconstruir a pausa de SLA — a maioria nunca pausou
+        // e recebe coleção vazia (pausa por status = 0). Corta a query de eventos e o cálculo por ticket.
+        $events = $this->eventsByTicket($tickets->where('sla_ever_paused', true)->values());
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
         $cal = app(\App\Services\BusinessCalendarService::class);
         return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal))]);
