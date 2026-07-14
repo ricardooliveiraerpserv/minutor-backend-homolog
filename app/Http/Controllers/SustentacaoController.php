@@ -711,6 +711,7 @@ class SustentacaoController extends Controller
             if ($userIds->isNotEmpty()) {
                 $minutes = DB::table('timesheets')
                     ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+                    ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
                     ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
                     ->where(function ($q) {
                         $q->where('service_types.code', 'sustentacao')
