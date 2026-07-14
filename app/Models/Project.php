@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Project extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, \App\Models\Concerns\BelongsToCompany;
 
     // Nota: o global scope HideAusterFrozenScope foi removido por decisão de produto
     // (12/05/2026). Esses subprojetos voltam a aparecer em listagens, mas continuam
