@@ -91,6 +91,29 @@ class AccessControl
     }
 
     /**
+     * ENFORCEMENT da política do Configurador para uma AÇÃO de tela (usado pelo middleware
+     * screen.action). É ADITIVO: só RESTRINGE (nunca concede) — entra por cima do gate atual
+     * (PermissionService). Regras:
+     *  - admin / admin.full_access → sempre permitido.
+     *  - tela sem registro em nav_screens → NÃO restringe (deixa passar; o gate legado decide).
+     *  - visibilidade: se a tela tem `profiles`, o perfil efetivo precisa estar neles — senão nega.
+     *  - deny-overlay da ação (modelo deny-list: padrão permite; nega só deny_users/deny_profiles).
+     */
+    public static function screenActionAllowed(User $user, string $screenKey, string $actionKey): bool
+    {
+        if ($user->isAdmin() || $user->hasAccess('admin.full_access')) return true;
+
+        $screen = NavScreen::where('key', $screenKey)->first();
+        if (!$screen) return true; // sem política salva → não restringe (aditivo)
+
+        $eff = $user->effectiveProfiles();
+        $profiles = $screen->profiles ?? [];
+        if (!empty($profiles) && !array_intersect($eff, $profiles)) return false; // perfil não vê a tela
+
+        return self::abilityAllows($user, $screen->abilities[$actionKey] ?? null); // deny-overlay
+    }
+
+    /**
      * Quem tem acesso à linha + de onde vem a permissão do usuário atual (explicabilidade).
      * NÃO altera o motor — só descreve as decisões já calculadas.
      * @return array{profiles: array, users: array, source: array}

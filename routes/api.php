@@ -759,22 +759,25 @@ Route::prefix('v1')->group(function () {
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
 
-        Route::middleware('permission.or.admin:users.create')->group(function () {
+        Route::middleware(['permission.or.admin:users.create', 'screen.action:/users,users.create'])->group(function () {
             Route::post('/users', [UserController::class, 'store'])->name('users.store');
         });
 
-        Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
-        Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
+        // Editar OUTROS usuários (auto-edição de perfil é /users/profile, não passa por aqui).
+        Route::middleware('screen.action:/users,users.update')->group(function () {
+            Route::put('/users/{user}', [UserController::class, 'update'])->name('users.update');
+            Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
+        });
 
         // Atualização em massa do tipo de contrato (cooperado/clt/pj)
         Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
 
-        Route::middleware('permission.or.admin:users.delete')->group(function () {
+        Route::middleware(['permission.or.admin:users.delete', 'screen.action:/users,users.delete'])->group(function () {
             Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');
             Route::delete('/users',           [UserController::class, 'bulkDestroy'])->name('users.bulk-destroy');
         });
 
-        Route::middleware('permission.or.admin:users.reset_password')->group(function () {
+        Route::middleware(['permission.or.admin:users.reset_password', 'screen.action:/users,users.reset_password'])->group(function () {
             Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword'])->name('users.reset-password');
             Route::post('/users/{user}/resend-welcome', [UserController::class, 'resendWelcome'])->name('users.resend-welcome');
             Route::post('/users/resend-welcome-bulk',   [UserController::class, 'resendWelcomeBulk'])->name('users.resend-welcome-bulk');
