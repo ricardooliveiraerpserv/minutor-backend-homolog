@@ -1178,6 +1178,19 @@ class UserController extends Controller
     }
 
     /**
+     * Assinatura RENDERIZADA do usuário logado — EXATAMENTE a que é anexada na resposta ao cliente
+     * (via SignatureRenderer::resolveFor). Usado no PREVIEW do compositor de interação.
+     */
+    public function mySignature(Request $request): JsonResponse
+    {
+        $data = \App\Services\SignatureRenderer::resolveFor($request->user());
+        $html = \App\Services\SignatureRenderer::hasData($data)
+            ? \App\Services\SignatureRenderer::render($data, 'data', true, 'light')
+            : '';
+        return response()->json(['data' => ['html' => $html]]);
+    }
+
+    /**
      * @OA\Put(
      *     path="/api/v1/users/profile",
      *     summary="Atualizar próprio perfil",
