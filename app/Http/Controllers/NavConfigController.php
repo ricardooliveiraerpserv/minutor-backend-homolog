@@ -175,6 +175,10 @@ class NavConfigController extends Controller
         if ($navModule->is_system) {
             return response()->json(['message' => 'Módulo de sistema não pode ser excluído.'], 422);
         }
+        // Guard: não excluir o ÚLTIMO módulo — só permite se houver mais de um.
+        if (NavModule::count() <= 1) {
+            return response()->json(['message' => 'Não é possível excluir o único módulo. Deve existir pelo menos um.'], 422);
+        }
         $navModule->delete();
         return response()->json(['data' => ['deleted' => true]]);
     }

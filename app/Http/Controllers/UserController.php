@@ -670,6 +670,19 @@ class UserController extends Controller
             return $this->validationErrorResponse($validator->errors()->all());
         }
 
+        // Guard: não rebaixar o ÚLTIMO admin (type admin -> outro/null). Deve existir >= 1 admin.
+        $validatedForType = $validator->validated();
+        if ($user->isAdmin()
+            && array_key_exists('type', $validatedForType)
+            && ($validatedForType['type'] ?? null) !== 'admin'
+            && User::where('type', 'admin')->where('id', '!=', $user->id)->doesntExist()) {
+            return $this->businessRuleResponse(
+                'CANNOT_DEMOTE_LAST_ADMIN',
+                'Não é possível rebaixar o último administrador',
+                'Deve existir pelo menos um administrador no sistema'
+            );
+        }
+
         DB::beginTransaction();
         try {
             $updateData = $validator->validated();
@@ -1071,6 +1084,15 @@ class UserController extends Controller
         $ids = collect($validator->validated()['ids'])
             ->filter(fn($id) => $id !== $currentUser->id)
             ->values();
+
+        // Guard: a exclusão em lote não pode remover TODOS os admins. Deve sobrar >= 1.
+        if (User::where('type', 'admin')->whereNotIn('id', $ids)->doesntExist()) {
+            return $this->businessRuleResponse(
+                'CANNOT_DELETE_LAST_ADMIN',
+                'Não é possível excluir todos os administradores',
+                'Deve existir pelo menos um administrador no sistema'
+            );
+        }
 
         $count = User::whereIn('id', $ids)->delete();
 
