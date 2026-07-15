@@ -40,7 +40,7 @@ class FechadoController extends Controller
 
         if ($request->filled('executive_id')) {
             $executiveId = (int) $request->get('executive_id');
-            $query->whereHas('customer', fn ($q) => $q->where('executive_id', $executiveId));
+            $query->whereHas('customer', fn ($q) => $q->where(\App\Models\Customer::activeExecutiveColumn(), $executiveId));
         }
 
         if ($request->filled('project_id')) {

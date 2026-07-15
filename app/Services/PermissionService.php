@@ -12,7 +12,8 @@ class PermissionService
 {
     public static function for(User $user): array
     {
-        $base = match ($user->type) {
+        // Multi-empresa: perfil EFETIVO (papel na empresa ativa) — flag off/sem empresa → users.type.
+        $base = match ($user->effectiveType()) {
             'admin'          => self::adminPermissions(),
             'administrativo' => self::administrativoPermissions(),
             'coordenador'    => self::coordenadorPermissions(),
@@ -25,7 +26,7 @@ class PermissionService
         // Coordenador de Projetos: acesso ao Cadastro de Usuários restrito a
         // RESETAR SENHA (precisa de view_all pra enxergar a lista e do
         // reset_password pro endpoint). Demais ações ficam gateadas na tela /users.
-        if ($user->type === 'coordenador' && $user->coordinator_type === 'projetos') {
+        if ($user->effectiveType() === 'coordenador' && $user->coordinator_type === 'projetos') {
             $base = array_merge($base, ['users.view_all', 'users.reset_password']);
         }
 

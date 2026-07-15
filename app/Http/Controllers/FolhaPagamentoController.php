@@ -659,7 +659,18 @@ class FolhaPagamentoController extends Controller
             return $r;
         }
         $empresa = $request->query('empresa') === 'bizify' ? 'bizify' : 'erpserv';
-        return response()->json(['data' => $this->buildRows($yearMonth, $empresa)]);
+
+        // Multi-empresa (flag ON): a Folha Cooperativa é ÚNICA por EMPRESA BASE (a ativa) —
+        // ignora o param das abas e usa a empresa ativa. O FE esconde as abas quando vier `company`.
+        $companyName = null;
+        if (config('multiempresa.scoping_enabled')) {
+            $active = \App\Models\Company::find(app(\App\Services\CompanyContext::class)->id());
+            if ($active) {
+                $empresa     = $active->slug === 'bizify' ? 'bizify' : 'erpserv';
+                $companyName = $active->name;
+            }
+        }
+        return response()->json(['data' => $this->buildRows($yearMonth, $empresa), 'company' => $companyName, 'empresa' => $companyName ? $empresa : null]);
     }
 
     /**
@@ -710,6 +721,9 @@ class FolhaPagamentoController extends Controller
         ]);
 
         $empresa = $request->input('empresa') === 'bizify' ? 'bizify' : 'erpserv';
+        // Multi-empresa: company_id da linha SEMPRE deriva da `empresa` (não da empresa ativa do
+        // request) — senão um lançamento Bizify salvo com ERPSERV ativo pegaria company_id errado.
+        $folhaCompanyId = \App\Models\Company::where('slug', $empresa)->value('id');
         $saved = 0;
 
         // Usuários do Raho = linhas 100% editáveis (salvam cpf/nome/status/valor_hora/produção também).
@@ -736,6 +750,7 @@ class FolhaPagamentoController extends Controller
                 continue;
             }
             $comum = [
+                'company_id'         => $folhaCompanyId,
                 'dias_trabalhados'   => $e['dias_trabalhados'] ?? 0,
                 'horas_trabalhadas'  => $e['horas_trabalhadas'] ?? null,
                 'variavel'           => $e['variavel'] ?? 0,

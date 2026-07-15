@@ -22,6 +22,8 @@ use Maatwebsite\Excel\Facades\Excel;
 
 class FechamentoClienteController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private function period(string $yearMonth): array
@@ -1132,6 +1134,7 @@ class FechamentoClienteController extends Controller
         $initialByTicket = \DB::table('ticket_initial_balances')
             ->whereNull('deleted_at')
             ->where('customer_id', $customerId)
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
             ->whereIn('ticket', $rows->pluck('ticket')->all())
             ->pluck('initial_minutes', 'ticket');
 

@@ -29,6 +29,7 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
+    use \App\Http\Traits\FiltersByActiveCompany;
 
     /**
      * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico).
@@ -405,7 +406,7 @@ class ProjectController extends Controller
         // Filtro por executivo responsável do cliente
         if ($executiveId) {
             $query->whereHas('customer', function ($q) use ($executiveId) {
-                $q->where('executive_id', $executiveId);
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $executiveId);
             });
         }
 
@@ -453,6 +454,26 @@ class ProjectController extends Controller
         // só aparecem quando explicitamente solicitados (ex: dropdowns de apontamento).
         if ($request->boolean('only_investimento_comercial')) {
             $query->where('is_investimento_comercial', true);
+            // Investimento Interno é POR-CLIENTE: os projetos IC/IS/IP são únicos por
+            // cliente e o company_id neles é apenas o carimbo da empresa ativa na
+            // criação (arbitrário). Portanto NÃO filtramos pelo company_id do projeto —
+            // removemos o CompanyScope e filtramos pelo CLIENTE conforme a empresa ativa.
+            $query->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class);
+            if (config('multiempresa.scoping_enabled')) {
+                $activeId = app(\App\Services\CompanyContext::class)->id();
+                if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    // Bizify: a casa BIZIFY + clientes marcados is_bizify_customer.
+                    $query->whereHas('customer', function ($c) {
+                        $c->where('is_bizify_customer', true)
+                          ->orWhereRaw('UPPER(name) = ?', ['BIZIFY']);
+                    });
+                    // Na Bizify todo cliente segue o PADRÃO dos 3 projetos canônicos
+                    // (IC/IS/IP criados em createInvestimentoProjects). Extras específicos
+                    // da casa (ex.: ERPSERV com Cloud/Day Off/Visita) só aparecem na tela
+                    // da própria empresa.
+                    $query->whereIn('name', ['Investimento Comercial', 'Investimento Suporte', 'Investimento Projetos']);
+                }
+            }
         } elseif (!$request->boolean('include_investimento_comercial')) {
             $query->where('is_investimento_comercial', false);
         } else {
@@ -3088,6 +3109,7 @@ class ProjectController extends Controller
 
         $base = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('customers', 'customers.id', '=', 'projects.customer_id')
             ->join('users', 'users.id', '=', 'timesheets.user_id')
             ->where('projects.is_investimento_comercial', true)
@@ -3243,10 +3265,22 @@ class ProjectController extends Controller
             'parent_project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
-        $erpservName = 'ERPSERV';
-        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$erpservName])->first();
+        // Multi-empresa: o projeto de investimento nasce sob o cliente da empresa ATIVA
+        // (Bizify → cliente "BIZIFY"; senão → "ERPSERV") e carrega o company_id dela.
+        $internalName = 'ERPSERV';
+        $internalCompanyId = null;
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId) {
+                $internalCompanyId = $activeId;
+                if (\App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    $internalName = 'BIZIFY';
+                }
+            }
+        }
+        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$internalName])->first();
         if (!$customer) {
-            return response()->json(['message' => "Cliente \"{$erpservName}\" não encontrado."], 422);
+            return response()->json(['message' => "Cliente \"{$internalName}\" não encontrado."], 422);
         }
 
         $serviceTypeId  = \App\Models\ServiceType::where('code', 'projeto')->value('id');
@@ -3276,6 +3310,7 @@ class ProjectController extends Controller
             'is_manual_code'            => true,
             'categoria_interna'         => $data['categoria'],
             'parent_project_id'         => $data['parent_project_id'] ?? null,
+            'company_id'                => $internalCompanyId,
         ]);
 
         // Aprovador: vincula como coordenador do projeto (é quem aprova os
@@ -3465,6 +3500,7 @@ class ProjectController extends Controller
                     'project_id'      => $project->id,
                     'user_id'         => $userId,
                     'real_project_id' => $realId,
+                    'company_id'      => $project->company_id,
                     'created_at'      => $now,
                     'updated_at'      => $now,
                 ];
