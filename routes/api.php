@@ -176,7 +176,19 @@ Route::prefix('v1')->group(function () {
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
         ->middleware('throttle:30,1')->name('integrations.microsoft.callback');
 
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
+        // ===== Multi-empresa: contexto do usuário (troca de empresa sem logout) =====
+        Route::get('/my-companies', [\App\Http\Controllers\CompanyController::class, 'myCompanies'])->name('companies.mine');
+        Route::post('/set-company', [\App\Http\Controllers\CompanyController::class, 'setCompany'])->name('companies.set');
+        // Módulo Empresas (gestão administrativa — admin)
+        Route::get('/companies',                       [\App\Http\Controllers\CompanyController::class, 'index']);
+        Route::post('/companies',                      [\App\Http\Controllers\CompanyController::class, 'store']);
+        Route::put('/companies/{company}',             [\App\Http\Controllers\CompanyController::class, 'update']);
+        Route::get('/companies/{company}/users',       [\App\Http\Controllers\CompanyController::class, 'companyUsers']);
+        Route::post('/companies/{company}/users',      [\App\Http\Controllers\CompanyController::class, 'attachUser']);
+        Route::put('/companies/{company}/users/{user}',    [\App\Http\Controllers\CompanyController::class, 'updateUserRole']);
+        Route::delete('/companies/{company}/users/{user}', [\App\Http\Controllers\CompanyController::class, 'detachUser']);
+
         // ===== Ver como (impersonation) =====
         Route::get('/impersonate/kinds',      [\App\Http\Controllers\ImpersonationController::class, 'kinds'])->name('impersonate.kinds');
         Route::get('/impersonate/candidates', [\App\Http\Controllers\ImpersonationController::class, 'candidates'])->name('impersonate.candidates');
@@ -387,6 +399,8 @@ Route::prefix('v1')->group(function () {
 
         // Agenda / Calendário da tela inicial (eventos do mês)
         Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);
+        Route::get('/calendar/visibility', [\App\Http\Controllers\CalendarController::class, 'visibility']);      // config visibilidade agenda
+        Route::put('/calendar/visibility', [\App\Http\Controllers\CalendarController::class, 'saveVisibility']);  // salvar (admin)
 
         // Tarefas rápidas (Smart To-Do) pessoais
         Route::get('/tasks',              [\App\Http\Controllers\TaskController::class, 'index']);
@@ -404,6 +418,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/communications/{communication}/log', [\App\Http\Controllers\CommunicationController::class, 'log']); // log de leitura (admin)
         Route::get('/communications/unread',         [\App\Http\Controllers\CommunicationController::class, 'unread']);    // popup de prévia
         Route::post('/communications/mark-read',     [\App\Http\Controllers\CommunicationController::class, 'markRead']);  // marca lido
+        Route::post('/communications/ack',           [\App\Http\Controllers\CommunicationController::class, 'ack']);       // confirma recebimento (requires_ack)
         Route::get('/communications/meta',           [\App\Http\Controllers\CommunicationController::class, 'meta']);
         Route::get('/communications/customer-users', [\App\Http\Controllers\CommunicationController::class, 'customerUsers']);
         Route::post('/communications/preview',       [\App\Http\Controllers\CommunicationController::class, 'preview']);
@@ -885,6 +900,15 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects/{project}/available-hours', [ProjectController::class, 'availableHours'])->name('projects.available-hours');
+            // Projetos reais escolhidos por consultor no investimento.
+            Route::get('/projects/{project}/real-project-assignments', [ProjectController::class, 'realProjectAssignments'])->name('projects.real-project-assignments');
+            Route::get('/projects/{project}/real-project-options', [ProjectController::class, 'realProjectOptions'])->name('projects.real-project-options');
+        });
+
+        // Alocação de investimento (consultores + projetos reais): escopo assign_consultants
+        // para que coordenadores também aloquem, sem projects.update global.
+        Route::middleware('permission.or.admin:projects.assign_consultants')->group(function () {
+            Route::patch('/projects/{project}/investment-allocation', [ProjectController::class, 'updateInvestmentAllocation'])->name('projects.investment-allocation');
         });
 
         Route::middleware('permission.or.admin:projects.create')->group(function () {
@@ -1184,6 +1208,7 @@ Route::prefix('v1')->group(function () {
 
         // Configurador de navegação: módulos dinâmicos + associação de itens de menu
         Route::get('/nav-config',                  [\App\Http\Controllers\NavConfigController::class, 'index'])->name('nav-config.index');
+        Route::get('/my-denied-actions',           [\App\Http\Controllers\NavConfigController::class, 'myDeniedActions'])->name('my-denied-actions');
         Route::put('/nav-screens',                 [\App\Http\Controllers\NavConfigController::class, 'saveScreens'])->name('nav-screens.save');
         Route::post('/nav-modules',                [\App\Http\Controllers\NavConfigController::class, 'store'])->name('nav-modules.store');
         Route::post('/nav-modules/reorder',        [\App\Http\Controllers\NavConfigController::class, 'reorder'])->name('nav-modules.reorder');
@@ -1567,11 +1592,11 @@ Route::prefix('v1')->group(function () {
 
         // ⏱️ FECHAMENTO DE HORAS EXCEDENTES (BH Mensal / BH Fixo)
         Route::middleware('auth:sanctum')->group(function () {
-            Route::get('/fechamento-excedente',                                [\App\Http\Controllers\FechamentoExcedenteController::class, 'index']);
+            Route::get('/fechamento-excedente',                                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'index']);
             Route::get('/fechamento-excedente/{customerId}/{yearMonth}/report-html',    [\App\Http\Controllers\FechamentoExcedenteController::class, 'reportHtml']);
             Route::post('/fechamento-excedente/{customerId}/{yearMonth}/email',         [\App\Http\Controllers\FechamentoExcedenteController::class, 'enviarEmail']);
-            Route::patch('/fechamento-excedente/{project}/flag',              [\App\Http\Controllers\FechamentoExcedenteController::class, 'toggleFlag']);
-            Route::post('/fechamento-excedente/{project}/{yearMonth}',        [\App\Http\Controllers\FechamentoExcedenteController::class, 'salvar']);
+            Route::patch('/fechamento-excedente/{project}/flag',                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'toggleFlag']);
+            Route::post('/fechamento-excedente/{project}/{yearMonth}',                  [\App\Http\Controllers\FechamentoExcedenteController::class, 'salvar']);
         });
 
         // 🤝 FECHAMENTO PARCEIRO
@@ -1698,6 +1723,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/open-periods',  [ProjectController::class, 'listOpenPeriods'])->name('projects.open-periods.index');
         Route::post('/projects/{project}/open-period',  [ProjectController::class, 'openPeriod'])->name('projects.open-periods.open');
         Route::post('/projects/{project}/close-periods',[ProjectController::class, 'closePeriods'])->name('projects.open-periods.close');
+        // Visão global (Configurações): todos os períodos abertos + fechar em lote.
         Route::get('/projects-open-periods',            [ProjectController::class, 'allOpenPeriods'])->name('projects.open-periods.all');
         Route::post('/projects-open-periods/close-all', [ProjectController::class, 'closeAllOpenPeriods'])->name('projects.open-periods.close-all');
         Route::post('/projects-open-periods/{period}/close', [ProjectController::class, 'closeOnePeriod'])->name('projects.open-periods.close-one');
@@ -1733,6 +1759,26 @@ Route::prefix('v1')->group(function () {
         // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
         Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');
         Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list');
+        // Inclusão manual de reajuste (sem contrato) — só rastreio
+        Route::post('/contracts/reajustes/manual',                    [ContractController::class, 'manualReajusteStore'])->name('contracts.reajustes-manual-store');
+        Route::patch('/contracts/reajustes/manual/{manual}',          [ContractController::class, 'manualReajusteUpdate'])->name('contracts.reajustes-manual-update');
+        Route::delete('/contracts/reajustes/manual/{manual}',         [ContractController::class, 'manualReajusteDestroy'])->name('contracts.reajustes-manual-destroy');
+        // Fluxo de reajuste da inclusão manual (preview/aplicar/histórico/notificar/prévia e-mail)
+        Route::get('/contracts/reajustes/manual/{manual}/adjustment-preview',        [ContractController::class, 'manualAdjustmentPreview'])->name('contracts.reajustes-manual-preview');
+        Route::post('/contracts/reajustes/manual/{manual}/apply-adjustment',         [ContractController::class, 'manualApplyAdjustment'])->name('contracts.reajustes-manual-apply');
+        Route::get('/contracts/reajustes/manual/{manual}/value-changes',             [ContractController::class, 'manualValueChanges'])->name('contracts.reajustes-manual-changes');
+        Route::post('/contracts/reajustes/manual/{manual}/notify-client-adjustment', [ContractController::class, 'manualNotify'])->name('contracts.reajustes-manual-notify');
+        Route::get('/contracts/reajustes/manual/{manual}/adjustment-email-preview',  [ContractController::class, 'manualAdjustmentEmailPreview'])->name('contracts.reajustes-manual-email-preview');
+        Route::post('/contracts/reajustes/manual/{manual}/reverse-adjustment',        [ContractController::class, 'manualReverseAdjustment'])->name('contracts.reajustes-manual-reverse');
+        Route::post('/contracts/reajustes/manual/{manual}/resend-adjustment',         [ContractController::class, 'manualResendAdjustment'])->name('contracts.reajustes-manual-resend');
+        Route::get('/contracts/reajustes/manual/{manual}/aviso-preview',              [ContractController::class, 'manualAvisoPreview'])->name('contracts.reajustes-manual-aviso-preview');
+        Route::post('/contracts/reajustes/manual/{manual}/aviso-send',                [ContractController::class, 'manualAvisoSend'])->name('contracts.reajustes-manual-aviso-send');
+        // Prévia do e-mail de reajuste (contrato) + estorno + reenvio
+        Route::get('/contracts/{contract}/adjustment-email-preview',  [ContractController::class, 'contractAdjustmentEmailPreview'])->name('contracts.adjustment-email-preview');
+        Route::post('/contracts/{contract}/reverse-adjustment',       [ContractController::class, 'reverseAdjustment'])->name('contracts.reverse-adjustment');
+        Route::post('/contracts/{contract}/resend-adjustment',        [ContractController::class, 'resendAdjustment'])->name('contracts.resend-adjustment');
+        Route::get('/contracts/{contract}/aviso-preview',             [ContractController::class, 'contractAvisoPreview'])->name('contracts.aviso-preview');
+        Route::post('/contracts/{contract}/aviso-send',               [ContractController::class, 'contractAvisoSend'])->name('contracts.aviso-send');
         Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');

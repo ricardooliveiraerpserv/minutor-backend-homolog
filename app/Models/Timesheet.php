@@ -17,7 +17,7 @@ use Carbon\Carbon;
 #[ObservedBy([TimesheetObserver::class])]
 class Timesheet extends Model
 {
-    use HasFactory, SoftDeletes, \App\Traits\WithAbilities;
+    use HasFactory, SoftDeletes, \App\Traits\WithAbilities, \App\Models\Concerns\BelongsToCompany;
     use \App\Attachments\Concerns\HasGlobalAttachments;
 
     // FASE 11 — chave do registry global de anexos.
@@ -608,28 +608,61 @@ class Timesheet extends Model
         // Pop-up in-app (Central de Notificações) para REJEIÇÃO / AJUSTE → leva à tela JÁ filtrada.
         if (in_array($statusKey, ['REJEITADO', 'AJUSTE'], true)) {
             try {
-                $isRej = $statusKey === 'REJEITADO';
-                $dia   = $this->date ? ' de ' . $this->date->format('d/m/Y') : '';
-                \App\Models\AppNotification::create([
-                    'title'        => $isRej ? 'Apontamento rejeitado' : 'Ajuste solicitado no apontamento',
-                    'message'      => ($isRej
-                                        ? "Seu apontamento{$dia} foi rejeitado."
-                                        : "Foi solicitado ajuste no seu apontamento{$dia}.")
-                                      . ($reason ? ' Motivo: ' . e($reason) : ''),
-                    'type'         => 'action',
-                    'priority'     => $isRej ? 'critical' : 'high',   // rejeitado=vermelho, ajuste=amarelo
-                    'target_users' => [$owner->id],
-                    'cta_label'    => 'Ver apontamentos',
-                    'cta_url'      => $isRej ? '/timesheets?status=rejected' : '/timesheets?status=adjustment_requested',
-                    'send_email'   => false,
-                    'visible'      => true,
-                    'created_by'   => $owner->id,
-                    'expires_at'   => now()->addDays(14),
-                ]);
+                $this->upsertOwnerPendingPopup($owner, $statusKey === 'REJEITADO', $reason);
             } catch (\Throwable $e) {
                 \Log::warning('notifyOwnerOfStatus: pop-up falhou', ['timesheet_id' => $this->id, 'error' => $e->getMessage()]);
             }
         }
+    }
+
+    /**
+     * Um pop-up POR PENDÊNCIA, não por apontamento: se o dono já tem um aviso vivo daquela
+     * fila (rejeitados ou ajuste), atualiza a contagem em vez de empilhar outro. O lembrete
+     * recorrente (actions:remind-pending) continua reenviando no ciclo dele.
+     */
+    private function upsertOwnerPendingPopup(User $owner, bool $isRej, ?string $reason): void
+    {
+        $status = $isRej ? self::STATUS_REJECTED : self::STATUS_ADJUSTMENT_REQUESTED;
+        $url    = $isRej ? '/timesheets?status=rejected' : '/timesheets?status=adjustment_requested';
+        $total  = static::where('user_id', $owner->id)->where('status', $status)->count();
+
+        $dia     = $this->date ? ' de ' . $this->date->format('d/m/Y') : '';
+        $motivo  = $reason ? ' Motivo: ' . e($reason) : '';
+        $message = $total > 1
+            ? ($isRej
+                ? "Você tem {$total} apontamentos rejeitados aguardando correção."
+                : "Você tem {$total} apontamentos com ajuste solicitado.")
+            : ($isRej
+                ? "Seu apontamento{$dia} foi rejeitado.{$motivo}"
+                : "Foi solicitado ajuste no seu apontamento{$dia}.{$motivo}");
+
+        $attrs = [
+            'title'        => $isRej ? 'Apontamento rejeitado' : 'Ajuste solicitado no apontamento',
+            'message'      => $message,
+            'type'         => 'action',
+            'priority'     => $isRej ? 'critical' : 'high',   // rejeitado=vermelho, ajuste=amarelo
+            'target_users' => [$owner->id],
+            'cta_label'    => 'Ver apontamentos',
+            'cta_url'      => $url,
+            'send_email'   => false,
+            'visible'      => true,
+            'created_by'   => $owner->id,
+            'expires_at'   => now()->addDays(14),
+        ];
+
+        // Só reaproveita aviso INDIVIDUAL deste dono. O lembrete recorrente (fix_ts_rejected)
+        // usa a mesma cta_url com vários destinatários — sequestrá-lo cortaria os outros.
+        $existing = \App\Models\AppNotification::where('type', 'action')
+            ->where('cta_url', $url)
+            ->where('visible', true)
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->whereJsonContains('target_users', $owner->id)
+            ->orderByDesc('id')
+            ->get()
+            ->first(fn ($n) => array_map('intval', $n->target_users ?? []) === [$owner->id]);
+
+        // Sem re-abrir: mexer em `resent_at`/reads é papel do lembrete recorrente.
+        $existing ? $existing->forceFill($attrs)->save() : \App\Models\AppNotification::create($attrs);
     }
 
     /**

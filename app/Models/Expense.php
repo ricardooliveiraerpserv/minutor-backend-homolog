@@ -12,7 +12,7 @@ use App\Models\PaymentMethod;
 
 class Expense extends Model
 {
-    use HasFactory;
+    use HasFactory, \App\Models\Concerns\BelongsToCompany;
     use \App\Attachments\Concerns\HasGlobalAttachments;
 
     // FASE 11 — chave do registry global de anexos.

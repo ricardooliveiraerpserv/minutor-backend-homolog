@@ -30,6 +30,8 @@ return [
         'contract.aporte'              => '#34D399', // esmeralda (aporte pai)
         'contract.aporte.child'        => '#6EE7B7', // esmeralda claro (aporte subprojeto)
         'contract.reajuste'            => '#F472B6', // pink
+        'contract.reajuste.estorno'    => '#F87171', // vermelho claro (estorno)
+        'contract.reajuste.aviso'      => '#38BDF8', // azul (aviso prévio)
         'contract.reajustes_pendentes' => '#FB923C', // laranja
         'request.phase.backlog'              => '#93C5FD',
         'request.phase.novo_projeto'         => '#60A5FA',
@@ -49,6 +51,11 @@ return [
         'fechamento.diretoria'         => '#FDBA74', // pêssego
         'timesheet.rejected'           => '#FB7185', // rosa (rejeitado)
         'timesheet.adjustment'         => '#F97316', // laranja (ajuste)
+        'timesheet.pending_approval'             => '#38BDF8', // azul (aprovar projetos)
+        'timesheet.pending_approval.sustentacao' => '#0EA5E9', // azul escuro (aprovar sustentação)
+        'expense.pending_approval'     => '#F59E0B', // âmbar (aprovar despesa)
+        'expense.adjustment'           => '#FB923C', // laranja claro (ajuste despesa)
+        'expense.rejected'             => '#EF4444', // vermelho (despesa rejeitada)
     ],
     // Fallback por domínio (workflow novo sem cor própria).
     'domain_accents' => [
@@ -116,6 +123,8 @@ return [
         'contract.aporte'              => ['contract', 'project', 'customer', 'actor'],
         'contract.aporte.child'        => ['contract', 'project', 'customer', 'actor'],
         'contract.reajuste'            => ['contract', 'customer', 'actor'],
+        'contract.reajuste.estorno'    => ['contract', 'customer', 'actor'],
+        'contract.reajuste.aviso'      => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
         'expense.approved_pending_payment' => ['actor'],
         'request.phase.backlog'              => ['request', 'customer', 'actor'],
@@ -136,6 +145,11 @@ return [
         'fechamento.diretoria'         => ['actor'],
         'timesheet.rejected'           => ['project', 'actor'],
         'timesheet.adjustment'         => ['project', 'actor'],
+        'timesheet.pending_approval'             => ['project', 'actor'],
+        'timesheet.pending_approval.sustentacao' => ['project', 'actor'],
+        'expense.pending_approval'     => ['project', 'actor'],
+        'expense.adjustment'           => ['project', 'actor'],
+        'expense.rejected'             => ['project', 'actor'],
     ],
 
     // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
@@ -197,6 +211,16 @@ return [
             'subject'   => 'Novo aporte de horas no subprojeto — {codigo}',
             'body'      => 'Foi registrado um novo aporte de horas no subprojeto {projeto}.',
             'variables' => ['codigo' => 'Código', 'projeto' => 'Subprojeto', 'cliente' => 'Cliente', 'horas' => 'Horas aportadas', 'saldo' => 'Saldo total', 'data' => 'Data'],
+        ],
+        'contract.reajuste.aviso' => [
+            'subject'   => 'Aviso: reajuste no próximo mês — {codigo}',
+            'body'      => 'Está na hora de enviar ao cliente o aviso de que o contrato {codigo} ({cliente}) será reajustado no próximo mês.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
+        ],
+        'contract.reajuste.estorno' => [
+            'subject'   => 'Estorno de reajuste — {codigo}',
+            'body'      => 'O reajuste do contrato {codigo} ({cliente}) foi estornado; o valor voltou ao anterior.',
+            'variables' => ['codigo' => 'Código', 'cliente' => 'Cliente'],
         ],
         'contract.reajuste' => [
             'subject'   => 'Reajuste do contrato — {codigo}',
@@ -297,6 +321,31 @@ return [
             'subject'   => 'Apontamento — ajuste solicitado',
             'body'      => 'Seu apontamento de {data} precisa de ajuste. {motivo}',
             'variables' => ['data' => 'Data do apontamento', 'motivo' => 'Motivo/observação'],
+        ],
+        'timesheet.pending_approval' => [
+            'subject'   => 'Apontamentos aguardando sua aprovação',
+            'body'      => 'Há apontamentos pendentes aguardando sua aprovação.',
+            'variables' => [],
+        ],
+        'timesheet.pending_approval.sustentacao' => [
+            'subject'   => 'Apontamentos de sustentação do dia anterior para aprovar',
+            'body'      => 'Há apontamentos de sustentação do dia anterior aguardando sua aprovação.',
+            'variables' => [],
+        ],
+        'expense.pending_approval' => [
+            'subject'   => 'Despesas aguardando sua aprovação',
+            'body'      => 'Há despesas pendentes aguardando sua aprovação.',
+            'variables' => [],
+        ],
+        'expense.adjustment' => [
+            'subject'   => 'Despesa — ajuste solicitado',
+            'body'      => 'Você tem despesas com ajuste solicitado.',
+            'variables' => [],
+        ],
+        'expense.rejected' => [
+            'subject'   => 'Despesa rejeitada',
+            'body'      => 'Você tem despesas rejeitadas.',
+            'variables' => [],
         ],
     ],
 
@@ -417,19 +466,49 @@ return [
         'contract.reajuste' => [
             'label'       => 'Reajuste de contrato',
             'domain'      => 'Contratos',
-            'description' => 'Ao aplicar reajuste. Os destinatários escolhidos no envio entram sempre; a Central adiciona papéis em cópia.',
+            'description' => 'Ao aplicar reajuste (contrato ou inclusão manual). Os e-mails escolhidos na tela são sempre o destinatário; a Central adiciona papéis internos em cópia (ex.: administrativo/financeiro/diretor).',
             'audiences'   => [
                 'contatos_do_contrato' => 'off',
                 'executivo_de_contas'  => 'off',
                 'cliente'              => 'off',
+                'administrativo'       => 'off',
+                'financeiro'           => 'off',
+                'coordenador'          => 'off',
+                'diretor'              => 'off',
+            ],
+        ],
+        'contract.reajuste.aviso' => [
+            'label'       => 'Aviso prévio de reajuste (lembrar administrativo)',
+            'domain'      => 'Contratos',
+            'description' => 'Um mês antes do vencimento: avisa o administrativo para enviar ao cliente o comunicado de reajuste do próximo mês.',
+            'audiences'   => [
+                'administrativo' => 'to',
+                'financeiro'     => 'off',
+                'coordenador'    => 'off',
+                'diretor'        => 'off',
+            ],
+        ],
+        'contract.reajuste.estorno' => [
+            'label'       => 'Estorno de reajuste',
+            'domain'      => 'Contratos',
+            'description' => 'Ao estornar um reajuste (contrato ou inclusão manual). O cliente é avisado do cancelamento; a Central adiciona papéis internos em cópia.',
+            'audiences'   => [
+                'contatos_do_contrato' => 'off',
+                'executivo_de_contas'  => 'off',
+                'cliente'              => 'off',
+                'administrativo'       => 'off',
+                'financeiro'           => 'off',
+                'coordenador'          => 'off',
+                'diretor'              => 'off',
             ],
         ],
         'contract.reajustes_pendentes' => [
             'label'       => 'Alerta de reajustes pendentes',
             'domain'      => 'Contratos',
-            'description' => 'Rotina diária que alerta sobre reajustes vencidos/pendentes.',
+            'description' => 'Rotina diária que alerta sobre reajustes vencidos/pendentes (contrato vencido).',
             'audiences'   => [
-                'financeiro' => 'to',
+                'financeiro'     => 'to',
+                'administrativo' => 'to',
             ],
         ],
 
@@ -574,6 +653,43 @@ return [
             'audiences'   => [
                 'coordenador' => 'off',
             ],
+        ],
+
+        // ── Lembretes de AÇÕES NÃO RESOLVIDAS (Central de Ações / Meu Dia) ──
+        'timesheet.pending_approval' => [
+            'label'       => 'Apontamentos para aprovar (projetos)',
+            'domain'      => 'Apontamento',
+            'description' => 'Lembrete recorrente ao coordenador com apontamentos pendentes de aprovação. O coordenador responsável recebe automaticamente; adicione papéis/e-mails em cópia se quiser.',
+            'recurrence'  => true,
+            'audiences'   => ['administrativo' => 'off'],
+        ],
+        'timesheet.pending_approval.sustentacao' => [
+            'label'       => 'Apontamentos para aprovar (sustentação)',
+            'domain'      => 'Apontamento',
+            'description' => 'Lembrete ao coordenador de sustentação — só os apontamentos do dia anterior. O responsável recebe automaticamente.',
+            'recurrence'  => true,
+            'audiences'   => ['administrativo' => 'off'],
+        ],
+        'expense.pending_approval' => [
+            'label'       => 'Despesas para aprovar',
+            'domain'      => 'Despesas',
+            'description' => 'Lembrete ao coordenador com despesas pendentes de aprovação. O responsável recebe automaticamente.',
+            'recurrence'  => true,
+            'audiences'   => ['administrativo' => 'off'],
+        ],
+        'expense.adjustment' => [
+            'label'       => 'Despesa — ajuste solicitado',
+            'domain'      => 'Despesas',
+            'description' => 'Lembrete ao autor da despesa com ajuste solicitado. O autor recebe automaticamente; adicione papéis em cópia (ex.: coordenador).',
+            'recurrence'  => true,
+            'audiences'   => ['coordenador' => 'off'],
+        ],
+        'expense.rejected' => [
+            'label'       => 'Despesa rejeitada',
+            'domain'      => 'Despesas',
+            'description' => 'Lembrete ao autor da despesa rejeitada. O autor recebe automaticamente; adicione papéis em cópia (ex.: coordenador).',
+            'recurrence'  => true,
+            'audiences'   => ['coordenador' => 'off'],
         ],
     ],
 ];

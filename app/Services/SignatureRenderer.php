@@ -62,7 +62,7 @@ class SignatureRenderer
     /** Dados FIXOS da empresa (não mudam por usuário). */
     private const COMPANY_LANDLINE = '(11) 3230.9647';
     private const COMPANY_SITE     = 'www.erpserv.com.br';
-    private const COMPANY_CITY     = 'São Paulo/SP';
+    private const COMPANY_CITY     = 'São Paulo/SP - Brasil';
 
     /** Assinatura padrão da empresa (fallback quando o usuário não tem assinatura). */
     public static function companyDefault(): array

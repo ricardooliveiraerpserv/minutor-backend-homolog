@@ -29,11 +29,29 @@
         <tr>
           <td align="left" bgcolor="#FFFFFF" style="padding:30px 40px 8px;">
             <p style="margin:0 0 14px;color:#0F172A;font-size:15px;line-height:1.6;">Prezados(a) da <b>{{ $cliente }}</b>,</p>
+            @if(!empty($mensagem))
+            <div style="margin:0 0 14px;color:#334155;font-size:14px;line-height:1.65;">{!! nl2br(e($mensagem)) !!}</div>
+            @elseif($estorno)
+            <p style="margin:0 0 14px;color:#334155;font-size:14px;line-height:1.65;">
+              Informamos o <b>estorno do reajuste</b> anteriormente aplicado ao seu contrato{{ $contrato ? ' ('.$contrato.')' : '' }}.
+              O valor volta ao praticado <b>antes do reajuste</b>, conforme abaixo. Pedimos desconsiderar o comunicado anterior.
+            </p>
+            @elseif($aviso)
+            <p style="margin:0 0 14px;color:#334155;font-size:14px;line-height:1.65;">
+              Informamos que o seu contrato{{ $contrato ? ' ('.$contrato.')' : '' }} passará por <b>reajuste a partir do próximo mês</b>,
+              conforme o índice <b>{{ $indiceLabel }}</b>. A estimativa atual é de aproximadamente
+              <b style="color:#0891B2;">+{{ number_format($percentual, 2, ',', '.') }}%</b> (acumulado até o momento).
+            </p>
+            <p style="margin:0 0 14px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.6;">
+              ⚠️ <b>Este percentual ainda não é o definitivo.</b> O valor final depende do índice fechado do próximo mês, que confirmaremos no momento da aplicação.
+            </p>
+            @else
             <p style="margin:0 0 14px;color:#334155;font-size:14px;line-height:1.65;">
               Em conformidade com o seu contrato{{ $contrato ? ' ('.$contrato.')' : '' }}, informamos o <b>reajuste do valor contratado</b>,
               calculado pela variação acumulada do índice <b>{{ $indiceLabel }}</b>@if($periodoFormatado) no período de <b>{{ $periodoFormatado }}</b>@endif,
               correspondente a <b style="color:#0891B2;">+{{ number_format($percentual, 2, ',', '.') }}%</b>.
             </p>
+            @endif
           </td>
         </tr>
 
@@ -46,11 +64,11 @@
                 <td style="padding:18px 22px;">
                   <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                     <tr>
-                      <td style="color:#64748B;font-size:13px;padding:4px 0;">Valor anterior</td>
-                      <td align="right" style="color:#64748B;font-size:14px;padding:4px 0;text-decoration:line-through;">{{ $brl($valorAnterior) }}</td>
+                      <td style="color:#64748B;font-size:13px;padding:4px 0;">{{ $aviso ? 'Valor atual' : ($estorno ? 'Valor reajustado (estornado)' : 'Valor anterior') }}</td>
+                      <td align="right" style="color:#64748B;font-size:14px;padding:4px 0;{{ $aviso ? '' : 'text-decoration:line-through;' }}">{{ $brl($valorAnterior) }}</td>
                     </tr>
                     <tr>
-                      <td style="color:#0F172A;font-size:14px;font-weight:700;padding:4px 0;">Novo valor</td>
+                      <td style="color:#0F172A;font-size:14px;font-weight:700;padding:4px 0;">{{ $aviso ? 'Valor estimado (não definitivo)' : ($estorno ? 'Valor restabelecido' : 'Novo valor') }}</td>
                       <td align="right" style="color:#0891B2;font-size:20px;font-weight:800;padding:4px 0;">{{ $brl($valorNovo) }}</td>
                     </tr>
                     <tr><td colspan="2" style="border-top:1px solid #E5E7EB;padding-top:10px;"></td></tr>

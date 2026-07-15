@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class FechamentoParceiroAjuste extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'fechamento_parceiro_ajustes';
 
     protected $fillable = [

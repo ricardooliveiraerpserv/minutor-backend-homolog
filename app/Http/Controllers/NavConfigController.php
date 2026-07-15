@@ -76,6 +76,12 @@ class NavConfigController extends Controller
         ]);
     }
 
+    /** Ações negadas ao usuário logado, por tela — consumido pelo FE p/ esconder/desabilitar botões. */
+    public function myDeniedActions(Request $request): JsonResponse
+    {
+        return response()->json(['data' => \App\Services\AccessControl::deniedActionsFor($request->user()) ?: new \stdClass]);
+    }
+
     /** Upsert em lote das TELAS (permissões/ativo). Admin. Mantém consistência única por key. */
     public function saveScreens(Request $request): JsonResponse
     {

@@ -20,6 +20,8 @@ use Illuminate\Validation\ValidationException;
  */
 class ApprovalController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     use ListCacheable;
 
     /** Cards de ação da tela inicial (Meu Dia / aba Ações). */
@@ -41,7 +43,9 @@ class ApprovalController extends Controller
             if ($u->isAdmin() || $u->isCoordenador()) {
                 $isSust = $u->isCoordenador() && $u->coordinator_type === 'sustentacao';
                 $coord = $isSust ? '' : '&coordinator_id=' . $u->id;
-                $tsQuery = $sinceCut($this->buildTimesheetQuery($u));
+                // Aprovação NÃO é day-scoped: um apontamento pendente de dias atrás continua exigindo
+                // ação. Sem sinceCut aqui → o Meu Dia bate com a aba Ações (mesmo total pendente no escopo).
+                $tsQuery = $this->buildTimesheetQuery($u);
                 // Sustentação: lembrete só dos apontamentos do DIA ANTERIOR (regra própria).
                 if ($isSust) $tsQuery->whereDate('date', now()->subDay()->toDateString());
                 $ts = $this->scopedApprovalCount($tsQuery, $u);
@@ -49,16 +53,21 @@ class ApprovalController extends Controller
                     "Há {$ts} apontamento(s)" . ($isSust ? ' do dia anterior' : '') . " aguardando sua aprovação.", 'Revisar apontamentos', "/approvals?tab=timesheets{$coord}", $ts);
 
                 // Despesas para APROVAR — mesma responsabilidade de quem aprova apontamento (coordenador/admin).
-                $exApprove = $this->scopedApprovalCount($sinceCut($this->buildExpenseQuery($u)), $u);
+                $exApprove = $this->scopedApprovalCount($this->buildExpenseQuery($u), $u);
                 if ($exApprove > 0) $actions[] = $this->homeAction('approve_exp', 'high', 'Despesas para aprovar',
                     "Há {$exApprove} despesa(s) aguardando sua aprovação.", 'Revisar despesas', "/approvals?tab=expenses{$coord}", $exApprove);
             }
 
             // DESPESAS para PAGAR — responsabilidade do ADMINISTRATIVO (administrativo NÃO aprova, só paga).
             if ($u->type === 'administrativo') {
-                $pay = $sinceCut(Expense::where('status', Expense::STATUS_APPROVED)->where('is_paid', false))->count();
+                // "A Pagar" = aprovadas, não pagas e NÃO de parceiro (parceiro paga no fechamento —
+                // essas nunca viram is_paid=true, então inflavam o contador). Fora também as marcadas
+                // p/ pagar no fechamento.
+                $pay = $sinceCut(Expense::where('status', Expense::STATUS_APPROVED)->where('is_paid', false)
+                    ->whereHas('user', fn ($q) => $q->whereNull('partner_id'))
+                    ->where(fn ($q) => $q->whereNull('pagar_no_fechamento')->orWhere('pagar_no_fechamento', false)))->count();
                 if ($pay > 0) $actions[] = $this->homeAction('pay_exp', 'medium', 'Despesas para pagar',
-                    "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas', $pay);
+                    "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas?all=1', $pay);
             }
 
             if ($u->type === 'consultor' || $u->type === 'parceiro_admin') {
@@ -296,6 +305,7 @@ class ApprovalController extends Controller
                 $totalsQ = DB::table('timesheets')
                     ->whereNull('deleted_at')
                     ->where('status', '!=', 'rejected')
+                    ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                     ->whereRaw("ticket ~ '^[0-9]{5}$'");
                 $totalsQ->where(function ($q) use ($ticketsByCustomer) {
                     foreach ($ticketsByCustomer as $cid => $tickets) {
@@ -311,6 +321,7 @@ class ApprovalController extends Controller
                 // Soma o saldo inicial cadastrado (ticket_initial_balances).
                 $initQ = DB::table('ticket_initial_balances')
                     ->whereNull('deleted_at')
+                    ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                     ->where(function ($q) use ($ticketsByCustomer) {
                         foreach ($ticketsByCustomer as $cid => $tickets) {
                             $q->orWhere(function ($qq) use ($cid, $tickets) {
@@ -781,6 +792,18 @@ class ApprovalController extends Controller
             ->exists();
     }
 
+    /**
+     * Projeto de sustentação com "Gerenciado por outro coordenador" sai da fila do coord de
+     * sustentação e passa a ser do override — mesma regra do SustentacaoScopeService. Sem isto
+     * o card do Meu Dia e a tela de Aprovações contam despesa/apontamento de projeto alheio.
+     */
+    private function excludeOverriddenProjects($query, User $user): void
+    {
+        $query->whereHas('project', fn ($pq) => $pq
+            ->whereNull('kanban_coordinator_override_id')
+            ->orWhere('kanban_coordinator_override_id', $user->id));
+    }
+
     private function buildTimesheetQuery(User $user, ?Request $request = null)
     {
         $query = Timesheet::with([
@@ -819,6 +842,7 @@ class ApprovalController extends Controller
                 $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
                       ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
             });
+            $this->excludeOverriddenProjects($query, $user);
         }
 
         // Executivo de conta SEM papel coordenador: vê investimento Comercial dos seus clientes
@@ -921,6 +945,7 @@ class ApprovalController extends Controller
                 $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
                       ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
             });
+            $this->excludeOverriddenProjects($query, $user);
         }
 
         // Executivo de conta que NÃO é coordenador/administrativo: só vê despesas de investimento
@@ -998,7 +1023,7 @@ class ApprovalController extends Controller
         // Filtro por executivo responsável do cliente
         if ($request->filled('executive_id')) {
             $query->whereHas('project.customer', function ($q) use ($request) {
-                $q->where('executive_id', $request->get('executive_id'));
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $request->get('executive_id'));
             });
         }
 
@@ -1082,7 +1107,7 @@ class ApprovalController extends Controller
         // Filtro por executivo responsável do cliente
         if ($request->filled('executive_id')) {
             $query->whereHas('project.customer', function ($q) use ($request) {
-                $q->where('executive_id', $request->get('executive_id'));
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $request->get('executive_id'));
             });
         }
 

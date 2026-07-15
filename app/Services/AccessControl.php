@@ -128,4 +128,35 @@ class AccessControl
             'source'   => $source,
         ];
     }
+
+    private static function abilityAllows(User $user, $ab): bool
+    {
+        if (!is_array($ab)) return true;
+        $uid = (int) $user->id;
+        if (in_array($uid, array_map('intval', $ab['deny_users'] ?? []), true)) return false;
+        if (in_array($uid, array_map('intval', $ab['users'] ?? []), true)) return true;
+        if (array_intersect($user->effectiveProfiles(), $ab['deny_profiles'] ?? [])) return false;
+        return true;
+    }
+
+    /**
+     * Ações NEGADAS ao usuário, por tela — só o que está bloqueado (padrão é permitido).
+     * Consumido pelo FE (hook) p/ esconder/desabilitar botões. Admin → vazio (vê tudo).
+     * @return array<string, string[]>  { screenKey: [actionKeys negados] }
+     */
+    public static function deniedActionsFor(User $user): array
+    {
+        if ($user->isAdmin() || $user->hasAccess('admin.full_access')) return [];
+        $out = [];
+        foreach (NavScreen::whereNotNull('abilities')->get(['key', 'abilities']) as $screen) {
+            $abilities = $screen->abilities;
+            if (!is_array($abilities)) continue;
+            $denied = [];
+            foreach ($abilities as $actionKey => $ab) {
+                if (!self::abilityAllows($user, $ab)) $denied[] = $actionKey;
+            }
+            if ($denied) $out[$screen->key] = array_values($denied);
+        }
+        return $out;
+    }
 }

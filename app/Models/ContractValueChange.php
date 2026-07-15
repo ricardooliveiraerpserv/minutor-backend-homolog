@@ -17,6 +17,7 @@ class ContractValueChange extends Model
         'periodo_fim',
         'periodo_formatado',
         'user_id',
+        'reversed_at',
     ];
 
     protected $casts = [
@@ -25,6 +26,7 @@ class ContractValueChange extends Model
         'percentual'     => 'decimal:4',
         'periodo_inicio' => 'date:Y-m-d',
         'periodo_fim'    => 'date:Y-m-d',
+        'reversed_at'    => 'datetime',
     ];
 
     public function contract(): BelongsTo

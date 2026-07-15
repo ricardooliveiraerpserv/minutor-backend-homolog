@@ -11,6 +11,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class FechamentoSendStatus extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'fechamento_send_status';
 
     public const TIPO_CONSULTOR = 'consultor';

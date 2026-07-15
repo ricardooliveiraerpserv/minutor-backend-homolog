@@ -454,17 +454,7 @@ class ProjectMessageController extends Controller
 
     private function userCanAccessProject($user, Project $project): bool
     {
-        // Participante CONVIDADO (liberado explicitamente por admin/coord na aba do Diário).
-        if (\App\Models\ProjectMessageParticipant::where('project_id', $project->id)->where('user_id', $user->id)->exists()) {
-            return true;
-        }
-        if ($user->isCoordenador()) {
-            return $project->coordinators()->where('users.id', $user->id)->exists();
-        }
-        if ($user->isCliente() && $user->customer_id) {
-            return $project->customer_id === $user->customer_id;
-        }
-        return $project->consultants()->where('users.id', $user->id)->exists();
+        return \App\Services\ProjectDiaryAccess::allows($user, $project);
     }
 
     /** Quem pode gerir os participantes convidados do Diário: admin ou coordenador do projeto. */

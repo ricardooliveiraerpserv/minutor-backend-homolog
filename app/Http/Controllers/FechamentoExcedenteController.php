@@ -63,8 +63,8 @@ class FechamentoExcedenteController extends Controller
             $rate = (float) ($p->additional_hourly_rate ?? 0);
             $rec  = $records->get($p->id);
 
-            // Todos os tipos (BH Mensal/Fixo/Fechado) apuram pelo SALDO ACUMULADO →
-            // incremental: excedente atual − já cobrado (em qualquer competência).
+            // Excedente PENDENTE a cobrar. Todos os tipos (BH Mensal/Fixo/Fechado) apuram
+            // pelo SALDO ACUMULADO → incremental: excedente atual − já cobrado (qualquer competência).
             $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
             $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
 
@@ -110,7 +110,7 @@ class FechamentoExcedenteController extends Controller
         $data = $this->buildRows($this->baseQuery()->get(), $yearMonth)
             // Mostra TODO contrato com horas excedentes (>0) OU com registro na competência.
             // Hora Adicional zerada aparece com valor R$ 0,00 (a cobrança/relatório é que
-            // filtra por valor > 0). Ex.: Fechado sem Hora Adicional setada.
+            // filtra por valor > 0 — ver reportRows). Ex.: Fechado sem Hora Adicional setada.
             ->filter(fn ($r) => $r['excess_hours'] > 0 || $r['record_id'] !== null)
             ->map(function ($r) use ($envio) {
                 $r['envio_em']  = $envio[$r['customer_id']]['envio_em'] ?? null;
@@ -157,7 +157,8 @@ class FechamentoExcedenteController extends Controller
         $ap   = $p->excessHoursApuracao($yearMonth);
         $rate = (float) ($p->additional_hourly_rate ?? 0);
 
-        // Todos os tipos apuram pelo saldo acumulado → incremental (atual − já cobrado).
+        // Todos os tipos (BH Mensal/Fixo/Fechado) apuram pelo saldo acumulado → o excedente
+        // a registrar é o incremental (atual − já cobrado em qualquer competência).
         $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
             ->where('project_id', $p->id)->sum('excess_hours');
         $excess = max(0, round($ap['excess'] - $jaCobrado, 2));

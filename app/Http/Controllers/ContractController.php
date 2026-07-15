@@ -1269,8 +1269,8 @@ class ContractController extends Controller
         $demandCards = collect();
         if (!$isConsultor) {
             $demandQuery = Contract::with([
-                'customer:id,name,executive_id',
-                'customer.executive:id,name',
+                'customer:id,name,executive_id,executive_bizify_id',
+                'customer.executive:id,name', 'customer.executiveBizify:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'kanbanCoordinator:id,name',
@@ -1296,8 +1296,8 @@ class ContractController extends Controller
         $transitionCards = collect();
         if (!$isConsultor && !$isCliente) {
             $transitionCards = Contract::with([
-                'customer:id,name,executive_id',
-                'customer.executive:id,name',
+                'customer:id,name,executive_id,executive_bizify_id',
+                'customer.executive:id,name', 'customer.executiveBizify:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'project:id,code,name,status',
@@ -1313,8 +1313,8 @@ class ContractController extends Controller
         $demandProjectIds = $demandCards->pluck('project_id')->filter()->unique()->values()->toArray();
 
         $projectQuery = \App\Models\Project::with([
-            'customer:id,name,executive_id',
-            'customer.executive:id,name',
+            'customer:id,name,executive_id,executive_bizify_id',
+            'customer.executive:id,name', 'customer.executiveBizify:id,name',
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
@@ -1415,18 +1415,19 @@ class ContractController extends Controller
             'sust_on_demand' => [],
             'sust_cloud'     => [],
             'sust_bizify'    => [],
+            'sust_saas'      => [], // Kanban Bizify: contratos do tipo SaaS
         ];
         $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
             // Todos contratos alocados numa fila de sustentação aparecem na coluna correta
             $sustCards = Contract::with([
-                'customer:id,name,executive_id',
-                'customer.executive:id,name',
+                'customer:id,name,executive_id,executive_bizify_id',
+                'customer.executive:id,name', 'customer.executiveBizify:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'executivoConta:id,name',
-                'project.customer:id,name,executive_id',
-                'project.customer.executive:id,name',
+                'project.customer:id,name,executive_id,executive_bizify_id',
+                'project.customer.executive:id,name', 'project.customer.executiveBizify:id,name',
                 'project.executivoConta:id,name',
                 'project.coordinators',
                 'project.consultants',
@@ -1443,7 +1444,9 @@ class ContractController extends Controller
                     $svcCode      = $c->serviceType?->code ?? '';
                     $svcName      = strtolower($c->serviceType?->name ?? '');
                     $contractName = strtolower($c->contractType?->name ?? '');
-                    if ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
+                    if (str_contains($contractName, 'saas') || str_contains($svcName, 'saas')) {
+                        $col = 'sust_saas';
+                    } elseif ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
                         $col = 'sust_bizify';
                     } elseif (str_contains($svcName, 'cloud')) {
                         $col = 'sust_cloud';
@@ -1570,6 +1573,21 @@ class ContractController extends Controller
             });
         }
 
+        // ── Multi-empresa: kanban Bizify. Quando a empresa ativa é Bizify, o FE monta
+        //    colunas por "Coordenador Bizify" (is_bizify_coordinator) + SaaS, em vez das
+        //    colunas de coordenador/Cloud/Bizify padrão. Com ERPSERV (ou flag off), tudo igual.
+        $activeCompanyId = config('multiempresa.scoping_enabled')
+            ? app(\App\Services\CompanyContext::class)->id()
+            : null;
+        $isBizifyActive = $activeCompanyId
+            ? \App\Models\Company::where('id', $activeCompanyId)->where('slug', 'bizify')->exists()
+            : false;
+        $bizifyCoordinators = \App\Models\User::where('enabled', true)
+            ->where('is_bizify_coordinator', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
         return response()->json([
             'demand_cards'          => $demandCards,
             'transition_cards'      => $transitionCards,
@@ -1579,6 +1597,8 @@ class ContractController extends Controller
             'request_cards'         => $requestCards,
             'aporte_cards'          => $aporteCards,
             'coordinators'          => $coordinators,
+            'is_bizify_active'      => $isBizifyActive,
+            'bizify_coordinators'   => $bizifyCoordinators,
             'user_role'             => $user?->type ?? 'admin',
             'contracts'             => $demandCards,
             // Liberação de visualização do pipeline (Demandas e Projetos) p/ o usuário logado.
@@ -2239,7 +2259,7 @@ class ContractController extends Controller
             'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_BACKLOG,
             'kanban_coordinator_id' => $contract->kanban_coordinator_id,
             'kanban_coordinator'    => $contract->kanbanCoordinator?->name,
-            'executivo_conta_name'  => $contract->executivoConta?->name ?? $contract->customer?->executive?->name,
+            'executivo_conta_name'  => $this->cardExecutivoContaName($contract->customer, $contract->executivoConta),
             'kanban_order'     => $contract->kanban_order,
             'status'           => $contract->status,
             'project_id'       => $contract->project_id,
@@ -2311,6 +2331,22 @@ class ContractController extends Controller
         return null;
     }
 
+    /**
+     * Executivo de conta do card conforme a empresa ATIVA (multi-empresa): com Bizify,
+     * usa o executivo Bizify do cliente (o executivo_conta_id gravado é o da ERPSERV).
+     * Sem Bizify: usa o executivo gravado no projeto/contrato, senão o executivo ERPSERV do cliente.
+     */
+    private function cardExecutivoContaName(?\App\Models\Customer $customer, ?\App\Models\User $stored): ?string
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                return $customer?->executiveBizify?->name;
+            }
+        }
+        return $stored?->name ?? $customer?->executive?->name;
+    }
+
     private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
     {
         // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os subprojetos.
@@ -2330,6 +2366,8 @@ class ContractController extends Controller
             'status'                => $project->status,
             'sold_hours'            => $project->sold_hours,
             'consumed_hours'        => $consumed,
+            // Cliente só acompanha horas se o projeto estiver com o acompanhamento ligado (senão o FE esconde).
+            'client_follows_timesheets' => $project->client_follows_timesheets,
             'general_hours_balance' => $saldo,
             'project_value'         => $project->project_value,
             'start_date'            => $project->start_date,
@@ -2342,7 +2380,7 @@ class ContractController extends Controller
             'coordination_consumed_hours' => $b['consumed'],
             'kanban_coordinator_override_id' => $project->kanban_coordinator_override_id,
             'consultants'           => $project->consultants->pluck('name'),
-            'executivo_conta_name'  => $project->executivoConta?->name ?? $project->customer?->executive?->name,
+            'executivo_conta_name'  => $this->cardExecutivoContaName($project->customer, $project->executivoConta),
             'contract_type'         => $project->contractType?->name,
             'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,
@@ -2945,6 +2983,7 @@ class ContractController extends Controller
             'emails.*' => 'email',
             'email'    => 'nullable|email', // compat (envio único)
             'salvar'   => 'nullable|boolean', // grava os e-mails na lista do cliente
+            'mensagem' => 'nullable|string',  // corpo editável do e-mail
         ]);
 
         $change = $contract->valueChanges()->latest('created_at')->first();
@@ -2975,6 +3014,7 @@ class ContractController extends Controller
             indice: $change->indice,
             periodoFormatado: $change->periodo_formatado,
             vigencia: optional($change->created_at)->format('d/m/Y') ?? now()->format('d/m/Y'),
+            mensagem: $validated['mensagem'] ?? null,
         );
 
         // Destinatários escolhidos no envio + papéis configurados na Central (cópia/extra).
@@ -2982,9 +3022,9 @@ class ContractController extends Controller
         $to = array_values(array_unique(array_merge($emails, $rcpt['to'])));
         $cc = array_values(array_diff($rcpt['cc'], $to));
 
-        // Envia pelo Microsoft Graph (canal que entrega de fato, igual ao fechamento);
-        // fallback p/ o mailer default só se o Graph não estiver configurado.
-        $graphFrom = config('services.graph.mailbox');
+        // Envia COMO o usuário logado (Send As via Graph, igual ao fechamento);
+        // fallback p/ o mailbox configurado / mailer default se o Graph estiver off.
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
         if (\App\Services\GraphMailer::enabled() && $graphFrom) {
             \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
         } else {
@@ -3107,6 +3147,20 @@ class ContractController extends Controller
 
         $rows = $this->reajustesData($validated['cliente_id'] ?? null, $validated['index_type'] ?? null);
 
+        // Inclusões MANUAIS (sem contrato) — só rastreio; aparecem na lista com
+        // flag `manual` + `empresa` (ERPSERV|BIZIFY). Não entram no summary/KPIs.
+        $rows = $rows->concat(
+            \App\Models\ManualReajuste::query()
+                ->with('project:id,code,name,hourly_rate')
+                ->withCount([
+                    'valueChanges as active_changes_count'   => fn ($x) => $x->whereNull('reversed_at'),
+                    'valueChanges as reversed_changes_count' => fn ($x) => $x->whereNotNull('reversed_at'),
+                ])
+                ->withMax(['valueChanges as last_change_at' => fn ($x) => $x->whereNull('reversed_at')], 'created_at')
+                ->orderBy('cliente_nome')->get()
+                ->map(fn ($m) => $this->manualRow($m))
+        )->values();
+
         if (!empty($validated['status'])) {
             $rows = $rows->where('status_reajuste', $validated['status']);
         }
@@ -3129,7 +3183,7 @@ class ContractController extends Controller
     /** GET /contracts/{id}/value-changes — histórico de reajustes (Ver histórico). */
     public function valueChanges(Request $request, Contract $contract): JsonResponse
     {
-        $rows = $contract->valueChanges()->with('user:id,name')->latest('created_at')->get()
+        $rows = $contract->valueChanges()->whereNull('reversed_at')->with('user:id,name')->latest('created_at')->get()
             ->map(fn ($h) => [
                 'id'                => $h->id,
                 'valor_anterior'    => (float) $h->valor_anterior,
@@ -3145,11 +3199,651 @@ class ContractController extends Controller
     }
 
     /** Contratos sujeitos a reajuste (recorrentes): com assinatura + vencimento. */
+    // ─── Inclusão manual de reajuste (sem contrato) ─────────────────────────
+    // Itens que não têm contrato cadastrado (licenças, Bizify, sustentação sem
+    // contrato). Só rastreio: saldo + datas. Não passam por aplicar/notificar.
+
+    /** Mapeia uma ManualReajuste pro mesmo shape de linha da lista de reajustes. */
+    private function manualRow(\App\Models\ManualReajuste $m): array
+    {
+        $hoje = Carbon::today();
+        $proj = $m->project_id ? ($m->relationLoaded('project') ? $m->project : \App\Models\Project::find($m->project_id)) : null;
+        $projectBacked = $proj !== null;
+        $prox = $m->data_vencimento
+            ? Carbon::parse($m->data_vencimento)->startOfDay()
+            : ($m->data_ultimo_reajuste ? Carbon::parse($m->data_ultimo_reajuste)->addYear()->startOfDay() : null);
+        $dias = $prox ? $hoje->diffInDays($prox, false) : null;
+
+        $recente = $m->data_ultimo_reajuste && Carbon::parse($m->data_ultimo_reajuste)->gte($hoje->copy()->subDays(30));
+        if ($recente)            $status = 'recente';
+        elseif ($dias === null)  $status = 'em_dia';
+        elseif ($dias < 0)       $status = 'vencido';
+        elseif ($dias <= 30)     $status = 'proximo';
+        else                     $status = 'em_dia';
+
+        $valor = (float) ($m->valor_inicial ?? 0);
+        $taxa  = $m->taxa_reajuste ? EconomicIndexService::canonical($m->taxa_reajuste) : 'IPCA';
+
+        return [
+            'id'                      => $m->id,
+            'manual'                  => true,
+            'project_backed'          => $projectBacked,
+            'project_id'              => $m->project_id,
+            'project_name'            => $proj?->name,
+            'can_reverse'             => (int) ($m->active_changes_count ?? 0) > 0
+                                          && $m->last_change_at
+                                          && Carbon::parse($m->last_change_at)->gte(Carbon::now()->subDays(30)),
+            'can_resend'              => (int) ($m->active_changes_count ?? 0) > 0,
+            'can_resend_estorno'      => (int) ($m->reversed_changes_count ?? 0) > 0,
+            'empresa'                 => $m->empresa,
+            'customer_id'             => $m->customer_id,
+            'cliente_emails'          => $this->manualClienteEmails($m),
+            'cliente_nome'            => $m->cliente_nome,
+            'codigo'                  => $projectBacked ? ($proj->code ?? $m->descricao) : $m->descricao,
+            'valor_atual'             => round($valor, 2),
+            'data_assinatura'         => optional($m->data_assinatura)->toDateString(),
+            'valor_inicial'           => round($valor, 2),
+            'pct_reajuste'            => $m->pct_reajuste !== null ? (float) $m->pct_reajuste : null,
+            'data_ultimo_reajuste'    => optional($m->data_ultimo_reajuste)->toDateString(),
+            'data_proximo_reajuste'   => optional($prox)->toDateString(),
+            'data_aviso'              => $prox ? $prox->copy()->subMonthNoOverflow()->toDateString() : null,
+            'dias_para_vencimento'    => $dias,
+            'status_reajuste'         => $status,
+            'taxa_reajuste'           => $taxa,
+            'percentual_estimado'     => $m->pct_reajuste !== null ? (float) $m->pct_reajuste : 0,
+            'valor_estimado_reajuste' => 0,
+            'periodo'                 => null,
+            'percentual_acumulado'    => null,
+            'valor_acumulado'         => null,
+            'periodo_acumulado'       => null,
+        ];
+    }
+
+    private function validateManual(Request $request): array
+    {
+        $data = $request->validate([
+            'cliente_nome'         => 'required|string|max:180',
+            'customer_id'          => 'nullable|integer|exists:customers,id',
+            'project_id'           => 'nullable|integer|exists:projects,id',
+            'descricao'            => 'nullable|string|max:200',
+            'empresa'              => 'required|in:ERPSERV,BIZIFY',
+            'valor_inicial'        => 'nullable|numeric|min:0',
+            'data_assinatura'      => 'nullable|date',
+            'data_ultimo_reajuste' => 'nullable|date',
+            'data_vencimento'      => 'nullable|date',
+            'taxa_reajuste'        => 'nullable|string|in:IPCA,IGPM,IGP-M',
+            'pct_reajuste'         => 'nullable|numeric',
+        ]);
+        if (!empty($data['taxa_reajuste'])) {
+            $data['taxa_reajuste'] = EconomicIndexService::canonical($data['taxa_reajuste']);
+        }
+        // Próximo = último + 1 ano quando não informado explicitamente.
+        if (empty($data['data_vencimento']) && !empty($data['data_ultimo_reajuste'])) {
+            $data['data_vencimento'] = Carbon::parse($data['data_ultimo_reajuste'])->addYear()->toDateString();
+        }
+        return $data;
+    }
+
+    /** POST /contracts/reajustes/manual */
+    public function manualReajusteStore(Request $request): JsonResponse
+    {
+        $m = \App\Models\ManualReajuste::create($this->validateManual($request));
+        return response()->json($this->manualRow($m), 201);
+    }
+
+    /** PATCH /contracts/reajustes/manual/{manual} */
+    public function manualReajusteUpdate(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $manual->update($this->validateManual($request));
+        return response()->json($this->manualRow($manual->fresh()));
+    }
+
+    /** DELETE /contracts/reajustes/manual/{manual} */
+    public function manualReajusteDestroy(\App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $manual->delete();
+        return response()->json(['ok' => true]);
+    }
+
+    /** E-mails do manual: salvos (notify_emails), senão do cliente vinculado. */
+    private function manualClienteEmails(\App\Models\ManualReajuste $m): array
+    {
+        if (is_array($m->notify_emails) && count($m->notify_emails)) {
+            return array_values(array_filter(array_map('trim', $m->notify_emails)));
+        }
+        if ($m->customer_id) {
+            $m->loadMissing('customer');
+            return $m->customer ? $m->customer->adminEmails() : [];
+        }
+        return [];
+    }
+
+    /** Período do reajuste manual: do último reajuste (ou assinatura) ao último mês fechado. */
+    private function manualPeriodo(\App\Models\ManualReajuste $m): array
+    {
+        $fim   = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+        $ancora = $m->data_ultimo_reajuste ?? $m->data_assinatura;
+        $inicio = $ancora
+            ? Carbon::parse($ancora)->startOfMonth()->addMonthNoOverflow()
+            : $fim->copy()->subMonthsNoOverflow(11)->startOfMonth();
+        if ($inicio->gt($fim)) $inicio = $fim->copy()->startOfMonth();
+        return [$inicio, $fim];
+    }
+
+    /** GET /contracts/reajustes/manual/{manual}/adjustment-preview */
+    public function manualAdjustmentPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $validated = $request->validate(['index_type' => 'required|string']);
+        if (!EconomicIndexService::supports($validated['index_type'])) {
+            return response()->json(['message' => 'Índice não suportado. Use IPCA ou IGP-M.'], 422);
+        }
+        $base = (float) ($manual->valor_inicial ?? 0);
+        if ($base <= 0) {
+            return response()->json(['message' => 'Sem valor-base para reajuste. Preencha o saldo inicial.'], 422);
+        }
+        [$start, $end] = $this->manualPeriodo($manual);
+        try {
+            $idx = app(EconomicIndexService::class)->accumulated($validated['index_type'], $start, $end);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 502);
+        }
+        $pct       = (float) $idx['percentual_total'];
+        $valorNovo = round($base * (1 + $pct / 100), 2);
+        $periodoFmt = $this->periodoFormatado($start, $end);
+        return response()->json([
+            'indice'            => $idx['index_type'],
+            'percentual'        => $pct,
+            'percentual_total'  => $pct,
+            'meses_utilizados'  => $idx['meses_utilizados'],
+            'valor_atual'       => round($base, 2),
+            'valor_novo'        => $valorNovo,
+            'valor_field'       => 'valor',
+            'cliente_emails'    => $this->manualClienteEmails($manual),
+            'periodo_inicio'    => $start->toDateString(),
+            'periodo_fim'       => $end->toDateString(),
+            'periodo_formatado' => $periodoFmt,
+            'periodo'           => ['inicio' => $start->toDateString(), 'fim' => $end->toDateString(), 'label' => $periodoFmt],
+        ]);
+    }
+
+    /** POST /contracts/reajustes/manual/{manual}/apply-adjustment */
+    public function manualApplyAdjustment(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $validated = $request->validate([
+            'indice'         => 'required|string',
+            'percentual'     => 'required|numeric',
+            'periodo_inicio' => 'nullable|date',
+            'periodo_fim'    => 'nullable|date',
+        ]);
+        if (!EconomicIndexService::supports($validated['indice'])) {
+            return response()->json(['message' => 'Índice não suportado.'], 422);
+        }
+        $base = (float) ($manual->valor_inicial ?? 0);
+        if ($base <= 0) return response()->json(['message' => 'Sem valor-base para reajuste.'], 422);
+
+        $pct       = (float) $validated['percentual'];
+        $valorNovo = round($base * (1 + $pct / 100), 2);
+        $pInicio = $validated['periodo_inicio'] ?? null;
+        $pFim    = $validated['periodo_fim'] ?? null;
+        $pLabel  = ($pInicio && $pFim) ? $this->periodoFormatado(Carbon::parse($pInicio), Carbon::parse($pFim)) : null;
+
+        DB::transaction(function () use ($manual, $valorNovo, $pct, $validated, $base, $request, $pInicio, $pFim, $pLabel) {
+            $updates = [
+                'valor_inicial'        => $valorNovo, // nova base p/ o próximo
+                'taxa_reajuste'        => EconomicIndexService::canonical($validated['indice']),
+                'pct_reajuste'         => null,
+            ];
+            if ($pFim) {
+                $updates['data_ultimo_reajuste'] = $pFim;
+                $updates['data_vencimento'] = Carbon::parse($pFim)->addYear()->toDateString();
+            } elseif ($manual->data_vencimento) {
+                $updates['data_vencimento'] = Carbon::parse($manual->data_vencimento)->addYear()->toDateString();
+            }
+            $manual->update($updates);
+
+            // Projeto sem contrato: o reajuste incide no hourly_rate do projeto.
+            if ($manual->project_id) {
+                $proj = \App\Models\Project::find($manual->project_id);
+                if ($proj && $proj->hourly_rate !== null) {
+                    $proj->update(['hourly_rate' => round((float) $proj->hourly_rate * (1 + $pct / 100), 2)]);
+                }
+            }
+
+            \App\Models\ManualReajusteValueChange::create([
+                'manual_reajuste_id' => $manual->id,
+                'valor_anterior'     => round($base, 2),
+                'valor_novo'         => $valorNovo,
+                'percentual'         => $pct,
+                'indice'             => EconomicIndexService::canonical($validated['indice']),
+                'periodo_inicio'     => $pInicio,
+                'periodo_fim'        => $pFim,
+                'periodo_formatado'  => $pLabel,
+                'user_id'            => $request->user()?->id,
+            ]);
+        });
+
+        return response()->json(['ok' => true, 'valor_anterior' => round($base, 2), 'valor_novo' => $valorNovo, 'percentual' => $pct]);
+    }
+
+    /** POST /contracts/{contract}/reverse-adjustment — estorna o último reajuste. */
+    public function reverseAdjustment(Request $request, Contract $contract): JsonResponse
+    {
+        $change = $contract->valueChanges()->whereNull('reversed_at')->latest('id')->first();
+        if (!$change) return response()->json(['message' => 'Nenhum reajuste para estornar.'], 422);
+        if ($change->created_at && $change->created_at->lt(now()->subDays(30))) {
+            return response()->json(['message' => 'Estorno não permitido: o reajuste foi aplicado há mais de 30 dias.'], 422);
+        }
+        $prev = $contract->valueChanges()->whereNull('reversed_at')->where('id', '<', $change->id)->latest('id')->first();
+        $pct  = (float) $change->percentual;
+        $isOnDemand = $contract->tipo_faturamento === 'on_demand';
+        $field = $isOnDemand ? 'valor_hora' : 'valor_projeto';
+        $other = $isOnDemand ? 'valor_projeto' : 'valor_hora';
+
+        DB::transaction(function () use ($contract, $change, $prev, $pct, $field, $other) {
+            $updates = ['valor_inicial' => (float) $change->valor_anterior];
+            if ($change->indice !== 'RENOVACAO') {
+                $updates[$field] = (float) $change->valor_anterior;
+                if ($contract->{$other} !== null && (1 + $pct / 100) != 0) {
+                    $updates[$other] = round((float) $contract->{$other} / (1 + $pct / 100), 2);
+                }
+                $updates['data_ultimo_reajuste'] = $prev?->periodo_fim ? Carbon::parse($prev->periodo_fim)->toDateString() : null;
+            }
+            if ($contract->data_vencimento) {
+                $updates['data_vencimento'] = Carbon::parse($contract->data_vencimento)->subYear()->toDateString();
+            }
+            $contract->update($updates);
+            $change->update(['reversed_at' => now()]); // marca estornado (some do histórico, fica p/ reenvio)
+        });
+
+        // Comunica o ESTORNO ao cliente (opcional; renovação sem reajuste não comunica).
+        $sent = false;
+        if ($change->indice !== 'RENOVACAO' && $request->boolean('notificar', true)) {
+            $contract->loadMissing(['customer:id,name', 'project:id,code']);
+            $sent = $this->sendEstornoMail(
+                $request,
+                $contract->customer?->name ?? 'Cliente',
+                $contract->project?->code ?? $contract->project_code_preview,
+                $this->clienteEmailsContrato($contract),
+                ['contract' => $contract, 'customer' => $contract->customer, 'actor' => $request->user()],
+                $change,
+                $request->input('mensagem')
+            );
+        }
+        return response()->json(['ok' => true, 'valor_atual' => (float) $change->valor_anterior, 'email_sent' => $sent]);
+    }
+
+    /** Envia o comunicado de estorno (cliente + cópias internas da Central) como o usuário logado. */
+    private function sendEstornoMail(Request $request, string $cliente, ?string $contrato, array $toEmails, array $ccContext, $change, ?string $mensagem = null): bool
+    {
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste.estorno', $ccContext);
+        $to = array_values(array_unique(array_merge($toEmails, $rcpt['to'])));
+        $cc = array_values(array_diff($rcpt['cc'], $to));
+        if (!$to) return false;
+        $mail = $this->buildReajusteMailFromChange($cliente, $contrato, $change, $mensagem, true);
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        } else {
+            Mail::to($to)->cc($cc)->send($mail);
+        }
+        return true;
+    }
+
+    /** POST /contracts/reajustes/manual/{manual}/reverse-adjustment — estorna o último reajuste. */
+    public function manualReverseAdjustment(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $change = $manual->valueChanges()->whereNull('reversed_at')->latest('id')->first();
+        if (!$change) return response()->json(['message' => 'Nenhum reajuste para estornar.'], 422);
+        if ($change->created_at && $change->created_at->lt(now()->subDays(30))) {
+            return response()->json(['message' => 'Estorno não permitido: o reajuste foi aplicado há mais de 30 dias.'], 422);
+        }
+        $prev = $manual->valueChanges()->whereNull('reversed_at')->where('id', '<', $change->id)->latest('id')->first();
+
+        DB::transaction(function () use ($manual, $change, $prev) {
+            $updates = [
+                'valor_inicial'        => (float) $change->valor_anterior,
+                'data_ultimo_reajuste' => $prev?->periodo_fim ? Carbon::parse($prev->periodo_fim)->toDateString() : null,
+            ];
+            if ($manual->data_vencimento) {
+                $updates['data_vencimento'] = Carbon::parse($manual->data_vencimento)->subYear()->toDateString();
+            }
+            $manual->update($updates);
+
+            // Projeto sem contrato: desfaz o reajuste no hourly_rate do projeto.
+            if ($manual->project_id && (float) $change->percentual != 0.0) {
+                $proj = \App\Models\Project::find($manual->project_id);
+                if ($proj && $proj->hourly_rate !== null) {
+                    $proj->update(['hourly_rate' => round((float) $proj->hourly_rate / (1 + (float) $change->percentual / 100), 2)]);
+                }
+            }
+
+            $change->update(['reversed_at' => now()]); // marca estornado
+        });
+
+        // Comunica o ESTORNO ao cliente (opcional; destinatários salvos/do cliente + cópias internas).
+        $sent = false;
+        if ($request->boolean('notificar', true)) {
+            $manual->loadMissing('customer:id,name');
+            $sent = $this->sendEstornoMail(
+                $request,
+                $manual->cliente_nome,
+                $manual->descricao ?? '—',
+                $this->manualClienteEmails($manual),
+                ['customer' => $manual->customer],
+                $change,
+                $request->input('mensagem')
+            );
+        }
+        return response()->json(['ok' => true, 'valor_atual' => (float) $change->valor_anterior, 'email_sent' => $sent]);
+    }
+
+    /** GET /contracts/reajustes/manual/{manual}/value-changes */
+    public function manualValueChanges(\App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $rows = $manual->valueChanges()->whereNull('reversed_at')->with('user:id,name')->latest('created_at')->get()
+            ->map(fn ($h) => [
+                'id'                => $h->id,
+                'valor_anterior'    => (float) $h->valor_anterior,
+                'valor_novo'        => (float) $h->valor_novo,
+                'percentual'        => (float) $h->percentual,
+                'indice'            => $h->indice,
+                'periodo_formatado' => $h->periodo_formatado,
+                'usuario'           => $h->user?->name,
+                'data'              => optional($h->created_at)->toDateTimeString(),
+            ]);
+        return response()->json(['data' => $rows]);
+    }
+
+    /** POST /contracts/reajustes/manual/{manual}/notify-client-adjustment */
+    public function manualNotify(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $validated = $request->validate([
+            'emails'   => 'nullable|array',
+            'emails.*' => 'email',
+            'salvar'   => 'nullable|boolean',
+            'mensagem' => 'nullable|string',
+        ]);
+        $change = $manual->valueChanges()->latest('created_at')->first();
+        if (!$change) return response()->json(['message' => 'Nenhum reajuste aplicado para comunicar.'], 422);
+
+        $emails = collect($validated['emails'] ?? $this->manualClienteEmails($manual))
+            ->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) return response()->json(['message' => 'Informe ao menos um e-mail de destino.'], 422);
+
+        // Salva os e-mails na própria inclusão manual p/ o próximo reajuste.
+        if (!empty($validated['salvar'])) {
+            $manual->update(['notify_emails' => $emails]);
+        }
+
+        $mail = $this->buildReajusteMailFromChange($manual->cliente_nome, $manual->descricao ?? '—', $change, $validated['mensagem'] ?? null);
+
+        // Cópias internas configuradas na Central de Workflows (mesmo workflow do contrato).
+        $manual->loadMissing('customer:id,name');
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste', ['customer' => $manual->customer]);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to'])));
+        $cc = array_values(array_diff($rcpt['cc'], $to));
+
+        // Envia COMO o usuário logado (Send As via Graph, igual ao fechamento).
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        } else {
+            Mail::to($to)->cc($cc)->send($mail);
+        }
+        return response()->json(['ok' => true, 'emails' => $emails, 'salvos' => !empty($validated['salvar'])]);
+    }
+
+    /** Monta o ReajusteClienteMail a partir de um registro de mudança (contrato ou manual). */
+    private function buildReajusteMailFromChange(string $cliente, ?string $contrato, $change, ?string $mensagem = null, bool $estorno = false): ReajusteClienteMail
+    {
+        // No estorno, os valores são invertidos: sai do reajustado e volta ao anterior.
+        $valorAnt = $estorno ? (float) $change->valor_novo : (float) $change->valor_anterior;
+        $valorNovo = $estorno ? (float) $change->valor_anterior : (float) $change->valor_novo;
+        return new ReajusteClienteMail(
+            cliente: $cliente ?: 'Cliente',
+            contrato: $contrato ?: '—',
+            valorAnterior: $valorAnt,
+            valorNovo: $valorNovo,
+            percentual: (float) $change->percentual,
+            indice: $change->indice,
+            periodoFormatado: $change->periodo_formatado,
+            vigencia: now()->format('d/m/Y'),
+            mensagem: $mensagem,
+            estorno: $estorno,
+        );
+    }
+
+    /** GET /contracts/{contract}/adjustment-email-preview — HTML do e-mail (prévia + corpo editável). */
+    public function contractAdjustmentEmailPreview(Request $request, Contract $contract): JsonResponse
+    {
+        $tipo = (string) $request->input('tipo', $request->boolean('estorno') ? 'estorno' : 'reajuste');
+        $change = $tipo === 'estorno_resend'
+            ? $contract->valueChanges()->whereNotNull('reversed_at')->latest('id')->first()
+            : $contract->valueChanges()->whereNull('reversed_at')->latest('id')->first();
+        if (!$change) return response()->json(['message' => 'Nada para pré-visualizar.'], 422);
+        $contract->loadMissing(['customer:id,name', 'project:id,code']);
+        $contrato = $contract->project?->code ?? $contract->project_code_preview;
+        $mensagem = $request->filled('mensagem') ? (string) $request->input('mensagem') : null;
+        $mail = $this->buildReajusteMailFromChange($contract->customer?->name ?? 'Cliente', $contrato, $change, $mensagem, $tipo !== 'reajuste');
+        return response()->json([
+            'subject'        => $mail->envelope()->subject,
+            'html'           => $mail->render(),
+            'mensagem_padrao'=> ReajusteClienteMail::defaultMensagem($contrato, (float) $change->percentual, $change->indice, $change->periodo_formatado),
+            'cliente_emails' => $this->clienteEmailsContrato($contract),
+        ]);
+    }
+
+    /** GET /contracts/reajustes/manual/{manual}/adjustment-email-preview — HTML do e-mail (prévia + corpo editável). */
+    public function manualAdjustmentEmailPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $tipo = (string) $request->input('tipo', $request->boolean('estorno') ? 'estorno' : 'reajuste');
+        $change = $tipo === 'estorno_resend'
+            ? $manual->valueChanges()->whereNotNull('reversed_at')->latest('id')->first()
+            : $manual->valueChanges()->whereNull('reversed_at')->latest('id')->first();
+        if (!$change) return response()->json(['message' => 'Nada para pré-visualizar.'], 422);
+        $contrato = $manual->descricao ?? '—';
+        $mensagem = $request->filled('mensagem') ? (string) $request->input('mensagem') : null;
+        $mail = $this->buildReajusteMailFromChange($manual->cliente_nome, $contrato, $change, $mensagem, $tipo !== 'reajuste');
+        return response()->json([
+            'subject'        => $mail->envelope()->subject,
+            'html'           => $mail->render(),
+            'mensagem_padrao'=> ReajusteClienteMail::defaultMensagem($contrato, (float) $change->percentual, $change->indice, $change->periodo_formatado),
+            'cliente_emails' => $this->manualClienteEmails($manual),
+        ]);
+    }
+
+    /** POST /contracts/{contract}/resend-adjustment — reenvia comunicado (reajuste|estorno). */
+    public function resendAdjustment(Request $request, Contract $contract): JsonResponse
+    {
+        return $this->resendReajusteEmail($request, $contract, 'contract');
+    }
+
+    /** POST /contracts/reajustes/manual/{manual}/resend-adjustment */
+    public function manualResendAdjustment(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        return $this->resendReajusteEmail($request, $manual, 'manual');
+    }
+
+    /** Reenvio do comunicado de reajuste OU estorno, com destinatários editáveis (novos). */
+    private function resendReajusteEmail(Request $request, $model, string $kind): JsonResponse
+    {
+        $validated = $request->validate([
+            'tipo'     => 'required|in:reajuste,estorno',
+            'emails'   => 'nullable|array',
+            'emails.*' => 'email',
+            'salvar'   => 'nullable|boolean',
+            'mensagem' => 'nullable|string',
+        ]);
+        $estorno = $validated['tipo'] === 'estorno';
+        $change = $estorno
+            ? $model->valueChanges()->whereNotNull('reversed_at')->latest('id')->first()
+            : $model->valueChanges()->whereNull('reversed_at')->latest('id')->first();
+        if (!$change) return response()->json(['message' => 'Nada para reenviar.'], 422);
+
+        if ($kind === 'contract') {
+            $model->loadMissing(['customer:id,name', 'project:id,code']);
+            $cliente  = $model->customer?->name ?? 'Cliente';
+            $contrato = $model->project?->code ?? $model->project_code_preview;
+            $defaults = $this->clienteEmailsContrato($model);
+            $ctx = ['contract' => $model, 'customer' => $model->customer, 'actor' => $request->user()];
+        } else {
+            $model->loadMissing('customer:id,name');
+            $cliente  = $model->cliente_nome;
+            $contrato = $model->descricao ?? '—';
+            $defaults = $this->manualClienteEmails($model);
+            $ctx = ['customer' => $model->customer];
+        }
+        $emails = collect($validated['emails'] ?? $defaults)->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) return response()->json(['message' => 'Informe ao menos um e-mail de destino.'], 422);
+
+        if (!empty($validated['salvar'])) {
+            if ($kind === 'contract' && $model->customer) {
+                $merged = array_values(array_unique(array_merge($model->customer->adminEmails(), $emails)));
+                $model->customer->setAdminEmails($merged);
+                $model->customer->save();
+            } elseif ($kind === 'manual') {
+                $model->update(['notify_emails' => $emails]);
+            }
+        }
+
+        $wfKey = $estorno ? 'contract.reajuste.estorno' : 'contract.reajuste';
+        $rcpt  = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve($wfKey, $ctx);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to'])));
+        $cc = array_values(array_diff($rcpt['cc'], $to));
+
+        $mail = $this->buildReajusteMailFromChange($cliente, $contrato, $change, $validated['mensagem'] ?? null, $estorno);
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        } else {
+            Mail::to($to)->cc($cc)->send($mail);
+        }
+        return response()->json(['ok' => true, 'emails' => $emails]);
+    }
+
+    // ─── Aviso prévio de reajuste (comunicado "próximo mês", estimativa) ─────
+    private function buildAvisoMail(string $cliente, ?string $contrato, float $base, float $pct, string $indice, ?string $periodoFmt, ?string $mensagem): ReajusteClienteMail
+    {
+        return new ReajusteClienteMail(
+            cliente: $cliente ?: 'Cliente',
+            contrato: $contrato ?: '—',
+            valorAnterior: round($base, 2),
+            valorNovo: round($base * (1 + $pct / 100), 2),
+            percentual: round($pct, 4),
+            indice: EconomicIndexService::canonical($indice),
+            periodoFormatado: $periodoFmt,
+            vigencia: Carbon::now()->addMonthNoOverflow()->startOfMonth()->format('d/m/Y'),
+            mensagem: $mensagem,
+            aviso: true,
+        );
+    }
+
+    /** GET /contracts/{contract}/aviso-preview?index_type=IPCA|IGPM[&mensagem=] */
+    public function contractAvisoPreview(Request $request, Contract $contract): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = $this->valorBaseReajuste($contract);
+        if ($base <= 0) return response()->json(['message' => 'Contrato sem valor-base para estimar.'], 422);
+        [$start, $end] = $this->reajustePeriodo($contract);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $contract->loadMissing(['customer:id,name', 'project:id,code']);
+        $contrato = $contract->project?->code ?? $contract->project_code_preview;
+        $mensagem = $request->filled('mensagem') ? (string) $request->input('mensagem') : null;
+        $mail = $this->buildAvisoMail($contract->customer?->name ?? 'Cliente', $contrato, $base, $pct, $v['index_type'], $pf, $mensagem);
+        return response()->json([
+            'subject' => $mail->envelope()->subject, 'html' => $mail->render(),
+            'mensagem_padrao' => ReajusteClienteMail::defaultMensagem($contrato, $pct, EconomicIndexService::canonical($v['index_type']), $pf, 'aviso'),
+            'cliente_emails' => $this->clienteEmailsContrato($contract),
+            'percentual' => round($pct, 4), 'valor_estimado' => round($base * (1 + $pct / 100), 2),
+        ]);
+    }
+
+    /** POST /contracts/{contract}/aviso-send */
+    public function contractAvisoSend(Request $request, Contract $contract): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string', 'emails' => 'nullable|array', 'emails.*' => 'email', 'mensagem' => 'nullable|string', 'salvar' => 'nullable|boolean']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = $this->valorBaseReajuste($contract);
+        if ($base <= 0) return response()->json(['message' => 'Contrato sem valor-base.'], 422);
+        [$start, $end] = $this->reajustePeriodo($contract);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $contract->loadMissing(['customer:id,name', 'project:id,code']);
+        $emails = collect($v['emails'] ?? $this->clienteEmailsContrato($contract))->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) return response()->json(['message' => 'Informe ao menos um e-mail.'], 422);
+        if (!empty($v['salvar']) && $contract->customer) {
+            $contract->customer->setAdminEmails(array_values(array_unique(array_merge($contract->customer->adminEmails(), $emails))));
+            $contract->customer->save();
+        }
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste', ['contract' => $contract, 'customer' => $contract->customer, 'actor' => $request->user()]);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to']))); $cc = array_values(array_diff($rcpt['cc'], $to));
+        $mail = $this->buildAvisoMail($contract->customer?->name ?? 'Cliente', $contract->project?->code ?? $contract->project_code_preview, $base, $pct, $v['index_type'], $pf, $v['mensagem'] ?? null);
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        else Mail::to($to)->cc($cc)->send($mail);
+        return response()->json(['ok' => true, 'emails' => $emails]);
+    }
+
+    /** GET /contracts/reajustes/manual/{manual}/aviso-preview */
+    public function manualAvisoPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = (float) ($manual->valor_inicial ?? 0);
+        if ($base <= 0) return response()->json(['message' => 'Sem valor-base para estimar.'], 422);
+        [$start, $end] = $this->manualPeriodo($manual);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $contrato = $manual->descricao ?? '—';
+        $mensagem = $request->filled('mensagem') ? (string) $request->input('mensagem') : null;
+        $mail = $this->buildAvisoMail($manual->cliente_nome, $contrato, $base, $pct, $v['index_type'], $pf, $mensagem);
+        return response()->json([
+            'subject' => $mail->envelope()->subject, 'html' => $mail->render(),
+            'mensagem_padrao' => ReajusteClienteMail::defaultMensagem($contrato, $pct, EconomicIndexService::canonical($v['index_type']), $pf, 'aviso'),
+            'cliente_emails' => $this->manualClienteEmails($manual),
+            'percentual' => round($pct, 4), 'valor_estimado' => round($base * (1 + $pct / 100), 2),
+        ]);
+    }
+
+    /** POST /contracts/reajustes/manual/{manual}/aviso-send */
+    public function manualAvisoSend(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
+    {
+        $v = $request->validate(['index_type' => 'required|string', 'emails' => 'nullable|array', 'emails.*' => 'email', 'mensagem' => 'nullable|string', 'salvar' => 'nullable|boolean']);
+        if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
+        $base = (float) ($manual->valor_inicial ?? 0);
+        if ($base <= 0) return response()->json(['message' => 'Sem valor-base.'], 422);
+        [$start, $end] = $this->manualPeriodo($manual);
+        try { $idx = app(EconomicIndexService::class)->accumulated($v['index_type'], $start, $end); }
+        catch (\Throwable $e) { return response()->json(['message' => $e->getMessage()], 502); }
+        $pct = (float) $idx['percentual_total']; $pf = $this->periodoFormatado($start, $end);
+        $manual->loadMissing('customer:id,name');
+        $emails = collect($v['emails'] ?? $this->manualClienteEmails($manual))->map(fn ($e) => trim((string) $e))->filter()->unique()->values()->all();
+        if (!$emails) return response()->json(['message' => 'Informe ao menos um e-mail.'], 422);
+        if (!empty($v['salvar'])) $manual->update(['notify_emails' => $emails]);
+        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('contract.reajuste', ['customer' => $manual->customer]);
+        $to = array_values(array_unique(array_merge($emails, $rcpt['to']))); $cc = array_values(array_diff($rcpt['cc'], $to));
+        $mail = $this->buildAvisoMail($manual->cliente_nome, $manual->descricao ?? '—', $base, $pct, $v['index_type'], $pf, $v['mensagem'] ?? null);
+        $graphFrom = $request->user()?->email ?: config('services.graph.mailbox');
+        if (\App\Services\GraphMailer::enabled() && $graphFrom) \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
+        else Mail::to($to)->cc($cc)->send($mail);
+        return response()->json(['ok' => true, 'emails' => $emails]);
+    }
+
     private function reajusteElegiveis(?int $clienteId = null, ?string $indexType = null): \Illuminate\Support\Collection
     {
         $q = Contract::query()
             ->whereNotNull('data_assinatura')
             ->whereNotNull('data_vencimento')
+            ->withCount([
+                'valueChanges as active_changes_count'   => fn ($x) => $x->whereNull('reversed_at'),
+                'valueChanges as reversed_changes_count' => fn ($x) => $x->whereNotNull('reversed_at'),
+            ])
+            ->withMax(['valueChanges as last_change_at' => fn ($x) => $x->whereNull('reversed_at')], 'created_at')
             ->with(['customer:id,name', 'project:id,code']);
 
         if ($clienteId) {
@@ -3199,6 +3893,11 @@ class ContractController extends Controller
 
         return [
             'id'                      => $c->id,
+            'can_reverse'             => (int) ($c->active_changes_count ?? 0) > 0
+                                          && $c->last_change_at
+                                          && Carbon::parse($c->last_change_at)->gte(Carbon::now()->subDays(30)),
+            'can_resend'              => (int) ($c->active_changes_count ?? 0) > 0,
+            'can_resend_estorno'      => (int) ($c->reversed_changes_count ?? 0) > 0,
             'cliente_nome'            => $c->customer?->name,
             'codigo'                  => $c->project?->code ?? $c->project_code_preview,
             'valor_atual'             => round($valorAtual, 2),
@@ -3208,6 +3907,7 @@ class ContractController extends Controller
             'pct_reajuste'            => $c->pct_reajuste !== null ? (float) $c->pct_reajuste : null,
             'data_ultimo_reajuste'    => optional($c->data_ultimo_reajuste)->toDateString(),
             'data_proximo_reajuste'   => optional($prox)->toDateString(),
+            'data_aviso'              => $prox ? $prox->copy()->subMonthNoOverflow()->toDateString() : null,
             'dias_para_vencimento'    => $dias,
             'status_reajuste'         => $status,
             'taxa_reajuste'           => $taxaCanon,

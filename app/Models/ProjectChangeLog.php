@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProjectChangeLog extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     /**
      * The table associated with the model.
      *
