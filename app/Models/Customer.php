@@ -24,6 +24,7 @@ class Customer extends Model
         'active',
         'executive_id',
         'executive_bizify_id',
+        'is_bizify_customer',
         'code_prefix',
         'fechamento_email',
         'emails_administrativos',
@@ -37,6 +38,7 @@ class Customer extends Model
      */
     protected $casts = [
         'active' => 'boolean',
+        'is_bizify_customer' => 'boolean',
         'emails_administrativos' => 'array',
         'secondary_cgcs' => 'array',
         'created_at' => 'datetime',
