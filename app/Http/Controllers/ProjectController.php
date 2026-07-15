@@ -266,6 +266,7 @@ class ProjectController extends Controller
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
+                $isTargetConsultor = method_exists($targetUser, 'isConsultor') && $targetUser->isConsultor();
                 // Modo "Meus Projetos" (activity_allocated): projetos onde o consultor participa do
                 // CRONOGRAMA — MESMO critério de acesso do ProjectStageController (allocations.user_id,
                 // com ou sem delivery, OU responsável por atividade). Antes exigia delivery_id NOT NULL,
@@ -279,6 +280,13 @@ class ProjectController extends Controller
                     $query->where(function ($q) use ($targetUserId) {
                         $q->whereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId))
                           ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId));
+                    });
+                } elseif ($isTargetConsultor) {
+                    // CONSULTOR (Meus Projetos): só vê projetos onde é RESPONSÁVEL de alguma atividade
+                    // (delivery). Ao ser TROCADO (responsável alterado p/ outro), o projeto some. Estar só
+                    // no time (project_consultants) ou ter alocação-resquício (stage_allocations) NÃO basta.
+                    $query->whereHas('stages.deliveries', function ($d) use ($targetUserId) {
+                        $d->where('responsible_user_id', $targetUserId);
                     });
                 } else {
                 $query->where(function ($q) use ($targetUserId) {
