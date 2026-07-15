@@ -15,6 +15,49 @@ use Illuminate\Support\Carbon;
  */
 class CalendarController extends Controller
 {
+    /** Tipos de evento da agenda + rótulos (config de visibilidade por perfil). */
+    const TYPE_LABELS = [
+        'birthday'            => 'Aniversário',
+        'holiday'             => 'Feriado',
+        'contract_expiration' => 'Vencimento',
+        'reajuste'            => 'Reajuste',
+        'task'                => 'Tarefa',
+        'outlook'             => 'Outlook',
+    ];
+    /** TODOS os perfis (users.type) entram na matriz de visibilidade. */
+    const PROFILE_LABELS = [
+        'admin'          => 'Administrador',
+        'administrativo' => 'Administrativo',
+        'coordenador'    => 'Coordenador',
+        'consultor'      => 'Consultor',
+        'parceiro_admin' => 'Parceiro',
+        'cliente'        => 'Cliente',
+    ];
+    /** Padrão: administrativos (vencimento/reajuste) só admin/administrativo/coordenador; o resto, todos. */
+    const DEFAULT_VISIBILITY = [
+        'birthday'            => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'holiday'             => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'contract_expiration' => ['admin', 'administrativo', 'coordenador'],
+        'reajuste'            => ['admin', 'administrativo', 'coordenador'],
+        'task'                => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'outlook'             => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+    ];
+
+    /** Config atual de visibilidade (saved ∪ defaults, saneada) — { tipo: [perfis] }. */
+    private static function visibilityConfig(): array
+    {
+        $saved = \App\Models\SystemSetting::get('calendar_visibility', []);
+        if (!is_array($saved)) $saved = [];
+        $out = [];
+        foreach (array_keys(self::TYPE_LABELS) as $t) {
+            $out[$t] = array_values(array_intersect(
+                (array) ($saved[$t] ?? self::DEFAULT_VISIBILITY[$t] ?? []),
+                array_keys(self::PROFILE_LABELS)
+            ));
+        }
+        return $out;
+    }
+
     /** Eventos do mês atual, ordenados por data. */
     public function events(Request $request): JsonResponse
     {
@@ -28,8 +71,12 @@ class CalendarController extends Controller
             : $now->copy()->startOfMonth();
         $month  = (int) $ref->month;
         $year   = (int) $ref->year;
-        // Contrato (vencimento/reajuste) carrega valor — restrito a quem enxerga contratos.
-        $canSeeContracts = in_array($u->type, ['admin', 'coordenador', 'administrativo'], true);
+        // Visibilidade por tipo × perfil — TODOS os perfis (inclusive admin) respeitam a matriz.
+        // O padrão já concede tudo a admin/administrativo; o ⚙️ da agenda é admin-only no FE.
+        $vis = self::visibilityConfig();
+        $canSee = fn (string $tipo) => in_array($u->type, $vis[$tipo] ?? [], true);
+        // Só carrega contratos se algum dos tipos de contrato for visível a este perfil (perf).
+        $canSeeContracts = $canSee('contract_expiration') || $canSee('reajuste');
 
         $eventos = collect();
 
@@ -108,23 +155,66 @@ class CalendarController extends Controller
             foreach (($integ?->cached_events ?? []) as $ev) {
                 $d = (string) ($ev['data'] ?? '');
                 if (strlen($d) === 10 && (int) substr($d, 5, 2) === $month && (int) substr($d, 0, 4) === $year) {
-                    $eventos->push(['tipo' => 'outlook', 'data' => $d, 'titulo' => (string) ($ev['titulo'] ?? 'Compromisso')]);
+                    $eventos->push([
+                        'tipo'        => 'outlook',
+                        'data'        => $d,
+                        'titulo'      => (string) ($ev['titulo'] ?? 'Compromisso'),
+                        'hora'        => $ev['hora'] ?? null,
+                        'hora_fim'    => $ev['hora_fim'] ?? null,
+                        'local'       => $ev['local'] ?? '',
+                        'link'        => $ev['link'] ?? '',
+                        'organizador' => $ev['organizador'] ?? '',
+                        'convidados'  => $ev['convidados'] ?? [],
+                    ]);
                 }
             }
         } catch (\Throwable) { /* nunca trava o calendário */ }
 
         $ordered = $eventos
+            ->filter(fn ($e) => $canSee($e['tipo']))   // visibilidade por tipo × perfil
             ->sortBy([['data', 'asc'], ['titulo', 'asc']])
             ->map(fn ($e) => array_merge($e, ['is_today' => $e['data'] === $now->toDateString()]))
             ->values();
 
+        // Tipos que ESTE perfil pode ver (matriz de visibilidade) — a legenda do FE usa isto,
+        // independente de haver evento no mês, senão some tipo que o usuário tem permissão de ver.
+        $tiposVisiveis = array_values(array_filter(array_keys(self::TYPE_LABELS), $canSee));
+
         return response()->json(['data' => [
             'eventos'  => $ordered,
+            'tipos'    => $tiposVisiveis,
             'mes'      => $ref->locale('pt_BR')->isoFormat('MMMM'),
             'mes_num'  => $month,
             'ano'      => $year,
             'mes_ref'  => $ref->format('Y-m'),
         ]]);
+    }
+
+    /** GET — config de visibilidade da agenda (tipos × perfis) + catálogos p/ a UI. */
+    public function visibility(Request $request): JsonResponse
+    {
+        abort_unless($request->user(), 401);
+        return response()->json(['data' => [
+            'visibility' => self::visibilityConfig(),
+            'types'      => self::TYPE_LABELS,
+            'profiles'   => self::PROFILE_LABELS,
+        ]]);
+    }
+
+    /** PUT — salva a config de visibilidade (admin). Só aceita tipos/perfis conhecidos. */
+    public function saveVisibility(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->isAdmin(), 403);
+        $v = $request->validate(['visibility' => 'required|array']);
+        $clean = [];
+        foreach (array_keys(self::TYPE_LABELS) as $t) {
+            $clean[$t] = array_values(array_intersect(
+                array_map('strval', (array) ($v['visibility'][$t] ?? [])),
+                array_keys(self::PROFILE_LABELS)
+            ));
+        }
+        \App\Models\SystemSetting::set('calendar_visibility', $clean, 'json', 'calendar', 'Visibilidade da agenda por perfil');
+        return response()->json(['data' => ['visibility' => $clean]]);
     }
 
     /** Monta a data do evento no ano/mês corrente (aniversário recorrente), tolerando dia inválido. */

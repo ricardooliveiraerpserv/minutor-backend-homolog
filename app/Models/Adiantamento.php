@@ -7,15 +7,28 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Adiantamento extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'adiantamentos';
 
+    // beneficiario_tipo
     public const TIPO_CONSULTOR = 'consultor';
     public const TIPO_PARCEIRO  = 'parceiro';
+
+    // tipo (natureza no fechamento)
+    //  - ADIANTAMENTO: desconta no fechamento (via parcelas).
+    //  - EMPRESTIMO  : soma o valor_total no mês em que foi feito (data_realizado)
+    //                  e é quitado pelas parcelas (descontos) nos meses seguintes.
+    public const NATUREZA_ADIANTAMENTO = 'adiantamento';
+    public const NATUREZA_EMPRESTIMO   = 'emprestimo';
 
     protected $fillable = [
         'beneficiario_tipo',
         'beneficiario_id',
+        'tipo',
         'valor_total',
+        'data_realizado',
+        'disponibilizado',
         'num_parcelas',
         'primeira_competencia',
         'descricao',
@@ -23,8 +36,10 @@ class Adiantamento extends Model
     ];
 
     protected $casts = [
-        'valor_total'  => 'decimal:2',
-        'num_parcelas' => 'integer',
+        'valor_total'     => 'decimal:2',
+        'num_parcelas'    => 'integer',
+        'data_realizado'  => 'date',
+        'disponibilizado' => 'boolean',
     ];
 
     public function parcelas(): HasMany
@@ -47,18 +62,75 @@ class Adiantamento extends Model
     }
 
     /**
+     * Filtro do adiantamento pai: beneficiário + exclui empréstimo ainda NÃO
+     * disponibilizado (que fica inerte no fechamento — sem descontar as parcelas).
+     */
+    private static function whereBeneficiarioAtivo($q, string $tipo, int $beneficiarioId)
+    {
+        return $q->where('beneficiario_tipo', $tipo)
+            ->where('beneficiario_id', $beneficiarioId)
+            ->where(fn ($w) => $w
+                ->where('tipo', '!=', self::NATUREZA_EMPRESTIMO)
+                ->orWhere('disponibilizado', true));
+    }
+
+    /**
      * Total de adiantamento a descontar de um beneficiário numa competência
-     * (soma das parcelas de TODOS os adiantamentos dele que caem no mês).
+     * (soma das parcelas de TODOS os adiantamentos dele que caem no mês —
+     * empréstimo ainda não disponibilizado não conta).
      * Usado pelos fechamentos de consultor e parceiro.
      */
     public static function descontoNoMes(string $tipo, int $beneficiarioId, string $yearMonth): float
     {
         return round((float) AdiantamentoParcela::query()
             ->where('year_month', $yearMonth)
-            ->whereHas('adiantamento', fn ($q) => $q
-                ->where('beneficiario_tipo', $tipo)
-                ->where('beneficiario_id', $beneficiarioId))
+            ->whereHas('adiantamento', fn ($q) => self::whereBeneficiarioAtivo($q, $tipo, $beneficiarioId))
             ->sum('valor'), 2);
+    }
+
+    /**
+     * Total de EMPRÉSTIMO a SOMAR no fechamento de um beneficiário na competência
+     * = soma do valor_total dos empréstimos cujo `data_realizado` cai no mês.
+     * É o aporte (dinheiro entregue via fechamento); as parcelas quitam depois.
+     */
+    public static function aporteEmprestimoNoMes(string $tipo, int $beneficiarioId, string $yearMonth): float
+    {
+        return round((float) static::query()
+            ->where('tipo', self::NATUREZA_EMPRESTIMO)
+            ->where('disponibilizado', true)
+            ->where('beneficiario_tipo', $tipo)
+            ->where('beneficiario_id', $beneficiarioId)
+            ->whereYear('data_realizado', (int) substr($yearMonth, 0, 4))
+            ->whereMonth('data_realizado', (int) substr($yearMonth, 5, 2))
+            ->sum('valor_total'), 2);
+    }
+
+    /**
+     * UMA linha por empréstimo cujo aporte cai na competência (não somadas) —
+     * exibida no fechamento como crédito verde ("+"). Item:
+     * ['adiantamento_id'=>int, 'legenda'=>?string, 'valor'=>float].
+     */
+    public static function aportesEmprestimoNoMes(string $tipo, int $beneficiarioId, string $yearMonth): array
+    {
+        return static::query()
+            ->where('tipo', self::NATUREZA_EMPRESTIMO)
+            ->where('disponibilizado', true)
+            ->where('beneficiario_tipo', $tipo)
+            ->where('beneficiario_id', $beneficiarioId)
+            ->whereYear('data_realizado', (int) substr($yearMonth, 0, 4))
+            ->whereMonth('data_realizado', (int) substr($yearMonth, 5, 2))
+            ->orderBy('id')
+            ->get(['id', 'descricao', 'valor_total', 'num_parcelas'])
+            ->map(fn ($e) => [
+                'adiantamento_id' => $e->id,
+                'legenda'         => implode(' · ', array_filter([
+                    $e->descricao,
+                    'empréstimo' . ($e->num_parcelas > 1 ? " ({$e->num_parcelas}x)" : ''),
+                ])),
+                'valor'           => round((float) $e->valor_total, 2),
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -67,9 +139,7 @@ class Adiantamento extends Model
      */
     public static function descricaoNoMes(string $tipo, int $beneficiarioId, string $yearMonth): ?string
     {
-        $descs = static::query()
-            ->where('beneficiario_tipo', $tipo)
-            ->where('beneficiario_id', $beneficiarioId)
+        $descs = self::whereBeneficiarioAtivo(static::query(), $tipo, $beneficiarioId)
             ->whereHas('parcelas', fn ($q) => $q->where('year_month', $yearMonth))
             ->pluck('descricao')
             ->filter()
@@ -87,9 +157,7 @@ class Adiantamento extends Model
     {
         $rows = AdiantamentoParcela::query()
             ->where('year_month', $yearMonth)
-            ->whereHas('adiantamento', fn ($q) => $q
-                ->where('beneficiario_tipo', $tipo)
-                ->where('beneficiario_id', $beneficiarioId))
+            ->whereHas('adiantamento', fn ($q) => self::whereBeneficiarioAtivo($q, $tipo, $beneficiarioId))
             ->with('adiantamento:id,num_parcelas')
             ->orderBy('numero')
             ->get();
@@ -113,9 +181,7 @@ class Adiantamento extends Model
     {
         return AdiantamentoParcela::query()
             ->where('year_month', $yearMonth)
-            ->whereHas('adiantamento', fn ($q) => $q
-                ->where('beneficiario_tipo', $tipo)
-                ->where('beneficiario_id', $beneficiarioId))
+            ->whereHas('adiantamento', fn ($q) => self::whereBeneficiarioAtivo($q, $tipo, $beneficiarioId))
             ->with('adiantamento:id,num_parcelas,descricao')
             ->orderBy('numero')
             ->get()

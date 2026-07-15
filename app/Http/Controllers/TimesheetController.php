@@ -73,6 +73,8 @@ use Maatwebsite\Excel\Facades\Excel;
  */
 class TimesheetController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     use ResponseHelpers;
     use \App\Http\Traits\ListCacheable;
 
@@ -234,7 +236,12 @@ class TimesheetController extends Controller
             // Projetos (default): vê TODOS os apontamentos — filtro client-side via
             // chip "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
-                $query->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+                // sustentacao/cloud + Investimento Suporte (suporte de TODAS as empresas, mesmo
+                // com service_type 'Projeto') — igual ApprovalController.
+                $query->where(function ($outer) {
+                    $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                });
             }
         }
 
@@ -631,6 +638,7 @@ class TimesheetController extends Controller
                             Timesheet::STATUS_ADJUSTMENT_REQUESTED,
                             Timesheet::STATUS_INTERNAL,
                         ])
+                        ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                         ->whereRaw("ticket ~ '^[0-9]{5}$'");
                     $totalsQ->where(function ($q) use ($ticketsByCustomer) {
                         foreach ($ticketsByCustomer as $cid => $tickets) {
@@ -646,6 +654,7 @@ class TimesheetController extends Controller
                     // Soma o saldo inicial cadastrado (ticket_initial_balances).
                     $initQ = \Illuminate\Support\Facades\DB::table('ticket_initial_balances')
                         ->whereNull('deleted_at')
+                        ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
                         ->where(function ($q) use ($ticketsByCustomer) {
                             foreach ($ticketsByCustomer as $cid => $tickets) {
                                 $q->orWhere(function ($qq) use ($cid, $tickets) {
@@ -1517,12 +1526,11 @@ class TimesheetController extends Controller
         // Processar user_id se fornecido (apenas para administradores)
         $validatedData = $validator->validated();
         if (isset($validatedData['user_id'])) {
+            // Coordenador pode definir/trocar o usuário do apontamento (gestão da equipe — apont. de
+            // terceiros). Só bloqueia quando o usuário REALMENTE muda (mandar o mesmo user não é alteração).
             $isUserChange = (int) $validatedData['user_id'] !== (int) $timesheet->user_id;
-            // Apont de ATIVIDADE do cronograma: coordenador pode definir/trocar o usuário.
-            $isCronogramaCoord = $timesheet->stage_delivery_id
-                && method_exists($user, 'isCoordenador') && $user->isCoordenador();
-            // Só exige admin quando o usuário REALMENTE muda (mandar o mesmo user não é alteração).
-            if ($isUserChange && !($user->isAdmin() || $user->hasAccess('admin.full_access') || $isCronogramaCoord)) {
+            $isCoord = method_exists($user, 'isCoordenador') && $user->isCoordenador();
+            if ($isUserChange && !($user->isAdmin() || $user->hasAccess('admin.full_access') || $isCoord)) {
                 return response()->json([
                     'code' => 'PERMISSION_DENIED',
                     'type' => 'error',
@@ -2819,7 +2827,11 @@ class TimesheetController extends Controller
         } elseif ($user->isCoordenador()) {
             // Coord projetos: vê tudo. Sustentação: restrito ao escopo.
             if ($user->coordinator_type === 'sustentacao') {
-                $base->whereHas('project.serviceType', fn($q) => $q->whereIn('code', ['sustentacao', 'cloud']));
+                // sustentacao/cloud + Investimento Suporte (suporte de todas as empresas) — igual ApprovalController.
+                $base->where(function ($outer) {
+                    $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                });
             }
         }
 
@@ -2864,6 +2876,7 @@ class TimesheetController extends Controller
         $initialByTicket = \DB::table('ticket_initial_balances')
             ->whereNull('deleted_at')
             ->where('customer_id', $customerId)
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('company_id', $cid))
             ->whereIn('ticket', $rows->pluck('ticket')->all())
             ->pluck('initial_minutes', 'ticket');
 
@@ -2976,8 +2989,8 @@ class TimesheetController extends Controller
         $ctNameBlock = strtolower(trim((string) ($project->contractType->name ?? '')));
         $ctCodeBlock = (string) ($project->contractType->code ?? '');
         if ($ctNameBlock === 'fechado' || $ctCodeBlock === 'fixed_hours' || $ctNameBlock === 'banco de horas fixo') {
-            $generalBalance    = $project->getGeneralHoursBalance(false, $excludeTimesheetId);
-            $apontaveisBalance = $generalBalance - (float) ($project->sold_hours ?? 0) + (float) ($project->coordination_hours ?? 0);
+            // Saldo apontável = Horas Apontáveis − apontadas (gestão NÃO consome o banco).
+            $apontaveisBalance = $project->getApontaveisBalance($excludeTimesheetId);
             if ($apontaveisBalance < $hoursToAdd && !$project->allow_negative_balance) {
                 Log::warning('Apontamento bloqueado — Horas Apontáveis insuficientes', [
                     'project_id' => $project->id, 'user_id' => $userId,

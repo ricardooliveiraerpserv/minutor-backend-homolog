@@ -168,6 +168,12 @@ Schedule::job(new CleanupContractEventsJob)
   ->description('Remove eventos de contrato com mais de 180 dias')
   ->withoutOverlapping();
 
+// Todo aviso/alerta sai na JANELA COMERCIAL: 08:00–18:00 em America/Sao_Paulo.
+// `app.timezone` é UTC, então sem o ->timezone() um dailyAt('08:00') dispararia 05:00 no Brasil.
+$alertTz   = 'America/Sao_Paulo';
+$alertFrom = '08:00';
+$alertTo   = '18:00';
+
 // Health Engine — varre customers e gera eventos de risco/oportunidade no Operational Feed
 // Roda toda segunda-feira às 06:00 (espelha cadência semanal do n8n original)
 Schedule::command('health:scan')
@@ -188,8 +194,17 @@ Schedule::command('ai:scan-customers-at-risk --days=7 --max=20 --sync')
 
 // Alerta de reajustes vencidos ao Financeiro — roda todo dia às 08:00, mas o comando
 // só envia de fato no 1º DIA ÚTIL do mês (pula fim de semana). Não aplica reajuste.
+// Aviso prévio: 1 mês antes do vencimento, avisa o administrativo p/ enviar o comunicado.
+Schedule::command('reajustes:alerta-aviso-previo')
+  ->dailyAt('08:10')
+  ->timezone($alertTz)
+  ->name('alerta-aviso-previo-reajuste')
+  ->description('Avisa o administrativo (1 mês antes) para enviar o comunicado de reajuste')
+  ->withoutOverlapping();
+
 Schedule::command('reajustes:alerta-vencidos')
   ->dailyAt('08:00')
+  ->timezone($alertTz)
   ->name('alerta-reajustes-vencidos')
   ->description('Avisa o Financeiro sobre contratos com reajuste vencido (1º dia útil do mês)')
   ->withoutOverlapping();
@@ -198,6 +213,7 @@ Schedule::command('reajustes:alerta-vencidos')
 // N = recurrence_days da Central). O aviso inicial sai na própria aprovação.
 Schedule::command('expenses:alerta-pendentes-pagamento')
   ->dailyAt('08:30')
+  ->timezone($alertTz)
   ->name('alerta-despesas-pendentes-pagamento')
   ->description('Reenvia aviso de despesas aprovadas e não pagas conforme recorrência da Central')
   ->withoutOverlapping();
@@ -212,15 +228,18 @@ Schedule::command('attachments:integrity-check')
   ->withoutOverlapping()
   ->runInBackground();
 
+// DESATIVADO (2026-07-13): não enviamos mais e-mail de mensagens do chat.
+// Em vez do digest por e-mail, as conversas pendentes aparecem no Meu Dia
+// (card PendingChatsCard). Para reativar, descomente o bloco abaixo.
 // Digest de mensagens não lidas do chat — roda a cada 30 minutos
 // e envia email pra cada user que ficou com mensagens não lidas há
 // pelo menos 15 minutos, respeitando cooldown de 60 minutos por user.
-Schedule::command('inbox:digest --min-quiet=15 --cooldown=60')
-  ->everyThirtyMinutes()
-  ->name('inbox-digest')
-  ->description('Envia digest por email das mensagens não lidas do chat')
-  ->withoutOverlapping()
-  ->runInBackground();
+// Schedule::command('inbox:digest --min-quiet=15 --cooldown=60')
+//   ->everyThirtyMinutes()
+//   ->name('inbox-digest')
+//   ->description('Envia digest por email das mensagens não lidas do chat')
+//   ->withoutOverlapping()
+//   ->runInBackground();
 
 // Alertas proativos do BOT (banco de horas crítico, despesas/timesheets pendentes,
 // tickets parados). Roda 1x ao dia às 8h e popula o OperationalFeed — a partir
@@ -234,21 +253,28 @@ Schedule::command('bot:proactive-alerts')
 
 // ===== Meu Dia — Central de Notificações / Ações / Tarefas =====
 Schedule::command('notifications:fire-recurring --scope=daily')
-  ->dailyAt('07:00')
+  ->dailyAt('08:00')
+  ->timezone($alertTz)
   ->name('notifications-fire-recurring')
   ->description('Reabre/reenvia avisos recorrentes da Central da tela inicial')
   ->withoutOverlapping();
 
+// Horários: só dispara dentro da janela. Fora dela o ciclo é pulado (o próximo
+// dentro da janela reenvia) — não acumula nem antecipa.
 Schedule::command('notifications:fire-recurring --scope=hours')
   ->hourly()
+  ->timezone($alertTz)
+  ->between($alertFrom, $alertTo)
   ->name('notifications-fire-recurring-hours')
-  ->description('Re-pergunta decisões recorrentes por horas')
+  ->description('Re-pergunta decisões recorrentes por horas (08h-18h)')
   ->withoutOverlapping();
 
 Schedule::command('actions:remind-pending')
   ->hourly()
+  ->timezone($alertTz)
+  ->between($alertFrom, $alertTo)
   ->name('actions-remind-pending')
-  ->description('Re-lembra ações não resolvidas conforme recorrência configurada')
+  ->description('Re-lembra ações não resolvidas conforme recorrência configurada (08h-18h)')
   ->withoutOverlapping();
 
 Schedule::command('tasks:generate-routines')
@@ -259,6 +285,7 @@ Schedule::command('tasks:generate-routines')
 
 Schedule::command('tasks:notify-overdue')
   ->dailyAt('08:00')
+  ->timezone($alertTz)
   ->name('tasks-notify-overdue')
   ->description('Notifica o responsável sobre tarefas atrasadas')
   ->withoutOverlapping();

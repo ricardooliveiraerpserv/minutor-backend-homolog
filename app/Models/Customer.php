@@ -24,6 +24,8 @@ class Customer extends Model
         'active',
         'crm_status',
         'executive_id',
+        'executive_bizify_id',
+        'is_bizify_customer',
         'code_prefix',
         'fechamento_email',
         'emails_administrativos',
@@ -52,6 +54,7 @@ class Customer extends Model
      */
     protected $casts = [
         'active' => 'boolean',
+        'is_bizify_customer' => 'boolean',
         'emails_administrativos' => 'array',
         'secondary_cgcs' => 'array',
         'created_at' => 'datetime',
@@ -234,6 +237,43 @@ class Customer extends Model
     public function executive(): BelongsTo
     {
         return $this->belongsTo(User::class, 'executive_id');
+    }
+
+    /** Executivo de conta na BIZIFY (o cliente é compartilhado; o executivo difere por empresa). */
+    public function executiveBizify(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'executive_bizify_id');
+    }
+
+    /**
+     * Coluna de executivo da empresa ATIVA — usada pelos FILTROS de executivo nas telas
+     * (Bizify → executive_bizify_id; ERPSERV/flag off → executive_id).
+     */
+    public static function activeExecutiveColumn(): string
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                return 'executive_bizify_id';
+            }
+        }
+        return 'executive_id';
+    }
+
+    /**
+     * Executivo EFETIVO conforme a empresa ATIVA (multi-empresa): Bizify usa
+     * executive_bizify_id; ERPSERV (ou flag off) usa executive_id. Base dos filtros
+     * de executivo nas telas.
+     */
+    public function effectiveExecutiveId(): ?int
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                return $this->executive_bizify_id;
+            }
+        }
+        return $this->executive_id;
     }
 
     public function contacts(): HasMany

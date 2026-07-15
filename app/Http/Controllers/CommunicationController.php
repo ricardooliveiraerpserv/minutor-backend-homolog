@@ -142,7 +142,9 @@ class CommunicationController extends Controller
         abort_if(empty($emails), 422, 'Nenhum destinatário válido.');
         abort_unless(GraphMailSender::enabled(), 422, 'Envio de e-mail não está configurado no servidor.');
 
-        $from = \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        // Comunicados saem do NOREPLY (config do mailbox Graph → MAIL_FROM_ADDRESS=noreply); HelpDeskEmailAccount só fallback.
+        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
+            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
         abort_unless($from, 422, 'Nenhuma conta de envio configurada.');
 
         // Assinatura padrão (remetente ou empresa) injetada na estrutura.
@@ -182,9 +184,12 @@ class CommunicationController extends Controller
     /** Histórico de envios. */
     public function index(Request $request): JsonResponse
     {
-        $this->authorizeManager($request);
+        $u = $this->authorizeManager($request);
         $theme = $request->query('theme') === 'dark' ? 'dark' : 'light';
-        $rows = Communication::with('sentBy:id,name')->orderByDesc('id')->limit(200)->get();
+        // Não-admin (coordenador/administrativo) só vê os comunicados que ELE enviou.
+        $rows = Communication::with('sentBy:id,name')
+            ->when(!$u->isAdmin(), fn ($q) => $q->where('sent_by', $u->id))
+            ->orderByDesc('id')->limit(200)->get();
         $custNames = Customer::pluck('name', 'id');
         $data = $rows->map(fn (Communication $c) => [
             'id'           => $c->id,
@@ -279,7 +284,8 @@ class CommunicationController extends Controller
     /** LOG de um comunicado (admin): destinatários (inclui clientes) × leu/quando. Mesmo formato do log de notificações. */
     public function log(Request $request, Communication $communication): JsonResponse
     {
-        $this->authorizeManager($request);
+        $u = $this->authorizeManager($request);
+        abort_if(!$u->isAdmin() && (int) $communication->sent_by !== (int) $u->id, 403, 'Você só pode ver o log dos comunicados que enviou.');
 
         $userIds = collect();
         if ($communication->all_customers) {
@@ -360,6 +366,22 @@ class CommunicationController extends Controller
             );
         }
         return response()->json(['data' => ['marked' => $ids->count()]]);
+    }
+
+    public function ack(Request $request): JsonResponse
+    {
+        $u = $this->client($request);
+        $v = $request->validate(['id' => 'required|integer']);
+        $exists = Communication::visible()->forClient($u)->whereKey($v['id'])->exists();
+        abort_unless($exists, 404);
+
+        $read = CommunicationRead::firstOrCreate(
+            ['communication_id' => $v['id'], 'user_id' => $u->id],
+            ['read_at' => now()],
+        );
+        if (!$read->acknowledged_at) { $read->acknowledged_at = now(); $read->save(); }
+
+        return response()->json(['data' => ['acknowledged' => true]]);
     }
 
     /** Resolve a lista final de e-mails (clientes + usuários + externos), em minúsculo e únicos. */

@@ -967,9 +967,13 @@ class MovideskService
                 return null;
             }
 
-            // 3. Fallback: projeto de sustentação ATIVO do cliente (determinístico:
-            // On Demand primeiro, depois o mais antigo). A escolha definitiva é o flag
-            // (passo 1); este fallback só decide quando NENHUM projeto tem o flag.
+            // 3. Fallback: projeto de sustentação ATIVO do cliente.
+            // DETERMINÍSTICO: prioriza On Demand, depois o mais antigo (id). Antes o
+            // ->first() não tinha ORDER BY e a escolha era arbitrária — quando o cliente
+            // tinha 2+ projetos de sustentação sem flag, os apontamentos importados se
+            // espalhavam pro projeto errado (bug MINAS BOJO, jul/2026). A escolha
+            // definitiva continua sendo o flag movidesk_integration_enabled (passo 1);
+            // este fallback só decide quando NENHUM projeto do cliente tem o flag.
             $candidates = Project::where('projects.customer_id', $customerId)
                 ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
                 ->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id')
@@ -988,7 +992,7 @@ class MovideskService
                 ->get();
 
             if ($candidates->count() > 1) {
-                Log::warning('⚠️ [MOVIDESK] Cliente com múltiplos projetos de sustentação ativos e NENHUM com movidesk_integration_enabled — fallback determinístico (On Demand > mais antigo).', [
+                Log::warning('⚠️ [MOVIDESK] Cliente com múltiplos projetos de sustentação ativos e NENHUM com movidesk_integration_enabled — usando fallback determinístico (On Demand > mais antigo). Defina o flag no projeto correto para evitar ambiguidade.', [
                     'customer_id' => $customerId,
                     'candidates'  => $candidates->pluck('id')->all(),
                     'chosen'      => $candidates->first()->id,

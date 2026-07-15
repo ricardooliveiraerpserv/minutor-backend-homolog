@@ -155,6 +155,13 @@ class MovideskSyncOrgsCommand extends Command
         // Resolução do projeto por cliente — MESMA regra do extractProjectId:
         // (1) PRIORIDADE ABSOLUTA ao projeto com movidesk_integration_enabled;
         // (2) fallback determinístico de sustentação (On Demand > mais antigo).
+        // Antes este mapa usava mapWithKeys (last-wins) sem ORDER BY sobre TODOS os
+        // projetos de sustentação ativos e ignorava o flag — pra cliente com 2+
+        // sustentação, revinculava pro projeto arbitrário a cada rodada, atropelando
+        // o flag e "desfazendo" a escolha do admin (bug MINAS BOJO, jul/2026).
+
+        // (2) fallback: sustentação ativo, ordenado (On Demand primeiro, depois id).
+        // groupBy + first() garante FIRST-wins (o melhor da ordenação), não last-wins.
         $sustMap = Project::join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->leftJoin('contract_types', 'contract_types.id', '=', 'projects.contract_type_id')
             ->where(function ($q) {
@@ -173,11 +180,15 @@ class MovideskSyncOrgsCommand extends Command
             ->groupBy('customer_id')
             ->map(fn($grp) => $grp->first()->id)
             ->toArray();
+
+        // (1) flag: projeto flagado ativo por cliente — sobrepõe o fallback.
         $flaggedMap = Project::where('movidesk_integration_enabled', true)
             ->get()
             ->filter(fn($p) => $p->isActive())
             ->mapWithKeys(fn($p) => [$p->customer_id => $p->id])
             ->toArray();
+        $projectMap = array_replace($sustMap, $flaggedMap);
+
         $projectMap = array_replace($sustMap, $flaggedMap);
 
         $defaultProjectId = (int) SystemSetting::get('movidesk_default_project_id');

@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ExcessHourCharge extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'excess_hour_charges';
 
     protected $fillable = [

@@ -39,6 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,
             'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
+            'company.context'     => \App\Http\Middleware\ResolveActiveCompany::class,
         ]);
 
         // Guest em rota /api não tem pra onde redirecionar: devolvendo null aqui, o

@@ -189,16 +189,22 @@ class SystemSettingController extends Controller
             // Validação
             $validator = Validator::make($request->all(), [
                 'timesheet_retroactive_limit_days'      => 'nullable|integer|min:0|max:365',
+                'fechamento_auto_dia_util'              => 'nullable|integer|min:1|max:20',
                 'movidesk_default_customer_id'          => 'nullable|integer|exists:customers,id',
                 'movidesk_default_project_id'           => 'nullable|integer|exists:projects,id',
                 'movidesk_default_user_id'              => 'nullable|integer|exists:users,id',
                 'movidesk_sync_orgs_interval_minutes'   => 'nullable|integer|in:5,10,15,20,30,60',
                 'movidesk_portal_sync_interval_minutes' => 'nullable|integer|in:5,10,15,20,30,60',
                 'movidesk_import_start_date'            => 'nullable|date',
+                'chat_notification_sound'               => 'nullable|string|in:ding,tri,chime,pop,alerta,suave',
+                'chat_notification_volume'              => 'nullable|integer|min:0|max:100',
             ], [
                 'timesheet_retroactive_limit_days.integer'         => 'O prazo deve ser um número inteiro.',
                 'timesheet_retroactive_limit_days.min'             => 'O prazo não pode ser negativo.',
                 'timesheet_retroactive_limit_days.max'             => 'O prazo não pode ser maior que 365 dias.',
+                'fechamento_auto_dia_util.integer'                 => 'O dia útil de encerramento deve ser um número inteiro.',
+                'fechamento_auto_dia_util.min'                     => 'O dia útil de encerramento deve ser no mínimo 1.',
+                'fechamento_auto_dia_util.max'                     => 'O dia útil de encerramento deve ser no máximo 20.',
                 'movidesk_default_customer_id.integer'             => 'O cliente padrão deve ser um número inteiro.',
                 'movidesk_default_customer_id.exists'              => 'O cliente selecionado não existe.',
                 'movidesk_default_project_id.integer'              => 'O projeto padrão deve ser um número inteiro.',
@@ -270,12 +276,15 @@ class SystemSettingController extends Controller
     {
         return match ($key) {
             'timesheet_retroactive_limit_days'      => 'integer',
+            'fechamento_auto_dia_util'              => 'integer',
             'movidesk_default_customer_id'          => 'integer',
             'movidesk_default_project_id'           => 'integer',
             'movidesk_default_user_id'              => 'integer',
             'movidesk_sync_orgs_interval_minutes'   => 'integer',
             'movidesk_portal_sync_interval_minutes' => 'integer',
             'movidesk_import_start_date'            => 'string',
+            'chat_notification_volume'              => 'integer',
+            'chat_notification_sound'               => 'string',
             default => 'string',
         };
     }
@@ -287,12 +296,15 @@ class SystemSettingController extends Controller
     {
         return match ($key) {
             'timesheet_retroactive_limit_days'      => 'timesheets',
+            'fechamento_auto_dia_util'              => 'fechamento',
             'movidesk_default_customer_id'          => 'movidesk',
             'movidesk_default_project_id'           => 'movidesk',
             'movidesk_default_user_id'              => 'movidesk',
             'movidesk_sync_orgs_interval_minutes'   => 'movidesk',
             'movidesk_portal_sync_interval_minutes' => 'movidesk',
             'movidesk_import_start_date'            => 'movidesk',
+            'chat_notification_sound'               => 'chat',
+            'chat_notification_volume'              => 'chat',
             default => 'general',
         };
     }
@@ -304,12 +316,15 @@ class SystemSettingController extends Controller
     {
         return match ($key) {
             'timesheet_retroactive_limit_days'      => 'Quantidade de dias após a data do serviço que o consultor pode lançar horas',
+            'fechamento_auto_dia_util'              => 'Nº do dia útil do mês em que a competência do mês anterior é encerrada automaticamente (pula fins de semana e feriados)',
             'movidesk_default_customer_id'          => 'ID do cliente padrão para integração com Movidesk',
             'movidesk_default_project_id'           => 'ID do projeto padrão para integração com Movidesk',
             'movidesk_default_user_id'              => 'ID do usuário padrão para integração com Movidesk',
             'movidesk_sync_orgs_interval_minutes'   => 'Intervalo em minutos para sincronização de organizações do Movidesk (5, 10, 15, 20, 30 ou 60)',
             'movidesk_portal_sync_interval_minutes' => 'Intervalo em minutos para sincronização do Portal de Sustentação do Movidesk (5, 10, 15, 20, 30 ou 60)',
             'movidesk_import_start_date'            => 'Data a partir da qual apontamentos Movidesk serão importados (filtro por data do apontamento)',
+            'chat_notification_sound'               => 'Toque global de notificação do chat (ding, tri, chime, pop, alerta, suave)',
+            'chat_notification_volume'              => 'Volume global do som de notificação do chat (0 a 100)',
             default => '',
         };
     }

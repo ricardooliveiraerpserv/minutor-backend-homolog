@@ -151,7 +151,7 @@ class OnDemandController extends Controller
         if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
             $executiveId = (int) $request->get('executive_id');
             $query->whereHas('customer', function ($q) use ($executiveId) {
-                $q->where('executive_id', $executiveId);
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $executiveId);
             });
         }
 
@@ -705,7 +705,7 @@ class OnDemandController extends Controller
             if ($user->isAdmin() && !$customerId && $request->filled('executive_id')) {
                 $executiveId = (int) $request->get('executive_id');
                 $query->whereHas('customer', function ($q) use ($executiveId) {
-                    $q->where('executive_id', $executiveId);
+                    $q->where(\App\Models\Customer::activeExecutiveColumn(), $executiveId);
                 });
             }
 

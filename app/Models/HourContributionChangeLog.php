@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class HourContributionChangeLog extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'hour_contribution_change_logs';
 
     protected $fillable = [

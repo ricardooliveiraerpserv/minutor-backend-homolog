@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class HourContribution extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, \App\Models\Concerns\BelongsToCompany;
     use \App\Attachments\Concerns\HasGlobalAttachments;
 
     // FASE 11 — chave do registry global de anexos.

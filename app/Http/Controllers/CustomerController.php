@@ -91,8 +91,17 @@ class CustomerController extends Controller
         $hasContractTypeName = $request->get('has_contract_type_name');
 
         $executiveId = $request->get('executive_id');
+        // Multi-empresa: o filtro de executivo usa a coluna da empresa ATIVA
+        // (Bizify → executive_bizify_id; senão → executive_id).
+        $execCol = 'executive_id';
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                $execCol = 'executive_bizify_id';
+            }
+        }
 
-        $query = Customer::with('executive');
+        $query = Customer::with(['executive', 'executiveBizify']);
 
         // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
         if ($search) {
@@ -102,9 +111,16 @@ class CustomerController extends Controller
             });
         }
 
-        // Filtro por executivo responsável
+        // Filtro por executivo responsável (coluna conforme a empresa ativa)
         if ($executiveId) {
-            $query->where('executive_id', $executiveId);
+            $query->where($execCol, $executiveId);
+        }
+
+        // Multi-empresa: com Bizify ATIVO a lista traz só clientes Bizify (com projeto
+        // Bizify ou vinculados). O picker "do cadastro geral" pede a base toda com
+        // ?bizify_scope=all. ERPSERV (ou flag off) segue mostrando todos.
+        if ($execCol === 'executive_bizify_id' && $request->get('bizify_scope') !== 'all') {
+            $query->where('is_bizify_customer', true);
         }
 
         // Filtro por status ativo/inativo
@@ -204,6 +220,8 @@ class CustomerController extends Controller
             'cgc' => [$cgcRequired ? 'required' : 'nullable', 'string', 'unique:customers,cgc,NULL,id,deleted_at,NULL'],
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
+            'executive_bizify_id' => 'nullable|exists:users,id',
+            'is_bizify_customer' => 'sometimes|boolean',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
@@ -259,7 +277,7 @@ class CustomerController extends Controller
         $this->createInvestimentoProjects($customer);
 
         // Resposta PO-UI
-        return response()->json($customer->load('executive'), 201);
+        return response()->json($customer->load(['executive', 'executiveBizify']), 201);
     }
 
     /**
@@ -309,7 +327,7 @@ class CustomerController extends Controller
      */
     public function show(Customer $customer): JsonResponse
     {
-        return response()->json($customer->load('executive'));
+        return response()->json($customer->load(['executive', 'executiveBizify']));
     }
 
     /**
@@ -351,6 +369,8 @@ class CustomerController extends Controller
             'cgc' => 'sometimes|string|unique:customers,cgc,' . $customer->id . ',id,deleted_at,NULL',
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
+            'executive_bizify_id' => 'nullable|exists:users,id',
+            'is_bizify_customer' => 'sometimes|boolean',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix,' . $customer->id,
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
@@ -418,7 +438,7 @@ class CustomerController extends Controller
         }
 
         // Resposta PO-UI
-        return response()->json($customer->load('executive'));
+        return response()->json($customer->load(['executive', 'executiveBizify']));
     }
 
     /**
@@ -644,7 +664,11 @@ class CustomerController extends Controller
         ];
 
         foreach ($defaults as $cfg) {
-            $exists = Project::withTrashed()->where('code', $cfg['code'])->exists();
+            // code é globalmente único → checa SEM o CompanyScope (senão, na Bizify,
+            // não enxerga um code já usado sob outra empresa e viola o unique ao criar).
+            $exists = Project::withTrashed()
+                ->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class)
+                ->where('code', $cfg['code'])->exists();
             if ($exists) {
                 continue;
             }

@@ -40,3 +40,39 @@ jobs:
           # Cache no GHCR (registry) — mais consistente que type=gha.
           cache-from: type=registry,ref=ghcr.io/leonardo-almd/minutor-backend:buildcache
           cache-to: type=registry,ref=ghcr.io/leonardo-almd/minutor-backend:buildcache,mode=max
+
+  # ── Deploy automático no VPS (ServerSpace) após a imagem estar no GHCR ──
+  # Requer secrets no repo: VPS_HOST, VPS_USER, VPS_SSH_KEY (chave privada SSH),
+  # e opcional VPS_PORT (default 22). Enquanto os secrets não existirem, o job
+  # falha só nesta etapa — o build/push da imagem continua funcionando.
+  deploy:
+    needs: build
+    if: github.repository == 'Leonardo-almd/minutor-backend'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Deploy no VPS (login GHCR + pull + up + migrate)
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 15m
+          envs: GHCR_USER,GHCR_TOKEN
+          script: |
+            set -e
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || true
+            cd /opt/minutor
+            # Só backend (frontend é Vercel; imagem do front no GHCR nem existe).
+            docker compose pull backend queue-worker scheduler
+            docker compose up -d --no-deps backend queue-worker scheduler
+            # entrypoint do container já roda migrate no start; este é reforço idempotente.
+            docker exec minutor-backend php artisan migrate --force || true
+            docker exec minutor-backend php artisan optimize
+            docker image prune -af || true

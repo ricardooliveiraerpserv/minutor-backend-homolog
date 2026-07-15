@@ -177,6 +177,11 @@
         @else
           <tr><td>Adiantamento</td><td class="muted">{{ ($adiantamentoDesc ?? null) ?: '—' }}</td><td class="right nowrap" style="color:#b91c1c;">− {{ $adiantamentoFmt }}</td></tr>
         @endif
+        @if(!empty($emprestimoLinhas))
+          @foreach($emprestimoLinhas as $e)
+            <tr><td>Empréstimo</td><td class="muted">{{ $e['legenda'] ?: '—' }}</td><td class="right nowrap" style="color:#15803d;">+ {{ $e['valor_fmt'] }}</td></tr>
+          @endforeach
+        @endif
         <tr><td>Adicional</td><td class="muted">{{ $adicionalDesc ?: '—' }}</td><td class="right nowrap" style="color:#15803d;">+ {{ $adicionalFmt }}</td></tr>
       </tbody>
     </table>
@@ -186,7 +191,7 @@
     <tr>
       <td class="total-label">
         @if(!empty($temAjustes))
-          RECEBIMENTO <br><span style="font-size:9px;font-weight:normal;">Base {{ $baseValorFmt }} − Desconto {{ $descontoFmt }} − Adiantamento {{ $adiantamentoFmt }} + Adicional {{ $adicionalFmt }}</span>
+          RECEBIMENTO <br><span style="font-size:9px;font-weight:normal;">Base {{ $baseValorFmt }} − Desconto {{ $descontoFmt }} − Adiantamento {{ $adiantamentoFmt }} + Adicional {{ $adicionalFmt }}@if(!empty($emprestimoLinhas)) + Empréstimo {{ $emprestimoFmt }}@endif</span>
         @elseif(($mode ?? 'ambos') === 'despesa')
           TOTAL — DESPESAS (FECHAMENTO)
         @elseif(($mode ?? 'ambos') === 'servicos')

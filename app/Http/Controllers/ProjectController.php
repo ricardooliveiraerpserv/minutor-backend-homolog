@@ -29,6 +29,7 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     use \App\Http\Traits\ListCacheable;
+    use \App\Http\Traits\FiltersByActiveCompany;
 
     /**
      * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico).
@@ -214,6 +215,10 @@ class ProjectController extends Controller
         $contractTypeId = $request->get('contract_type_id');
         $serviceTypeName = $request->get('service_type_name');
         $parentProjectsOnly = $request->get('parent_projects_only') === 'true';
+        // Opt-in EXCLUSIVO do Relatório de Apontamentos: coordenador de sustentação também
+        // pode enxergar/selecionar o filho On Demand cujo pai é sustentação. Sem este param,
+        // a regra global de visibilidade (coord de sustentação só vê sustentação) fica intacta.
+        $includeSustOnDemandChildren = $request->boolean('include_sust_ondemand_children');
 
         // Modo gestão: query leve para o dashboard /gestao-projetos
         // Omite relações pesadas (hourContributions, serviceType, parentProject)
@@ -330,14 +335,24 @@ class ProjectController extends Controller
                         $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id))
                           ->orWhereHas('childProjects.coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
                         if ($isSustentacao) {
-                            $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                            $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'))
+                              ->orWhere(fn($sq) => $sq->where('is_investimento_comercial', true)->where('categoria_interna', 'Suporte'));
                         }
                     });
                 } else {
-                    $query->where(function ($q) use ($currentUser, $isSustentacao) {
+                    $query->where(function ($q) use ($currentUser, $isSustentacao, $includeSustOnDemandChildren) {
                         $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
                         if ($isSustentacao) {
-                            $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'));
+                            $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'))
+                              ->orWhere(fn($sq) => $sq->where('is_investimento_comercial', true)->where('categoria_interna', 'Suporte'));
+                            // SÓ no Relatório de Apontamentos (param include_sust_ondemand_children):
+                            // permite o coord de sustentação selecionar o filho On Demand cujo pai é
+                            // sustentação. Não altera a regra global em nenhum outro fluxo.
+                            if ($includeSustOnDemandChildren) {
+                                $q->orWhere(fn($sq) => $sq
+                                    ->whereHas('contractType', fn($ct) => $ct->where('code', 'on_demand'))
+                                    ->whereHas('parentProject.serviceType', fn($st) => $st->where('code', 'sustentacao')));
+                            }
                         }
                     });
                 }
@@ -424,7 +439,7 @@ class ProjectController extends Controller
         // Filtro por executivo responsável do cliente
         if ($executiveId) {
             $query->whereHas('customer', function ($q) use ($executiveId) {
-                $q->where('executive_id', $executiveId);
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $executiveId);
             });
         }
 
@@ -472,6 +487,26 @@ class ProjectController extends Controller
         // só aparecem quando explicitamente solicitados (ex: dropdowns de apontamento).
         if ($request->boolean('only_investimento_comercial')) {
             $query->where('is_investimento_comercial', true);
+            // Investimento Interno é POR-CLIENTE: os projetos IC/IS/IP são únicos por
+            // cliente e o company_id neles é apenas o carimbo da empresa ativa na
+            // criação (arbitrário). Portanto NÃO filtramos pelo company_id do projeto —
+            // removemos o CompanyScope e filtramos pelo CLIENTE conforme a empresa ativa.
+            $query->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class);
+            if (config('multiempresa.scoping_enabled')) {
+                $activeId = app(\App\Services\CompanyContext::class)->id();
+                if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    // Bizify: a casa BIZIFY + clientes marcados is_bizify_customer.
+                    $query->whereHas('customer', function ($c) {
+                        $c->where('is_bizify_customer', true)
+                          ->orWhereRaw('UPPER(name) = ?', ['BIZIFY']);
+                    });
+                    // Na Bizify todo cliente segue o PADRÃO dos 3 projetos canônicos
+                    // (IC/IS/IP criados em createInvestimentoProjects). Extras específicos
+                    // da casa (ex.: ERPSERV com Cloud/Day Off/Visita) só aparecem na tela
+                    // da própria empresa.
+                    $query->whereIn('name', ['Investimento Comercial', 'Investimento Suporte', 'Investimento Projetos']);
+                }
+            }
         } elseif (!$request->boolean('include_investimento_comercial')) {
             $query->where('is_investimento_comercial', false);
         } else {
@@ -1112,14 +1147,16 @@ class ProjectController extends Controller
         }
 
         $project = \DB::transaction(function () use ($validated, $wantsMovidesk) {
-            $p = Project::create($validated);
+            // Desliga o flag dos outros projetos do cliente ANTES de criar o novo com
+            // o flag ativo. A ordem importa: com a unique index parcial (máx 1 flag por
+            // cliente), criar com flag=true enquanto outro ainda está true violaria o
+            // índice. Desligando primeiro, nunca há 2 ativos simultâneos.
             if ($wantsMovidesk) {
-                Project::where('customer_id', $p->customer_id)
-                    ->where('id', '!=', $p->id)
+                Project::where('customer_id', $validated['customer_id'])
                     ->where('movidesk_integration_enabled', true)
                     ->update(['movidesk_integration_enabled' => false]);
             }
-            return $p;
+            return Project::create($validated);
         });
 
         // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
@@ -1333,16 +1370,9 @@ class ProjectController extends Controller
         }
 
         // Acesso ao Diário do Projeto (chat) — o FE esconde a aba quando false, evitando o
-        // "Erro ao carregar mensagens". Mesma regra do ProjectMessageController::userCanAccessProject:
-        // admin/administrativo, coordenador OU consultor do projeto, ou participante convidado.
-        $du = request()->user();
-        $project->diary_access = $du ? (
-            $du->isAdmin()
-            || (method_exists($du, 'isAdministrativo') && $du->isAdministrativo())
-            || $project->coordinators->contains('id', $du->id)
-            || $project->consultants->contains('id', $du->id)
-            || \App\Models\ProjectMessageParticipant::where('project_id', $project->id)->where('user_id', $du->id)->exists()
-        ) : false;
+        // "Erro ao carregar mensagens". Regra única em ProjectDiaryAccess, a mesma que o
+        // ProjectMessageController usa pra barrar a API (senão a aba aparece e dá 403).
+        $project->diary_access = \App\Services\ProjectDiaryAccess::allows(request()->user(), $project);
 
         return response()->json($project);
     }
@@ -1492,6 +1522,11 @@ class ProjectController extends Controller
             'hourly_rate_effective_from' => 'nullable|date',
             'consultant_ids' => 'nullable|array',
             'consultant_ids.*' => 'exists:users,id',
+            // Projetos reais por consultor (só faz sentido em projeto de investimento):
+            // mapa { user_id => [real_project_id, ...] }.
+            'real_projects_by_consultant' => 'nullable|array',
+            'real_projects_by_consultant.*' => 'array',
+            'real_projects_by_consultant.*.*' => 'integer|exists:projects,id',
             'coordinator_ids' => 'nullable|array|max:1',
             'coordinator_ids.*' => 'exists:users,id',
             'consultant_group_ids' => 'nullable|array',
@@ -1675,6 +1710,10 @@ class ProjectController extends Controller
 
         // Separar relacionamentos e campos que não pertencem ao model
         $consultantIds      = $validated['consultant_ids'] ?? null;
+        // false = campo não enviado (não mexe); array (mesmo vazio) = sincronizar.
+        $realProjectsByConsultant = array_key_exists('real_projects_by_consultant', $validated)
+            ? ($validated['real_projects_by_consultant'] ?? [])
+            : false;
         $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
         $consultantGroupIds = array_key_exists('consultant_group_ids', $validated) ? $validated['consultant_group_ids'] : false;
 
@@ -1696,7 +1735,7 @@ class ProjectController extends Controller
             ? Carbon::parse($validated['hourly_rate_effective_from'])->startOfMonth()->toDateString()
             : null;
         $previousHourlyRate = $project->hourly_rate;
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
+        unset($validated['consultant_ids'], $validated['real_projects_by_consultant'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
         $previousSoldHours = (float) ($project->sold_hours ?? 0);
@@ -1788,13 +1827,15 @@ class ProjectController extends Controller
         }
 
         \DB::transaction(function () use ($project, $validated) {
-            $project->update($validated);
+            // Desliga o flag dos OUTROS projetos do cliente ANTES de ligar neste, pra
+            // nunca haver 2 ativos ao mesmo tempo (a unique index parcial barraria).
             if (!empty($validated['movidesk_integration_enabled'])) {
                 Project::where('customer_id', $project->customer_id)
                     ->where('id', '!=', $project->id)
                     ->where('movidesk_integration_enabled', true)
                     ->update(['movidesk_integration_enabled' => false]);
             }
+            $project->update($validated);
         });
 
         // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
@@ -1854,6 +1895,16 @@ class ProjectController extends Controller
         // Atualizar consultores se fornecido
         if ($consultantIds !== null) {
             $project->consultants()->sync($consultantIds);
+        }
+
+        // Projetos reais por consultor (alocação em projeto de investimento).
+        // Só grava se o campo foi enviado E a tabela existe (migração aplicada).
+        if ($realProjectsByConsultant !== false && Schema::hasTable('project_consultant_real_projects')) {
+            try {
+                $this->syncConsultantRealProjects($project, $realProjectsByConsultant);
+            } catch (\Exception $e) {
+                \Log::warning('ProjectController@update: falha ao sincronizar projetos reais por consultor', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
         }
 
         // Atualizar coordenadores se fornecido
@@ -2281,6 +2332,24 @@ class ProjectController extends Controller
         // Calcular saldo real disponível usando getGeneralHoursBalance (considera lógica de contratos fechados)
         $generalBalance = $project->getGeneralHoursBalance();
 
+        // ── Horas APONTÁVEIS (teto/saldo/% coerentes com o bloqueio de apontamento) ──
+        // Para Fechado/BH Fixo o teto de apontamento NÃO são as vendidas e sim "Horas
+        // Apontáveis" (coordination_hours) + aporte. Expõe os valores apontáveis para o
+        // tooltip refletir exatamente o que a validação bloqueia. Demais tipos = disponível.
+        $ctNameCs = strtolower(trim((string) ($project->contractType->name ?? '')));
+        $ctCodeCs = (string) ($project->contractType->code ?? '');
+        if ($ctNameCs === 'fechado' || $ctCodeCs === 'fixed_hours' || $ctNameCs === 'banco de horas fixo') {
+            $aporteHrs         = max(0.0, round($totalAvailableHours - (float) $soldHours, 2));
+            $apontaveisHours   = round((float) ($project->coordination_hours ?? 0) + $aporteHrs, 2);
+            // Saldo = Horas Apontáveis − apontadas (gestão não consome o banco apontável).
+            $apontaveisBalance = round(max(0.0, $project->getApontaveisBalance()), 2);
+            $apontaveisPct     = $apontaveisHours > 0 ? round((($apontaveisHours - $apontaveisBalance) / $apontaveisHours) * 100, 2) : 0;
+        } else {
+            $apontaveisHours   = round($totalAvailableHours, 2);
+            $apontaveisBalance = round(max(0.0, $generalBalance), 2);
+            $apontaveisPct     = $hoursPercentage;
+        }
+
         $hoursSummary = [
             'total_logged_hours' => $totalLoggedHours,
             'approved_hours' => $approvedHours,
@@ -2289,6 +2358,10 @@ class ProjectController extends Controller
             'general_balance' => round($generalBalance, 2), // Saldo real disponível calculado
             'total_available_hours' => round($totalAvailableHours, 2), // Horas vendidas + aporte de horas
             'hours_percentage' => $hoursPercentage,
+            // Apontáveis = teto real de apontamento (Fechado/BH Fixo usa Horas Apontáveis).
+            'apontaveis_hours' => $apontaveisHours,
+            'apontaveis_balance' => $apontaveisBalance,
+            'apontaveis_percentage' => $apontaveisPct,
             'parent_project_hours' => round($parentLoggedMinutes / 60, 2),
             'child_projects_hours' => round($childLoggedMinutes / 60, 2),
         ];
@@ -4175,6 +4248,7 @@ class ProjectController extends Controller
 
         $base = DB::table('timesheets')
             ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('customers', 'customers.id', '=', 'projects.customer_id')
             ->join('users', 'users.id', '=', 'timesheets.user_id')
             ->where('projects.is_investimento_comercial', true)
@@ -4330,10 +4404,22 @@ class ProjectController extends Controller
             'parent_project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
-        $erpservName = 'ERPSERV';
-        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$erpservName])->first();
+        // Multi-empresa: o projeto de investimento nasce sob o cliente da empresa ATIVA
+        // (Bizify → cliente "BIZIFY"; senão → "ERPSERV") e carrega o company_id dela.
+        $internalName = 'ERPSERV';
+        $internalCompanyId = null;
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId) {
+                $internalCompanyId = $activeId;
+                if (\App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    $internalName = 'BIZIFY';
+                }
+            }
+        }
+        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$internalName])->first();
         if (!$customer) {
-            return response()->json(['message' => "Cliente \"{$erpservName}\" não encontrado."], 422);
+            return response()->json(['message' => "Cliente \"{$internalName}\" não encontrado."], 422);
         }
 
         $serviceTypeId  = \App\Models\ServiceType::where('code', 'projeto')->value('id');
@@ -4363,6 +4449,7 @@ class ProjectController extends Controller
             'is_manual_code'            => true,
             'categoria_interna'         => $data['categoria'],
             'parent_project_id'         => $data['parent_project_id'] ?? null,
+            'company_id'                => $internalCompanyId,
         ]);
 
         // Aprovador: vincula como coordenador do projeto (é quem aprova os
@@ -4516,6 +4603,183 @@ class ProjectController extends Controller
         return response()->json(['allow_manual_timesheet' => $data['allow']]);
     }
 
+    // ─── Projetos reais por consultor (alocação em investimento) ──────────────
+
+    /**
+     * Sincroniza os projetos reais escolhidos por consultor neste projeto de
+     * investimento. $map = [ user_id => [real_project_id, ...] ].
+     * Só grava para consultores efetivamente alocados; só reais abertos do MESMO
+     * cliente e que NÃO sejam de investimento.
+     */
+    private function syncConsultantRealProjects(Project $project, array $map): void
+    {
+        $consultantIds = $project->consultants()->pluck('users.id')->map(fn ($id) => (int) $id)->all();
+
+        $validRealIds = Project::where('customer_id', $project->customer_id)
+            ->where('id', '!=', $project->id)
+            ->where(function ($q) {
+                $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $rows = [];
+        $now  = now();
+        foreach ($map as $userId => $realIds) {
+            $userId = (int) $userId;
+            if (!in_array($userId, $consultantIds, true)) {
+                continue;
+            }
+            foreach (array_unique(array_map('intval', (array) $realIds)) as $realId) {
+                if (!in_array($realId, $validRealIds, true)) {
+                    continue;
+                }
+                $rows[] = [
+                    'project_id'      => $project->id,
+                    'user_id'         => $userId,
+                    'real_project_id' => $realId,
+                    'company_id'      => $project->company_id,
+                    'created_at'      => $now,
+                    'updated_at'      => $now,
+                ];
+            }
+        }
+
+        \DB::transaction(function () use ($project, $rows) {
+            \DB::table('project_consultant_real_projects')
+                ->where('project_id', $project->id)
+                ->delete();
+            if (!empty($rows)) {
+                \DB::table('project_consultant_real_projects')->insert($rows);
+            }
+        });
+    }
+
+    /**
+     * Para o modal de Alocação: candidatos a projeto real (todos os projetos
+     * abertos do cliente, não-investimento) + o mapa atual de escolhas por consultor.
+     * GET /projects/{project}/real-project-assignments
+     */
+    public function realProjectAssignments(Request $request, Project $project): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user->isAdmin() && !$user->isCoordenador() && !$user->isAdministrativo()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $realProjects = Project::with('serviceType')
+            ->where('customer_id', $project->customer_id)
+            ->where('id', '!=', $project->id)
+            ->where(function ($q) {
+                $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+            })
+            ->open()
+            ->orderBy('name')
+            ->get()
+            ->map(fn ($p) => [
+                'id'                        => $p->id,
+                'name'                      => $p->name,
+                'service_type_code'         => $p->serviceType?->code,
+                'is_investimento_comercial' => (bool) $p->is_investimento_comercial,
+                'categoria_interna'         => $p->categoria_interna,
+            ]);
+
+        $assignments = [];
+        if (Schema::hasTable('project_consultant_real_projects')) {
+            $rows = \DB::table('project_consultant_real_projects')
+                ->where('project_id', $project->id)
+                ->get(['user_id', 'real_project_id']);
+            foreach ($rows as $r) {
+                $assignments[(string) $r->user_id][] = (int) $r->real_project_id;
+            }
+        }
+
+        return response()->json([
+            'real_projects' => $realProjects,
+            'assignments'   => (object) $assignments,
+        ]);
+    }
+
+    /**
+     * Para o modal de Apontamento: os projetos reais escolhidos para ESTE
+     * consultor neste projeto de investimento. Se não houver configuração,
+     * cai no fallback: todos os reais abertos do cliente (não bloqueia o apontamento).
+     * GET /projects/{project}/real-project-options?user_id=X
+     */
+    public function realProjectOptions(Request $request, Project $project): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $targetUserId = (int) ($request->get('user_id') ?: $currentUser->id);
+        if ($targetUserId !== (int) $currentUser->id
+            && !$currentUser->isAdmin() && !$currentUser->isCoordenador()) {
+            $targetUserId = (int) $currentUser->id;
+        }
+
+        $realIds = Schema::hasTable('project_consultant_real_projects')
+            ? \DB::table('project_consultant_real_projects')
+                ->where('project_id', $project->id)
+                ->where('user_id', $targetUserId)
+                ->pluck('real_project_id')
+                ->all()
+            : [];
+
+        $query = Project::with('serviceType')->where('id', '!=', $project->id)->open();
+
+        if (!empty($realIds)) {
+            $query->whereIn('id', $realIds);
+        } else {
+            $query->where('customer_id', $project->customer_id)
+                ->where(function ($q) {
+                    $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+                });
+        }
+
+        $items = $query->orderBy('name')->get()->map(fn ($p) => [
+            'id'                        => $p->id,
+            'name'                      => $p->name,
+            'service_type_code'         => $p->serviceType?->code,
+            'is_investimento_comercial' => (bool) $p->is_investimento_comercial,
+            'categoria_interna'         => $p->categoria_interna,
+        ]);
+
+        return response()->json(['items' => $items]);
+    }
+
+    /**
+     * Alocação de um projeto de INVESTIMENTO (consultores + projetos reais por consultor).
+     * Endpoint dedicado e escopado por `projects.assign_consultants` — assim o
+     * COORDENADOR (que não tem projects.update) também aloca nesta rotina, sem ganhar
+     * poder de editar os demais campos do projeto.
+     * PATCH /projects/{project}/investment-allocation
+     */
+    public function updateInvestmentAllocation(Request $request, Project $project): JsonResponse
+    {
+        if (!$project->is_investimento_comercial) {
+            return response()->json(['message' => 'Alocação de investimento só se aplica a projetos de investimento.'], 422);
+        }
+
+        $data = $request->validate([
+            'consultant_ids'                  => 'nullable|array',
+            'consultant_ids.*'                => 'exists:users,id',
+            'real_projects_by_consultant'     => 'nullable|array',
+            'real_projects_by_consultant.*'   => 'array',
+            'real_projects_by_consultant.*.*' => 'integer|exists:projects,id',
+        ]);
+
+        \DB::transaction(function () use ($project, $data) {
+            if (array_key_exists('consultant_ids', $data)) {
+                $project->consultants()->sync($data['consultant_ids'] ?? []);
+            }
+            if (array_key_exists('real_projects_by_consultant', $data)
+                && Schema::hasTable('project_consultant_real_projects')) {
+                $this->syncConsultantRealProjects($project, $data['real_projects_by_consultant'] ?? []);
+            }
+        });
+
+        return response()->json(['message' => 'Alocação atualizada.']);
+    }
+
     // ─── Períodos abertos por projeto ────────────────────────────────────────
 
     public function openPeriod(Request $request, Project $project): JsonResponse
@@ -4568,6 +4832,10 @@ class ProjectController extends Controller
         return response()->json(['data' => $periods]);
     }
 
+    /**
+     * Lista TODOS os períodos de projeto abertos (closed_at = null) de todos os projetos.
+     * Usado na visão de Configurações para o admin ver e fechar em lote.
+     */
     public function allOpenPeriods(): JsonResponse
     {
         $user = Auth::user();
@@ -4595,6 +4863,10 @@ class ProjectController extends Controller
         return response()->json(['data' => $data]);
     }
 
+    /**
+     * Fecha em lote TODOS os períodos de projeto abertos de competências anteriores à
+     * vigente (o mês atual nunca é fechado). Mesma regra do closePeriods, sem projeto fixo.
+     */
     public function closeAllOpenPeriods(Request $request): JsonResponse
     {
         $user = Auth::user();
@@ -4611,6 +4883,10 @@ class ProjectController extends Controller
         return response()->json(['message' => "{$count} período(s) fechado(s).", 'count' => $count]);
     }
 
+    /**
+     * Fecha UM período de projeto específico (uma linha da visão de períodos abertos).
+     * O mês atual nunca é fechado.
+     */
     public function closeOnePeriod(Request $request, \App\Models\ProjectOpenPeriod $period): JsonResponse
     {
         $user = Auth::user();

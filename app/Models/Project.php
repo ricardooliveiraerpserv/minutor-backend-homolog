@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Project extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, \App\Models\Concerns\BelongsToCompany;
 
     // Nota: o global scope HideAusterFrozenScope foi removido por decisão de produto
     // (12/05/2026). Esses subprojetos voltam a aparecer em listagens, mas continuam
@@ -1005,6 +1005,29 @@ class Project extends Model
     }
 
     /**
+     * Saldo APONTÁVEL (Fechado/BH Fixo): teto = "Horas Apontáveis" (coordination_hours)
+     * + aporte, consumido = horas apontadas. O overhead de gestão (coordinator_hours %)
+     * NÃO consome o banco apontável. Reaproveita getGeneralHoursBalance (que já trata
+     * aportes, subprojetos e saldo inicial) trocando o teto vendidas→apontáveis e
+     * devolvendo o overhead de gestão que ele desconta.
+     */
+    public function getApontaveisBalance(?int $excludeTimesheetId = null): float
+    {
+        $general = $this->getGeneralHoursBalance(false, $excludeTimesheetId);
+
+        $loggedMinutes = $this->timesheets()
+            ->whereNotIn('status', [
+                Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED,
+                Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE,
+            ])
+            ->when($excludeTimesheetId, fn ($q) => $q->where('id', '!=', $excludeTimesheetId))
+            ->sum('effort_minutes') ?? 0;
+        $gestao = $this->calculateCoordinationHours(round($loggedMinutes / 60, 2));
+
+        return round($general - (float) ($this->sold_hours ?? 0) + (float) ($this->coordination_hours ?? 0) + $gestao, 2);
+    }
+
+    /**
      * Verificar se o projeto é do tipo On Demand
      */
     public function isOnDemand(): bool
@@ -1428,16 +1451,18 @@ class Project extends Model
     /**
      * Horas excedentes a cobrar do projeto (BH Mensal ou BH Fixo).
      *  - BH Mensal: excedente da COMPETÊNCIA = consumo do mês − contratadas do mês (>=0).
-     *  - BH Fixo:   excedente pelo ESTADO ATUAL = saldo negativo (banco esgotado).
+     *  - BH Fixo:   excedente pelo ESTADO ATUAL = saldo negativo (banco esgotado);
+     *               a competência é irrelevante (regra do produto: olha o estado atual).
      *
      * @return array{basis:string, contracted:float, consumed:float, excess:float}
      */
     public function excessHoursApuracao(string $yearMonth): array
     {
         // BH Fixo, Fechado E BH Mensal: excedente pelo SALDO ACUMULADO (managementBreakdown).
-        // Só há excedente quando o saldo fica NEGATIVO. O BH Mensal ACUMULA mês a mês —
-        // consumir acima da cota de UM mês não gera excedente se o saldo de meses anteriores
-        // ainda cobre. (Ex.: cota 50/mês, saldo +100; gasta 90 → saldo +10 → sem excedente.)
+        // Só há excedente quando o saldo fica NEGATIVO (horas contratadas + acumuladas
+        // esgotadas), incremental sobre o já cobrado. O BH Mensal ACUMULA mês a mês — consumir
+        // acima da cota de UM mês NÃO gera excedente se o saldo de meses anteriores ainda cobre.
+        // (Ex.: cota 50/mês, saldo +100; gasta 90 no mês → saldo +10 → sem excedente.)
         if ($this->isBankHoursFixed() || $this->isClosedContract() || $this->isBankHoursMonthly()) {
             $bd      = $this->managementBreakdown();
             $balance = $bd['balance'];
