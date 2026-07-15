@@ -83,6 +83,8 @@ class User extends Authenticatable
         'extra_permissions',
         // Funcionário Bizify (separa do resultado ERPSERV no fechamento de consultores)
         'is_bizify',
+        // Coordenador Bizify: ganha coluna própria no Kanban de Contratos quando a empresa ativa é Bizify
+        'is_bizify_coordinator',
         // Diretor (aparece na rotina de Fechamento Diretoria)
         'is_diretor',
         // Diretor de Projetos (recebe e-mails das fases do contrato/Triagem)
@@ -148,6 +150,7 @@ class User extends Authenticatable
             'is_executive' => 'boolean',
             'is_coordinator' => 'boolean',
             'is_bizify' => 'boolean',
+            'is_bizify_coordinator' => 'boolean',
             'is_diretor' => 'boolean',
             'is_diretor_projetos' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
