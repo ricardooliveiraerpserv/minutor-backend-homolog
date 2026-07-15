@@ -3233,10 +3233,22 @@ class ProjectController extends Controller
             'parent_project_id' => 'nullable|integer|exists:projects,id',
         ]);
 
-        $erpservName = 'ERPSERV';
-        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$erpservName])->first();
+        // Multi-empresa: o projeto de investimento nasce sob o cliente da empresa ATIVA
+        // (Bizify → cliente "BIZIFY"; senão → "ERPSERV") e carrega o company_id dela.
+        $internalName = 'ERPSERV';
+        $internalCompanyId = null;
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId) {
+                $internalCompanyId = $activeId;
+                if (\App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    $internalName = 'BIZIFY';
+                }
+            }
+        }
+        $customer = \App\Models\Customer::whereRaw('UPPER(name) = ?', [$internalName])->first();
         if (!$customer) {
-            return response()->json(['message' => "Cliente \"{$erpservName}\" não encontrado."], 422);
+            return response()->json(['message' => "Cliente \"{$internalName}\" não encontrado."], 422);
         }
 
         $serviceTypeId  = \App\Models\ServiceType::where('code', 'projeto')->value('id');
@@ -3266,6 +3278,7 @@ class ProjectController extends Controller
             'is_manual_code'            => true,
             'categoria_interna'         => $data['categoria'],
             'parent_project_id'         => $data['parent_project_id'] ?? null,
+            'company_id'                => $internalCompanyId,
         ]);
 
         // Aprovador: vincula como coordenador do projeto (é quem aprova os
