@@ -169,7 +169,10 @@ class ProjectController extends Controller
         // Idem para o dashboard /gestao-projetos (modo gestao): a tela carrega TODOS os
         // projetos pra filtrar/ordenar no client; o cap de 200 cortava os últimos (ex.:
         // projetos "[SUPORTE]..." que ordenam por nome depois do Z e caíam fora da página).
-        $maxPerPage = ($request->boolean('only_investimento_comercial') || $request->boolean('gestao')) ? 2000 : 200;
+        // Modo minimal (dropdowns id/nome/código) também usa cap alto: são leves e o SELETOR de
+        // projeto filtra client-side — com >200 projetos, os de nome no fim (ex.: "TESTE 3") caíam
+        // fora dos 200 e o filtro dizia "Nenhum resultado".
+        $maxPerPage = ($request->boolean('only_investimento_comercial') || $request->boolean('gestao') || $request->boolean('minimal')) ? 2000 : 200;
         $perPage = min($request->get('pageSize', $request->get('per_page', 15)), $maxPerPage);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
