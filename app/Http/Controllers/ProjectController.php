@@ -271,7 +271,10 @@ class ProjectController extends Controller
                 // CRONOGRAMA — MESMO critério de acesso do ProjectStageController (allocations.user_id,
                 // com ou sem delivery, OU responsável por atividade). Antes exigia delivery_id NOT NULL,
                 // então quem estava na EQUIPE da etapa (alocação delivery=null) sumia do "Meus Projetos".
-                if ($request->boolean('activity_allocated')) {
+                // CONSULTOR: força o critério RESPONSÁVEL-only (branch elseif abaixo), mesmo com
+                // activity_allocated=true — trocar o responsável de uma atividade some o projeto de
+                // "Meus Projetos" (alocação-resquício em stage_allocations NÃO conta).
+                if ($request->boolean('activity_allocated') && !$isTargetConsultor) {
                     // "Meus Projetos" = EXATAMENTE o critério de visibilidade do CRONOGRAMA do consultor
                     // (ProjectStageController::index, ADR 0004): alocado numa etapa OU responsável por
                     // atividade. Consistência total: se o projeto aparece na lista, o cronograma tem
