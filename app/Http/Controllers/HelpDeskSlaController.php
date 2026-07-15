@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\DB;
 /** Help Desk — Cadastro de políticas de SLA + metas por prioridade. */
 class HelpDeskSlaController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     public function index(Request $request): JsonResponse
     {
         $policies = HelpDeskSlaPolicy::query()
@@ -138,7 +140,13 @@ class HelpDeskSlaController extends Controller
         // Tira os alvos de QUALQUER outra política (um cliente = uma política).
         if (!empty($ids)) {
             DB::table('helpdesk_sla_policy_customers')
-                ->whereIn('customer_id', $ids)->where('sla_policy_id', '!=', $policy->id)->delete();
+                ->whereIn('customer_id', $ids)->where('sla_policy_id', '!=', $policy->id)
+                // Não mexe em vínculos de políticas de OUTRA empresa (junção não tem company_id → filtra pela raiz).
+                ->when($this->activeCompanyId(), fn ($q, $cid) => $q->whereIn(
+                    'sla_policy_id',
+                    DB::table('helpdesk_sla_policies')->where('company_id', $cid)->select('id')
+                ))
+                ->delete();
         }
         // Adiciona os novos e remove os que saíram desta política.
         $policy->customers()->sync($ids);

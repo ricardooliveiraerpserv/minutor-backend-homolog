@@ -14,6 +14,8 @@ use Illuminate\Http\Request;
 /** Help Desk — Gatilhos (automação). CRUD + metadados do builder + receitas prontas. */
 class HelpDeskTriggerController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     public function index(): JsonResponse
     {
         return response()->json(['data' => HelpDeskTrigger::with('createdBy:id,name')->orderBy('run_order')->orderBy('id')->get()]);
@@ -55,7 +57,11 @@ class HelpDeskTriggerController extends Controller
     /** Metadados p/ o builder (eventos, campos, operadores, ações) + listas de opções. */
     public function meta(): JsonResponse
     {
-        $agentIds = \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->distinct()->pluck('user_id');
+        $agentIds = \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q
+                ->join('helpdesk_teams', 'helpdesk_teams.id', '=', 'helpdesk_team_user.helpdesk_team_id')
+                ->where('helpdesk_teams.company_id', $cid))
+            ->distinct()->pluck('helpdesk_team_user.user_id');
 
         return response()->json(['data' => [
             'events'      => HelpDeskTrigger::EVENTS,

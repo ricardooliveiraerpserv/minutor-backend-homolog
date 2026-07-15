@@ -21,6 +21,8 @@ use Illuminate\Support\Facades\Schema;
  */
 class DocumentNumberService
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     /**
      * Reserva um código para o cliente. Consome a sequência UMA vez.
      * @return array{codigo:string, sequence:int, year:string, prefix:string}
@@ -78,7 +80,9 @@ class DocumentNumberService
             return true;
         }
         if (Schema::hasColumn('crm_proposals', 'codigo')
-            && DB::table('crm_proposals')->where('codigo', $code)->exists()) {
+            && DB::table('crm_proposals')->where('codigo', $code)
+                ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_proposals.company_id', $cid))
+                ->exists()) {
             return true;
         }
         if (Schema::hasColumn('documents', 'codigo')
