@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Conta de e-mail do Help Desk (recebimento). PEGADINHA: $table explícito. Senha NUNCA serializa. */
 class HelpDeskEmailAccount extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_email_accounts';

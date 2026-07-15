@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Catálogo de Serviços do Help Desk (árvore). PEGADINHA: $table explícito (Laravel inferiria help_desk_services). */
 class HelpDeskService extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_services';

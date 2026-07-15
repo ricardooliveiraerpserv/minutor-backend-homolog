@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Regra de associação domínio → organização/perfil. PEGADINHA: $table explícito. */
 class HelpDeskAssociationRule extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_association_rules';

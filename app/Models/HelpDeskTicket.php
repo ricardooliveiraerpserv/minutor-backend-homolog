@@ -18,6 +18,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class HelpDeskTicket extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
     use HasGlobalAttachments;
 

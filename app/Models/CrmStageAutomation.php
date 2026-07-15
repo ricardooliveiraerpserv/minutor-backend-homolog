@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /** CRM — automação configurável de etapa (Fase 3). */
 class CrmStageAutomation extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $fillable = ['stage_id', 'evento', 'tipo', 'config', 'ordem', 'ativa'];
     protected $casts = ['config' => 'array', 'ativa' => 'boolean', 'ordem' => 'integer'];
 

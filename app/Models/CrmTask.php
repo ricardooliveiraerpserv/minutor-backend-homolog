@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /** CRM — tarefa comercial / Próxima Ação. */
 class CrmTask extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $fillable = [
         'customer_id', 'opportunity_id', 'contract_id', 'project_id', 'activity_id',
         'tipo', 'categoria', 'titulo', 'objetivo', 'data', 'responsavel_id', 'prioridade', 'concluida_at', 'notas', 'created_by_id',

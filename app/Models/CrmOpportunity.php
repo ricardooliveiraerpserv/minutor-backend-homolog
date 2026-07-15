@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 /** CRM — Oportunidade (deal). Empresa = customers (empresa única). */
 class CrmOpportunity extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $fillable = [

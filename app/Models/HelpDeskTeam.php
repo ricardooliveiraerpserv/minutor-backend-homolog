@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Fila/Equipe de atendimento. Membros = usuários internos do Minutor. */
 class HelpDeskTeam extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_teams';

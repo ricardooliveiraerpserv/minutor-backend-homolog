@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 /** Roadmap Fase 1 — snapshot de Saúde da Conta (histórico). */
 class CrmAccountHealthSnapshot extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     public $timestamps = false; // só created_at
 
     protected $fillable = ['customer_id', 'score', 'status', 'motivos', 'margem', 'competencia', 'created_at'];

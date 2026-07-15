@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Categoria de chamado (árvore). Roteia fila + SLA padrão. */
 class HelpDeskCategory extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_categories';

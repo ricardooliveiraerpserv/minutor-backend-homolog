@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /** Ledger de e-mails processados pela ingestão. PEGADINHA: $table explícito. */
 class HelpDeskIngestedEmail extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $table = 'helpdesk_ingested_emails';
 
     protected $fillable = [
