@@ -1326,6 +1326,7 @@ class ContractController extends Controller
             'sust_on_demand' => [],
             'sust_cloud'     => [],
             'sust_bizify'    => [],
+            'sust_saas'      => [], // Kanban Bizify: contratos do tipo SaaS
         ];
         $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
@@ -1354,7 +1355,9 @@ class ContractController extends Controller
                     $svcCode      = $c->serviceType?->code ?? '';
                     $svcName      = strtolower($c->serviceType?->name ?? '');
                     $contractName = strtolower($c->contractType?->name ?? '');
-                    if ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
+                    if (str_contains($contractName, 'saas') || str_contains($svcName, 'saas')) {
+                        $col = 'sust_saas';
+                    } elseif ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
                         $col = 'sust_bizify';
                     } elseif (str_contains($svcName, 'cloud')) {
                         $col = 'sust_cloud';
@@ -1481,6 +1484,21 @@ class ContractController extends Controller
             });
         }
 
+        // ── Multi-empresa: kanban Bizify. Quando a empresa ativa é Bizify, o FE monta
+        //    colunas por "Coordenador Bizify" (is_bizify_coordinator) + SaaS, em vez das
+        //    colunas de coordenador/Cloud/Bizify padrão. Com ERPSERV (ou flag off), tudo igual.
+        $activeCompanyId = config('multiempresa.scoping_enabled')
+            ? app(\App\Services\CompanyContext::class)->id()
+            : null;
+        $isBizifyActive = $activeCompanyId
+            ? \App\Models\Company::where('id', $activeCompanyId)->where('slug', 'bizify')->exists()
+            : false;
+        $bizifyCoordinators = \App\Models\User::where('enabled', true)
+            ->where('is_bizify_coordinator', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
         return response()->json([
             'demand_cards'          => $demandCards,
             'transition_cards'      => $transitionCards,
@@ -1490,6 +1508,8 @@ class ContractController extends Controller
             'request_cards'         => $requestCards,
             'aporte_cards'          => $aporteCards,
             'coordinators'          => $coordinators,
+            'is_bizify_active'      => $isBizifyActive,
+            'bizify_coordinators'   => $bizifyCoordinators,
             'user_role'             => $user?->type ?? 'admin',
             'contracts'             => $demandCards,
             // Liberação de visualização do pipeline (Demandas e Projetos) p/ o usuário logado.
