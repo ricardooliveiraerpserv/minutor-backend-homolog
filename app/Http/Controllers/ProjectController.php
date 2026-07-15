@@ -2782,7 +2782,7 @@ class ProjectController extends Controller
         $todayCarbon = \Carbon\Carbon::now()->startOfDay();
         $totalDeliveries = 0; $doneDeliveries = 0; $lateCount = 0;
         $blockedCount = 0; $reviewCount = 0; $waitingClientCount = 0; $inProgressCount = 0;
-        $hoursPlannedTotal = 0; $hoursActualTotal = 0;
+        $hoursPlannedTotal = 0; $hoursActualTotal = 0; $hoursPlannedDone = 0;
         $alerts = [];
         $userIdsInvolved = [];
         foreach ($stages as $st) {
@@ -2796,7 +2796,13 @@ class ProjectController extends Controller
                 if ($d->predecessor_state === 'pending')                            $blockedCount++;
                 if ($d->is_late)                                                    $lateCount++;
                 // Atividade do cliente é medida em dias — não soma horas planejadas.
-                if (!$d->client_involved) $hoursPlannedTotal += (float) ($d->hours_planned ?? 0);
+                if (!$d->client_involved) {
+                    $hoursPlannedTotal += (float) ($d->hours_planned ?? 0);
+                    // Progresso por HORAS: horas planejadas das atividades já concluídas.
+                    if ($d->status === \App\Models\StageDelivery::STATUS_DONE) {
+                        $hoursPlannedDone += (float) ($d->hours_planned ?? 0);
+                    }
+                }
                 if ($d->responsible_user_id) $userIdsInvolved[$d->responsible_user_id] = true;
 
                 // Alertas leves por delivery
@@ -2959,6 +2965,9 @@ class ProjectController extends Controller
             'progress_pct'         => $totalDeliveries > 0 ? round(($doneDeliveries / $totalDeliveries) * 100, 1) : 0.0,
             'total_deliveries'     => $totalDeliveries,
             'done_deliveries'      => $doneDeliveries,
+            // Progresso por HORAS: horas planejadas concluídas / total planejado (só atividades faturáveis).
+            'progress_hours_pct'   => $hoursPlannedTotal > 0 ? round(($hoursPlannedDone / $hoursPlannedTotal) * 100, 1) : 0.0,
+            'hours_done'           => round($hoursPlannedDone, 2),
             'in_progress_count'    => $inProgressCount,
             'review_count'         => $reviewCount,
             'blocked_count'        => $blockedCount,
