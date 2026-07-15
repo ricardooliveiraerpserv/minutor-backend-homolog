@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 /** CRM — métricas do dashboard comercial. */
 class CrmDashboardController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     public function summary(): JsonResponse
     {
         $abertas  = CrmOpportunity::where('status', 'aberto');
@@ -49,6 +51,7 @@ class CrmDashboardController extends Controller
             ->join('customers as c', 'c.id', '=', 'o.customer_id')
             ->leftJoin('customer_crm_profiles as p', 'p.customer_id', '=', 'c.id')
             ->where('o.status', 'ganho')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("COALESCE(p.segment, 'Sem segmento') as segment, SUM(o.valor) as valor")
             ->groupBy('segment')->orderByDesc('valor')->get()
             ->map(fn ($r) => ['segment' => $r->segment, 'valor' => (float) $r->valor]);
@@ -58,6 +61,7 @@ class CrmDashboardController extends Controller
             ->join('crm_opportunities as o', 'o.id', '=', 'op.opportunity_id')
             ->join('crm_products as pr', 'pr.id', '=', 'op.crm_product_id')
             ->where('o.status', 'ganho')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw('pr.name as produto, SUM(op.valor) as valor')
             ->groupBy('pr.name')->orderByDesc('valor')->get()
             ->map(fn ($r) => ['produto' => $r->produto, 'valor' => (float) $r->valor]);
@@ -67,6 +71,7 @@ class CrmDashboardController extends Controller
             ->join('crm_opportunities as o', 'o.id', '=', 'op.opportunity_id')
             ->join('crm_products as pr', 'pr.id', '=', 'op.crm_product_id')
             ->where('o.status', 'ganho')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("COALESCE(pr.categoria, 'Sem categoria') as categoria, SUM(op.quantidade * op.valor) as valor")
             ->groupBy('categoria')->orderByDesc('valor')->get()
             ->map(fn ($r) => ['categoria' => $r->categoria, 'valor' => (float) $r->valor]);
@@ -75,6 +80,7 @@ class CrmDashboardController extends Controller
         $perdasPorMotivo = DB::table('crm_opportunities as o')
             ->leftJoin('crm_loss_reasons as r', 'r.id', '=', 'o.loss_reason_id')
             ->where('o.status', 'perdido')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("COALESCE(r.name, 'Sem motivo') as motivo, COUNT(*) as qtd, COALESCE(SUM(o.valor),0) as valor")
             ->groupBy('r.name')->orderByDesc('qtd')->get()
             ->map(fn ($r) => ['motivo' => $r->motivo, 'qtd' => (int) $r->qtd, 'valor' => (float) $r->valor]);
@@ -82,6 +88,7 @@ class CrmDashboardController extends Controller
         $perdasPorExecutivo = DB::table('crm_opportunities as o')
             ->leftJoin('users as u', 'u.id', '=', 'o.responsavel_id')
             ->where('o.status', 'perdido')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("COALESCE(u.name, '—') as executivo, COUNT(*) as qtd")
             ->groupBy('u.name')->orderByDesc('qtd')->get()
             ->map(fn ($r) => ['executivo' => $r->executivo, 'qtd' => (int) $r->qtd]);
@@ -90,6 +97,7 @@ class CrmDashboardController extends Controller
             ->join('crm_opportunities as o', 'o.id', '=', 'op.opportunity_id')
             ->join('crm_products as pr', 'pr.id', '=', 'op.crm_product_id')
             ->where('o.status', 'perdido')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw('pr.name as produto, COUNT(DISTINCT o.id) as qtd')
             ->groupBy('pr.name')->orderByDesc('qtd')->get()
             ->map(fn ($r) => ['produto' => $r->produto, 'qtd' => (int) $r->qtd]);
@@ -102,6 +110,7 @@ class CrmDashboardController extends Controller
         $forecast = DB::table('crm_opportunities as o')
             ->join('crm_pipeline_stages as s', 's.id', '=', 'o.stage_id')
             ->where('o.status', 'aberto')->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw('s.name as etapa, COUNT(*) as qtd, SUM(o.valor) as valor')
             ->groupBy('s.name')->get()
             ->map(fn ($r) => ['etapa' => $r->etapa, 'qtd' => (int) $r->qtd, 'valor' => (float) $r->valor]);
@@ -143,19 +152,24 @@ class CrmDashboardController extends Controller
         $prospects    = (int) DB::table('customer_crm_profiles')->whereNotNull('qualified_at')->count();
         $oppsAbertas  = (int) CrmOpportunity::where('status', 'aberto')->count();
         $oppsTotal    = (int) CrmOpportunity::count();
-        $propostas    = (int) DB::table('crm_proposals')->whereNull('deleted_at')->count();
+        $propostas    = (int) DB::table('crm_proposals')->whereNull('deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_proposals.company_id', $cid))->count();
         $contratos    = (int) CrmOpportunity::whereNotNull('contract_id')->count();
 
         // Clientes que já tiveram oportunidade (base para Prospect→Oportunidade)
         $prospectsComOpp = (int) DB::table('crm_opportunities as o')
             ->join('customer_crm_profiles as p', 'p.customer_id', '=', 'o.customer_id')
             ->whereNull('o.deleted_at')->whereNotNull('p.qualified_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->distinct('o.customer_id')->count('o.customer_id');
         // Oportunidades que geraram proposta / que viraram contrato
-        $oppsComProposta = (int) DB::table('crm_proposals')->whereNull('deleted_at')->distinct('opportunity_id')->count('opportunity_id');
+        $oppsComProposta = (int) DB::table('crm_proposals')->whereNull('deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_proposals.company_id', $cid))
+            ->distinct('opportunity_id')->count('opportunity_id');
         $propostasComContrato = (int) DB::table('crm_proposals as pr')
             ->join('crm_opportunities as o', 'o.id', '=', 'pr.opportunity_id')
-            ->whereNull('pr.deleted_at')->whereNotNull('o.contract_id')->count();
+            ->whereNull('pr.deleted_at')->whereNotNull('o.contract_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('pr.company_id', $cid))->count();
 
         $pct = fn ($num, $den) => $den > 0 ? round($num / $den * 100, 1) : 0.0;
 
@@ -167,18 +181,22 @@ class CrmDashboardController extends Controller
         $diasProspectOpp = (float) (DB::table('crm_opportunities as o')
             ->join('customer_crm_profiles as p', 'p.customer_id', '=', 'o.customer_id')
             ->whereNull('o.deleted_at')->whereNotNull('p.qualified_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("AVG(EXTRACT(EPOCH FROM (o.created_at - p.qualified_at))/86400) as d")->value('d') ?? 0);
         // Oportunidade→Contrato: contrato gerado vs criação da oportunidade
         $diasOppContrato = (float) (DB::table('crm_opportunities as o')
             ->join('contracts as c', 'c.id', '=', 'o.contract_id')
             ->whereNull('o.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("AVG(EXTRACT(EPOCH FROM (c.created_at - o.created_at))/86400) as d")->value('d') ?? 0);
 
         // Valor por etapa (Lead/Prospect = potencial; Oport/Proposta/Contrato = valor real)
         $valLeads = (float) DB::table('customer_crm_profiles')->whereNotNull('lead_created_at')->sum('valor_potencial');
         $valProspects = (float) DB::table('customer_crm_profiles')->whereNotNull('qualified_at')->sum('valor_potencial');
         $valOpps = (float) CrmOpportunity::sum('valor');
-        $valProp = (float) DB::table('crm_proposals')->whereNull('deleted_at')->sum(DB::raw('valor - descontos'));
+        $valProp = (float) DB::table('crm_proposals')->whereNull('deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_proposals.company_id', $cid))
+            ->sum(DB::raw('valor - descontos'));
         $valContr = (float) CrmOpportunity::whereNotNull('contract_id')->sum('valor');
 
         return [
@@ -218,6 +236,7 @@ class CrmDashboardController extends Controller
         // Leads/qualificados por origem (perfil firmográfico).
         $leadsPorOrigem = DB::table('crm_lead_sources as s')
             ->leftJoin('customer_crm_profiles as p', 'p.lead_source_id', '=', 's.id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('s.company_id', $cid))
             ->selectRaw("s.id, s.name,
                 COUNT(p.customer_id) FILTER (WHERE p.lead_created_at IS NOT NULL) as leads,
                 COUNT(p.customer_id) FILTER (WHERE p.qualified_at IS NOT NULL) as qualificados")
@@ -228,6 +247,7 @@ class CrmDashboardController extends Controller
             ->join('customers as c', 'c.id', '=', 'o.customer_id')
             ->join('customer_crm_profiles as p', 'p.customer_id', '=', 'c.id')
             ->whereNull('o.deleted_at')->whereNotNull('p.lead_source_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw("p.lead_source_id,
                 COUNT(*) as oportunidades,
                 COUNT(*) FILTER (WHERE o.status='ganho') as ganhas,
@@ -277,6 +297,7 @@ class CrmDashboardController extends Controller
         // Agregados de oportunidade por cliente (1 query).
         $oppAgg = DB::table('crm_opportunities')->whereNull('deleted_at')
             ->whereIn('customer_id', $customers->pluck('id'))
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_opportunities.company_id', $cid))
             ->selectRaw("customer_id,
                 MAX(ultima_interacao_at) as ult,
                 COUNT(*) FILTER (WHERE status='aberto' AND proxima_acao_at IS NOT NULL AND proxima_acao_at >= now()) as com_proxima")
@@ -433,6 +454,7 @@ class CrmDashboardController extends Controller
         // Por origem: leads / qualificados / conversão + receita gerada (oportunidades ganhas)
         $porOrigem = DB::table('crm_lead_sources as s')
             ->leftJoin('customer_crm_profiles as p', 'p.lead_source_id', '=', 's.id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('s.company_id', $cid))
             ->selectRaw("s.id, s.name,
                 COUNT(p.customer_id) FILTER (WHERE p.lead_created_at IS NOT NULL) as leads,
                 COUNT(p.customer_id) FILTER (WHERE p.qualified_at IS NOT NULL) as qualificados")
@@ -442,6 +464,7 @@ class CrmDashboardController extends Controller
             ->join('customers as c', 'c.id', '=', 'o.customer_id')
             ->join('customer_crm_profiles as p', 'p.customer_id', '=', 'c.id')
             ->where('o.status', 'ganho')->whereNull('o.deleted_at')->whereNotNull('p.lead_source_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
             ->selectRaw('p.lead_source_id, SUM(o.valor) as receita')
             ->groupBy('p.lead_source_id')->pluck('receita', 'lead_source_id');
 
@@ -531,6 +554,7 @@ class CrmDashboardController extends Controller
 
         // PERFORMANCE por vendedor (win rate / ticket médio / ciclo médio) — all-time.
         $perf = DB::table('crm_opportunities')->whereNull('deleted_at')->whereNotNull('responsavel_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_opportunities.company_id', $cid))
             ->selectRaw("responsavel_id,
                 sum(case when status='ganho' then 1 else 0 end) as ganhas,
                 sum(case when status='perdido' then 1 else 0 end) as perdidas,
@@ -648,10 +672,15 @@ class CrmDashboardController extends Controller
         $lead = DB::table('customer_crm_profiles')->whereNotNull('qualified_at')->whereNotNull('lead_created_at')
             ->avg(DB::raw($d('qualified_at - lead_created_at')));
         $prospect = DB::table('crm_opportunities as o')->join('customer_crm_profiles as p', 'p.customer_id', '=', 'o.customer_id')
-            ->whereNotNull('p.qualified_at')->avg(DB::raw($d('o.created_at - p.qualified_at')));
+            ->whereNotNull('p.qualified_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
+            ->avg(DB::raw($d('o.created_at - p.qualified_at')));
         $oppProp = DB::table('crm_proposals as pr')->join('crm_opportunities as o', 'o.id', '=', 'pr.opportunity_id')
-            ->whereNull('pr.deleted_at')->avg(DB::raw($d('pr.created_at - o.created_at')));
+            ->whereNull('pr.deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('pr.company_id', $cid))
+            ->avg(DB::raw($d('pr.created_at - o.created_at')));
         $fech = DB::table('crm_opportunities')->where('status', 'ganho')->whereNotNull('fechamento_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_opportunities.company_id', $cid))
             ->avg(DB::raw($d('fechamento_at - created_at')));
         $r = fn ($x) => $x === null ? null : round(max(0, (float) $x), 1);
         return [

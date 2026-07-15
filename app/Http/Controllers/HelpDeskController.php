@@ -15,6 +15,8 @@ use Illuminate\Http\JsonResponse;
 /** Help Desk — metadados para formulários/filtros (status, prioridades, canais, filas, categorias, SLA). */
 class HelpDeskController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     /** Usuários internos atribuíveis (atendentes/membros de fila) — exclui cliente/parceiro. */
     public function agents(\Illuminate\Http\Request $request): JsonResponse
     {
@@ -24,7 +26,11 @@ class HelpDeskController extends Controller
                 ->orderBy('name')->get(['id', 'name', 'type'])]);
         }
         // AGENTES = usuários vinculados a ALGUMA equipe (promovidos automaticamente ao entrar na equipe).
-        $memberIds = \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->distinct()->pluck('user_id');
+        $memberIds = \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q
+                ->join('helpdesk_teams', 'helpdesk_teams.id', '=', 'helpdesk_team_user.helpdesk_team_id')
+                ->where('helpdesk_teams.company_id', $cid))
+            ->distinct()->pluck('helpdesk_team_user.user_id');
         $agents = User::whereIn('id', $memberIds)->orderBy('name')->get(['id', 'name', 'type']);
         return response()->json(['data' => $agents]);
     }

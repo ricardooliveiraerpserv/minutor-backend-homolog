@@ -27,6 +27,8 @@ use Illuminate\Support\Facades\DB;
  */
 class Customer360Controller extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     public function show(Request $request, Customer $customer): JsonResponse
     {
         $requested = collect(explode(',', $request->query('sections', 'header,resumo,crm,saude,adm,serv,timeline')))
@@ -217,6 +219,7 @@ class Customer360Controller extends Controller
         $produtos = DB::table('crm_opportunity_products as op')
             ->join('crm_products as pr', 'pr.id', '=', 'op.crm_product_id')
             ->whereIn('op.opportunity_id', $oppIds)
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('pr.company_id', $cid))
             ->select('pr.name', 'pr.categoria')->distinct()->get()
             ->map(fn ($r) => ['name' => $r->name, 'categoria' => $r->categoria]);
 

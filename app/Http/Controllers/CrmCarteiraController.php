@@ -18,6 +18,8 @@ use Illuminate\Support\Facades\DB;
  */
 class CrmCarteiraController extends Controller
 {
+    use \App\Http\Traits\FiltersByActiveCompany;
+
     private function authorizeView(): array
     {
         $u = auth()->user();
@@ -48,13 +50,17 @@ class CrmCarteiraController extends Controller
         // Agregados (sem N+1)
         $snap = CrmAccountHealthSnapshot::whereIn('customer_id', $ids)->orderByDesc('id')->get()->groupBy('customer_id')->map->first();
         $won = DB::table('crm_opportunities')->whereIn('customer_id', $ids)->where('status', 'ganho')->whereNull('deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_opportunities.company_id', $cid))
             ->selectRaw('customer_id, SUM(valor) v')->groupBy('customer_id')->pluck('v', 'customer_id');
         $oppUlt = DB::table('crm_opportunities')->whereIn('customer_id', $ids)->whereNull('deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_opportunities.company_id', $cid))
             ->selectRaw('customer_id, MAX(ultima_interacao_at) u')->groupBy('customer_id')->pluck('u', 'customer_id');
         $renov = DB::table('crm_opportunities')->whereIn('customer_id', $ids)->where('tipo', 'renovacao')->where('status', 'aberto')->whereNull('deleted_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('crm_opportunities.company_id', $cid))
             ->selectRaw('customer_id, COUNT(*) c')->groupBy('customer_id')->pluck('c', 'customer_id');
         $fups = DB::table('crm_tasks as t')->join('crm_opportunities as o', 'o.id', '=', 't.opportunity_id')
             ->whereIn('o.customer_id', $ids)->whereNull('t.concluida_at')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('t.company_id', $cid))
             ->selectRaw('o.customer_id, COUNT(*) c')->groupBy('o.customer_id')->pluck('c', 'customer_id');
         // Projetos em risco (proxy sem Cronograma: consumo > 90% do contratado)
         $projRisk = DB::table('projects as p')->whereIn('p.customer_id', $ids)->whereNull('p.deleted_at')->where('p.sold_hours', '>', 0)
