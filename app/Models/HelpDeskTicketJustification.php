@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Justificativa de ticket vinculada a um status. PEGADINHA: $table explícito. */
 class HelpDeskTicketJustification extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_ticket_justifications';

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 /** Perfil de assinatura reutilizável por e-mail (P-E.2.4). */
 class CrmSignatureProfile extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $fillable = ['email', 'name', 'cpf', 'cargo', 'image', 'times_used', 'last_used_at'];
 
     protected $casts = ['last_used_at' => 'datetime', 'times_used' => 'integer'];

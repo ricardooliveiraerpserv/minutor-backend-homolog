@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Gatilho (automação) do Help Desk. PEGADINHA: $table explícito. */
 class HelpDeskTrigger extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_triggers';

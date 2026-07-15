@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** CRM — etapa de um funil. */
 class CrmPipelineStage extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $fillable = ['pipeline_id', 'name', 'ordem', 'is_won', 'is_lost', 'probabilidade', 'cor', 'sla_dias', 'is_inicial', 'ativa', 'regras'];
     protected $casts = ['is_won' => 'boolean', 'is_lost' => 'boolean', 'ordem' => 'integer', 'probabilidade' => 'integer',
         'sla_dias' => 'integer', 'is_inicial' => 'boolean', 'ativa' => 'boolean', 'regras' => 'array'];

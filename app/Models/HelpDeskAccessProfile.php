@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Perfil de Acesso do Help Desk (agente|cliente). PEGADINHA: $table explícito. */
 class HelpDeskAccessProfile extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_access_profiles';

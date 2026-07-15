@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Base de Conhecimento: categoria (árvore). */
 class HelpDeskKbCategory extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $table = 'helpdesk_kb_categories';
 
     protected $fillable = [

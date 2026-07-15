@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Formulário estruturado vinculado a um status (construtor de formulários). */
 class HelpDeskForm extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $table = 'helpdesk_forms';
 
     protected $fillable = ['name', 'status_id', 'title', 'subtitle', 'intro', 'show_logo', 'active'];

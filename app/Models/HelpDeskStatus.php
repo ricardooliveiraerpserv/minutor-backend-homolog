@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Status do chamado (workflow configurável). */
 class HelpDeskStatus extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $table = 'helpdesk_statuses';
 
     protected $fillable = [

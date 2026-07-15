@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Base de Conhecimento: artigo. Imagens/anexos via Attachment Engine. */
 class HelpDeskKbArticle extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
     use HasGlobalAttachments;
 

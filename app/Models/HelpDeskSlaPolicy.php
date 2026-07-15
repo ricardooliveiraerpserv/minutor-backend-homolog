@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Help Desk — Política de SLA (escopável por contrato/cliente, ou global/default). */
 class HelpDeskSlaPolicy extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_sla_policies';
