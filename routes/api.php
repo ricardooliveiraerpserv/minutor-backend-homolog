@@ -779,6 +779,11 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware(['permission.or.admin:users.reset_password', 'screen.action:/users,users.reset_password'])->group(function () {
             Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword'])->name('users.reset-password');
+        });
+
+        // Reenviar boas-vindas: ação própria no Configurador (reenviar_boas_vindas) — enforçada
+        // separada do reset, pra o Configurador poder liberar/negar de forma independente.
+        Route::middleware(['permission.or.admin:users.reset_password', 'screen.action:/users,reenviar_boas_vindas'])->group(function () {
             Route::post('/users/{user}/resend-welcome', [UserController::class, 'resendWelcome'])->name('users.resend-welcome');
             Route::post('/users/resend-welcome-bulk',   [UserController::class, 'resendWelcomeBulk'])->name('users.resend-welcome-bulk');
         });
