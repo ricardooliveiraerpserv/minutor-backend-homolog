@@ -23,6 +23,7 @@ class Customer extends Model
         'cgc',
         'active',
         'executive_id',
+        'executive_bizify_id',
         'code_prefix',
         'fechamento_email',
         'emails_administrativos',
@@ -218,6 +219,28 @@ class Customer extends Model
     public function executive(): BelongsTo
     {
         return $this->belongsTo(User::class, 'executive_id');
+    }
+
+    /** Executivo de conta na BIZIFY (o cliente é compartilhado; o executivo difere por empresa). */
+    public function executiveBizify(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'executive_bizify_id');
+    }
+
+    /**
+     * Executivo EFETIVO conforme a empresa ATIVA (multi-empresa): Bizify usa
+     * executive_bizify_id; ERPSERV (ou flag off) usa executive_id. Base dos filtros
+     * de executivo nas telas.
+     */
+    public function effectiveExecutiveId(): ?int
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                return $this->executive_bizify_id;
+            }
+        }
+        return $this->executive_id;
     }
 
     public function contacts(): HasMany
