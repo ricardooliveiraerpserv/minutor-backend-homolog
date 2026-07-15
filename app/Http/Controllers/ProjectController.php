@@ -212,6 +212,10 @@ class ProjectController extends Controller
         $contractTypeId = $request->get('contract_type_id');
         $serviceTypeName = $request->get('service_type_name');
         $parentProjectsOnly = $request->get('parent_projects_only') === 'true';
+        // Opt-in EXCLUSIVO do Relatório de Apontamentos: coordenador de sustentação também
+        // pode enxergar/selecionar o filho On Demand cujo pai é sustentação. Sem este param,
+        // a regra global de visibilidade (coord de sustentação só vê sustentação) fica intacta.
+        $includeSustOnDemandChildren = $request->boolean('include_sust_ondemand_children');
 
         // Modo gestão: query leve para o dashboard /gestao-projetos
         // Omite relações pesadas (hourContributions, serviceType, parentProject)
@@ -303,11 +307,19 @@ class ProjectController extends Controller
                         }
                     });
                 } else {
-                    $query->where(function ($q) use ($currentUser, $isSustentacao) {
+                    $query->where(function ($q) use ($currentUser, $isSustentacao, $includeSustOnDemandChildren) {
                         $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
                         if ($isSustentacao) {
                             $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'))
                               ->orWhere(fn($sq) => $sq->where('is_investimento_comercial', true)->where('categoria_interna', 'Suporte'));
+                            // SÓ no Relatório de Apontamentos (param include_sust_ondemand_children):
+                            // permite o coord de sustentação selecionar o filho On Demand cujo pai é
+                            // sustentação. Não altera a regra global em nenhum outro fluxo.
+                            if ($includeSustOnDemandChildren) {
+                                $q->orWhere(fn($sq) => $sq
+                                    ->whereHas('contractType', fn($ct) => $ct->where('code', 'on_demand'))
+                                    ->whereHas('parentProject.serviceType', fn($st) => $st->where('code', 'sustentacao')));
+                            }
                         }
                     });
                 }
