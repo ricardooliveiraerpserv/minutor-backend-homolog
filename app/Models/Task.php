@@ -9,6 +9,8 @@ use Illuminate\Support\Carbon;
 /** Tarefa rápida pessoal (Smart To-Do). Sempre escopada ao user_id. */
 class Task extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $fillable = [
         'user_id', 'created_by', 'assigned_to', 'completed_by', 'group_item_id', 'title', 'description',
         'due_date', 'due_time', 'completed', 'completed_at',

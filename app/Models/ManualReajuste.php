@@ -13,6 +13,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class ManualReajuste extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
+
     protected $table = 'manual_reajustes';
 
     protected $fillable = [

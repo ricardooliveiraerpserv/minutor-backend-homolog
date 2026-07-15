@@ -1180,8 +1180,8 @@ class ContractController extends Controller
         $demandCards = collect();
         if (!$isConsultor) {
             $demandQuery = Contract::with([
-                'customer:id,name,executive_id',
-                'customer.executive:id,name',
+                'customer:id,name,executive_id,executive_bizify_id',
+                'customer.executive:id,name', 'customer.executiveBizify:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'kanbanCoordinator:id,name',
@@ -1207,8 +1207,8 @@ class ContractController extends Controller
         $transitionCards = collect();
         if (!$isConsultor && !$isCliente) {
             $transitionCards = Contract::with([
-                'customer:id,name,executive_id',
-                'customer.executive:id,name',
+                'customer:id,name,executive_id,executive_bizify_id',
+                'customer.executive:id,name', 'customer.executiveBizify:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'project:id,code,name,status',
@@ -1224,8 +1224,8 @@ class ContractController extends Controller
         $demandProjectIds = $demandCards->pluck('project_id')->filter()->unique()->values()->toArray();
 
         $projectQuery = \App\Models\Project::with([
-            'customer:id,name,executive_id',
-            'customer.executive:id,name',
+            'customer:id,name,executive_id,executive_bizify_id',
+            'customer.executive:id,name', 'customer.executiveBizify:id,name',
             'contract:id,project_name',
             'coordinators:id,name',
             'consultants:id,name',
@@ -1326,18 +1326,19 @@ class ContractController extends Controller
             'sust_on_demand' => [],
             'sust_cloud'     => [],
             'sust_bizify'    => [],
+            'sust_saas'      => [], // Kanban Bizify: contratos do tipo SaaS
         ];
         $sustentacaoAutoCards = collect(); // backward compat
         if (!$isConsultor && !$isCliente) {
             // Todos contratos alocados numa fila de sustentação aparecem na coluna correta
             $sustCards = Contract::with([
-                'customer:id,name,executive_id',
-                'customer.executive:id,name',
+                'customer:id,name,executive_id,executive_bizify_id',
+                'customer.executive:id,name', 'customer.executiveBizify:id,name',
                 'contractType:id,name',
                 'serviceType:id,name',
                 'executivoConta:id,name',
-                'project.customer:id,name,executive_id',
-                'project.customer.executive:id,name',
+                'project.customer:id,name,executive_id,executive_bizify_id',
+                'project.customer.executive:id,name', 'project.customer.executiveBizify:id,name',
                 'project.executivoConta:id,name',
                 'project.coordinators',
                 'project.consultants',
@@ -1354,7 +1355,9 @@ class ContractController extends Controller
                     $svcCode      = $c->serviceType?->code ?? '';
                     $svcName      = strtolower($c->serviceType?->name ?? '');
                     $contractName = strtolower($c->contractType?->name ?? '');
-                    if ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
+                    if (str_contains($contractName, 'saas') || str_contains($svcName, 'saas')) {
+                        $col = 'sust_saas';
+                    } elseif ($svcCode === 'bizify' || str_contains($svcName, 'bizify')) {
                         $col = 'sust_bizify';
                     } elseif (str_contains($svcName, 'cloud')) {
                         $col = 'sust_cloud';
@@ -1481,6 +1484,21 @@ class ContractController extends Controller
             });
         }
 
+        // ── Multi-empresa: kanban Bizify. Quando a empresa ativa é Bizify, o FE monta
+        //    colunas por "Coordenador Bizify" (is_bizify_coordinator) + SaaS, em vez das
+        //    colunas de coordenador/Cloud/Bizify padrão. Com ERPSERV (ou flag off), tudo igual.
+        $activeCompanyId = config('multiempresa.scoping_enabled')
+            ? app(\App\Services\CompanyContext::class)->id()
+            : null;
+        $isBizifyActive = $activeCompanyId
+            ? \App\Models\Company::where('id', $activeCompanyId)->where('slug', 'bizify')->exists()
+            : false;
+        $bizifyCoordinators = \App\Models\User::where('enabled', true)
+            ->where('is_bizify_coordinator', true)
+            ->select('id', 'name')
+            ->orderBy('name')
+            ->get();
+
         return response()->json([
             'demand_cards'          => $demandCards,
             'transition_cards'      => $transitionCards,
@@ -1490,6 +1508,8 @@ class ContractController extends Controller
             'request_cards'         => $requestCards,
             'aporte_cards'          => $aporteCards,
             'coordinators'          => $coordinators,
+            'is_bizify_active'      => $isBizifyActive,
+            'bizify_coordinators'   => $bizifyCoordinators,
             'user_role'             => $user?->type ?? 'admin',
             'contracts'             => $demandCards,
             // Liberação de visualização do pipeline (Demandas e Projetos) p/ o usuário logado.
@@ -2148,7 +2168,7 @@ class ContractController extends Controller
             'kanban_status'    => $contract->kanban_status ?? Contract::KANBAN_BACKLOG,
             'kanban_coordinator_id' => $contract->kanban_coordinator_id,
             'kanban_coordinator'    => $contract->kanbanCoordinator?->name,
-            'executivo_conta_name'  => $contract->executivoConta?->name ?? $contract->customer?->executive?->name,
+            'executivo_conta_name'  => $this->cardExecutivoContaName($contract->customer, $contract->executivoConta),
             'kanban_order'     => $contract->kanban_order,
             'status'           => $contract->status,
             'project_id'       => $contract->project_id,
@@ -2220,6 +2240,22 @@ class ContractController extends Controller
         return null;
     }
 
+    /**
+     * Executivo de conta do card conforme a empresa ATIVA (multi-empresa): com Bizify,
+     * usa o executivo Bizify do cliente (o executivo_conta_id gravado é o da ERPSERV).
+     * Sem Bizify: usa o executivo gravado no projeto/contrato, senão o executivo ERPSERV do cliente.
+     */
+    private function cardExecutivoContaName(?\App\Models\Customer $customer, ?\App\Models\User $stored): ?string
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                return $customer?->executiveBizify?->name;
+            }
+        }
+        return $stored?->name ?? $customer?->executive?->name;
+    }
+
     private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
     {
         // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os subprojetos.
@@ -2253,7 +2289,7 @@ class ContractController extends Controller
             'coordination_consumed_hours' => $b['consumed'],
             'kanban_coordinator_override_id' => $project->kanban_coordinator_override_id,
             'consultants'           => $project->consultants->pluck('name'),
-            'executivo_conta_name'  => $project->executivoConta?->name ?? $project->customer?->executive?->name,
+            'executivo_conta_name'  => $this->cardExecutivoContaName($project->customer, $project->executivoConta),
             'contract_type'         => $project->contractType?->name,
             'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,

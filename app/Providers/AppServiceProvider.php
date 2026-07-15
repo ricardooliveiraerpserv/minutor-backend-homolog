@@ -34,7 +34,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Empresa ativa do request (multi-empresa) — 1 instância por request,
+        // compartilhada entre o middleware e o global scope BelongsToCompany.
+        $this->app->scoped(\App\Services\CompanyContext::class);
     }
 
     /**
