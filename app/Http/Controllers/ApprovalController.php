@@ -1009,7 +1009,7 @@ class ApprovalController extends Controller
         // Filtro por executivo responsável do cliente
         if ($request->filled('executive_id')) {
             $query->whereHas('project.customer', function ($q) use ($request) {
-                $q->where('executive_id', $request->get('executive_id'));
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $request->get('executive_id'));
             });
         }
 
@@ -1093,7 +1093,7 @@ class ApprovalController extends Controller
         // Filtro por executivo responsável do cliente
         if ($request->filled('executive_id')) {
             $query->whereHas('project.customer', function ($q) use ($request) {
-                $q->where('executive_id', $request->get('executive_id'));
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $request->get('executive_id'));
             });
         }
 

@@ -394,7 +394,7 @@ class ProjectController extends Controller
         // Filtro por executivo responsável do cliente
         if ($executiveId) {
             $query->whereHas('customer', function ($q) use ($executiveId) {
-                $q->where('executive_id', $executiveId);
+                $q->where(\App\Models\Customer::activeExecutiveColumn(), $executiveId);
             });
         }
 

@@ -228,6 +228,21 @@ class Customer extends Model
     }
 
     /**
+     * Coluna de executivo da empresa ATIVA — usada pelos FILTROS de executivo nas telas
+     * (Bizify → executive_bizify_id; ERPSERV/flag off → executive_id).
+     */
+    public static function activeExecutiveColumn(): string
+    {
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                return 'executive_bizify_id';
+            }
+        }
+        return 'executive_id';
+    }
+
+    /**
      * Executivo EFETIVO conforme a empresa ATIVA (multi-empresa): Bizify usa
      * executive_bizify_id; ERPSERV (ou flag off) usa executive_id. Base dos filtros
      * de executivo nas telas.
