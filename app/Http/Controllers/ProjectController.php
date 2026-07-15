@@ -2975,6 +2975,10 @@ class ProjectController extends Controller
             'overdue_count'        => $lateCount,
             'hours_planned'        => round($hoursPlannedTotal, 2),
             'hours_actual'         => round($hoursActualTotal, 2),
+            // Horas CONSUMIDAS do projeto (apontadas + inicial) — MESMA fonte do card "Consumidas".
+            // Usado no card "Progresso (horas)", que reflete consumo (não exige conclusão de atividade
+            // nem vínculo do apontamento a uma etapa do cronograma).
+            'hours_consumed'       => round($project->getTotalLoggedHours() + (float) ($project->initial_hours_consumed ?? 0), 2),
             'hours_balance'        => round($hoursPlannedTotal - $hoursActualTotal, 2),
             // Horas disponibilizadas à gestão (pool do cronograma): coordination_hours
             // se preenchido, senão 100% das vendidas. Saldo a alocar = disponibilizadas − planejadas.
