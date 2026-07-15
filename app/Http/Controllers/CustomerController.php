@@ -650,7 +650,11 @@ class CustomerController extends Controller
         ];
 
         foreach ($defaults as $cfg) {
-            $exists = Project::withTrashed()->where('code', $cfg['code'])->exists();
+            // code é globalmente único → checa SEM o CompanyScope (senão, na Bizify,
+            // não enxerga um code já usado sob outra empresa e viola o unique ao criar).
+            $exists = Project::withTrashed()
+                ->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class)
+                ->where('code', $cfg['code'])->exists();
             if ($exists) {
                 continue;
             }

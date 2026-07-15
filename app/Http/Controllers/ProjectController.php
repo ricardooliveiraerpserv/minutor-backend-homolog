@@ -442,6 +442,21 @@ class ProjectController extends Controller
         // só aparecem quando explicitamente solicitados (ex: dropdowns de apontamento).
         if ($request->boolean('only_investimento_comercial')) {
             $query->where('is_investimento_comercial', true);
+            // Investimento Interno é POR-CLIENTE: os projetos IC/IS/IP são únicos por
+            // cliente e o company_id neles é apenas o carimbo da empresa ativa na
+            // criação (arbitrário). Portanto NÃO filtramos pelo company_id do projeto —
+            // removemos o CompanyScope e filtramos pelo CLIENTE conforme a empresa ativa.
+            $query->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class);
+            if (config('multiempresa.scoping_enabled')) {
+                $activeId = app(\App\Services\CompanyContext::class)->id();
+                if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    // Bizify: a casa BIZIFY + clientes marcados is_bizify_customer.
+                    $query->whereHas('customer', function ($c) {
+                        $c->where('is_bizify_customer', true)
+                          ->orWhereRaw('UPPER(name) = ?', ['BIZIFY']);
+                    });
+                }
+            }
         } elseif (!$request->boolean('include_investimento_comercial')) {
             $query->where('is_investimento_comercial', false);
         } else {
