@@ -91,8 +91,17 @@ class CustomerController extends Controller
         $hasContractTypeName = $request->get('has_contract_type_name');
 
         $executiveId = $request->get('executive_id');
+        // Multi-empresa: o filtro de executivo usa a coluna da empresa ATIVA
+        // (Bizify → executive_bizify_id; senão → executive_id).
+        $execCol = 'executive_id';
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = app(\App\Services\CompanyContext::class)->id();
+            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                $execCol = 'executive_bizify_id';
+            }
+        }
 
-        $query = Customer::with('executive');
+        $query = Customer::with(['executive', 'executiveBizify']);
 
         // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
         if ($search) {
@@ -102,9 +111,9 @@ class CustomerController extends Controller
             });
         }
 
-        // Filtro por executivo responsável
+        // Filtro por executivo responsável (coluna conforme a empresa ativa)
         if ($executiveId) {
-            $query->where('executive_id', $executiveId);
+            $query->where($execCol, $executiveId);
         }
 
         // Filtro por status ativo/inativo
@@ -256,7 +265,7 @@ class CustomerController extends Controller
         $this->createInvestimentoProjects($customer);
 
         // Resposta PO-UI
-        return response()->json($customer->load('executive'), 201);
+        return response()->json($customer->load(['executive', 'executiveBizify']), 201);
     }
 
     /**
@@ -306,7 +315,7 @@ class CustomerController extends Controller
      */
     public function show(Customer $customer): JsonResponse
     {
-        return response()->json($customer->load('executive'));
+        return response()->json($customer->load(['executive', 'executiveBizify']));
     }
 
     /**
@@ -406,7 +415,7 @@ class CustomerController extends Controller
         }
 
         // Resposta PO-UI
-        return response()->json($customer->load('executive'));
+        return response()->json($customer->load(['executive', 'executiveBizify']));
     }
 
     /**
