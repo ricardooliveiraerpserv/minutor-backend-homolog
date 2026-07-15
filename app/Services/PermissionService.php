@@ -149,10 +149,10 @@ class PermissionService
             'customers.manage',
             // Parceiros — acesso total (filtro + dropdown "Empresa parceira" no cadastro de usuários)
             'partners.view', 'partners.manage',
-            // Usuários — SÓ ver a lista + resetar senha. create/update/delete REMOVIDOS: a tela
-            // /users já força reset-only p/ administrativo; antes o backend concedia CRUD total
-            // (a API aceitava criar/editar/excluir usuário mesmo com os botões escondidos).
-            'users.view', 'users.view_all',
+            // Usuários — perm-base concede o CRUD; o CORTE REAL de acesso vem do Configurador
+            // (nav_screens + middleware screen.action). Ex.: administrativo é NEGADO em
+            // create/update/delete via deny_profiles, então a API bloqueia mesmo tendo a perm-base.
+            'users.view', 'users.view_all', 'users.create', 'users.update', 'users.delete',
             'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',
             // Aprovações
             'approvals.view', 'approvals.manage',
