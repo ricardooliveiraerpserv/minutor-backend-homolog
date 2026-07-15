@@ -149,8 +149,10 @@ class PermissionService
             'customers.manage',
             // Parceiros — acesso total (filtro + dropdown "Empresa parceira" no cadastro de usuários)
             'partners.view', 'partners.manage',
-            // Usuários — acesso total
-            'users.view', 'users.view_all', 'users.create', 'users.update', 'users.delete',
+            // Usuários — SÓ ver a lista + resetar senha. create/update/delete REMOVIDOS: a tela
+            // /users já força reset-only p/ administrativo; antes o backend concedia CRUD total
+            // (a API aceitava criar/editar/excluir usuário mesmo com os botões escondidos).
+            'users.view', 'users.view_all',
             'users.reset_password', 'users.view_own_profile', 'users.update_own_profile',
             // Aprovações
             'approvals.view', 'approvals.manage',
