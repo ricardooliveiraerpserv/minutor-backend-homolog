@@ -20,6 +20,13 @@ return new class extends Migration
         if (! $erpserv || ! $bizify) {
             return;
         }
+        // projects.code era unique GLOBAL → composto com company_id (BIZIFY reusa códigos da ERPSERV).
+        if (Schema::hasColumn('projects', 'company_id')) {
+            DB::statement('ALTER TABLE projects DROP CONSTRAINT IF EXISTS projects_code_unique');
+            DB::statement('DROP INDEX IF EXISTS projects_code_unique');
+            DB::statement('CREATE UNIQUE INDEX IF NOT EXISTS projects_company_code_unique ON projects (company_id, code)');
+        }
+
         $saasSt = DB::table('service_types')->where(fn ($q) => $q->where('name', 'ilike', '%saas%')->orWhere('name', 'ilike', '%bizify%'))->value('id');
         if (! $saasSt) {
             \Illuminate\Support\Facades\Log::warning('[import SaaS] service_type SaaS/Bizify não encontrado; abortado.');
