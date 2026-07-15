@@ -227,9 +227,12 @@ class TaskController extends Controller
             'contract' => [\App\Models\Contract::class, 'project_name'],
         };
 
+        $customerId = $request->query('customer_id');
+
         $rows = $model::query()
             ->when($q !== '', fn ($w) => $w->where($col, 'ilike', "%{$q}%"))
-            ->orderBy($col)->limit(20)->get(['id', $col . ' as name']);
+            ->when($type === 'project' && $customerId, fn ($w) => $w->where('customer_id', $customerId))
+            ->orderBy($col)->limit(50)->get(['id', $col . ' as name']);
 
         return response()->json(['data' => $rows]);
     }
