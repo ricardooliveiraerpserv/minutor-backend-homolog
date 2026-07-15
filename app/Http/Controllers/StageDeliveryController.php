@@ -237,6 +237,24 @@ class StageDeliveryController extends Controller
      */
     public function move(Request $request, StageDelivery $delivery): JsonResponse
     {
+        // Consultor só move a PRÓPRIA atividade (responsável OU alocado) — mesma regra do storeComment.
+        // Coordenador/admin (projects.update) movem qualquer card. Cliente já é barrado pelo grupo.
+        $user = $request->user();
+        if ($user && method_exists($user, 'isConsultor') && $user->isConsultor()) {
+            $isResponsible = (int) $delivery->responsible_user_id === (int) $user->id;
+            $isAllocated = \App\Models\StageAllocation::query()
+                ->where('user_id', $user->id)
+                ->where(function ($q) use ($delivery) {
+                    $q->where('delivery_id', $delivery->id)
+                      ->orWhere(function ($s) use ($delivery) {
+                          $s->whereNull('delivery_id')->where('stage_id', $delivery->stage_id);
+                      });
+                })
+                ->exists();
+            if (!$isResponsible && !$isAllocated) {
+                return response()->json(['message' => 'Você só pode mover atividades sob sua responsabilidade.'], 403);
+            }
+        }
 
         $data = $request->validate([
             'status'        => ['required', Rule::in(StageDelivery::STATUSES)],
