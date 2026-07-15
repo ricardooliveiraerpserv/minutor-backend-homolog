@@ -455,6 +455,11 @@ class ProjectController extends Controller
                         $c->where('is_bizify_customer', true)
                           ->orWhereRaw('UPPER(name) = ?', ['BIZIFY']);
                     });
+                    // Na Bizify todo cliente segue o PADRÃO dos 3 projetos canônicos
+                    // (IC/IS/IP criados em createInvestimentoProjects). Extras específicos
+                    // da casa (ex.: ERPSERV com Cloud/Day Off/Visita) só aparecem na tela
+                    // da própria empresa.
+                    $query->whereIn('name', ['Investimento Comercial', 'Investimento Suporte', 'Investimento Projetos']);
                 }
             }
         } elseif (!$request->boolean('include_investimento_comercial')) {
