@@ -116,6 +116,13 @@ class CustomerController extends Controller
             $query->where($execCol, $executiveId);
         }
 
+        // Multi-empresa: com Bizify ATIVO a lista traz só clientes Bizify (com projeto
+        // Bizify ou vinculados). O picker "do cadastro geral" pede a base toda com
+        // ?bizify_scope=all. ERPSERV (ou flag off) segue mostrando todos.
+        if ($execCol === 'executive_bizify_id' && $request->get('bizify_scope') !== 'all') {
+            $query->where('is_bizify_customer', true);
+        }
+
         // Filtro por status ativo/inativo
         if ($request->has('active')) {
             $active = $request->boolean('active');
@@ -209,6 +216,7 @@ class CustomerController extends Controller
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
             'executive_bizify_id' => 'nullable|exists:users,id',
+            'is_bizify_customer' => 'sometimes|boolean',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
@@ -358,6 +366,7 @@ class CustomerController extends Controller
             'active' => 'nullable|boolean',
             'executive_id' => 'nullable|exists:users,id',
             'executive_bizify_id' => 'nullable|exists:users,id',
+            'is_bizify_customer' => 'sometimes|boolean',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix,' . $customer->id,
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
