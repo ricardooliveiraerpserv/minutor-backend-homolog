@@ -389,6 +389,7 @@ class UserController extends Controller
             'is_executive' => 'sometimes|boolean',
             'is_coordinator' => 'sometimes|boolean',
             'is_bizify' => 'sometimes|boolean',
+            'is_bizify_coordinator' => 'sometimes|boolean',
             'home_company_id' => 'sometimes|nullable|integer|exists:companies,id', // empresa da folha (deriva is_bizify)
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'nullable|array',
@@ -648,6 +649,7 @@ class UserController extends Controller
             'is_executive' => 'sometimes|boolean',
             'is_coordinator' => 'sometimes|boolean',
             'is_bizify' => 'sometimes|boolean',
+            'is_bizify_coordinator' => 'sometimes|boolean',
             'home_company_id' => 'sometimes|nullable|integer|exists:companies,id', // empresa da folha (deriva is_bizify)
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'sometimes|array',
