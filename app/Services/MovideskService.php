@@ -1291,6 +1291,21 @@ class MovideskService
         return !$reaberto;
     }
 
+    /** Empresa da integração Movidesk: SEMPRE ERPSERV (resolvida por slug, cacheada). */
+    private ?int $erpservCompanyIdCache = null;
+    private function erpservCompanyId(): ?int
+    {
+        if ($this->erpservCompanyIdCache !== null) {
+            return $this->erpservCompanyIdCache;
+        }
+        try {
+            $id = \App\Models\Company::where('slug', 'erpserv')->value('id');
+            return $this->erpservCompanyIdCache = ($id ? (int) $id : null);
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
     private function createTimesheet(array $data): void
     {
         DB::beginTransaction();
@@ -1319,6 +1334,11 @@ class MovideskService
             $timesheet->movidesk_appointment_id = $data['movidesk_appointment_id'] ?? null;
             $timesheet->is_internal_action      = $data['is_internal_action'] ?? false;
             $timesheet->origin                  = $data['origin'] ?? 'webhook';
+            // Multi-empresa: o sync roda no scheduler (sem empresa ativa), então o
+            // BelongsToCompany não carimba e o apontamento nasceria com company_id NULL
+            // — ficando INVISÍVEL na tela (CompanyScope). A integração Movidesk é 100%
+            // ERPSERV, então carimbamos explicitamente aqui.
+            $timesheet->company_id              = $this->erpservCompanyId();
 
             // SÓ apontamento GENUINAMENTE NOVO vira atraso. Se já existiu um apontamento
             // (mesmo soft-deletado) pra este movidesk_appointment_id, é RECRIAÇÃO do
