@@ -59,8 +59,9 @@ class FechamentoNotaController extends Controller
         // Prazo de envio: notas não são aceitas após o dia 15 do mês SEGUINTE à competência
         // (ex.: competência 05/2026 → prazo 15/06/2026), salvo liberação do administrativo
         // para este notable+mês — admin sempre pode enviar.
-        $deadline = \Carbon\Carbon::parse($yearMonth . '-01')->addMonthNoOverflow()->day(15)->endOfDay();
-        if (now()->greaterThan($deadline) && !(auth()->user()->isAdmin() || auth()->user()->isAdministrativo())) {
+        // Prazo no fuso do Brasil (servidor roda em UTC): senão o dia 15 à noite no BR já é dia 16 em UTC.
+        $deadline = \Carbon\Carbon::parse($yearMonth . '-01', 'America/Sao_Paulo')->addMonthNoOverflow()->day(15)->endOfDay();
+        if (\Carbon\Carbon::now('America/Sao_Paulo')->greaterThan($deadline) && !(auth()->user()->isAdmin() || auth()->user()->isAdministrativo())) {
             $existing = FechamentoNota::where('notable_type', get_class($model))
                 ->where('notable_id', $model->id)
                 ->where('year_month', $yearMonth)
