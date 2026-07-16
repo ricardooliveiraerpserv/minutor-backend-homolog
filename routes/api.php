@@ -920,6 +920,7 @@ Route::prefix('v1')->group(function () {
             Route::patch('/projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.update-status');
             Route::get('/projects/{project}/saving', [ProjectController::class, 'saving'])->name('projects.saving');
             Route::post('/projects/{project}/send-saving', [ProjectController::class, 'sendSaving'])->name('projects.send-saving');
+            Route::patch('/projects/{project}/delivery', [ProjectController::class, 'updateDelivery'])->name('projects.update-delivery');
             Route::put('/projects/{project}', [ProjectController::class, 'update'])->name('projects.update');
             Route::patch('/projects/{project}', [ProjectController::class, 'update'])->name('projects.patch');
             Route::put('/projects/{project}/sold-hours-history/{history}', [ProjectController::class, 'updateSoldHoursHistory'])->name('projects.sold-hours-history.update');
