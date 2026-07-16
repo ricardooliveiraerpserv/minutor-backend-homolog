@@ -4238,6 +4238,31 @@ class ProjectController extends Controller
         ]);
     }
 
+    /** Edição inline (tabela Demandas e Projetos): datas de prazo + percentual de entrega. Cliente não edita. */
+    public function updateDelivery(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if ($user->type === 'cliente') {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        $validated = $request->validate([
+            'start_date'          => 'nullable|date',
+            'expected_end_date'   => 'nullable|date',
+            'delivery_percentage' => 'nullable|numeric|min:0|max:100',
+        ]);
+
+        $project->fill($validated);
+        $project->save();
+
+        return response()->json([
+            'success'             => true,
+            'start_date'          => $project->start_date?->toDateString(),
+            'expected_end_date'   => $project->expected_end_date?->toDateString(),
+            'delivery_percentage' => $project->delivery_percentage,
+        ]);
+    }
+
     public function icAnalytics(Request $request): JsonResponse
     {
         $user = $request->user();

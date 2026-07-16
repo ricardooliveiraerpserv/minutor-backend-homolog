@@ -2372,6 +2372,7 @@ class ContractController extends Controller
             'project_value'         => $project->project_value,
             'start_date'            => $project->start_date,
             'expected_end_date'     => $project->expected_end_date,
+            'delivery_percentage'   => $project->delivery_percentage,
             'coordinator_ids'       => $project->coordinators->pluck('id'),
             'coordinators'          => $project->coordinators->pluck('name'),
             // Banco de coordenação — pra lente do coordenador no card (vendidas = banco).
