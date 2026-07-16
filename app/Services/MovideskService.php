@@ -51,9 +51,11 @@ class MovideskService
     public function fetchTicket(int $ticketId): ?array
     {
         try {
-            // Timeout curto: tickets travados não devem bloquear o lote inteiro
-            // (job roda a cada 5min e processa dezenas de tickets em sequência).
-            $response = Http::timeout(5)->get("{$this->baseUrl()}/tickets", [
+            // Timeout: a API do Movidesk degradou e tickets normais chegam a 13s+ nesta
+            // query (com $expand pesado). Com 5s TUDO estourava (cURL 28) e ia pra blacklist.
+            // 20s cobre a variação medida e ainda evita que um ticket travado segure o lote
+            // (o scheduler tem mutex; o slow-lane reprocessa o que passar disso).
+            $response = Http::timeout(20)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
                 '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
