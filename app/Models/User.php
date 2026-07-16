@@ -344,6 +344,19 @@ class User extends Authenticatable
         }
         return [$type];
     }
+
+    /**
+     * Agente do Help Desk = vinculado a ALGUMA equipe. Mesma definição do
+     * HelpDeskController::agents ("promovidos automaticamente ao entrar na equipe").
+     * Usado p/ esconder o Help Desk do menu de quem não atende, mesmo com a tela
+     * presente na árvore do Configurador.
+     */
+    public function isHelpDeskAgent(): bool
+    {
+        return \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
+            ->where('user_id', $this->id)
+            ->exists();
+    }
     public function isParceiroAdmin(): bool { return $this->effectiveType() === 'parceiro_admin'; }
 
     // ── BOT: equipe e clientes acessíveis ─────────────────────────────
