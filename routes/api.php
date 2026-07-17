@@ -1267,6 +1267,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['permission.or.admin:users.reset_password', 'screen.action:/users,resend_welcome'])->group(function () {
             Route::post('/users/{user}/resend-welcome', [UserController::class, 'resendWelcome'])->name('users.resend-welcome');
             Route::post('/users/resend-welcome-bulk',   [UserController::class, 'resendWelcomeBulk'])->name('users.resend-welcome-bulk');
+            // Convite (fase 1b): ativa um pré-cadastro cliente (senha temp + enable + e-mail).
+            Route::post('/users/{user}/invite',         [UserController::class, 'invite'])->name('users.invite');
         });
 
         // Histórico de alterações de valor hora
