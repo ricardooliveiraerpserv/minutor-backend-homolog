@@ -129,6 +129,13 @@ class HelpDeskEmailIngestor
             $contact = CustomerContact::create(['customer_id' => $customerId, 'name' => $fromName, 'email' => $fromEmail]);
         }
 
+        // Pré-cadastro de USUÁRIO cliente (paridade Movidesk): remetente identificado por
+        // empresa vira um usuário type=cliente com acesso SÓ ao Help Desk, SEM senha — não
+        // loga até ser convidado (fase 1b). Dedup por e-mail; nunca quebra a ingestão.
+        if ($customerId && $fromEmail) {
+            $this->preRegisterClientUser($fromEmail, $fromName, (int) $customerId, $rule);
+        }
+
         // Política de abertura (accept_from).
         $acceptFrom = $settings['accept_from'] ?? 'any';
         $allowed = match ($acceptFrom) {
@@ -436,6 +443,56 @@ class HelpDeskEmailIngestor
     private function systemActor(): ?User
     {
         return $this->actor ??= (User::where('type', 'admin')->orderBy('id')->first() ?? User::orderBy('id')->first());
+    }
+
+    /**
+     * Pré-cadastro de usuário cliente a partir do e-mail (fase 1a).
+     *
+     * Cria um `users` type=cliente, vinculado à empresa (customer) identificada pelo
+     * domínio, com acesso SÓ ao Help Desk (allowed_modules=['help_desk']) e SEM senha
+     * (coluna nullable) — `enabled=false`. Não loga até o convite (fase 1b) definir senha.
+     *
+     * Idempotente por e-mail: se já existe QUALQUER usuário com esse e-mail (cliente ou
+     * interno), não faz nada — nunca sobrescreve. Envolto em try/catch: falha aqui não
+     * pode derrubar a ingestão do e-mail/ticket.
+     */
+    private function preRegisterClientUser(string $email, ?string $name, int $customerId, ?HelpDeskAssociationRule $rule): void
+    {
+        try {
+            if (User::where('email', $email)->exists()) {
+                return; // já existe — não mexe (inclusive usuários internos)
+            }
+
+            $companyId = $rule?->company_id ?? 1;
+            $profileId = $rule?->access_profile_id
+                ?? \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
+                    ->where('is_default', true)
+                    ->where('company_id', $companyId)
+                    ->value('id');
+
+            $user = new User();
+            $user->forceFill([
+                'name'                       => $name ?: $email,
+                'email'                      => $email,
+                'type'                       => 'cliente',
+                'customer_id'                => $customerId,
+                'allowed_modules'            => ['help_desk'],
+                'helpdesk_access_profile_id' => $profileId,
+                'home_company_id'            => $companyId,
+                'current_company_id'         => $companyId,
+                'enabled'                    => false, // pendente: sem senha, aguarda convite (1b)
+                // password OMITIDO => NULL (coluna nullable) => verifyPassword() barra o login
+            ])->save();
+
+            \Log::info('🆕 [HD INGEST] Usuário cliente pré-cadastrado (sem senha)', [
+                'user_id' => $user->id, 'email' => $email, 'customer_id' => $customerId,
+                'company_id' => $companyId, 'helpdesk_access_profile_id' => $profileId,
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('⚠️ [HD INGEST] Falha ao pré-cadastrar usuário cliente', [
+                'email' => $email, 'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function ledger(
