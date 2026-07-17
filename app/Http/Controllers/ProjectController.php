@@ -2919,9 +2919,12 @@ class ProjectController extends Controller
             return response()->json(null);
         }
 
+        // A aba "Comentários" do projeto é o histórico do canal do cliente (visibility='client').
+        // O Diário interno da requisição (visibility='internal') NÃO entra aqui.
         $req = \App\Models\ContractRequest::with([
             'customer:id,name',
             'createdBy:id,name',
+            'messages' => fn ($q) => $q->where('visibility', 'client')->orderBy('created_at'),
             'messages.author:id,name',
             'messages.attachments',
         ])->find($project->contract_request_id);
