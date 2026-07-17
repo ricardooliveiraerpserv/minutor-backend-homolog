@@ -137,14 +137,22 @@ class ProjectStageController extends Controller
         $user = $request->user();
         $isConsultor = $user && method_exists($user, 'isConsultor') && $user->isConsultor();
 
+        // Consultor só enxerga as próprias atividades. Admin/coord podem filtrar por um
+        // user_id específico (o "dono da hora" no modal de apontamento) — assim o campo
+        // Atividade só traz o que aquele consultor está alocado. Sem user_id (e não-consultor)
+        // = todas as atividades do projeto (comportamento antigo).
+        $filterUserId = $isConsultor
+            ? (int) $user->id
+            : ($request->filled('user_id') ? (int) $request->input('user_id') : null);
+
         $stages = $project->stages()
-            ->with(['deliveries' => function ($q) use ($isConsultor, $user) {
+            ->with(['deliveries' => function ($q) use ($filterUserId) {
                 $q->select('id', 'stage_id', 'title', 'status', 'order_index')
                   ->orderBy('order_index');
-                if ($isConsultor) {
-                    $q->where(function ($w) use ($user) {
-                        $w->where('responsible_user_id', $user->id)
-                          ->orWhereHas('allocations', fn ($a) => $a->where('user_id', $user->id));
+                if ($filterUserId) {
+                    $q->where(function ($w) use ($filterUserId) {
+                        $w->where('responsible_user_id', $filterUserId)
+                          ->orWhereHas('allocations', fn ($a) => $a->where('user_id', $filterUserId));
                     });
                 }
             }])
