@@ -71,6 +71,9 @@ class User extends Authenticatable
         'has_temporary_password',
         'temporary_password_expires_at',
         'customer_id',
+        // Acesso a módulos por usuário (cliente): ['projetos','help_desk']. NULL = todos.
+        // Não é vetor de escalada: só RESTRINGE o próprio cliente. Ver EnsureClienteModule.
+        'allowed_modules',
         'partner_id',
         'signature',
         'birth_date',
@@ -138,6 +141,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'allowed_modules' => 'array',
             'enabled' => 'boolean',
             'can_use_bot' => 'boolean',
             'bot_allowed_scopes' => 'array',
@@ -304,6 +308,28 @@ class User extends Authenticatable
     public function isCoordenador(): bool      { return $this->effectiveType() === 'coordenador'; }
     public function isConsultor(): bool     { return $this->effectiveType() === 'consultor'; }
     public function isCliente(): bool       { return $this->effectiveType() === 'cliente'; }
+
+    /**
+     * Módulos que ESTE usuário cliente enxerga: ['projetos','help_desk'].
+     * NULL na coluna = todos (legado). Só faz sentido para cliente; para os
+     * demais perfis o gating é por NavModule::keysForProfile e este método
+     * devolve null (= sem recorte).
+     */
+    public function allowedModulesList(): ?array
+    {
+        if (!$this->isCliente()) {
+            return null;
+        }
+        $mods = $this->allowed_modules;
+        return is_array($mods) ? array_values($mods) : null; // null = todos
+    }
+
+    /** Cliente pode acessar o módulo? NULL (todos) libera. */
+    public function canAccessClientModule(string $module): bool
+    {
+        $mods = $this->allowedModulesList();
+        return $mods === null || in_array($module, $mods, true);
+    }
 
     /**
      * Papel EFETIVO p/ permissões (multi-empresa): com a flag ligada E empresa ativa,
