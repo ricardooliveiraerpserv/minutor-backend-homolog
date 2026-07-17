@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ContractRequestMessage extends Model
 {
-    protected $fillable = ['contract_request_id', 'user_id', 'message'];
+    protected $fillable = ['contract_request_id', 'user_id', 'message', 'visibility'];
 
     public function request(): BelongsTo
     {
