@@ -230,6 +230,9 @@ class UserController extends Controller
         $items = collect($users->items())->map(function ($user) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            // Pré-cadastro pendente de convite (fase 1a/1b): cliente sem senha, desabilitado.
+            // `password` não é serializado (hidden), então o FE precisa deste booleano derivado.
+            $userData['is_pending_invite'] = $user->type === 'cliente' && !$user->enabled && $user->password === null;
             return $userData;
         })->toArray();
 
@@ -1009,6 +1012,61 @@ class UserController extends Controller
 
         return response()->json([
             'message'    => 'E-mail de boas-vindas reenviado com sucesso',
+            'email_sent' => $emailSent,
+        ]);
+    }
+
+    /**
+     * Convite (fase 1b): ativa um usuário cliente PRÉ-CADASTRADO pela ingestão de
+     * e-mail (type=cliente, enabled=false, senha nula). Define uma senha temporária,
+     * habilita o login e envia o e-mail de boas-vindas. No 1º acesso o cliente é
+     * forçado a trocar a senha (fluxo has_temporary_password do AuthController).
+     *
+     * Reusa setTemporaryPassword + WelcomeNotification (mesmo motor do resendWelcome).
+     */
+    public function invite(Request $request, int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        if (!$currentUser->isAdmin() && !$currentUser->hasAccess('users.reset_password')) {
+            return $this->accessDeniedResponse('Você não tem permissão para convidar usuários');
+        }
+
+        $user = User::find($id);
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        // Só pré-cadastro pendente: cliente, desabilitado, sem senha. Evita "ativar"
+        // por engano um usuário interno ou um cliente já ativo.
+        if (!($user->type === 'cliente' && !$user->enabled && $user->password === null)) {
+            return $this->validationErrorResponse(['Este usuário não é um pré-cadastro pendente de convite.']);
+        }
+
+        $temporaryPassword = $this->generateTemporaryPassword();
+
+        DB::beginTransaction();
+        try {
+            $user->setTemporaryPassword($temporaryPassword, 72); // 72h p/ o cliente ativar
+            $user->forceFill(['enabled' => true])->save();       // libera o login
+            DB::commit();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return $this->serverErrorResponse('Erro ao convidar usuário: ' . $e->getMessage());
+        }
+
+        $emailSent = false;
+        try {
+            $user->notify(new WelcomeNotification($temporaryPassword));
+            $emailSent = true;
+        } catch (\Exception $e) {
+            \Log::error('Falha ao enviar e-mail de convite', [
+                'user_id' => $user->id,
+                'error'   => $e->getMessage(),
+            ]);
+        }
+
+        return response()->json([
+            'message'    => 'Convite enviado. O cliente recebeu uma senha temporária por e-mail.',
             'email_sent' => $emailSent,
         ]);
     }
