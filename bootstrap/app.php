@@ -41,6 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
             'screen.action'       => \App\Http\Middleware\ScreenActionAccess::class,
             'company.context'     => \App\Http\Middleware\ResolveActiveCompany::class,
+            'cliente.module'      => \App\Http\Middleware\EnsureClienteModule::class,
         ]);
 
         // Guest em rota /api não tem pra onde redirecionar: devolvendo null aqui, o
