@@ -69,7 +69,9 @@ class HelpDeskAccessProfileController extends Controller
     public function people(Request $request): JsonResponse
     {
         $kind = $request->get('kind') === 'cliente' ? 'cliente' : 'agent';
-        $q = User::query()->select('id', 'name', 'type', 'helpdesk_access_profile_id');
+        // customer_id + helpdesk_department_id: p/ a tela de Pessoas oferecer o
+        // departamento (escopo por cliente). Ver HelpDeskDepartmentController.
+        $q = User::query()->select('id', 'name', 'type', 'helpdesk_access_profile_id', 'customer_id', 'helpdesk_department_id');
         $kind === 'cliente'
             ? $q->where('type', 'cliente')
             : $q->whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor']);
