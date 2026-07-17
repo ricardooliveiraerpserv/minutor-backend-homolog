@@ -312,6 +312,15 @@ Route::prefix('v1')->group(function () {
         Route::delete('/help-desk/kb/categories/{kbCategory}', [\App\Http\Controllers\HelpDeskKbCategoryController::class, 'destroy']);
         Route::patch('/help-desk/people/access-profile/bulk',        [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'bulkSetAccessProfile']);
         Route::patch('/help-desk/people/{user}/access-profile',      [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setAccessProfile']);
+        // Departamentos do Help Desk (escopo por cliente) + vínculo pessoa↔departamento.
+        // Gestão interna — block.cliente barra o perfil cliente no backend (2ª camada).
+        Route::middleware('block.cliente')->group(function () {
+            Route::get('/help-desk/departments',                     [\App\Http\Controllers\HelpDeskDepartmentController::class, 'index']);
+            Route::post('/help-desk/departments',                    [\App\Http\Controllers\HelpDeskDepartmentController::class, 'store']);
+            Route::put('/help-desk/departments/{department}',        [\App\Http\Controllers\HelpDeskDepartmentController::class, 'update']);
+            Route::delete('/help-desk/departments/{department}',     [\App\Http\Controllers\HelpDeskDepartmentController::class, 'destroy']);
+            Route::patch('/help-desk/people/{user}/department',      [\App\Http\Controllers\HelpDeskDepartmentController::class, 'setPersonDepartment']);
+        });
         Route::get('/help-desk/portal/kb/{article}',     [\App\Http\Controllers\HelpDeskPortalController::class, 'kbShow']);
         Route::get('/help-desk/portal/tickets/{ticket}', [\App\Http\Controllers\HelpDeskPortalController::class, 'showTicket']);
         Route::patch('/help-desk/tickets/{ticket}/assign', [\App\Http\Controllers\HelpDeskTicketController::class, 'assign']);
