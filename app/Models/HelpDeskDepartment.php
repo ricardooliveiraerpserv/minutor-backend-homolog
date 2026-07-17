@@ -14,6 +14,9 @@ class HelpDeskDepartment extends Model
 {
     use SoftDeletes;
 
+    // Laravel inferiria 'help_desk_departments' (com _); a tabela é 'helpdesk_departments'.
+    protected $table = 'helpdesk_departments';
+
     protected $fillable = ['customer_id', 'name', 'active', 'company_id'];
 
     protected $casts = ['active' => 'boolean'];
