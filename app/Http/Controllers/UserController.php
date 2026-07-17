@@ -1054,20 +1054,37 @@ class UserController extends Controller
             return $this->serverErrorResponse('Erro ao convidar usuário: ' . $e->getMessage());
         }
 
+        // TRAVA de e-mail: a WelcomeNotification usa canal SMTP, que NÃO passa pela
+        // MAIL_ALLOWLIST (só o GraphMailSender respeita). Aqui aplicamos a mesma trava:
+        // com allowlist setada, só envia p/ endereços permitidos; senão, ativa o usuário
+        // e devolve a senha temporária p/ repasse MANUAL, sem disparar e-mail a ninguém.
+        $allow = \App\Services\GraphMailSender::allowlist();
+        $recipientAllowed = empty($allow) || in_array(strtolower((string) $user->email), $allow, true);
+
         $emailSent = false;
-        try {
-            $user->notify(new WelcomeNotification($temporaryPassword));
-            $emailSent = true;
-        } catch (\Exception $e) {
-            \Log::error('Falha ao enviar e-mail de convite', [
-                'user_id' => $user->id,
-                'error'   => $e->getMessage(),
+        if ($recipientAllowed) {
+            try {
+                $user->notify(new WelcomeNotification($temporaryPassword));
+                $emailSent = true;
+            } catch (\Exception $e) {
+                \Log::error('Falha ao enviar e-mail de convite', [
+                    'user_id' => $user->id,
+                    'error'   => $e->getMessage(),
+                ]);
+            }
+        } else {
+            \Log::info('✋ [CONVITE] E-mail suprimido (fora da MAIL_ALLOWLIST) — repasse manual', [
+                'user_id' => $user->id, 'email' => $user->email,
             ]);
         }
 
         return response()->json([
-            'message'    => 'Convite enviado. O cliente recebeu uma senha temporária por e-mail.',
+            'message'    => $emailSent
+                ? 'Convite enviado. O cliente recebeu uma senha temporária por e-mail.'
+                : 'Usuário ativado. E-mail NÃO enviado (bloqueado pela allowlist do ambiente) — repasse a senha temporária manualmente.',
             'email_sent' => $emailSent,
+            // Só devolve a senha quando NÃO enviou e-mail (p/ o admin repassar). Padrão do resetPassword.
+            'temporary_password' => $emailSent ? null : $temporaryPassword,
         ]);
     }
 
