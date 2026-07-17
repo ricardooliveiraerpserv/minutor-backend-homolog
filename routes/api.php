@@ -176,7 +176,7 @@ Route::prefix('v1')->group(function () {
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
         ->middleware('throttle:30,1')->name('integrations.microsoft.callback');
 
-    Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
+    Route::middleware(['auth:sanctum', 'company.context', 'cliente.module'])->group(function () {
         // ===== Multi-empresa: contexto do usuário (troca de empresa sem logout) =====
         Route::get('/my-companies', [\App\Http\Controllers\CompanyController::class, 'myCompanies'])->name('companies.mine');
         Route::post('/set-company', [\App\Http\Controllers\CompanyController::class, 'setCompany'])->name('companies.set');
