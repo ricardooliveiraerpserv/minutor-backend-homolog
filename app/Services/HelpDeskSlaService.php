@@ -416,6 +416,25 @@ class HelpDeskSlaService
     }
 
     /**
+     * Resumo ENXUTO p/ a LISTAGEM/fila: só os 4 flags que o card lê (breached/overdue de 1ª resposta
+     * e resolução) + paused. Pula as ~8 serializações Carbon de datas (toIso8601String) do summary()
+     * completo — multiplicadas por 500 tickets custavam caro no CPU. O detalhe usa summary().
+     */
+    public function listSummary(HelpDeskTicket $t, ?Collection $events = null): array
+    {
+        $now = now();
+        $effFr  = $this->effectiveDue(optional($t->first_response_due_at) ? Carbon::parse($t->first_response_due_at) : null, $t, $now, $events);
+        $effRes = $this->effectiveDue(optional($t->resolution_due_at) ? Carbon::parse($t->resolution_due_at) : null, $t, $now, $events);
+        return [
+            'paused'                  => $this->isPausedNow($t) || $this->isSchedulePaused($t),
+            'first_response_breached' => (bool) $t->first_response_breached,
+            'resolution_breached'     => (bool) $t->resolution_breached,
+            'first_response_overdue'  => !$t->first_responded_at && $effFr && $now->greaterThan($effFr),
+            'resolution_overdue'      => !$t->resolved_at && $effRes && $now->greaterThan($effRes),
+        ];
+    }
+
+    /**
      * Resumo de SLA voltado ao CLIENTE (Portal). Sem flags internas de violação,
      * sem timing de primeira resposta interno: só o que faz sentido para o cliente.
      */

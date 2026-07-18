@@ -33,7 +33,21 @@ class HelpDeskTicketController extends Controller
         ]);
     }
 
-    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null): array
+    /**
+     * Relações MÍNIMAS da LISTAGEM/fila (index). O card só usa customer, assignee, status e o
+     * solicitante (contact/requester p/ montar o nome). Carregar as 11 relações do detalhe aqui
+     * (contract/project/service/justification/category/team) multiplica a serialização por 500
+     * tickets sem ninguém ler. O detalhe (show/store/update) continua usando withRels completo.
+     */
+    private function withListRels($q)
+    {
+        return $q->with([
+            'customer:id,name', 'contact:id,name', 'requester:id,name',
+            'status:id,key,label,color,is_open,is_resolved,is_terminal', 'assignee:id,name',
+        ]);
+    }
+
+    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false): array
     {
         // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
         $solicitante = optional($t->contact)->name ?: optional($t->requester)->name ?: $t->requester_name;
@@ -42,7 +56,8 @@ class HelpDeskTicketController extends Controller
         $diasSemInteracao = ($ref && $cal) ? max(0, $cal->businessDaysBetween($ref, now()) - 1) : 0;
 
         return array_merge($t->toArray(), [
-            'sla'                    => $this->sla->summary($t, $events),
+            // Na LISTA (lean) o card só lê os flags do SLA — listSummary pula a serialização de datas.
+            'sla'                    => $lean ? $this->sla->listSummary($t, $events) : $this->sla->summary($t, $events),
             'solicitante_nome'       => $solicitante,
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
             'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
@@ -81,7 +96,7 @@ class HelpDeskTicketController extends Controller
     private function filtered(Request $request)
     {
         $user = $request->user();
-        return $this->access->applyViewScope($this->withRels(HelpDeskTicket::query()), $user) // perfil: escopo de visão
+        return $this->access->applyViewScope($this->withListRels(HelpDeskTicket::query()), $user) // perfil: escopo de visão
             ->whereNull('merged_into_id') // chamados mesclados somem das listagens (ficam no destino)
             ->when($request->filled('status_id'), fn ($q) => $q->where('status_id', $request->status_id))
             ->when($request->filled('status_key'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('key', $request->status_key)))
@@ -128,7 +143,7 @@ class HelpDeskTicketController extends Controller
         $events = $this->eventsByTicket($tickets->where('sla_ever_paused', true)->values());
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
         $cal = app(\App\Services\BusinessCalendarService::class);
-        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal))]);
+        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true))]);
     }
 
     /**
