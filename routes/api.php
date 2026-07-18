@@ -293,7 +293,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/help-desk/teams/{team}',            [\App\Http\Controllers\HelpDeskTeamController::class, 'update']);
         Route::delete('/help-desk/teams/{team}',         [\App\Http\Controllers\HelpDeskTeamController::class, 'destroy']);
         Route::post('/help-desk/tickets/redistribute', [\App\Http\Controllers\HelpDeskTicketController::class, 'bulkAssign']);
-        Route::get('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'show']);
+        Route::get('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'show'])->whereNumber('ticket');
         Route::put('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'update']);
         Route::delete('/help-desk/tickets/{ticket}',     [\App\Http\Controllers\HelpDeskTicketController::class, 'destroy']);
         Route::post('/help-desk/triggers/apply-recipe', [\App\Http\Controllers\HelpDeskTriggerController::class, 'applyRecipe']);
