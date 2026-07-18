@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Attachments\AttachmentService;
 use App\Attachments\Storage\LocalStorageProvider;
 use App\Attachments\Storage\S3StorageProvider;
+use App\Attachments\Storage\SupabaseStorageProvider;
 use App\Attachments\Storage\StorageProvider;
 use Illuminate\Support\ServiceProvider;
 
@@ -22,8 +23,9 @@ class AttachmentsServiceProvider extends ServiceProvider
             // Driver por env (default local). Só ambientes com ATTACHMENTS_DRIVER=s3
             // (+ AWS_*/Supabase configurados) usam o bucket — mantém local no resto.
             return match (strtolower((string) env('ATTACHMENTS_DRIVER', 'local'))) {
-                's3'    => new S3StorageProvider(),
-                default => new LocalStorageProvider(),
+                's3'       => new S3StorageProvider(),
+                'supabase' => new SupabaseStorageProvider(),
+                default    => new LocalStorageProvider(),
             };
         });
 
