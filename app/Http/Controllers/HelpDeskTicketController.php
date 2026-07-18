@@ -52,8 +52,13 @@ class HelpDeskTicketController extends Controller
         // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
         $solicitante = optional($t->contact)->name ?: optional($t->requester)->name ?: $t->requester_name;
         // Dias ÚTEIS sem interação da EQUIPE: referência = última interação de agente OU abertura.
+        // NÃO conta quando a bola NÃO está com a equipe: encerrados (fechado/cancelado), entregues
+        // (resolvido/solução com GMUD), aguardando cliente/terceiros, ou agendado (reunião marcada).
+        $semIntExcl = ['fechado', 'cancelado', 'resolvido', 'solucao_gmud', 'aguardando_cliente', 'pendente_terceiros', 'reuniao_agendada'];
+        $foraDaFilaEquipe = in_array(optional($t->status)->key, $semIntExcl, true)
+            || ($t->scheduled_until && \Illuminate\Support\Carbon::parse($t->scheduled_until)->isFuture());
         $ref = $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt) : $t->created_at;
-        $diasSemInteracao = ($ref && $cal) ? max(0, $cal->businessDaysBetween($ref, now()) - 1) : 0;
+        $diasSemInteracao = (!$foraDaFilaEquipe && $ref && $cal) ? max(0, $cal->businessDaysBetween($ref, now()) - 1) : 0;
 
         return array_merge($t->toArray(), [
             // Na LISTA (lean) o card só lê os flags do SLA — listSummary pula a serialização de datas.
