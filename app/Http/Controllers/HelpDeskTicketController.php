@@ -116,10 +116,22 @@ class HelpDeskTicketController extends Controller
             ->when($request->boolean('mine'), fn ($q) => $q->where('assignee_id', $user?->id))
             ->when($request->boolean('unassigned'), fn ($q) => $q->whereNull('assignee_id'))
             ->when($request->boolean('breached'), fn ($q) => $q->where(fn ($w) => $w->where('first_response_breached', true)->orWhere('resolution_breached', true)))
+            // Busca ÚNICA da fila — respeita todos os filtros (roda dentro do filtered()): assunto,
+            // descrição, cliente, solicitante/responsável/contato E conteúdo das interações.
             ->when($request->filled('search'), function ($q) use ($request) {
                 $s = '%' . $request->search . '%';
-                $q->where(fn ($w) => $w->where('subject', 'ilike', $s)->orWhere('ticket_number', 'ilike', $s)->orWhere('description', 'ilike', $s));
+                $q->where(fn ($w) => $w
+                    ->where('subject', 'ilike', $s)
+                    ->orWhere('description', 'ilike', $s)
+                    ->orWhere('requester_name', 'ilike', $s)
+                    ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $s))
+                    ->orWhereHas('assignee', fn ($a) => $a->where('name', 'ilike', $s))
+                    ->orWhereHas('contact', fn ($c) => $c->where('name', 'ilike', $s))
+                    ->orWhereHas('requester', fn ($r) => $r->where('name', 'ilike', $s))
+                    ->orWhereHas('comments', fn ($cm) => $cm->whereNull('deleted_at')->where('body', 'ilike', $s)));
             })
+            // Filtro DEDICADO por número do chamado (campo separado da busca geral).
+            ->when($request->filled('ticket'), fn ($q) => $q->where('ticket_number', 'ilike', '%' . $request->ticket . '%'))
             ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
             // ESCALA: filtro de DATA no banco (usa índice created_at) — a fila deixa de carregar "os N
             // mais recentes de toda a história" e passa a varrer só o período pedido.
