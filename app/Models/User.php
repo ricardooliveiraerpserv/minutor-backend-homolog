@@ -372,13 +372,28 @@ class User extends Authenticatable
     }
 
     /**
-     * Agente do Help Desk = vinculado a ALGUMA equipe. Mesma definição do
-     * HelpDeskController::agents ("promovidos automaticamente ao entrar na equipe").
+     * "Definido como agente" do Help Desk. Existem DUAS formas de designar alguém
+     * agente no sistema — qualquer uma vale:
+     *  1. Perfil de Acesso `kind='agent'` (Config. do Help Desk › Pessoas › Agentes).
+     *     É o ato explícito na tela; `helpdesk_access_profile_id` aponta pro perfil.
+     *  2. Vínculo com alguma equipe (`helpdesk_team_user`) — o HelpDeskController::agents
+     *     trata membro de equipe como agente ("promovido automaticamente ao entrar").
+     *
+     * ⚠️ NÃO confundir com a aba "Agentes" da tela Pessoas: ela lista TODO usuário
+     * interno (HelpDeskAccessProfileController::people filtra só por users.type), então
+     * aparecer lá não designa ninguém.
+     *
      * Usado p/ esconder o Help Desk do menu de quem não atende, mesmo com a tela
      * presente na árvore do Configurador.
      */
     public function isHelpDeskAgent(): bool
     {
+        if ($this->helpdesk_access_profile_id
+            && \App\Models\HelpDeskAccessProfile::whereKey($this->helpdesk_access_profile_id)
+                ->where('kind', 'agent')->exists()) {
+            return true;
+        }
+
         return \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
             ->where('user_id', $this->id)
             ->exists();

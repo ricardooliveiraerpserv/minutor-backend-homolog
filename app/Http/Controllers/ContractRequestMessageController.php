@@ -32,7 +32,16 @@ class ContractRequestMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
+        // Duas abas: 'client' = Comentários (cliente), 'internal' = Diário (equipe).
+        $visibility = $this->resolveVisibility($request->query('visibility'));
+
+        // Cliente só enxerga a aba Comentários — o Diário interno é invisível pra ele.
+        if ($user->isCliente() && $visibility === 'internal') {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
         $query = $contractRequest->messages()
+            ->where('visibility', $visibility)
             ->with(['author:id,name', 'attachments'])
             ->orderBy('created_at');
 
@@ -54,19 +63,28 @@ class ContractRequestMessageController extends Controller
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 
-        // Cliente só interage enquanto é requisição. Quando vira projeto
-        // (req_decision setado em requestPlanDecision), chat fica read-only
-        // pro cliente — internos (admin/coord) seguem podendo comentar.
-        if ($user->isCliente() && $contractRequest->req_decision !== null) {
+        // Duas abas: cliente só posta em Comentários (client); Diário (internal) é da equipe.
+        $visibility = $this->resolveVisibility($request->input('visibility'));
+        if ($user->isCliente()) {
+            $visibility = 'client';
+        }
+
+        // Depois que a requisição vira projeto (req_decided_at preenchido em
+        // requestPlanDecision), TODO o canal da requisição vira histórico
+        // congelado — ninguém adiciona novas interações, nem a equipe. A
+        // continuidade interna passa a ser o Diário do Projeto; os Comentários
+        // do cliente ficam acessíveis só como histórico (somente leitura).
+        if ($contractRequest->req_decided_at !== null) {
             return response()->json([
-                'message' => 'A requisição virou projeto. O chat ficou disponível apenas para histórico.',
+                'message' => 'A requisição virou projeto. Os comentários ficaram como histórico (somente leitura).',
             ], 403);
         }
 
         $request->validate([
-            'message' => 'nullable|string|max:2000',
-            'files'   => 'nullable|array|max:10',
-            'files.*' => 'file|max:20480',
+            'message'    => 'nullable|string|max:2000',
+            'visibility' => 'nullable|in:client,internal',
+            'files'      => 'nullable|array|max:10',
+            'files.*'    => 'file|max:20480',
         ]);
 
         $text = $request->input('message', '');
@@ -78,6 +96,7 @@ class ContractRequestMessageController extends Controller
             'contract_request_id' => $contractRequest->id,
             'user_id'             => $user->id,
             'message'             => $text,
+            'visibility'          => $visibility,
         ]);
 
         // FASE 11.7 (PR 7b) — Upload de anexos 100% via camada Attachment.
@@ -101,10 +120,18 @@ class ContractRequestMessageController extends Controller
         // Parser @-mention token @[id:Nome] (espelha ProjectMessageController)
         $mentionedIds = $this->persistMentions($msg);
 
+        // Diário interno NUNCA vaza pro cliente: descarta qualquer menção a cliente.
+        if ($visibility === 'internal' && !empty($mentionedIds)) {
+            $clientIds = User::whereIn('id', $mentionedIds)->where('type', 'cliente')->pluck('id')->all();
+            $mentionedIds = array_values(array_diff($mentionedIds, $clientIds));
+        }
+
         // Fase card-envolvidos: notifica envolvidos do card (cliente sai automaticamente
         // se req_decided_at preenchido). Best-effort — falha em mail não bloqueia chat.
+        // No Diário interno pulamos o broadcast pros envolvidos (que pode incluir o
+        // cliente) — só notificamos os @-mencionados, já filtrados pra equipe.
         try {
-            $this->dispatchChatNotification($contractRequest, $msg, $user, $mentionedIds);
+            $this->dispatchChatNotification($contractRequest, $msg, $user, $mentionedIds, $visibility);
         } catch (\Throwable $e) {
             \Log::warning('chat notif req falhou', ['req_id' => $contractRequest->id, 'err' => $e->getMessage()]);
         }
@@ -136,7 +163,7 @@ class ContractRequestMessageController extends Controller
         return $userIds;
     }
 
-    private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author, array $mentionedIds = []): void
+    private function dispatchChatNotification(ContractRequest $req, ContractRequestMessage $msg, User $author, array $mentionedIds = [], string $visibility = 'client'): void
     {
         $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $cardUrl = $base . '/contratos/pipeline?req=' . $req->id;
@@ -159,14 +186,20 @@ class ContractRequestMessageController extends Controller
         ));
 
         // 1) Mensagem no chat → envolvidos do card.
-        $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message.request', [
-            'card'      => ['type' => CardEnvolvido::TYPE_REQUEST, 'id' => $req->id],
-            'actor'     => $author,
-            'mentioned' => $mentionedIds,
-        ]);
-        $chatTo = $rcpt['to'] ?? [];
-        if (!empty($chatTo)) {
-            Notification::route('mail', $chatTo)->notify($mkNotif()->withCc($rcpt['cc'] ?? []));
+        // Diário interno: pula o broadcast pros envolvidos (que resolve contatos do
+        // cliente). Só os @-mencionados (equipe) são notificados, no passo 2.
+        $chatTo = [];
+        $rcpt = ['to' => [], 'cc' => []];
+        if ($visibility !== 'internal') {
+            $rcpt = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('card.chat_message.request', [
+                'card'      => ['type' => CardEnvolvido::TYPE_REQUEST, 'id' => $req->id],
+                'actor'     => $author,
+                'mentioned' => $mentionedIds,
+            ]);
+            $chatTo = $rcpt['to'] ?? [];
+            if (!empty($chatTo)) {
+                Notification::route('mail', $chatTo)->notify($mkNotif()->withCc($rcpt['cc'] ?? []));
+            }
         }
 
         // 2) Marcação (@) → pessoa marcada, sem duplicar quem já recebeu acima.
@@ -212,8 +245,11 @@ class ContractRequestMessageController extends Controller
             return response()->json([], 403);
         }
 
-        // Escopo da Requisição: chat é entre cliente e executivo da conta.
-        // Admin pode participar. Coord/consultor/parceiro ficam fora.
+        $visibility = $this->resolveVisibility($request->query('visibility'));
+        if ($user->isCliente() && $visibility === 'internal') {
+            return response()->json([], 403);
+        }
+
         $customer = $contractRequest->customer;
         $executiveId = $customer?->executive_id;
 
@@ -233,6 +269,22 @@ class ContractRequestMessageController extends Controller
                 ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => 'executivo'])
             : collect();
 
+        if ($visibility === 'internal') {
+            // Diário interno: equipe (admin/administrativo/coord/consultor/parceiro) + executivo.
+            // Cliente NUNCA entra no @-picker do Diário.
+            $team = User::query()
+                ->whereIn('type', ['administrativo', 'coordenador', 'consultor', 'parceiro_admin'])
+                ->where('enabled', true)
+                ->select('id', 'name', 'type')
+                ->get()
+                ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => $u->type]);
+
+            return response()->json(
+                $admins->concat($executivo)->concat($team)->unique('id')->sortBy('name')->values()
+            );
+        }
+
+        // Comentários (client): chat é entre cliente e executivo da conta. Admin participa.
         $clientes = User::query()
             ->where('type', 'cliente')
             ->where('customer_id', $contractRequest->customer_id)
@@ -249,6 +301,12 @@ class ContractRequestMessageController extends Controller
             ->values();
 
         return response()->json($users);
+    }
+
+    /** Normaliza o parâmetro de aba; qualquer valor inválido cai em 'client' (Comentários). */
+    private function resolveVisibility(?string $value): string
+    {
+        return $value === 'internal' ? 'internal' : 'client';
     }
 
     /**
