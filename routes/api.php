@@ -294,6 +294,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('/help-desk/teams/{team}',         [\App\Http\Controllers\HelpDeskTeamController::class, 'destroy']);
         Route::post('/help-desk/tickets/redistribute', [\App\Http\Controllers\HelpDeskTicketController::class, 'bulkAssign']);
         Route::get('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'show'])->whereNumber('ticket');
+        Route::get('/help-desk/tickets/{ticket}/detail',  [\App\Http\Controllers\HelpDeskTicketController::class, 'detail'])->whereNumber('ticket');
         Route::put('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'update']);
         Route::delete('/help-desk/tickets/{ticket}',     [\App\Http\Controllers\HelpDeskTicketController::class, 'destroy']);
         Route::post('/help-desk/triggers/apply-recipe', [\App\Http\Controllers\HelpDeskTriggerController::class, 'applyRecipe']);
