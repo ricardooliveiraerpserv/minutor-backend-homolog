@@ -1286,6 +1286,40 @@ class HelpDeskTicketController extends Controller
     }
 
     /**
+     * Abertura do chamado em UMA chamada só: ticket + interações (40 recentes). Evita o backend free
+     * re-inicializar o Laravel N vezes (show + comments eram 2 requests). O resto (anexos/apontamentos/
+     * merged/reuniões) segue em chamadas próprias, adiadas — não bloqueiam o conteúdo visível.
+     */
+    public function detail(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
+    {
+        $user = $request->user();
+        $ticketData = $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id));
+
+        $isCliente = (bool) $user?->isCliente();
+        $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
+        $total = $base()->count();
+        $cq = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
+        if ($total > 40) {
+            $recentIds = $base()->orderByDesc('created_at')->limit(40)->pluck('id');
+            $cq->whereIn('id', $recentIds);
+        }
+        $comments = $cq->get();
+        $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
+        $commentsData = $comments->map(fn ($c) => array_merge($c->toArray(), [
+            'attachments'      => ($attByComment->get($c->id) ?? collect())->values(),
+            'can_edit'         => $this->access->canEditComment($user, $c),
+            'can_candidate_kb' => !$c->is_system && $c->author_user_id && $this->access->canCandidateKb($user, $c),
+        ]));
+
+        return response()->json(['data' => [
+            'ticket'            => $ticketData,
+            'comments'          => $commentsData,
+            'comments_total'    => $total,
+            'comments_returned' => $comments->count(),
+        ]]);
+    }
+
+    /**
      * Executa um Playbook de Atendimento no chamado — sequência de ações numa única operação,
      * atômica, reusando transitionStatus/comentários/SLA (zero duplicação). `start_finalize` NÃO
      * aplica no servidor: devolve defaults p/ o FE abrir o fluxo "Finalizar" pré-preenchido.
