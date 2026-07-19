@@ -1424,10 +1424,17 @@ class HelpDeskTicketController extends Controller
     // ── Interações (respostas/notas) ──────────────────────────────────────────
     public function comments(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
-        $q = $ticket->comments()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
         // Cliente só enxerga as respostas marcadas como visíveis ao cliente.
-        if ($request->user()?->isCliente()) {
-            $q->where('visibility', 'customer');
+        $isCliente = (bool) $request->user()?->isCliente();
+        $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
+        $total = $base()->count();
+        $q = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
+        // PAGINAÇÃO: por padrão traz só as N interações MAIS RECENTES (tickets grandes — 183 interações —
+        // custavam ~6s pra montar). ?limit=0 (ou "todas") traz tudo. Mantém a ordem cronológica no retorno.
+        $limit = (int) $request->input('limit', 0);
+        if ($limit > 0 && $total > $limit) {
+            $recentIds = $base()->orderByDesc('created_at')->limit($limit)->pluck('id');
+            $q->whereIn('id', $recentIds);
         }
         $user = $request->user();
         $comments = $q->get();
@@ -1443,7 +1450,8 @@ class HelpDeskTicketController extends Controller
                 && $this->access->canCandidateKb($user, $c);
             return $arr;
         });
-        return response()->json(['data' => $data]);
+        // total = quantas existem; returned = quantas vieram (FE mostra "carregar mais antigas" se total>returned).
+        return response()->json(['data' => $data, 'total' => $total, 'returned' => $comments->count()]);
     }
 
     /** Edita o corpo E o tempo trabalhado de uma interação (gated por service.edit_actions). */
