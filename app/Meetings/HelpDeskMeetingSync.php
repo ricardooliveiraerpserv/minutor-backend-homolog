@@ -96,11 +96,32 @@ class HelpDeskMeetingSync
         }
 
         $ticket->comments()->create([
-            'author_user_id' => $meeting->created_by_id,
-            'body'           => '<p>❌ <strong>Reunião cancelada</strong> — ' . e($meeting->title) . '</p>',
+            'author_user_id' => $meeting->organizer_user_id ?: $meeting->created_by_id,
+            'body'           => $this->canceledBody($meeting),
             'visibility'     => 'customer',
             'channel'        => 'interno',
         ]);
+    }
+
+    /** Corpo da interação de reunião CANCELADA — mesmo padrão do convite (assunto, quando) + nota do SLA. */
+    private function canceledBody(Meeting $meeting): string
+    {
+        $meeting->loadMissing('organizer');
+        $dia = optional($meeting->starts_at)->format('d/m/Y');
+        $ini = optional($meeting->starts_at)->format('H:i');
+        $fim = optional($meeting->ends_at)->format('H:i');
+
+        $linhas = [];
+        $linhas[] = '<strong>Assunto:</strong> ' . e($meeting->title);
+        if ($dia) {
+            $linhas[] = '<strong>Estava agendada para:</strong> ' . e($dia)
+                . ($ini ? ' · ' . e($ini) . ($fim ? ' às ' . e($fim) : '') : '');
+        }
+        if ($meeting->organizer?->name) $linhas[] = '<strong>Organizador:</strong> ' . e($meeting->organizer->name);
+
+        return '<p>❌ <strong>Reunião cancelada</strong></p>'
+            . '<p>' . implode('<br>', $linhas) . '</p>'
+            . '<p><em>Voltamos a tratar deste chamado — o atendimento (SLA) foi retomado.</em></p>';
     }
 
     /**
