@@ -1430,10 +1430,13 @@ class HelpDeskTicketController extends Controller
             $q->where('visibility', 'customer');
         }
         $user = $request->user();
-        // Anexos POR interação (estilo e-mail) — listFor respeita permissão/visibilidade.
-        $data = $q->get()->map(function ($c) use ($svc, $user) {
+        $comments = $q->get();
+        // Anti-N+1: anexos de TODAS as interações em UMA query (era 1 query de anexos POR comentário —
+        // 183 comentários = 183 queries). aggregateLoader agrupa por entity_id (= id do comentário).
+        $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
+        $data = $comments->map(function ($c) use ($attByComment, $user) {
             $arr = $c->toArray();
-            $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $c->id, $user)->values();
+            $arr['attachments'] = ($attByComment->get($c->id) ?? collect())->values();
             $arr['can_edit'] = $this->access->canEditComment($user, $c);
             // Só faz sentido "virar artigo" a partir de interação da EQUIPE (não do cliente/sistema).
             $arr['can_candidate_kb'] = !$c->is_system && $c->author_user_id
