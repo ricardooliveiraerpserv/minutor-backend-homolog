@@ -22,15 +22,21 @@ class HelpDeskTicketController extends Controller
     {
     }
 
-    private function withRels($q)
+    /** Relações do DETALHE do chamado (colunas enxutas) — compartilhadas por with()/load(). */
+    private function detailRels(): array
     {
-        return $q->with([
+        return [
             'customer:id,name', 'contact:id,name,email', 'requester:id,name',
             'category:id,name,color', 'status:id,key,label,color,is_open,is_resolved,is_terminal',
             'assignee:id,name', 'team:id,name',
             'contract:id,categoria,helpdesk_integration_enabled', 'project:id,name',
             'service:id,name,code', 'justification:id,name,status_id',
-        ]);
+        ];
+    }
+
+    private function withRels($q)
+    {
+        return $q->with($this->detailRels());
     }
 
     /**
@@ -1293,7 +1299,10 @@ class HelpDeskTicketController extends Controller
     public function detail(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
         $user = $request->user();
-        $ticketData = $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id));
+        // $ticket já veio do route-model-binding: eager-load das relações no próprio modelo em vez de
+        // refazer o SELECT do ticket (withRels(...)->find). Mesma decoração, uma query a menos.
+        $ticket->load($this->detailRels());
+        $ticketData = $this->decorate($ticket);
 
         $isCliente = (bool) $user?->isCliente();
         $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
