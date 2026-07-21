@@ -1962,6 +1962,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('/competencias/matriz/versions/{id}', [SkillMatrixVersionController::class, 'destroyVersion'])->whereNumber('id');
             Route::put('/competencias/profissionais/classification/bulk', [SkillProfileController::class, 'bulkClassification']);
             Route::put('/competencias/profissionais/{id}/classification', [SkillProfileController::class, 'updateClassification'])->whereNumber('id');
+            Route::delete('/competencias/profissionais/bulk',  [SkillProfileController::class, 'bulkDestroy']);
+            Route::delete('/competencias/profissionais/{id}',  [SkillProfileController::class, 'destroy'])->whereNumber('id');
             // Kanban de Contratação/Onboarding
             Route::get('/competencias/contratacao',                 [SkillHireController::class, 'index']);
             Route::post('/competencias/contratacao/hire',           [SkillHireController::class, 'hire']);

@@ -195,4 +195,40 @@ class SkillProfileController extends Controller
             'partner_id' => $respondent->partner_id ? (string) $respondent->partner_id : '',
         ]);
     }
+
+    /** Exclui um respondente e todo o seu histórico (submissões, respostas, convites). */
+    public function destroy(int $id): JsonResponse
+    {
+        SkillRespondent::findOrFail($id);
+        $this->purge([$id]);
+
+        return response()->json(['deleted' => 1]);
+    }
+
+    /** Exclusão em massa de respondentes (com histórico). */
+    public function bulkDestroy(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'respondent_ids' => 'required|array|min:1',
+            'respondent_ids.*' => 'integer',
+        ]);
+        $deleted = $this->purge($data['respondent_ids']);
+
+        return response()->json(['deleted' => $deleted]);
+    }
+
+    /**
+     * Remove respondentes + dependências. answers caem por cascade da submissão;
+     * hire_cards por cascade do respondente. Submissões e convites deletados
+     * explicitamente (FK nullOnDelete deixaria órfãos).
+     */
+    private function purge(array $ids): int
+    {
+        return DB::transaction(function () use ($ids) {
+            DB::table('skill_submissions')->whereIn('respondent_id', $ids)->delete();
+            DB::table('skill_survey_invites')->whereIn('respondent_id', $ids)->delete();
+
+            return DB::table('skill_respondents')->whereIn('id', $ids)->delete();
+        });
+    }
 }
