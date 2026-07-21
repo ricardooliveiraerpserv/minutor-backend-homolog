@@ -528,6 +528,8 @@ class SkillSurveyService
             );
             if ($invite->wasRecentlyCreated) {
                 $created++;
+                // Avisa o colaborador por e-mail com link direto para responder (assíncrono).
+                $user->notify(new \App\Notifications\SkillSurveyInviteNotification($survey));
             }
         }
 
