@@ -606,9 +606,8 @@ class RelatorioRentabilidadeController extends Controller
             }
             [$ey, $em] = array_map('intval', explode('-', $lastReceb));
             $mesesInativo = $refIdx - ($ey * 12 + $em);
-            if ($mesesInativo < $threshold) {
-                continue; // ainda ativo (recebeu por algum dos CNPJs)
-            }
+            // Traz TODOS os clientes; a régua (meses) só define quem é Ativo/Inativo.
+            $ativo = $mesesInativo < $threshold;
             // Último valor recebido (títulos do último mês de recebimento).
             $lastValor = 0.0;
             foreach ($g['titulos'] as $t) {
@@ -623,6 +622,7 @@ class RelatorioRentabilidadeController extends Controller
                 'no_minutor' => $g['no_minutor'],
                 'ultimo_faturamento' => $lastReceb,
                 'meses_inativo' => $mesesInativo,
+                'ativo' => $ativo,
                 'ultimo_valor' => round($lastValor, 2),
                 'total_recebido' => round($g['receb_total'], 2),
             ];
@@ -633,6 +633,8 @@ class RelatorioRentabilidadeController extends Controller
             'ref' => $ref->format('Y-m'),
             'meses' => $threshold,
             'total' => count($rows),
+            'ativos' => collect($rows)->where('ativo', true)->count(),
+            'inativos' => collect($rows)->where('ativo', false)->count(),
             'clientes' => $rows,
         ]);
     }
