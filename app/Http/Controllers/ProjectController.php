@@ -3127,8 +3127,40 @@ class ProjectController extends Controller
             ->map(fn ($h) => ['date' => $h->date->toDateString(), 'name' => $h->name])
             ->values();
 
+        // Última movimentação = o mais recente entre um APONTAMENTO e um EVENTO de atividade
+        // (mover/concluir/criar entrega). Antes o card só olhava timesheets → uma conclusão ou
+        // mudança de status recente ficava invisível e mostrava um apontamento antigo como "última".
+        $lastMovement = null;
+        if (!$isConsultorScoped) {
+            $allStageIds = $project->stages()->pluck('id')->all();
+            $ev = !empty($allStageIds) ? \App\Models\StageActivityEvent::query()
+                ->whereIn('stage_id', $allStageIds)->with('actor:id,name')
+                ->orderByDesc('created_at')->orderByDesc('id')->first() : null;
+            $ts = \App\Models\Timesheet::where('project_id', $project->id)->whereNull('deleted_at')
+                ->with('user:id,name')->orderByDesc('created_at')->orderByDesc('id')->first();
+            $useEv = $ev && (!$ts || $ev->created_at->greaterThanOrEqualTo($ts->created_at));
+            if ($useEv) {
+                $p = $ev->payload ?? [];
+                $lastMovement = [
+                    'kind'  => $ev->type, // delivery_completed | delivery_moved | delivery_created
+                    'user'  => optional($ev->actor)->name,
+                    'at'    => optional($ev->created_at)->toIso8601String(),
+                    'title' => $p['title'] ?? null,
+                    'to'    => $p['to'] ?? null,
+                ];
+            } elseif ($ts) {
+                $lastMovement = [
+                    'kind'  => 'timesheet',
+                    'user'  => optional($ts->user)->name,
+                    'at'    => optional($ts->created_at)->toIso8601String(),
+                    'hours' => round(((int) $ts->effort_minutes) / 60, 1),
+                ];
+            }
+        }
+
         return response()->json([
             'is_operational' => true,
+            'last_movement'  => $lastMovement,
             'project_window' => [
                 'start' => $minDate?->toDateString(),
                 'end'   => $maxDate?->toDateString(),
