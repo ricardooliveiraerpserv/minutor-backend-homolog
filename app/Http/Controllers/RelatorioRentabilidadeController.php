@@ -547,9 +547,9 @@ class RelatorioRentabilidadeController extends Controller
     }
 
     /**
-     * Clientes SEM faturamento recente (churn) a partir dos dados do Keruak.
-     * Usa a data de emissão (faturamento) de cada título; lista clientes cuja
-     * última emissão está há >= N meses do mês de referência (default 2).
+     * Clientes SEM recebimento recente (churn) a partir dos dados do Keruak.
+     * Usa o "Mês-Ano Recebimento" de cada título; lista clientes cujo último
+     * recebimento está há >= N meses do mês de referência (default 2).
      */
     public function clientesInativos(Request $request): JsonResponse
     {
@@ -583,43 +583,36 @@ class RelatorioRentabilidadeController extends Controller
                     'cliente' => $cust['cliente'] ?? ($info['name'] ?? '—'),
                     'executivo' => $cust['executivo'] ?? null,
                     'no_minutor' => (bool) $cust,
-                    'emissoes' => [],
+                    'meses' => [],
                     'titulos' => [],
                     'receb_total' => 0.0,
                 ];
             }
             $groups[$key]['receb_total'] += array_sum($info['receb'] ?? []);
-            $temEmissao = false;
             foreach ($info['titulos'] ?? [] as $t) {
                 $groups[$key]['titulos'][] = $t;
-                if (! empty($t['emissao'])) {
-                    $groups[$key]['emissoes'][] = $t['emissao'];
-                    $temEmissao = true;
-                }
             }
-            // Sem emissão nos títulos → usa o mês de recebimento como referência.
-            if (! $temEmissao) {
-                foreach (array_keys($info['receb'] ?? []) as $rm) {
-                    $groups[$key]['emissoes'][] = $rm;
-                }
+            // "Mês-Ano Recebimento": o mapa `receb` já é indexado por mês de recebimento.
+            foreach (array_keys($info['receb'] ?? []) as $rm) {
+                $groups[$key]['meses'][] = $rm;
             }
         }
 
         $rows = [];
         foreach ($groups as $g) {
-            $lastEmissao = $g['emissoes'] ? max($g['emissoes']) : null;
-            if (! $lastEmissao) {
+            $lastReceb = $g['meses'] ? max($g['meses']) : null;
+            if (! $lastReceb) {
                 continue;
             }
-            [$ey, $em] = array_map('intval', explode('-', $lastEmissao));
+            [$ey, $em] = array_map('intval', explode('-', $lastReceb));
             $mesesInativo = $refIdx - ($ey * 12 + $em);
             if ($mesesInativo < $threshold) {
-                continue; // ainda ativo (por algum dos CNPJs)
+                continue; // ainda ativo (recebeu por algum dos CNPJs)
             }
-            // Último valor faturado (títulos do último mês, por emissão ou recebimento).
+            // Último valor recebido (títulos do último mês de recebimento).
             $lastValor = 0.0;
             foreach ($g['titulos'] as $t) {
-                if (($t['emissao'] ?? null) === $lastEmissao || ($t['recebimento'] ?? null) === $lastEmissao) {
+                if (($t['recebimento'] ?? null) === $lastReceb) {
                     $lastValor += (float) $t['valor'];
                 }
             }
@@ -628,7 +621,7 @@ class RelatorioRentabilidadeController extends Controller
                 'cliente' => $g['cliente'],
                 'executivo' => $g['executivo'],
                 'no_minutor' => $g['no_minutor'],
-                'ultimo_faturamento' => $lastEmissao,
+                'ultimo_faturamento' => $lastReceb,
                 'meses_inativo' => $mesesInativo,
                 'ultimo_valor' => round($lastValor, 2),
                 'total_recebido' => round($g['receb_total'], 2),
