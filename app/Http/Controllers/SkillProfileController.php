@@ -196,6 +196,19 @@ class SkillProfileController extends Controller
         ]);
     }
 
+    /** Atualiza o valor praticado do respondente (guardado em data['valor']). */
+    public function updateValor(Request $request, int $id): JsonResponse
+    {
+        $respondent = SkillRespondent::findOrFail($id);
+        $data = $request->validate(['valor' => 'nullable|string|max:60']);
+        $d = is_array($respondent->data) ? $respondent->data : [];
+        $d['valor'] = filled($data['valor'] ?? null) ? trim($data['valor']) : null;
+        $respondent->data = $d;
+        $respondent->save();
+
+        return response()->json(['id' => $respondent->id, 'valor' => $d['valor']]);
+    }
+
     /** Exclui um respondente e todo o seu histórico (submissões, respostas, convites). */
     public function destroy(int $id): JsonResponse
     {
