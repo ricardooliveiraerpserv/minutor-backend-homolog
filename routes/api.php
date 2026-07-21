@@ -41,6 +41,13 @@ use App\Http\Controllers\ProjectContactController;
 use App\Http\Controllers\SkillController;
 use App\Http\Controllers\ConsultantSkillController;
 use App\Http\Controllers\GapController;
+use App\Http\Controllers\SkillSurveyController;
+use App\Http\Controllers\SkillSubmissionController;
+use App\Http\Controllers\SkillDashboardController;
+use App\Http\Controllers\SkillProfileController;
+use App\Http\Controllers\SkillMatrixVersionController;
+use App\Http\Controllers\SkillFormConfigController;
+use App\Http\Controllers\SkillHireController;
 use App\Http\Controllers\CandidateController;
 
 /*
@@ -125,6 +132,15 @@ Route::prefix('v1')->group(function () {
     // o usuário é identificado pelo `state` assinado, não pelo bearer token).
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
         ->middleware('throttle:30,1')->name('integrations.microsoft.callback');
+
+    // 🧠 BANCO DE COMPETÊNCIAS — portal público (Parceiros / Banco de Talentos), sem login.
+    // Autosave/retomada via continue_token (guardado no navegador do respondente).
+    Route::get('/skills-form/{token}',                          [\App\Http\Controllers\SkillFormController::class, 'show']);
+    Route::post('/skills-form/{token}/upload',                  [\App\Http\Controllers\SkillFormController::class, 'upload']);
+    Route::post('/skills-form/{token}/start',                   [\App\Http\Controllers\SkillFormController::class, 'start']);
+    Route::get('/skills-form/continue/{continueToken}',         [\App\Http\Controllers\SkillFormController::class, 'resume']);
+    Route::patch('/skills-form/continue/{continueToken}',       [\App\Http\Controllers\SkillFormController::class, 'autosave']);
+    Route::post('/skills-form/continue/{continueToken}/submit', [\App\Http\Controllers\SkillFormController::class, 'submit']);
 
     Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
         // ===== Multi-empresa: contexto do usuário (troca de empresa sem logout) =====
@@ -1251,6 +1267,57 @@ Route::prefix('v1')->group(function () {
         Route::put('/consultant-skills/{id}',          [ConsultantSkillController::class, 'update'])->name('consultant-skills.update');
         Route::get('/consultants/{id}/profile',        [ConsultantSkillController::class, 'showProfile'])->name('consultants.profile.show');
         Route::patch('/consultants/{id}/profile',      [ConsultantSkillController::class, 'updateProfile'])->name('consultants.profile.update');
+
+        // 🧠 BANCO DE COMPETÊNCIAS — Pesquisas (motor + Form Interno). Uma matriz única, versionada.
+        // Gestão: criar pesquisa, enviar convites, acompanhar (admin/administrativo).
+        Route::middleware('permission.or.admin:competencias.manage')->group(function () {
+            Route::get('/competencias/meta',                    [SkillSurveyController::class, 'meta']);
+            Route::get('/competencias/surveys',                 [SkillSurveyController::class, 'index']);
+            Route::post('/competencias/surveys',                [SkillSurveyController::class, 'store']);
+            Route::get('/competencias/surveys/{id}',            [SkillSurveyController::class, 'show'])->whereNumber('id');
+            Route::put('/competencias/surveys/{id}',            [SkillSurveyController::class, 'update'])->whereNumber('id');
+            Route::post('/competencias/surveys/{id}/invites',   [SkillSurveyController::class, 'storeInvites'])->whereNumber('id');
+            Route::get('/competencias/surveys/{id}/invites',    [SkillSurveyController::class, 'invites'])->whereNumber('id');
+            Route::post('/competencias/invites/{id}/reminder',  [SkillSurveyController::class, 'reminder'])->whereNumber('id');
+            // Matriz — escrita (competências + publicar versão)
+            Route::post('/competencias/matriz/skills',          [SkillMatrixVersionController::class, 'storeSkill']);
+            Route::put('/competencias/matriz/skills/{id}',      [SkillMatrixVersionController::class, 'updateSkill'])->whereNumber('id');
+            Route::delete('/competencias/matriz/skills/{id}',   [SkillMatrixVersionController::class, 'destroySkill'])->whereNumber('id');
+            Route::post('/competencias/matriz/versions/publish',[SkillMatrixVersionController::class, 'publish']);
+            Route::delete('/competencias/matriz/versions/{id}', [SkillMatrixVersionController::class, 'destroyVersion'])->whereNumber('id');
+            Route::put('/competencias/profissionais/classification/bulk', [SkillProfileController::class, 'bulkClassification']);
+            Route::put('/competencias/profissionais/{id}/classification', [SkillProfileController::class, 'updateClassification'])->whereNumber('id');
+            // Kanban de Contratação/Onboarding
+            Route::get('/competencias/contratacao',                 [SkillHireController::class, 'index']);
+            Route::post('/competencias/contratacao/hire',           [SkillHireController::class, 'hire']);
+            Route::get('/competencias/contratacao/{id}',            [SkillHireController::class, 'show'])->whereNumber('id');
+            Route::put('/competencias/contratacao/{id}',            [SkillHireController::class, 'update'])->whereNumber('id');
+            Route::post('/competencias/contratacao/{id}/move',      [SkillHireController::class, 'move'])->whereNumber('id');
+            Route::post('/competencias/contratacao/{id}/complete',  [SkillHireController::class, 'complete'])->whereNumber('id');
+            Route::put('/competencias/matriz/categories',       [SkillMatrixVersionController::class, 'renameCategory']);
+            Route::delete('/competencias/matriz/categories/{name}', [SkillMatrixVersionController::class, 'destroyCategory'])->where('name', '.*');
+            // Configuração de Formulários (campos cadastrais por tipo)
+            Route::get('/competencias/form-configs',            [SkillFormConfigController::class, 'index']);
+            Route::put('/competencias/form-configs/{type}',     [SkillFormConfigController::class, 'update']);
+            Route::post('/competencias/form-configs/{type}/reset', [SkillFormConfigController::class, 'reset']);
+        });
+        // Leitura de indicadores / perfis / matriz (admin/administrativo/coordenador)
+        Route::middleware('permission.or.admin:competencias.view')->group(function () {
+            Route::get('/competencias/dashboard',                 [SkillDashboardController::class, 'summary']);
+            Route::get('/competencias/profissionais',             [SkillProfileController::class, 'index']);
+            Route::get('/competencias/profissionais/{id}',        [SkillProfileController::class, 'show'])->whereNumber('id');
+            Route::get('/competencias/matriz/versions',           [SkillMatrixVersionController::class, 'versions']);
+            Route::get('/competencias/matriz/skills',             [SkillMatrixVersionController::class, 'skills']);
+        });
+        // Responder a própria pesquisa (colaborador logado). Posse verificada na controller.
+        Route::middleware('permission.or.admin:competencias.respond')->group(function () {
+            Route::get('/competencias/minhas-pesquisas',                      [SkillSubmissionController::class, 'mine']);
+            Route::get('/competencias/meu-historico',                         [SkillSubmissionController::class, 'history']);
+            Route::get('/competencias/surveys/{surveyId}/responder',          [SkillSubmissionController::class, 'open'])->whereNumber('surveyId');
+            Route::patch('/competencias/submissions/{submissionId}/autosave', [SkillSubmissionController::class, 'autosave'])->whereNumber('submissionId');
+            Route::get('/competencias/submissions/{submissionId}/review',     [SkillSubmissionController::class, 'review'])->whereNumber('submissionId');
+            Route::post('/competencias/submissions/{submissionId}/submit',    [SkillSubmissionController::class, 'submit'])->whereNumber('submissionId');
+        });
 
         // 📋 KANBAN DE CANDIDATOS
         Route::get('/candidates',                      [CandidateController::class, 'index'])->name('candidates.index');

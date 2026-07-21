@@ -103,6 +103,11 @@ class User extends Authenticatable
         'work_model',
         'city',
         'state',
+        'cep',
+        'address_street',
+        'address_number',
+        'address_complement',
+        'neighborhood',
         'protheus_years_experience',
     ];
 
