@@ -551,7 +551,7 @@ class RelatorioRentabilidadeController extends Controller
      * Usa o "Mês-Ano Recebimento" de cada título; lista clientes cujo último
      * recebimento está há >= N meses do mês de referência (default 2).
      */
-    public function clientesInativos(Request $request): JsonResponse
+    public function atividadeClientes(Request $request): JsonResponse
     {
         $threshold = max(1, (int) $request->input('meses', 2));
         $ref = Carbon::now()->startOfMonth();
