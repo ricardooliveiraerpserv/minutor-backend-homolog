@@ -111,6 +111,9 @@ class PermissionService
         'financial.view_own_rate', 'financial.view_partner_rate', 'financial.view_project_cost',
         // Relatórios
         'reports.view', 'reports.export',
+        // Banco de Competências
+        'competencias.view', 'competencias.manage', 'competencias.view_team',
+        'competencias.respond', 'competencias.reports.view',
         // Sistema
         'settings.view',
     ];
@@ -159,6 +162,9 @@ class PermissionService
             'approvals.view', 'approvals.manage',
             // Relatórios
             'reports.view', 'reports.export',
+            // Banco de Competências (gestão completa)
+            'competencias.view', 'competencias.manage', 'competencias.view_team',
+            'competencias.respond', 'competencias.reports.view',
             // Configurações
             'settings.view',
         ];
@@ -179,6 +185,8 @@ class PermissionService
             'financial.view_own_rate', 'financial.view_project_cost',
             'reports.view', 'reports.export',
             'consultant_groups.view',
+            // Banco de Competências: consulta competências da equipe + responde a própria.
+            'competencias.view', 'competencias.view_team', 'competencias.respond',
         ];
     }
 
@@ -193,6 +201,8 @@ class PermissionService
             'expenses.view', 'expenses.manage',
             'users.view_own_profile', 'users.update_own_profile',
             'financial.view_own_rate', 'financial.view_partner_rate',
+            // Banco de Competências: responde a própria pesquisa.
+            'competencias.respond',
         ];
     }
 
