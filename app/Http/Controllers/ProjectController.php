@@ -568,7 +568,11 @@ class ProjectController extends Controller
         $gestaoMonths = $gestaoMonthsRaw
             ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
             : [];
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
+        // A closure de cache NÃO captura $request/$targetUserId — "Meus Projetos" (consultor) precisa
+        // dos dois pra computar as horas do consultor. Captura antes e passa via use().
+        $activityAllocated = $request->boolean('activity_allocated');
+        $myProjectsUserId = $targetUserId ?? null;
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths, $activityAllocated, $myProjectsUserId) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -689,19 +693,19 @@ class ProjectController extends Controller
         // "Meus Projetos" (consultor): a lista deve mostrar as horas DO CONSULTOR — alocadas a ele
         // (SUM planned_hours das alocações dele nas etapas) e consumidas por ele (SUM effort_minutes dos
         // apontamentos dele) — não os totais do projeto. Dois GROUP BY (anti-N+1), só neste modo.
-        $activityAllocatedMode = $request->boolean('activity_allocated') && isset($targetUserId) && $targetUserId && !empty($projectIds);
+        $activityAllocatedMode = $activityAllocated && $myProjectsUserId && !empty($projectIds);
         $myAllocMap = []; $myConsumedMap = [];
         if ($activityAllocatedMode) {
             $myAllocMap = \App\Models\StageAllocation::query()
                 ->join('project_stages', 'project_stages.id', '=', 'stage_allocations.stage_id')
-                ->where('stage_allocations.user_id', $targetUserId)
+                ->where('stage_allocations.user_id', $myProjectsUserId)
                 ->whereIn('project_stages.project_id', $projectIds)
                 ->groupBy('project_stages.project_id')
                 ->selectRaw('project_stages.project_id as pid, COALESCE(SUM(stage_allocations.planned_hours), 0) as h')
                 ->pluck('h', 'pid')->toArray();
             $myConsumedMap = \App\Models\Timesheet::query()
                 ->whereIn('project_id', $projectIds)
-                ->where('user_id', $targetUserId)
+                ->where('user_id', $myProjectsUserId)
                 ->whereNull('deleted_at')
                 ->whereNotIn('status', [\App\Models\Timesheet::STATUS_ADJUSTMENT_REQUESTED, \App\Models\Timesheet::STATUS_REJECTED])
                 ->groupBy('project_id')
