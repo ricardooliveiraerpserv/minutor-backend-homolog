@@ -571,40 +571,67 @@ class RelatorioRentabilidadeController extends Controller
                 }
             });
 
-        $rows = [];
+        // Unifica os CNPJs do MESMO cliente numa linha só (igual à Rentabilidade por
+        // cliente): quem casa por customer_id agrupa; CNPJ sem cliente fica avulso.
+        $groups = [];
         foreach ($map as $cnpj => $info) {
-            // Última data de FATURAMENTO (emissão). Fallback: recebimento, se sem emissão.
-            $emissoes = array_filter(array_column($info['titulos'] ?? [], 'emissao'));
-            $lastEmissao = $emissoes ? max($emissoes) : null;
-            if (! $lastEmissao) {
-                $recebs = array_keys($info['receb'] ?? []);
-                $lastEmissao = $recebs ? max($recebs) : null;
+            $cust = $custByCnpj[$cnpj] ?? null;
+            $key = $cust ? 'c' . $cust['customer_id'] : 'x' . $cnpj;
+            if (! isset($groups[$key])) {
+                $groups[$key] = [
+                    'cnpj' => $cnpj,
+                    'cliente' => $cust['cliente'] ?? ($info['name'] ?? '—'),
+                    'executivo' => $cust['executivo'] ?? null,
+                    'no_minutor' => (bool) $cust,
+                    'emissoes' => [],
+                    'titulos' => [],
+                    'receb_total' => 0.0,
+                ];
             }
+            $groups[$key]['receb_total'] += array_sum($info['receb'] ?? []);
+            $temEmissao = false;
+            foreach ($info['titulos'] ?? [] as $t) {
+                $groups[$key]['titulos'][] = $t;
+                if (! empty($t['emissao'])) {
+                    $groups[$key]['emissoes'][] = $t['emissao'];
+                    $temEmissao = true;
+                }
+            }
+            // Sem emissão nos títulos → usa o mês de recebimento como referência.
+            if (! $temEmissao) {
+                foreach (array_keys($info['receb'] ?? []) as $rm) {
+                    $groups[$key]['emissoes'][] = $rm;
+                }
+            }
+        }
+
+        $rows = [];
+        foreach ($groups as $g) {
+            $lastEmissao = $g['emissoes'] ? max($g['emissoes']) : null;
             if (! $lastEmissao) {
                 continue;
             }
             [$ey, $em] = array_map('intval', explode('-', $lastEmissao));
             $mesesInativo = $refIdx - ($ey * 12 + $em);
             if ($mesesInativo < $threshold) {
-                continue; // ainda ativo
+                continue; // ainda ativo (por algum dos CNPJs)
             }
-            // Último valor faturado (soma dos títulos do último mês de emissão).
+            // Último valor faturado (títulos do último mês, por emissão ou recebimento).
             $lastValor = 0.0;
-            foreach ($info['titulos'] ?? [] as $t) {
-                if (($t['emissao'] ?? null) === $lastEmissao) {
+            foreach ($g['titulos'] as $t) {
+                if (($t['emissao'] ?? null) === $lastEmissao || ($t['recebimento'] ?? null) === $lastEmissao) {
                     $lastValor += (float) $t['valor'];
                 }
             }
-            $cust = $custByCnpj[$cnpj] ?? null;
             $rows[] = [
-                'cnpj' => $cnpj,
-                'cliente' => $cust['cliente'] ?? ($info['name'] ?? '—'),
-                'executivo' => $cust['executivo'] ?? null,
-                'no_minutor' => (bool) $cust,
+                'cnpj' => $g['cnpj'],
+                'cliente' => $g['cliente'],
+                'executivo' => $g['executivo'],
+                'no_minutor' => $g['no_minutor'],
                 'ultimo_faturamento' => $lastEmissao,
                 'meses_inativo' => $mesesInativo,
                 'ultimo_valor' => round($lastValor, 2),
-                'total_recebido' => round(array_sum($info['receb'] ?? []), 2),
+                'total_recebido' => round($g['receb_total'], 2),
             ];
         }
         usort($rows, fn ($a, $b) => [$b['meses_inativo'], $b['total_recebido']] <=> [$a['meses_inativo'], $a['total_recebido']]);
