@@ -42,7 +42,15 @@ class AdiantamentoController extends Controller
         $users    = User::whereIn('id', $userIds)->pluck('name', 'id');
         $partners = Partner::whereIn('id', $partnerIds)->pluck('name', 'id');
 
-        $data = $itens->map(fn ($a) => [
+        // Progresso das parcelas: paga = competência já chegou (<= mês atual).
+        $currentYm = now()->format('Y-m');
+
+        $data = $itens->map(function ($a) use ($users, $partners, $currentYm) {
+            $totalParcelas = $a->parcelas->count();
+            $pagas = $a->parcelas->filter(fn ($p) => $p->year_month <= $currentYm)->count();
+            $restantes = max(0, $totalParcelas - $pagas);
+
+            return [
             'id'                   => $a->id,
             'beneficiario_tipo'    => $a->beneficiario_tipo,
             'beneficiario_id'      => $a->beneficiario_id,
@@ -63,7 +71,11 @@ class AdiantamentoController extends Controller
                 'year_month' => $p->year_month,
                 'valor'      => (float) $p->valor,
             ])->values(),
-        ]);
+            'parcelas_pagas'       => $pagas,
+            'parcelas_restantes'   => $restantes,
+            'encerrado'            => $totalParcelas > 0 && $restantes === 0,
+            ];
+        });
 
         return response()->json(['data' => $data]);
     }
