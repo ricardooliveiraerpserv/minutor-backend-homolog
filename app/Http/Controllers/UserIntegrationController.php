@@ -89,42 +89,19 @@ class UserIntegrationController extends Controller
         return response()->json(['data' => ['connected' => false]]);
     }
 
-    /** Sincroniza os eventos do mês atual e guarda no cache. */
+    /** Re-sincroniza a agenda do usuário (botão "Sincronizar") e guarda o snapshot no cache. */
     public function sync(Request $request): JsonResponse
     {
         $i = $this->integration($request);
         if (!$i) return response()->json(['message' => 'Outlook não conectado.'], 422);
 
-        $token = $this->freshToken($i);
-        if (!$token) return response()->json(['message' => 'Não foi possível renovar o acesso. Reconecte sua conta Microsoft.'], 422);
-
-        $start = now()->startOfMonth();
-        $end   = now()->endOfMonth();
-        $events = MicrosoftCalendarService::fetchEvents($token, $start, $end);
-
-        $i->update(['cached_events' => $events, 'last_sync_at' => now()]);
+        $synced = MicrosoftCalendarService::syncEvents($i);
+        if ($synced === null) return response()->json(['message' => 'Não foi possível renovar o acesso. Reconecte sua conta Microsoft.'], 422);
 
         return response()->json(['data' => [
-            'synced'       => count($events),
+            'synced'       => $synced,
             'last_sync_at' => $i->last_sync_at->toIso8601String(),
         ]]);
-    }
-
-    /** Garante um access_token válido (renova via refresh_token se expirado). Persiste o novo. */
-    private function freshToken(UserIntegration $i): ?string
-    {
-        if (!$i->isExpired() && $i->access_token) return $i->access_token;
-        if (!$i->refresh_token) return null;
-
-        $tok = MicrosoftCalendarService::refresh($i->refresh_token);
-        if (!empty($tok['error']) || empty($tok['access_token'])) return null;
-
-        $i->update([
-            'access_token'  => $tok['access_token'],
-            'refresh_token' => $tok['refresh_token'] ?? $i->refresh_token, // MS pode rotacionar
-            'expires_at'    => now()->addSeconds((int) ($tok['expires_in'] ?? 3600)),
-        ]);
-        return $tok['access_token'];
     }
 
     private function integration(Request $request): ?UserIntegration

@@ -152,6 +152,12 @@ class CalendarController extends Controller
         // 6) 📅 Outlook — eventos sincronizados da conta Microsoft do usuário (cache). Defensivo.
         try {
             $integ = \App\Models\UserIntegration::where('user_id', $u->id)->where('provider', 'microsoft')->first();
+            // Auto-sync se o snapshot está velho (> 10 min): reflete alterações de invite (data/hora) sem
+            // depender do usuário clicar "Sincronizar". Throttle evita bater no Graph a cada abertura da agenda.
+            if ($integ && \App\Services\MicrosoftCalendarService::configured()
+                && (!$integ->last_sync_at || $integ->last_sync_at->lt($now->copy()->subMinutes(10)))) {
+                \App\Services\MicrosoftCalendarService::syncEvents($integ); // atualiza $integ->cached_events in-place
+            }
             foreach (($integ?->cached_events ?? []) as $ev) {
                 $d = (string) ($ev['data'] ?? '');
                 if (strlen($d) === 10 && (int) substr($d, 5, 2) === $month && (int) substr($d, 0, 4) === $year) {

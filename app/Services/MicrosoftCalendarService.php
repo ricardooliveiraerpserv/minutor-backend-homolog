@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\UserIntegration;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 
@@ -104,6 +105,7 @@ class MicrosoftCalendarService
                 '$top'          => 100,
             ]);
             $r = Http::withToken($accessToken)->acceptJson()
+                ->timeout(12) // nunca segura a agenda por causa de um Graph lento
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->get($url);
             if (!$r->successful()) return [];
@@ -133,5 +135,41 @@ class MicrosoftCalendarService
         } catch (\Throwable) {
             return [];
         }
+    }
+
+    /**
+     * Garante um access_token válido p/ a integração (renova via refresh_token se expirado e persiste).
+     * Fonte ÚNICA de renovação de token — usada pelo /sync e pelo auto-sync da agenda. null se não deu.
+     */
+    public static function freshTokenFor(UserIntegration $i): ?string
+    {
+        if (!$i->isExpired() && $i->access_token) return $i->access_token;
+        if (!$i->refresh_token) return null;
+
+        $tok = self::refresh($i->refresh_token);
+        if (!empty($tok['error']) || empty($tok['access_token'])) return null;
+
+        $i->update([
+            'access_token'  => $tok['access_token'],
+            'refresh_token' => $tok['refresh_token'] ?? $i->refresh_token, // MS pode rotacionar
+            'expires_at'    => now()->addSeconds((int) ($tok['expires_in'] ?? 3600)),
+        ]);
+        return $tok['access_token'];
+    }
+
+    /**
+     * Re-sincroniza a agenda do usuário e grava o snapshot em cached_events + last_sync_at.
+     * Janela = início do mês atual → fim de +2 meses (cobre navegação p/ meses à frente).
+     * Retorna o nº de eventos, ou null se não foi possível renovar o acesso. Defensivo.
+     */
+    public static function syncEvents(UserIntegration $i): ?int
+    {
+        $token = self::freshTokenFor($i);
+        if (!$token) return null;
+
+        $events = self::fetchEvents($token, now()->startOfMonth(), now()->addMonths(2)->endOfMonth());
+        $i->update(['cached_events' => $events, 'last_sync_at' => now()]);
+
+        return count($events);
     }
 }
