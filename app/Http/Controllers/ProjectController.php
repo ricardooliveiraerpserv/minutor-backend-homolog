@@ -3020,14 +3020,17 @@ class ProjectController extends Controller
                 ->selectRaw('user_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS h')
                 ->pluck('h', 'user_id');
 
-            // Planejado (alocação) por usuário neste projeto — pro tooltip/saldo.
-            $plannedByUser = \DB::table('stage_allocations as a')
-                ->join('project_stages as ps', 'ps.id', '=', 'a.stage_id')
+            // DISPONIBILIZADAS por usuário = SUM(hours_planned) das ATIVIDADES onde ele é responsável
+            // (stage_deliveries) — igual ao "Meus Projetos". NÃO usar stage_allocations (fica 0 no
+            // cronograma delivery-based). Saldo = disponibilizadas − apontadas.
+            $plannedByUser = \DB::table('stage_deliveries as sd')
+                ->join('project_stages as ps', 'ps.id', '=', 'sd.stage_id')
                 ->where('ps.project_id', $project->id)
                 ->whereNull('ps.deleted_at')
-                ->whereIn('a.user_id', $uids)
-                ->groupBy('a.user_id')
-                ->selectRaw('a.user_id AS user_id, COALESCE(SUM(a.planned_hours), 0) AS h')
+                ->whereNull('sd.deleted_at')
+                ->whereIn('sd.responsible_user_id', $uids)
+                ->groupBy('sd.responsible_user_id')
+                ->selectRaw('sd.responsible_user_id AS user_id, COALESCE(SUM(sd.hours_planned), 0) AS h')
                 ->pluck('h', 'user_id');
 
             $usersData = \App\Models\User::whereIn('id', $uids)->get(['id', 'name', 'email']);
