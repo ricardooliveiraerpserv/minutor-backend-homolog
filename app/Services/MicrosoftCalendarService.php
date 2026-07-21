@@ -236,4 +236,20 @@ class MicrosoftCalendarService
             return [];
         }
     }
+
+    /**
+     * Re-sincroniza a agenda do usuário e grava o snapshot em cached_events + last_sync_at.
+     * Janela = início do mês atual → fim de +2 meses (cobre navegação p/ meses à frente).
+     * Retorna o nº de eventos, ou null se não foi possível renovar o acesso. Defensivo.
+     */
+    public static function syncEvents(\App\Models\UserIntegration $i): ?int
+    {
+        $token = self::freshTokenFor($i);
+        if (!$token) return null;
+
+        $events = self::fetchEvents($token, now()->startOfMonth(), now()->addMonths(2)->endOfMonth());
+        $i->update(['cached_events' => $events, 'last_sync_at' => now()]);
+
+        return count($events);
+    }
 }
