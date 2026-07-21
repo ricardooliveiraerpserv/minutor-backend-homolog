@@ -690,18 +690,19 @@ class ProjectController extends Controller
             ->flip()
             ->toArray();
 
-        // "Meus Projetos" (consultor): a lista deve mostrar as horas DO CONSULTOR — alocadas a ele
-        // (SUM planned_hours das alocações dele nas etapas) e consumidas por ele (SUM effort_minutes dos
-        // apontamentos dele) — não os totais do projeto. Dois GROUP BY (anti-N+1), só neste modo.
+        // "Meus Projetos" (consultor): a lista mostra as horas DO CONSULTOR — não os totais do projeto.
+        // DISPONIBILIZADAS = SUM(hours_planned) das ATIVIDADES (stage_deliveries) onde ele é o
+        // responsável (é o que a coluna HORAS do cronograma mostra pra ele). CONSUMIDAS = SUM(effort_minutes)
+        // dos apontamentos dele. Saldo = disponibilizadas − consumidas (calculado no front). Anti-N+1.
         $activityAllocatedMode = $activityAllocated && $myProjectsUserId && !empty($projectIds);
         $myAllocMap = []; $myConsumedMap = [];
         if ($activityAllocatedMode) {
-            $myAllocMap = \App\Models\StageAllocation::query()
-                ->join('project_stages', 'project_stages.id', '=', 'stage_allocations.stage_id')
-                ->where('stage_allocations.user_id', $myProjectsUserId)
+            $myAllocMap = \App\Models\StageDelivery::query()
+                ->join('project_stages', 'project_stages.id', '=', 'stage_deliveries.stage_id')
+                ->where('stage_deliveries.responsible_user_id', $myProjectsUserId)
                 ->whereIn('project_stages.project_id', $projectIds)
                 ->groupBy('project_stages.project_id')
-                ->selectRaw('project_stages.project_id as pid, COALESCE(SUM(stage_allocations.planned_hours), 0) as h')
+                ->selectRaw('project_stages.project_id as pid, COALESCE(SUM(stage_deliveries.hours_planned), 0) as h')
                 ->pluck('h', 'pid')->toArray();
             $myConsumedMap = \App\Models\Timesheet::query()
                 ->whereIn('project_id', $projectIds)
