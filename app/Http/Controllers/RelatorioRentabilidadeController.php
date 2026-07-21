@@ -545,4 +545,75 @@ class RelatorioRentabilidadeController extends Controller
             'receita_inicial' => (float) $rec->receita_inicial,
         ]]);
     }
+
+    /**
+     * Clientes SEM faturamento recente (churn) a partir dos dados do Keruak.
+     * Usa a data de emissão (faturamento) de cada título; lista clientes cuja
+     * última emissão está há >= N meses do mês de referência (default 2).
+     */
+    public function clientesInativos(Request $request): JsonResponse
+    {
+        $threshold = max(1, (int) $request->input('meses', 2));
+        $ref = Carbon::now()->startOfMonth();
+        $refIdx = $ref->year * 12 + $ref->month;
+
+        $map = app(\App\Services\KeruakRentabilidadeService::class)->recebido($request->boolean('refresh'));
+
+        // CNPJ (só dígitos) -> cliente Minutor (nome + executivo), via cgc + secundários.
+        $custByCnpj = [];
+        \App\Models\Customer::with('executive:id,name')
+            ->get(['id', 'name', 'cgc', 'secondary_cgcs', 'executive_id'])
+            ->each(function ($c) use (&$custByCnpj) {
+                $cnpjs = collect([$c->cgc])->merge((array) ($c->secondary_cgcs ?? []))
+                    ->map(fn ($x) => preg_replace('/\D/', '', (string) $x))->filter()->unique();
+                foreach ($cnpjs as $cnpj) {
+                    $custByCnpj[$cnpj] = ['cliente' => $c->name, 'executivo' => $c->executive->name ?? null, 'customer_id' => $c->id];
+                }
+            });
+
+        $rows = [];
+        foreach ($map as $cnpj => $info) {
+            // Última data de FATURAMENTO (emissão). Fallback: recebimento, se sem emissão.
+            $emissoes = array_filter(array_column($info['titulos'] ?? [], 'emissao'));
+            $lastEmissao = $emissoes ? max($emissoes) : null;
+            if (! $lastEmissao) {
+                $recebs = array_keys($info['receb'] ?? []);
+                $lastEmissao = $recebs ? max($recebs) : null;
+            }
+            if (! $lastEmissao) {
+                continue;
+            }
+            [$ey, $em] = array_map('intval', explode('-', $lastEmissao));
+            $mesesInativo = $refIdx - ($ey * 12 + $em);
+            if ($mesesInativo < $threshold) {
+                continue; // ainda ativo
+            }
+            // Último valor faturado (soma dos títulos do último mês de emissão).
+            $lastValor = 0.0;
+            foreach ($info['titulos'] ?? [] as $t) {
+                if (($t['emissao'] ?? null) === $lastEmissao) {
+                    $lastValor += (float) $t['valor'];
+                }
+            }
+            $cust = $custByCnpj[$cnpj] ?? null;
+            $rows[] = [
+                'cnpj' => $cnpj,
+                'cliente' => $cust['cliente'] ?? ($info['name'] ?? '—'),
+                'executivo' => $cust['executivo'] ?? null,
+                'no_minutor' => (bool) $cust,
+                'ultimo_faturamento' => $lastEmissao,
+                'meses_inativo' => $mesesInativo,
+                'ultimo_valor' => round($lastValor, 2),
+                'total_recebido' => round(array_sum($info['receb'] ?? []), 2),
+            ];
+        }
+        usort($rows, fn ($a, $b) => [$b['meses_inativo'], $b['total_recebido']] <=> [$a['meses_inativo'], $a['total_recebido']]);
+
+        return response()->json([
+            'ref' => $ref->format('Y-m'),
+            'meses' => $threshold,
+            'total' => count($rows),
+            'clientes' => $rows,
+        ]);
+    }
 }
