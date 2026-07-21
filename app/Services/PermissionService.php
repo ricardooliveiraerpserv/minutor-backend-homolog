@@ -126,6 +126,9 @@ class PermissionService
         // Help Desk — acende o módulo no menu (sidebar). O acesso ao chamado em si
         // é decidido pelo HelpDeskAccessPolicy, não por esta chave.
         'help_desk.tickets.view',
+        // Banco de Competências
+        'competencias.view', 'competencias.manage', 'competencias.view_team',
+        'competencias.respond', 'competencias.reports.view',
         // Sistema
         'settings.view',
     ];
@@ -177,6 +180,9 @@ class PermissionService
             'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
             // Relatórios
             'reports.view', 'reports.export',
+            // Banco de Competências (gestão completa)
+            'competencias.view', 'competencias.manage', 'competencias.view_team',
+            'competencias.respond', 'competencias.reports.view',
             // Configurações
             'settings.view',
                     // CRM (gestão comercial)
@@ -206,6 +212,8 @@ class PermissionService
             'holidays.manage',
             // Follow Up: coordenador vê/gerencia os do seu contexto.
             'followups.view', 'followups.manage',
+            // Banco de Competências: consulta competências da equipe + responde a própria.
+            'competencias.view', 'competencias.view_team', 'competencias.respond',
         ];
     }
 
@@ -225,6 +233,8 @@ class PermissionService
             // Help Desk: acende o item no menu do consultor (sidebar gateia por esta chave).
             // NÃO amplia dado: o que ele enxerga de chamado segue no HelpDeskAccessPolicy.
             'help_desk.tickets.view',
+            // Banco de Competências: responde a própria pesquisa.
+            'competencias.respond',
         ];
     }
 
