@@ -49,6 +49,9 @@ class AdiantamentoController extends Controller
             $totalParcelas = $a->parcelas->count();
             $pagas = $a->parcelas->filter(fn ($p) => $p->year_month <= $currentYm)->count();
             $restantes = max(0, $totalParcelas - $pagas);
+            // Valor já pago (parcelas vencidas) e valor atualizado ainda devido (a vencer).
+            $valorPago = round($a->parcelas->filter(fn ($p) => $p->year_month <= $currentYm)->sum(fn ($p) => (float) $p->valor), 2);
+            $valorDevido = round($a->parcelas->filter(fn ($p) => $p->year_month > $currentYm)->sum(fn ($p) => (float) $p->valor), 2);
 
             return [
             'id'                   => $a->id,
@@ -73,6 +76,8 @@ class AdiantamentoController extends Controller
             ])->values(),
             'parcelas_pagas'       => $pagas,
             'parcelas_restantes'   => $restantes,
+            'valor_pago'           => $valorPago,
+            'valor_devido'         => $valorDevido,
             'encerrado'            => $totalParcelas > 0 && $restantes === 0,
             ];
         });
