@@ -1604,17 +1604,15 @@ class ProjectController extends Controller
             $validated['coordination_hours'] = null;
         }
 
-        // Horas apontáveis podem chegar até CONTRATADAS + APORTE (hour_contributions somam com as contratadas).
+        // Horas de coordenação não podem exceder as horas vendidas (contratadas).
         $coordH = array_key_exists('coordination_hours', $validated) ? $validated['coordination_hours'] : null;
         $soldHForCoord = array_key_exists('sold_hours', $validated) ? $validated['sold_hours'] : $project->sold_hours;
-        $aporteHForCoord = (float) $project->hourContributions()->sum('contributed_hours');
-        $maxCoord = (float) $soldHForCoord + $aporteHForCoord;
-        if (!$isBhMensal && $coordH !== null && $soldHForCoord !== null && (float) $coordH > $maxCoord) {
+        if (!$isBhMensal && $coordH !== null && $soldHForCoord !== null && (float) $coordH > (float) $soldHForCoord) {
             return response()->json([
                 'code' => 'INVALID_COORDINATION_HOURS',
                 'type' => 'error',
                 'message' => 'Horas inválidas',
-                'detailMessage' => "As horas apontáveis não podem exceder as horas disponíveis ({$maxCoord}h" . ($aporteHForCoord > 0 ? ' = contratadas + aporte' : '') . ").",
+                'detailMessage' => "As horas de coordenação não podem ser maiores que as horas vendidas ({$soldHForCoord}h).",
             ], 422);
         }
 
