@@ -553,7 +553,10 @@ class RelatorioRentabilidadeController extends Controller
      */
     public function atividadeClientes(Request $request): JsonResponse
     {
-        $threshold = max(1, (int) $request->input('meses', 2));
+        // Limiares parametrizáveis (Configurador): Ativo até N meses; Inativo a partir de M.
+        // A faixa entre eles é "Inativando" (ex.: ativo_ate=4, inativo_a_partir=6 → 5 = inativando).
+        $ativoAte = max(0, (int) \App\Models\SystemSetting::get('cliente_status_ativo_ate', 4));
+        $inativoApartir = max($ativoAte + 1, (int) \App\Models\SystemSetting::get('cliente_status_inativo_a_partir', 6));
         $ref = Carbon::now()->startOfMonth();
         $refIdx = $ref->year * 12 + $ref->month;
 
@@ -606,8 +609,10 @@ class RelatorioRentabilidadeController extends Controller
             }
             [$ey, $em] = array_map('intval', explode('-', $lastReceb));
             $mesesInativo = $refIdx - ($ey * 12 + $em);
-            // Traz TODOS os clientes; a régua (meses) só define quem é Ativo/Inativo.
-            $ativo = $mesesInativo < $threshold;
+            // Traz TODOS os clientes; os limiares definem o status em 3 faixas.
+            $status = $mesesInativo <= $ativoAte
+                ? 'ativo'
+                : ($mesesInativo >= $inativoApartir ? 'inativo' : 'inativando');
             // Último valor recebido (títulos do último mês de recebimento).
             $lastValor = 0.0;
             foreach ($g['titulos'] as $t) {
@@ -622,7 +627,7 @@ class RelatorioRentabilidadeController extends Controller
                 'no_minutor' => $g['no_minutor'],
                 'ultimo_faturamento' => $lastReceb,
                 'meses_inativo' => $mesesInativo,
-                'ativo' => $ativo,
+                'status' => $status,
                 'ultimo_valor' => round($lastValor, 2),
                 'total_recebido' => round($g['receb_total'], 2),
             ];
@@ -631,11 +636,36 @@ class RelatorioRentabilidadeController extends Controller
 
         return response()->json([
             'ref' => $ref->format('Y-m'),
-            'meses' => $threshold,
+            'config' => ['ativo_ate' => $ativoAte, 'inativo_a_partir' => $inativoApartir],
             'total' => count($rows),
-            'ativos' => collect($rows)->where('ativo', true)->count(),
-            'inativos' => collect($rows)->where('ativo', false)->count(),
+            'ativos' => collect($rows)->where('status', 'ativo')->count(),
+            'inativando' => collect($rows)->where('status', 'inativando')->count(),
+            'inativos' => collect($rows)->where('status', 'inativo')->count(),
             'clientes' => $rows,
         ]);
+    }
+
+    /** Config dos limiares de status do cliente (Configurador). */
+    public function statusClientesConfig(): JsonResponse
+    {
+        return response()->json([
+            'ativo_ate' => max(0, (int) \App\Models\SystemSetting::get('cliente_status_ativo_ate', 4)),
+            'inativo_a_partir' => max(1, (int) \App\Models\SystemSetting::get('cliente_status_inativo_a_partir', 6)),
+        ]);
+    }
+
+    public function statusClientesConfigUpdate(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ativo_ate' => ['required', 'integer', 'min:0', 'max:60'],
+            'inativo_a_partir' => ['required', 'integer', 'min:1', 'max:120'],
+        ]);
+        if ($data['inativo_a_partir'] <= $data['ativo_ate']) {
+            return response()->json(['message' => '"Inativo a partir de" deve ser maior que "Ativo até".'], 422);
+        }
+        \App\Models\SystemSetting::set('cliente_status_ativo_ate', (string) $data['ativo_ate'], 'integer', 'clientes', 'Status Ativo até N meses sem receber');
+        \App\Models\SystemSetting::set('cliente_status_inativo_a_partir', (string) $data['inativo_a_partir'], 'integer', 'clientes', 'Status Inativo a partir de N meses sem receber');
+
+        return response()->json(['ok' => true, 'ativo_ate' => $data['ativo_ate'], 'inativo_a_partir' => $data['inativo_a_partir']]);
     }
 }
