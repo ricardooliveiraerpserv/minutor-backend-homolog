@@ -71,12 +71,21 @@ class HelpDeskAccessProfileController extends Controller
         $kind = $request->get('kind') === 'cliente' ? 'cliente' : 'agent';
         // customer_id + helpdesk_department_id: p/ a tela de Pessoas oferecer o
         // departamento (escopo por cliente). Ver HelpDeskDepartmentController.
-        $q = User::query()->select('id', 'name', 'type', 'helpdesk_access_profile_id', 'customer_id', 'helpdesk_department_id');
+        // customer:id,name eager-load p/ a tela de Pessoas exibir a EMPRESA (cliente) de cada
+        // pessoa — sem N+1 (1 query extra p/ todos os clientes da página).
+        $q = User::query()
+            ->select('id', 'name', 'type', 'helpdesk_access_profile_id', 'customer_id', 'helpdesk_department_id')
+            ->with('customer:id,name');
         $kind === 'cliente'
             ? $q->where('type', 'cliente')
             : $q->whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor']);
         if ($request->filled('search')) $q->where('name', 'ilike', '%' . $request->search . '%');
-        return response()->json(['data' => $q->orderBy('name')->limit(500)->get()]);
+        $rows = $q->orderBy('name')->limit(500)->get()->map(function (User $u) {
+            $u->setAttribute('customer_name', $u->customer?->name);
+            $u->unsetRelation('customer');
+            return $u;
+        });
+        return response()->json(['data' => $rows]);
     }
 
     /** Vincula (ou remove) o perfil de acesso de um usuário, validando a compatibilidade de tipo. */
