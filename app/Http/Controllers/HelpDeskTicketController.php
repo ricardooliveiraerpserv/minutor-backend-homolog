@@ -31,7 +31,31 @@ class HelpDeskTicketController extends Controller
             'assignee:id,name', 'team:id,name',
             'contract:id,categoria,helpdesk_integration_enabled', 'project:id,name',
             'service:id,name,code', 'justification:id,name,status_id',
+            'continuations:id,ticket_number,previous_ticket_id', // p/ continuation_ticket no payload
         ];
+    }
+
+    /**
+     * Enriquece o payload do ticket (show E detail) com os flags de PERMISSÃO do usuário +
+     * solicitante resolvido + continuação. Fonte ÚNICA — o /detail (perf) e o /show precisam
+     * devolver EXATAMENTE os mesmos flags, senão o FE perde o menu de gestão e o encerrar/cancelar.
+     */
+    private function enrichTicketFlags(HelpDeskTicket $ticket, array $data, ?\App\Models\User $user): array
+    {
+        $data['can_edit_description'] = $this->access->canEditActions($user);
+        $data['can_merge']      = $this->access->canMerge($user);
+        $data['can_delete']     = $this->access->canDelete($user);
+        $data['can_print']      = $this->access->canPrint($user);
+        $data['can_view_sla']   = $this->access->canViewSla($user);
+        $data['can_clone']      = $this->access->canClone($user);
+        $data['can_send_email'] = $this->access->canSendEmail($user);
+        $data['can_reopen']     = $this->access->canReopen($user);
+        $data['can_close']      = $this->access->canClose($user);
+        $data['solicitante']    = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail()];
+        $data['continuation_ticket'] = optional($ticket->relationLoaded('continuations')
+            ? $ticket->continuations->sortByDesc('id')->first()
+            : $ticket->continuations()->orderByDesc('id')->first())->only(['id', 'ticket_number']) ?: null;
+        return $data;
     }
 
     private function withRels($q)
@@ -818,20 +842,7 @@ class HelpDeskTicketController extends Controller
             'continuations:id,ticket_number,previous_ticket_id',            // chamado(s) abertos a partir DESTE
         ]);
         $events = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
-        $data = $this->decorate($ticket, $events);
-        // Chamado ATUAL (continuação mais recente aberta a partir deste, quando encerrado).
-        $data['continuation_ticket'] = optional($ticket->continuations->sortByDesc('id')->first())->only(['id', 'ticket_number']) ?: null;
-        $data['can_edit_description'] = $this->access->canEditActions(\Illuminate\Support\Facades\Auth::user());
-        $data['can_merge'] = $this->access->canMerge(\Illuminate\Support\Facades\Auth::user());
-        $data['can_delete'] = $this->access->canDelete(\Illuminate\Support\Facades\Auth::user());
-        $data['can_print'] = $this->access->canPrint(\Illuminate\Support\Facades\Auth::user());
-        $data['can_view_sla'] = $this->access->canViewSla(\Illuminate\Support\Facades\Auth::user());
-        $data['can_clone'] = $this->access->canClone(\Illuminate\Support\Facades\Auth::user());
-        $data['can_send_email'] = $this->access->canSendEmail(\Illuminate\Support\Facades\Auth::user());
-        $data['can_reopen'] = $this->access->canReopen(\Illuminate\Support\Facades\Auth::user());
-        $data['can_close'] = $this->access->canClose(\Illuminate\Support\Facades\Auth::user());
-        // Solicitante resolvido: se o e-mail estiver cadastrado, traz o NOME do contato.
-        $data['solicitante'] = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail()];
+        $data = $this->enrichTicketFlags($ticket, $this->decorate($ticket, $events), \Illuminate\Support\Facades\Auth::user());
         return response()->json(['data' => $data]);
     }
 
@@ -1302,7 +1313,7 @@ class HelpDeskTicketController extends Controller
         // $ticket já veio do route-model-binding: eager-load das relações no próprio modelo em vez de
         // refazer o SELECT do ticket (withRels(...)->find). Mesma decoração, uma query a menos.
         $ticket->load($this->detailRels());
-        $ticketData = $this->decorate($ticket);
+        $ticketData = $this->enrichTicketFlags($ticket, $this->decorate($ticket), $user);
 
         $isCliente = (bool) $user?->isCliente();
         $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
