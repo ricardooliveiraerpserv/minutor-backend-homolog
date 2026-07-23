@@ -22,27 +22,53 @@ class HelpDeskTicketController extends Controller
     {
     }
 
-    private function withRels($q)
+    /** Relações do DETALHE do chamado (colunas enxutas) — compartilhadas por with()/load(). */
+    private function detailRels(): array
     {
-        return $q->with([
+        return [
             'customer:id,name', 'contact:id,name,email', 'requester:id,name',
             'category:id,name,color', 'status:id,key,label,color,is_open,is_resolved,is_terminal',
             'assignee:id,name', 'team:id,name',
             'contract:id,categoria,helpdesk_integration_enabled', 'project:id,name',
             'service:id,name,code', 'justification:id,name,status_id',
+        ];
+    }
+
+    private function withRels($q)
+    {
+        return $q->with($this->detailRels());
+    }
+
+    /**
+     * Relações MÍNIMAS da LISTAGEM/fila (index). O card só usa customer, assignee, status e o
+     * solicitante (contact/requester p/ montar o nome). Carregar as 11 relações do detalhe aqui
+     * (contract/project/service/justification/category/team) multiplica a serialização por 500
+     * tickets sem ninguém ler. O detalhe (show/store/update) continua usando withRels completo.
+     */
+    private function withListRels($q)
+    {
+        return $q->with([
+            'customer:id,name', 'contact:id,name', 'requester:id,name',
+            'status:id,key,label,color,is_open,is_resolved,is_terminal', 'assignee:id,name',
         ]);
     }
 
-    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null): array
+    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false): array
     {
         // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
         $solicitante = optional($t->contact)->name ?: optional($t->requester)->name ?: $t->requester_name;
         // Dias ÚTEIS sem interação da EQUIPE: referência = última interação de agente OU abertura.
+        // NÃO conta quando a bola NÃO está com a equipe: encerrados (fechado/cancelado), entregues
+        // (resolvido/solução com GMUD), aguardando cliente/terceiros, ou agendado (reunião marcada).
+        $semIntExcl = ['fechado', 'cancelado', 'resolvido', 'solucao_gmud', 'aguardando_cliente', 'pendente_terceiros', 'reuniao_agendada'];
+        $foraDaFilaEquipe = in_array(optional($t->status)->key, $semIntExcl, true)
+            || ($t->scheduled_until && \Illuminate\Support\Carbon::parse($t->scheduled_until)->isFuture());
         $ref = $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt) : $t->created_at;
-        $diasSemInteracao = ($ref && $cal) ? max(0, $cal->businessDaysBetween($ref, now()) - 1) : 0;
+        $diasSemInteracao = (!$foraDaFilaEquipe && $ref && $cal) ? max(0, $cal->businessDaysBetween($ref, now()) - 1) : 0;
 
         return array_merge($t->toArray(), [
-            'sla'                    => $this->sla->summary($t, $events),
+            // Na LISTA (lean) o card só lê os flags do SLA — listSummary pula a serialização de datas.
+            'sla'                    => $lean ? $this->sla->listSummary($t, $events) : $this->sla->summary($t, $events),
             'solicitante_nome'       => $solicitante,
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
             'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
@@ -81,7 +107,7 @@ class HelpDeskTicketController extends Controller
     private function filtered(Request $request)
     {
         $user = $request->user();
-        return $this->access->applyViewScope($this->withRels(HelpDeskTicket::query()), $user) // perfil: escopo de visão
+        return $this->access->applyViewScope($this->withListRels(HelpDeskTicket::query()), $user) // perfil: escopo de visão
             ->whereNull('merged_into_id') // chamados mesclados somem das listagens (ficam no destino)
             ->when($request->filled('status_id'), fn ($q) => $q->where('status_id', $request->status_id))
             ->when($request->filled('status_key'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('key', $request->status_key)))
@@ -96,10 +122,22 @@ class HelpDeskTicketController extends Controller
             ->when($request->boolean('mine'), fn ($q) => $q->where('assignee_id', $user?->id))
             ->when($request->boolean('unassigned'), fn ($q) => $q->whereNull('assignee_id'))
             ->when($request->boolean('breached'), fn ($q) => $q->where(fn ($w) => $w->where('first_response_breached', true)->orWhere('resolution_breached', true)))
+            // Busca ÚNICA da fila — respeita todos os filtros (roda dentro do filtered()): assunto,
+            // descrição, cliente, solicitante/responsável/contato E conteúdo das interações.
             ->when($request->filled('search'), function ($q) use ($request) {
                 $s = '%' . $request->search . '%';
-                $q->where(fn ($w) => $w->where('subject', 'ilike', $s)->orWhere('ticket_number', 'ilike', $s)->orWhere('description', 'ilike', $s));
+                $q->where(fn ($w) => $w
+                    ->where('subject', 'ilike', $s)
+                    ->orWhere('description', 'ilike', $s)
+                    ->orWhere('requester_name', 'ilike', $s)
+                    ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $s))
+                    ->orWhereHas('assignee', fn ($a) => $a->where('name', 'ilike', $s))
+                    ->orWhereHas('contact', fn ($c) => $c->where('name', 'ilike', $s))
+                    ->orWhereHas('requester', fn ($r) => $r->where('name', 'ilike', $s))
+                    ->orWhereHas('comments', fn ($cm) => $cm->whereNull('deleted_at')->where('body', 'ilike', $s)));
             })
+            // Filtro DEDICADO por número do chamado (campo separado da busca geral).
+            ->when($request->filled('ticket'), fn ($q) => $q->where('ticket_number', 'ilike', '%' . $request->ticket . '%'))
             ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
             // ESCALA: filtro de DATA no banco (usa índice created_at) — a fila deixa de carregar "os N
             // mais recentes de toda a história" e passa a varrer só o período pedido.
@@ -128,7 +166,7 @@ class HelpDeskTicketController extends Controller
         $events = $this->eventsByTicket($tickets->where('sla_ever_paused', true)->values());
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
         $cal = app(\App\Services\BusinessCalendarService::class);
-        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal))]);
+        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true))]);
     }
 
     /**
@@ -1254,6 +1292,43 @@ class HelpDeskTicketController extends Controller
     }
 
     /**
+     * Abertura do chamado em UMA chamada só: ticket + interações (40 recentes). Evita o backend free
+     * re-inicializar o Laravel N vezes (show + comments eram 2 requests). O resto (anexos/apontamentos/
+     * merged/reuniões) segue em chamadas próprias, adiadas — não bloqueiam o conteúdo visível.
+     */
+    public function detail(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
+    {
+        $user = $request->user();
+        // $ticket já veio do route-model-binding: eager-load das relações no próprio modelo em vez de
+        // refazer o SELECT do ticket (withRels(...)->find). Mesma decoração, uma query a menos.
+        $ticket->load($this->detailRels());
+        $ticketData = $this->decorate($ticket);
+
+        $isCliente = (bool) $user?->isCliente();
+        $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
+        $total = $base()->count();
+        $cq = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
+        if ($total > 40) {
+            $recentIds = $base()->orderByDesc('created_at')->limit(40)->pluck('id');
+            $cq->whereIn('id', $recentIds);
+        }
+        $comments = $cq->get();
+        $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
+        $commentsData = $comments->map(fn ($c) => array_merge($c->toArray(), [
+            'attachments'      => ($attByComment->get($c->id) ?? collect())->values(),
+            'can_edit'         => $this->access->canEditComment($user, $c),
+            'can_candidate_kb' => !$c->is_system && $c->author_user_id && $this->access->canCandidateKb($user, $c),
+        ]));
+
+        return response()->json(['data' => [
+            'ticket'            => $ticketData,
+            'comments'          => $commentsData,
+            'comments_total'    => $total,
+            'comments_returned' => $comments->count(),
+        ]]);
+    }
+
+    /**
      * Executa um Playbook de Atendimento no chamado — sequência de ações numa única operação,
      * atômica, reusando transitionStatus/comentários/SLA (zero duplicação). `start_finalize` NÃO
      * aplica no servidor: devolve defaults p/ o FE abrir o fluxo "Finalizar" pré-preenchido.
@@ -1392,23 +1467,34 @@ class HelpDeskTicketController extends Controller
     // ── Interações (respostas/notas) ──────────────────────────────────────────
     public function comments(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
-        $q = $ticket->comments()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
         // Cliente só enxerga as respostas marcadas como visíveis ao cliente.
-        if ($request->user()?->isCliente()) {
-            $q->where('visibility', 'customer');
+        $isCliente = (bool) $request->user()?->isCliente();
+        $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
+        $total = $base()->count();
+        $q = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
+        // PAGINAÇÃO: por padrão traz só as N interações MAIS RECENTES (tickets grandes — 183 interações —
+        // custavam ~6s pra montar). ?limit=0 (ou "todas") traz tudo. Mantém a ordem cronológica no retorno.
+        $limit = (int) $request->input('limit', 0);
+        if ($limit > 0 && $total > $limit) {
+            $recentIds = $base()->orderByDesc('created_at')->limit($limit)->pluck('id');
+            $q->whereIn('id', $recentIds);
         }
         $user = $request->user();
-        // Anexos POR interação (estilo e-mail) — listFor respeita permissão/visibilidade.
-        $data = $q->get()->map(function ($c) use ($svc, $user) {
+        $comments = $q->get();
+        // Anti-N+1: anexos de TODAS as interações em UMA query (era 1 query de anexos POR comentário —
+        // 183 comentários = 183 queries). aggregateLoader agrupa por entity_id (= id do comentário).
+        $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
+        $data = $comments->map(function ($c) use ($attByComment, $user) {
             $arr = $c->toArray();
-            $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $c->id, $user)->values();
+            $arr['attachments'] = ($attByComment->get($c->id) ?? collect())->values();
             $arr['can_edit'] = $this->access->canEditComment($user, $c);
             // Só faz sentido "virar artigo" a partir de interação da EQUIPE (não do cliente/sistema).
             $arr['can_candidate_kb'] = !$c->is_system && $c->author_user_id
                 && $this->access->canCandidateKb($user, $c);
             return $arr;
         });
-        return response()->json(['data' => $data]);
+        // total = quantas existem; returned = quantas vieram (FE mostra "carregar mais antigas" se total>returned).
+        return response()->json(['data' => $data, 'total' => $total, 'returned' => $comments->count()]);
     }
 
     /** Edita o corpo E o tempo trabalhado de uma interação (gated por service.edit_actions). */

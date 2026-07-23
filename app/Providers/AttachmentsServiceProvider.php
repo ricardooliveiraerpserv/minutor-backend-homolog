@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Attachments\AttachmentService;
 use App\Attachments\Storage\LocalStorageProvider;
+use App\Attachments\Storage\S3StorageProvider;
+use App\Attachments\Storage\SupabaseStorageProvider;
 use App\Attachments\Storage\StorageProvider;
 use Illuminate\Support\ServiceProvider;
 
@@ -18,12 +20,13 @@ class AttachmentsServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(StorageProvider::class, function ($app) {
-            // Hoje só local. Quando S3 entrar:
-            //   match (config('attachments.driver', 'local')) {
-            //     's3' => new S3StorageProvider(...),
-            //     ...
-            //   }
-            return new LocalStorageProvider();
+            // Driver por env (default local). Só ambientes com ATTACHMENTS_DRIVER=s3
+            // (+ AWS_*/Supabase configurados) usam o bucket — mantém local no resto.
+            return match (strtolower((string) env('ATTACHMENTS_DRIVER', 'local'))) {
+                's3'       => new S3StorageProvider(),
+                'supabase' => new SupabaseStorageProvider(),
+                default    => new LocalStorageProvider(),
+            };
         });
 
         $this->app->singleton(AttachmentService::class, function ($app) {

@@ -1727,20 +1727,12 @@ class UserController extends Controller
             // Processar upload da nova foto (já temos $file da validação acima)
             $fileName = 'user_' . $user->id . '_' . time() . '.' . $file->getClientOriginalExtension();
 
-            // Garantir que o diretório profile_photos existe
-            $directory = storage_path('app/public/profile_photos');
-            if (!file_exists($directory)) {
-                mkdir($directory, 0755, true);
-            }
-
-
-
-            // Salvar arquivo no storage usando o disco public explicitamente
-            $path = $file->storeAs('profile_photos', $fileName, 'public');
-
-
-
             $storagePath = 'profile_photos/' . $fileName;
+
+            // Grava no PROVIDER de anexos CONFIGURADO (local/supabase), não só no disco local — senão o
+            // registerExisting abaixo, que checa exists() NO PROVIDER, falha quando o driver é supabase
+            // (dev1: ATTACHMENTS_DRIVER=supabase). No local, o provider grava no mesmo disco public de antes.
+            app(\App\Attachments\Storage\StorageProvider::class)->putUploaded($storagePath, $file);
 
             // FASE 11.7 — Persistência 100% na camada Attachment.
             // Falha aqui é fatal porque já não há legado pra cobrir o upload.

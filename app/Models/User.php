@@ -662,9 +662,11 @@ class User extends Authenticatable
                 ->whereNull('deleted_at')
                 ->latest('id')->first();
             if (!$att || !$att->storage_path) return null;
-            $disk = \Illuminate\Support\Facades\Storage::disk('public');
-            if (!$disk->exists($att->storage_path)) return null;
-            return 'data:' . ($att->mime_type ?: 'image/jpeg') . ';base64,' . base64_encode($disk->get($att->storage_path));
+            // Lê do PROVIDER de anexos CONFIGURADO (local/supabase). Antes lia só do disco local, então
+            // a foto (no Supabase na dev1) não embutia na assinatura — checkbox marcado mas sem foto.
+            $provider = app(\App\Attachments\Storage\StorageProvider::class);
+            if (!$provider->exists($att->storage_path)) return null;
+            return 'data:' . ($att->mime_type ?: 'image/jpeg') . ';base64,' . base64_encode($provider->get($att->storage_path));
         } catch (\Throwable $e) {
             return null;
         }
