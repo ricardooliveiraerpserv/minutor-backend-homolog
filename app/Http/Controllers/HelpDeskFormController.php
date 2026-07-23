@@ -78,6 +78,32 @@ class HelpDeskFormController extends Controller
     /** Substitui a lista de campos do formulário na ordem enviada. */
     private function syncFields(HelpDeskForm $form, array $fields): void
     {
+        // Só grava a regra vinda do construtor se tiver um checkbox de gatilho (`when`); senão null.
+        // (require_attachment/regras avançadas são setadas fora do construtor e preservadas via LOCK.)
+        $mapRule = fn (array $f) => !empty($f['rule']['when'] ?? null)
+            ? ['when' => $f['rule']['when'], 'value' => $f['rule']['value'] ?? 'não se aplica'] : null;
+
+        // Formulário TRAVADO: NÃO altera/remove campos existentes — só ANEXA os de chave inédita.
+        // Assim, editar o form no construtor não apaga as regras já configuradas.
+        if ($form->locked) {
+            $existing = $form->fields()->pluck('key')->all();
+            $order = (int) $form->fields()->max('order_index');
+            foreach (array_values($fields) as $f) {
+                if (in_array($f['key'], $existing, true)) continue; // campo travado — ignora qualquer mudança
+                $form->fields()->create([
+                    'order_index' => ++$order,
+                    'key'         => $f['key'],
+                    'ftype'       => $f['ftype'],
+                    'label'       => $f['label'],
+                    'hint'        => $f['hint'] ?? null,
+                    'required'    => (bool) ($f['required'] ?? false),
+                    'min_chars'   => $f['min_chars'] ?? null,
+                    'rule'        => $mapRule($f),
+                ]);
+            }
+            return;
+        }
+
         $form->fields()->delete();
         foreach (array_values($fields) as $i => $f) {
             $form->fields()->create([
@@ -88,8 +114,7 @@ class HelpDeskFormController extends Controller
                 'hint'        => $f['hint'] ?? null,
                 'required'    => (bool) ($f['required'] ?? false),
                 'min_chars'   => $f['min_chars'] ?? null,
-                // Só grava a regra se tiver um checkbox de gatilho (`when`); senão null.
-                'rule'        => !empty($f['rule']['when'] ?? null) ? ['when' => $f['rule']['when'], 'value' => $f['rule']['value'] ?? 'não se aplica'] : null,
+                'rule'        => $mapRule($f),
             ]);
         }
     }
