@@ -275,7 +275,11 @@ class HelpDeskAccessPolicy
     }
 
     /**
-     * Escopo de visão do CLIENTE: own (só os que ele abriu) | same_org (da empresa) | none.
+     * Escopo de visão do CLIENTE:
+     *   own        — só os que ele abriu (requester = ele)
+     *   department — todos os chamados abertos por pessoas do MESMO departamento dele
+     *   same_org   — todos os chamados da empresa (customer)
+     *   none       — nenhum
      * Por segurança, "any" (todos de qualquer cliente) degrada para same_org — não expomos
      * tickets de outras empresas a um cliente.
      */
@@ -283,7 +287,7 @@ class HelpDeskAccessPolicy
     {
         if ($this->unrestricted($user)) return 'same_org';
         $s = (string) $this->perm($user, 'tickets.view_tickets', 'same_org');
-        return in_array($s, ['own', 'same_org', 'none'], true) ? $s : 'same_org';
+        return in_array($s, ['own', 'department', 'same_org', 'none'], true) ? $s : 'same_org';
     }
 
     public function canSee(?User $user, HelpDeskTicket $t): bool

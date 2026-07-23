@@ -34,6 +34,19 @@ class HelpDeskPortalController extends Controller
         return (int) $cid;
     }
 
+    /**
+     * Escopo "departamento": chamados abertos por pessoas do MESMO departamento do cliente.
+     * O chamado não tem departamento próprio — ele herda o departamento de quem o abriu
+     * (requester). Cliente sem departamento definido só enxerga os próprios (fallback seguro).
+     */
+    private function scopeByDepartment(\Illuminate\Database\Eloquent\Builder $q, \App\Models\User $user, int $cid): \Illuminate\Database\Eloquent\Builder
+    {
+        $dept = $user->helpdesk_department_id;
+        if (!$dept) return $q->where('requester_user_id', $user->id);
+        return $q->whereIn('requester_user_id', \App\Models\User::query()
+            ->where('customer_id', $cid)->where('helpdesk_department_id', $dept)->select('id'));
+    }
+
     /** Eventos status_changed de vários tickets em UMA query (SLA pausado sem N+1). */
     private function eventsByTicket(Collection $tickets): Collection
     {
@@ -80,10 +93,12 @@ class HelpDeskPortalController extends Controller
     public function myTickets(Request $request): JsonResponse
     {
         $cid = $this->customerId($request);
-        $scope = $this->access->clientViewScope($request->user()); // own | same_org | none
+        $user = $request->user();
+        $scope = $this->access->clientViewScope($user); // own | department | same_org | none
         $tickets = HelpDeskTicket::where('customer_id', $cid)
             ->whereNull('merged_into_id') // chamados mesclados não aparecem na lista do cliente
-            ->when($scope === 'own', fn ($q) => $q->where('requester_user_id', $request->user()->id)) // só os que ELE abriu
+            ->when($scope === 'own', fn ($q) => $q->where('requester_user_id', $user->id)) // só os que ELE abriu
+            ->when($scope === 'department', fn ($q) => $this->scopeByDepartment($q, $user, $cid)) // do mesmo depto dele
             ->when($scope === 'none', fn ($q) => $q->whereRaw('1 = 0'))
             ->with(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'assignee:id,name', 'contact:id,name'])
             ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
@@ -100,6 +115,13 @@ class HelpDeskPortalController extends Controller
         $scope = $this->access->clientViewScope($u);
         abort_if($scope === 'none', 403, 'Seu perfil de acesso não permite visualizar chamados.');
         abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
+        if ($scope === 'department') {
+            $dept = $u->helpdesk_department_id;
+            $reqDept = $ticket->requester_user_id
+                ? optional(\App\Models\User::find($ticket->requester_user_id))->helpdesk_department_id : null;
+            $sameDept = $dept && $reqDept && (int) $dept === (int) $reqDept;
+            abort_unless($sameDept || (int) $ticket->requester_user_id === (int) $u->id, 404);
+        }
         $ticket->load(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'service:id,name', 'assignee:id,name', 'category:id,name', 'justification:id,name', 'tags:id,name', 'customer:id,name', 'team:id,name', 'contact:id,name', 'requester:id,name', 'previousTicket:id,ticket_number,customer_id', 'continuations:id,ticket_number,customer_id,previous_ticket_id']);
         $events   = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
         $comments = $ticket->comments()->where('visibility', 'customer')->with('author:id,name')->orderBy('created_at')->get();
