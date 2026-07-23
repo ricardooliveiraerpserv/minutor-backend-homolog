@@ -55,38 +55,62 @@ class UserCapacityService
             ->groupBy('stage_id')
             ->selectRaw('stage_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS actual_hours');
 
-        $rows = DB::table('stage_allocations as a')
-            ->join('project_stages as ps', 'ps.id', '=', 'a.stage_id')
-            ->join('projects as p', 'p.id', '=', 'ps.project_id')
-            ->leftJoin('customers as c', 'c.id', '=', 'p.customer_id')
-            ->leftJoin('service_types as st', 'st.id', '=', 'p.service_type_id')
-            ->leftJoinSub($tsSum, 'ts', fn ($j) => $j->on('ts.stage_id', '=', 'a.stage_id'))
-            ->where('a.user_id', $userId)
-            ->whereNull('ps.deleted_at')
-            ->whereNull('p.deleted_at')
-            ->where('ps.status', '!=', 'done')
-            ->where(function ($q) {
-                // Apenas projetos operacionais (sustentação fora — ADR 0004)
-                $q->whereNull('st.name')
-                  ->orWhere(function ($s) {
-                      $s->whereRaw('LOWER(st.name) NOT LIKE ?', ['%sustenta%'])
-                        ->whereRaw('LOWER(st.name) NOT LIKE ?', ['%cloud%'])
-                        ->whereRaw('LOWER(st.name) NOT LIKE ?', ['%bizify%']);
-                  });
-            })
-            ->selectRaw('
-                a.id AS allocation_id,
-                a.stage_id,
-                ps.name AS stage_name,
-                p.id AS project_id,
-                p.name AS project_name,
-                c.name AS customer_name,
-                a.planned_hours,
-                COALESCE(ts.actual_hours, 0) AS actual_hours
-            ')
-            ->orderBy('p.name')
-            ->orderBy('ps.order_index')
-            ->get();
+        // Planejado por etapa a partir do CRONOGRAMA (fonte real do trabalho): soma de
+        // hours_planned das ATIVIDADES onde o consultor é responsável. As stage_allocations
+        // NÃO são sincronizadas com o responsável das atividades — usar só elas subcontava a
+        // carga (ex.: 70h de atividade apareciam como 1h). Fallback pra alocação nas etapas
+        // sem atividades dele (projetos legados). GREATEST evita subcontagem sem duplicar.
+        $plannedByStage = [];
+        foreach (DB::table('stage_deliveries')
+                    ->where('responsible_user_id', $userId)
+                    ->whereNull('deleted_at')
+                    ->groupBy('stage_id')
+                    ->selectRaw('stage_id, COALESCE(SUM(hours_planned), 0) AS h')
+                    ->get() as $r) {
+            $plannedByStage[(int) $r->stage_id] = (float) $r->h;
+        }
+        foreach (DB::table('stage_allocations')
+                    ->where('user_id', $userId)
+                    ->groupBy('stage_id')
+                    ->selectRaw('stage_id, COALESCE(SUM(planned_hours), 0) AS h')
+                    ->get() as $r) {
+            $sid = (int) $r->stage_id;
+            $plannedByStage[$sid] = max($plannedByStage[$sid] ?? 0.0, (float) $r->h);
+        }
+        $plannedByStage = array_filter($plannedByStage, fn ($h) => $h > 0);
+
+        $rows = collect();
+        if (!empty($plannedByStage)) {
+            $rows = DB::table('project_stages as ps')
+                ->join('projects as p', 'p.id', '=', 'ps.project_id')
+                ->leftJoin('customers as c', 'c.id', '=', 'p.customer_id')
+                ->leftJoin('service_types as st', 'st.id', '=', 'p.service_type_id')
+                ->leftJoinSub($tsSum, 'ts', fn ($j) => $j->on('ts.stage_id', '=', 'ps.id'))
+                ->whereIn('ps.id', array_keys($plannedByStage))
+                ->whereNull('ps.deleted_at')
+                ->whereNull('p.deleted_at')
+                ->where('ps.status', '!=', 'done')
+                ->where(function ($q) {
+                    // Apenas projetos operacionais (sustentação fora — ADR 0004)
+                    $q->whereNull('st.name')
+                      ->orWhere(function ($s) {
+                          $s->whereRaw('LOWER(st.name) NOT LIKE ?', ['%sustenta%'])
+                            ->whereRaw('LOWER(st.name) NOT LIKE ?', ['%cloud%'])
+                            ->whereRaw('LOWER(st.name) NOT LIKE ?', ['%bizify%']);
+                      });
+                })
+                ->selectRaw('
+                    ps.id AS stage_id,
+                    ps.name AS stage_name,
+                    p.id AS project_id,
+                    p.name AS project_name,
+                    c.name AS customer_name,
+                    COALESCE(ts.actual_hours, 0) AS actual_hours
+                ')
+                ->orderBy('p.name')
+                ->orderBy('ps.order_index')
+                ->get();
+        }
 
         $items = [];
         $totalPlanned = 0.0;
@@ -94,14 +118,14 @@ class UserCapacityService
         $hasOverrun = false;
 
         foreach ($rows as $r) {
-            $planned   = (float) $r->planned_hours;
+            $planned   = $plannedByStage[(int) $r->stage_id] ?? 0.0;
             $actual    = (float) $r->actual_hours;
             $remaining = round($planned - $actual, 2);
 
             if ($remaining < 0) $hasOverrun = true;
 
             $items[] = [
-                'allocation_id'   => (int) $r->allocation_id,
+                'allocation_id'   => (int) $r->stage_id,   // sem linha de alocação: usa stage_id como chave estável
                 'stage_id'        => (int) $r->stage_id,
                 'stage_name'      => (string) $r->stage_name,
                 'project_id'      => (int) $r->project_id,
