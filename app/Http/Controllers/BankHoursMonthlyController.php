@@ -813,7 +813,10 @@ class BankHoursMonthlyController extends Controller
 
             // Coletar projetos para a listagem:
             // - Se o projeto pai for do tipo "Projeto", ele deve aparecer na listagem
-            // - Sempre incluir apenas filhos que sejam do tipo "Projeto"
+            // - Filho SEMPRE aparece na aba Projetos, mesmo sendo Sustentação: um
+            //   projeto-filho faz parte do contrato do pai (não é sustentação avulsa).
+            //   A aba Sustentação lista chamados/apontamentos, não projetos — só o
+            //   request de sustentação mantém o filtro por tipo.
             $projects = collect();
 
             if ($parentProject->service_type_id === $projectServiceType->id) {
@@ -821,10 +824,12 @@ class BankHoursMonthlyController extends Controller
             }
 
             if ($parentProject->childProjects && $parentProject->childProjects->count() > 0) {
-                $filteredChildren = $parentProject->childProjects->filter(function ($child) use ($projectServiceType) {
-                    return $child->service_type_id === $projectServiceType->id;
-                });
-                $projects = $projects->merge($filteredChildren);
+                $isSustRequest = strtolower($projectServiceType->code ?? '') === 'sustentacao'
+                    || mb_stripos($projectServiceType->name ?? '', 'sustenta') !== false;
+                $children = $isSustRequest
+                    ? $parentProject->childProjects->filter(fn ($child) => $child->service_type_id === $projectServiceType->id)
+                    : $parentProject->childProjects;
+                $projects = $projects->merge($children);
             }
         } else {
             // Buscar projetos com o service_type solicitado, restritos ao contrato BH Mensal.
