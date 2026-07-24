@@ -43,29 +43,11 @@ class FolhaPagamentoController extends Controller
     {
         $all = FechamentoFolha::where('year_month', $yearMonth)->where('empresa', $empresa)->get();
 
-        // Bizify: folha 100% manual (lançamentos/importação de planilha) — colunas próprias,
-        // sem cooperados/sócios/Raho. ERPSERV segue a lógica completa abaixo.
-        if ($empresa === 'bizify') {
-            // Carry-forward: se o mês ainda não tem lançamentos, carrega do ÚLTIMO mês
-            // anterior que tiver (só ajustes mês a mês). Os meses passados ficam
-            // gravados (independentes) e NUNCA são sobrescritos — isto é só prefill.
-            if ($all->whereNotNull('socio_key')->isEmpty()) {
-                $prevMonth = FechamentoFolha::where('empresa', 'bizify')
-                    ->whereNotNull('socio_key')
-                    ->where('cancelado', false)
-                    ->where('year_month', '<', $yearMonth)
-                    ->max('year_month');
-                if ($prevMonth) {
-                    $prev = FechamentoFolha::where('empresa', 'bizify')
-                        ->where('year_month', $prevMonth)
-                        ->whereNotNull('socio_key')
-                        ->where('cancelado', false)
-                        ->get();
-                    return $this->injectDiretoria($this->buildBizifyRows($prev, true), 'bizify', $yearMonth, $comDiretoria);
-                }
-            }
-            return $this->injectDiretoria($this->buildBizifyRows($all), 'bizify', $yearMonth, $comDiretoria);
-        }
+        // MESMA ENGRENAGEM P/ AS DUAS EMPRESAS: a folha puxa os cooperados do CADASTRO
+        // (fechamento-based), filtrados pela EMPRESA BASE do funcionário (is_bizify).
+        //  • ERPSERV → cooperados não-Bizify;  • BIZIFY → cooperados is_bizify.
+        // Raho/parceiros/sócios manuais são conceitos da COOPERATIVA (só ERPSERV).
+        $isBizify = $empresa === 'bizify';
 
         $fc   = app(FechamentoConsultorController::class);
         $data = $fc->buildConsultoresData($yearMonth);
@@ -104,7 +86,11 @@ class FolhaPagamentoController extends Controller
         // Exclui os sócios (entram como linha própria). Produção/horas vêm do fechamento
         // do consultor quando houver apontamentos; senão 0 / 160.
         $cooperados = User::where('contract_type', 'cooperado')->where('enabled', true)
-            ->whereNotIn('type', ['cliente'])->orderBy('name')->get();
+            ->whereNotIn('type', ['cliente'])
+            ->where(fn ($q) => $isBizify
+                ? $q->where('is_bizify', true)
+                : $q->where('is_bizify', false)->orWhereNull('is_bizify'))
+            ->orderBy('name')->get();
         foreach ($cooperados as $u) {
             if ($u->partner_id) {
                 // Usuários de PARCEIRO não entram como cooperado individual:
@@ -189,7 +175,7 @@ class FolhaPagamentoController extends Controller
         // ── Raho: cada usuário do parceiro vira linha própria (azul, identificada,
         //    100% editável). Keyed por user_id; valores editáveis vêm da folha salva,
         //    com defaults do cadastro/fechamento. Novo usuário do Raho → nova linha auto. ──
-        if ($rahoId) {
+        if ($rahoId && !$isBizify) {
             // Valores CALCULADOS do mês filtrado: vêm do fechamento do PARCEIRO (horas × taxa).
             $rahoPartner = \App\Models\Partner::find($rahoId);
             $rahoCalc = $rahoPartner
@@ -282,7 +268,7 @@ class FolhaPagamentoController extends Controller
         //    admin (is_executive), com a APURAÇÃO TOTAL do parceiro (soma do fechamento de
         //    TODOS os membros: horas somadas + valor total). Membros comuns NÃO aparecem.
         //    Parceiro SEM admin is_executive é ignorado (não entra na folha). ──
-        $partners = \App\Models\Partner::query()
+        $partners = $isBizify ? collect() : \App\Models\Partner::query()
             ->when($rahoId, fn ($q) => $q->where('id', '!=', $rahoId))
             ->orderBy('name')->get();
         foreach ($partners as $partner) {
@@ -383,7 +369,8 @@ class FolhaPagamentoController extends Controller
             ->map(fn ($m) => trim((string) $m))->filter()->flip();
 
         // ── Linhas manuais ("Nova linha editável") — inclui os sócios (migrados p/ manual). ──
-        foreach ($folhaBySocio as $key => $f) {
+        //    Só COOPERATIVA (ERPSERV); a folha Bizify é 100% cadastro (sem sócios manuais).
+        foreach (($isBizify ? [] : $folhaBySocio) as $key => $f) {
             // Diretor já representado por usuário (cooperado + Fechamento Diretoria): não duplica.
             $sCpf = $cpfDigits($f->cpf);
             $sMat = trim((string) $f->matricula);
@@ -432,6 +419,9 @@ class FolhaPagamentoController extends Controller
         $jaIncluidos = collect($rows)->whereNotNull('user_id')->pluck('user_id')->all();
         $inativos = User::where('contract_type', 'cooperado')
             ->where('enabled', false)
+            ->where(fn ($q) => $isBizify
+                ? $q->where('is_bizify', true)
+                : $q->where('is_bizify', false)->orWhereNull('is_bizify'))
             ->whereNotIn('id', $jaIncluidos)
             ->get();
         foreach ($inativos as $u) {
@@ -795,7 +785,7 @@ class FolhaPagamentoController extends Controller
                     $extra['valor_hora'] = $e['valor_hora'] ?? null;
                 }
                 FechamentoFolha::updateOrCreate(
-                    ['user_id' => $e['user_id'], 'year_month' => $yearMonth, 'empresa' => 'erpserv'],
+                    ['user_id' => $e['user_id'], 'year_month' => $yearMonth, 'empresa' => $empresa],
                     array_merge($comum, $extra)
                 );
                 $saved++;
@@ -838,7 +828,7 @@ class FolhaPagamentoController extends Controller
             );
         } elseif ($request->filled('user_id')) {
             FechamentoFolha::updateOrCreate(
-                ['user_id' => $request->integer('user_id'), 'year_month' => $yearMonth, 'empresa' => 'erpserv'],
+                ['user_id' => $request->integer('user_id'), 'year_month' => $yearMonth, 'empresa' => $empresa],
                 ['cancelado' => $cancelado]
             );
         } else {
@@ -937,12 +927,10 @@ class FolhaPagamentoController extends Controller
         // O .xls não leva linhas canceladas (elas estão na aba "Canceladas").
         $rows = array_values(array_filter($this->buildRows($yearMonth, $empresa), fn ($r) => empty($r['cancelado'])));
 
-        if ($empresa === 'bizify') {
-            $fileName = "{$month}_{$year}_BIZIFY SOLUCOES TECNOLOGICAS LTDA.xls";
-            return Excel::download(new FolhaBizifyExport($rows), $fileName, ExcelType::XLS);
-        }
-
-        $fileName = "{$month}_{$year}_M_ERPSERV CONSULTORIA DE SISTEMAS LTDA.xls";
+        // As DUAS empresas usam o mesmo layout (cadastro/cooperados) — só muda o nome do arquivo.
+        $fileName = $empresa === 'bizify'
+            ? "{$month}_{$year}_BIZIFY SOLUCOES TECNOLOGICAS LTDA.xls"
+            : "{$month}_{$year}_M_ERPSERV CONSULTORIA DE SISTEMAS LTDA.xls";
         return Excel::download(new FolhaPagamentoExport($rows), $fileName, ExcelType::XLS);
     }
 }
