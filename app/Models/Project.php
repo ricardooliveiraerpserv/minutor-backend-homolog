@@ -1170,7 +1170,15 @@ class Project extends Model
         $this->loadMissing('contractType', 'childProjects.contractType');
 
         if ($this->isOnDemand()) {
-            return ['available' => 0.0, 'consumed' => 0.0, 'balance' => 0.0];
+            // On Demand não tem saldo de banco (available/balance = 0). MAS o consumo —
+            // inclusive o CONSUMO INICIAL do sistema anterior (initial_hours_consumed) —
+            // deve aparecer, batendo com a lista/gestão que já soma o inicial (antes o
+            // detalhe zerava e ignorava as horas consumidas iniciais).
+            $logged  = round((($this->timesheets()
+                ->whereIn('status', ['approved', 'pending'])
+                ->sum('effort_minutes')) ?? 0) / 60, 2);
+            $initial = (float) ($this->initial_hours_consumed ?? 0);
+            return ['available' => 0.0, 'consumed' => round($logged + $initial, 2), 'balance' => 0.0];
         }
 
         $consumed = round((($this->timesheets()
