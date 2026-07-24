@@ -130,8 +130,22 @@ class HourBankService
         $closing = ConsultantHourBankClosing::where('user_id', $userId)
             ->where('year_month', $prevYearMonth)
             ->first();
+        if ($closing) {
+            return (float) $closing->final_balance;
+        }
 
-        return $closing ? (float) $closing->final_balance : 0.0;
+        // Sem fechamento GRAVADO do mês anterior: encadeia DINAMICAMENTE recalculando o mês
+        // anterior (que por sua vez recua até o mês de início, onde o saldo inicial semeia).
+        // Sem isto, a virada de um mês ainda não fechado ZERAVA o saldo — fazendo o saldo
+        // inicial (ex.: -250h) sumir e gerar horas extras indevidas no mês seguinte.
+        // Guardado por $startDate (recursão termina no mês de início) para não recorrer infinito.
+        if ($startDate) {
+            $dailyHours = (float) (\App\Models\User::where('id', $userId)->value('daily_hours') ?? 8.0);
+            $prev = $this->calculateMonth($userId, (int) $prevDate->year, (int) $prevDate->month, $dailyHours, $startDate);
+            return (float) ($prev['final_balance'] ?? 0.0);
+        }
+
+        return 0.0;
     }
 
     // ─── Cálculo Central ───────────────────────────────────────────────────
