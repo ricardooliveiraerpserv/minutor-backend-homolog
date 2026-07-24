@@ -24,6 +24,7 @@ class Partner extends Model
         'pricing_type',
         'contract_type',
         'hourly_rate',
+        'folha_user_id',
     ];
 
     protected $casts = [
@@ -37,6 +38,12 @@ class Partner extends Model
     public function users(): HasMany
     {
         return $this->hasMany(User::class);
+    }
+
+    /** Usuário que representa o parceiro na Folha da Cooperativa (quem "sobe pra folha"). */
+    public function folhaUser(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(User::class, 'folha_user_id');
     }
 
     /** Todas as alterações de valor hora (histórico, mais recente primeiro). */
