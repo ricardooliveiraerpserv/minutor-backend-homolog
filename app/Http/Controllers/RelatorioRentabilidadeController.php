@@ -141,7 +141,42 @@ class RelatorioRentabilidadeController extends Controller
             'nao_util'   => Carbon::parse($d['dia'])->isWeekend() || in_array($d['dia'], $feriados), // fim de semana ou feriado
         ], array_values($porDia));
 
-        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia]]);
+        // Consultores que RECEBEM FIXO (salário mensal) SEM apontamento no período ainda
+        // contam custo — o salário roda independente de horas. Sem isto, um fixo que não
+        // apontou no mês sumia da seção "Recebe Fixo". Retornados à PARTE (fixos_zerados)
+        // p/ não poluir a tabela/gráfico; o FE só os mescla na seção Recebe Fixo
+        // (receita 0, custo = salário, resultado negativo).
+        $jaNoRelatorio = [];
+        foreach ($groups as $g) { $jaNoRelatorio[$g['user_id']] = true; }
+
+        $fixosQuery = \App\Models\User::query()
+            ->where('enabled', true)
+            ->where('type', 'consultor')
+            ->whereNull('coordinator_type')
+            ->where(fn ($q) => $q->whereNull('is_bizify')->orWhere('is_bizify', false))
+            ->where(fn ($q) => $q->whereNull('is_diretor')->orWhere('is_diretor', false))
+            ->where(fn ($q) => $q->whereNull('is_diretor_projetos')->orWhere('is_diretor_projetos', false))
+            ->with('partner:id,pricing_type,hourly_rate');
+        // Mesma empresa dos apontamentos (Timesheet é escopado por empresa quando o
+        // multi-empresa está ligado): filtra os fixos pela empresa da folha ativa.
+        if (config('multiempresa.scoping_enabled')) {
+            $cid = app(\App\Services\CompanyContext::class)->id();
+            if ($cid) { $fixosQuery->where('home_company_id', $cid); }
+        }
+
+        $fixosZerados = [];
+        foreach ($fixosQuery->get() as $u) {
+            if (isset($jaNoRelatorio[$u->id])) continue; // já aparece (tem apontamento)
+            $meta = $costMeta($u);
+            if ($meta['type'] !== 'monthly' || $meta['salary'] <= 0) continue; // só recebe fixo com salário
+            $fixosZerados[] = [
+                'user_id'        => $u->id,
+                'consultor'      => $u->name,
+                'custo_fixo_mes' => round($meta['salary'], 2),
+            ];
+        }
+
+        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados]]);
     }
 
     /**
