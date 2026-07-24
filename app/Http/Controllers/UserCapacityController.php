@@ -59,16 +59,27 @@ class UserCapacityController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'capacity_hours']);
 
-        $items = $users->map(function (User $u) {
+        // Carga por mês de todos de uma vez (base da "ocupação por mês", sem N+1).
+        $monthlyAll = UserCapacityService::monthlyLoadByUser($users->pluck('id')->all());
+
+        $items = $users->map(function (User $u) use ($monthlyAll) {
             $capacity = $u->capacity_hours !== null
                 ? (float) $u->capacity_hours
                 : UserCapacityService::DEFAULT_CAPACITY_HOURS;
 
             $summary = UserCapacityService::summarize($u->id, $capacity);
 
-            $usagePct = $capacity > 0
-                ? round($summary['totals']['planned_hours'] / $capacity * 100, 1)
-                : 0.0;
+            // Ocupação = MÊS MAIS CHEIO (planejado no mês ÷ capacidade mensal). O total (backlog)
+            // pode estar espalhado por vários meses — comparar o total com 1 mês dava falso overload.
+            $monthly   = $monthlyAll[$u->id] ?? [];
+            $peakHours = !empty($monthly) ? max($monthly) : 0.0;
+            $peakMonth = !empty($monthly) ? (string) array_keys($monthly, $peakHours)[0] : null;
+
+            $usagePct = $capacity > 0 ? round($peakHours / $capacity * 100, 1) : 0.0;
+            $overload = $peakHours > $capacity;
+            $reasons  = $overload && $peakMonth
+                ? [sprintf('Pico de %.0fh em %s excede a capacidade de %.0fh/mês', $peakHours, $peakMonth, $capacity)]
+                : [];
 
             return [
                 'user' => [
@@ -77,13 +88,15 @@ class UserCapacityController extends Controller
                     'email' => $u->email,
                 ],
                 'capacity_hours'   => $capacity,
-                'planned_hours'    => $summary['totals']['planned_hours'],
+                'planned_hours'    => $summary['totals']['planned_hours'], // backlog total (todos os meses)
                 'actual_hours'     => $summary['totals']['actual_hours'],
                 'remaining_hours'  => $summary['totals']['remaining_hours'],
-                'usage_pct'        => $usagePct,
+                'usage_pct'        => $usagePct,          // ocupação do mês mais cheio
+                'peak_month'       => $peakMonth,         // 'YYYY-MM'
+                'peak_month_hours' => round($peakHours, 2),
                 'allocation_count' => count($summary['items']),
-                'overload'         => $summary['overload'],
-                'overload_reasons' => $summary['overload_reasons'],
+                'overload'         => $overload,
+                'overload_reasons' => $reasons,
             ];
         });
 
