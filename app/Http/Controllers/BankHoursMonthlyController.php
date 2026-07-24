@@ -878,9 +878,13 @@ class BankHoursMonthlyController extends Controller
                 'status_display' => $project->getStatusDisplayAttribute(),
                 'sold_hours' => $project->sold_hours,
                 'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
-                // Chave "Cliente acompanha apontamentos": quando false, o consumo NÃO é
-                // exposto ao cliente (front mostra "—"). null/true = acompanha (mostra).
-                'client_follows_timesheets' => $project->client_follows_timesheets,
+                // Cliente só vê o consumo/saldo se AMBAS as chaves de visibilidade
+                // estiverem ligadas: "Cliente acompanha apontamentos"
+                // (client_follows_timesheets) E "Cliente vê o Extrato"
+                // (extrato_visivel_cliente). Qualquer uma em false → front mostra "—".
+                // null/true contam como ligado.
+                'consumo_visivel_cliente' => $project->client_follows_timesheets !== false
+                    && $project->extrato_visivel_cliente !== false,
                 'hours_balance' => round($project->getGeneralHoursBalance(), 2),
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
