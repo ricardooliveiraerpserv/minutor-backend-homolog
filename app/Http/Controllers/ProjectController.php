@@ -376,6 +376,9 @@ class ProjectController extends Controller
                 $query->open(); // Scope: exclui apenas cancelled e finished (permite paused)
             } elseif ($status === 'active') {
                 $query->active(); // Scope: exclui cancelled, finished e paused
+            } elseif ($status === 'closed') {
+                // Meus Projetos — aba "Encerrados/Cancelados" (lista simples, sem árvore).
+                $query->whereIn('status', [Project::STATUS_FINISHED, Project::STATUS_CANCELLED]);
             } else {
                 // CTE recursiva: sobe a árvore a partir dos nós que batem,
                 // depois expande para mostrar todos os filhos de cada ancestral.
