@@ -75,6 +75,11 @@ class UserCapacityController extends Controller
             $peakHours = !empty($monthly) ? max($monthly) : 0.0;
             $peakMonth = !empty($monthly) ? (string) array_keys($monthly, $peakHours)[0] : null;
 
+            // Distribuição mês a mês (ordenada) p/ o tooltip do painel de capacidade.
+            ksort($monthly);
+            $monthlyList = [];
+            foreach ($monthly as $m => $h) $monthlyList[] = ['month' => $m, 'hours' => $h];
+
             $usagePct = $capacity > 0 ? round($peakHours / $capacity * 100, 1) : 0.0;
             $overload = $peakHours > $capacity;
             $reasons  = $overload && $peakMonth
@@ -94,6 +99,8 @@ class UserCapacityController extends Controller
                 'usage_pct'        => $usagePct,          // ocupação do mês mais cheio
                 'peak_month'       => $peakMonth,         // 'YYYY-MM'
                 'peak_month_hours' => round($peakHours, 2),
+                'monthly'          => $monthlyList,       // [{month:'YYYY-MM', hours}] p/ tooltip
+
                 'allocation_count' => count($summary['items']),
                 'overload'         => $overload,
                 'overload_reasons' => $reasons,
