@@ -896,6 +896,9 @@ class BankHoursFixedController extends Controller
                 'sold_hours' => $project->sold_hours,
                 'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
                 'consumed_hours' => $consumed,
+                // Chave "Cliente acompanha apontamentos": quando false, o consumo NÃO é
+                // exposto ao cliente (front mostra "—"). null/true = acompanha (mostra).
+                'client_follows_timesheets' => $project->client_follows_timesheets,
                 'hours_balance' => $adjustedBalance,
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
