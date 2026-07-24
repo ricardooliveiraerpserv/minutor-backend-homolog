@@ -7,10 +7,10 @@ on:
 
 jobs:
   build:
-    # Roda apenas no repo de produção (Leonardo-almd/minutor-backend).
+    # Roda apenas no repo de producao (erpserv-clientes/minutor-backend).
     # No repo homolog (ricardooliveiraerpserv/minutor-backend-homolog) o
-    # workflow é ignorado — Render builda e roda automaticamente.
-    if: github.repository == 'Leonardo-almd/minutor-backend'
+    # workflow e ignorado — Render builda e roda automaticamente.
+    if: github.repository == 'erpserv-clientes/minutor-backend'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,19 +35,19 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/leonardo-almd/minutor-backend:latest
-            ghcr.io/leonardo-almd/minutor-backend:${{ github.sha }}
+            ghcr.io/erpserv-clientes/minutor-backend:latest
+            ghcr.io/erpserv-clientes/minutor-backend:${{ github.sha }}
           # Cache no GHCR (registry) — mais consistente que type=gha.
-          cache-from: type=registry,ref=ghcr.io/leonardo-almd/minutor-backend:buildcache
-          cache-to: type=registry,ref=ghcr.io/leonardo-almd/minutor-backend:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/erpserv-clientes/minutor-backend:buildcache
+          cache-to: type=registry,ref=ghcr.io/erpserv-clientes/minutor-backend:buildcache,mode=max
 
-  # ── Deploy automático no VPS (ServerSpace) após a imagem estar no GHCR ──
+  # ── Deploy automatico no VPS (ServerSpace) apos a imagem estar no GHCR ──
   # Requer secrets no repo: VPS_HOST, VPS_USER, VPS_SSH_KEY (chave privada SSH),
-  # e opcional VPS_PORT (default 22). Enquanto os secrets não existirem, o job
-  # falha só nesta etapa — o build/push da imagem continua funcionando.
+  # e opcional VPS_PORT (default 22). Enquanto os secrets nao existirem, o job
+  # falha so nesta etapa — o build/push da imagem continua funcionando.
   deploy:
     needs: build
-    if: github.repository == 'Leonardo-almd/minutor-backend'
+    if: github.repository == 'erpserv-clientes/minutor-backend'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,10 +69,10 @@ jobs:
             set -e
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin || true
             cd /opt/minutor
-            # Só backend (frontend é Vercel; imagem do front no GHCR nem existe).
+            # So backend (frontend e Vercel; imagem do front no GHCR nem existe).
             docker compose pull backend queue-worker scheduler
             docker compose up -d --no-deps backend queue-worker scheduler
-            # entrypoint do container já roda migrate no start; este é reforço idempotente.
+            # entrypoint do container ja roda migrate no start; este e reforco idempotente.
             docker exec minutor-backend php artisan migrate --force || true
             docker exec minutor-backend php artisan optimize
             docker image prune -af || true
