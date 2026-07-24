@@ -144,6 +144,70 @@ class UserCapacityService
     }
 
     /**
+     * Carga PLANEJADA por MÊS de cada consultor, distribuindo as horas de cada atividade
+     * (stage_deliveries) proporcionalmente aos dias corridos do seu intervalo
+     * [planned_start_at, due_date]. Uma query p/ todos os usuários (sem N+1).
+     * Retorna [userId => ['YYYY-MM' => horas, ...]] — base da "ocupação por mês".
+     *
+     * @param  array<int,int> $userIds
+     * @return array<int, array<string, float>>
+     */
+    public static function monthlyLoadByUser(array $userIds): array
+    {
+        if (empty($userIds)) return [];
+
+        $rows = DB::table('stage_deliveries as d')
+            ->join('project_stages as ps', 'ps.id', '=', 'd.stage_id')
+            ->join('projects as p', 'p.id', '=', 'ps.project_id')
+            ->leftJoin('service_types as st', 'st.id', '=', 'p.service_type_id')
+            ->whereIn('d.responsible_user_id', $userIds)
+            ->whereNull('d.deleted_at')
+            ->whereNull('ps.deleted_at')
+            ->whereNull('p.deleted_at')
+            ->where('ps.status', '!=', 'done')
+            ->whereNotNull('d.planned_start_at')
+            ->whereNotNull('d.due_date')
+            ->where(function ($q) {
+                // Apenas projetos operacionais (sustentação fora — ADR 0004), igual ao summarize.
+                $q->whereNull('st.name')
+                  ->orWhere(function ($s) {
+                      $s->whereRaw('LOWER(st.name) NOT LIKE ?', ['%sustenta%'])
+                        ->whereRaw('LOWER(st.name) NOT LIKE ?', ['%cloud%'])
+                        ->whereRaw('LOWER(st.name) NOT LIKE ?', ['%bizify%']);
+                  });
+            })
+            ->get(['d.responsible_user_id', 'd.planned_start_at', 'd.due_date', 'd.hours_planned']);
+
+        $byUser = [];
+        foreach ($rows as $r) {
+            $hours = (float) $r->hours_planned;
+            if ($hours <= 0) continue;
+            $start = Carbon::parse($r->planned_start_at)->startOfDay();
+            $end   = Carbon::parse($r->due_date)->startOfDay();
+            if ($end->lt($start)) continue;
+            $totalDays = $start->diffInDays($end) + 1;   // dias corridos do intervalo
+            $perDay    = $hours / $totalDays;
+            $uid       = (int) $r->responsible_user_id;
+
+            // Distribui por mês: horas do mês = perDay × dias do intervalo que caem no mês.
+            $cursor = $start->copy();
+            while ($cursor->lte($end)) {
+                $monthEnd = $cursor->copy()->endOfMonth()->startOfDay();
+                $segEnd   = $monthEnd->lt($end) ? $monthEnd : $end;
+                $days     = $cursor->diffInDays($segEnd) + 1;
+                $key      = $cursor->format('Y-m');
+                $byUser[$uid][$key] = ($byUser[$uid][$key] ?? 0.0) + $perDay * $days;
+                $cursor = $monthEnd->copy()->addDay()->startOfDay();
+            }
+        }
+
+        foreach ($byUser as $uid => $months) {
+            foreach ($months as $k => $v) $byUser[$uid][$k] = round($v, 2);
+        }
+        return $byUser;
+    }
+
+    /**
      * Horas disponíveis num dia útil específico para o consultor.
      *
      * Default = 8h/dia útil. Subtrai a soma de `hours_planned` das atividades
