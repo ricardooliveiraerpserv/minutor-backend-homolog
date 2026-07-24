@@ -59,6 +59,7 @@ class PartnerController extends Controller
             'pricing_type' => 'required|in:fixed,variable',
             'hourly_rate'  => 'nullable|numeric|min:0|max:999999.99',
             'contract_type' => 'nullable|in:cooperado,clt,pj',
+            'folha_user_id' => 'nullable|integer|exists:users,id',
         ]);
 
         $partner = Partner::create($data);
@@ -84,6 +85,7 @@ class PartnerController extends Controller
             'hourly_rate'  => 'nullable|numeric|min:0|max:999999.99',
             'hourly_rate_effective_from' => 'nullable|date',
             'contract_type' => 'nullable|in:cooperado,clt,pj',
+            'folha_user_id' => 'nullable|integer|exists:users,id',
         ]);
 
         $effectiveFrom = $data['hourly_rate_effective_from'] ?? null;
