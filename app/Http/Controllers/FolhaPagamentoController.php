@@ -286,14 +286,25 @@ class FolhaPagamentoController extends Controller
             ->when($rahoId, fn ($q) => $q->where('id', '!=', $rahoId))
             ->orderBy('name')->get();
         foreach ($partners as $partner) {
-            $admin = User::where('partner_id', $partner->id)
-                ->where('is_executive', true)
-                ->orderBy('id')->first();
-            // Folha COOPERATIVA: só entra parceiro cujo admin é COOPERADO (a apuração do
-            // parceiro cooperado consolida nele). Parceiro PJ é pago no Fechamento Parceiros,
-            // não nesta folha.
-            if (!$admin || $admin->contract_type !== 'cooperado') {
-                continue; // sem admin is_executive OU admin não-cooperado → fora da folha
+            // Representante do parceiro na folha ("quem sobe pra folha"): escolha EXPLÍCITA
+            // no cadastro do parceiro (folha_user_id) → fallback is_executive (legado).
+            $admin = null;
+            if ($partner->folha_user_id) {
+                $admin = User::where('partner_id', $partner->id)
+                    ->where('id', $partner->folha_user_id)->first();
+            }
+            if (!$admin) {
+                $admin = User::where('partner_id', $partner->id)
+                    ->where('is_executive', true)
+                    ->orderBy('id')->first();
+            }
+            // Folha COOPERATIVA: só entra parceiro COOPERADO (fonte de verdade = o próprio
+            // parceiro; aceita também o legado onde só o admin ficou marcado cooperado).
+            // Parceiro PJ é pago no Fechamento Parceiros, não nesta folha.
+            $isCoop = $partner->contract_type === 'cooperado'
+                || ($admin && $admin->contract_type === 'cooperado');
+            if (!$admin || !$isCoop) {
+                continue; // sem representante OU parceiro não-cooperado → fora da folha
             }
 
             $parceiroCtrl  = app(FechamentoParceiroController::class);
@@ -324,9 +335,9 @@ class FolhaPagamentoController extends Controller
                 'is_socio'           => false,
                 'is_raho'            => false,
                 'is_parceiro_total'  => true,
-                // Parceiro cooperado é apurado 100% no admin → se o admin é cooperado,
-                // esta linha consolidada representa o cooperado e entra no filtro.
-                'is_cooperado'       => $admin->contract_type === 'cooperado',
+                // Parceiro cooperado é apurado 100% no representante → esta linha
+                // consolidada representa o cooperado e entra no filtro.
+                'is_cooperado'       => $isCoop,
                 'is_bizify'          => (bool) ($admin->is_bizify ?? false),
                 'partner_label'      => $partner->name,
                 'inativo'            => !$admin->enabled,
