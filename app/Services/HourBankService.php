@@ -10,6 +10,23 @@ use Illuminate\Support\Collection;
 
 class HourBankService
 {
+    /** Cache do saldo inicial (banco de horas) por usuário nesta request. */
+    private array $initialBalanceCache = [];
+
+    /**
+     * Saldo inicial do banco de horas trazido de outro sistema (ex.: -100h devedor).
+     * Semeia o cálculo no 1º mês (mês de bank_hours_start_date). 0 quando não informado.
+     */
+    private function initialBalanceFor(int $userId): float
+    {
+        if (!array_key_exists($userId, $this->initialBalanceCache)) {
+            $this->initialBalanceCache[$userId] = (float) (
+                \App\Models\User::where('id', $userId)->value('bank_hours_initial_balance') ?? 0
+            );
+        }
+        return $this->initialBalanceCache[$userId];
+    }
+
     // ─── Cálculo de Dias Úteis ──────────────────────────────────────────────
 
     /**
@@ -101,11 +118,12 @@ class HourBankService
         $prevDate      = Carbon::createFromDate($year, $month, 1)->subMonth();
         $prevYearMonth = $prevDate->format('Y-m');
 
-        // Se existe data de início e o mês anterior é anterior a ela, saldo anterior é zero
+        // Antes do início do banco não há histórico no Minutor — mas o consultor pode
+        // trazer um SALDO INICIAL de outro sistema (ex.: -100h). Ele semeia o 1º mês.
         if ($startDate) {
             $startYearMonth = Carbon::parse($startDate)->format('Y-m');
             if ($prevYearMonth < $startYearMonth) {
-                return 0.0;
+                return $this->initialBalanceFor($userId);
             }
         }
 
@@ -263,10 +281,13 @@ class HourBankService
         ?string $startDate  = null
     ): array {
         $results         = [];
-        $prevFinalBalance = 0.0;
 
         $current = Carbon::parse($fromYearMonth . '-01');
         $end     = Carbon::parse($toYearMonth   . '-01');
+
+        // Semeia o encadeamento com o saldo anterior do 1º mês do range (que é o mês de
+        // início do banco): traz o SALDO INICIAL de outro sistema quando houver.
+        $prevFinalBalance = $this->getPreviousBalance($userId, (int) $current->year, (int) $current->month, $startDate);
 
         while ($current->lte($end)) {
             $year      = (int) $current->year;
