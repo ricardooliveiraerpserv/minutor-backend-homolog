@@ -564,9 +564,11 @@ class FolhaPagamentoController extends Controller
                 if (!$u) {
                     continue;
                 }
-                $rows[] = $empresa === 'bizify'
-                    ? $this->diretoriaBizifyRow($u, $info['amount'], $info['col'])
-                    : $this->diretoriaErpservRow($u, $info['amount'], $info['col']);
+                // As DUAS empresas usam agora o grid do cadastro (ERPSERV) — a linha do
+                // diretor SEMPRE no formato ERPSERV (a antiga diretoriaBizifyRow não tem
+                // dias/horas/valor_hora e quebrava o grid). Só entram os diretores com
+                // regra no Fechamento Diretoria da empresa (contribuição > 0, filtrada acima).
+                $rows[] = $this->diretoriaErpservRow($u, $info['amount'], $info['col']);
             }
         }
 
