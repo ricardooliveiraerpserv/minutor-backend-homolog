@@ -70,7 +70,13 @@ class CompanyController extends Controller
     /** Lista TODAS as empresas (gestão) com contagem de usuários. */
     public function index(Request $request): JsonResponse
     {
-        if ($r = $this->denyNonAdmin($request)) return $r;
+        // Admin gerencia empresas; ADMINISTRATIVO (gestão de usuários/folha) também precisa
+        // da LISTA p/ o seletor "Empresa base" no cadastro de usuário (senão vinha vazio).
+        // Só a listagem é liberada — criar/editar/excluir empresa segue admin-only.
+        $u = $request->user();
+        if (!$u || !($u->isAdmin() || $u->isAdministrativo())) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
 
         $data = Company::withCount('users')->orderBy('name')->get()->map(fn (Company $c) => [
             'id' => $c->id, 'name' => $c->name, 'slug' => $c->slug, 'color' => $c->color, 'cnpj' => $c->cnpj,
