@@ -464,7 +464,7 @@ class FolhaPagamentoController extends Controller
             ];
         }
 
-        $rows = $this->injectDiretoria($rows, 'erpserv', $yearMonth, $comDiretoria);
+        $rows = $this->injectDiretoria($rows, $empresa, $yearMonth, $comDiretoria);
         usort($rows, fn ($a, $b) => strcasecmp((string) $a['nome'], (string) $b['nome']));
         return $rows;
     }
