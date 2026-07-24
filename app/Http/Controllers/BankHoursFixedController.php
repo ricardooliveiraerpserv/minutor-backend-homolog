@@ -810,18 +810,23 @@ class BankHoursFixedController extends Controller
             }
 
             // Coletar projetos para a listagem:
-            // - Se o projeto pai for do tipo "Projeto", ele deve aparecer na listagem
-            // - Sempre incluir apenas filhos que sejam do tipo "Projeto"
-            // Regra: ao entrar num pai COM filhos, a tabela mostra SÓ OS FILHOS (do tipo
-            // solicitado) — o projeto pai não aparece. Pai SEM filhos (projeto avulso)
-            // mostra o próprio projeto, pra não deixar a aba vazia.
+            // Regra: ao entrar num pai COM filhos, a tabela mostra OS FILHOS — o projeto
+            // pai não aparece. Pai SEM filhos (projeto avulso) mostra o próprio projeto,
+            // pra não deixar a aba vazia.
+            // Filho SEMPRE aparece na aba Projetos, mesmo sendo Sustentação: um projeto-
+            // filho faz parte do contrato do pai (não é sustentação avulsa). A aba
+            // Sustentação lista chamados/apontamentos, não projetos — só o request de
+            // sustentação mantém o filtro por tipo.
             $projects = collect();
             $hasAnyChildren = $parentProject->childProjects && $parentProject->childProjects->count() > 0;
 
             if ($hasAnyChildren) {
-                $projects = $parentProject->childProjects->filter(function ($child) use ($projectServiceType) {
-                    return $child->service_type_id === $projectServiceType->id;
-                })->values();
+                $isSustRequest = strtolower($projectServiceType->code ?? '') === 'sustentacao'
+                    || mb_stripos($projectServiceType->name ?? '', 'sustenta') !== false;
+                $projects = ($isSustRequest
+                    ? $parentProject->childProjects->filter(fn ($child) => $child->service_type_id === $projectServiceType->id)
+                    : $parentProject->childProjects
+                )->values();
             } elseif ($parentProject->service_type_id === $projectServiceType->id) {
                 $projects->push($parentProject);
             }
