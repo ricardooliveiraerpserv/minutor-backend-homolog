@@ -33,10 +33,17 @@ class HourBankService
      * Calcula dias úteis do mês, excluindo fins de semana e feriados em dias úteis.
      * Se $startDate for fornecido e cair no mesmo mês/ano, conta apenas a partir dessa data.
      */
-    public function calculateWorkingDays(int $year, int $month, ?string $startDate = null): array
+    public function calculateWorkingDays(int $year, int $month, ?string $startDate = null, ?string $upToDate = null): array
     {
         $monthStart = Carbon::createFromDate($year, $month, 1)->startOfMonth();
         $monthEnd   = $monthStart->copy()->endOfMonth();
+
+        // Limita o fim do intervalo (ex.: HOJE) — conta só os dias úteis DECORRIDOS. Usado no mês
+        // corrente pra o saldo não nascer -184h no início do mês (previsto vs. mês inteiro).
+        if ($upToDate) {
+            $ud = Carbon::parse($upToDate)->endOfDay();
+            if ($ud->lt($monthEnd)) $monthEnd = $ud;
+        }
 
         // Se existe data de início, ajusta o começo do intervalo
         $rangeStart = $monthStart->copy();
@@ -162,8 +169,18 @@ class HourBankService
         ?string $startDate  = null,
         float   $additionalWorkedHours = 0.0
     ): array {
-        $workingData     = $this->calculateWorkingDays($year, $month, $startDate);
-        $expectedHours   = round($workingData['working_days'] * $dailyHours, 2);
+        // Dias úteis do MÊS INTEIRO (info: "quantas horas úteis o mês terá").
+        $workingFull     = $this->calculateWorkingDays($year, $month, $startDate);
+        $expectedFull    = round($workingFull['working_days'] * $dailyHours, 2);
+
+        // No MÊS CORRENTE o saldo usa só os dias úteis DECORRIDOS (até hoje) — senão o mês nasce
+        // com déficit do mês inteiro (-184h). Meses passados usam o mês inteiro (já completos).
+        $isCurrent       = ((int) now()->year === $year && (int) now()->month === $month);
+        $workingUsed     = $isCurrent
+            ? $this->calculateWorkingDays($year, $month, $startDate, now()->toDateString())
+            : $workingFull;
+        $expectedHours   = round($workingUsed['working_days'] * $dailyHours, 2);
+
         $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate) + $additionalWorkedHours, 2);
         $previousBalance = $this->getPreviousBalance($userId, $year, $month, $startDate);
 
@@ -183,9 +200,13 @@ class HourBankService
             'user_id'             => $userId,
             'year_month'          => sprintf('%04d-%02d', $year, $month),
             'daily_hours'         => $dailyHours,
-            'working_days'        => $workingData['working_days'],
-            'holidays_count'      => $workingData['holidays_count'],
+            'working_days'        => $workingUsed['working_days'],
+            'holidays_count'      => $workingUsed['holidays_count'],
             'expected_hours'      => $expectedHours,
+            // Mês inteiro (info "horas úteis do mês") + flag de mês corrente pro FE mostrar o "até hoje".
+            'working_days_full'   => $workingFull['working_days'],
+            'expected_hours_full' => $expectedFull,
+            'is_current_month'    => $isCurrent,
             'worked_hours'        => $workedHours,
             'month_balance'       => $monthBalance,
             'previous_balance'    => round($previousBalance, 2),
@@ -308,8 +329,14 @@ class HourBankService
             $month     = (int) $current->month;
             $yearMonth = $current->format('Y-m');
 
-            $workingData   = $this->calculateWorkingDays($year, $month, $startDate);
-            $expectedHours = round($workingData['working_days'] * $dailyHours, 2);
+            $workingFull   = $this->calculateWorkingDays($year, $month, $startDate);
+            $expectedFull  = round($workingFull['working_days'] * $dailyHours, 2);
+            // Mês corrente: saldo pelos dias úteis DECORRIDOS (até hoje); passados = mês inteiro.
+            $isCurrent     = ((int) now()->year === $year && (int) now()->month === $month);
+            $workingUsed   = $isCurrent
+                ? $this->calculateWorkingDays($year, $month, $startDate, now()->toDateString())
+                : $workingFull;
+            $expectedHours = round($workingUsed['working_days'] * $dailyHours, 2);
             $workedHours   = $this->getWorkedHours($userId, $year, $month, $startDate);
 
             $monthBalance = round($workedHours - $expectedHours, 2);
@@ -327,9 +354,12 @@ class HourBankService
                 'user_id'             => $userId,
                 'year_month'          => $yearMonth,
                 'daily_hours'         => $dailyHours,
-                'working_days'        => $workingData['working_days'],
-                'holidays_count'      => $workingData['holidays_count'],
+                'working_days'        => $workingUsed['working_days'],
+                'holidays_count'      => $workingUsed['holidays_count'],
                 'expected_hours'      => $expectedHours,
+                'working_days_full'   => $workingFull['working_days'],
+                'expected_hours_full' => $expectedFull,
+                'is_current_month'    => $isCurrent,
                 'worked_hours'        => $workedHours,
                 'month_balance'       => $monthBalance,
                 'previous_balance'    => round($prevFinalBalance, 2),
