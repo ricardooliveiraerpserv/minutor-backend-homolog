@@ -2180,6 +2180,30 @@ Route::prefix('v1')->group(function () {
             // Auditoria — admin global vê tudo; admin de cofre vê só os seus (escopo no controller)
             Route::get('/logs',                          [\App\Http\Controllers\VaultController::class, 'logs'])->name('vault.logs');
         });
+
+        // ────────────────────────────────────────────────────────────────────
+        // 🖥️ COFRE DE AMBIENTES (infra Protheus) — camada ADITIVA sobre o cofre.
+        // Metadados em CLARO; segredos só via /reveal enforced. NUNCA logar payload
+        // com blob. Reusa a cripto/chaves do cofre de senhas sem tocá-las.
+        // ────────────────────────────────────────────────────────────────────
+        Route::prefix('environments')->middleware('permission.or.admin:environments.use')->group(function () {
+            // Clientes-vault
+            Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
+            Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
+            // Ambientes de um cliente
+            Route::get('/clients/{customerId}/environments',  [\App\Http\Controllers\EnvironmentController::class, 'environments'])->name('environments.env.index');
+            Route::post('/clients/{customerId}/environments', [\App\Http\Controllers\EnvironmentController::class, 'storeEnvironment'])->name('environments.env.store');
+            Route::get('/environments/{id}',               [\App\Http\Controllers\EnvironmentController::class, 'showEnvironment'])->name('environments.env.show');
+            Route::put('/environments/{id}',               [\App\Http\Controllers\EnvironmentController::class, 'updateEnvironment'])->name('environments.env.update');
+            Route::delete('/environments/{id}',            [\App\Http\Controllers\EnvironmentController::class, 'destroyEnvironment'])->name('environments.env.destroy');
+            // Credenciais (listagem SEM blob)
+            Route::get('/environments/{envId}/credentials',  [\App\Http\Controllers\EnvironmentCredentialController::class, 'index'])->name('environments.cred.index');
+            Route::post('/environments/{envId}/credentials', [\App\Http\Controllers\EnvironmentCredentialController::class, 'store'])->name('environments.cred.store');
+            Route::put('/credentials/{id}',                [\App\Http\Controllers\EnvironmentCredentialController::class, 'update'])->name('environments.cred.update');
+            Route::delete('/credentials/{id}',             [\App\Http\Controllers\EnvironmentCredentialController::class, 'destroy'])->name('environments.cred.destroy');
+            // Reveal ENFORCED (único caminho do ciphertext)
+            Route::post('/secrets/{id}/reveal',            [\App\Http\Controllers\EnvironmentSecretController::class, 'reveal'])->middleware('throttle:60,1')->name('environments.secret.reveal');
+        });
     });
 
     // Signed URL externa (sem auth:sanctum; o middleware 'signed' garante

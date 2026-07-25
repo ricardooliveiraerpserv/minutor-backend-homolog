@@ -1,0 +1,223 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Customer;
+use App\Models\EnvAccessLog;
+use App\Models\EnvClientVault;
+use App\Models\EnvEnvironment;
+use App\Models\User;
+use App\Models\Vault;
+use App\Models\VaultMember;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Cofre de Ambientes — clientes-vault e ambientes. Camada ADITIVA: reusa `vaults`
+ * (type='client') + `vault_members` (distribuição de chave por RSA) sem tocar em
+ * nada da segurança existente. Metadados em CLARO; segredos vivem em env_secrets.
+ */
+class EnvironmentController extends Controller
+{
+    private const INTERNAL_TYPES = ['admin', 'administrativo', 'coordenador', 'consultor'];
+
+    private function guardInternal(Request $request): User
+    {
+        $user = $request->user();
+        abort_unless(in_array($user->effectiveType(), self::INTERNAL_TYPES, true), 403);
+
+        return $user;
+    }
+
+    /** Membership do usuário no cliente-vault (reusa VaultMember). 404 se não é membro. */
+    private function membershipByVault(Request $request, int $vaultId, ?string $needRole = null): VaultMember
+    {
+        $member = VaultMember::where('vault_id', $vaultId)->where('user_id', $request->user()->id)->first();
+        abort_if(! $member, 404);
+        if ($needRole === 'admin') {
+            abort_unless($member->role === 'admin', 403);
+        } elseif ($needRole === 'write') {
+            abort_unless(in_array($member->role, ['admin', 'write'], true), 403);
+        }
+
+        return $member;
+    }
+
+    /** Cliente-vault de um customer; garante membership. */
+    private function clientVault(Request $request, int $customerId, ?string $needRole = null): EnvClientVault
+    {
+        $cv = EnvClientVault::where('customer_id', $customerId)->first();
+        abort_if(! $cv, 404);
+        $this->membershipByVault($request, $cv->vault_id, $needRole);
+
+        return $cv;
+    }
+
+    // ── Clientes-vault ────────────────────────────────────────────────────────
+
+    /** Clientes cujo cofre de ambientes o usuário é membro. */
+    public function clients(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+
+        $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
+        $rows = EnvClientVault::with('customer:id,name,company_name')
+            ->whereIn('vault_id', $vaultIds)
+            ->get()
+            ->map(fn ($cv) => [
+                'customer_id'       => $cv->customer_id,
+                'customer_name'     => $cv->customer?->name,
+                'vault_id'          => $cv->vault_id,
+                'environments_count' => EnvEnvironment::where('customer_id', $cv->customer_id)->count(),
+                'role'              => VaultMember::where('vault_id', $cv->vault_id)->where('user_id', $user->id)->value('role'),
+            ])
+            ->sortBy('customer_name')->values();
+
+        return response()->json($rows);
+    }
+
+    /**
+     * Cria o cofre de ambientes de um cliente: vault type='client' + member owner +
+     * mapeamento. O client já envia a vaultKey cifrada com a PRÓPRIA chave pública.
+     */
+    public function createClient(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $data = $request->validate([
+            'customer_id'         => 'required|integer|exists:customers,id',
+            'encrypted_vault_key' => 'required|string|max:2000',
+        ]);
+
+        if (EnvClientVault::where('customer_id', $data['customer_id'])->exists()) {
+            return response()->json(['message' => 'Este cliente já tem cofre de ambientes.'], 409);
+        }
+        $customer = Customer::findOrFail($data['customer_id']);
+
+        $cv = DB::transaction(function () use ($user, $customer, $data) {
+            $vault = Vault::create([
+                'type'       => 'client',
+                'name'       => 'Ambientes — ' . $customer->name,
+                'created_by' => $user->id,
+            ]);
+            VaultMember::create([
+                'vault_id'            => $vault->id,
+                'user_id'             => $user->id,
+                'role'                => 'admin',
+                'encrypted_vault_key' => $data['encrypted_vault_key'],
+                'key_version'         => $vault->key_version ?? 1,
+            ]);
+
+            return EnvClientVault::create([
+                'customer_id' => $customer->id,
+                'vault_id'    => $vault->id,
+                'created_by'  => $user->id,
+            ]);
+        });
+
+        EnvAccessLog::record($request, 'client_create', ['item_label' => $customer->name]);
+
+        return response()->json(['customer_id' => $cv->customer_id, 'vault_id' => $cv->vault_id], 201);
+    }
+
+    // ── Ambientes ─────────────────────────────────────────────────────────────
+
+    public function environments(Request $request, int $customerId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $cv = $this->clientVault($request, $customerId);
+
+        $rows = EnvEnvironment::withCount(['credentials', 'secrets'])
+            ->where('customer_id', $customerId)
+            ->orderByRaw("array_position(ARRAY['prod','homolog','dev','dr']::text[], type)")
+            ->orderBy('name')
+            ->get()
+            ->map(fn ($e) => [
+                'id'                => $e->id,
+                'name'              => $e->name,
+                'type'              => $e->type,
+                'status'            => $e->status,
+                'credentials_count' => $e->credentials_count,
+                'vault_id'          => $e->vault_id,
+            ]);
+
+        return response()->json(['vault_id' => $cv->vault_id, 'environments' => $rows]);
+    }
+
+    public function storeEnvironment(Request $request, int $customerId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $cv = $this->clientVault($request, $customerId, 'write');
+        $data = $request->validate([
+            'name'                => 'required|string|max:120',
+            'type'                => 'required|in:prod,homolog,dev,dr',
+            'status'              => 'sometimes|in:online,offline,unknown,maintenance',
+            'inventory'           => 'sometimes|array',
+            'notes'               => 'nullable|string|max:5000',
+            'responsible_user_id' => 'nullable|integer|exists:users,id',
+        ]);
+
+        $env = EnvEnvironment::create(array_merge($data, [
+            'customer_id' => $customerId,
+            'vault_id'    => $cv->vault_id,
+            'status'      => $data['status'] ?? 'unknown',
+        ]));
+        EnvAccessLog::record($request, 'env_create', ['environment_id' => $env->id, 'item_label' => $env->name]);
+
+        return response()->json(['id' => $env->id], 201);
+    }
+
+    private function envWithMembership(Request $request, int $envId, ?string $needRole = null): EnvEnvironment
+    {
+        $env = EnvEnvironment::findOrFail($envId);
+        $this->membershipByVault($request, $env->vault_id, $needRole);
+
+        return $env;
+    }
+
+    public function showEnvironment(Request $request, int $envId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envWithMembership($request, $envId);
+
+        return response()->json([
+            'id'          => $env->id,
+            'customer_id' => $env->customer_id,
+            'vault_id'    => $env->vault_id,
+            'name'        => $env->name,
+            'type'        => $env->type,
+            'status'      => $env->status,
+            'inventory'   => $env->inventory,
+            'notes'       => $env->notes,
+            'responsible' => $env->responsible?->only(['id', 'name']),
+        ]);
+    }
+
+    public function updateEnvironment(Request $request, int $envId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envWithMembership($request, $envId, 'write');
+        $data = $request->validate([
+            'name'                => 'sometimes|string|max:120',
+            'type'                => 'sometimes|in:prod,homolog,dev,dr',
+            'status'              => 'sometimes|in:online,offline,unknown,maintenance',
+            'inventory'           => 'sometimes|array',
+            'notes'               => 'nullable|string|max:5000',
+            'responsible_user_id' => 'nullable|integer|exists:users,id',
+        ]);
+        $env->update($data);
+        EnvAccessLog::record($request, 'env_update', ['environment_id' => $env->id, 'item_label' => $env->name]);
+
+        return response()->json(['updated' => true]);
+    }
+
+    public function destroyEnvironment(Request $request, int $envId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envWithMembership($request, $envId, 'admin');
+        EnvAccessLog::record($request, 'env_delete', ['environment_id' => $env->id, 'item_label' => $env->name]);
+        $env->delete();
+
+        return response()->json(['deleted' => true]);
+    }
+}

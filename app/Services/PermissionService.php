@@ -133,6 +133,8 @@ class PermissionService
         'settings.view',
         // Cofre de Senhas (zero-knowledge; só equipe interna)
         'vault.use', 'vault.audit.view',
+        // Cofre de Ambientes (infra Protheus; só equipe interna)
+        'environments.use', 'environments.admin', 'environments.audit.view',
     ];
 
     /**
@@ -196,6 +198,8 @@ class PermissionService
             'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
             // Cofre de Senhas
             'vault.use',
+            // Cofre de Ambientes
+            'environments.use',
         ];
     }
 
@@ -222,6 +226,7 @@ class PermissionService
             'competencias.view', 'competencias.view_team', 'competencias.respond',
             // Cofre de Senhas
             'vault.use',
+            'environments.use',
         ];
     }
 
@@ -245,6 +250,7 @@ class PermissionService
             'competencias.respond',
             // Cofre de Senhas
             'vault.use',
+            'environments.use',
         ];
     }
 
