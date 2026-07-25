@@ -46,10 +46,19 @@ class VaultController extends Controller
         return $member;
     }
 
-    /** Step-up TOTP para operações destrutivas. */
+    /** Step-up para operações destrutivas: Microsoft (stepup_token) ou TOTP (totp_code). */
     private function requireFreshTotp(Request $request): void
     {
         $keys = VaultUserKey::where('user_id', $request->user()->id)->first();
+
+        if (\App\Services\VaultStepUp::driver() === 'microsoft') {
+            if (! \App\Services\VaultStepUp::check($keys, (string) $request->input('stepup_token'))) {
+                abort(422, 'Verificação Microsoft necessária para esta operação.');
+            }
+
+            return;
+        }
+
         $code = (string) $request->input('totp_code');
         $timestep = ($keys?->totpConfirmed() && $keys->totp_secret && $code !== '')
             ? Totp::verify($keys->totp_secret, $code, $keys->totp_last_timestep)

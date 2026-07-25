@@ -16,16 +16,18 @@ class VaultUserKey extends Model
         'user_id', 'kdf_iterations', 'kdf_memory', 'kdf_parallelism',
         'auth_hash', 'encrypted_symmetric_key', 'public_key', 'encrypted_private_key',
         'recovery_symmetric_key', 'totp_secret', 'totp_confirmed_at', 'totp_last_timestep',
+        'ms_oid', 'stepup_token_hash', 'stepup_token_expires_at',
     ];
 
-    // auth_hash (bcrypt), totp_secret e token de recovery nunca voltam na API
-    protected $hidden = ['auth_hash', 'totp_secret', 'recovery_token_hash'];
+    // auth_hash (bcrypt), totp_secret e tokens efêmeros nunca voltam na API
+    protected $hidden = ['auth_hash', 'totp_secret', 'recovery_token_hash', 'stepup_token_hash'];
 
     protected $casts = [
         'totp_secret'               => 'encrypted',
         'totp_confirmed_at'         => 'datetime',
         'totp_last_timestep'        => 'integer',
         'recovery_token_expires_at' => 'datetime',
+        'stepup_token_expires_at'   => 'datetime',
         'kdf_iterations'            => 'integer',
         'kdf_memory'                => 'integer',
         'kdf_parallelism'           => 'integer',

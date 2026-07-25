@@ -44,8 +44,12 @@ class UserIntegrationController extends Controller
         return response()->json(['data' => ['authorize_url' => MicrosoftCalendarService::authorizeUrl($state)]]);
     }
 
-    /** Callback do OAuth (público): troca o code por tokens e redireciona pro front. */
-    public function callback(Request $request): RedirectResponse
+    /**
+     * Callback do OAuth (público): troca o code por tokens e redireciona pro front.
+     * Fluxo `vault` (step-up do Cofre) devolve uma página mínima que entrega o token
+     * ao opener via postMessage e fecha o popup — o token nunca passa por URL.
+     */
+    public function callback(Request $request): RedirectResponse|\Illuminate\Http\Response
     {
         $front = rtrim((string) config('app.frontend_url'), '/') . '/inicio';
 
@@ -61,7 +65,14 @@ class UserIntegrationController extends Controller
 
             $tok = MicrosoftCalendarService::exchangeCode($code);
             if (!empty($tok['error']) || empty($tok['access_token'])) {
-                return redirect()->away($front . '?outlook=error');
+                return ($payload['flow'] ?? '') === 'vault'
+                    ? $this->vaultPopupResponse(null)
+                    : redirect()->away($front . '?outlook=error');
+            }
+
+            if (($payload['flow'] ?? '') === 'vault') {
+                // step-up do Cofre: valida conta/tenant e emite token efêmero (NÃO grava integração)
+                return $this->vaultPopupResponse(\App\Services\VaultStepUp::completeFromTokens($uid, $tok));
             }
 
             UserIntegration::updateOrCreate(
@@ -80,6 +91,25 @@ class UserIntegrationController extends Controller
             Log::warning('Outlook OAuth callback falhou', ['e' => $e->getMessage()]);
             return redirect()->away($front . '?outlook=error');
         }
+    }
+
+    /** Página mínima do popup do step-up do Cofre: postMessage pro opener e fecha. */
+    private function vaultPopupResponse(?string $token): \Illuminate\Http\Response
+    {
+        $origin = json_encode(rtrim((string) config('app.frontend_url'), '/'));
+        $payload = json_encode(['type' => 'vault-ms-stepup', 'token' => $token]);
+        $html = <<<HTML
+<!doctype html><meta charset="utf-8"><title>Minutor — Cofre</title>
+<body style="font-family:sans-serif;padding:2rem;text-align:center">
+<p>Verificação concluída — pode fechar esta janela.</p>
+<script>
+  try { window.opener && window.opener.postMessage({$payload}, {$origin}); } catch (e) {}
+  window.close();
+</script>
+</body>
+HTML;
+
+        return response($html, 200)->header('Content-Type', 'text/html; charset=utf-8');
     }
 
     /** Desconecta (remove a integração) — permitido a qualquer momento. */

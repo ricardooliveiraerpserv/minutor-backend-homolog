@@ -7,9 +7,12 @@ use App\Models\Vault;
 use App\Models\VaultAccessLog;
 use App\Models\VaultMember;
 use App\Models\VaultUserKey;
+use App\Services\MicrosoftCalendarService;
 use App\Services\Totp;
+use App\Services\VaultStepUp;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -54,6 +57,24 @@ class VaultProfileController extends Controller
         return true;
     }
 
+    /** 2º fator conforme o driver: Microsoft (stepup_token) ou TOTP (totp_code). */
+    private function checkSecondFactor(VaultUserKey $keys, Request $request): bool
+    {
+        if (VaultStepUp::driver() === 'microsoft') {
+            return VaultStepUp::check($keys, (string) $request->input('stepup_token'));
+        }
+
+        return $this->checkTotp($keys, (string) $request->input('totp_code'));
+    }
+
+    /** 2º fator pronto pro setup? Microsoft: conta pinada · TOTP: confirmado no app. */
+    private function secondFactorReady(VaultUserKey $keys): bool
+    {
+        return VaultStepUp::driver() === 'microsoft'
+            ? ! empty($keys->ms_oid)
+            : $keys->totpConfirmed();
+    }
+
     public function profile(Request $request): JsonResponse
     {
         $user = $this->guardInternal($request);
@@ -61,7 +82,9 @@ class VaultProfileController extends Controller
 
         return response()->json([
             'configured'     => (bool) $keys?->isConfigured(),
+            'second_factor'  => VaultStepUp::driver(),
             'totp_confirmed' => (bool) $keys?->totpConfirmed(),
+            'ms_linked'      => ! empty($keys?->ms_oid),
             'has_recovery'   => ! empty($keys?->recovery_symmetric_key),
             'kdf'            => [
                 'iterations'  => $keys?->kdf_iterations ?? 3,
@@ -69,6 +92,30 @@ class VaultProfileController extends Controller
                 'parallelism' => $keys?->kdf_parallelism ?? 4,
             ],
         ]);
+    }
+
+    /**
+     * Inicia o step-up Microsoft: devolve a authorize URL p/ o popup.
+     * prompt=login FORÇA re-autenticação (com a MFA corporativa) a cada unlock.
+     */
+    public function msStart(Request $request): JsonResponse
+    {
+        $this->guardInternal($request);
+        if (VaultStepUp::driver() !== 'microsoft' || ! MicrosoftCalendarService::configured()) {
+            return response()->json(['message' => 'Verificação Microsoft indisponível.'], 422);
+        }
+
+        $state = Crypt::encryptString(json_encode([
+            'uid'  => $request->user()->id,
+            't'    => now()->timestamp,
+            'flow' => 'vault',
+        ]));
+
+        // Mantém os scopes padrão (exchangeCode reenvia os mesmos na troca do code);
+        // só força prompt=login pra re-autenticação fresca.
+        return response()->json(['authorize_url' => MicrosoftCalendarService::authorizeUrl($state, [
+            'prompt' => 'login',
+        ])]);
     }
 
     public function totpSetup(Request $request): JsonResponse
@@ -131,8 +178,12 @@ class VaultProfileController extends Controller
         if ($keys->isConfigured()) {
             return response()->json(['message' => 'Cofre já configurado.'], 409);
         }
-        if (! $keys->totpConfirmed()) {
-            return response()->json(['message' => 'Configure o autenticador (2FA) antes de concluir.'], 422);
+        if (! $this->secondFactorReady($keys)) {
+            return response()->json(['message' => 'Configure o 2º fator (Microsoft ou autenticador) antes de concluir.'], 422);
+        }
+        // Driver Microsoft: exige step-up fresco no próprio setup
+        if (VaultStepUp::driver() === 'microsoft' && ! VaultStepUp::check($keys, (string) $request->input('stepup_token'))) {
+            return response()->json(['message' => 'Verificação Microsoft expirada — repita a verificação.'], 422);
         }
 
         DB::transaction(function () use ($user, $keys, $data) {
@@ -171,13 +222,14 @@ class VaultProfileController extends Controller
     {
         $user = $this->guardInternal($request);
         $data = $request->validate([
-            'auth_hash' => 'required|string|max:500',
-            'totp_code' => 'required|string|max:10',
+            'auth_hash'    => 'required|string|max:500',
+            'totp_code'    => 'nullable|string|max:10',
+            'stepup_token' => 'nullable|string|max:500',
         ]);
 
         $keys = VaultUserKey::where('user_id', $user->id)->first();
         $hashOk = $keys?->isConfigured() && Hash::check($data['auth_hash'], $keys->auth_hash);
-        $totpOk = $keys && $this->checkTotp($keys, $data['totp_code']);
+        $totpOk = $keys && $this->checkSecondFactor($keys, $request);
 
         if (! $hashOk || ! $totpOk) {
             VaultAccessLog::record($request, 'unlock_failed');
@@ -211,6 +263,7 @@ class VaultProfileController extends Controller
             'current_auth_hash'           => 'nullable|string|max:500',
             'recovery_token'              => 'nullable|string|max:500',
             'totp_code'                   => 'nullable|string|max:10',
+            'stepup_token'                => 'nullable|string|max:500',
             'new_auth_hash'               => 'required|string|max:500',
             'new_encrypted_symmetric_key' => 'required|string|max:2000',
             'new_recovery_symmetric_key'  => 'nullable|string|max:2000',
@@ -230,8 +283,8 @@ class VaultProfileController extends Controller
                 return response()->json(['message' => 'Sessão de recuperação expirada — reinicie o processo.'], 422);
             }
         } else {
-            if (! $this->checkTotp($keys, (string) ($data['totp_code'] ?? ''))) {
-                return response()->json(['message' => 'Código do autenticador inválido.'], 422);
+            if (! $this->checkSecondFactor($keys, $request)) {
+                return response()->json(['message' => 'Verificação de 2º fator inválida.'], 422);
             }
             if (! Hash::check((string) ($data['current_auth_hash'] ?? ''), $keys->auth_hash)) {
                 return response()->json(['message' => 'Master password atual inválida.'], 422);
@@ -261,10 +314,13 @@ class VaultProfileController extends Controller
     public function recoveryUnlock(Request $request): JsonResponse
     {
         $user = $this->guardInternal($request);
-        $data = $request->validate(['totp_code' => 'required|string|max:10']);
+        $request->validate([
+            'totp_code'    => 'nullable|string|max:10',
+            'stepup_token' => 'nullable|string|max:500',
+        ]);
 
         $keys = VaultUserKey::where('user_id', $user->id)->first();
-        if (! $keys?->recovery_symmetric_key || ! $this->checkTotp($keys, $data['totp_code'])) {
+        if (! $keys?->recovery_symmetric_key || ! $this->checkSecondFactor($keys, $request)) {
             return response()->json(['message' => 'Não foi possível iniciar a recuperação.'], 422);
         }
 

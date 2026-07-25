@@ -32,12 +32,15 @@ class MicrosoftCalendarService
         return "https://login.microsoftonline.com/{$tenant}/oauth2/v2.0/token";
     }
 
-    /** URL de consentimento (redireciona o usuário). $state amarra o callback ao usuário. */
-    public static function authorizeUrl(string $state): string
+    /**
+     * URL de consentimento (redireciona o usuário). $state amarra o callback ao usuário.
+     * $overrides permite variar prompt/scope (ex.: step-up do Cofre usa prompt=login).
+     */
+    public static function authorizeUrl(string $state, array $overrides = []): string
     {
         $c = self::cfg();
         $tenant = $c['tenant_id'] ?: 'common';
-        $params = http_build_query([
+        $params = http_build_query(array_merge([
             'client_id'     => $c['client_id'],
             'response_type' => 'code',
             'redirect_uri'  => $c['redirect_uri'],
@@ -45,7 +48,7 @@ class MicrosoftCalendarService
             'scope'         => $c['scopes'],
             'state'         => $state,
             'prompt'        => 'select_account',
-        ]);
+        ], $overrides));
         return "https://login.microsoftonline.com/{$tenant}/oauth2/v2.0/authorize?{$params}";
     }
 

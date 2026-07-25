@@ -136,4 +136,11 @@ return [
         'env'            => env('CLICKSIGN_ENV', 'sandbox'),
     ],
 
+    // Cofre de Senhas — driver do 2º fator: 'microsoft' (Entra, popup a cada unlock)
+    // ou 'totp' (app autenticador; fallback/dev). Sem env: microsoft quando o app
+    // Entra estiver configurado (MS_CAL_REDIRECT_URI setado), senão totp.
+    'vault' => [
+        'second_factor' => env('VAULT_2FA_DRIVER'),
+    ],
+
 ];
