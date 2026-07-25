@@ -2154,7 +2154,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/unlock',              [\App\Http\Controllers\VaultProfileController::class, 'unlock'])->middleware('throttle:vault-unlock')->name('vault.unlock');
             Route::post('/master-password',     [\App\Http\Controllers\VaultProfileController::class, 'changeMasterPassword'])->middleware('throttle:10,1')->name('vault.master-password');
             Route::post('/recovery/unlock',     [\App\Http\Controllers\VaultProfileController::class, 'recoveryUnlock'])->middleware('throttle:5,15')->name('vault.recovery.unlock');
+            Route::post('/recovery/regenerate', [\App\Http\Controllers\VaultProfileController::class, 'regenerateRecovery'])->middleware('throttle:10,1')->name('vault.recovery.regenerate');
             Route::get('/public-keys',          [\App\Http\Controllers\VaultProfileController::class, 'publicKeys'])->name('vault.public-keys');
+            Route::get('/teams',                [\App\Http\Controllers\VaultProfileController::class, 'teams'])->name('vault.teams');
 
             // Cofres e membros
             Route::get('/vaults',                        [\App\Http\Controllers\VaultController::class, 'index'])->name('vault.vaults.index');

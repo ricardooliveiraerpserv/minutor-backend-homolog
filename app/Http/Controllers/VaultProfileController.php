@@ -347,6 +347,38 @@ class VaultProfileController extends Controller
         ]);
     }
 
+    /**
+     * Gera nova recovery key SEM trocar a master password: só re-wrapa a user key
+     * com a nova recovery key (blob novo do client). Exige master password atual
+     * (current_auth_hash) + 2º fator. A recovery key anterior deixa de valer.
+     */
+    public function regenerateRecovery(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $data = $request->validate([
+            'current_auth_hash'          => 'required|string|max:500',
+            'totp_code'                  => 'nullable|string|max:10',
+            'stepup_token'               => 'nullable|string|max:500',
+            'new_recovery_symmetric_key' => 'required|string|max:2000',
+        ]);
+
+        $keys = VaultUserKey::where('user_id', $user->id)->first();
+        if (! $keys?->isConfigured()) {
+            return response()->json(['message' => 'Cofre não configurado.'], 422);
+        }
+        if (! $this->checkSecondFactor($keys, $request)) {
+            return response()->json(['message' => 'Verificação de 2º fator inválida.'], 422);
+        }
+        if (! Hash::check($data['current_auth_hash'], $keys->auth_hash)) {
+            return response()->json(['message' => 'Master password atual inválida.'], 422);
+        }
+
+        $keys->forceFill(['recovery_symmetric_key' => $data['new_recovery_symmetric_key']])->save();
+        VaultAccessLog::record($request, 'recovery_regenerated');
+
+        return response()->json(['regenerated' => true]);
+    }
+
     /** Chaves públicas de usuários internos com perfil configurado (p/ compartilhar cofres). */
     public function publicKeys(Request $request): JsonResponse
     {
@@ -366,5 +398,43 @@ class VaultProfileController extends Controller
         }
 
         return response()->json($query->orderBy('users.name')->get());
+    }
+
+    /**
+     * Equipes (Grupos de Consultores) para adicionar vários membros ao cofre de uma vez.
+     * Para cada grupo, devolve os membros INTERNOS que já configuraram o cofre (têm chave
+     * pública, aptos a receber o wrap) + a contagem total (p/ avisar quantos ficam de fora).
+     */
+    public function teams(Request $request): JsonResponse
+    {
+        $this->guardInternal($request);
+
+        $groups = DB::table('consultant_groups')->select('id', 'name')->orderBy('name')->get();
+
+        $result = $groups->map(function ($g) {
+            $members = DB::table('consultant_group_user as cgu')
+                ->join('users', 'users.id', '=', 'cgu.user_id')
+                ->join('vault_user_keys as vk', 'vk.user_id', '=', 'users.id')
+                ->where('cgu.consultant_group_id', $g->id)
+                ->whereIn('users.type', self::INTERNAL_TYPES)
+                ->where('users.enabled', true)
+                ->whereNotNull('vk.public_key')
+                ->whereNotNull('vk.auth_hash')
+                ->select('users.id as user_id', 'users.name', 'users.email', 'vk.public_key')
+                ->orderBy('users.name')
+                ->get();
+
+            $total = DB::table('consultant_group_user')->where('consultant_group_id', $g->id)->count();
+
+            return [
+                'id'                 => $g->id,
+                'name'               => $g->name,
+                'members'            => $members,          // aptos (com chave pública)
+                'total'              => $total,            // total no grupo
+                'not_configured'     => max(0, $total - $members->count()),
+            ];
+        })->filter(fn ($g) => $g['total'] > 0)->values();
+
+        return response()->json($result);
     }
 }
