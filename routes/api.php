@@ -2137,6 +2137,45 @@ Route::prefix('v1')->group(function () {
         Route::get('/attachments/{id}/url',          [\App\Http\Controllers\AttachmentController::class, 'signedUrl'])->name('attachments.signed-url');
         Route::delete('/attachments/{id}',           [\App\Http\Controllers\AttachmentController::class, 'destroy'])->name('attachments.destroy');
         Route::post('/attachments/{id}/restore',     [\App\Http\Controllers\AttachmentController::class, 'restore'])->name('attachments.restore');
+
+        // ────────────────────────────────────────────────────────────────────
+        // 🔐 COFRE DE SENHAS (zero-knowledge) — só equipe interna.
+        // Servidor guarda/entrega BLOBS cifrados no client; nunca vê segredo.
+        // NUNCA logar payloads destas rotas.
+        // ────────────────────────────────────────────────────────────────────
+        Route::prefix('vault')->middleware('permission.or.admin:vault.use')->group(function () {
+            // Perfil criptográfico / 2FA / unlock
+            Route::get('/profile',              [\App\Http\Controllers\VaultProfileController::class, 'profile'])->name('vault.profile');
+            Route::post('/totp/setup',          [\App\Http\Controllers\VaultProfileController::class, 'totpSetup'])->middleware('throttle:10,1')->name('vault.totp.setup');
+            Route::post('/totp/confirm',        [\App\Http\Controllers\VaultProfileController::class, 'totpConfirm'])->middleware('throttle:10,1')->name('vault.totp.confirm');
+            Route::post('/profile/setup',       [\App\Http\Controllers\VaultProfileController::class, 'setup'])->name('vault.profile.setup');
+            Route::post('/unlock',              [\App\Http\Controllers\VaultProfileController::class, 'unlock'])->middleware('throttle:vault-unlock')->name('vault.unlock');
+            Route::post('/master-password',     [\App\Http\Controllers\VaultProfileController::class, 'changeMasterPassword'])->middleware('throttle:10,1')->name('vault.master-password');
+            Route::post('/recovery/unlock',     [\App\Http\Controllers\VaultProfileController::class, 'recoveryUnlock'])->middleware('throttle:5,15')->name('vault.recovery.unlock');
+            Route::get('/public-keys',          [\App\Http\Controllers\VaultProfileController::class, 'publicKeys'])->name('vault.public-keys');
+
+            // Cofres e membros
+            Route::get('/vaults',                        [\App\Http\Controllers\VaultController::class, 'index'])->name('vault.vaults.index');
+            Route::post('/vaults',                       [\App\Http\Controllers\VaultController::class, 'store'])->name('vault.vaults.store');
+            Route::put('/vaults/{id}',                   [\App\Http\Controllers\VaultController::class, 'update'])->name('vault.vaults.update');
+            Route::delete('/vaults/{id}',                [\App\Http\Controllers\VaultController::class, 'destroy'])->name('vault.vaults.destroy');
+            Route::get('/vaults/{id}/members',           [\App\Http\Controllers\VaultController::class, 'members'])->name('vault.members.index');
+            Route::post('/vaults/{id}/members',          [\App\Http\Controllers\VaultController::class, 'addMember'])->name('vault.members.store');
+            Route::put('/vaults/{id}/members/{userId}',  [\App\Http\Controllers\VaultController::class, 'updateMember'])->name('vault.members.update');
+            Route::delete('/vaults/{id}/members/{userId}', [\App\Http\Controllers\VaultController::class, 'removeMember'])->name('vault.members.destroy');
+            Route::post('/vaults/{id}/rotate',           [\App\Http\Controllers\VaultController::class, 'rotate'])->name('vault.rotate');
+
+            // Itens
+            Route::get('/vaults/{vaultId}/items',        [\App\Http\Controllers\VaultItemController::class, 'index'])->name('vault.items.index');
+            Route::post('/vaults/{vaultId}/items',       [\App\Http\Controllers\VaultItemController::class, 'store'])->name('vault.items.store');
+            Route::put('/items/{id}',                    [\App\Http\Controllers\VaultItemController::class, 'update'])->name('vault.items.update');
+            Route::delete('/items/{id}',                 [\App\Http\Controllers\VaultItemController::class, 'destroy'])->name('vault.items.destroy');
+            Route::post('/items/{id}/restore',           [\App\Http\Controllers\VaultItemController::class, 'restore'])->name('vault.items.restore');
+            Route::post('/items/{id}/log',               [\App\Http\Controllers\VaultItemController::class, 'logAction'])->name('vault.items.log');
+
+            // Auditoria — admin global vê tudo; admin de cofre vê só os seus (escopo no controller)
+            Route::get('/logs',                          [\App\Http\Controllers\VaultController::class, 'logs'])->name('vault.logs');
+        });
     });
 
     // Signed URL externa (sem auth:sanctum; o middleware 'signed' garante

@@ -76,5 +76,16 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute(5)->by($email !== '' ? $email . '|' . $request->ip() : $request->ip()),
             ];
         });
+
+        // Unlock do Cofre de Senhas: rota autenticada, então chaveia por user id
+        // (o IP colapsa no gateway atrás do proxy — mesmo caso do login acima).
+        RateLimiter::for('vault-unlock', function (Request $request) {
+            $key = 'vu:'.($request->user()?->id ?? $request->ip());
+
+            return [
+                Limit::perMinute(5)->by($key),
+                Limit::perHour(20)->by($key.':h'),
+            ];
+        });
     }
 }

@@ -131,6 +131,8 @@ class PermissionService
         'competencias.respond', 'competencias.reports.view',
         // Sistema
         'settings.view',
+        // Cofre de Senhas (zero-knowledge; só equipe interna)
+        'vault.use', 'vault.audit.view',
     ];
 
     /**
@@ -192,6 +194,8 @@ class PermissionService
             'crm.opportunities.view', 'crm.opportunities.view_all',
             'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
             'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
+            // Cofre de Senhas
+            'vault.use',
         ];
     }
 
@@ -216,6 +220,8 @@ class PermissionService
             'followups.view', 'followups.manage',
             // Banco de Competências: consulta competências da equipe + responde a própria.
             'competencias.view', 'competencias.view_team', 'competencias.respond',
+            // Cofre de Senhas
+            'vault.use',
         ];
     }
 
@@ -237,6 +243,8 @@ class PermissionService
             'help_desk.tickets.view',
             // Banco de Competências: responde a própria pesquisa.
             'competencias.respond',
+            // Cofre de Senhas
+            'vault.use',
         ];
     }
 

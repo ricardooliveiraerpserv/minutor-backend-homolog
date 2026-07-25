@@ -65,6 +65,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 if ($e instanceof \Illuminate\Auth\Access\AuthorizationException) {
                     return response()->json(['message' => 'This action is unauthorized.'], 403);
                 }
+                // Rate limit deve chegar como 429 de verdade (antes caía no 422 genérico
+                // e o front não conseguia distinguir throttle de credencial inválida).
+                if ($e instanceof \Illuminate\Http\Exceptions\ThrottleRequestsException) {
+                    return response()->json(['message' => 'Muitas tentativas — aguarde um instante.'], 429, $e->getHeaders());
+                }
 
                 $payload = config('app.debug')
                     ? [
