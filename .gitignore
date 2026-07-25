@@ -27,3 +27,6 @@ migrate*.load
 
 # Docker volumes
 docker/mysql/data/
+
+# Claude Code — pode conter credenciais em comandos permitidos
+.claude/settings.local.json
