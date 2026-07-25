@@ -85,8 +85,11 @@ Route::prefix('v1')->group(function () {
     });
 
     // 🎫 WEBHOOKS - Rotas públicas para receber notificações externas
-    Route::post('/webhooks/movidesk/ticket', [MovideskWebhookController::class, 'handleTicket'])
-        ->name('webhooks.movidesk.ticket');
+    // A4 (segurança): webhook do Movidesk DESABILITADO — não é mais usado (migramos p/ API direta;
+    // 0 chamadas em 2 meses de log). Rota removida para eliminar a superfície de ataque (endpoint
+    // público sem uso). Para reativar: descomentar + auth (o controller já valida HMAC/segredo).
+    // Route::post('/webhooks/movidesk/ticket', [MovideskWebhookController::class, 'handleTicket'])
+    //     ->name('webhooks.movidesk.ticket');
 
     /**
      * @OA\Get(
