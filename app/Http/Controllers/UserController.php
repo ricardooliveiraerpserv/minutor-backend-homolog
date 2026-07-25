@@ -425,6 +425,16 @@ class UserController extends Controller
         try {
             $userData = $validator->validated();
 
+            // A1 (segurança): só ADMIN define papel/permissão. Um users.create não-admin
+            // não pode criar um admin nem conceder permissões/flags de papel.
+            if (!Auth::user()->isAdmin()) {
+                unset(
+                    $userData['type'], $userData['extra_permissions'], $userData['is_executive'],
+                    $userData['is_bizify'], $userData['is_diretor_projetos'], $userData['coordinator_type'],
+                    $userData['can_timesheet_sustentacao'], $userData['dashboard_types']
+                );
+            }
+
             // Normalizar email para minúsculas
             if (isset($userData['email'])) {
                 $userData['email'] = strtolower(trim($userData['email']));
@@ -704,6 +714,17 @@ class UserController extends Controller
         DB::beginTransaction();
         try {
             $updateData = $validator->validated();
+
+            // A1 (segurança): campos que concedem PRIVILÉGIO/PAPEL/permissão só ADMIN altera.
+            // Sem isto, quem tem users.update ou users.update_own_profile (coordenador/parceiro)
+            // conseguia se promover a admin ou dar permissões editando o próprio cadastro.
+            if (!Auth::user()->isAdmin()) {
+                unset(
+                    $updateData['type'], $updateData['extra_permissions'], $updateData['is_executive'],
+                    $updateData['is_bizify'], $updateData['is_diretor_projetos'], $updateData['coordinator_type'],
+                    $updateData['can_timesheet_sustentacao'], $updateData['dashboard_types']
+                );
+            }
 
             // Normalizar email para minúsculas
             if (isset($updateData['email'])) {
