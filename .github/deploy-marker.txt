@@ -1,2 +1,3 @@
 auto-deploy on-push confirmado em 2026-07-24 (migracao erpserv-clientes).
 push real de teste: auto-deploy on-push check
+retrigger apos toggle actions
