@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Attachments\AttachmentService;
+use App\Models\Attachment;
 use App\Models\CustomerContact;
 use App\Models\HelpDeskStatus;
 use App\Models\HelpDeskTicket;
@@ -11,6 +13,7 @@ use App\Models\MovideskOrganization;
 use App\Models\SystemSetting;
 use App\Models\User;
 use Illuminate\Console\Command;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -24,8 +27,17 @@ use Illuminate\Support\Facades\Http;
  */
 class HelpDeskImportMovidesk extends Command
 {
-    protected $signature = 'help-desk:import-movidesk {--months=3} {--limit=0} {--token=} {--dry-run} {--fix-imagens} {--only-new} {--sync} {--since=} {--company=1}';
-    protected $description = 'Importa/sincroniza tickets do Movidesk para o Help Desk nativo. --sync: delta por lastUpdate (novos + abertos que mudaram), com watermark.';
+    protected $signature = 'help-desk:import-movidesk {--months=3} {--limit=0} {--token=} {--dry-run} {--fix-imagens} {--backfill-files} {--only-new} {--sync} {--since=} {--company=1}';
+    protected $description = 'Importa/sincroniza tickets do Movidesk para o Help Desk nativo. --sync: delta por lastUpdate (novos + abertos que mudaram), com watermark. --backfill-files: re-busca janela recente e rehospeda imagens/anexos inline.';
+
+    public function __construct(private AttachmentService $attachments)
+    {
+        parent::__construct();
+    }
+
+    /** Ator (admin) usado como uploader dos anexos rehospedados — CLI não tem usuário logado. */
+    private ?User $uploaderCache = null;
+    private bool $uploaderResolved = false;
 
     /** Watermark do sync incremental (última data de lastUpdate processada). */
     private const WATERMARK_KEY = 'movidesk_hd_sync_watermark';
@@ -42,6 +54,121 @@ class HelpDeskImportMovidesk extends Command
         $html = preg_replace('/<img\b[^>]*movidesk-files[^>]*>/is', self::IMG_PLACEHOLDER, $html) ?? $html;
         $html = preg_replace('/<a\b[^>]*movidesk-files[^>]*>.*?<\/a>/is', self::FILE_PLACEHOLDER, $html) ?? $html;
         return $html;
+    }
+
+    /**
+     * Rehospeda as imagens/anexos inline que ainda apontam pro S3 do Movidesk: baixa o binário
+     * (enquanto a URL assinada está viva), grava como Attachment (FASE 11) da entidade dona e
+     * reescreve o HTML:
+     *   <img ...movidesk-files...>  → <img data-att-id="{id}" alt="..."> (o FE resolve p/ URL assinada)
+     *   <a ...movidesk-files...>x</a> → chip com data-att-id (arquivo vira anexo listado)
+     * Se a URL já expirou (download falha) ou não há uploader/permissão, cai no marcador (cleanBody).
+     * entity_id PRECISA já existir no banco (ticket/comentário salvo) — o AttachmentService resolve a entidade.
+     */
+    private function rehostBody(?string $html, string $entityType, int $entityId): string
+    {
+        $html = (string) $html;
+        if ($html === '' || stripos($html, 'movidesk-files') === false) return $html;
+        $uploader = $this->uploader();
+        if (!$uploader) return $this->cleanBody($html); // sem ator não dá pra gravar anexo
+
+        // <img> apontando pro movidesk-files → baixa e vira anexo 'image' inline (data-att-id).
+        $html = preg_replace_callback('/<img\b[^>]*>/is', function ($m) use ($entityType, $entityId, $uploader) {
+            $tag = $m[0];
+            if (stripos($tag, 'movidesk-files') === false) return $tag;
+            if (!preg_match('/(?<=[\s"\'])src=["\']([^"\']+)["\']/i', $tag, $s)) return self::IMG_PLACEHOLDER;
+            $att = $this->downloadAndStore(html_entity_decode($s[1]), $entityType, $entityId, $uploader, 'image');
+            if (!$att) return self::IMG_PLACEHOLDER;
+            $alt = preg_match('/\salt=["\']([^"\']*)["\']/i', $tag, $a) ? $a[1] : 'imagem';
+            return sprintf('<img data-att-id="%d" alt="%s">', $att->id, htmlspecialchars($alt, ENT_QUOTES));
+        }, $html) ?? $html;
+
+        // <a> apontando pro movidesk-files → baixa e vira anexo 'attachment' (chip clicável).
+        $html = preg_replace_callback('/<a\b[^>]*>.*?<\/a>/is', function ($m) use ($entityType, $entityId, $uploader) {
+            $tag = $m[0];
+            if (stripos($tag, 'movidesk-files') === false) return $tag;
+            if (!preg_match('/(?<=[\s"\'])href=["\']([^"\']+)["\']/i', $tag, $s)) return self::FILE_PLACEHOLDER;
+            $att = $this->downloadAndStore(html_entity_decode($s[1]), $entityType, $entityId, $uploader, 'attachment');
+            if (!$att) return self::FILE_PLACEHOLDER;
+            return sprintf(
+                '<span class="hd-att-chip" data-att-id="%d">📎 %s</span>',
+                $att->id, htmlspecialchars($att->original_name, ENT_QUOTES),
+            );
+        }, $html) ?? $html;
+
+        return $html;
+    }
+
+    /** Baixa a URL (S3 Movidesk) e grava como Attachment via AttachmentService. null se falhar/expirado. */
+    private function downloadAndStore(string $url, string $entityType, int $entityId, User $uploader, string $category): ?Attachment
+    {
+        $tmp = null;
+        try {
+            $resp = Http::timeout(45)->get($url);
+            if (!$resp->successful()) return null;               // URL assinada expirada (403) etc.
+            $bytes = $resp->body();
+            if ($bytes === '' || strlen($bytes) < 8) return null;
+
+            $mime = trim(explode(';', (string) ($resp->header('Content-Type') ?: 'application/octet-stream'))[0]);
+            $name = $this->fileNameFromUrl($url, $resp->header('Content-Disposition'), $mime);
+
+            $tmp = tempnam(sys_get_temp_dir(), 'mvatt');
+            file_put_contents($tmp, $bytes);
+            // test-mode=true: pula is_uploaded_file() (não é upload HTTP real, é download server-side).
+            $file = new UploadedFile($tmp, $name, $mime ?: null, null, true);
+
+            $att = $this->attachments->store($uploader, [
+                'entity_type' => $entityType,
+                'entity_id'   => $entityId,
+                'category'    => $category,
+                'file'        => $file,
+                'visibility'  => 'internal',
+                'metadata'    => ['imported_from' => 'movidesk'],
+            ]);
+            return $att;
+        } catch (\Throwable $e) {
+            // Extensão/MIME não permitido, tamanho, rede: não interrompe a importação — vira marcador.
+            return null;
+        } finally {
+            if ($tmp && is_file($tmp)) @unlink($tmp);
+        }
+    }
+
+    /** Deriva um nome de arquivo com extensão coerente (Content-Disposition > URL > MIME). */
+    private function fileNameFromUrl(string $url, ?string $disposition, string $mime): string
+    {
+        if ($disposition && preg_match('/filename\*?=(?:UTF-8\'\')?["\']?([^"\';]+)/i', $disposition, $d)) {
+            $n = urldecode(trim($d[1]));
+            if ($n !== '' && str_contains($n, '.')) return $this->sanitizeBasename($n);
+        }
+        $path = (string) parse_url($url, PHP_URL_PATH);
+        $base = $path !== '' ? basename($path) : '';
+        $extByMime = [
+            'image/png' => 'png', 'image/jpeg' => 'jpg', 'image/jpg' => 'jpg', 'image/webp' => 'webp',
+            'application/pdf' => 'pdf', 'text/plain' => 'txt', 'text/csv' => 'csv',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'docx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'xlsx',
+        ];
+        $ext = $extByMime[strtolower($mime)] ?? (pathinfo($base, PATHINFO_EXTENSION) ?: 'bin');
+        if ($base === '' || !str_contains($base, '.')) $base = 'movidesk_' . substr(md5($url), 0, 8) . '.' . $ext;
+        elseif (strtolower(pathinfo($base, PATHINFO_EXTENSION)) !== strtolower($ext) && isset($extByMime[strtolower($mime)])) {
+            $base = pathinfo($base, PATHINFO_FILENAME) . '.' . $ext; // corrige ext pra bater com o MIME real
+        }
+        return $this->sanitizeBasename($base);
+    }
+
+    private function sanitizeBasename(string $n): string
+    {
+        $n = preg_replace('/[^\w.\-]+/u', '_', $n) ?? $n;
+        return mb_substr(ltrim($n, '.'), 0, 180) ?: 'arquivo.bin';
+    }
+
+    /** Uploader dos anexos: primeiro admin (internal staff → passa o permission_check do registry). */
+    private function uploader(): ?User
+    {
+        if ($this->uploaderResolved) return $this->uploaderCache;
+        $this->uploaderResolved = true;
+        return $this->uploaderCache = User::where('type', 'admin')->orderBy('id')->first();
     }
 
     private const BASE = 'https://api.movidesk.com/public/v1';
@@ -73,6 +200,12 @@ class HelpDeskImportMovidesk extends Command
         // CLI não tem contexto de empresa e o pluck de status pega "último vence" (empresa 2) → status errado.
         $companyId = max(1, (int) $this->option('company'));
 
+        // Backfill de anexos: re-busca a janela recente da API (URLs S3 frescas) e rehospeda os
+        // já importados. Não cria/atualiza ticket — só reescreve descrição/interações com anexos reais.
+        if ($this->option('backfill-files')) {
+            return $this->backfillFiles($token, $months, $limit);
+        }
+
         // Mapas de resolução (carregados uma vez). Status ESCOPADO pela empresa (chaves repetem entre empresas).
         $statusId = HelpDeskStatus::where('company_id', $companyId)->pluck('id', 'key');   // key → id
         $orgToCustomer = MovideskOrganization::whereNotNull('customer_id')->pluck('customer_id', 'movidesk_id'); // movidesk_id → customer_id
@@ -97,7 +230,7 @@ class HelpDeskImportMovidesk extends Command
             return self::SUCCESS;
         }
 
-        $imp = 0; $upd = 0; $skip = 0; $comments = 0; $errs = 0;
+        $imp = 0; $upd = 0; $skip = 0; $comments = 0; $errs = 0; $reh = 0;
         $bar = $this->output->createProgressBar(count($ids));
         $bar->start();
 
@@ -115,7 +248,10 @@ class HelpDeskImportMovidesk extends Command
                 if (!$t || !empty($t['isDeleted'])) { $skip++; $bar->advance(); continue; }
                 if ($dry) { $bar->advance(); continue; }
 
-                DB::transaction(function () use ($t, $statusId, $orgToCustomer, $userByEmail, $contactByEmail, $companyId, &$imp, &$upd, &$comments) {
+                // Fila de rehospedagem (imagens/anexos inline) — processada FORA da transação:
+                // download do S3 + upload pro storage são chamadas de rede lentas, não seguram lock de DB.
+                $rehostQueue = [];
+                DB::transaction(function () use ($t, $statusId, $orgToCustomer, $userByEmail, $contactByEmail, $companyId, &$imp, &$upd, &$comments, &$rehostQueue) {
                     $mid = (string) $t['id'];
                     $actions = collect($t['actions'] ?? [])->sortBy('createdDate')->values();
 
@@ -138,7 +274,8 @@ class HelpDeskImportMovidesk extends Command
 
                     // Descrição = ação MAIS ANTIGA (abertura); demais viram interações.
                     $descAction = $actions->first();
-                    $desc = $this->cleanBody($descAction['htmlDescription'] ?? ($descAction['description'] ?? null));
+                    $descRaw = $descAction['htmlDescription'] ?? ($descAction['description'] ?? null);
+                    $desc = $this->cleanBody($descRaw); // fallback: placeholder até rehospedar (fora da transação)
 
                     $num = $t['movideskTicketNumber'] ?? $t['id'];
                     $ticket = HelpDeskTicket::withTrashed()->firstOrNew(['source_system' => 'movidesk', 'external_ref' => $mid]);
@@ -175,6 +312,10 @@ class HelpDeskImportMovidesk extends Command
                             'meta' => json_encode(['imported_from' => 'movidesk', 'movidesk_id' => $mid]),
                             'created_at' => $created,
                         ]);
+                        // Rehospeda a descrição só na criação (a abertura não muda; evita re-download no sync).
+                        if (stripos((string) $descRaw, 'movidesk-files') !== false) {
+                            $rehostQueue[] = ['type' => 'HELPDESK_TICKET', 'id' => $ticket->id, 'html' => $descRaw, 'col' => 'description', 'table' => 'helpdesk_tickets'];
+                        }
                         $imp++;
                     } else {
                         $upd++;
@@ -191,11 +332,12 @@ class HelpDeskImportMovidesk extends Command
                         $authorContact = (!$authorUser && $email) ? optional($contactByEmail->get(mb_strtolower($email)))->id : null;
                         $isPublic = !isset($a['isPublic']) || $a['isPublic'] !== false;
 
+                        $rawBody = $a['htmlDescription'] ?? ($a['description'] ?? '');
                         $c = new HelpDeskTicketComment([
                             'ticket_id'        => $ticket->id,
                             'author_user_id'   => $authorUser,
                             'author_contact_id' => $authorContact,
-                            'body'             => $this->cleanBody($a['htmlDescription'] ?? ($a['description'] ?? '')),
+                            'body'             => $this->cleanBody($rawBody),
                             'visibility'       => $isPublic ? 'customer' : 'internal',
                             'channel'          => 'movidesk',
                             'is_system'        => false,
@@ -205,9 +347,20 @@ class HelpDeskImportMovidesk extends Command
                         $c->created_at = $this->dt($a['createdDate'] ?? null) ?? $created;
                         $c->updated_at = $c->created_at;
                         $c->save();
+                        if (stripos((string) $rawBody, 'movidesk-files') !== false) {
+                            $rehostQueue[] = ['type' => 'HELPDESK_TICKET_COMMENT', 'id' => $c->id, 'html' => $rawBody, 'col' => 'body', 'table' => 'helpdesk_ticket_comments'];
+                        }
                         $comments++;
                     }
                 });
+
+                // Rehospedagem FORA da transação: baixa cada imagem/anexo inline (S3 Movidesk ainda vivo),
+                // grava como Attachment e reescreve o corpo (data-att-id). Se a URL expirou → marcador.
+                foreach ($rehostQueue as $rq) {
+                    $new = $this->rehostBody($rq['html'], $rq['type'], $rq['id']);
+                    DB::table($rq['table'])->where('id', $rq['id'])->update([$rq['col'] => $new]);
+                    $reh++;
+                }
             } catch (\Throwable $e) {
                 $errs++;
                 // A conexão pode cair no meio de um run longo (pooler Supabase) e derrubar TODAS as
@@ -220,9 +373,76 @@ class HelpDeskImportMovidesk extends Command
         }
         $bar->finish();
         $this->newLine(2);
-        $this->info("Importados: {$imp} · Atualizados: {$upd} · Interações: {$comments} · Pulados: {$skip} · Erros: {$errs}");
+        $this->info("Importados: {$imp} · Atualizados: {$upd} · Interações: {$comments} · Rehospedados: {$reh} · Pulados: {$skip} · Erros: {$errs}");
         // Só avança o watermark se o run não quebrou no meio (senão perderíamos tickets da janela).
         if ($sync && !$dry) $this->advanceWatermark($runStart);
+        return self::SUCCESS;
+    }
+
+    /**
+     * BACKFILL de anexos: re-busca os tickets da janela recente (createdDate >= now-months) direto
+     * da API — que devolve URLs S3 FRESCAS (as gravadas no banco já podem ter assinatura expirada) —
+     * e rehospeda a descrição + interações já importadas, casando as interações por idempotency_key.
+     * Idempotente: rehostBody deduplica por checksom e vira no-op quando o corpo já não tem movidesk-files.
+     */
+    private function backfillFiles(string $token, int $months, int $limit): int
+    {
+        if (!$this->uploader()) { $this->error('Sem usuário admin p/ uploader dos anexos.'); return self::FAILURE; }
+        $since = now()->subMonths($months)->startOfDay();
+        $this->info("BACKFILL de anexos — tickets criados desde {$since->toDateString()} (janela {$months} meses). Re-busca da API p/ URLs frescas.");
+        $ids = $this->listTicketIds($token, $since, $limit);
+        $this->info('Encontrados: ' . count($ids) . ' tickets' . ($limit ? " (limitado a {$limit})" : ''));
+        if (empty($ids)) return self::SUCCESS;
+
+        $tk = 0; $ck = 0; $skip = 0; $errs = 0;
+        $bar = $this->output->createProgressBar(count($ids));
+        $bar->start();
+        foreach ($ids as $id) {
+            try {
+                $mid = (string) $id;
+                $ticket = HelpDeskTicket::withTrashed()
+                    ->where('source_system', 'movidesk')->where('external_ref', $mid)->first();
+                if (!$ticket) { $skip++; $bar->advance(); continue; } // ainda não importado
+
+                $t = $this->fetchFull($token, (int) $id);
+                if (!$t) { $skip++; $bar->advance(); continue; }
+                $actions = collect($t['actions'] ?? [])->sortBy('createdDate')->values();
+
+                // Descrição = 1ª ação; rehospeda com o HTML fresco (troca placeholder/URL morta por anexo real).
+                $descAction = $actions->first();
+                $rawDesc = $descAction['htmlDescription'] ?? ($descAction['description'] ?? '');
+                if (stripos((string) $rawDesc, 'movidesk-files') !== false) {
+                    $new = $this->rehostBody($rawDesc, 'HELPDESK_TICKET', $ticket->id);
+                    if ($new !== $ticket->description) {
+                        DB::table('helpdesk_tickets')->where('id', $ticket->id)->update(['description' => $new]);
+                        $tk++;
+                    }
+                }
+
+                // Interações: casa por idempotency_key (mv-{mid}-act-{actId}) e rehospeda o corpo.
+                foreach ($actions->slice(1) as $a) {
+                    $rawBody = $a['htmlDescription'] ?? ($a['description'] ?? '');
+                    if (stripos((string) $rawBody, 'movidesk-files') === false) continue;
+                    $key = 'mv-' . $mid . '-act-' . ($a['id'] ?? '');
+                    $c = HelpDeskTicketComment::where('idempotency_key', $key)->first();
+                    if (!$c) continue;
+                    $new = $this->rehostBody($rawBody, 'HELPDESK_TICKET_COMMENT', $c->id);
+                    if ($new !== $c->body) {
+                        DB::table('helpdesk_ticket_comments')->where('id', $c->id)->update(['body' => $new]);
+                        $ck++;
+                    }
+                }
+            } catch (\Throwable $e) {
+                $errs++;
+                try { DB::reconnect(); } catch (\Throwable) {}
+                $this->newLine();
+                $this->warn("Ticket {$id}: " . $e->getMessage());
+            }
+            $bar->advance();
+        }
+        $bar->finish();
+        $this->newLine(2);
+        $this->info("Backfill — descrições rehospedadas: {$tk} · interações rehospedadas: {$ck} · pulados: {$skip} · erros: {$errs}");
         return self::SUCCESS;
     }
 
