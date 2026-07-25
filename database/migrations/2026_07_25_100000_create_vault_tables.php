@@ -49,7 +49,9 @@ return new class extends Migration {
         if (! Schema::hasTable('vaults')) {
             Schema::create('vaults', function (Blueprint $table) {
                 $table->id();
-                $table->foreignId('company_id')->nullable()->constrained('companies')->nullOnDelete();
+                // company_id nullable; FK adicionada só se a tabela companies existir
+                // (multi-empresa pode não estar rolada em todos os ambientes/bases locais).
+                $table->unsignedBigInteger('company_id')->nullable();
                 $table->string('type', 20); // 'personal' | 'shared'
                 $table->string('name'); // claro (listagem/busca)
                 $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
@@ -59,7 +61,13 @@ return new class extends Migration {
 
                 $table->index('type');
                 $table->index('created_by');
+                $table->index('company_id');
             });
+            if (Schema::hasTable('companies')) {
+                Schema::table('vaults', function (Blueprint $table) {
+                    $table->foreign('company_id')->references('id')->on('companies')->nullOnDelete();
+                });
+            }
             // Um único cofre pessoal por usuário
             DB::statement("CREATE UNIQUE INDEX IF NOT EXISTS vaults_personal_owner_unique ON vaults (created_by) WHERE type = 'personal'");
         }
