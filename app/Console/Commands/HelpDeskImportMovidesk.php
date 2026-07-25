@@ -390,7 +390,8 @@ class HelpDeskImportMovidesk extends Command
         if (!$this->uploader()) { $this->error('Sem usuário admin p/ uploader dos anexos.'); return self::FAILURE; }
         $since = now()->subMonths($months)->startOfDay();
         $this->info("BACKFILL de anexos — tickets criados desde {$since->toDateString()} (janela {$months} meses). Re-busca da API p/ URLs frescas.");
-        $ids = $this->listTicketIds($token, $since, $limit);
+        // DESC: os mais recentes primeiro — são os que ainda têm URL S3 viva (as antigas expiram → marcador).
+        $ids = $this->listTicketIds($token, $since, $limit, 'createdDate desc');
         $this->info('Encontrados: ' . count($ids) . ' tickets' . ($limit ? " (limitado a {$limit})" : ''));
         if (empty($ids)) return self::SUCCESS;
 
@@ -504,14 +505,14 @@ class HelpDeskImportMovidesk extends Command
     }
 
     /** Lista ids dos tickets criados desde $since (paginado; respeita $limit). */
-    private function listTicketIds(string $token, Carbon $since, int $limit): array
+    private function listTicketIds(string $token, Carbon $since, int $limit, string $orderby = 'createdDate'): array
     {
         $ids = []; $skip = 0;
         do {
             $resp = Http::timeout(60)->get(self::BASE . '/tickets', [
                 'token' => $token, '$select' => 'id,createdDate',
                 '$filter' => "createdDate ge {$since->format('Y-m-d')}T00:00:00.00z",
-                '$orderby' => 'createdDate', '$top' => 1000, '$skip' => $skip,
+                '$orderby' => $orderby, '$top' => 1000, '$skip' => $skip,
             ]);
             if (!$resp->successful()) break;
             $page = $resp->json();
