@@ -2203,6 +2203,20 @@ Route::prefix('v1')->group(function () {
             Route::delete('/credentials/{id}',             [\App\Http\Controllers\EnvironmentCredentialController::class, 'destroy'])->name('environments.cred.destroy');
             // Reveal ENFORCED (único caminho do ciphertext)
             Route::post('/secrets/{id}/reveal',            [\App\Http\Controllers\EnvironmentSecretController::class, 'reveal'])->middleware('throttle:60,1')->name('environments.secret.reveal');
+
+            // Infra (F1b): Banco / AppServer / VPN — listagem SEM blob; senha via /reveal.
+            Route::get('/environments/{envId}/databases',  [\App\Http\Controllers\EnvironmentInfraController::class, 'databases'])->name('environments.db.index');
+            Route::post('/environments/{envId}/databases', [\App\Http\Controllers\EnvironmentInfraController::class, 'storeDatabase'])->name('environments.db.store');
+            Route::put('/databases/{id}',                  [\App\Http\Controllers\EnvironmentInfraController::class, 'updateDatabase'])->name('environments.db.update');
+            Route::delete('/databases/{id}',               [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyDatabase'])->name('environments.db.destroy');
+            Route::get('/environments/{envId}/appservers',  [\App\Http\Controllers\EnvironmentInfraController::class, 'appservers'])->name('environments.app.index');
+            Route::post('/environments/{envId}/appservers', [\App\Http\Controllers\EnvironmentInfraController::class, 'storeAppserver'])->name('environments.app.store');
+            Route::put('/appservers/{id}',                 [\App\Http\Controllers\EnvironmentInfraController::class, 'updateAppserver'])->name('environments.app.update');
+            Route::delete('/appservers/{id}',              [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyAppserver'])->name('environments.app.destroy');
+            Route::get('/environments/{envId}/vpns',        [\App\Http\Controllers\EnvironmentInfraController::class, 'vpns'])->name('environments.vpn.index');
+            Route::post('/environments/{envId}/vpns',       [\App\Http\Controllers\EnvironmentInfraController::class, 'storeVpn'])->name('environments.vpn.store');
+            Route::put('/vpns/{id}',                        [\App\Http\Controllers\EnvironmentInfraController::class, 'updateVpn'])->name('environments.vpn.update');
+            Route::delete('/vpns/{id}',                     [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyVpn'])->name('environments.vpn.destroy');
         });
     });
 

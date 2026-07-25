@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Concerns;
 
 use App\Models\EnvEnvironment;
+use App\Models\EnvSecret;
 use App\Models\User;
 use App\Models\VaultMember;
 use Illuminate\Http\Request;
@@ -44,5 +45,37 @@ trait ResolvesEnvMembership
         $this->requireVaultMember($request, $env->vault_id, $needRole);
 
         return $env;
+    }
+
+    /**
+     * Cria/atualiza/mantém o segredo (blob cifrado no client) de um recurso.
+     * $blob null/'' → mantém o secret atual. Retorna o secret_id resultante.
+     */
+    protected function syncSecret(Request $request, EnvEnvironment $env, ?int $currentSecretId, ?string $blob, string $kind, bool $critical): ?int
+    {
+        if (empty($blob)) {
+            return $currentSecretId;
+        }
+        if ($currentSecretId) {
+            EnvSecret::where('id', $currentSecretId)->update([
+                'data'        => $blob,
+                'key_version' => (int) $request->input('key_version', 1),
+                'critical'    => $critical,
+                'updated_by'  => $request->user()->id,
+            ]);
+
+            return $currentSecretId;
+        }
+
+        return EnvSecret::create([
+            'environment_id' => $env->id,
+            'vault_id'       => $env->vault_id,
+            'kind'           => $kind,
+            'data'           => $blob,
+            'key_version'    => (int) $request->input('key_version', 1),
+            'critical'       => $critical,
+            'created_by'     => $request->user()->id,
+            'updated_by'     => $request->user()->id,
+        ])->id;
     }
 }
