@@ -21,12 +21,22 @@ class ApiSecurityHeaders
         // Precisam ser "frameáveis" pela própria origem — senão o navegador bloqueia (ícone quebrado).
         $framableInline = $request->is('api/v1/p/*/pdf') || $request->is('api/v1/p/*/deck-html');
 
+        // Página HTML do popup de step-up do Cofre (callback OAuth): precisa de estilo +
+        // script inline. CSP própria (self + inline) em vez de default-src 'none'.
+        $vaultPopup = $request->is('api/v1/integrations/microsoft/callback');
+
         // Headers de segurança
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-Frame-Options', $framableInline ? 'SAMEORIGIN' : 'DENY');
         $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Content-Security-Policy', $framableInline ? "frame-ancestors 'self'" : "default-src 'none'; frame-ancestors 'none'");
+        $csp = "default-src 'none'; frame-ancestors 'none'";
+        if ($framableInline) {
+            $csp = "frame-ancestors 'self'";
+        } elseif ($vaultPopup) {
+            $csp = "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:";
+        }
+        $response->headers->set('Content-Security-Policy', $csp);
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
 

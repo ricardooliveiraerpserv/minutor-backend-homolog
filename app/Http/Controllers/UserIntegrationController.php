@@ -63,16 +63,20 @@ class UserIntegrationController extends Controller
             $code = (string) $request->query('code');
             abort_if($uid <= 0 || $code === '', 400);
 
+            $isVault = ($payload['flow'] ?? '') === 'vault';
+
             $tok = MicrosoftCalendarService::exchangeCode($code);
             if (!empty($tok['error']) || empty($tok['access_token'])) {
-                return ($payload['flow'] ?? '') === 'vault'
-                    ? $this->vaultPopupResponse(null)
+                return $isVault
+                    ? $this->vaultPopupResponse()
                     : redirect()->away($front . '?outlook=error');
             }
 
-            if (($payload['flow'] ?? '') === 'vault') {
-                // step-up do Cofre: valida conta/tenant e emite token efêmero (NÃO grava integração)
-                return $this->vaultPopupResponse(\App\Services\VaultStepUp::completeFromTokens($uid, $tok));
+            // Fluxo do Cofre (step-up): identifica a conta e grava o step-up server-side.
+            // O FE detecta via POLL em /vault/ms/status — NÃO grava integração de Outlook.
+            if ($isVault) {
+                \App\Services\VaultStepUp::completeFromTokens($uid, $tok);
+                return $this->vaultPopupResponse();
             }
 
             UserIntegration::updateOrCreate(
@@ -93,20 +97,72 @@ class UserIntegrationController extends Controller
         }
     }
 
-    /** Página mínima do popup do step-up do Cofre: postMessage pro opener e fecha. */
-    private function vaultPopupResponse(?string $token): \Illuminate\Http\Response
+    /**
+     * Página do popup do step-up do Cofre. O FE detecta a conclusão por POLL
+     * (/vault/ms/status), então aqui só sinalizamos e tentamos fechar (best-effort:
+     * postMessage + window.close podem ser bloqueados por COOP, mas o poll cobre).
+     */
+    private function vaultPopupResponse(): \Illuminate\Http\Response
     {
         $origin = json_encode(rtrim((string) config('app.frontend_url'), '/'));
-        $payload = json_encode(['type' => 'vault-ms-stepup', 'token' => $token]);
         $html = <<<HTML
-<!doctype html><meta charset="utf-8"><title>Minutor — Cofre</title>
-<body style="font-family:sans-serif;padding:2rem;text-align:center">
-<p>Verificação concluída — pode fechar esta janela.</p>
-<script>
-  try { window.opener && window.opener.postMessage({$payload}, {$origin}); } catch (e) {}
-  window.close();
-</script>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minutor — Cofre</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+    background: #f1f5f9; color: #0f172a; padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 380px; background: #fff; border: 1px solid #e2e8f0;
+    border-radius: 20px; padding: 40px 32px; text-align: center;
+    box-shadow: 0 10px 30px -12px rgba(15,23,42,.18);
+  }
+  .badge {
+    width: 64px; height: 64px; margin: 0 auto 20px; border-radius: 50%;
+    background: #dcfce7; display: flex; align-items: center; justify-content: center;
+  }
+  .badge svg { width: 32px; height: 32px; stroke: #16a34a; }
+  h1 { font-size: 19px; margin: 0 0 8px; font-weight: 650; }
+  p { font-size: 14px; line-height: 1.5; color: #64748b; margin: 0 0 24px; }
+  button {
+    width: 100%; padding: 12px 16px; font-size: 15px; font-weight: 600;
+    color: #fff; background: #0f766e; border: 0; border-radius: 12px; cursor: pointer;
+    transition: background .15s;
+  }
+  button:hover { background: #115e59; }
+  .hint { font-size: 12px; color: #94a3b8; margin: 14px 0 0; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0b1220; color: #e2e8f0; }
+    .card { background: #111a2e; border-color: #1e293b; box-shadow: 0 10px 30px -12px rgba(0,0,0,.5); }
+    .badge { background: rgba(22,163,74,.15); }
+    p { color: #94a3b8; }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+    </div>
+    <h1>Verificação concluída</h1>
+    <p>Sua identidade foi confirmada com a Microsoft.<br>Pode fechar esta janela e voltar ao cofre.</p>
+    <button type="button" onclick="window.close()">Fechar janela</button>
+    <p class="hint">Se a janela não fechar, feche-a manualmente — o cofre já detectou a verificação.</p>
+  </div>
+  <script>
+    try { window.opener && window.opener.postMessage({type:'vault-ms-stepup'}, {$origin}); } catch (e) {}
+  </script>
 </body>
+</html>
 HTML;
 
         return response($html, 200)->header('Content-Type', 'text/html; charset=utf-8');

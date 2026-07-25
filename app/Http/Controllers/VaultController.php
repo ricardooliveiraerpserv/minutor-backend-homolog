@@ -52,7 +52,7 @@ class VaultController extends Controller
         $keys = VaultUserKey::where('user_id', $request->user()->id)->first();
 
         if (\App\Services\VaultStepUp::driver() === 'microsoft') {
-            if (! \App\Services\VaultStepUp::check($keys, (string) $request->input('stepup_token'))) {
+            if (! \App\Services\VaultStepUp::consume($keys)) {
                 abort(422, 'Verificação Microsoft necessária para esta operação.');
             }
 

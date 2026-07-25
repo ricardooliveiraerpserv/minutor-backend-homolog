@@ -57,11 +57,11 @@ class VaultProfileController extends Controller
         return true;
     }
 
-    /** 2º fator conforme o driver: Microsoft (stepup_token) ou TOTP (totp_code). */
+    /** 2º fator conforme o driver: Microsoft (step-up server-side, consumido) ou TOTP (código). */
     private function checkSecondFactor(VaultUserKey $keys, Request $request): bool
     {
         if (VaultStepUp::driver() === 'microsoft') {
-            return VaultStepUp::check($keys, (string) $request->input('stepup_token'));
+            return VaultStepUp::consume($keys); // popup MS gravou o step-up; consome (uso único)
         }
 
         return $this->checkTotp($keys, (string) $request->input('totp_code'));
@@ -116,6 +116,15 @@ class VaultProfileController extends Controller
         return response()->json(['authorize_url' => MicrosoftCalendarService::authorizeUrl($state, [
             'prompt' => 'login',
         ])]);
+    }
+
+    /** Poll do FE: o step-up Microsoft já foi concluído (popup)? NÃO consome. */
+    public function msStatus(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $keys = VaultUserKey::where('user_id', $user->id)->first();
+
+        return response()->json(['active' => VaultStepUp::active($keys)]);
     }
 
     public function totpSetup(Request $request): JsonResponse
@@ -181,8 +190,8 @@ class VaultProfileController extends Controller
         if (! $this->secondFactorReady($keys)) {
             return response()->json(['message' => 'Configure o 2º fator (Microsoft ou autenticador) antes de concluir.'], 422);
         }
-        // Driver Microsoft: exige step-up fresco no próprio setup
-        if (VaultStepUp::driver() === 'microsoft' && ! VaultStepUp::check($keys, (string) $request->input('stepup_token'))) {
+        // Driver Microsoft: exige step-up fresco (popup) — consome no setup
+        if (VaultStepUp::driver() === 'microsoft' && ! VaultStepUp::consume($keys)) {
             return response()->json(['message' => 'Verificação Microsoft expirada — repita a verificação.'], 422);
         }
 

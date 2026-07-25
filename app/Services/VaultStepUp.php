@@ -3,16 +3,20 @@
 namespace App\Services;
 
 use App\Models\VaultUserKey;
-use Illuminate\Support\Facades\Hash;
 
 /**
- * Cofre — 2º fator via Microsoft Entra (step-up).
+ * Cofre — 2º fator via Microsoft Entra (step-up), desenho robusto por POLLING.
  *
- * Fluxo: FE abre popup no authorize (prompt=login → força re-auth + MFA corporativa);
- * o callback OAuth troca o code, valida tenant + conta (oid pinado no 1º uso) e emite
- * um TOKEN efêmero (5 min) que o FE envia no unlock/operações destrutivas.
- * A Microsoft prova só IDENTIDADE — a master password continua sendo a única chave
- * dos dados (zero-knowledge intacto).
+ * Fluxo: FE abre popup no authorize (prompt=login → re-auth + MFA corporativa);
+ * o callback OAuth troca o code, identifica a conta via Graph /me (NÃO depende de
+ * parsear id_token) e grava um step-up com validade curta (5 min) no servidor.
+ * O FE então faz POLL em /vault/ms/status até ficar ativo (não depende de
+ * postMessage nem de o popup fechar — COOP-proof). As operações consomem o step-up.
+ *
+ * Tenant é garantido pelo endpoint OAuth ser específico do tenant (authorizeUrl usa
+ * /{tenant}/oauth2/...), então só contas do tenant conseguem autenticar. A conta é
+ * pinada (ms_oid) no 1º uso; login com outra conta é recusado. A Microsoft prova só
+ * IDENTIDADE — a master password segue a única chave (zero-knowledge intacto).
  */
 class VaultStepUp
 {
@@ -30,68 +34,46 @@ class VaultStepUp
     }
 
     /**
-     * Processa o retorno do OAuth (já com os tokens trocados): valida tenant e conta,
-     * pina o oid no primeiro uso e emite o token de step-up.
-     * Retorna o token ou null (conta errada/tenant errado).
+     * Processa o retorno do OAuth: identifica a conta via Graph /me, pina no 1º uso
+     * e grava o step-up (timestamp). Retorna true em sucesso.
      */
-    public static function completeFromTokens(int $userId, array $tokens): ?string
+    public static function completeFromTokens(int $userId, array $tokens): bool
     {
-        $claims = self::idTokenClaims((string) ($tokens['id_token'] ?? ''));
-        if (! $claims) {
-            return null;
+        $accessToken = (string) ($tokens['access_token'] ?? '');
+        if ($accessToken === '') {
+            return false;
         }
-
-        // Tenant: quando configurado (não-'common'), tem que bater
-        $tenant = (string) config('services.microsoft_calendar.tenant_id');
-        if ($tenant && $tenant !== 'common' && ($claims['tid'] ?? '') !== $tenant) {
-            return null;
+        $account = MicrosoftCalendarService::me($accessToken); // email/UPN da conta
+        if (! $account) {
+            return false;
         }
-
-        $oid = (string) ($claims['oid'] ?? '');
-        if ($oid === '') {
-            return null;
-        }
+        $account = mb_strtolower(trim($account));
 
         $keys = VaultUserKey::firstOrCreate(['user_id' => $userId]);
         if (empty($keys->ms_oid)) {
-            $keys->ms_oid = $oid; // 1º step-up pina a conta Entra deste usuário
-        } elseif ($keys->ms_oid !== $oid) {
-            return null; // logou com OUTRA conta Microsoft — recusa
+            $keys->ms_oid = $account; // 1º step-up pina a conta Microsoft
+        } elseif (mb_strtolower(trim($keys->ms_oid)) !== $account) {
+            return false; // logou com OUTRA conta Microsoft — recusa
         }
+        $keys->forceFill(['stepup_token_expires_at' => now()->addMinutes(self::TTL_MINUTES)])->save();
 
-        $token = base64_encode(random_bytes(32));
-        $keys->forceFill([
-            'stepup_token_hash'       => Hash::make($token),
-            'stepup_token_expires_at' => now()->addMinutes(self::TTL_MINUTES),
-        ]);
-        $keys->save();
-
-        return $token;
+        return true;
     }
 
-    /** Valida um step-up token dentro da janela (NÃO consome: 5 min cobrem lote de operações). */
-    public static function check(?VaultUserKey $keys, ?string $token): bool
+    /** Existe um step-up válido (não expirado) p/ este usuário? NÃO consome. */
+    public static function active(?VaultUserKey $keys): bool
     {
-        if (! $keys || ! $token || ! $keys->stepup_token_hash) {
+        return (bool) ($keys?->stepup_token_expires_at?->isFuture());
+    }
+
+    /** Valida E CONSOME o step-up (uso único por operação). */
+    public static function consume(?VaultUserKey $keys): bool
+    {
+        if (! self::active($keys)) {
             return false;
         }
+        $keys->forceFill(['stepup_token_expires_at' => null])->save();
 
-        return $keys->stepup_token_expires_at?->isFuture()
-            && Hash::check($token, $keys->stepup_token_hash);
-    }
-
-    /**
-     * Claims do id_token SEM verificar assinatura — seguro AQUI porque o token veio
-     * direto do endpoint de token da Microsoft via TLS (confidential client), não do browser.
-     */
-    private static function idTokenClaims(string $idToken): ?array
-    {
-        $parts = explode('.', $idToken);
-        if (count($parts) !== 3) {
-            return null;
-        }
-        $payload = json_decode(base64_decode(strtr($parts[1], '-_', '+/')), true);
-
-        return is_array($payload) ? $payload : null;
+        return true;
     }
 }
