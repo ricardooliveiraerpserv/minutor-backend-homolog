@@ -988,8 +988,9 @@ class UserController extends Controller
         }
 
         return response()->json([
-            'message'            => 'Senha temporária gerada com sucesso',
-            'temporary_password' => $temporaryPassword,
+            'message'            => $emailSent
+                ? 'Senha temporária enviada por e-mail ao usuário.'
+                : 'Senha gerada, mas o envio do e-mail falhou — reenvie o reset.',
             'email_sent'         => $emailSent,
         ]);
     }
@@ -1163,8 +1164,7 @@ class UserController extends Controller
         }
 
         return response()->json([
-            'message'            => 'Nova senha gerada com sucesso',
-            'temporary_password' => $temporaryPassword,
+            'message'            => 'Nova senha gerada e enviada por e-mail.',
         ]);
     }
 

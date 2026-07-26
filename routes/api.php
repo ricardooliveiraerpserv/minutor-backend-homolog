@@ -74,7 +74,7 @@ Route::prefix('v1')->group(function () {
 
         // Recuperação de senha — 3 solicitações por hora por IP
         Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword'])
-            ->middleware('throttle:3,60')
+            ->middleware('throttle:forgot-password')
             ->name('password.email');
         Route::post('/reset-password', [PasswordResetController::class, 'resetPassword'])
             ->middleware('throttle:5,15')
