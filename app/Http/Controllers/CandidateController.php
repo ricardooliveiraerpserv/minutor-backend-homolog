@@ -35,7 +35,9 @@ class CandidateController extends Controller
     {
         $data = $request->validate([
             'name'                    => 'required|string|max:255',
-            'email'                   => 'required|email|max:255|unique:users,email',
+            // Segurança (anti-enumeração): rota pública NÃO valida contra users (vazava
+            // quais e-mails são de usuários internos). Candidato é pool separado.
+            'email'                   => 'required|email|max:255',
             'phone'                   => 'nullable|string|max:30',
             'linkedin_url'            => 'nullable|url|max:255',
             'city'                    => 'nullable|string|max:100',

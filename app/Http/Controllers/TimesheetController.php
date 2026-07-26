@@ -789,8 +789,7 @@ class TimesheetController extends Controller
 
             return response()->json([
                 'error'   => 'Erro ao listar apontamentos',
-                'details' => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
-            ], 500);
+            ], 500); // detalhe do erro fica só no log (não vaza SQL/arquivo/linha ao cliente)
         }
     }
 
@@ -1341,7 +1340,7 @@ class TimesheetController extends Controller
             ]);
             return response()->json([
                 'success' => false,
-                'message' => "Erro no passo [{$step}]: [" . class_basename($e) . '] ' . $e->getMessage() . ' — ' . basename($e->getFile()) . ':' . $e->getLine()
+                'message' => 'Erro ao carregar o apontamento.' // detalhe (passo/SQL/arquivo) fica só no log
             ], 500);
         }
     }
