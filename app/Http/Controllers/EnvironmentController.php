@@ -179,6 +179,7 @@ class EnvironmentController extends Controller
     {
         $this->guardInternal($request);
         $env = $this->envWithMembership($request, $envId);
+        \App\Services\EnvAccess::authorize($request->user(), $env, 'view');
 
         return response()->json([
             'id'          => $env->id,
@@ -190,6 +191,8 @@ class EnvironmentController extends Controller
             'inventory'   => $env->inventory,
             'notes'       => $env->notes,
             'responsible' => $env->responsible?->only(['id', 'name']),
+            // Permissões efetivas DESTE usuário no ambiente (o FE esconde botões).
+            'permissions' => \App\Services\EnvAccess::effectiveFor($request->user(), $env),
         ]);
     }
 

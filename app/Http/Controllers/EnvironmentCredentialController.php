@@ -47,7 +47,7 @@ class EnvironmentCredentialController extends Controller
     public function store(Request $request, int $envId): JsonResponse
     {
         $this->guardInternal($request);
-        $env = $this->envWithMembership($request, $envId, 'write');
+        $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
             'category'            => 'required|in:' . implode(',', EnvCredential::CATEGORIES),
             'label'               => 'required|string|max:120',
@@ -98,7 +98,7 @@ class EnvironmentCredentialController extends Controller
     {
         $this->guardInternal($request);
         $cred = EnvCredential::findOrFail($id);
-        $env = $this->envWithMembership($request, $cred->environment_id, 'write');
+        $env = $this->envAuthorized($request, $cred->environment_id, 'manage');
         $data = $request->validate([
             'label'               => 'sometimes|string|max:120',
             'username'            => 'nullable|string|max:200',
@@ -145,7 +145,7 @@ class EnvironmentCredentialController extends Controller
     {
         $this->guardInternal($request);
         $cred = EnvCredential::findOrFail($id);
-        $env = $this->envWithMembership($request, $cred->environment_id, 'write');
+        $env = $this->envAuthorized($request, $cred->environment_id, 'manage');
         EnvAccessLog::record($request, 'cred_delete', ['environment_id' => $env->id, 'item_label' => $cred->label]);
         if ($cred->secret_id) {
             EnvSecret::where('id', $cred->secret_id)->delete();

@@ -32,8 +32,10 @@ class EnvironmentSecretController extends Controller
         ]);
 
         $secret = EnvSecret::findOrFail($secretId);
-        // Enforcement: precisa ser membro do cliente-vault deste segredo
+        // Enforcement: membership + ACL fina da operação (reveal/copy) no ambiente.
         $this->requireVaultMember($request, $secret->vault_id);
+        $op = ($data['action'] ?? 'reveal') === 'copy' ? 'copy' : 'reveal';
+        \App\Services\EnvAccess::authorize($request->user(), $secret->environment, $op);
 
         // NÍVEL 4: item crítico exige step-up fresco + justificativa.
         if ($secret->critical) {

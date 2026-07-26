@@ -60,7 +60,7 @@ class EnvironmentCertificateController extends Controller
     public function store(Request $request, int $envId): JsonResponse
     {
         $this->guardInternal($request);
-        $env = $this->envWithMembership($request, $envId, 'write');
+        $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
             'name'                => 'required|string|max:160',
             'type'                => 'sometimes|in:A1,A3',
@@ -104,7 +104,7 @@ class EnvironmentCertificateController extends Controller
     {
         $this->guardInternal($request);
         $cert = EnvCertificate::findOrFail($id);
-        $env = $this->envWithMembership($request, $cert->environment_id, 'write');
+        $env = $this->envAuthorized($request, $cert->environment_id, 'manage');
         $data = $request->validate([
             'name'                => 'sometimes|string|max:160',
             'type'                => 'sometimes|in:A1,A3',
@@ -133,7 +133,7 @@ class EnvironmentCertificateController extends Controller
     {
         $this->guardInternal($request);
         $cert = EnvCertificate::findOrFail($id);
-        $env = $this->envWithMembership($request, $cert->environment_id, 'write');
+        $env = $this->envAuthorized($request, $cert->environment_id, 'manage');
         EnvAccessLog::record($request, 'certificate_delete', ['environment_id' => $env->id, 'item_label' => $cert->name]);
         if ($cert->pfx_pass_secret_id) {
             EnvSecret::where('id', $cert->pfx_pass_secret_id)->delete();

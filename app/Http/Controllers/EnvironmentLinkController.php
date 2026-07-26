@@ -27,7 +27,7 @@ class EnvironmentLinkController extends Controller
     public function store(Request $request, int $envId): JsonResponse
     {
         $this->guardInternal($request);
-        $env = $this->envWithMembership($request, $envId, 'write');
+        $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
             'label' => 'required|string|max:120',
             'url'   => 'required|string|max:1000',
@@ -48,7 +48,7 @@ class EnvironmentLinkController extends Controller
     {
         $this->guardInternal($request);
         $link = EnvLink::findOrFail($id);
-        $this->envWithMembership($request, $link->environment_id, 'write');
+        $this->envAuthorized($request, $link->environment_id, 'manage');
         $link->delete();
 
         return response()->json(['deleted' => true]);

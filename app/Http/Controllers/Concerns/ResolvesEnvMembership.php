@@ -48,6 +48,19 @@ trait ResolvesEnvMembership
     }
 
     /**
+     * Resolve o ambiente exigindo membership (404) + a OPERAÇÃO na ACL fina (403).
+     * op: view|reveal|copy|edit|delete|admin. Substitui a checagem só-por-papel.
+     */
+    protected function envAuthorized(Request $request, int $envId, string $op): EnvEnvironment
+    {
+        $env = EnvEnvironment::findOrFail($envId);
+        $this->requireVaultMember($request, $env->vault_id);
+        \App\Services\EnvAccess::authorize($request->user(), $env, $op);
+
+        return $env;
+    }
+
+    /**
      * Cria/atualiza/mantém o segredo (blob cifrado no client) de um recurso.
      * $blob null/'' → mantém o secret atual. Retorna o secret_id resultante.
      */

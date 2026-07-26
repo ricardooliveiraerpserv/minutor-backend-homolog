@@ -2230,6 +2230,11 @@ Route::prefix('v1')->group(function () {
             // Histórico de negócio do ambiente
             Route::get('/environments/{envId}/history',     [\App\Http\Controllers\EnvironmentCertificateController::class, 'history'])->name('environments.history');
 
+            // ACL fina por ambiente (F2) — só admin do ambiente
+            Route::get('/environments/{envId}/permissions',            [\App\Http\Controllers\EnvPermissionController::class, 'index'])->name('environments.perm.index');
+            Route::put('/environments/{envId}/permissions/{userId}',   [\App\Http\Controllers\EnvPermissionController::class, 'upsert'])->name('environments.perm.upsert');
+            Route::delete('/environments/{envId}/permissions/{userId}', [\App\Http\Controllers\EnvPermissionController::class, 'destroy'])->name('environments.perm.destroy');
+
             // Links + Documentação (F1d)
             Route::get('/environments/{envId}/links',       [\App\Http\Controllers\EnvironmentLinkController::class, 'index'])->name('environments.link.index');
             Route::post('/environments/{envId}/links',      [\App\Http\Controllers\EnvironmentLinkController::class, 'store'])->name('environments.link.store');

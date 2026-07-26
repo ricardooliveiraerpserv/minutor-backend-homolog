@@ -59,7 +59,7 @@ class EnvironmentInfraController extends Controller
     public function storeDatabase(Request $request, int $envId): JsonResponse
     {
         $this->guardInternal($request);
-        $env = $this->envWithMembership($request, $envId, 'write');
+        $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
             'engine'        => 'sometimes|in:sqlserver,postgres,oracle,mysql',
             'server'        => 'required|string|max:200',
@@ -102,7 +102,7 @@ class EnvironmentInfraController extends Controller
     {
         $this->guardInternal($request);
         $db = EnvDatabase::findOrFail($id);
-        $env = $this->envWithMembership($request, $db->environment_id, 'write');
+        $env = $this->envAuthorized($request, $db->environment_id, 'manage');
         $data = $request->validate([
             'engine'        => 'sometimes|in:sqlserver,postgres,oracle,mysql',
             'server'        => 'sometimes|string|max:200',
@@ -131,7 +131,7 @@ class EnvironmentInfraController extends Controller
     {
         $this->guardInternal($request);
         $db = EnvDatabase::findOrFail($id);
-        $env = $this->envWithMembership($request, $db->environment_id, 'write');
+        $env = $this->envAuthorized($request, $db->environment_id, 'manage');
         EnvAccessLog::record($request, 'database_delete', ['environment_id' => $env->id, 'item_label' => $db->server]);
         if ($db->password_secret_id) {
             EnvSecret::where('id', $db->password_secret_id)->delete();
@@ -166,7 +166,7 @@ class EnvironmentInfraController extends Controller
     public function storeAppserver(Request $request, int $envId): JsonResponse
     {
         $this->guardInternal($request);
-        $env = $this->envWithMembership($request, $envId, 'write');
+        $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
             'name'      => 'required|string|max:120',
             'version'   => 'nullable|string|max:60',
@@ -186,7 +186,7 @@ class EnvironmentInfraController extends Controller
     {
         $this->guardInternal($request);
         $a = EnvAppserver::findOrFail($id);
-        $env = $this->envWithMembership($request, $a->environment_id, 'write');
+        $env = $this->envAuthorized($request, $a->environment_id, 'manage');
         $data = $request->validate([
             'name'      => 'sometimes|string|max:120',
             'version'   => 'nullable|string|max:60',
@@ -206,7 +206,7 @@ class EnvironmentInfraController extends Controller
     {
         $this->guardInternal($request);
         $a = EnvAppserver::findOrFail($id);
-        $env = $this->envWithMembership($request, $a->environment_id, 'write');
+        $env = $this->envAuthorized($request, $a->environment_id, 'manage');
         EnvAccessLog::record($request, 'appserver_delete', ['environment_id' => $env->id, 'item_label' => $a->name]);
         $a->delete();
 
@@ -240,7 +240,7 @@ class EnvironmentInfraController extends Controller
     public function storeVpn(Request $request, int $envId): JsonResponse
     {
         $this->guardInternal($request);
-        $env = $this->envWithMembership($request, $envId, 'write');
+        $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
             'provider'      => 'sometimes|string|max:30',
             'server'        => 'nullable|string|max:200',
@@ -277,7 +277,7 @@ class EnvironmentInfraController extends Controller
     {
         $this->guardInternal($request);
         $v = EnvVpn::findOrFail($id);
-        $env = $this->envWithMembership($request, $v->environment_id, 'write');
+        $env = $this->envAuthorized($request, $v->environment_id, 'manage');
         $data = $request->validate([
             'provider'      => 'sometimes|string|max:30',
             'server'        => 'nullable|string|max:200',
@@ -303,7 +303,7 @@ class EnvironmentInfraController extends Controller
     {
         $this->guardInternal($request);
         $v = EnvVpn::findOrFail($id);
-        $env = $this->envWithMembership($request, $v->environment_id, 'write');
+        $env = $this->envAuthorized($request, $v->environment_id, 'manage');
         EnvAccessLog::record($request, 'vpn_delete', ['environment_id' => $env->id, 'item_label' => $v->provider]);
         if ($v->password_secret_id) {
             EnvSecret::where('id', $v->password_secret_id)->delete();
