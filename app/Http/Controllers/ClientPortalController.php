@@ -25,8 +25,13 @@ class ClientPortalController extends Controller
         $filterMonth = $request->get('filter_month'); // 1-12
         $filterYear  = $request->get('filter_year');  // e.g. 2025
 
-        // Admins podem passar customer_id livremente; coordenadores não têm customer_id;
-        // clientes (futuramente) veriam apenas o próprio customer_id.
+        // A2 (IDOR): CLIENTE só enxerga o PRÓPRIO customer_id — ignora o que vier no request,
+        // senão trocando o id na URL via o portal (projetos/financeiro) de outro cliente.
+        if ($user && method_exists($user, 'isCliente') && $user->isCliente()) {
+            $customerId = $user->customer_id;
+        }
+
+        // Admins podem passar customer_id livremente; coordenadores são checados abaixo.
         if (!$customerId) {
             return response()->json(['message' => 'customer_id obrigatório'], 422);
         }
