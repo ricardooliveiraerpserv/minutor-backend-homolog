@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Concerns\ResolvesEnvMembership;
+use App\Models\Attachment;
 use App\Models\EnvAccessLog;
 use App\Models\EnvAppserver;
 use App\Models\EnvDatabase;
@@ -20,6 +21,15 @@ use Illuminate\Support\Facades\DB;
 class EnvironmentInfraController extends Controller
 {
     use ResolvesEnvMembership;
+
+    /** Último anexo cifrado (.enc) de um recurso, se houver. */
+    private function attachmentId(string $entityType, int $entityId): ?int
+    {
+        return Attachment::where('entity_type', $entityType)
+            ->where('entity_id', $entityId)
+            ->whereNull('deleted_at')
+            ->latest('id')->value('id');
+    }
 
     // ── Banco ─────────────────────────────────────────────────────────────────
 
@@ -139,14 +149,15 @@ class EnvironmentInfraController extends Controller
         $env = $this->envWithMembership($request, $envId);
 
         $rows = EnvAppserver::where('environment_id', $env->id)->orderBy('name')->get()->map(fn ($a) => [
-            'id'        => $a->id,
-            'name'      => $a->name,
-            'version'   => $a->version,
-            'build'     => $a->build,
-            'patch'     => $a->patch,
-            'root_path' => $a->root_path,
-            'port'      => $a->port,
-            'notes'     => $a->notes,
+            'id'            => $a->id,
+            'name'          => $a->name,
+            'version'       => $a->version,
+            'build'         => $a->build,
+            'patch'         => $a->patch,
+            'root_path'     => $a->root_path,
+            'port'          => $a->port,
+            'notes'         => $a->notes,
+            'ini_attachment_id' => $this->attachmentId('ENV_APPSERVER_INI', $a->id),
         ]);
 
         return response()->json($rows);
@@ -220,6 +231,7 @@ class EnvironmentInfraController extends Controller
             'secret_id'   => $v->password_secret_id,
             'critical'    => $v->critical,
             'notes'       => $v->notes,
+            'ovpn_attachment_id' => $this->attachmentId('ENV_VPN_OVPN', $v->id),
         ]);
 
         return response()->json($rows);

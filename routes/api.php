@@ -2217,6 +2217,14 @@ Route::prefix('v1')->group(function () {
             Route::post('/environments/{envId}/vpns',       [\App\Http\Controllers\EnvironmentInfraController::class, 'storeVpn'])->name('environments.vpn.store');
             Route::put('/vpns/{id}',                        [\App\Http\Controllers\EnvironmentInfraController::class, 'updateVpn'])->name('environments.vpn.update');
             Route::delete('/vpns/{id}',                     [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyVpn'])->name('environments.vpn.destroy');
+
+            // Certificados (F1c) — metadados em CLARO; senha do PFX via reveal; arquivo .pfx cifrado no client
+            Route::get('/environments/{envId}/certificates',  [\App\Http\Controllers\EnvironmentCertificateController::class, 'index'])->name('environments.cert.index');
+            Route::post('/environments/{envId}/certificates', [\App\Http\Controllers\EnvironmentCertificateController::class, 'store'])->name('environments.cert.store');
+            Route::put('/certificates/{id}',                [\App\Http\Controllers\EnvironmentCertificateController::class, 'update'])->name('environments.cert.update');
+            Route::delete('/certificates/{id}',             [\App\Http\Controllers\EnvironmentCertificateController::class, 'destroy'])->name('environments.cert.destroy');
+            // Histórico de negócio do ambiente
+            Route::get('/environments/{envId}/history',     [\App\Http\Controllers\EnvironmentCertificateController::class, 'history'])->name('environments.history');
         });
     });
 

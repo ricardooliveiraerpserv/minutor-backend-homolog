@@ -102,6 +102,20 @@ class AttachableEntitiesRegistry
                 && $user->customer_id !== null
                 && (int) $user->customer_id === (int) $customerId;
         };
+        // Cofre de Ambientes: arquivo cifrado só p/ MEMBRO do cliente-vault do ambiente
+        // do recurso (cert/vpn/appserver). O $entity é resolvido antes do check no store().
+        $envMemberOfResource = function (User $user, $entity) use ($internalStaff) {
+            if (! $internalStaff($user) || $entity === null) {
+                return false;
+            }
+            $env = $entity->environment; // EnvCertificate/EnvVpn/EnvAppserver->environment()
+            if (! $env) {
+                return false;
+            }
+
+            return \App\Models\VaultMember::where('vault_id', $env->vault_id)
+                ->where('user_id', $user->id)->exists();
+        };
 
         self::$entities = [
             // ── PROJECT ───────────────────────────────────────────────────────
@@ -346,6 +360,38 @@ class AttachableEntitiesRegistry
                 'allowed_mime' => self::MIME_IMAGES,
                 'allowed_extensions' => ['png','jpg','jpeg','webp'],
                 'max_size_mb' => 5,
+            ],
+
+            // ── COFRE DE AMBIENTES: arquivos CIFRADOS NO CLIENT (.enc) ─────────
+            // O conteúdo real (.pfx/.ovpn/.ini) é cifrado no navegador com a vaultKey
+            // do cliente ANTES do upload; o servidor guarda só o ciphertext e NUNCA
+            // vê a chave privada. Acesso = ser membro do cliente-vault do ambiente.
+            'ENV_CERT_PFX' => [
+                'model' => \App\Models\EnvCertificate::class,
+                'categories' => ['pfx'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envMemberOfResource,
+                'allowed_mime' => ['application/octet-stream'],
+                'allowed_extensions' => ['enc'],
+                'max_size_mb' => 10,
+            ],
+            'ENV_VPN_OVPN' => [
+                'model' => \App\Models\EnvVpn::class,
+                'categories' => ['ovpn'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envMemberOfResource,
+                'allowed_mime' => ['application/octet-stream'],
+                'allowed_extensions' => ['enc'],
+                'max_size_mb' => 5,
+            ],
+            'ENV_APPSERVER_INI' => [
+                'model' => \App\Models\EnvAppserver::class,
+                'categories' => ['ini'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envMemberOfResource,
+                'allowed_mime' => ['application/octet-stream'],
+                'allowed_extensions' => ['enc'],
+                'max_size_mb' => 10,
             ],
         ];
 
