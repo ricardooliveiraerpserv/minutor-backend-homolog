@@ -2191,6 +2191,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/dashboard',                       [\App\Http\Controllers\EnvironmentController::class, 'dashboard'])->name('environments.dashboard');
             Route::get('/alerts',                          [\App\Http\Controllers\EnvironmentController::class, 'alerts'])->name('environments.alerts');
             Route::get('/search',                          [\App\Http\Controllers\EnvironmentController::class, 'search'])->name('environments.search');
+            Route::get('/favorites',                       [\App\Http\Controllers\EnvironmentController::class, 'favorites'])->name('environments.favorites');
+            Route::post('/environments/{envId}/favorite',  [\App\Http\Controllers\EnvironmentController::class, 'toggleFavorite'])->name('environments.favorite.toggle');
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
             Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');

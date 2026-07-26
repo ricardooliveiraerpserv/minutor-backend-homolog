@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\EnvAccessLog;
 use App\Models\EnvClientVault;
 use App\Models\EnvEnvironment;
+use App\Models\EnvFavorite;
 use App\Models\User;
 use App\Models\Vault;
 use App\Models\VaultMember;
@@ -127,6 +128,10 @@ class EnvironmentController extends Controller
         $this->guardInternal($request);
         $cv = $this->clientVault($request, $customerId);
 
+        $favIds = EnvFavorite::where('user_id', $request->user()->id)
+            ->whereIn('environment_id', EnvEnvironment::where('customer_id', $customerId)->pluck('id'))
+            ->pluck('environment_id')->flip();
+
         $rows = EnvEnvironment::withCount(['credentials', 'secrets'])
             ->where('customer_id', $customerId)
             ->orderByRaw("array_position(ARRAY['prod','homolog','dev','dr']::text[], type)")
@@ -139,6 +144,7 @@ class EnvironmentController extends Controller
                 'status'            => $e->status,
                 'credentials_count' => $e->credentials_count,
                 'vault_id'          => $e->vault_id,
+                'is_favorite'       => $favIds->has($e->id),
             ]);
 
         return response()->json(['vault_id' => $cv->vault_id, 'environments' => $rows]);
@@ -155,6 +161,8 @@ class EnvironmentController extends Controller
             'inventory'           => 'sometimes|array',
             'notes'               => 'nullable|string|max:5000',
             'responsible_user_id' => 'nullable|integer|exists:users,id',
+            'rdp_host'            => 'nullable|string|max:255',
+            'rdp_port'            => 'nullable|integer|min:1|max:65535',
         ]);
 
         $env = EnvEnvironment::create(array_merge($data, [
@@ -190,7 +198,10 @@ class EnvironmentController extends Controller
             'status'      => $env->status,
             'inventory'   => $env->inventory,
             'notes'       => $env->notes,
+            'rdp_host'    => $env->rdp_host,
+            'rdp_port'    => $env->rdp_port,
             'responsible' => $env->responsible?->only(['id', 'name']),
+            'is_favorite' => EnvFavorite::where('user_id', $request->user()->id)->where('environment_id', $env->id)->exists(),
             // Permissões efetivas DESTE usuário no ambiente (o FE esconde botões).
             'permissions' => \App\Services\EnvAccess::effectiveFor($request->user(), $env),
         ]);
@@ -207,6 +218,8 @@ class EnvironmentController extends Controller
             'inventory'           => 'sometimes|array',
             'notes'               => 'nullable|string|max:5000',
             'responsible_user_id' => 'nullable|integer|exists:users,id',
+            'rdp_host'            => 'nullable|string|max:255',
+            'rdp_port'            => 'nullable|integer|min:1|max:65535',
         ]);
         $env->update($data);
         EnvAccessLog::record($request, 'env_update', ['environment_id' => $env->id, 'item_label' => $env->name]);
@@ -222,6 +235,48 @@ class EnvironmentController extends Controller
         $env->delete();
 
         return response()->json(['deleted' => true]);
+    }
+
+    // ── Favoritos (acesso rápido) ─────────────────────────────────────────────
+
+    /** Alterna o ambiente como favorito do usuário. Basta ser membro (view). */
+    public function toggleFavorite(Request $request, int $envId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envWithMembership($request, $envId);
+        \App\Services\EnvAccess::authorize($request->user(), $env, 'view');
+
+        $existing = EnvFavorite::where('user_id', $request->user()->id)->where('environment_id', $env->id)->first();
+        if ($existing) {
+            $existing->delete();
+
+            return response()->json(['favorited' => false]);
+        }
+        EnvFavorite::create(['user_id' => $request->user()->id, 'environment_id' => $env->id]);
+
+        return response()->json(['favorited' => true]);
+    }
+
+    /** Ambientes favoritados do usuário (para o acesso rápido na home). */
+    public function favorites(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
+
+        $rows = EnvFavorite::with('environment.customer:id,name')
+            ->where('user_id', $user->id)
+            ->get()
+            ->filter(fn ($f) => $f->environment && $vaultIds->contains($f->environment->vault_id))
+            ->map(fn ($f) => [
+                'id'       => $f->environment->id,
+                'name'     => $f->environment->name,
+                'type'     => $f->environment->type,
+                'status'   => $f->environment->status,
+                'customer' => $f->environment->customer?->name,
+            ])
+            ->sortBy('customer')->values();
+
+        return response()->json($rows);
     }
 
     // ── Dashboard e busca ─────────────────────────────────────────────────────
