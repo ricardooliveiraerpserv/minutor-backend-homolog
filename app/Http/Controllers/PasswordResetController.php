@@ -274,23 +274,20 @@ class PasswordResetController extends Controller
             ], 422);
         }
 
+        // Segurança (anti-enumeração): NÃO revelar se o e-mail existe. Resposta genérica
+        // e idêntica para "e-mail inexistente" e "token inválido".
         $user = User::where('email', $request->email)->first();
 
-        if (!$user) {
-            return response()->json([
-                'message' => 'Email não encontrado',
-                'valid' => false
-            ], 404);
+        $valid = false;
+        if ($user) {
+            $tokenRepository = Password::getRepository();
+            $valid = $tokenRepository->exists($user, $request->token);
         }
 
-        // Verifica se o token é válido usando o broker de password do Laravel
-        $tokenRepository = Password::getRepository();
-        $token = $tokenRepository->exists($user, $request->token);
-
         return response()->json([
-            'message' => $token ? 'Token válido' : 'Token inválido ou expirado',
-            'valid' => $token
-        ], $token ? 200 : 400);
+            'message' => $valid ? 'Token válido' : 'Token inválido ou expirado',
+            'valid' => $valid
+        ], $valid ? 200 : 400);
     }
 
 } 

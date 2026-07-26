@@ -860,7 +860,7 @@ class ProjectController extends Controller
                 'file'    => $e->getFile(),
                 'line'    => $e->getLine(),
             ]);
-            return response()->json(['error' => 'Erro ao listar projetos', 'details' => $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine()], 500);
+            return response()->json(['error' => 'Erro ao listar projetos'], 500); // detalhe só no log
         }
     }
 
