@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Controllers\Concerns\ResolvesEnvMembership;
 use App\Models\EnvAccessLog;
 use App\Models\EnvSecret;
+use App\Services\EnvStepUp;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -14,8 +15,8 @@ use Illuminate\Http\Request;
  * membership (403 p/ não-membro) e registrar auditoria. O valor em claro só existe
  * no client após decifrar com a vaultKey — zero-knowledge preservado.
  *
- * NOTA F1a: gate por membership + auditoria. Step-up por-operação e justificativa
- * obrigatória em itens `critical` entram na Fase 2 (EnvStepUp).
+ * NÍVEL 4 (Fase 2): itens `critical` exigem step-up 2º fator FRESCO (Microsoft/TOTP,
+ * reusando o mecanismo do cofre) + JUSTIFICATIVA obrigatória (≥10 chars), tudo auditado.
  */
 class EnvironmentSecretController extends Controller
 {
@@ -27,11 +28,23 @@ class EnvironmentSecretController extends Controller
         $data = $request->validate([
             'action'        => 'sometimes|in:reveal,copy',
             'justification' => 'nullable|string|max:1000',
+            'totp_code'     => 'nullable|string|max:10',
         ]);
 
         $secret = EnvSecret::findOrFail($secretId);
         // Enforcement: precisa ser membro do cliente-vault deste segredo
         $this->requireVaultMember($request, $secret->vault_id);
+
+        // NÍVEL 4: item crítico exige step-up fresco + justificativa.
+        if ($secret->critical) {
+            $justification = trim((string) ($data['justification'] ?? ''));
+            if (mb_strlen($justification) < 10) {
+                return response()->json(['message' => 'Justificativa obrigatória (mín. 10 caracteres) para item crítico.', 'requires' => 'justification'], 422);
+            }
+            if (! EnvStepUp::satisfied($request)) {
+                return response()->json(['message' => 'Verificação de 2º fator necessária para revelar item crítico.', 'requires' => 'stepup'], 422);
+            }
+        }
 
         $action = ($data['action'] ?? 'reveal') === 'copy' ? 'secret_copy' : 'secret_reveal';
         EnvAccessLog::record(
