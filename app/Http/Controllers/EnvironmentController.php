@@ -220,4 +220,73 @@ class EnvironmentController extends Controller
 
         return response()->json(['deleted' => true]);
     }
+
+    // ── Dashboard e busca ─────────────────────────────────────────────────────
+
+    /** Indicadores do cofre (só sobre metadados CLARO; nunca toca segredos). */
+    public function dashboard(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+
+        $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
+        $clientVaultIds = EnvClientVault::whereIn('vault_id', $vaultIds)->pluck('vault_id');
+        $envIds = EnvEnvironment::whereIn('vault_id', $clientVaultIds)->pluck('id');
+
+        $criticos = \App\Models\EnvCredential::whereIn('environment_id', $envIds)->where('critical', true)->count()
+            + \App\Models\EnvDatabase::whereIn('environment_id', $envIds)->where('critical', true)->count()
+            + \App\Models\EnvVpn::whereIn('environment_id', $envIds)->where('critical', true)->count()
+            + \App\Models\EnvCertificate::whereIn('environment_id', $envIds)->where('critical', true)->count();
+
+        $certsVencendo = \App\Models\EnvCertificate::whereIn('environment_id', $envIds)
+            ->whereNotNull('valid_to')
+            ->whereBetween('valid_to', [now()->startOfDay(), now()->addDays(30)])
+            ->count();
+
+        // Compartilhados = cliente-vaults com mais de 1 membro
+        $compartilhados = VaultMember::whereIn('vault_id', $clientVaultIds)
+            ->selectRaw('vault_id')->groupBy('vault_id')->havingRaw('count(*) > 1')->get()->count();
+
+        $ultimoAcesso = EnvAccessLog::where('user_id', $user->id)->max('created_at');
+
+        return response()->json([
+            'clientes'       => $clientVaultIds->count(),
+            'ambientes'      => $envIds->count(),
+            'credenciais'    => \App\Models\EnvCredential::whereIn('environment_id', $envIds)->count(),
+            'certificados'   => \App\Models\EnvCertificate::whereIn('environment_id', $envIds)->count(),
+            'vpns'           => \App\Models\EnvVpn::whereIn('environment_id', $envIds)->count(),
+            'itens_criticos' => $criticos,
+            'compartilhados' => $compartilhados,
+            'alertas'        => $certsVencendo,
+            'ultimo_acesso'  => $ultimoAcesso,
+        ]);
+    }
+
+    /** Busca por METADADOS CLARO (nome de ambiente, credencial, host de banco/vpn). */
+    public function search(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $q = trim((string) $request->query('q'));
+        if (mb_strlen($q) < 2) {
+            return response()->json(['environments' => [], 'credentials' => [], 'resources' => []]);
+        }
+        $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+
+        $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
+        $envIds = EnvEnvironment::whereIn('vault_id', $vaultIds)->pluck('id');
+
+        $environments = EnvEnvironment::with('customer:id,name')
+            ->whereIn('vault_id', $vaultIds)->where('name', 'ilike', $like)->limit(20)->get()
+            ->map(fn ($e) => ['id' => $e->id, 'name' => $e->name, 'type' => $e->type, 'customer' => $e->customer?->name]);
+
+        $credentials = \App\Models\EnvCredential::with('environment:id,name')
+            ->whereIn('environment_id', $envIds)
+            ->where(fn ($w) => $w->where('label', 'ilike', $like)->orWhere('username', 'ilike', $like))
+            ->limit(20)->get()
+            ->map(fn ($c) => ['id' => $c->id, 'label' => $c->label, 'username' => $c->username, 'environment_id' => $c->environment_id, 'environment' => $c->environment?->name]);
+
+        return response()->json([
+            'environments' => $environments,
+            'credentials'  => $credentials,
+        ]);
+    }
 }

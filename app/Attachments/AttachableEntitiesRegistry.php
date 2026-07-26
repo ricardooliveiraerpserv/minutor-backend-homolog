@@ -116,6 +116,15 @@ class AttachableEntitiesRegistry
             return \App\Models\VaultMember::where('vault_id', $env->vault_id)
                 ->where('user_id', $user->id)->exists();
         };
+        // Documentação do ambiente: o $entity É o próprio EnvEnvironment (não-secreto).
+        $envMemberOfEnvironment = function (User $user, $entity) use ($internalStaff) {
+            if (! $internalStaff($user) || $entity === null) {
+                return false;
+            }
+
+            return \App\Models\VaultMember::where('vault_id', $entity->vault_id)
+                ->where('user_id', $user->id)->exists();
+        };
 
         self::$entities = [
             // ── PROJECT ───────────────────────────────────────────────────────
@@ -392,6 +401,16 @@ class AttachableEntitiesRegistry
                 'allowed_mime' => ['application/octet-stream'],
                 'allowed_extensions' => ['enc'],
                 'max_size_mb' => 10,
+            ],
+            // Documentação do ambiente (NÃO-secreta; servidor lê): manuais, layouts, XMLs.
+            'ENV_DOC' => [
+                'model' => \App\Models\EnvEnvironment::class,
+                'categories' => ['doc'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envMemberOfEnvironment,
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','docx','doc','xlsx','xls','csv','txt','xml','png','jpg','jpeg'],
+                'max_size_mb' => 50,
             ],
         ];
 

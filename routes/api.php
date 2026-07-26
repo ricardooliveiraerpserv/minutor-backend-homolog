@@ -2187,6 +2187,9 @@ Route::prefix('v1')->group(function () {
         // com blob. Reusa a cripto/chaves do cofre de senhas sem tocá-las.
         // ────────────────────────────────────────────────────────────────────
         Route::prefix('environments')->middleware('permission.or.admin:environments.use')->group(function () {
+            // Dashboard + busca (metadados CLARO)
+            Route::get('/dashboard',                       [\App\Http\Controllers\EnvironmentController::class, 'dashboard'])->name('environments.dashboard');
+            Route::get('/search',                          [\App\Http\Controllers\EnvironmentController::class, 'search'])->name('environments.search');
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
             Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
@@ -2225,6 +2228,12 @@ Route::prefix('v1')->group(function () {
             Route::delete('/certificates/{id}',             [\App\Http\Controllers\EnvironmentCertificateController::class, 'destroy'])->name('environments.cert.destroy');
             // Histórico de negócio do ambiente
             Route::get('/environments/{envId}/history',     [\App\Http\Controllers\EnvironmentCertificateController::class, 'history'])->name('environments.history');
+
+            // Links + Documentação (F1d)
+            Route::get('/environments/{envId}/links',       [\App\Http\Controllers\EnvironmentLinkController::class, 'index'])->name('environments.link.index');
+            Route::post('/environments/{envId}/links',      [\App\Http\Controllers\EnvironmentLinkController::class, 'store'])->name('environments.link.store');
+            Route::delete('/links/{id}',                    [\App\Http\Controllers\EnvironmentLinkController::class, 'destroy'])->name('environments.link.destroy');
+            Route::get('/environments/{envId}/docs',        [\App\Http\Controllers\EnvironmentLinkController::class, 'docs'])->name('environments.docs.index');
         });
     });
 
