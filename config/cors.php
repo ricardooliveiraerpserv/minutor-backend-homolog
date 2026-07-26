@@ -19,7 +19,15 @@ return [
 
     'allowed_methods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 
-    'allowed_origins' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS', 'https://app.minutor.com.br,https://api.minutor.com.br,https://minutor-frontend-homolog.onrender.com,https://minutor-backend-homolog.onrender.com,http://localhost:3000,http://localhost:5173')))),
+    // B3 (segurança): em produção o default traz SÓ as origens oficiais.
+    // Origens de teste/homolog (onrender/localhost) só entram fora de produção
+    // ou explicitamente via env CORS_ALLOWED_ORIGINS.
+    'allowed_origins' => array_filter(array_map('trim', explode(',', env(
+        'CORS_ALLOWED_ORIGINS',
+        env('APP_ENV') === 'production'
+            ? 'https://app.minutor.com.br,https://api.minutor.com.br'
+            : 'https://app.minutor.com.br,https://api.minutor.com.br,https://minutor-frontend-homolog.onrender.com,https://minutor-backend-homolog.onrender.com,http://localhost:3000,http://localhost:5173'
+    )))),
 
     'allowed_origins_patterns' => array_filter(array_map('trim', explode(',', env('CORS_ALLOWED_ORIGINS_PATTERNS', '')))),
 

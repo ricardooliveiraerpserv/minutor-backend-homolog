@@ -516,7 +516,8 @@ class ProjectController extends Controller
                         $query->leftJoin('customers', 'customers.id', '=', 'projects.customer_id');
                     }
                     $query->orderBy($mapped, $direction);
-                } else {
+                } elseif (Schema::hasColumn('projects', $col)) {
+                    // B4 (segurança): whitelist — só ordena por coluna real de projects
                     $query->orderBy('projects.' . $col, $direction);
                 }
             }
@@ -2961,6 +2962,10 @@ class ProjectController extends Controller
             }
         }
 
+        // B4 (segurança): whitelist — coluna real de project_change_logs ou cai no default
+        if (!Schema::hasColumn('project_change_logs', $orderField)) {
+            $orderField = 'created_at';
+        }
         $query->orderBy($orderField, $orderDirection);
 
         // Paginação

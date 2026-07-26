@@ -7,6 +7,7 @@ use App\Models\ExpenseCategory;
 use App\Http\Traits\ResponseHelpers;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * @OA\Schema(
@@ -133,10 +134,11 @@ class ExpenseCategoryController extends Controller
         if ($request->has('order')) {
             $orderFields = explode(',', $request->get('order'));
             foreach ($orderFields as $field) {
-                if (str_starts_with($field, '-')) {
-                    $query->orderBy(substr($field, 1), 'desc');
-                } else {
-                    $query->orderBy($field, 'asc');
+                $desc = str_starts_with($field, '-');
+                $col  = $desc ? substr($field, 1) : $field;
+                // B4 (segurança): whitelist de campo de ordenação — só colunas reais da tabela
+                if (Schema::hasColumn('expense_categories', $col)) {
+                    $query->orderBy($col, $desc ? 'desc' : 'asc');
                 }
             }
         } else {
