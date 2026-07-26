@@ -79,5 +79,16 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute(5)->by($email !== '' ? $email.'|'.$request->ip() : $request->ip()),
             ];
         });
+
+        // M1 (segurança): forgot-password chaveado por EMAIL (não só IP — que é spoofável
+        // atrás do proxy com trustProxies em '*'). Evita burlar o limite trocando o
+        // X-Forwarded-For a cada requisição.
+        RateLimiter::for('forgot-password', function (Request $request) {
+            $email = Str::lower(trim((string) $request->input('email', '')));
+            return [
+                Limit::perHour(3)->by($email !== '' ? 'fp:' . $email : 'fp-ip:' . $request->ip()),
+                Limit::perHour(20)->by('fp-ip:' . $request->ip()),
+            ];
+        });
     }
 }

@@ -67,7 +67,7 @@ class AttachmentController extends Controller
             'entity_type' => 'required|string',
             'entity_id'   => 'required|integer|min:1',
             'category'    => 'required|string',
-            'file'        => 'required|file',
+            'file'        => 'required|file|max:25600|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z',
             'visibility'  => 'nullable|in:internal,customer,restricted',
             'metadata'    => 'nullable|array',
         ]);

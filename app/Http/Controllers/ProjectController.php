@@ -3431,7 +3431,7 @@ class ProjectController extends Controller
     public function uploadAttachment(Request $request, Project $project): \Illuminate\Http\JsonResponse
     {
         $request->validate([
-            'file' => 'required|file|max:20480',
+            'file' => 'required|file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z',
             'type' => 'required|in:proposta,contrato,logo,outro',
         ]);
 
