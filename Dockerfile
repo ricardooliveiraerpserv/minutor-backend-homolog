@@ -56,9 +56,10 @@ RUN printf 'server {\n\
     index index.php;\n\
     disable_symlinks off;\n\
     client_max_body_size 25M;\n\
-    location /storage/ {\n\
+    location ^~ /storage/ {\n\
         alias /var/www/storage/app/public/;\n\
         try_files $uri =404;\n\
+        location ~ \\.php$ { return 403; }\n\
     }\n\
     location / {\n\
         try_files $uri $uri/ /index.php?$query_string;\n\

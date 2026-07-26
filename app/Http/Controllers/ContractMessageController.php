@@ -50,7 +50,7 @@ class ContractMessageController extends Controller
         $request->validate([
             'message' => 'nullable|string|max:5000',
             'files'   => 'nullable|array|max:10',
-            'files.*' => 'file|max:20480',
+            'files.*' => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z',
         ]);
 
         $text = $request->input('message', '');

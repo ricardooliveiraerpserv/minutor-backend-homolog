@@ -69,7 +69,7 @@ class InboxController extends Controller
             'metadata'    => 'nullable|array',
             'reply_to_id' => 'nullable|integer|exists:messages,id',
             'files'       => 'nullable|array|max:10',
-            'files.*'     => 'file|max:20480', // 20 MB por arquivo
+            'files.*'     => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z', // 20 MB; whitelist anti-RCE/XSS
         ];
         $data = $request->validate($rules);
 
