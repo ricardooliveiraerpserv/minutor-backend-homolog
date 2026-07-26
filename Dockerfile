@@ -60,6 +60,7 @@ RUN printf 'server {\n\
         alias /var/www/storage/app/public/;\n\
         try_files $uri =404;\n\
         location ~ \\.php$ { return 403; }\n\
+        location ~ ^/storage/(message-attachments|contract-message-attachments|req-message-attachments|chat)/ { return 403; }\n\
     }\n\
     location / {\n\
         try_files $uri $uri/ /index.php?$query_string;\n\
