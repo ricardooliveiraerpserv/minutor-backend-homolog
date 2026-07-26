@@ -2189,6 +2189,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('environments')->middleware('permission.or.admin:environments.use')->group(function () {
             // Dashboard + busca (metadados CLARO)
             Route::get('/dashboard',                       [\App\Http\Controllers\EnvironmentController::class, 'dashboard'])->name('environments.dashboard');
+            Route::get('/alerts',                          [\App\Http\Controllers\EnvironmentController::class, 'alerts'])->name('environments.alerts');
             Route::get('/search',                          [\App\Http\Controllers\EnvironmentController::class, 'search'])->name('environments.search');
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');

@@ -261,6 +261,62 @@ class EnvironmentController extends Controller
         ]);
     }
 
+    /**
+     * Alertas de vencimento (só metadados CLARO): certificados vencendo/vencidos e
+     * senhas com rotação vencida/próxima. Escopo = ambientes onde o user é membro.
+     */
+    public function alerts(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $days = (int) $request->query('days', 30);
+        $limit = now()->addDays($days)->endOfDay();
+
+        $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
+        $envIds = EnvEnvironment::whereIn('vault_id', $vaultIds)->pluck('id');
+
+        $certificates = \App\Models\EnvCertificate::with('environment:id,name,customer_id', 'environment.customer:id,name')
+            ->whereIn('environment_id', $envIds)
+            ->whereNotNull('valid_to')
+            ->where('valid_to', '<=', $limit)
+            ->orderBy('valid_to')
+            ->get()
+            ->map(fn ($c) => [
+                'id'             => $c->id,
+                'name'           => $c->name,
+                'valid_to'       => $c->valid_to?->toDateString(),
+                'days_to_expire' => (int) round(now()->startOfDay()->diffInDays($c->valid_to, false)),
+                'environment_id' => $c->environment_id,
+                'environment'    => $c->environment?->name,
+                'customer'       => $c->environment?->customer?->name,
+            ]);
+
+        // Senhas: rotação vencida/próxima (last_rotated_at + rotate_every_days).
+        $passwords = \App\Models\EnvCredential::with('environment:id,name')
+            ->whereIn('environment_id', $envIds)
+            ->whereNotNull('rotate_every_days')
+            ->whereNotNull('last_rotated_at')
+            ->get()
+            ->map(function ($c) {
+                $next = $c->last_rotated_at->copy()->addDays($c->rotate_every_days);
+
+                return [
+                    'id'             => $c->id,
+                    'label'          => $c->label,
+                    'next_rotation'  => $next->toDateString(),
+                    'days_to_expire' => (int) round(now()->startOfDay()->diffInDays($next, false)),
+                    'environment_id' => $c->environment_id,
+                    'environment'    => $c->environment?->name,
+                ];
+            })
+            ->filter(fn ($p) => $p['days_to_expire'] <= $days)
+            ->sortBy('days_to_expire')->values();
+
+        return response()->json([
+            'certificates' => $certificates,
+            'passwords'    => $passwords,
+        ]);
+    }
+
     /** Busca por METADADOS CLARO (nome de ambiente, credencial, host de banco/vpn). */
     public function search(Request $request): JsonResponse
     {

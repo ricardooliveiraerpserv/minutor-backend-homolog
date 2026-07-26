@@ -202,6 +202,14 @@ Schedule::command('reajustes:alerta-aviso-previo')
   ->description('Avisa o administrativo (1 mês antes) para enviar o comunicado de reajuste')
   ->withoutOverlapping();
 
+// Cofre de Ambientes: digest de certificados/senhas vencendo (destinatários na Central).
+Schedule::command('environments:alertas-vencimento')
+  ->dailyAt('08:15')
+  ->timezone($alertTz)
+  ->name('alerta-ambientes-vencimento')
+  ->description('Alerta de certificados e senhas do Cofre de Ambientes vencendo em 30 dias')
+  ->withoutOverlapping();
+
 Schedule::command('reajustes:alerta-vencidos')
   ->dailyAt('08:00')
   ->timezone($alertTz)
