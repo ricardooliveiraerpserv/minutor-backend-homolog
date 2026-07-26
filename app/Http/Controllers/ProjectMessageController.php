@@ -65,7 +65,7 @@ class ProjectMessageController extends Controller
             'message'    => 'nullable|string|max:5000',
             'priority'   => 'nullable|in:normal,high',
             'files'      => 'nullable|array|max:10',
-            'files.*'    => 'file|max:20480', // 20 MB por arquivo
+            'files.*'    => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z', // 20 MB; whitelist anti-RCE/XSS
         ]);
 
         $text = $request->input('message', '');

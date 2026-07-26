@@ -84,7 +84,7 @@ class ContractRequestMessageController extends Controller
             'message'    => 'nullable|string|max:2000',
             'visibility' => 'nullable|in:client,internal',
             'files'      => 'nullable|array|max:10',
-            'files.*'    => 'file|max:20480',
+            'files.*'    => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z',
         ]);
 
         $text = $request->input('message', '');
