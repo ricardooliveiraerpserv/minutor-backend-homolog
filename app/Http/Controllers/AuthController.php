@@ -190,6 +190,25 @@ class AuthController extends Controller
      *     )
      * )
      */
+    /**
+     * A5 (segurança): token EFÊMERO e restrito para upload direto no backend (contorna o limite
+     * de body da borda da Vercel). Vale 10 min e tem ability 'file-upload' — assim o browser
+     * NÃO recebe o token de sessão de 24h. Mesmo vazando por XSS, expira rápido.
+     */
+    public function uploadToken(Request $request): JsonResponse
+    {
+        $token = $request->user()->createToken(
+            'upload-' . now()->timestamp,
+            ['file-upload'],
+            now()->addMinutes(10)
+        );
+
+        return response()->json([
+            'token'      => $token->plainTextToken,
+            'expires_in' => 600,
+        ]);
+    }
+
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()->delete();

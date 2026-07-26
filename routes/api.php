@@ -252,6 +252,8 @@ Route::prefix('v1')->group(function () {
         Route::put('/user/theme-preference', [AuthController::class, 'updateThemePreference'])->name('user.theme-preference');
 
         // Autenticação
+        // A5 (segurança): token efêmero p/ upload direto no backend (não entrega o token de 24h)
+        Route::post('/upload-token', [AuthController::class, 'uploadToken'])->name('auth.upload-token');
         Route::post('/auth/logout', [AuthController::class, 'logout'])->name('auth.logout');
         Route::post('/auth/logout-all', [AuthController::class, 'logoutAll'])->name('auth.logout.all');
         Route::get('/auth/verify-token', [AuthController::class, 'verifyToken'])->name('auth.verify');
