@@ -4918,7 +4918,8 @@ class BankHoursFixedController extends Controller
             return response()->json(['success' => true, 'data' => []]);
         }
 
-        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
+        $customerId = ($user && method_exists($user, 'isCliente') && $user->isCliente()) ? $user->customer_id : $request->get('customer_id');
         $projectId  = $request->get('project_id');
         $dateFrom   = $request->get('date_from');
         $dateTo     = $request->get('date_to');
@@ -5003,7 +5004,8 @@ class BankHoursFixedController extends Controller
     {
         $user       = $request->user();
         $projectId  = $request->get('project_id');
-        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
+        $customerId = ($user && method_exists($user, 'isCliente') && $user->isCliente()) ? $user->customer_id : $request->get('customer_id');
         $dateFrom   = $request->get('date_from');
         $dateTo     = $request->get('date_to');
 
@@ -5096,7 +5098,8 @@ class BankHoursFixedController extends Controller
     {
         $user       = $request->user();
         $projectId  = $request->get('project_id');
-        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
+        $customerId = ($user && method_exists($user, 'isCliente') && $user->isCliente()) ? $user->customer_id : $request->get('customer_id');
         $dateFrom   = $request->get('date_from');
         $dateTo     = $request->get('date_to');
 
@@ -5198,7 +5201,8 @@ class BankHoursFixedController extends Controller
     {
         $user       = $request->user();
         $projectId  = $request->get('project_id');
-        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
+        $customerId = ($user && method_exists($user, 'isCliente') && $user->isCliente()) ? $user->customer_id : $request->get('customer_id');
         if (!$projectId || !$customerId) return response()->json(['tickets' => []]);
         $dateFrom = $request->get('date_from');
         $dateTo   = $request->get('date_to');
@@ -5302,7 +5306,8 @@ class BankHoursFixedController extends Controller
             ->value('id');
         if (!$serviceTypeId) return response()->json(['tickets' => []]);
 
-        $customerId = $request->get('customer_id') ?? ($user && method_exists($user, 'isCliente') && $user->isCliente() ? $user->customer_id : null);
+        // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
+        $customerId = ($user && method_exists($user, 'isCliente') && $user->isCliente()) ? $user->customer_id : $request->get('customer_id');
         if (!$customerId) return response()->json(['tickets' => []]);
         $projectId  = $request->get('project_id');
         $dateFrom   = $request->get('date_from');
@@ -5399,7 +5404,8 @@ class BankHoursFixedController extends Controller
     {
         $user = $request->user();
         $isCliente = $user && method_exists($user, 'isCliente') && $user->isCliente();
-        $customerId = $request->get('customer_id') ?? ($isCliente ? $user->customer_id : null);
+        // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request).
+        $customerId = $isCliente ? $user->customer_id : $request->get('customer_id');
         $projectId  = $request->get('project_id');
         $dateFrom   = $request->get('date_from');
         $dateTo     = $request->get('date_to');
