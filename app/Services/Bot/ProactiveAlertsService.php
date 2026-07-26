@@ -308,7 +308,12 @@ class ProactiveAlertsService
         $messageTpl = (string) ($d->config['message_template'] ?? '');
         $maxRows    = (int)    ($d->config['max_rows'] ?? 50);
 
-        $rows = DB::select(rtrim(trim($sql), ';'));
+        // A3 (segurança): limita o tempo por consulta — um SELECT pesado/abusivo não trava o
+        // banco. SET LOCAL é escopado à transação e reseta sozinho no commit.
+        $rows = DB::transaction(function () use ($sql) {
+            DB::statement("SET LOCAL statement_timeout = '5s'");
+            return DB::select(rtrim(trim($sql), ';'));
+        });
         $rows = array_slice($rows, 0, $maxRows);
 
         $count = 0;

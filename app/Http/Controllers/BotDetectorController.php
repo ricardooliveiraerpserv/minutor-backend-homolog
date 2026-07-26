@@ -17,8 +17,19 @@ class BotDetectorController extends Controller
     {
     }
 
+    /**
+     * A3 (segurança): detectores executam SQL escrito à mão (SELECT livre) direto no banco.
+     * Mesmo bloqueando escrita, um SELECT lê QUALQUER tabela (senhas hash, tokens, dados de
+     * todos os clientes). É recurso de admin — trava aqui pra não bastar estar logado.
+     */
+    private function ensureAdmin(): void
+    {
+        abort_unless(auth()->user()?->isAdmin(), 403, 'Apenas administradores podem gerenciar detectores.');
+    }
+
     public function index(): JsonResponse
     {
+        $this->ensureAdmin();
         $items = BotProactiveDetector::query()->orderBy('id')->get();
         return response()->json([
             'data'         => $items,
@@ -31,6 +42,7 @@ class BotDetectorController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $data = $this->validatePayload($request, isUpdate: false);
         BotProactiveDetector::create(array_merge([
             'active' => true,
@@ -40,6 +52,7 @@ class BotDetectorController extends Controller
 
     public function update(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $d = BotProactiveDetector::findOrFail($id);
         $data = $this->validatePayload($request, isUpdate: true);
         // Slug não muda em sistema
@@ -54,6 +67,7 @@ class BotDetectorController extends Controller
 
     public function destroy(int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $d = BotProactiveDetector::findOrFail($id);
         if ($d->is_system) {
             return response()->json([
@@ -67,6 +81,7 @@ class BotDetectorController extends Controller
     /** Roda o detector em modo dry e retorna o que ele criaria. */
     public function test(int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $d = BotProactiveDetector::findOrFail($id);
         [$count, $err] = $this->alerts->runDetector($d, dry: true);
         return response()->json([
@@ -80,6 +95,7 @@ class BotDetectorController extends Controller
     /** Executa todos os detectores ativos (ou um específico) — útil pra disparar manualmente. */
     public function run(Request $request, ?int $id = null): JsonResponse
     {
+        $this->ensureAdmin();
         $dry = (bool) $request->input('dry', false);
 
         if ($id) {
@@ -99,6 +115,7 @@ class BotDetectorController extends Controller
 
     public function validateSql(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $sql = (string) $request->input('sql', '');
         $err = $this->alerts->validateSql($sql);
         return response()->json([
