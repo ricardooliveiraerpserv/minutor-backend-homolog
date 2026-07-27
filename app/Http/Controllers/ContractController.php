@@ -1975,18 +1975,17 @@ class ContractController extends Controller
         $linkedContractId = $contractRequest->linked_contract_id;
         $coordinatorId    = $data['coordinator_id'] ?? $contractRequest->linked_coordinator_id;
 
-        if ($contractRequest->req_decision === 'subprojeto') {
-            // Subprojeto: apenas fecha a requisição; o projeto já existe
-            $contractRequest->update(['kanban_column' => 'req_em_andamento']);
-        } else {
-            if (!$linkedContractId) {
-                return response()->json(['message' => 'Requisição sem contrato vinculado.'], 422);
-            }
+        // novo_projeto E subprojeto (filho) geram o projeto AQUI — ao definir o coordenador
+        // e soltar em "Backlog" no pipeline. Idempotente: se o contrato já tem project_id
+        // (ex.: já gerado pelo Kanban de Contratos), NÃO duplica — só garante o coordenador.
+        if (!$linkedContractId) {
+            return response()->json(['message' => 'Requisição sem contrato vinculado.'], 422);
+        }
 
-            $contract = \App\Models\Contract::findOrFail($linkedContractId);
-            $contract->load(['customer', 'contacts', 'attachments']);
+        $contract = \App\Models\Contract::findOrFail($linkedContractId);
+        $contract->load(['customer', 'contacts', 'attachments']);
 
-            DB::transaction(function () use ($contract, $coordinatorId, $linkedContractId, $contractRequest) {
+        DB::transaction(function () use ($contract, $coordinatorId, $linkedContractId, $contractRequest) {
                 if (!$contract->project_id) {
                     $codeService   = new \App\Services\ProjectCodeService();
                     $parentProject = $contract->parent_project_id ? \App\Models\Project::find($contract->parent_project_id) : null;
@@ -2042,14 +2041,19 @@ class ContractController extends Controller
                         'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
                         'kanban_coordinator_id' => $coordinatorId,
                     ]);
+                    // Projeto já existe (gerado antes pelo Kanban de Contratos): apenas
+                    // garante o coordenador escolhido, sem recriar nada.
+                    if ($coordinatorId && $contract->project_id) {
+                        \App\Models\Project::find($contract->project_id)?->coordinators()->syncWithoutDetaching([$coordinatorId]);
+                    }
                 }
 
                 $contractRequest->update([
-                    'contract_id'   => $linkedContractId,
-                    'kanban_column' => 'req_em_andamento',
+                    'contract_id'           => $linkedContractId,
+                    'linked_coordinator_id' => $coordinatorId,
+                    'kanban_column'         => 'req_em_andamento',
                 ]);
             });
-        }
 
         \App\Models\ContractRequestKanbanLog::create([
             'contract_request_id' => $contractRequest->id,
