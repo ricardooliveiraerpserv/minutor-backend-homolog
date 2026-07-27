@@ -68,7 +68,9 @@ class ProjectMessageController extends Controller
             'files.*'    => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z', // 20 MB; whitelist anti-RCE/XSS
         ]);
 
-        $text = $request->input('message', '');
+        // ConvertEmptyStringsToNull transforma "" em null; cast garante string
+        // (anexo sem texto não pode inserir null na coluna NOT NULL message).
+        $text = (string) $request->input('message', '');
         if (!$text && !$request->hasFile('files')) {
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
