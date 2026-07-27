@@ -44,9 +44,9 @@ class ReajusteClienteMail extends Mailable
                  . "O valor volta ao praticado antes do reajuste, conforme abaixo. Pedimos desconsiderar o comunicado anterior.";
         }
         if ($mode === 'aviso') {
-            return "Informamos que o seu contrato{$ref} passará por reajuste a partir do próximo mês, conforme o índice {$indiceLabel}. "
-                 . "A estimativa atual é de aproximadamente +{$pct}% (acumulado até o momento). "
-                 . "Importante: este percentual ainda NÃO é o definitivo — o valor final depende do índice fechado do próximo mês, que confirmaremos na aplicação.";
+            return "Informamos que o seu contrato{$ref} passará por reajuste a partir do próximo mês, "
+                 . "calculado pela variação acumulada do índice {$indiceLabel}{$per}, correspondente a +{$pct}%. "
+                 . "Este é o valor consolidado, que passa a vigorar a partir da data indicada.";
         }
         return "Em conformidade com o seu contrato{$ref}, informamos o reajuste do valor contratado, "
              . "calculado pela variação acumulada do índice {$indiceLabel}{$per}, correspondente a +{$pct}%.";

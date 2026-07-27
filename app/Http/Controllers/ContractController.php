@@ -3090,20 +3090,20 @@ class ContractController extends Controller
             return [Carbon::parse($start)->startOfMonth(), Carbon::parse($end)->endOfMonth()];
         }
 
-        if ($c->data_ultimo_reajuste) {
-            // Continua no mês SEGUINTE ao do último reajuste (sem reincidir o mês já contado).
-            $startM = Carbon::parse($c->data_ultimo_reajuste)->startOfMonth()->addMonthNoOverflow();
-        } elseif ($c->data_assinatura) {
-            $startM = Carbon::parse($c->data_assinatura)->startOfMonth();
-        } else {
-            $startM = Carbon::now()->subMonthsNoOverflow(12)->startOfMonth();
-        }
+        // Janela do reajuste = os ÚLTIMOS 12 MESES FECHADOS, terminando no último mês já
+        // publicado (mês anterior). Como o índice desse mês já saiu, a janela está 100%
+        // fechada → o percentual é CONSOLIDADO (não é prévia/estimativa). Ex.: avisando em
+        // Jul, a janela é Jul/ano-1 → Jun/ano (12 meses). O aniversário/último reajuste NÃO
+        // encurta a janela — o reajuste anual sempre apura 12 meses fechados.
+        $endM   = Carbon::now()->subMonthNoOverflow()->endOfMonth();          // último mês fechado
+        $startM = $endM->copy()->startOfMonth()->subMonthsNoOverflow(11);     // 12 meses (inclusive)
 
-        $endM = Carbon::now()->subMonthNoOverflow()->endOfMonth(); // último mês fechado
-
-        // Reajuste recente: ainda não há mês fechado novo → período = o próprio mês de início.
-        if ($startM->greaterThan($endM)) {
-            $endM = $startM->copy()->endOfMonth();
+        // Nunca antes do início do contrato (não apura inflação pré-assinatura).
+        if ($c->data_assinatura) {
+            $assinM = Carbon::parse($c->data_assinatura)->startOfMonth();
+            if ($assinM->greaterThan($startM)) {
+                $startM = $assinM;
+            }
         }
 
         return [$startM, $endM];
@@ -3340,12 +3340,13 @@ class ContractController extends Controller
     /** Período do reajuste manual: do último reajuste (ou assinatura) ao último mês fechado. */
     private function manualPeriodo(\App\Models\ManualReajuste $m): array
     {
-        $fim   = Carbon::now()->subMonthNoOverflow()->endOfMonth();
-        $ancora = $m->data_ultimo_reajuste ?? $m->data_assinatura;
-        $inicio = $ancora
-            ? Carbon::parse($ancora)->startOfMonth()->addMonthNoOverflow()
-            : $fim->copy()->subMonthsNoOverflow(11)->startOfMonth();
-        if ($inicio->gt($fim)) $inicio = $fim->copy()->startOfMonth();
+        // Últimos 12 meses fechados (ver reajustePeriodo) — janela consolidada, não prévia.
+        $fim    = Carbon::now()->subMonthNoOverflow()->endOfMonth();
+        $inicio = $fim->copy()->startOfMonth()->subMonthsNoOverflow(11);
+        if ($m->data_assinatura) {
+            $assinM = Carbon::parse($m->data_assinatura)->startOfMonth();
+            if ($assinM->greaterThan($inicio)) $inicio = $assinM;
+        }
         return [$inicio, $fim];
     }
 
