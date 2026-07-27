@@ -237,6 +237,31 @@ class EnvironmentController extends Controller
         return response()->json(['deleted' => true]);
     }
 
+    // ── Compartilhamento (membros do cofre do cliente) ────────────────────────
+
+    /**
+     * Membros do cofre do cliente. Adicionar/listar/mudar papel reusam os endpoints
+     * `/vault/*` (funcionam em type='client'). AQUI só a REMOÇÃO é aditiva: revoga a
+     * membership sem marcar `pending_rotation` — o `rotate` padrão só cobre vault_items
+     * e corromperia os env_secrets. O acesso já é cortado pelo gate de membership do
+     * reveal. A rotação de chave própria (recifra env_secrets) fica p/ a próxima fase.
+     */
+    public function removeMember(Request $request, int $customerId, int $userId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $cv = $this->clientVault($request, $customerId, 'admin');
+
+        $target = VaultMember::where('vault_id', $cv->vault_id)->where('user_id', $userId)->firstOrFail();
+        if ($target->role === 'admin') {
+            $admins = VaultMember::where('vault_id', $cv->vault_id)->where('role', 'admin')->count();
+            abort_if($admins <= 1, 422, 'O cofre precisa de ao menos um administrador.');
+        }
+        $target->delete();
+        EnvAccessLog::record($request, 'member_remove', ['item_label' => 'user #' . $userId]);
+
+        return response()->json(['removed' => true]);
+    }
+
     // ── Favoritos (acesso rápido) ─────────────────────────────────────────────
 
     /** Alterna o ambiente como favorito do usuário. Basta ser membro (view). */

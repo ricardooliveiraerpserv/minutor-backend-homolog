@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Http\Controllers\Concerns\ResolvesEnvMembership;
+use App\Models\EnvGroupPermission;
 use App\Models\EnvPermission;
 use App\Models\VaultMember;
 use App\Services\EnvAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Gestão da ACL fina por ambiente. Só quem tem `admin` no ambiente gerencia.
@@ -78,6 +80,65 @@ class EnvPermissionController extends Controller
         $this->guardInternal($request);
         $env = $this->envAuthorized($request, $envId, 'admin');
         EnvPermission::where('environment_id', $env->id)->where('user_id', $userId)->delete();
+
+        return response()->json(['reset' => true]);
+    }
+
+    // ── ACL de GRUPO (herança automática) ──────────────────────────────────────
+
+    /** Grupos de Consultores + a permissão de grupo neste ambiente (membros herdam). */
+    public function groupIndex(Request $request, int $envId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envAuthorized($request, $envId, 'admin');
+
+        $custom = EnvGroupPermission::where('environment_id', $env->id)->get()->keyBy('consultant_group_id');
+        $groups = DB::table('consultant_groups')->orderBy('name')->get()->map(function ($g) use ($custom) {
+            $p = $custom->get($g->id);
+
+            return [
+                'group_id'   => $g->id,
+                'name'       => $g->name,
+                'members'    => DB::table('consultant_group_user')->where('consultant_group_id', $g->id)->count(),
+                'has_perm'   => (bool) $p,
+                'can_view'   => (bool) ($p->can_view ?? false),
+                'can_reveal' => (bool) ($p->can_reveal ?? false),
+                'can_copy'   => (bool) ($p->can_copy ?? false),
+                'can_manage' => (bool) ($p->can_manage ?? false),
+                'can_admin'  => (bool) ($p->can_admin ?? false),
+            ];
+        })->filter(fn ($g) => $g['members'] > 0)->values();
+
+        return response()->json($groups);
+    }
+
+    public function groupUpsert(Request $request, int $envId, int $groupId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envAuthorized($request, $envId, 'admin');
+        abort_unless(DB::table('consultant_groups')->where('id', $groupId)->exists(), 422, 'Grupo inexistente.');
+
+        $data = $request->validate([
+            'can_view'   => 'required|boolean',
+            'can_reveal' => 'required|boolean',
+            'can_copy'   => 'required|boolean',
+            'can_manage' => 'required|boolean',
+            'can_admin'  => 'required|boolean',
+        ]);
+        EnvGroupPermission::updateOrCreate(
+            ['environment_id' => $env->id, 'consultant_group_id' => $groupId],
+            $data
+        );
+
+        return response()->json(['saved' => true]);
+    }
+
+    /** Remove a permissão do grupo → o grupo deixa de herdar (volta ao default do papel). */
+    public function groupDestroy(Request $request, int $envId, int $groupId): JsonResponse
+    {
+        $this->guardInternal($request);
+        $env = $this->envAuthorized($request, $envId, 'admin');
+        EnvGroupPermission::where('environment_id', $env->id)->where('consultant_group_id', $groupId)->delete();
 
         return response()->json(['reset' => true]);
     }

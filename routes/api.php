@@ -2196,6 +2196,8 @@ Route::prefix('v1')->group(function () {
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
             Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
+            // Compartilhamento — remoção aditiva de membro do cofre do cliente (add/role reusam /vault/*)
+            Route::delete('/clients/{customerId}/members/{userId}', [\App\Http\Controllers\EnvironmentController::class, 'removeMember'])->name('environments.member.remove');
             // Ambientes de um cliente
             Route::get('/clients/{customerId}/environments',  [\App\Http\Controllers\EnvironmentController::class, 'environments'])->name('environments.env.index');
             Route::post('/clients/{customerId}/environments', [\App\Http\Controllers\EnvironmentController::class, 'storeEnvironment'])->name('environments.env.store');
@@ -2236,6 +2238,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/environments/{envId}/permissions',            [\App\Http\Controllers\EnvPermissionController::class, 'index'])->name('environments.perm.index');
             Route::put('/environments/{envId}/permissions/{userId}',   [\App\Http\Controllers\EnvPermissionController::class, 'upsert'])->name('environments.perm.upsert');
             Route::delete('/environments/{envId}/permissions/{userId}', [\App\Http\Controllers\EnvPermissionController::class, 'destroy'])->name('environments.perm.destroy');
+            // ACL de grupo (herança automática)
+            Route::get('/environments/{envId}/group-permissions',              [\App\Http\Controllers\EnvPermissionController::class, 'groupIndex'])->name('environments.gperm.index');
+            Route::put('/environments/{envId}/group-permissions/{groupId}',    [\App\Http\Controllers\EnvPermissionController::class, 'groupUpsert'])->name('environments.gperm.upsert');
+            Route::delete('/environments/{envId}/group-permissions/{groupId}', [\App\Http\Controllers\EnvPermissionController::class, 'groupDestroy'])->name('environments.gperm.destroy');
 
             // Links + Documentação (F1d)
             Route::get('/environments/{envId}/links',       [\App\Http\Controllers\EnvironmentLinkController::class, 'index'])->name('environments.link.index');

@@ -3,9 +3,11 @@
 namespace App\Services;
 
 use App\Models\EnvEnvironment;
+use App\Models\EnvGroupPermission;
 use App\Models\EnvPermission;
 use App\Models\User;
 use App\Models\VaultMember;
+use Illuminate\Support\Facades\DB;
 
 /**
  * ACL fina do Cofre de Ambientes: permissão por usuário × ambiente × operação.
@@ -29,7 +31,7 @@ class EnvAccess
             return self::none();
         }
 
-        // Override custom por (usuário, ambiente)
+        // 1) Override custom por (usuário, ambiente) — precedência máxima
         $custom = EnvPermission::where('user_id', $user->id)->where('environment_id', $env->id)->first();
         if ($custom) {
             return [
@@ -42,7 +44,24 @@ class EnvAccess
             ];
         }
 
-        // Default pelo papel de membro do cliente-vault
+        // 2) Herança de GRUPO: união (OR) das permissões dos grupos do usuário neste ambiente.
+        //    Herança automática — inclui quem entrar no grupo depois (resolvido em tempo de leitura).
+        $groupIds = DB::table('consultant_group_user')->where('user_id', $user->id)->pluck('consultant_group_id');
+        if ($groupIds->isNotEmpty()) {
+            $gp = EnvGroupPermission::where('environment_id', $env->id)->whereIn('consultant_group_id', $groupIds)->get();
+            if ($gp->isNotEmpty()) {
+                return [
+                    'view'   => (bool) $gp->contains(fn ($g) => $g->can_view),
+                    'reveal' => (bool) $gp->contains(fn ($g) => $g->can_reveal),
+                    'copy'   => (bool) $gp->contains(fn ($g) => $g->can_copy),
+                    'manage' => (bool) $gp->contains(fn ($g) => $g->can_manage),
+                    'admin'  => (bool) $gp->contains(fn ($g) => $g->can_admin),
+                    'source' => 'group',
+                ];
+            }
+        }
+
+        // 3) Default pelo papel de membro do cliente-vault
         return match ($member->role) {
             'admin' => self::all('role_admin'),
             'write' => ['view' => true, 'reveal' => true, 'copy' => true, 'manage' => true, 'admin' => false, 'source' => 'role_write'],
