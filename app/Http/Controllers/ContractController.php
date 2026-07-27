@@ -2068,6 +2068,20 @@ class ContractController extends Controller
         $fromColumn = $contractRequest->kanban_column ?? 'backlog';
         $toColumn   = $request->input('kanban_column');
 
+        // Backstop de integridade: uma requisição NUNCA habita colunas da fase Projeto.
+        // A requisição só vira projeto pela definição do coordenador em "Aguardando Início
+        // (Req.)". Sem isto, um drag para o "Backlog" da fase Projeto gravava 'proj_backlog'
+        // e o card sumia (requisição não é renderizada em colunas de projeto). Bug 2026-07-27.
+        $projectPhaseColumns = [
+            'proj_backlog', 'proj_em_planejamento', 'em_andamento',
+            'em_homologacao', 'em_producao', 'pausado', 'cancelado', 'encerrado',
+        ];
+        if (in_array($toColumn, $projectPhaseColumns, true)) {
+            return response()->json([
+                'message' => 'Requisição não pode ir direto para a fase de Projeto. É preciso a definição do coordenador em "Aguardando Início (Req.)".',
+            ], 422);
+        }
+
         $contractRequest->update(['kanban_column' => $toColumn]);
 
         \App\Models\ContractRequestKanbanLog::create([
