@@ -68,7 +68,7 @@ class ProjectMessageController extends Controller
             'files.*'    => 'file|max:20480', // 20 MB por arquivo
         ]);
 
-        $text = $request->input('message', '');
+        $text = (string) $request->input('message', '');
         if (!$text && !$request->hasFile('files')) {
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }

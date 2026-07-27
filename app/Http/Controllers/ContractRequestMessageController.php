@@ -87,7 +87,7 @@ class ContractRequestMessageController extends Controller
             'files.*'    => 'file|max:20480',
         ]);
 
-        $text = $request->input('message', '');
+        $text = (string) $request->input('message', '');
         if (!$text && !$request->hasFile('files')) {
             return response()->json(['message' => 'Mensagem ou anexo obrigatório.'], 422);
         }
