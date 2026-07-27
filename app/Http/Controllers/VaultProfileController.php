@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\Vault;
 use App\Models\VaultAccessLog;
@@ -81,17 +82,40 @@ class VaultProfileController extends Controller
         $keys = VaultUserKey::where('user_id', $user->id)->first();
 
         return response()->json([
-            'configured'     => (bool) $keys?->isConfigured(),
-            'second_factor'  => VaultStepUp::driver(),
-            'totp_confirmed' => (bool) $keys?->totpConfirmed(),
-            'ms_linked'      => ! empty($keys?->ms_oid),
-            'has_recovery'   => ! empty($keys?->recovery_symmetric_key),
-            'kdf'            => [
+            'configured'      => (bool) $keys?->isConfigured(),
+            'second_factor'   => VaultStepUp::driver(),
+            'totp_confirmed'  => (bool) $keys?->totpConfirmed(),
+            'ms_linked'       => ! empty($keys?->ms_oid),
+            'has_recovery'    => ! empty($keys?->recovery_symmetric_key),
+            // Auto-lock é REGRA GLOBAL definida pelo admin (SystemSetting), não por usuário.
+            // Entregue a todos (o timer roda no client); só admin altera via setLockTimeout.
+            'lock_timeout_min' => (int) SystemSetting::get('vault_lock_timeout_min', 5),
+            'is_vault_admin'   => $user->isAdmin(),
+            'kdf'             => [
                 'iterations'  => $keys?->kdf_iterations ?? 3,
                 'memory'      => $keys?->kdf_memory ?? 65536,
                 'parallelism' => $keys?->kdf_parallelism ?? 4,
             ],
         ]);
+    }
+
+    /**
+     * Define o auto-lock GLOBAL do cofre (minutos). Regra única para todos os usuários;
+     * SOMENTE admin altera. O timer em si roda no client (vault-context).
+     */
+    public function setLockTimeout(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        abort_unless($user->isAdmin(), 403);
+
+        $data = $request->validate([
+            'minutes' => 'required|integer|in:1,5,15,30',
+        ]);
+
+        SystemSetting::set('vault_lock_timeout_min', $data['minutes'], 'integer', 'vault', 'Auto-lock do cofre (minutos) — regra global');
+        VaultAccessLog::record($request, 'lock_timeout_changed', [], ['minutes' => $data['minutes']]);
+
+        return response()->json(['lock_timeout_min' => $data['minutes']]);
     }
 
     /**

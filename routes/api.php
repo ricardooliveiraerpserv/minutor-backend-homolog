@@ -2146,6 +2146,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('vault')->middleware('permission.or.admin:vault.use')->group(function () {
             // Perfil criptográfico / 2FA / unlock
             Route::get('/profile',              [\App\Http\Controllers\VaultProfileController::class, 'profile'])->name('vault.profile');
+            Route::put('/lock-timeout',         [\App\Http\Controllers\VaultProfileController::class, 'setLockTimeout'])->middleware('throttle:20,1')->name('vault.lock-timeout');
             Route::post('/totp/setup',          [\App\Http\Controllers\VaultProfileController::class, 'totpSetup'])->middleware('throttle:10,1')->name('vault.totp.setup');
             Route::post('/totp/confirm',        [\App\Http\Controllers\VaultProfileController::class, 'totpConfirm'])->middleware('throttle:10,1')->name('vault.totp.confirm');
             Route::post('/ms/start',            [\App\Http\Controllers\VaultProfileController::class, 'msStart'])->middleware('throttle:10,1')->name('vault.ms.start');
