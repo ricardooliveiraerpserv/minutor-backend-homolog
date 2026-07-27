@@ -66,14 +66,32 @@ class VaultStepUp
         return (bool) ($keys?->stepup_token_expires_at?->isFuture());
     }
 
-    /** Valida E CONSOME o step-up (uso único por operação). */
+    /**
+     * Valida E CONSOME o step-up (uso único por operação).
+     *
+     * Segurança (auditoria cofre, item 3): o consumo é ATÔMICO — um único UPDATE
+     * condicionado a "ainda válido" zera o token e só tem sucesso se afetou 1 linha.
+     * Assim, duas requisições concorrentes não conseguem consumir o mesmo step-up
+     * (a 2ª afeta 0 linhas). Substitui o antigo check-then-clear (janela de corrida).
+     */
     public static function consume(?VaultUserKey $keys): bool
     {
-        if (! self::active($keys)) {
+        if (! $keys) {
             return false;
         }
-        $keys->forceFill(['stepup_token_expires_at' => null])->save();
 
-        return true;
+        $affected = VaultUserKey::query()
+            ->where('id', $keys->id)
+            ->whereNotNull('stepup_token_expires_at')
+            ->where('stepup_token_expires_at', '>', now())
+            ->update(['stepup_token_expires_at' => null]);
+
+        if ($affected === 1) {
+            $keys->stepup_token_expires_at = null; // mantém a instância em memória coerente
+
+            return true;
+        }
+
+        return false;
     }
 }
