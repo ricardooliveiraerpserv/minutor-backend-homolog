@@ -477,6 +477,17 @@ class ProjectController extends Controller
         } elseif (!$request->boolean('include_investimento_comercial')) {
             $query->where('is_investimento_comercial', false);
         } else {
+            // include_investimento_comercial=true: o chamador (ex.: dropdown de
+            // Novo Apontamento) quer também os projetos de investimento do cliente.
+            // Esses projetos carregam company_id = carimbo arbitrário da empresa que
+            // os criou (tipicamente ERPSERV/1); sob outra empresa ativa (Bizify) o
+            // CompanyScope os esconderia e o consultor não teria onde apontar o
+            // investimento. Como a query já está delimitada por customer_id, o filtro
+            // de empresa é espúrio — removemos o CompanyScope para o investimento
+            // aparecer (o customer_id já impede vazar projeto de outro cliente).
+            if ($customerId) {
+                $query->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class);
+            }
             // include_investimento_comercial=true: para consultor (não admin/coord),
             // restringe IC apenas aos projetos onde ele está alocado. Projetos
             // não-IC continuam visíveis normalmente.
