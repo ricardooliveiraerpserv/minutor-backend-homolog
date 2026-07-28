@@ -31,7 +31,7 @@ class HelpDeskTicket extends Model
         'sla_policy_id', 'first_response_due_at', 'resolution_due_at',
         'first_responded_at', 'resolved_at', 'closed_at', 'reopened_at',
         'first_response_breached', 'resolution_breached', 'reopen_count',
-        'last_activity_at', 'source_system', 'external_ref', 'graph_thread_msg_id', 'created_by_id',
+        'last_activity_at', 'source_system', 'external_ref', 'graph_thread_msg_id', 'external_ticket_ref', 'created_by_id',
         'scheduled_until', 'scheduled_all_day', 'sla_paused_at', 'sla_ever_paused',
         'reopen_scheduled_at', 'reopen_scheduled_note', 'reopen_scheduled_by_id',
         'previous_ticket_id', 'merged_into_id',

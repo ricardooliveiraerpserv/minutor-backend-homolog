@@ -918,6 +918,7 @@ class HelpDeskTicketController extends Controller
             'category_id'         => 'nullable|exists:helpdesk_categories,id',
             'service_id'          => 'nullable|exists:helpdesk_services,id',
             'justification_id'    => 'nullable|exists:helpdesk_ticket_justifications,id',
+            'external_ticket_ref' => 'nullable|string|max:100', // ex.: nº do chamado no fornecedor (TOTVS)
             'status_id'           => 'nullable|exists:helpdesk_statuses,id',
             'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
             'channel'             => 'nullable|in:' . implode(',', HelpDeskTicket::CHANNELS),
