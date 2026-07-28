@@ -25,5 +25,8 @@ migrate*.load
 .idea/
 .cursor/
 
+# Claude Code — configuração local (contém segredos; NUNCA versionar)
+.claude/settings.local.json
+
 # Docker volumes
 docker/mysql/data/
