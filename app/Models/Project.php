@@ -941,14 +941,17 @@ class Project extends Model
             // detalhe zerava e ignorava as horas consumidas iniciais).
             $logged  = round((($this->timesheets()
                 ->whereIn('status', ['approved', 'pending'])
-                ->sum('effort_minutes')) ?? 0) / 60, 2);
+                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
             $initial = (float) ($this->initial_hours_consumed ?? 0);
             return ['available' => 0.0, 'consumed' => round($logged + $initial, 2), 'balance' => 0.0];
         }
 
+        // Consumo FATURÁVEL ao cliente = horas apontadas × (1 + uplift do contrato).
+        // O acréscimo mora no apontamento (contract_client_pct); o consultor/pagamento
+        // lê effort_minutes cru e não passa por aqui. Contratadas ficam no real.
         $consumed = round((($this->timesheets()
             ->whereIn('status', ['approved', 'pending'])
-            ->sum('effort_minutes')) ?? 0) / 60, 2);
+            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
 
         // Consumo dos filhos — mesma regra do ProjectController gestão-mode.
@@ -967,7 +970,7 @@ class Project extends Model
                 } elseif ($isOnDemand) {
                     $childLogged = round((($child->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
-                        ->sum('effort_minutes')) ?? 0) / 60, 2);
+                        ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
                     $childrenConsumed += round($childLogged + (float) ($child->initial_hours_consumed ?? 0), 2);
                 }
                 // else: filho Projeto / BH-Mensal — ignorado (idêntico à Gestão).
@@ -1219,7 +1222,7 @@ class Project extends Model
         $min  = $this->timesheets()
             ->whereIn('status', ['approved', 'pending'])
             ->whereBetween('date', [$from, $to])
-            ->sum('effort_minutes');
+            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
         return round(((float) $min) / 60, 2);
     }
 

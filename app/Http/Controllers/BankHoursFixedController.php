@@ -331,7 +331,7 @@ class BankHoursFixedController extends Controller
                     // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
                     $parentLoggedMinutes = $parentProject->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
-                        ->sum('effort_minutes') ?? 0;
+                        ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
                     $consumedHours += $parentLoggedHours;
                     // Incluir horas consumidas do sistema anterior
@@ -367,7 +367,7 @@ class BankHoursFixedController extends Controller
                         // On Demand / demais: apontadas + initial_hours_consumed.
                         $childLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
-                            ->sum('effort_minutes') ?? 0;
+                            ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours;
                         $consumedHours += (float) ($childProject->initial_hours_consumed ?? 0);
@@ -418,7 +418,7 @@ class BankHoursFixedController extends Controller
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
             }
 
@@ -443,7 +443,7 @@ class BankHoursFixedController extends Controller
                     $childMonthLoggedMinutes = $childProject->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
                         ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
+                        ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                 }
             }
@@ -566,7 +566,7 @@ class BankHoursFixedController extends Controller
                 if ($commitsSold) {
                     $accum += $proj->getTotalAvailableHours();
                 } else {
-                    $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum('effort_minutes') ?? 0;
+                    $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $accum += round($mins / 60, 2);
                     // Histórico pré-importação (alinhado com ProjectController::index gestao mode)
                     $accum += (float) ($proj->initial_hours_consumed ?? 0);
@@ -576,7 +576,7 @@ class BankHoursFixedController extends Controller
                 $mins = $proj->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $accumMonth += round($mins / 60, 2);
 
                 // Fechado/BH-Fixo (filho) consome o valor vendido na data de início — soma
@@ -4522,7 +4522,7 @@ class BankHoursFixedController extends Controller
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
 
                 if ($parentProject->hasChildProjects()) {
@@ -4530,7 +4530,7 @@ class BankHoursFixedController extends Controller
                         $childMonthLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
                             ->whereBetween('date', [$monthStart, $monthEnd])
-                            ->sum('effort_minutes') ?? 0;
+                            ->sum(\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                     }
                 }
@@ -4967,6 +4967,17 @@ class BankHoursFixedController extends Controller
             }
             return $req;
         };
+        // Lado cliente/contrato → horas JÁ INFLADAS pelo multiplicador (billableMinutes),
+        // com o FIM ajustado = INÍCIO + minutos faturáveis. O consultor não acessa esta tela.
+        $billEnd = function ($t) use ($fmtTime) {
+            $bill = (int) round($t->billableMinutes());
+            if ($t->start_time && $bill !== (int) $t->effort_minutes) {
+                $start = $t->start_time instanceof \Carbon\Carbon
+                    ? $t->start_time->copy() : \Carbon\Carbon::parse((string) $t->start_time);
+                return $start->addMinutes($bill)->format('H:i');
+            }
+            return $fmtTime($t->end_time);
+        };
 
         return response()->json([
             'success' => true,
@@ -4975,8 +4986,8 @@ class BankHoursFixedController extends Controller
                 'date'               => optional($t->date)->format('Y-m-d'),
                 'created_at'         => optional($t->created_at)->toIso8601String(),
                 'start_time'         => $fmtTime($t->start_time),
-                'end_time'           => $fmtTime($t->end_time),
-                'effort_minutes'     => $t->effort_minutes,
+                'end_time'           => $billEnd($t),
+                'effort_minutes'     => (int) round($t->billableMinutes()),
                 'description'        => $t->observation,
                 'status'             => $t->status,
                 'status_display'     => $t->status_display,
@@ -5253,11 +5264,12 @@ class BankHoursFixedController extends Controller
                 DB::raw("MAX(movidesk_tickets.solicitante::text) AS ticket_solicitante"),
                 DB::raw("MAX(movidesk_tickets.status) AS ticket_status"),
                 DB::raw("MAX(movidesk_tickets.base_status) AS ticket_base_status"),
-                DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
+                // Lado cliente → minutos JÁ INFLADOS pelo multiplicador do contrato.
+                DB::raw("SUM(timesheets.effort_minutes * (1 + COALESCE(timesheets.contract_client_pct, timesheets.client_extra_pct, 0) / 100.0)) AS lifetime_minutes"),
                 DB::raw(
                     "SUM(CASE WHEN " . ($byDigitacao ? 'timesheets.created_at::date' : 'timesheets.date') . " BETWEEN " .
                     "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
-                    "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
+                    "THEN timesheets.effort_minutes * (1 + COALESCE(timesheets.contract_client_pct, timesheets.client_extra_pct, 0) / 100.0) ELSE 0 END) AS period_minutes"
                 ),
             )
             ->addBinding($dateFrom, 'select')
@@ -5362,11 +5374,12 @@ class BankHoursFixedController extends Controller
                 DB::raw("MAX(movidesk_tickets.solicitante::text) AS ticket_solicitante"),
                 DB::raw("MAX(movidesk_tickets.status) AS ticket_status"),
                 DB::raw("MAX(movidesk_tickets.base_status) AS ticket_base_status"),
-                DB::raw("SUM(timesheets.effort_minutes) AS lifetime_minutes"),
+                // Lado cliente → minutos JÁ INFLADOS pelo multiplicador do contrato.
+                DB::raw("SUM(timesheets.effort_minutes * (1 + COALESCE(timesheets.contract_client_pct, timesheets.client_extra_pct, 0) / 100.0)) AS lifetime_minutes"),
                 DB::raw(
                     "SUM(CASE WHEN " . ($byDigitacao ? 'timesheets.created_at::date' : 'timesheets.date') . " BETWEEN " .
                     "COALESCE(?, timesheets.date) AND COALESCE(?, timesheets.date) " .
-                    "THEN timesheets.effort_minutes ELSE 0 END) AS period_minutes"
+                    "THEN timesheets.effort_minutes * (1 + COALESCE(timesheets.contract_client_pct, timesheets.client_extra_pct, 0) / 100.0) ELSE 0 END) AS period_minutes"
                 ),
             )
             ->addBinding($dateFrom, 'select')

@@ -340,7 +340,7 @@ class OnDemandController extends Controller
                     $parentLoggedMinutes = $parentProject->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
                         ->when($periodEndDate, fn($q) => $q->where('date', '<=', $periodEndDate))
-                        ->sum('effort_minutes') ?? 0;
+                        ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
                     $consumedHours += $parentLoggedHours;
                 }
@@ -367,7 +367,7 @@ class OnDemandController extends Controller
                         $childLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
                             ->when($periodEndDate, fn($q) => $q->where('date', '<=', $periodEndDate))
-                            ->sum('effort_minutes') ?? 0;
+                            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours;
                     }
@@ -404,7 +404,7 @@ class OnDemandController extends Controller
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
             }
 
@@ -416,7 +416,7 @@ class OnDemandController extends Controller
                     $childMonthLoggedMinutes = $childProject->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
                         ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
+                        ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                 }
             }
@@ -440,7 +440,7 @@ class OnDemandController extends Controller
         $monthMaintenanceHours = round((float) \App\Models\Timesheet::whereIn('project_id', $sustProjectIds)
             ->whereIn('status', ['approved', 'pending'])
             ->whereBetween('date', [$monthStart, $monthEnd])
-            ->sum('effort_minutes') / 60, 2);
+            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) / 60, 2);
         $monthProjectsHours = round(max(0, $monthConsumedHours - $monthMaintenanceHours), 2);
 
         // Se há filtro de período ativo, recalcular exceeded_hours e amount_to_pay
@@ -722,7 +722,7 @@ class OnDemandController extends Controller
             $consumed = round((float) \App\Models\Timesheet::whereIn('project_id', $projIds)
                 ->where('status', '!=', 'rejected')
                 ->whereNull('deleted_at')
-                ->sum('effort_minutes') / 60, 2);
+                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) / 60, 2);
 
             return [
                 'id' => $project->id,
@@ -4361,7 +4361,7 @@ class OnDemandController extends Controller
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
 
                 if ($parentProject->hasChildProjects()) {
@@ -4369,7 +4369,7 @@ class OnDemandController extends Controller
                         $childMonthLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
                             ->whereBetween('date', [$monthStart, $monthEnd])
-                            ->sum('effort_minutes') ?? 0;
+                            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                     }
                 }

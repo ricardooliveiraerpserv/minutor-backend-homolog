@@ -296,7 +296,8 @@ class FechamentoClienteController extends Controller
                 'solicitante'    => $solicitante,
                 'ticket'         => $t->ticket,
                 'titulo'         => $t->ticket_titulo,
-                'horas'          => round($t->effort_minutes / 60, 2),
+                // Horas faturáveis ao cliente (já com o uplift do contrato). Consultor lê o real.
+                'horas'          => $t->billableHours(),
             ];
         })->values();
 
@@ -412,11 +413,13 @@ class FechamentoClienteController extends Controller
 
                 // Horas DECIMAIS arredondadas a 2 casas na origem, p/ o valor a pagar bater com
                 // as horas exibidas no documento de cobrança (49,42h × R$148 = R$7.314,16, não 7.313,67).
-                $horas      = round($t->effort_minutes / 60, 2);
+                // Horas FATURÁVEIS ao cliente = reais × (1 + uplift do contrato). O uplift mora
+                // na linha do apontamento (billableHours); a rotina não muda — só lê inflado.
+                // Consultor lê effort_minutes cru e nunca passa por aqui.
+                $horas      = $t->billableHours();
                 // Valoriza cada apontamento pela taxa vigente NO MÊS do apontamento — legado intacto.
                 $hourlyRate = (float) ($project?->hourlyRateForCompetencia($t->date->format('Y-m')) ?? 0);
-                $mult       = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
-                $valorTs = round($horas * $hourlyRate * $mult, 2);
+                $valorTs    = round($horas * $hourlyRate, 2);
 
                 $horasProjeto += $horas;
                 $basesProjeto += $horas * $hourlyRate;
@@ -436,10 +439,9 @@ class FechamentoClienteController extends Controller
                     'titulo'           => $t->ticket_titulo,
                     'solicitante'      => $solicitante,
                     'observacao'       => $t->observation,
-                    'client_extra_pct' => $t->client_extra_pct ? (float) $t->client_extra_pct : null,
-                    'valor_extra'      => $t->client_extra_pct
-                        ? round($horas * $hourlyRate * ((float) $t->client_extra_pct / 100), 2)
-                        : null,
+                    // Uplift já embutido nas horas acima — não expõe o fator separadamente.
+                    'client_extra_pct' => null,
+                    'valor_extra'      => null,
                 ];
             }
 
@@ -507,7 +509,7 @@ class FechamentoClienteController extends Controller
             $comp  = $t->date->format('Y-m');
             $key   = $t->project_id . '|' . $comp;
             $rate  = $rateCache[$key] ??= (float) ($t->project?->hourlyRateForCompetencia($comp) ?? 0);
-            $horas = round($t->effort_minutes / 60, 2);
+            $horas = $t->billableHours(); // faturável ao cliente (uplift do contrato); consultor lê real
             $mult  = 1 + (((float) ($t->client_extra_pct ?? 0)) / 100);
             return [
                 'id'             => $t->id,
@@ -690,7 +692,9 @@ class FechamentoClienteController extends Controller
             ->whereNull('deleted_at')
             ->where('is_internal_action', false)
             ->whereIn('project_id', $projectIds)
-            ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
+            // Consumo faturável ao cliente = horas com o uplift do contrato (COALESCE respeita a
+            // vigência: só apontamentos no período da regra têm contract_client_pct).
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as total_minutes')
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
@@ -698,7 +702,7 @@ class FechamentoClienteController extends Controller
             ->whereNull('deleted_at')
             ->where('is_internal_action', false)
             ->whereIn('project_id', $projectIds)
-            ->selectRaw('project_id, SUM(effort_minutes) as total_minutes')
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as total_minutes')
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
@@ -708,7 +712,9 @@ class FechamentoClienteController extends Controller
             ->whereNull('deleted_at')
             ->where('is_internal_action', false)
             ->whereIn('project_id', $projectIds)
-            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(client_extra_pct, 0) / 100.0)) as weighted_minutes')
+            // Uplift efetivo do cliente = COALESCE(contract_client_pct, client_extra_pct, 0):
+            // a regra do CONTRATO vence (decisão B); manual só como fallback sem regra.
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as weighted_minutes')
             ->groupBy('project_id')
             ->pluck('weighted_minutes', 'project_id');
 
@@ -728,7 +734,7 @@ class FechamentoClienteController extends Controller
                     'id'          => $t->id,
                     'data'        => $t->date->format('Y-m-d'),
                     'colaborador' => $t->user?->name ?? '—',
-                    'horas'       => round($t->effort_minutes / 60, 2),
+                    'horas'       => $t->billableHours(),
                     'ticket'      => $t->ticket,
                     'observacao'  => $t->observation,
                 ])->values()->toArray();
@@ -1123,8 +1129,8 @@ class FechamentoClienteController extends Controller
             ->selectRaw('timesheets.ticket as ticket')
             ->selectRaw('MAX(movidesk_tickets.titulo) as title')
             ->selectRaw("MAX(movidesk_tickets.solicitante::jsonb->>'name') as requester")
-            ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
-            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes', [$from, $to])
+            ->selectRaw('SUM(timesheets.effort_minutes * (1 + COALESCE(timesheets.contract_client_pct, timesheets.client_extra_pct, 0) / 100.0)) as lifetime_minutes')
+            ->selectRaw('SUM(CASE WHEN timesheets.date BETWEEN ? AND ? THEN timesheets.effort_minutes * (1 + COALESCE(timesheets.contract_client_pct, timesheets.client_extra_pct, 0) / 100.0) ELSE 0 END) as period_minutes', [$from, $to])
             ->groupBy('timesheets.ticket')
             ->orderBy('timesheets.ticket')
             ->get();

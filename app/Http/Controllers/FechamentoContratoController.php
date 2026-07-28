@@ -90,8 +90,10 @@ class FechamentoContratoController extends Controller
                 'is_investimento' => (bool) ($root->is_investimento_comercial ?? false),
             ];
 
+            // Consumo FATURÁVEL ao cliente = horas com o uplift do contrato (billableMinutes).
+            // Custo/consultor não passa por aqui — este é o consumo cobrado do cliente.
             $minutesMap[$typeCode][$custId][$rootId] =
-                ($minutesMap[$typeCode][$custId][$rootId] ?? 0) + (int) $ts->effort_minutes;
+                ($minutesMap[$typeCode][$custId][$rootId] ?? 0) + (int) round($ts->billableMinutes());
         }
 
         // Flag "faturado / NFS-e enviada" por projeto (pai) neste mês (existência da linha).
@@ -112,7 +114,7 @@ class FechamentoContratoController extends Controller
             $allTimeMinutes = Timesheet::whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_LATE])
                 ->whereNull('deleted_at')
                 ->whereIn('project_id', $bhProjectIds)
-                ->selectRaw('project_id, SUM(effort_minutes) as total')
+                ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as total')
                 ->groupBy('project_id')
                 ->pluck('total', 'project_id')
                 ->toArray();

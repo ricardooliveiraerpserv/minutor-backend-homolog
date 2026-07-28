@@ -86,7 +86,7 @@ class ClientPortalController extends Controller
         $this->applyPeriod($tsQuery, $period);
 
         $loggedMinutesByProject = $tsQuery
-            ->select('project_id', DB::raw('SUM(effort_minutes) as total_minutes'))
+            ->select('project_id', DB::raw('SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as total_minutes'))
             ->groupBy('project_id')
             ->pluck('total_minutes', 'project_id');
 
@@ -98,7 +98,7 @@ class ClientPortalController extends Controller
         $monthMinutes = Timesheet::whereIn('project_id', $allProjectIds)
             ->whereIn('status', ['approved', 'pending'])
             ->whereMonth('date', $fMonth)->whereYear('date', $fYear)
-            ->sum('effort_minutes');
+            ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
         $monthConsumed = round($monthMinutes / 60, 1);
 
         // Mês anterior para tendência
@@ -106,7 +106,7 @@ class ClientPortalController extends Controller
         $prevMinutes = Timesheet::whereIn('project_id', $allProjectIds)
             ->whereIn('status', ['approved', 'pending'])
             ->whereMonth('date', $prevDate->month)->whereYear('date', $prevDate->year)
-            ->sum('effort_minutes');
+            ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
         $prevConsumed = round($prevMinutes / 60, 1);
 
         $trendPct = $prevConsumed > 0
@@ -121,7 +121,7 @@ class ClientPortalController extends Controller
             $mins = Timesheet::whereIn('project_id', $allProjectIds)
                 ->whereIn('status', ['approved', 'pending'])
                 ->whereMonth('date', $d->month)->whereYear('date', $d->year)
-                ->sum('effort_minutes');
+                ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
             $monthlyChart[] = [
                 'month'          => $d->format('Y-m'),
                 'label'          => $d->locale('pt_BR')->isoFormat('MMM/YY'),
@@ -418,7 +418,7 @@ class ClientPortalController extends Controller
         $totalChamados = $uniqueTickets->count();
 
         // Horas consumidas
-        $totalMinutes  = $timesheets->sum('effort_minutes');
+        $totalMinutes  = (clone $tsBase)->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
         $totalHours    = round($totalMinutes / 60, 1);
 
         // Tempo médio por chamado
@@ -727,7 +727,7 @@ class ClientPortalController extends Controller
                 $consumedMin = \App\Models\Timesheet::where('project_id', $p->id)
                     ->whereNull('deleted_at')
                     ->whereIn('status', ['approved', 'pending'])
-                    ->sum('effort_minutes');
+                    ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
                 $consumed = $consumedMin > 0 ? round((float) $consumedMin / 60, 2) : 0.0;
             }
             $pct = ($available && $available > 0 && $consumed !== null)

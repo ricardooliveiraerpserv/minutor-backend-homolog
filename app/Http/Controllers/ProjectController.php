@@ -561,7 +561,9 @@ class ProjectController extends Controller
             // explícito. Consumo = tudo apontado MENOS rejeitado/ajuste/conflito (inclui ação
             // interna, pendente, aprovado, liberado). Regra do user 2026-05-22.
             $rows = DB::table('timesheets')
-                ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as total_logged_minutes')
+                // Consumo FATURÁVEL ao cliente = apontado × (1 + uplift do contrato). O acréscimo
+                // mora no apontamento (contract_client_pct); consultor/pagamento lê o real.
+                ->selectRaw('project_id, COALESCE(SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)), 0) as total_logged_minutes')
                 ->whereIn('project_id', $allIdsToSum)
                 ->whereNull('deleted_at')
                 ->whereIn('status', ['approved', 'pending'])
@@ -576,7 +578,7 @@ class ProjectController extends Controller
         $monthlyMap = [];
         if ($gestaoMode && !empty($gestaoMonths) && !empty($allIdsToSum)) {
             $monthlyMap = DB::table('timesheets')
-                ->selectRaw('project_id, COALESCE(SUM(effort_minutes), 0) as m')
+                ->selectRaw('project_id, COALESCE(SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)), 0) as m')
                 ->whereIn('project_id', $allIdsToSum)
                 ->whereNull('deleted_at')
                 ->whereIn('status', ['approved', 'pending'])
