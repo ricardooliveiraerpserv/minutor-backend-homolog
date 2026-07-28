@@ -239,7 +239,7 @@ class HelpDeskMailComposer
             .   '<strong>Último status:</strong> ' . $status
             . '</div>'
             . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
-            . '<div style="font-size:14px;margin:0 0 14px">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
+            . '<div style="font-size:14px;font-weight:bold;color:#111827;margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #e5e7eb">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
             . '</div>';
     }
 
