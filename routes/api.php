@@ -1002,6 +1002,18 @@ Route::prefix('v1')->group(function () {
             Route::get('/relatorios/atividade-clientes/config',                           [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'statusClientesConfig']);
             Route::put('/relatorios/atividade-clientes/config',                           [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'statusClientesConfigUpdate']);
             Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
+
+            // 💰 Multiplicador de horas faturáveis ao cliente (por contrato) — admin/contracts.manage.
+            // Só cadastra/gerencia as regras; a aplicação no cálculo é feita no lado cliente
+            // pelo ContractHourMultiplierService (nunca no lado consultor/parceiro).
+            Route::middleware('permission.or.admin:contracts.manage')->group(function () {
+                Route::get('/contract-hour-multipliers',                  [\App\Http\Controllers\ContractHourMultiplierController::class, 'index']);
+                Route::get('/contract-hour-multipliers/contracts',        [\App\Http\Controllers\ContractHourMultiplierController::class, 'contracts']);
+                Route::post('/contract-hour-multipliers',                 [\App\Http\Controllers\ContractHourMultiplierController::class, 'store']);
+                Route::put('/contract-hour-multipliers/{multiplier}',     [\App\Http\Controllers\ContractHourMultiplierController::class, 'update']);
+                Route::delete('/contract-hour-multipliers/{multiplier}',  [\App\Http\Controllers\ContractHourMultiplierController::class, 'destroy']);
+            });
+
             Route::get('/fechamento-consultor/{yearMonth}',                              [\App\Http\Controllers\FechamentoConsultorController::class, 'index']);
             Route::get('/fechamento-consultor/{yearMonth}/export-excel',                 [\App\Http\Controllers\FechamentoConsultorController::class, 'exportExcel']);
 
