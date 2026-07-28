@@ -109,23 +109,30 @@ class HelpDeskReplyMailer
     {
         $inline = [];
         $i = 0;
+        $seen = []; // dedup por conteúdo (md5) → mesma imagem = 1 anexo (cid), reusado no fio inteiro
         // 1) Prints colados (data:image) → imagem inline (cid).
         $html = preg_replace_callback(
             '/<img\b[^>]*\bsrc=["\']data:(image\/[a-zA-Z0-9.+-]+);base64,([^"\']+)["\'][^>]*>/i',
-            function ($m) use (&$inline, &$i) {
+            function ($m) use (&$inline, &$i, &$seen) {
                 $bytes = base64_decode($m[2], true);
                 if ($bytes === false || $bytes === '') return '';
-                $i++;
                 $mime = strtolower($m[1]);
-                $ext  = match ($mime) {
-                    'image/png' => 'png', 'image/jpeg' => 'jpg', 'image/jpg' => 'jpg',
-                    'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img',
-                };
-                $cid = "hdimg{$i}@minutor";
-                $inline[] = ['name' => "imagem{$i}.{$ext}", 'mime' => $mime, 'bytes' => $bytes, 'cid' => $cid];
-                // PRESERVA a tag original (width/height/style) — troca só o src. Antes reconstruía
-                // um <img> sem dimensões, o que estourava o tamanho dos ícones da assinatura (viravam
-                // gigantes, ~90px nativo, ignorando o width="30"). Só o src vira cid:.
+                // DEDUP: mesma imagem (mesmo conteúdo) reusa o cid, sem novo anexo — evita estourar o
+                // limite de 250 partes do Exchange quando o histórico repete logos/assinaturas.
+                $key = md5($bytes);
+                if (isset($seen[$key])) {
+                    $cid = $seen[$key];
+                } else {
+                    $i++;
+                    $ext  = match ($mime) {
+                        'image/png' => 'png', 'image/jpeg' => 'jpg', 'image/jpg' => 'jpg',
+                        'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img',
+                    };
+                    $cid = "hdimg{$i}@minutor";
+                    $inline[] = ['name' => "imagem{$i}.{$ext}", 'mime' => $mime, 'bytes' => $bytes, 'cid' => $cid];
+                    $seen[$key] = $cid;
+                }
+                // PRESERVA a tag original (width/height/style) — troca só o src.
                 return preg_replace('/\bsrc=["\']data:[^"\']*["\']/i', 'src="cid:' . $cid . '"', $m[0])
                     ?? ('<img src="cid:' . $cid . '" style="max-width:100%;height:auto">');
             },
@@ -152,17 +159,23 @@ class HelpDeskReplyMailer
         //     background-image:url(cid:), mas descarta data: em CSS — então convertemos aqui.
         $html = preg_replace_callback(
             '/background-image:\s*url\(\s*([\'"]?)data:(image\/[a-zA-Z0-9.+-]+);base64,([^\'")]+)\1\s*\)/i',
-            function ($m) use (&$inline, &$i) {
+            function ($m) use (&$inline, &$i, &$seen) {
                 $bytes = base64_decode($m[3], true);
                 if ($bytes === false || $bytes === '') return $m[0];
-                $i++;
                 $mime = strtolower($m[2]);
-                $ext  = match ($mime) {
-                    'image/png' => 'png', 'image/jpeg' => 'jpg', 'image/jpg' => 'jpg',
-                    'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img',
-                };
-                $cid = "hdbg{$i}@minutor";
-                $inline[] = ['name' => "bg{$i}.{$ext}", 'mime' => $mime, 'bytes' => $bytes, 'cid' => $cid];
+                $key = md5($bytes);
+                if (isset($seen[$key])) {
+                    $cid = $seen[$key];
+                } else {
+                    $i++;
+                    $ext  = match ($mime) {
+                        'image/png' => 'png', 'image/jpeg' => 'jpg', 'image/jpg' => 'jpg',
+                        'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img',
+                    };
+                    $cid = "hdbg{$i}@minutor";
+                    $inline[] = ['name' => "bg{$i}.{$ext}", 'mime' => $mime, 'bytes' => $bytes, 'cid' => $cid];
+                    $seen[$key] = $cid;
+                }
                 return "background-image:url('cid:{$cid}')";
             },
             $html
