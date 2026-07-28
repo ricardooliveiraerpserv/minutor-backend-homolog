@@ -3568,7 +3568,7 @@ class ProjectController extends Controller
             return response()->json(['message' => 'Acesso negado'], 403);
         }
 
-        $realProjects = Project::with('serviceType')
+        $realProjects = Project::withoutCompanyScope()->with('serviceType')
             ->where('customer_id', $project->customer_id)
             ->where('id', '!=', $project->id)
             ->where(function ($q) {
@@ -3624,7 +3624,7 @@ class ProjectController extends Controller
                 ->all()
             : [];
 
-        $query = Project::with('serviceType')->where('id', '!=', $project->id)->open();
+        $query = Project::withoutCompanyScope()->with('serviceType')->where('id', '!=', $project->id)->open();
 
         if (!empty($realIds)) {
             $query->whereIn('id', $realIds);
