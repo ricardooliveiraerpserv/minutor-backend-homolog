@@ -589,7 +589,14 @@ class TimesheetController extends Controller
         // Resposta PO-UI (com cache Redis de 60s por usuário + filtros)
         try {
             $result = $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page, $hideClientPct) {
-                $totalEffortMinutes = (int) (clone $query)->sum('effort_minutes');
+                // Perfis de gestão (admin/coord/administrativo → !hideClientPct) veem as horas
+                // JÁ INFLADAS pelo multiplicador do contrato (mesma regra do cliente). O consultor
+                // e o parceiro (hideClientPct) veem o REAL. É o "muda em todos os locais menos o consultor".
+                $inflate = !$hideClientPct;
+                $effortExpr = $inflate
+                    ? 'effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'
+                    : 'effort_minutes';
+                $totalEffortMinutes = (int) round((clone $query)->sum(\Illuminate\Support\Facades\DB::raw($effortExpr)));
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;
 
@@ -639,8 +646,11 @@ class TimesheetController extends Controller
                             });
                         }
                     });
-                    foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw('customer_id, ticket, SUM(effort_minutes) AS total')->get() as $r) {
-                        $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) $r->total;
+                    $ticketSumExpr = $inflate
+                        ? 'SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0))'
+                        : 'SUM(effort_minutes)';
+                    foreach ($totalsQ->groupBy('customer_id', 'ticket')->selectRaw("customer_id, ticket, {$ticketSumExpr} AS total")->get() as $r) {
+                        $ticketTotalsMap[$r->customer_id . ':' . $r->ticket] = (int) round($r->total);
                     }
 
                     // Soma o saldo inicial cadastrado (ticket_initial_balances).
@@ -705,6 +715,23 @@ class TimesheetController extends Controller
                         $ts->makeHidden(['client_extra_pct']);
                     }
                     $arr = $ts->toArray();
+                    // Perfis de gestão (não-consultor): TEMPO e FIM já vêm INFLADOS pelo multiplicador
+                    // do contrato. Consultor/parceiro (hideClientPct) continuam no REAL.
+                    if (!$hideClientPct) {
+                        $billMin = (int) round($ts->billableMinutes());
+                        if ($billMin !== (int) $ts->effort_minutes) {
+                            $arr['effort_minutes'] = $billMin;
+                            $h = $billMin / 60;
+                            $arr['effort_hours'] = rtrim(rtrim(number_format($h, 2, ',', ''), '0'), ',') ?: '0';
+                            // FIM ajustado = INÍCIO + minutos faturáveis (só quando há horário de início).
+                            if ($ts->start_time) {
+                                $start = $ts->start_time instanceof \Carbon\Carbon
+                                    ? $ts->start_time->copy() : \Carbon\Carbon::parse((string) $ts->start_time);
+                                $arr['end_time'] = $start->addMinutes($billMin)->format('H:i');
+                            }
+                            $arr['hours_inflated'] = true;
+                        }
+                    }
                     if (isset($arr['ticket_solicitante']) && is_string($arr['ticket_solicitante'])) {
                         $arr['ticket_solicitante'] = json_decode($arr['ticket_solicitante'], true);
                     }

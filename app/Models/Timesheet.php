@@ -85,6 +85,7 @@ class Timesheet extends Model
         'manual_project_edit' => 'boolean',
         'date_locked'         => 'boolean',
         'client_extra_pct'    => 'decimal:2',
+        'contract_client_pct' => 'decimal:2', // derivado da regra do contrato (mantido pelo serviço)
         'consultant_extra_pct'=> 'decimal:2',
         'start_time' => 'datetime:H:i',
         'end_time' => 'datetime:H:i',
@@ -120,6 +121,17 @@ class Timesheet extends Model
         static::saving(function ($timesheet) {
             $timesheet->calculateEffort();
         });
+
+        // % de uplift do cliente DERIVADO da regra do contrato (denormaliza p/ a cobrança
+        // ler sem join). Só recalcula quando muda projeto/data (ou é novo) — update de
+        // status não mexe. É lado-cliente puro: consultor/parceiro NUNCA lê contract_client_pct.
+        static::saving(function ($timesheet) {
+            if ($timesheet->project_id && $timesheet->date &&
+                (!$timesheet->exists || $timesheet->isDirty('project_id') || $timesheet->isDirty('date'))) {
+                $timesheet->contract_client_pct = app(\App\Services\ContractHourMultiplierService::class)
+                    ->pctForTimesheet((int) $timesheet->project_id, $timesheet->date);
+            }
+        });
     }
 
     /**
@@ -137,6 +149,25 @@ class Timesheet extends Model
             self::STATUS_RELEASED             => 'Liberado',
             self::STATUS_LATE                 => 'Atraso (pós-fechamento)',
         ];
+    }
+
+    /**
+     * Minutos FATURÁVEIS ao cliente = minutos reais × (1 + uplift efetivo).
+     * Uplift efetivo = COALESCE(contract_client_pct, client_extra_pct, 0) — a regra do
+     * CONTRATO vence (decisão B); manual só como fallback. É o ÚNICO lugar do acréscimo:
+     * as rotinas do lado cliente leem billableMinutes(); o CONSULTOR/PARCEIRO lê
+     * effort_minutes cru e NUNCA passa por aqui (fica sempre no real).
+     */
+    public function billableMinutes(): float
+    {
+        $pct = (float) ($this->contract_client_pct ?? $this->client_extra_pct ?? 0);
+        return ((float) $this->effort_minutes) * (1 + $pct / 100);
+    }
+
+    /** Horas faturáveis ao cliente (decimais), arredondadas a 2 casas. */
+    public function billableHours(): float
+    {
+        return round($this->billableMinutes() / 60, 2);
     }
 
     /**

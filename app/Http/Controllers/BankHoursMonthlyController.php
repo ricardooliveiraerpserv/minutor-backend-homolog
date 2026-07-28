@@ -425,7 +425,7 @@ class BankHoursMonthlyController extends Controller
                     // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
                     $parentLoggedMinutes = $parentProject->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
-                        ->sum('effort_minutes') ?? 0;
+                        ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $parentLoggedHours = round($parentLoggedMinutes / 60, 2);
                     // + horas iniciais já consumidas antes do Minutor (saldo histórico). Sem isso o
                     // cliente via saldo inflado (ignorava initial_hours_consumed) ≠ Gestão de Contratos.
@@ -454,7 +454,7 @@ class BankHoursMonthlyController extends Controller
                         // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
                         $childLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
-                            ->sum('effort_minutes') ?? 0;
+                            ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours + (float) ($childProject->initial_hours_consumed ?? 0);
                     }
@@ -503,7 +503,7 @@ class BankHoursMonthlyController extends Controller
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
             }
 
@@ -516,7 +516,7 @@ class BankHoursMonthlyController extends Controller
                     $childMonthLoggedMinutes = $childProject->timesheets()
                         ->whereIn('status', ['approved', 'pending'])
                         ->whereBetween('date', [$monthStart, $monthEnd])
-                        ->sum('effort_minutes') ?? 0;
+                        ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                 }
             }
@@ -551,7 +551,7 @@ class BankHoursMonthlyController extends Controller
                 if ($isClosedContract) {
                     $accum += $proj->getTotalAvailableHours();
                 } else {
-                    $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum('effort_minutes') ?? 0;
+                    $mins = $proj->timesheets()->whereIn('status', ['approved', 'pending'])->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                     $accum += round($mins / 60, 2);
                 }
 
@@ -559,7 +559,7 @@ class BankHoursMonthlyController extends Controller
                 $mins = $proj->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $accumMonth += round($mins / 60, 2);
             };
 
@@ -4512,7 +4512,7 @@ class BankHoursMonthlyController extends Controller
                 $parentMonthLoggedMinutes = $parentProject->timesheets()
                     ->whereIn('status', ['approved', 'pending'])
                     ->whereBetween('date', [$monthStart, $monthEnd])
-                    ->sum('effort_minutes') ?? 0;
+                    ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                 $monthConsumedHours += round($parentMonthLoggedMinutes / 60, 2);
 
                 if ($parentProject->hasChildProjects()) {
@@ -4520,7 +4520,7 @@ class BankHoursMonthlyController extends Controller
                         $childMonthLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
                             ->whereBetween('date', [$monthStart, $monthEnd])
-                            ->sum('effort_minutes') ?? 0;
+                            ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $monthConsumedHours += round($childMonthLoggedMinutes / 60, 2);
                     }
                 }
