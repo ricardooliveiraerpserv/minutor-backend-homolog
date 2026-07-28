@@ -1703,29 +1703,22 @@ class ProjectController extends Controller
             unset($validated['extrato_visivel_cliente']);
         }
 
-        // Override de coordenador para projetos de sustentação:
-        // - Só admin pode setar/limpar
-        // - Só pra projetos cujo service_type seja sustentação
-        // - Sincroniza com Contract Kanban (migra card pra coluna do coord ou
-        //   devolve pra fila de sustentação correta).
+        // Override de coordenador no Kanban:
+        // - Só admin pode setar/limpar.
+        // - Permitido em QUALQUER projeto (decisão Ricardo 2026-07-28): projeto normal
+        //   pode ir pra coluna de qualquer coordenador; sustentação segue valendo pras
+        //   filhas (Banco de Horas fixo/mensal, On Demand etc.). Antes era travado só
+        //   pra sustentação ("Override de coordenador só é permitido em projetos de
+        //   sustentação"), o que barrava o arrasto de projetos normais.
+        // - O override só reroteia visão/aprovação de apontamento pro coordenador de
+        //   destino; NÃO altera os coordenadores cadastrados (M2M) do projeto.
+        // - Sincroniza com Contract Kanban (migra card pra coluna do coord ou devolve
+        //   pra fila de sustentação correta).
         $overrideKey = 'kanban_coordinator_override_id';
         $overrideInValidated = array_key_exists($overrideKey, $validated);
-        if ($overrideInValidated) {
-            if (!auth()->user()->isAdmin()) {
-                unset($validated[$overrideKey]);
-                $overrideInValidated = false;
-            } else {
-                $project->loadMissing('serviceType');
-                $svcCode = $project->serviceType?->code;
-                $svcName = strtolower(trim((string) $project->serviceType?->name));
-                $isSustentacao = $svcCode === 'sustentacao' || str_contains($svcName, 'sustenta');
-                if (!$isSustentacao && !empty($validated[$overrideKey])) {
-                    return response()->json([
-                        'code' => 'OVERRIDE_NOT_ALLOWED',
-                        'message' => 'Override de coordenador só é permitido em projetos de sustentação.',
-                    ], 422);
-                }
-            }
+        if ($overrideInValidated && !auth()->user()->isAdmin()) {
+            unset($validated[$overrideKey]);
+            $overrideInValidated = false;
         }
 
         // Movidesk integration flag (mesma regra do store): no máximo 1 por cliente.
