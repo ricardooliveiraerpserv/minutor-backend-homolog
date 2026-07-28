@@ -59,18 +59,31 @@ class HelpDeskEmailIngestor
                 continue;
             }
             $sum['accounts']++;
-            $messages = GraphMailReader::recentMessages((string) $acc->email, $perAccount);
-            // Mais antigas primeiro, p/ manter a ordem cronológica das respostas.
-            $messages = array_reverse($messages);
 
-            foreach ($messages as $msg) {
-                $sum['fetched']++;
-                try {
-                    $this->processOne($acc, $msg, $sum);
-                } catch (\Throwable $e) {
-                    $sum['errors']++;
-                    $sum['details'][] = "Conta #{$acc->id}: erro em '" . ($msg['id'] ?? '?') . "': " . $e->getMessage();
+            // Ingestão roda em job background (cron), SEM empresa corrente. Com o multi-empresa
+            // ligado (homolog), o trait BelongsToCompany carimba company_id e o CompanyScope
+            // escopa numeração/queries pela empresa ATIVA — sem contexto, o ticket nasce órfão
+            // (invisível na UI), casa triggers de forma errada e o número do chamado colide.
+            // Fixa a empresa dona da caixa durante o processamento desta conta (inerte em prod,
+            // onde multiempresa.scoping_enabled = false).
+            $companyCtx = app(\App\Services\CompanyContext::class);
+            $companyCtx->set($acc->company_id);
+            try {
+                $messages = GraphMailReader::recentMessages((string) $acc->email, $perAccount);
+                // Mais antigas primeiro, p/ manter a ordem cronológica das respostas.
+                $messages = array_reverse($messages);
+
+                foreach ($messages as $msg) {
+                    $sum['fetched']++;
+                    try {
+                        $this->processOne($acc, $msg, $sum);
+                    } catch (\Throwable $e) {
+                        $sum['errors']++;
+                        $sum['details'][] = "Conta #{$acc->id}: erro em '" . ($msg['id'] ?? '?') . "': " . $e->getMessage();
+                    }
                 }
+            } finally {
+                $companyCtx->forget();
             }
         }
 
@@ -226,10 +239,6 @@ class HelpDeskEmailIngestor
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $acc->default_team_id,
-                // Ingestão roda em job background (cron) — sem empresa corrente, o trait de
-                // multi-empresa não preenche company_id e o ticket nasce órfão (invisível na UI
-                // e sem casar triggers por empresa). Fixa a empresa dona da caixa.
-                'company_id'          => $acc->company_id,
                 'source_system'       => 'email:graph',
                 // id do Graph é longo (>120); guardamos um hash curto aqui e o id completo no ledger.
                 'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
@@ -331,7 +340,6 @@ class HelpDeskEmailIngestor
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $prev->team_id ?: $acc->default_team_id,
-                'company_id'          => $prev->company_id ?: $acc->company_id, // background: fixa empresa (segue o anterior)
                 'source_system'       => 'email:graph',
                 'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
                 'last_activity_at'    => $receivedAt,

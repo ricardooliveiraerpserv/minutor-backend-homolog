@@ -58,8 +58,9 @@ class HelpDeskMailComposer
         $barColor   = $sm['breached'] ? '#ef4444' : $sm['color'];
         $clienteVal = optional($ticket->customer)->name;
         $agenteVal  = optional($ticket->assignee)->name;
-        $atualizado = optional($ticket->updated_at)->format('d/m/Y H:i');
-        $aberto     = optional($ticket->created_at)->format('d/m/Y H:i');
+        // Servidor roda em UTC; exibe no fuso de São Paulo (mesma convenção do HelpDeskTicketController).
+        $atualizado = $ticket->updated_at ? $ticket->updated_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : null;
+        $aberto     = $ticket->created_at ? $ticket->created_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : null;
         $ctaUrl     = HelpDeskTriggerEngine::render('{ticket.url}', $ticket);
         $ctaLabel   = e($tpl->button_label ?: 'Acompanhar chamado');
 
@@ -301,8 +302,8 @@ class HelpDeskMailComposer
                 'Equipe' => (string) optional($ticket->team)->name,
             ]),
             'sla' => self::blockTable('SLA', [
-                '1ª resposta' => $ticket->first_response_due_at ? $ticket->first_response_due_at->format('d/m/Y H:i') : '—',
-                'Resolução'   => $ticket->resolution_due_at ? $ticket->resolution_due_at->format('d/m/Y H:i') : '—',
+                '1ª resposta' => $ticket->first_response_due_at ? $ticket->first_response_due_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—',
+                'Resolução'   => $ticket->resolution_due_at ? $ticket->resolution_due_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—',
                 'Situação'    => $ticket->resolution_breached ? 'SLA vencido' : 'Dentro do prazo',
             ]),
             'button' => self::blockButton($ticket, $color),
