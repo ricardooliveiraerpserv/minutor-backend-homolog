@@ -231,6 +231,7 @@ class HelpDeskMailComposer
         $status   = e((string) (optional($ticket->status)->label ?: '—'));
         $resp     = e((string) (optional($ticket->assignee)->name ?: 'Não atribuído'));
         $ref      = trim((string) $ticket->external_ticket_ref);
+        $stKey    = (string) optional($ticket->status)->key;
         $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
 
         return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
@@ -240,10 +241,13 @@ class HelpDeskMailComposer
             .   '<strong>Data de abertura:</strong> ' . e($abertura) . '<br>'
             .   '<strong>Último status:</strong> ' . $status . '<br>'
             .   '<strong>Responsável:</strong> ' . $resp
-            .   ($ref !== '' ? '<br><strong>Fornecedor:</strong> ' . e($ref) : '')
+            .   (($ref !== '' && $stKey === 'pendente_terceiros') ? '<br><strong>Fornecedor:</strong> ' . e($ref) : '')
             . '</div>'
             . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
             . '<div style="font-size:14px;font-weight:bold;color:#111827;margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #e5e7eb">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
+            . ($stKey === 'aguardando_cliente'
+                ? '<div style="font-size:14px;color:#374151;background:#f5f3ff;border-left:3px solid #7c3aed;padding:10px 12px;border-radius:6px;margin:0 0 16px">⏳ <strong>Aguardamos o seu retorno</strong> para darmos continuidade ao atendimento do seu chamado.</div>'
+                : '')
             . '</div>';
     }
 
