@@ -246,11 +246,9 @@ class HelpDeskMailComposer
             $aviso = '<div style="' . $avStyle . '">🛠️ Sua solicitação está <strong>em desenvolvimento</strong>.'
                 . ($schedTxt !== '' ? ' A previsão de entrega é <strong>' . e($schedTxt) . '</strong>.' : '')
                 . '</div>';
-        } elseif ($stKey === 'pendente_terceiros') {
-            $aviso = '<div style="' . $avStyle . '">🤝 Sua solicitação está sendo <strong>tratada junto ao fornecedor</strong>'
-                . ($fornec !== '' ? ' <strong>' . e($fornec) . '</strong>' : '')
-                . '. Assim que houver retorno, atualizaremos o status do seu chamado.</div>';
         }
+        // Obs.: "Pendente terceiros" NÃO tem aviso de cabeçalho — a mensagem (caixa) já é a própria
+        // interação enviada pelo fluxo de fornecedor (evita a mensagem em dobro).
         $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
 
         return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
