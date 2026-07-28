@@ -266,6 +266,19 @@ class HelpDeskMailComposer
             . '</div>';
     }
 
+    /** Botões Aceitar/Recusar quando o chamado está RESOLVIDO (aguardando aceite) — o cliente decide do e-mail, sem login. */
+    public static function acceptButtonsHtml(HelpDeskTicket $ticket): string
+    {
+        if (!(optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal)) return '';
+        $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept');
+        $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject');
+        return '<div style="margin:22px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px">'
+            . '<div style="font-size:13px;color:#4b5563;margin:0 0 12px">A solução resolveu o seu chamado? Você pode responder direto por aqui:</div>'
+            . '<a href="' . e($aUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#16a34a;text-decoration:none;border-radius:8px;margin:0 8px 8px 0">&#10003; Aceitar e encerrar</a>'
+            . '<a href="' . e($rUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#ef4444;text-decoration:none;border-radius:8px;margin:0 8px 8px 0">&#10007; Recusar solução</a>'
+            . '</div>';
+    }
+
     /**
      * Histórico da conversa visível ao cliente (abertura + interações públicas), do mais recente
      * ao mais antigo, para embutir no corpo do e-mail de atualização (estilo Movidesk: "um e-mail

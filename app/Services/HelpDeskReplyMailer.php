@@ -48,6 +48,7 @@ class HelpDeskReplyMailer
         // com o fio inteiro (no espírito do portal do fornecedor). Exclui o próprio comentário atual.
         $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
             . (string) $comment->body
+            . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar
             . \App\Services\HelpDeskMailComposer::conversationHistoryHtml($ticket, (int) $comment->id);
         [$html, $inlineImgs] = self::treatBody($bodyWithHistory);
         $attachments = array_merge($inlineImgs, self::commentAttachments($comment));
