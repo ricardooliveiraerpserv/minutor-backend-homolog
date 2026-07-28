@@ -80,6 +80,21 @@ class HelpDeskAcceptController extends Controller
         HelpDeskTicketEvent::log($ticket->id, 'closed', ['to_value' => $fechado->label, 'meta' => ['via' => 'email', 'aceite_cliente' => true]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $fechado->key, 'meta' => ['via' => 'email']]);
 
+        // Cliente aceitou pelo e-mail → dispara os gatilhos de encerramento (ex.: "Chamado encerrado
+        // → cliente") pra enviar o e-mail de encerramento. Sem actor_email: o próprio cliente recebe.
+        // CompanyContext fixado na empresa do chamado → não casa o gatilho duplicado de outra empresa.
+        try {
+            $companyCtx = app(\App\Services\CompanyContext::class);
+            $companyCtx->set($ticket->company_id);
+            try {
+                \App\Services\HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['via' => 'email_aceite']);
+            } finally {
+                $companyCtx->forget();
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail de encerramento (aceite) falhou: ' . $e->getMessage());
+        }
+
         return $this->page('Chamado encerrado', '<p>Prontinho! O chamado <b>' . e($ticket->ticket_number ?: ('#' . $ticket->id))
             . '</b> foi encerrado. Obrigado pelo retorno. 👍</p><p style="color:#6b7280;font-size:13px;margin-top:12px">Você já pode fechar esta página.</p>');
     }
