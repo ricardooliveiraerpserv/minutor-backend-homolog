@@ -232,6 +232,25 @@ class HelpDeskMailComposer
         $resp     = e((string) (optional($ticket->assignee)->name ?: 'Não atribuído'));
         $ref      = trim((string) $ticket->external_ticket_ref);
         $stKey    = (string) optional($ticket->status)->key;
+        // Prazo de entrega = data informada no chamado (agendamento). All-day → só a data.
+        $schedTxt = $ticket->scheduled_until
+            ? \Illuminate\Support\Carbon::parse($ticket->scheduled_until)->timezone('America/Sao_Paulo')->format($ticket->scheduled_all_day ? 'd/m/Y' : 'd/m/Y \à\s H:i') . ($ticket->scheduled_all_day ? '' : ' BRT')
+            : '';
+        // Aviso automático ao cliente conforme o status — mesma caixa destacada.
+        $avStyle = 'font-size:14px;color:#374151;background:#f5f3ff;border-left:3px solid #7c3aed;padding:10px 12px;border-radius:6px;margin:0 0 16px';
+        $fornec  = $ref !== '' ? trim((string) preg_replace('/\s*#.*$/', '', $ref)) : '';
+        $aviso = '';
+        if ($stKey === 'aguardando_cliente') {
+            $aviso = '<div style="' . $avStyle . '">⏳ <strong>Aguardamos o seu retorno</strong> para darmos continuidade ao atendimento do seu chamado.</div>';
+        } elseif ($stKey === 'em_desenvolvimento') {
+            $aviso = '<div style="' . $avStyle . '">🛠️ Sua solicitação está <strong>em desenvolvimento</strong>.'
+                . ($schedTxt !== '' ? ' A previsão de entrega é <strong>' . e($schedTxt) . '</strong>.' : '')
+                . '</div>';
+        } elseif ($stKey === 'pendente_terceiros') {
+            $aviso = '<div style="' . $avStyle . '">🤝 Sua solicitação está sendo <strong>tratada junto ao fornecedor</strong>'
+                . ($fornec !== '' ? ' <strong>' . e($fornec) . '</strong>' : '')
+                . '. Assim que houver retorno, atualizaremos o status do seu chamado.</div>';
+        }
         $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
 
         return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
@@ -245,9 +264,7 @@ class HelpDeskMailComposer
             . '</div>'
             . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
             . '<div style="font-size:14px;font-weight:bold;color:#111827;margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #e5e7eb">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
-            . ($stKey === 'aguardando_cliente'
-                ? '<div style="font-size:14px;color:#374151;background:#f5f3ff;border-left:3px solid #7c3aed;padding:10px 12px;border-radius:6px;margin:0 0 16px">⏳ <strong>Aguardamos o seu retorno</strong> para darmos continuidade ao atendimento do seu chamado.</div>'
-                : '')
+            . $aviso
             . '</div>';
     }
 
