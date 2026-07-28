@@ -309,8 +309,9 @@ class HelpDeskMailComposer
         }
 
         // Interações visíveis ao cliente (agente e cliente).
-        // Só as últimas 15 interações — bound de tamanho/partes do e-mail (evita o limite do Exchange).
-        $comments = $ticket->comments()->where('visibility', 'customer')->orderByDesc('id')->limit(15)->get()->sortBy('id')->values();
+        // Histórico COMPLETO (sem cap). O que estourava as 250 partes do Exchange eram as IMAGENS
+        // (cada logo/assinatura antigo virava anexo inline); com noImg abaixo, texto integral é seguro.
+        $comments = $ticket->comments()->where('visibility', 'customer')->orderBy('created_at')->orderBy('id')->get();
         foreach ($comments as $c) {
             if ($excludeCommentId && (int) $c->id === (int) $excludeCommentId) continue;
             $who = $c->author_user_id
