@@ -112,7 +112,12 @@ class SignatureRenderer
         $sig = is_array($u->signature) ? $u->signature : [];
         // Cargo EFETIVO: se o usuário personalizou (custom_cargo), usa o cargo próprio; senão usa o
         // padrão do perfil (cadastro Cargos por Perfil) — sempre fresco, sem depender do que ficou salvo.
-        $custom = !empty($sig['custom_cargo']);
+        // Retrocompat: assinaturas antigas guardaram o cargo em 'role' SEM o flag custom_cargo.
+        // Se o flag não existe mas há um cargo salvo, honra o cargo digitado (senão o do perfil o
+        // sobrescreveria e a mudança do usuário "sumia"). Com o flag presente, respeita a escolha.
+        $custom = array_key_exists('custom_cargo', $sig)
+            ? !empty($sig['custom_cargo'])
+            : trim((string) ($sig['role'] ?? '')) !== '';
         $sig['role'] = $custom
             ? trim((string) ($sig['role'] ?? ''))
             : (string) \App\Models\ProfileCargo::forProfile($u->type);
