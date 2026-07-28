@@ -266,6 +266,16 @@ class HelpDeskMailComposer
             . '</div>';
     }
 
+    /**
+     * Remove imagens do HTML (logos/assinaturas/prints). Usado no bloco de histórico: cada resposta
+     * embute o fio inteiro e o treatBody transforma cada imagem em anexo inline (cid) — com muitas
+     * interações isso estoura o limite de PARTES do Exchange (máx. 250 body parts → NDR 554 5.3.4).
+     */
+    private static function noImg(string $html): string
+    {
+        return (string) preg_replace('#<img\b[^>]*>#i', '<span style="color:#9ca3af">[imagem]</span>', $html);
+    }
+
     /** Botões Aceitar/Recusar quando o chamado está RESOLVIDO (aguardando aceite) — o cliente decide do e-mail, sem login. */
     public static function acceptButtonsHtml(HelpDeskTicket $ticket): string
     {
@@ -294,18 +304,19 @@ class HelpDeskMailComposer
             $items[] = [
                 'when' => $ticket->created_at,
                 'who'  => (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente'),
-                'html' => self::richHtml((string) $ticket->description),
+                'html' => self::noImg(self::richHtml((string) $ticket->description)),
             ];
         }
 
         // Interações visíveis ao cliente (agente e cliente).
-        $comments = $ticket->comments()->where('visibility', 'customer')->orderBy('created_at')->orderBy('id')->get();
+        // Só as últimas 15 interações — bound de tamanho/partes do e-mail (evita o limite do Exchange).
+        $comments = $ticket->comments()->where('visibility', 'customer')->orderByDesc('id')->limit(15)->get()->sortBy('id')->values();
         foreach ($comments as $c) {
             if ($excludeCommentId && (int) $c->id === (int) $excludeCommentId) continue;
             $who = $c->author_user_id
                 ? (optional(\App\Models\User::find($c->author_user_id))->name ?: 'Suporte ERPSERV')
                 : (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente');
-            $items[] = ['when' => $c->created_at, 'who' => $who, 'html' => self::richHtml((string) $c->body)];
+            $items[] = ['when' => $c->created_at, 'who' => $who, 'html' => self::noImg(self::richHtml((string) $c->body))];
         }
 
         if (empty($items)) return '';
