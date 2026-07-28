@@ -214,6 +214,35 @@ class HelpDeskMailComposer
      * é invertida pelos clientes e o logo é imagem). Corpo claro com tema ESCURO intencional via
      * media query (clientes que honram). Default do logo = cid do logo branco.
      */
+    /** Marcador de corte: o cliente escreve ACIMA desta linha; o ingestor descarta o que vier abaixo. */
+    public const REPLY_DELIMITER = '##– Não escreva abaixo desta linha –##';
+
+    /**
+     * Cabeçalho de status do e-mail de ATUALIZAÇÃO (estilo portal TOTVS/Movidesk): marcador de
+     * "não escreva abaixo desta linha" + nº, data de abertura e último status + "sua solicitação
+     * foi atualizada". Vai no TOPO do e-mail — assim, quando o cliente responder, o texto novo
+     * dele fica acima do marcador e o histórico citado é cortado na ingestão.
+     */
+    public static function updateHeaderHtml(HelpDeskTicket $ticket): string
+    {
+        $tz       = 'America/Sao_Paulo';
+        $num      = e((string) ($ticket->ticket_number ?: ('#' . $ticket->id)));
+        $abertura = $ticket->created_at ? $ticket->created_at->copy()->timezone($tz)->format('d/m/Y \à\s H:i') . ' BRT' : '—';
+        $status   = e((string) (optional($ticket->status)->label ?: '—'));
+        $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
+
+        return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
+            . '<div style="color:#9ca3af;font-size:11px;margin:0 0 12px">' . e(self::REPLY_DELIMITER) . '</div>'
+            . '<div style="font-size:13px;color:#374151;line-height:1.6;margin:0 0 10px">'
+            .   '<strong>Solicitação nº:</strong> ' . $num . '<br>'
+            .   '<strong>Data de abertura:</strong> ' . e($abertura) . '<br>'
+            .   '<strong>Último status:</strong> ' . $status
+            . '</div>'
+            . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
+            . '<div style="font-size:14px;margin:0 0 14px">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
+            . '</div>';
+    }
+
     /**
      * Histórico da conversa visível ao cliente (abertura + interações públicas), do mais recente
      * ao mais antigo, para embutir no corpo do e-mail de atualização (estilo Movidesk: "um e-mail

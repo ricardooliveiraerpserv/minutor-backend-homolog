@@ -46,7 +46,8 @@ class HelpDeskReplyMailer
         // bloqueado pela maioria dos clientes de e-mail — e o HTML é envelopado.
         // Anexa o HISTÓRICO da conversa (visível ao cliente) abaixo da nova resposta — "e-mail único"
         // com o fio inteiro (no espírito do portal do fornecedor). Exclui o próprio comentário atual.
-        $bodyWithHistory = (string) $comment->body
+        $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
+            . (string) $comment->body
             . \App\Services\HelpDeskMailComposer::conversationHistoryHtml($ticket, (int) $comment->id);
         [$html, $inlineImgs] = self::treatBody($bodyWithHistory);
         $attachments = array_merge($inlineImgs, self::commentAttachments($comment));

@@ -108,6 +108,8 @@ class HelpDeskEmailIngestor
         $fromName  = trim((string) data_get($msg, 'from.emailAddress.name', '')) ?: $fromEmail;
         $subject   = trim((string) ($msg['subject'] ?? '')) ?: '(sem assunto)';
         $body      = (string) (data_get($msg, 'body.content') ?: data_get($msg, 'bodyPreview', ''));
+        // Corta o histórico citado: mantém só o que o cliente escreveu ACIMA do marcador do e-mail anterior.
+        $body      = $this->stripQuotedHistory($body);
         $receivedAt = ($r = data_get($msg, 'receivedDateTime')) ? Carbon::parse($r) : now();
 
         // Anti-loop: ignora e-mail enviado pela própria caixa (cópia/auto-resposta).
@@ -517,6 +519,27 @@ class HelpDeskEmailIngestor
                 'email' => $email, 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Corta o histórico citado das respostas de e-mail: quando o cliente responde a um e-mail de
+     * atualização, tudo a partir do marcador "não escreva abaixo desta linha" é o e-mail anterior
+     * (nosso cabeçalho + thread) e deve ser descartado — só o texto NOVO (acima) vira interação.
+     * Abertura nova (sem o marcador) é no-op.
+     */
+    private function stripQuotedHistory(string $html): string
+    {
+        if ($html === '') return $html;
+        if (preg_match('/n[aã]o\s+escreva\s+abaixo\s+desta\s+linha/iu', $html, $m, PREG_OFFSET_CAPTURE)) {
+            $cut = substr($html, 0, (int) $m[0][1]);
+            // recua até o início da tag que contém o marcador, p/ não deixar tag meia-aberta
+            $lastLt = strrpos($cut, '<');
+            if ($lastLt !== false && strpos($cut, '>', $lastLt) === false) {
+                $cut = substr($cut, 0, $lastLt);
+            }
+            $html = rtrim($cut);
+        }
+        return $html;
     }
 
     private function ledger(
