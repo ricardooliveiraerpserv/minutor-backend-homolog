@@ -96,8 +96,11 @@ class HelpDeskEmailIngestor
         $messageId = (string) ($msg['id'] ?? '');
         if ($messageId === '') return;
 
-        // Dedup: já processado?
-        if (HelpDeskIngestedEmail::where('email_account_id', $acc->id)->where('graph_message_id', $messageId)->exists()) {
+        // Dedup: já processado? Checagem GLOBAL (bypass do CompanyScope): o graph_message_id é
+        // único por caixa, independe de empresa. Como agora processamos sob o CompanyContext da
+        // conta, escopar o dedup por empresa faria linhas de ledger sem company_id (legado) ou de
+        // outra empresa escaparem da checagem e o e-mail ser reprocessado em loop a cada rodada.
+        if (HelpDeskIngestedEmail::withoutGlobalScopes()->where('email_account_id', $acc->id)->where('graph_message_id', $messageId)->exists()) {
             return;
         }
 
