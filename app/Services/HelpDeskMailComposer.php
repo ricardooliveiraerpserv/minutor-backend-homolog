@@ -229,6 +229,7 @@ class HelpDeskMailComposer
         $num      = e((string) ($ticket->ticket_number ?: ('#' . $ticket->id)));
         $abertura = $ticket->created_at ? $ticket->created_at->copy()->timezone($tz)->format('d/m/Y \à\s H:i') . ' BRT' : '—';
         $status   = e((string) (optional($ticket->status)->label ?: '—'));
+        $resp     = e((string) (optional($ticket->assignee)->name ?: 'Não atribuído'));
         $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
 
         return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
@@ -236,7 +237,8 @@ class HelpDeskMailComposer
             . '<div style="font-size:13px;color:#374151;line-height:1.6;margin:0 0 10px">'
             .   '<strong>Solicitação nº:</strong> ' . $num . '<br>'
             .   '<strong>Data de abertura:</strong> ' . e($abertura) . '<br>'
-            .   '<strong>Último status:</strong> ' . $status
+            .   '<strong>Último status:</strong> ' . $status . '<br>'
+            .   '<strong>Responsável:</strong> ' . $resp
             . '</div>'
             . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
             . '<div style="font-size:14px;font-weight:bold;color:#111827;margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #e5e7eb">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
