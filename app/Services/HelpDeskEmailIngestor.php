@@ -226,6 +226,10 @@ class HelpDeskEmailIngestor
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $acc->default_team_id,
+                // Ingestão roda em job background (cron) — sem empresa corrente, o trait de
+                // multi-empresa não preenche company_id e o ticket nasce órfão (invisível na UI
+                // e sem casar triggers por empresa). Fixa a empresa dona da caixa.
+                'company_id'          => $acc->company_id,
                 'source_system'       => 'email:graph',
                 // id do Graph é longo (>120); guardamos um hash curto aqui e o id completo no ledger.
                 'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
@@ -237,7 +241,10 @@ class HelpDeskEmailIngestor
         });
         $sum['tickets']++;
         $this->storeFiles('HELPDESK_TICKET', $ticket->id, $inboundFiles);
-        HelpDeskTriggerEngine::dispatch('ticket_created', $ticket->fresh(), ['comment_by' => 'client', 'actor_email' => $fromEmail]);
+        // Sem actor_email: num ticket aberto por e-mail o "cliente" É quem disparou; com
+        // actor_email o skip_actor do trigger de confirmação (#1) zerava os destinatários e
+        // o cliente nunca recebia o e-mail com o nº do chamado. (comment_added mantém actor_email.)
+        HelpDeskTriggerEngine::dispatch('ticket_created', $ticket->fresh(), ['comment_by' => 'client']);
         $sum['details'][] = "✅ Chamado {$ticket->ticket_number} aberto de {$fromEmail}: \"{$subject}\".";
         $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
     }
@@ -324,6 +331,7 @@ class HelpDeskEmailIngestor
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $prev->team_id ?: $acc->default_team_id,
+                'company_id'          => $prev->company_id ?: $acc->company_id, // background: fixa empresa (segue o anterior)
                 'source_system'       => 'email:graph',
                 'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
                 'last_activity_at'    => $receivedAt,
