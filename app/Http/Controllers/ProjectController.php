@@ -3561,8 +3561,11 @@ class ProjectController extends Controller
      * abertos do cliente, não-investimento) + o mapa atual de escolhas por consultor.
      * GET /projects/{project}/real-project-assignments
      */
-    public function realProjectAssignments(Request $request, Project $project): JsonResponse
+    public function realProjectAssignments(Request $request, $project): JsonResponse
     {
+        // Investimento é cross-empresa (projeto carimbado company_id=1 mas gerido sob
+        // qualquer empresa ativa) — resolve fora do global scope, senão o binding falha (422).
+        $project = Project::withoutCompanyScope()->findOrFail($project);
         $user = Auth::user();
         if (!$user->isAdmin() && !$user->isCoordenador() && !$user->isAdministrativo()) {
             return response()->json(['message' => 'Acesso negado'], 403);
@@ -3607,8 +3610,11 @@ class ProjectController extends Controller
      * cai no fallback: todos os reais abertos do cliente (não bloqueia o apontamento).
      * GET /projects/{project}/real-project-options?user_id=X
      */
-    public function realProjectOptions(Request $request, Project $project): JsonResponse
+    public function realProjectOptions(Request $request, $project): JsonResponse
     {
+        // Investimento é cross-empresa (projeto carimbado company_id=1 mas gerido sob
+        // qualquer empresa ativa) — resolve fora do global scope, senão o binding falha (422).
+        $project = Project::withoutCompanyScope()->findOrFail($project);
         $currentUser = Auth::user();
         $targetUserId = (int) ($request->get('user_id') ?: $currentUser->id);
         if ($targetUserId !== (int) $currentUser->id
@@ -3653,8 +3659,11 @@ class ProjectController extends Controller
      * poder de editar os demais campos do projeto.
      * PATCH /projects/{project}/investment-allocation
      */
-    public function updateInvestmentAllocation(Request $request, Project $project): JsonResponse
+    public function updateInvestmentAllocation(Request $request, $project): JsonResponse
     {
+        // Investimento é cross-empresa (projeto carimbado company_id=1 mas gerido sob
+        // qualquer empresa ativa) — resolve fora do global scope, senão o binding falha (422).
+        $project = Project::withoutCompanyScope()->findOrFail($project);
         if (!$project->is_investimento_comercial) {
             return response()->json(['message' => 'Alocação de investimento só se aplica a projetos de investimento.'], 422);
         }
