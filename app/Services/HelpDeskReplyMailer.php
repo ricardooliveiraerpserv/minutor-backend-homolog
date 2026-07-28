@@ -44,7 +44,11 @@ class HelpDeskReplyMailer
 
         // Trata o corpo: prints colados (data:image) viram imagens inline (cid) — data: é
         // bloqueado pela maioria dos clientes de e-mail — e o HTML é envelopado.
-        [$html, $inlineImgs] = self::treatBody((string) $comment->body);
+        // Anexa o HISTÓRICO da conversa (visível ao cliente) abaixo da nova resposta — "e-mail único"
+        // com o fio inteiro (no espírito do portal do fornecedor). Exclui o próprio comentário atual.
+        $bodyWithHistory = (string) $comment->body
+            . \App\Services\HelpDeskMailComposer::conversationHistoryHtml($ticket, (int) $comment->id);
+        [$html, $inlineImgs] = self::treatBody($bodyWithHistory);
         $attachments = array_merge($inlineImgs, self::commentAttachments($comment));
 
         $cc = array_values(array_filter((array) $ticket->cc_emails, fn ($e) => $e && strcasecmp($e, $to) !== 0));
@@ -53,7 +57,7 @@ class HelpDeskReplyMailer
         // nosso documento, quebrando a estrutura e fazendo o cliente ignorar color-scheme:light
         // (voltava a inverter p/ dark). Sem ele, o card claro é respeitado.
         [$ok, $err] = GraphMailSender::sendAs(
-            (string) $from->email, [$to], $cc, self::subjectFor($ticket), $html, [], $attachments, false
+            (string) $from->email, [$to], $cc, self::subjectFor($ticket), $html, [], $attachments, false, [], $ticket->graph_thread_msg_id
         );
         if (!$ok) {
             Log::warning("HelpDesk: e-mail de resposta falhou ({$ticket->ticket_number} → {$to}): {$err}");

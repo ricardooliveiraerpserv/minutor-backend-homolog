@@ -214,6 +214,52 @@ class HelpDeskMailComposer
      * é invertida pelos clientes e o logo é imagem). Corpo claro com tema ESCURO intencional via
      * media query (clientes que honram). Default do logo = cid do logo branco.
      */
+    /**
+     * Histórico da conversa visível ao cliente (abertura + interações públicas), do mais recente
+     * ao mais antigo, para embutir no corpo do e-mail de atualização (estilo Movidesk: "um e-mail
+     * único mantendo o histórico"). Datas no fuso de São Paulo. Exclui o comentário atual, se dado.
+     */
+    public static function conversationHistoryHtml(HelpDeskTicket $ticket, ?int $excludeCommentId = null): string
+    {
+        $tz = 'America/Sao_Paulo';
+        $items = [];
+
+        // Abertura (mensagem original do cliente).
+        if (trim(strip_tags((string) $ticket->description)) !== '') {
+            $items[] = [
+                'when' => $ticket->created_at,
+                'who'  => (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente'),
+                'html' => self::richHtml((string) $ticket->description),
+            ];
+        }
+
+        // Interações visíveis ao cliente (agente e cliente).
+        $comments = $ticket->comments()->where('visibility', 'customer')->orderBy('created_at')->orderBy('id')->get();
+        foreach ($comments as $c) {
+            if ($excludeCommentId && (int) $c->id === (int) $excludeCommentId) continue;
+            $who = $c->author_user_id
+                ? (optional(\App\Models\User::find($c->author_user_id))->name ?: 'Suporte ERPSERV')
+                : (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente');
+            $items[] = ['when' => $c->created_at, 'who' => $who, 'html' => self::richHtml((string) $c->body)];
+        }
+
+        if (empty($items)) return '';
+        $items = array_reverse($items); // mais recente primeiro
+
+        $rows = '';
+        foreach ($items as $it) {
+            $ts = $it['when'] ? $it['when']->copy()->timezone($tz)->format('d/m/Y H:i') : '';
+            $rows .= '<div style="border-left:3px solid #e5e7eb;padding:6px 0 6px 12px;margin:0 0 12px">'
+                . '<div style="font-size:12px;color:#6b7280;margin:0 0 4px"><strong style="color:#374151">' . e($it['who']) . '</strong> · ' . e($ts) . '</div>'
+                . '<div style="font-size:14px;color:#111827;line-height:1.5">' . $it['html'] . '</div>'
+                . '</div>';
+        }
+
+        return '<div style="margin:22px 0 0;border-top:1px solid #e5e7eb;padding-top:14px">'
+            . '<div style="font-size:12px;font-weight:bold;color:#374151;text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px">Histórico da conversa</div>'
+            . $rows . '</div>';
+    }
+
     public static function composeSimple(string $title, string $messageHtml, ?string $logoSrc = null, ?string $headerSubtitle = null): string
     {
         $tpl   = HelpDeskCommTemplate::current();

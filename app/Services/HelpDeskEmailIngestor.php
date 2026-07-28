@@ -242,6 +242,9 @@ class HelpDeskEmailIngestor
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $acc->default_team_id,
+                // Âncora do threading: guardamos o id Graph da msg do cliente p/ responder na MESMA
+                // conversa (createReply) — assim confirmação e respostas caem num e-mail único na caixa dele.
+                'graph_thread_msg_id' => $messageId,
                 'source_system'       => 'email:graph',
                 // id do Graph é longo (>120); guardamos um hash curto aqui e o id completo no ledger.
                 'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
@@ -272,7 +275,8 @@ class HelpDeskEmailIngestor
                 'channel'           => 'email',
                 'idempotency_key'   => 'email:' . substr(sha1($messageId), 0, 40), // id do Graph não cabe em varchar(80)
             ]);
-            $ticket->update(['last_activity_at' => $receivedAt]);
+            // Atualiza a âncora p/ a última msg do cliente → futuras respostas threadam nela.
+            $ticket->update(['last_activity_at' => $receivedAt, 'graph_thread_msg_id' => $messageId]);
             HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'visibility' => 'customer', 'via' => 'email']]);
             $this->moveToEmAndamento($ticket); // resposta do cliente reativa o chamado
             return $c;
@@ -343,6 +347,7 @@ class HelpDeskEmailIngestor
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $prev->team_id ?: $acc->default_team_id,
+                'graph_thread_msg_id' => $messageId, // âncora do threading (continuação)
                 'source_system'       => 'email:graph',
                 'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
                 'last_activity_at'    => $receivedAt,

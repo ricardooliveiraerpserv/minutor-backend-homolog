@@ -255,11 +255,11 @@ class HelpDeskTriggerEngine
             // Imagens/assinatura do chamado (data:) → cid inline, pra renderizarem no e-mail.
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
-            GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], $inline, false);
+            GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
         } else {
             $body = nl2br(self::render((string) ($params['body'] ?? ''), $ticket));
             $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . $body . '</div>';
-            GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html);
+            GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
         }
     }
 

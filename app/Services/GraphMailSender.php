@@ -74,7 +74,7 @@ class GraphMailSender
      * @param array<int,array{name:string,mime:string,bytes:string,cid?:string}> $inlineAttachments  anexos em memória (cid = imagem inline)
      * @return array{0: bool, 1: ?string}
      */
-    public static function sendAs(string $fromEmail, array $to, array $cc, string $subject, string $htmlBody, array $attachmentPaths = [], array $inlineAttachments = [], bool $withFooter = true, array $bcc = []): array
+    public static function sendAs(string $fromEmail, array $to, array $cc, string $subject, string $htmlBody, array $attachmentPaths = [], array $inlineAttachments = [], bool $withFooter = true, array $bcc = [], ?string $threadAnchorId = null): array
     {
         if (!self::enabled()) {
             return [false, 'Microsoft Graph (envio) não configurado no servidor.'];
@@ -131,9 +131,18 @@ class GraphMailSender
                 $message['attachments'][] = $entry;
             }
 
-            $token   = self::token();
-            $url     = sprintf('%s/users/%s/sendMail', self::GRAPH_BASE, rawurlencode($fromEmail));
+            $token = self::token();
 
+            // THREADING: com uma âncora (a mensagem do cliente no chamado), envia como RESPOSTA do
+            // Graph (createReply) → cai na MESMA conversa na caixa do cliente ("e-mail único" com
+            // histórico) em vez de mensagem solta. Qualquer falha no fluxo → fallback pro sendMail.
+            if ($threadAnchorId) {
+                [$tOk, $tErr] = self::sendThreadedReply($token, $fromEmail, (string) $threadAnchorId, $message);
+                if ($tOk) return [true, null];
+                \Illuminate\Support\Facades\Log::info("HelpDesk: threading indisponível ({$tErr}); enviando sem thread.");
+            }
+
+            $url  = sprintf('%s/users/%s/sendMail', self::GRAPH_BASE, rawurlencode($fromEmail));
             $resp = Http::withToken($token)->acceptJson()->asJson()
                 ->post($url, ['message' => $message, 'saveToSentItems' => true]);
 
@@ -144,6 +153,53 @@ class GraphMailSender
                 $msg = "Sem permissão Mail.Send para '{$fromEmail}' (confira a permissão de aplicativo e a Application Access Policy no Azure). ({$msg})";
             }
             return [false, $msg];
+        } catch (\Throwable $e) {
+            return [false, $e->getMessage()];
+        }
+    }
+
+    /**
+     * Envia $message (já montado) como RESPOSTA (createReply) à mensagem âncora do cliente,
+     * mantendo a MESMA conversa (conversationId/References) na caixa dele. Passos: cria o
+     * rascunho de resposta → sobrescreve assunto/corpo/destinatários → anexa arquivos → envia.
+     * Retorna [ok, erro]; qualquer falha vira [false, motivo] e o chamador faz fallback p/ sendMail.
+     *
+     * @param array<string,mixed> $message
+     * @return array{0: bool, 1: ?string}
+     */
+    private static function sendThreadedReply(string $token, string $fromEmail, string $anchorId, array $message): array
+    {
+        try {
+            $base   = sprintf('%s/users/%s', self::GRAPH_BASE, rawurlencode($fromEmail));
+            $anchor = $base . '/messages/' . rawurlencode($anchorId);
+
+            // 1) rascunho de resposta NA MESMA conversa (createReply herda conversationId/References)
+            $r = Http::withToken($token)->acceptJson()->withBody('{}', 'application/json')->post($anchor . '/createReply');
+            if (!$r->successful()) return [false, 'createReply HTTP ' . $r->status()];
+            $draftId = (string) $r->json('id');
+            if ($draftId === '') return [false, 'createReply sem id'];
+            $draft = $base . '/messages/' . rawurlencode($draftId);
+
+            // 2) sobrescreve o conteúdo (o corpo do createReply — original citado — é trocado pelo nosso)
+            $patch = Http::withToken($token)->acceptJson()->asJson()->patch($draft, [
+                'subject'      => (string) ($message['subject'] ?? ''),
+                'body'         => $message['body'] ?? ['contentType' => 'HTML', 'content' => ''],
+                'toRecipients' => $message['toRecipients'] ?? [],
+                'ccRecipients' => $message['ccRecipients'] ?? [],
+            ]);
+            if (!$patch->successful()) return [false, 'patch HTTP ' . $patch->status()];
+
+            // 3) anexos (inclusive imagens inline cid) — um POST por anexo
+            foreach ((array) ($message['attachments'] ?? []) as $att) {
+                $a = Http::withToken($token)->acceptJson()->asJson()->post($draft . '/attachments', $att);
+                if (!$a->successful()) return [false, 'attachment HTTP ' . $a->status()];
+            }
+
+            // 4) envia o rascunho (fica nos Itens Enviados, dentro da conversa)
+            $s = Http::withToken($token)->acceptJson()->withBody('{}', 'application/json')->post($draft . '/send');
+            if (!$s->successful()) return [false, 'send HTTP ' . $s->status()];
+
+            return [true, null];
         } catch (\Throwable $e) {
             return [false, $e->getMessage()];
         }
