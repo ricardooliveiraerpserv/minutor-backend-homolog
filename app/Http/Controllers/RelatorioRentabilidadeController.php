@@ -40,6 +40,7 @@ class RelatorioRentabilidadeController extends Controller
             ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
+            ->whereNotIn('user_id', $this->rentabHiddenUserIds()) // oculta usuários da Rentabilidade (config admin) — fora dos dados E dos totais
             ->get();
 
         // Metadados de custo por consultor: ['eff' => custo/hora, 'type' => hourly|monthly,
@@ -159,6 +160,7 @@ class RelatorioRentabilidadeController extends Controller
             ->where(fn ($q) => $q->whereNull('is_bizify')->orWhere('is_bizify', false))
             ->where(fn ($q) => $q->whereNull('is_diretor')->orWhere('is_diretor', false))
             ->where(fn ($q) => $q->whereNull('is_diretor_projetos')->orWhere('is_diretor_projetos', false))
+            ->whereNotIn('id', $this->rentabHiddenUserIds()) // oculta usuários da Rentabilidade (config admin)
             ->with('partner:id,pricing_type,hourly_rate');
         // Mesma empresa dos apontamentos (Timesheet é escopado por empresa quando o
         // multi-empresa está ligado): filtra os fixos pela empresa da folha ativa.
@@ -707,5 +709,37 @@ class RelatorioRentabilidadeController extends Controller
         \App\Models\SystemSetting::set('cliente_status_inativo_a_partir', (string) $data['inativo_a_partir'], 'integer', 'clientes', 'Status Inativo a partir de N meses sem receber');
 
         return response()->json(['ok' => true, 'ativo_ate' => $data['ativo_ate'], 'inativo_a_partir' => $data['inativo_a_partir']]);
+    }
+
+    /** IDs de usuários ocultados da tela de Rentabilidade (config global do admin). */
+    private function rentabHiddenUserIds(): array
+    {
+        $ids = \App\Models\SystemSetting::get('rentab_hidden_user_ids', []);
+        if (is_string($ids)) $ids = json_decode($ids, true);
+        return is_array($ids) ? array_values(array_filter(array_map('intval', $ids))) : [];
+    }
+
+    /** Config "quem aparece na Rentabilidade": todos os usuários (menos clientes) + quais estão ocultos. Admin. */
+    public function hiddenUsersConfig(Request $request): JsonResponse
+    {
+        if (!$request->user()?->isAdmin()) abort(403);
+        $users = \App\Models\User::where('type', '!=', 'cliente')
+            ->orderBy('name')
+            ->get(['id', 'name', 'type', 'enabled'])
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'type' => $u->type, 'enabled' => (bool) $u->enabled]);
+        return response()->json(['hidden_ids' => $this->rentabHiddenUserIds(), 'users' => $users]);
+    }
+
+    /** Salva os usuários ocultados da Rentabilidade (saem da tela e dos totais). Admin. */
+    public function hiddenUsersConfigUpdate(Request $request): JsonResponse
+    {
+        if (!$request->user()?->isAdmin()) abort(403);
+        $data = $request->validate([
+            'user_ids'   => 'present|array',
+            'user_ids.*' => 'integer',
+        ]);
+        $ids = array_values(array_unique(array_map('intval', $data['user_ids'])));
+        \App\Models\SystemSetting::set('rentab_hidden_user_ids', $ids, 'json', 'rentabilidade', 'Usuários ocultados da tela de Rentabilidade');
+        return response()->json(['ok' => true, 'hidden_ids' => $ids]);
     }
 }
