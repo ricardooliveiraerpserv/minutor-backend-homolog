@@ -453,6 +453,17 @@ Route::prefix('v1')->group(function () {
         Route::get('/distribution-lists',            [\App\Http\Controllers\DistributionListController::class, 'index']);
         Route::post('/distribution-lists',           [\App\Http\Controllers\DistributionListController::class, 'store']);
         Route::delete('/distribution-lists/{distributionList}', [\App\Http\Controllers\DistributionListController::class, 'destroy']);
+        // Grupos de distribuição (estruturados em blocos por cliente)
+        Route::get('/communication-groups',                          [\App\Http\Controllers\CommunicationGroupController::class, 'index']);
+        Route::post('/communication-groups',                         [\App\Http\Controllers\CommunicationGroupController::class, 'store']);
+        Route::get('/communication-groups/{group}',                  [\App\Http\Controllers\CommunicationGroupController::class, 'show']);
+        Route::put('/communication-groups/{group}',                  [\App\Http\Controllers\CommunicationGroupController::class, 'update']);
+        Route::delete('/communication-groups/{group}',               [\App\Http\Controllers\CommunicationGroupController::class, 'destroy']);
+        Route::get('/communication-groups/{group}/resolve',          [\App\Http\Controllers\CommunicationGroupController::class, 'resolve']);
+        Route::post('/communication-groups/{group}/blocks',          [\App\Http\Controllers\CommunicationGroupController::class, 'addBlock']);
+        Route::put('/communication-groups/{group}/blocks/{block}',   [\App\Http\Controllers\CommunicationGroupController::class, 'saveBlock']);
+        Route::delete('/communication-groups/{group}/blocks/{block}', [\App\Http\Controllers\CommunicationGroupController::class, 'deleteBlock']);
+        Route::post('/communication-groups/{group}/blocks/{block}/copy', [\App\Http\Controllers\CommunicationGroupController::class, 'copyBlock']);
         Route::get('/communication-templates',       [\App\Http\Controllers\CommunicationTemplateController::class, 'index']);
         Route::post('/communication-templates',      [\App\Http\Controllers\CommunicationTemplateController::class, 'store']);
         Route::delete('/communication-templates/{communicationTemplate}', [\App\Http\Controllers\CommunicationTemplateController::class, 'destroy']);
