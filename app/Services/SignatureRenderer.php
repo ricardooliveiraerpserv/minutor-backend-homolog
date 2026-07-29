@@ -137,9 +137,13 @@ class SignatureRenderer
         // linha de e-mail naquela assinatura (não cai no principal). Compat: aceita bizify_email antigo.
         $altEmail = trim((string) ($sig['alt_email'] ?? $sig['bizify_email'] ?? ''));
         $emailForBrand = ($brand === $homeBrand) ? $email : $altEmail;
+        // Cargo por EMPRESA: o brand da empresa base usa o cargo do cadastro (role); o OUTRO brand usa
+        // o cargo secundário (alt_role). Cargo exclusivo por empresa. Secundário vazio → sem cargo.
+        $altRole = trim((string) ($sig['alt_role'] ?? ''));
+        $roleForBrand = ($brand === $homeBrand) ? $role : $altRole;
         return [
             'name'    => $name,
-            'role'    => $role,
+            'role'    => $roleForBrand,
             'phone'   => $mobile,                                          // celular/whatsapp — opcional (some se vazio)
             'phone2'  => $isBizify ? '' : self::COMPANY_LANDLINE,          // Bizify não tem fixo
             'email'   => $emailForBrand,
