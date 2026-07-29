@@ -24,7 +24,18 @@ class HelpDeskAcceptController extends Controller
     /** Link assinado (30 dias) da tela de aceite/recusa — usado nos botões do e-mail. */
     public static function actionUrl(int $ticketId, string $acao): string
     {
-        return URL::temporarySignedRoute('hd.accept', now()->addDays(30), ['ticket' => $ticketId, 'acao' => $acao]);
+        // O link precisa apontar SEMPRE para o host público do backend (APP_URL). A request
+        // que gera o e-mail chega proxiada pelo frontend (host minutor-frontend + porta interna
+        // :10000), então sem forçar o root o link sairia inacessível ao cliente (ERR_CONNECTION_RESET).
+        // A assinatura confere na validação porque o clique bate direto no backend (TrustProxies=*).
+        URL::forceRootUrl(config('app.url'));
+        URL::forceScheme('https');
+        try {
+            return URL::temporarySignedRoute('hd.accept', now()->addDays(30), ['ticket' => $ticketId, 'acao' => $acao]);
+        } finally {
+            URL::forceRootUrl(null);
+            URL::forceScheme(null);
+        }
     }
 
     /** Página (GET): confirmação de encerramento (verde) ou formulário de recusa (vermelho). */
