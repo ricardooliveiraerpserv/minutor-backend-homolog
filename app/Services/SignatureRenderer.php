@@ -316,7 +316,8 @@ class SignatureRenderer
             // No e-mail, o treatBody converte essa URL em anexo inline (cid).
             $blockUri = function (string $f): string {
                 $p = public_path("sig-icons-bizify/$f.png");
-                return is_file($p) ? rtrim((string) config('app.url'), '/') . "/sig-icons-bizify/$f.png" : '';
+                // ?v=mtime → cache-busting: quando o arquivo muda, a URL muda e o navegador rebaixa a nova.
+                return is_file($p) ? rtrim((string) config('app.url'), '/') . "/sig-icons-bizify/$f.png?v=" . filemtime($p) : '';
             };
             $bzContacts = '';
             if (!empty($d['phone']))   $bzContacts .= self::contactLine('phone', $iconMode, e($d['phone']), $textColor, 'bizify');

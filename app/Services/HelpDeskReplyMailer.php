@@ -143,7 +143,7 @@ class HelpDeskReplyMailer
         // 1b) Blocos decorativos da Bizify servidos por URL (…/sig-icons-bizify/xxx.png) → inline (cid).
         //     No preview do sistema eles carregam por URL; no e-mail viram anexo inline (data: quebra).
         $html = preg_replace_callback(
-            '#<img\b([^>]*?)\bsrc=["\']https?://[^"\']*/sig-icons-bizify/([a-z0-9-]+\.png)["\']([^>]*)>#i',
+            '#<img\b([^>]*?)\bsrc=["\']https?://[^"\']*/sig-icons-bizify/([a-z0-9-]+\.png)(?:\?[^"\']*)?["\']([^>]*)>#i',
             function ($m) use (&$inline, &$i, &$seen) {
                 $fp = public_path('sig-icons-bizify/' . $m[2]);
                 if (!is_file($fp)) return $m[0];
