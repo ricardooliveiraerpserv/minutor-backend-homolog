@@ -294,8 +294,7 @@ class SignatureRenderer
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
         $left = '<td valign="top" style="vertical-align:top;padding-right:12px">'
-            . ($isBizify ? '<div style="margin:0 0 4px 2px">' . self::bizifyPlus('#6b3fd4') . '</div>' : '')
-            . '<img src="' . $logoSrc . '" alt="' . ($isBizify ? 'Bizify' : 'ERPSERV') . '" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
+            . '<img src="' . $logoSrc . '" alt="ERPSERV" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
             . $userBlock
             . '</td>';
 
@@ -308,6 +307,48 @@ class SignatureRenderer
             $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:4px;display:inline-block">'
                 . '<img src="' . self::iconSrc($s['icon'], $iconMode, $isBizify ? 'bizify' : 'erpserv') . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
         }
+        // ── LAYOUT BIZIFY (fiel ao modelo): logo + redes + @bizifyapp à ESQUERDA; nome + contatos no
+        //    MEIO; grafismos (pontinhos / barras / anel PARCIAL) à DIREITA. Estrutura própria (o Bizify
+        //    NÃO usa a estrutura da ERPSERV). Decorações como PNG (anel parcial, balão, telefone, nuvem).
+        if ($isBizify) {
+            $decorUri = function (string $f): string {
+                $p = public_path("sig-icons-bizify/$f.png");
+                return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+            };
+            $dimg = function (string $f, int $w, string $extra = '') use ($decorUri): string {
+                $u = $decorUri($f);
+                return $u === '' ? '' : '<img src="' . $u . '" width="' . $w . '" border="0" style="width:' . $w . 'px;height:auto;display:inline-block;border:0;outline:none;' . $extra . '">';
+            };
+            $bzContacts = '';
+            if (!empty($d['phone']))   $bzContacts .= self::contactLine('phone', $iconMode, e($d['phone']), $textColor, 'bizify');
+            if (!empty($d['email']))   $bzContacts .= self::contactLine('email', $iconMode, '<a href="mailto:' . e($d['email']) . '" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['email']) . '</a>', $textColor, 'bizify');
+            if (!empty($d['website'])) {
+                $bzHref = preg_match('#^https?://#i', $d['website']) ? $d['website'] : 'https://' . $d['website'];
+                $bzContacts .= self::contactLine('web', $iconMode, '<a href="' . e($bzHref) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor, 'bizify');
+            }
+            $handleColor = $dark ? '#5ec5f0' : '#29abe2';
+            $col1 = '<td valign="top" style="vertical-align:top;padding-right:22px">'
+                . '<div style="margin:0 0 4px 2px">' . self::bizifyPlus('#6b3fd4') . '</div>'
+                . '<img src="' . $logoSrc . '" alt="Bizify" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
+                . '<div style="margin-top:14px;white-space:nowrap">' . $social . '</div>'
+                . '<div style="margin-top:8px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;letter-spacing:.3px;color:' . $handleColor . '">@bizifyapp</div>'
+                . '<div style="margin-top:12px">' . $dimg('decor-phone', 22, 'vertical-align:bottom') . $dimg('decor-cloud', 44, 'vertical-align:bottom;margin-left:12px') . '</div>'
+                . '</td>';
+            $roleLine = $role !== '' ? '<div style="font-size:12px;color:' . $roleColor . ';margin-top:2px">' . e($role) . '</div>' : '';
+            $col2 = '<td valign="top" style="vertical-align:top;padding-right:26px">'
+                . '<div style="margin:0 0 6px">' . $dimg('decor-speech', 40) . '</div>'
+                . '<div style="font-size:20px;font-weight:800;color:' . $nameColor . ';line-height:1.2">' . e($name) . '</div>'
+                . $roleLine
+                . '<div style="margin-top:10px">' . $bzContacts . '</div>'
+                . '</td>';
+            $col3 = '<td valign="top" style="vertical-align:top">'
+                . '<div style="margin:2px 0 30px">' . self::bizifyDots('#7d9bdf') . '</div>'
+                . '<div style="white-space:nowrap">' . self::bizifyBars('#8fb0e8') . $dimg('decor-ring', 34, 'vertical-align:bottom;margin-left:12px') . '</div>'
+                . '</td>';
+            return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
+                . '<tr>' . $col1 . $col2 . $col3 . '</tr></table>';
+        }
+
         $topRow = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px"><tr>'
             . '<td valign="middle" style="vertical-align:middle">' . $banner . '</td>'
             . '<td valign="middle" align="right" style="vertical-align:middle;text-align:right;white-space:nowrap">' . $social . '</td>'
@@ -332,16 +373,7 @@ class SignatureRenderer
 
         $right = '<td valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
 
-        // Coluna decorativa Bizify (à direita): grade de pontinhos no topo + barras/anel embaixo.
-        // Sem position:absolute (o Exchange remove) — decoração fica na coluna, no fluxo da tabela.
-        $decor = $isBizify
-            ? '<td valign="top" align="right" style="vertical-align:top;padding-left:20px">'
-                . '<div style="margin:2px 0 26px">' . self::bizifyDots('#7d9bdf') . '</div>'
-                . '<div style="white-space:nowrap">' . self::bizifyBars('#8fb0e8') . self::bizifyRing('#5b3fd4') . '</div>'
-                . '</td>'
-            : '';
-
         return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
-            . '<tr>' . $left . $right . $decor . '</tr></table>';
+            . '<tr>' . $left . $right . '</tr></table>';
     }
 }
