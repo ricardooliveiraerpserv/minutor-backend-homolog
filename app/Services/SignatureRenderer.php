@@ -132,15 +132,15 @@ class SignatureRenderer
             return self::companyDefault($brand);
         }
         $isBizify = $brand === 'bizify';
-        // E-mail secundário Bizify: se preenchido, a assinatura Bizify usa ele (ex.: @bizify.com.br);
-        // a ERPSERV mantém o e-mail principal do cadastro.
+        // E-mail Bizify: a assinatura Bizify usa SÓ o e-mail secundário (bizify_email). Se não
+        // preenchido, NÃO mostra e-mail (não cai no principal). A ERPSERV usa o e-mail do cadastro.
         $bizEmail = trim((string) ($sig['bizify_email'] ?? ''));
         return [
             'name'    => $name,
             'role'    => $role,
             'phone'   => $mobile,                                          // celular/whatsapp — opcional (some se vazio)
             'phone2'  => $isBizify ? '' : self::COMPANY_LANDLINE,          // Bizify não tem fixo
-            'email'   => ($isBizify && $bizEmail !== '') ? $bizEmail : $email,
+            'email'   => $isBizify ? $bizEmail : $email,                   // Bizify: só o secundário (vazio = sem e-mail)
             'website' => $isBizify ? 'bizify.com.br' : self::COMPANY_SITE,
             'city'    => $isBizify ? '' : self::COMPANY_CITY,              // Bizify sem cidade
             'photo'   => $photo,
