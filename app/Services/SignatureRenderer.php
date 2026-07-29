@@ -215,12 +215,10 @@ class SignatureRenderer
             .   '<div style="font-size:13px;font-weight:bold;color:' . $nameColor . ';text-transform:uppercase;line-height:1.2;white-space:nowrap">' . e($name) . '</div>'
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
-        $left = '<td valign="top" style="vertical-align:top;padding-right:12px">'
-            . '<img src="' . $logoSrc . '" alt="ERPSERV" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
-            . $userBlock
-            . '</td>';
+        $leftInner = '<img src="' . $logoSrc . '" alt="ERPSERV" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
+            . $userBlock;
 
-        // ── BLOCO DIREITO: topo (faixa "LET'S DO IT" + redes HORIZONTAIS) + contatos em GRID 2 colunas ──
+        // ── BLOCO DIREITO: topo (faixa "LET'S DO IT" + redes) + contatos em COLUNA ÚNICA ──
         // Faixa em CSS (não imagem) → sem a borda/placa do Apple Mail. Cor no claro = cor do logo.
         $banner = $showTagline ? self::taglineHtml($dark ? '#C4B5FD' : '#4a2583') : '';
         $social = '';
@@ -228,30 +226,34 @@ class SignatureRenderer
             $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:4px;display:inline-block">'
                 . '<img src="' . self::iconSrc($s['icon'], $iconMode) . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
         }
-        $topRow = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px"><tr>'
+        $topRow = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:14px"><tr>'
             . '<td valign="middle" style="vertical-align:middle">' . $banner . '</td>'
             . '<td valign="middle" align="right" style="vertical-align:middle;text-align:right;white-space:nowrap">' . $social . '</td>'
             . '</tr></table>';
 
-        // contatos em 2 colunas: A (celular/fixo/cidade) | B (e-mail/site)
-        $colA = '';
-        if (!empty($d['phone']))  $colA .= self::contactLine('whatsapp', $iconMode, e($d['phone']), $textColor);
-        if (!empty($d['phone2'])) $colA .= self::contactLine('phone', $iconMode, e($d['phone2']), $textColor);
-        if (!empty($d['city']))   $colA .= self::contactLine('location', $iconMode, e($d['city']), $textColor);
-        $colB = '';
-        if (!empty($d['email']))  $colB .= self::contactLine('email', $iconMode, '<a href="mailto:' . e($d['email']) . '" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['email']) . '</a>', $textColor);
+        // Contatos em COLUNA ÚNICA (cada um em linha própria de largura total). Antes eram 2 colunas
+        // estreitas de <td> fixo → no mobile o e-mail/endereço era espremido e QUEBRAVA caractere a
+        // caractere, invadindo os botões. Em linha inteira, cabe sem quebrar.
+        $contacts = '';
+        if (!empty($d['phone']))  $contacts .= self::contactLine('whatsapp', $iconMode, e($d['phone']), $textColor);
+        if (!empty($d['phone2'])) $contacts .= self::contactLine('phone', $iconMode, e($d['phone2']), $textColor);
+        if (!empty($d['email']))  $contacts .= self::contactLine('email', $iconMode, '<a href="mailto:' . e($d['email']) . '" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['email']) . '</a>', $textColor);
+        if (!empty($d['city']))   $contacts .= self::contactLine('location', $iconMode, e($d['city']), $textColor);
         if (!empty($d['website'])) {
             $href = preg_match('#^https?://#i', $d['website']) ? $d['website'] : 'https://' . $d['website'];
-            $colB .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor);
+            $contacts .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor);
         }
-        $grid = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-            . '<td valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
-            . '<td valign="top" style="vertical-align:top">' . $colB . '</td>'
-            . '</tr></table>';
+        $rightInner = $topRow . $contacts;
 
-        $right = '<td valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
-
-        return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
-            . '<tr>' . $left . $right . '</tr></table>';
+        // Layout FLUID-HYBRID: no desktop as duas colunas ficam lado a lado (ghost table p/ Outlook
+        // Windows); no MOBILE a coluna direita quebra para baixo sozinha (inline-block + max-width:100%),
+        // SEM media query — funciona no Outlook iOS/Gmail/Apple Mail. Fim do overlap com os botões.
+        return '<div style="max-width:520px;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
+            . '<!--[if mso]><table role="presentation" width="516" cellpadding="0" cellspacing="0" border="0"><tr><td width="164" valign="top"><![endif]-->'
+            . '<div style="display:inline-block;vertical-align:top;width:164px;max-width:100%;padding-right:12px;box-sizing:border-box">' . $leftInner . '</div>'
+            . '<!--[if mso]></td><td width="336" valign="top"><![endif]-->'
+            . '<div style="display:inline-block;vertical-align:top;width:336px;max-width:100%;box-sizing:border-box">' . $rightInner . '</div>'
+            . '<!--[if mso]></td></tr></table><![endif]-->'
+            . '</div>';
     }
 }
