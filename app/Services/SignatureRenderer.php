@@ -360,15 +360,15 @@ class SignatureRenderer
                 .   '<div style="font-family:' . $bzFont . ';font-size:18px;font-weight:700;color:' . $bzNavy . ';line-height:1.15">' . e($name) . '</div>'
                 .   ($role !== '' ? '<div style="font-family:' . $bzFont . ';font-size:12px;color:' . $roleColor . ';line-height:1.3;margin-top:1px">' . e($role) . '</div>' : '')
                 . '</td></tr></table>';
-            $col2 = '<td width="235" valign="middle" style="width:235px;vertical-align:middle;padding-right:4px">'
+            $col2 = '<td width="210" valign="middle" style="width:210px;vertical-align:middle;padding-right:2px">'
                 . $bzNameBlock
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
                 . '</td>';
-            // Bloco direito alinhado à ESQUERDA da coluna (encosta no texto) — antes ia p/ a borda direita.
-            $col3 = '<td width="255" valign="middle" align="left" style="width:255px;vertical-align:middle">'
-                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="250" border="0" style="width:250px;height:auto;display:block;border:0;outline:none">' : '')
+            // Bloco direito alinhado à ESQUERDA (encosta no texto) — colunas apertadas p/ ficar bem perto.
+            $col3 = '<td width="250" valign="middle" align="left" style="width:250px;vertical-align:middle">'
+                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="248" border="0" style="width:248px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            return '<table role="presentation" width="715" cellpadding="0" cellspacing="0" border="0" style="width:715px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
+            return '<table role="presentation" width="675" cellpadding="0" cellspacing="0" border="0" style="width:675px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
                 . '<tr>' . $col1 . $col2 . $col3 . '</tr></table>';
         }
 
