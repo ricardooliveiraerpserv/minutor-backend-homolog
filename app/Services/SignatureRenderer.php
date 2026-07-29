@@ -328,8 +328,8 @@ class SignatureRenderer
             }
             // Blocos decorativos = recortes da ARTE OFICIAL Bizify (logo bicolor, redes redondas, "+",
             // balão, telefone, nuvem à esq.; pontinhos, barras, anel à dir.) → idênticos ao original.
-            $leftBlock  = $blockUri('block-left');
-            $rightBlock = $blockUri('block-right');
+            $leftBlock  = $blockUri('block-left-hd');
+            $rightBlock = $blockUri('block-right-hd');
             // Larguras EXPLÍCITAS por coluna (sem width="1"/max-width): numa tabela shrink de 3 colunas
             // o navegador dava toda a largura ao meio e colapsava col1/col3 (blocos "sumiam").
             $col1 = '<td width="215" valign="top" style="width:215px;vertical-align:top;padding-right:16px">'
