@@ -208,6 +208,16 @@ Route::prefix('v1')->group(function () {
         Route::patch('/tasks/{task}/resolve', [\App\Http\Controllers\TaskController::class, 'resolve']);
         Route::put('/tasks/{task}',       [\App\Http\Controllers\TaskController::class, 'update']);
         Route::delete('/tasks/{task}',    [\App\Http\Controllers\TaskController::class, 'destroy']);
+        // Central de Reunião (admin/coordenador; visível só aos envolvidos)
+        Route::get('/meetings',                              [\App\Http\Controllers\MeetingController::class, 'index']);
+        Route::post('/meetings',                             [\App\Http\Controllers\MeetingController::class, 'store']);
+        Route::get('/meetings/{meeting}',                    [\App\Http\Controllers\MeetingController::class, 'show']);
+        Route::put('/meetings/{meeting}',                    [\App\Http\Controllers\MeetingController::class, 'update']);
+        Route::delete('/meetings/{meeting}',                 [\App\Http\Controllers\MeetingController::class, 'destroy']);
+        Route::put('/meetings/{meeting}/participants',       [\App\Http\Controllers\MeetingController::class, 'syncParticipants']);
+        Route::post('/meetings/{meeting}/tasks',             [\App\Http\Controllers\MeetingController::class, 'storeTask']);
+        Route::patch('/meetings/{meeting}/tasks/{task}/toggle', [\App\Http\Controllers\MeetingController::class, 'toggleTask']);
+        Route::delete('/meetings/{meeting}/tasks/{task}',    [\App\Http\Controllers\MeetingController::class, 'deleteTask']);
 
         // Central de Comunicação (externa, com clientes)
         Route::get('/communications/mine',           [\App\Http\Controllers\CommunicationController::class, 'mine']);      // recebidas (endereçadas a mim)
