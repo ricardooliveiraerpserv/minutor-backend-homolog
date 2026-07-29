@@ -21,6 +21,17 @@ class HelpDeskAcceptController extends Controller
 {
     private const BRAND = '#7c3aed';
 
+    /**
+     * O chamado está aguardando o aceite do cliente? SÓ então os links (aceitar E recusar)
+     * valem. Após ENCERRAR (status "fechado" = is_terminal), ambos expiram — antes a trava
+     * usava só is_resolved, mas "fechado" também tem is_resolved=true, deixando o Recusar ativo.
+     */
+    private function awaitingAcceptance(HelpDeskTicket $ticket): bool
+    {
+        $st = $ticket->status;
+        return $st && $st->is_resolved && !$st->is_terminal;
+    }
+
     /** Link assinado (30 dias) da tela de aceite/recusa — usado nos botões do e-mail. */
     public static function actionUrl(int $ticketId, string $acao): string
     {
@@ -44,7 +55,7 @@ class HelpDeskAcceptController extends Controller
         abort_unless($request->hasValidSignature(), 403, 'Link inválido ou expirado.');
         $acao = $request->query('acao') === 'reject' ? 'reject' : 'accept';
 
-        if (!optional($ticket->status)->is_resolved) {
+        if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando seu aceite '
                 . '(status atual: <b>' . e(optional($ticket->status)->label ?: '—') . '</b>). Nenhuma ação é necessária.</p>');
         }
@@ -77,7 +88,7 @@ class HelpDeskAcceptController extends Controller
     public function accept(Request $request, HelpDeskTicket $ticket)
     {
         abort_unless($request->hasValidSignature(), 403, 'Link inválido ou expirado.');
-        if (!optional($ticket->status)->is_resolved) {
+        if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando aceite. Obrigado!</p>');
         }
         $fechado = HelpDeskStatus::where('key', 'fechado')->first();
@@ -125,7 +136,7 @@ class HelpDeskAcceptController extends Controller
             return $this->page('Informe o motivo', '<p>Por favor, descreva o que não resolveu para reabrirmos o chamado. '
                 . 'Volte ao e-mail e clique novamente em "Recusar".</p>');
         }
-        if (!optional($ticket->status)->is_resolved) {
+        if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando aceite. Nossa equipe já pode ter retomado o atendimento.</p>');
         }
         $em = HelpDeskStatus::where('key', 'em_andamento')->first();

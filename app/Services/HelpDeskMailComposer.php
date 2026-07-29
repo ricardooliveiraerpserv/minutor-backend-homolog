@@ -280,6 +280,19 @@ class HelpDeskMailComposer
     }
 
     /**
+     * Link de ACESSO ao chamado — vai em TODA resposta ao cliente. Aponta para o PORTAL do cliente
+     * (sem login interno), mesmo padrão do aviso de chamado encerrado. Botão discreto e centralizado.
+     */
+    public static function ticketLinkHtml(HelpDeskTicket $ticket): string
+    {
+        $url = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $ticket->id;
+        return '<div style="margin:20px 0 4px;padding-top:16px;border-top:1px solid #e5e7eb;text-align:center">'
+            . '<a href="' . e($url) . '" style="display:inline-block;padding:12px 26px;font-size:14px;font-weight:700;color:#ffffff;background:#7c3aed;text-decoration:none;border-radius:8px">Acessar o chamado &rarr;</a>'
+            . '<div style="font-size:12px;color:#9ca3af;margin-top:8px">Acompanhe o histórico completo pelo portal.</div>'
+            . '</div>';
+    }
+
+    /**
      * Histórico da conversa visível ao cliente (abertura + interações públicas), do mais recente
      * ao mais antigo, para embutir no corpo do e-mail de atualização (estilo Movidesk: "um e-mail
      * único mantendo o histórico"). Datas no fuso de São Paulo. Exclui o comentário atual, se dado.

@@ -49,6 +49,7 @@ class HelpDeskReplyMailer
         $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
             . (string) $comment->body
             . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar
+            . \App\Services\HelpDeskMailComposer::ticketLinkHtml($ticket)    // Link de acesso ao chamado (toda resposta)
             . \App\Services\HelpDeskMailComposer::conversationHistoryHtml($ticket, (int) $comment->id);
         [$html, $inlineImgs] = self::treatBody($bodyWithHistory);
         $attachments = array_merge($inlineImgs, self::commentAttachments($comment));
