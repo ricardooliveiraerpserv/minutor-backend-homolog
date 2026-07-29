@@ -1598,6 +1598,12 @@ class HelpDeskTicketController extends Controller
     {
         // Chamado FECHADO (status terminal) não recebe novas interações — reabrir antes.
         abort_if(optional($ticket->status)->is_terminal, 422, 'Chamado fechado — reabra o chamado para adicionar interações.');
+        // Fluxo de FORMULÁRIO (dynamic/solution/gmud) envia via FormData p/ mandar os arquivos JUNTO
+        // do comentário (senão subiriam depois e o e-mail já teria saído sem anexo). Aí 'solution'
+        // chega como string JSON — decodifica p/ array antes de validar.
+        if (is_string($request->input('solution')) && $request->input('solution') !== '') {
+            $request->merge(['solution' => json_decode((string) $request->input('solution'), true)]);
+        }
         $v = $request->validate([
             'body'            => 'required_without:files|nullable|string', // interação pode ser só anexo/print (estilo e-mail)
             'visibility'      => 'nullable|in:internal,customer',
