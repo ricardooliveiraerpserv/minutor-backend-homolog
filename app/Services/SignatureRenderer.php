@@ -329,26 +329,21 @@ class SignatureRenderer
             // balão, telefone, nuvem à esq.; pontinhos, barras, anel à dir.) → idênticos ao original.
             $leftBlock  = $blockUri('block-left');
             $rightBlock = $blockUri('block-right');
-            \Illuminate\Support\Facades\Log::info('SIG.bizify.blocks.debug', [
-                'mode'         => $iconMode,
-                'left_len'     => strlen($leftBlock),
-                'right_len'    => strlen($rightBlock),
-                'left_isfile'  => is_file(public_path('sig-icons-bizify/block-left.png')),
-                'path'         => public_path('sig-icons-bizify/block-left.png'),
-            ]);
-            $col1 = '<td valign="top" style="vertical-align:top;padding-right:18px">'
-                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="205" border="0" style="width:205px;max-width:100%;height:auto;display:block;border:0;outline:none">' : '')
+            // Larguras EXPLÍCITAS por coluna (sem width="1"/max-width): numa tabela shrink de 3 colunas
+            // o navegador dava toda a largura ao meio e colapsava col1/col3 (blocos "sumiam").
+            $col1 = '<td width="215" valign="top" style="width:215px;vertical-align:top;padding-right:16px">'
+                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="199" border="0" style="width:199px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
             $roleLine = $role !== '' ? '<div style="font-size:12px;color:' . $roleColor . ';margin-top:2px">' . e($role) . '</div>' : '';
-            $col2 = '<td valign="top" style="vertical-align:top;padding:22px 26px 0 0">'
+            $col2 = '<td width="270" valign="top" style="width:270px;vertical-align:top;padding:22px 24px 0 0">'
                 . '<div style="font-size:21px;font-weight:800;color:' . $nameColor . ';line-height:1.2">' . e($name) . '</div>'
                 . $roleLine
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
                 . '</td>';
-            $col3 = '<td valign="top" align="right" style="vertical-align:top">'
-                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="165" border="0" style="width:165px;max-width:100%;height:auto;display:block;border:0;outline:none">' : '')
+            $col3 = '<td width="170" valign="top" align="right" style="width:170px;vertical-align:top">'
+                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="160" border="0" style="width:160px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
+            return '<table role="presentation" width="655" cellpadding="0" cellspacing="0" border="0" style="width:655px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
                 . '<tr>' . $col1 . $col2 . $col3 . '</tr></table>';
         }
 
