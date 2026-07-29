@@ -345,8 +345,8 @@ class SignatureRenderer
             // o navegador dava toda a largura ao meio e colapsava col1/col3 (blocos "sumiam").
             // Mesmas PROPORÇÕES do template (bloco DIREITO o mais largo), porém em tamanho menor (~730px).
             // Texto centralizado verticalmente contra os blocos.
-            $col1 = '<td width="225" valign="middle" style="width:225px;vertical-align:middle;padding-right:8px">'
-                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="215" border="0" style="width:215px;height:auto;display:block;border:0;outline:none">' : '')
+            $col1 = '<td width="180" valign="middle" style="width:180px;vertical-align:middle;padding-right:6px">'
+                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="172" border="0" style="width:172px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
             // Bloco NOME/FOTO da Bizify: foto à ESQUERDA, nome+cargo CENTRALIZADOS verticalmente com ela.
             // Nome em fonte arredondada (aprox. da marca) + navy Bizify, title-case (não maiúsculo).
@@ -354,25 +354,25 @@ class SignatureRenderer
             $bzNavy = '#2e3192';
             $bzPhotoCell = '';
             if ($showPhoto && !empty($d['photo']) && (Str::startsWith($d['photo'], 'data:image') || filter_var($d['photo'], FILTER_VALIDATE_URL))) {
-                $bzPhotoCell = '<td valign="middle" width="52" style="width:52px;min-width:52px;vertical-align:middle;padding-right:10px">'
-                    . '<span style="display:inline-block;width:48px;height:48px;border-radius:50%;'
+                $bzPhotoCell = '<td valign="middle" width="46" style="width:46px;min-width:46px;vertical-align:middle;padding-right:8px">'
+                    . '<span style="display:inline-block;width:42px;height:42px;border-radius:50%;'
                     . 'background-image:url(\'' . e($d['photo']) . '\');background-size:cover;background-position:center;background-repeat:no-repeat"></span></td>';
             }
             $bzNameBlock = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
                 . $bzPhotoCell
                 . '<td valign="middle" style="vertical-align:middle">'
-                .   '<div style="font-family:' . $bzFont . ';font-size:18px;font-weight:700;color:' . $bzNavy . ';line-height:1.15">' . e($name) . '</div>'
-                .   ($role !== '' ? '<div style="font-family:' . $bzFont . ';font-size:12px;color:' . $roleColor . ';line-height:1.3;margin-top:1px">' . e($role) . '</div>' : '')
+                .   '<div style="font-family:' . $bzFont . ';font-size:16px;font-weight:700;color:' . $bzNavy . ';line-height:1.15">' . e($name) . '</div>'
+                .   ($role !== '' ? '<div style="font-family:' . $bzFont . ';font-size:11px;color:' . $roleColor . ';line-height:1.3;margin-top:1px">' . e($role) . '</div>' : '')
                 . '</td></tr></table>';
-            $col2 = '<td width="210" valign="middle" style="width:210px;vertical-align:middle;padding-right:2px">'
+            $col2 = '<td width="190" valign="middle" style="width:190px;vertical-align:middle;padding-right:2px">'
                 . $bzNameBlock
-                . '<div style="margin-top:12px">' . $bzContacts . '</div>'
+                . '<div style="margin-top:10px">' . $bzContacts . '</div>'
                 . '</td>';
-            // Bloco direito alinhado à ESQUERDA (encosta no texto) — colunas apertadas p/ ficar bem perto.
-            $col3 = '<td width="250" valign="middle" align="left" style="width:250px;vertical-align:middle">'
-                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="248" border="0" style="width:248px;height:auto;display:block;border:0;outline:none">' : '')
+            // Bloco direito alinhado à ESQUERDA (encosta no texto) — Bizify compacta, proporção ≈ ERPSERV.
+            $col3 = '<td width="165" valign="middle" align="left" style="width:165px;vertical-align:middle">'
+                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="160" border="0" style="width:160px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            return '<table role="presentation" width="675" cellpadding="0" cellspacing="0" border="0" style="width:675px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
+            return '<table role="presentation" width="535" cellpadding="0" cellspacing="0" border="0" style="width:535px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
                 . '<tr>' . $col1 . $col2 . $col3 . '</tr></table>';
         }
 
