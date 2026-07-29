@@ -326,6 +326,13 @@ class SignatureRenderer
             // balão, telefone, nuvem à esq.; pontinhos, barras, anel à dir.) → idênticos ao original.
             $leftBlock  = $blockUri('block-left');
             $rightBlock = $blockUri('block-right');
+            \Illuminate\Support\Facades\Log::info('SIG.bizify.blocks.debug', [
+                'mode'         => $iconMode,
+                'left_len'     => strlen($leftBlock),
+                'right_len'    => strlen($rightBlock),
+                'left_isfile'  => is_file(public_path('sig-icons-bizify/block-left.png')),
+                'path'         => public_path('sig-icons-bizify/block-left.png'),
+            ]);
             $col1 = '<td valign="top" style="vertical-align:top;padding-right:18px">'
                 . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="205" border="0" style="width:205px;max-width:100%;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
