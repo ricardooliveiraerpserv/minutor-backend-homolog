@@ -47,7 +47,7 @@ class RelatorioRentabilidadeController extends Controller
         // 'salary' => salário mensal cheio quando monthly (0 caso contrário)].
         $costMetaCache = [];
         $costMeta = function ($user) use (&$costMetaCache, $from, $yearMonth) {
-            if (!$user) return ['eff' => 0.0, 'type' => 'hourly', 'salary' => 0.0];
+            if (!$user) return ['eff' => 0.0, 'type' => 'hourly', 'salary' => 0.0, 'ctype' => null];
             if (isset($costMetaCache[$user->id])) return $costMetaCache[$user->id];
 
             // Consultor vinculado a parceiro herda o valor/hora DO PARCEIRO na competência
@@ -55,14 +55,15 @@ class RelatorioRentabilidadeController extends Controller
             // (pricing_type 'variable'), usa o valor do próprio consultor (regra abaixo).
             if ($user->partner_id && $user->partner && $user->partner->pricing_type === Partner::PRICING_FIXED) {
                 $r = (float) $user->partner->hourlyRateForCompetencia($yearMonth);
-                return $costMetaCache[$user->id] = ['eff' => $r, 'type' => 'hourly', 'salary' => 0.0];
+                return $costMetaCache[$user->id] = ['eff' => $r, 'type' => 'hourly', 'salary' => 0.0, 'ctype' => $user->consultant_type];
             }
 
             $hist = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $rate = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
             $type = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
+            $ctype = $hist['consultant_type'] ?? $user->consultant_type;
             $eff  = ($type === 'monthly' && $rate > 0) ? round($rate / 160, 4) : $rate;
-            return $costMetaCache[$user->id] = ['eff' => $eff, 'type' => $type, 'salary' => ($type === 'monthly' ? $rate : 0.0)];
+            return $costMetaCache[$user->id] = ['eff' => $eff, 'type' => $type, 'salary' => ($type === 'monthly' ? $rate : 0.0), 'ctype' => $ctype];
         };
         $costRate = fn ($user) => $costMeta($user)['eff'];
 
@@ -181,7 +182,33 @@ class RelatorioRentabilidadeController extends Controller
             ];
         }
 
-        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados]]);
+        // Hora extra do BANCO DE HORAS — mesma conta do Fechamento do Consultor:
+        // horas extras pagas (HourBankService) × (salário/160). Só p/ 'banco_de_horas';
+        // fixo/horista NÃO entram aqui. O FE soma isto no Custo Fixo do consultor.
+        $monthlyIds = [];
+        foreach ($groups as $g) { if (($g['rate_type'] ?? '') === 'monthly') $monthlyIds[$g['user_id']] = true; }
+        foreach ($fixosZerados as $z) { $monthlyIds[$z['user_id']] = true; }
+        $fixosExtras = [];
+        if (!empty($monthlyIds)) {
+            $bankSvc = app(\App\Services\HourBankService::class);
+            foreach (\App\Models\User::whereIn('id', array_keys($monthlyIds))->get() as $u) {
+                $meta = $costMeta($u);
+                if (($meta['ctype'] ?? null) !== 'banco_de_horas' || $meta['salary'] <= 0) continue;
+                $extraTs = Timesheet::whereBetween('date', [$from, $to])
+                    ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
+                    ->whereNull('deleted_at')->where('is_billable_only', false)->where('is_internal_action', false)
+                    ->whereNotNull('consultant_extra_pct')->where('user_id', $u->id)
+                    ->get(['effort_minutes', 'consultant_extra_pct']);
+                $extraHoursForBank = round($extraTs->sum(fn ($t) => ($t->effort_minutes / 60) * ((float) $t->consultant_extra_pct / 100)), 2);
+                $startDate = $u->bank_hours_start_date ? $u->bank_hours_start_date->format('Y-m-d') : null;
+                $calc = $bankSvc->calculateMonth($u->id, $y, $m, (float) ($u->daily_hours ?? 8.0), $startDate, $extraHoursForBank);
+                $valorHoraExtra = round($meta['salary'] / 160, 4);
+                $overtime = round((float) ($calc['paid_hours'] ?? 0) * $valorHoraExtra, 2);
+                if ($overtime != 0.0) { $fixosExtras[] = ['user_id' => $u->id, 'extra_cost' => $overtime]; }
+            }
+        }
+
+        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados, 'fixos_extras' => $fixosExtras]]);
     }
 
     /**
