@@ -347,6 +347,7 @@ class TaskController extends Controller
             'customer' => \App\Models\Customer::find($t->entity_id)?->name,
             'project'  => \App\Models\Project::find($t->entity_id)?->name,
             'contract' => \App\Models\Contract::find($t->entity_id)?->project_name,
+            'meeting'  => \App\Models\Meeting::find($t->entity_id)?->title,
             default    => null,
         };
     }

@@ -28,7 +28,7 @@ class Task extends Model
 
     public const TYPES = ['pessoal', 'cliente', 'follow-up', 'interno'];
     public const PRIORITIES = ['baixa', 'media', 'alta'];
-    public const ENTITY_TYPES = ['customer', 'project', 'contract'];
+    public const ENTITY_TYPES = ['customer', 'project', 'contract', 'meeting'];
     public const RECURRENCES = ['none', 'daily', 'weekly', 'monthly'];
 
     public function user(): BelongsTo { return $this->belongsTo(User::class); }
