@@ -1207,6 +1207,11 @@ class UserController extends Controller
             'signature.photo'     => 'nullable|string',
             'signature.show_photo'=> 'nullable|boolean',
             'signature.custom_cargo'=> 'nullable|boolean',
+            'is_bizify'           => 'nullable|boolean',
+            'home_is_bizify'      => 'nullable|boolean',
+            'signature.bizify_email'=> 'nullable|string|max:160',
+            'signature.alt_email' => 'nullable|string|max:160',
+            'signature.alt_role'  => 'nullable|string|max:120',
         ]);
 
         $sig = $v['signature'] ?? [];
@@ -1231,10 +1236,20 @@ class UserController extends Controller
             if ($dataUrl) $sig['photo'] = $dataUrl;
         }
 
+        $bizId = \App\Models\Company::where('slug', 'bizify')->value('id');
+        $targetBizify = $target && ($target->is_bizify || ($bizId && (int) $target->current_company_id === (int) $bizId));
+        $homeBrand = $request->has('home_is_bizify')
+            ? ($request->boolean('home_is_bizify') ? 'bizify' : 'erpserv')
+            : ($targetBizify ? 'bizify' : 'erpserv');
+        $brand = $request->has('is_bizify')
+            ? ($request->boolean('is_bizify') ? 'bizify' : 'erpserv')
+            : $homeBrand;
         $data = \App\Services\SignatureRenderer::resolveData(
             (string) ($v['name'] ?? ''),
             (string) ($v['email'] ?? ''),
             $sig,
+            $brand,
+            $homeBrand,
         );
         return response()->json(['data' => [
             'system' => \App\Services\SignatureRenderer::render($data, 'data', true, 'light'),
