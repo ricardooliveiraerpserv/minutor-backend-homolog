@@ -132,12 +132,15 @@ class SignatureRenderer
             return self::companyDefault($brand);
         }
         $isBizify = $brand === 'bizify';
+        // E-mail secundário Bizify: se preenchido, a assinatura Bizify usa ele (ex.: @bizify.com.br);
+        // a ERPSERV mantém o e-mail principal do cadastro.
+        $bizEmail = trim((string) ($sig['bizify_email'] ?? ''));
         return [
             'name'    => $name,
             'role'    => $role,
             'phone'   => $mobile,                                          // celular/whatsapp — opcional (some se vazio)
             'phone2'  => $isBizify ? '' : self::COMPANY_LANDLINE,          // Bizify não tem fixo
-            'email'   => $email,
+            'email'   => ($isBizify && $bizEmail !== '') ? $bizEmail : $email,
             'website' => $isBizify ? 'bizify.com.br' : self::COMPANY_SITE,
             'city'    => $isBizify ? '' : self::COMPANY_CITY,              // Bizify sem cidade
             'photo'   => $photo,
@@ -337,19 +340,11 @@ class SignatureRenderer
             $col1 = '<td width="225" valign="middle" style="width:225px;vertical-align:middle;padding-right:8px">'
                 . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="215" border="0" style="width:215px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            $roleLine = $role !== '' ? '<div style="font-size:12px;color:' . $roleColor . ';margin-top:2px">' . e($role) . '</div>' : '';
-            // Foto do usuário (dinâmica) — vai na COLUNA DO MEIO como avatar redondo, acima do nome
-            // (a imagem do bloco à esquerda é FIXA; a foto muda por usuário). background-image → o
-            // Apple Mail não põe a "placa"; no e-mail o treatBody converte o data: em cid.
-            $bzPhoto = '';
-            if ($showPhoto && !empty($d['photo']) && (Str::startsWith($d['photo'], 'data:image') || filter_var($d['photo'], FILTER_VALIDATE_URL))) {
-                $bzPhoto = '<div style="margin:0 0 10px"><span style="display:inline-block;width:56px;height:56px;border-radius:50%;'
-                    . 'background-image:url(\'' . e($d['photo']) . '\');background-size:cover;background-position:center;background-repeat:no-repeat"></span></div>';
-            }
+            // Nome/cargo + FOTO reusam o mesmo bloco da ERPSERV ($userBlock): foto à ESQUERDA do nome,
+            // na MESMA LINHA, e o nome na MESMA FONTE/estilo. A foto (dinâmica) muda por usuário; a
+            // imagem do bloco à esquerda continua fixa.
             $col2 = '<td width="240" valign="middle" style="width:240px;vertical-align:middle;padding-right:14px">'
-                . $bzPhoto
-                . '<div style="font-size:20px;font-weight:800;color:' . $nameColor . ';line-height:1.2">' . e($name) . '</div>'
-                . $roleLine
+                . $userBlock
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
                 . '</td>';
             $col3 = '<td width="265" valign="middle" align="right" style="width:265px;vertical-align:middle">'

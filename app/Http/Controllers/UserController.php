@@ -369,6 +369,7 @@ class UserController extends Controller
             'signature.photo' => 'nullable|string',
             'signature.show_photo' => 'nullable|boolean',
             'signature.custom_cargo' => 'nullable|boolean',
+            'signature.bizify_email' => 'nullable|string|max:160',
             'enabled' => 'sometimes|boolean',
             'can_use_bot' => 'sometimes|boolean',
             'bot_allowed_scopes' => 'sometimes|nullable|array',
@@ -641,6 +642,7 @@ class UserController extends Controller
             'signature.photo' => 'nullable|string',
             'signature.show_photo' => 'nullable|boolean',
             'signature.custom_cargo' => 'nullable|boolean',
+            'signature.bizify_email' => 'nullable|string|max:160',
             'enabled' => 'sometimes|boolean',
             'can_use_bot' => 'sometimes|boolean',
             'bot_allowed_scopes' => 'sometimes|nullable|array',
@@ -1267,6 +1269,7 @@ class UserController extends Controller
             'signature.photo'     => 'nullable|string',
             'signature.show_photo'=> 'nullable|boolean',
             'signature.custom_cargo'=> 'nullable|boolean',
+            'signature.bizify_email'=> 'nullable|string|max:160',
         ]);
 
         $sig = $v['signature'] ?? [];
