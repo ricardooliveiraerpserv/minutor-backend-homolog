@@ -340,11 +340,24 @@ class SignatureRenderer
             $col1 = '<td width="225" valign="middle" style="width:225px;vertical-align:middle;padding-right:8px">'
                 . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="215" border="0" style="width:215px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            // Nome/cargo + FOTO reusam o mesmo bloco da ERPSERV ($userBlock): foto à ESQUERDA do nome,
-            // na MESMA LINHA, e o nome na MESMA FONTE/estilo. A foto (dinâmica) muda por usuário; a
-            // imagem do bloco à esquerda continua fixa.
+            // Bloco NOME/FOTO da Bizify: foto à ESQUERDA, nome+cargo CENTRALIZADOS verticalmente com ela.
+            // Nome em fonte arredondada (aprox. da marca) + navy Bizify, title-case (não maiúsculo).
+            $bzFont = "'Trebuchet MS','Segoe UI',Tahoma,Arial,sans-serif";
+            $bzNavy = '#2e3192';
+            $bzPhotoCell = '';
+            if ($showPhoto && !empty($d['photo']) && (Str::startsWith($d['photo'], 'data:image') || filter_var($d['photo'], FILTER_VALIDATE_URL))) {
+                $bzPhotoCell = '<td valign="middle" width="52" style="width:52px;min-width:52px;vertical-align:middle;padding-right:10px">'
+                    . '<span style="display:inline-block;width:48px;height:48px;border-radius:50%;'
+                    . 'background-image:url(\'' . e($d['photo']) . '\');background-size:cover;background-position:center;background-repeat:no-repeat"></span></td>';
+            }
+            $bzNameBlock = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+                . $bzPhotoCell
+                . '<td valign="middle" style="vertical-align:middle">'
+                .   '<div style="font-family:' . $bzFont . ';font-size:18px;font-weight:700;color:' . $bzNavy . ';line-height:1.15">' . e($name) . '</div>'
+                .   ($role !== '' ? '<div style="font-family:' . $bzFont . ';font-size:12px;color:' . $roleColor . ';line-height:1.3;margin-top:1px">' . e($role) . '</div>' : '')
+                . '</td></tr></table>';
             $col2 = '<td width="240" valign="middle" style="width:240px;vertical-align:middle;padding-right:14px">'
-                . $userBlock
+                . $bzNameBlock
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
                 . '</td>';
             $col3 = '<td width="265" valign="middle" align="right" style="width:265px;vertical-align:middle">'
