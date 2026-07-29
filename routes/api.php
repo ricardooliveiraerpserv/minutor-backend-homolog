@@ -1022,6 +1022,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/relatorios/atividade-clientes',                                  [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'atividadeClientes']);
             Route::get('/relatorios/atividade-clientes/config',                           [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'statusClientesConfig']);
             Route::put('/relatorios/atividade-clientes/config',                           [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'statusClientesConfigUpdate']);
+            // Config "quem aparece na Rentabilidade" (admin) — ANTES do catch-all {yearMonth}.
+            Route::get('/relatorios/rentabilidade/hidden-users',                         [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'hiddenUsersConfig']);
+            Route::put('/relatorios/rentabilidade/hidden-users',                         [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'hiddenUsersConfigUpdate']);
             Route::get('/relatorios/rentabilidade/{yearMonth}',                          [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'rentabilidade']);
 
             // 💰 Multiplicador de horas faturáveis ao cliente (por contrato) — admin/contracts.manage.
