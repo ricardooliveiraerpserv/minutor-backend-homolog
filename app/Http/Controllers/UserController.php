@@ -1294,6 +1294,7 @@ class UserController extends Controller
             (string) ($v['name'] ?? ''),
             (string) ($v['email'] ?? ''),
             $sig,
+            ($target && $target->is_bizify) ? 'bizify' : 'erpserv',
         );
         return response()->json(['data' => [
             'system' => \App\Services\SignatureRenderer::render($data, 'data', true, 'light'),

@@ -22,11 +22,26 @@ class SignatureRenderer
         ['label' => 'Facebook',  'url' => 'https://www.facebook.com/erpserv',          'icon' => 'facebook'],
     ];
 
+    /** Redes sociais da BIZIFY (assinatura dos usuários is_bizify). Handle @bizifyapp. */
+    private const SOCIAL_BIZIFY = [
+        ['label' => 'Instagram', 'url' => 'https://www.instagram.com/bizifyapp',       'icon' => 'instagram'],
+        ['label' => 'LinkedIn',  'url' => 'https://www.linkedin.com/company/bizify',   'icon' => 'linkedin'],
+        ['label' => 'YouTube',   'url' => 'https://www.youtube.com/@bizifyapp',        'icon' => 'youtube'],
+        ['label' => 'Facebook',  'url' => 'https://www.facebook.com/bizifyapp',        'icon' => 'facebook'],
+    ];
+
     /** Ícones PNG gerados (badges roxos) — public/sig-icons/. */
     private const ICONS = ['phone', 'whatsapp', 'email', 'web', 'location', 'instagram', 'linkedin', 'youtube', 'facebook', 'lets-do-it', 'lets-do-it-dark'];
     private const ICON_CID_PREFIX = 'sig_icon_';
 
     private static function iconPath(string $n): string { return public_path("sig-icons/$n.png"); }
+
+    /** data:URI do logo BIZIFY (public/logo-bizify.png). */
+    private static function bizifyLogoDataUri(): string
+    {
+        $p = public_path('logo-bizify.png');
+        return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+    }
 
     /** data:URI do logo soft-white (#E5E7EB) p/ fundo escuro; fallback ao branco. */
     private static function softLogoDataUri(): string
@@ -65,8 +80,21 @@ class SignatureRenderer
     private const COMPANY_CITY     = 'São Paulo/SP - Brasil';
 
     /** Assinatura padrão da empresa (fallback quando o usuário não tem assinatura). */
-    public static function companyDefault(): array
+    public static function companyDefault(string $brand = 'erpserv'): array
     {
+        if ($brand === 'bizify') {
+            return [
+                'name'    => 'Bizify',
+                'role'    => 'Central de Atendimento',
+                'phone'   => '',                       // Bizify: só celular (opcional), sem fixo
+                'phone2'  => '',
+                'email'   => 'contato@bizify.com.br',
+                'website' => 'bizify.com.br',
+                'city'    => '',
+                'photo'   => '',
+                'brand'   => 'bizify',
+            ];
+        }
         return [
             'name'    => 'ERPSERV Consultoria',
             'role'    => 'Central de Atendimento',
@@ -76,39 +104,45 @@ class SignatureRenderer
             'website' => self::COMPANY_SITE,
             'city'    => self::COMPANY_CITY,
             'photo'   => '',
+            'brand'   => 'erpserv',
         ];
     }
 
     /**
      * Monta os dados de render combinando: nome/e-mail AUTOMÁTICOS (do cadastro),
      * cargo/celular EDITÁVEIS (celular opcional), e telefone fixo/site/cidade FIXOS da empresa.
-     * Sem cargo nem celular → assinatura institucional da empresa.
+     * Sem cargo nem celular → assinatura institucional da empresa. $brand ('erpserv'|'bizify')
+     * troca logo, redes, site e cores — a Bizify não tem fixo nem cidade (só celular opcional).
      */
-    public static function resolveData(string $name, string $email, array $sig): array
+    public static function resolveData(string $name, string $email, array $sig, string $brand = 'erpserv'): array
     {
         $role   = trim((string) ($sig['role'] ?? ''));
         $mobile = trim((string) ($sig['mobile'] ?? ''));
         $photo  = (string) ($sig['photo'] ?? '');
 
         if ($role === '' && $mobile === '' && $photo === '') {
-            return self::companyDefault();
+            return self::companyDefault($brand);
         }
+        $isBizify = $brand === 'bizify';
         return [
             'name'    => $name,
             'role'    => $role,
-            'phone'   => $mobile,                  // celular/whatsapp — opcional (some se vazio)
-            'phone2'  => self::COMPANY_LANDLINE,   // fixo
+            'phone'   => $mobile,                                          // celular/whatsapp — opcional (some se vazio)
+            'phone2'  => $isBizify ? '' : self::COMPANY_LANDLINE,          // Bizify não tem fixo
             'email'   => $email,
-            'website' => self::COMPANY_SITE,
-            'city'    => self::COMPANY_CITY,
+            'website' => $isBizify ? 'bizify.com.br' : self::COMPANY_SITE,
+            'city'    => $isBizify ? '' : self::COMPANY_CITY,              // Bizify sem cidade
             'photo'   => $photo,
+            'brand'   => $brand,
         ];
     }
 
     /** Resolve a assinatura a usar: a do usuário (nome/e-mail do cadastro) ou o padrão da empresa. */
     public static function resolveFor(?User $u): array
     {
-        if (!$u) return self::companyDefault();
+        // Marca da assinatura: usuário da Bizify (is_bizify, derivado do home_company_id) → assinatura Bizify.
+        $brand = ($u && $u->is_bizify) ? 'bizify' : 'erpserv';
+        if (!$u) return self::companyDefault($brand);
         $sig = is_array($u->signature) ? $u->signature : [];
         // Cargo EFETIVO: se o usuário personalizou (custom_cargo), usa o cargo próprio; senão usa o
         // padrão do perfil (cadastro Cargos por Perfil) — sempre fresco, sem depender do que ficou salvo.
@@ -127,7 +161,7 @@ class SignatureRenderer
             $dataUrl = $u->profilePhotoDataUrl();
             if ($dataUrl) $sig['photo'] = $dataUrl;
         }
-        return self::resolveData((string) ($u->name ?? ''), (string) ($u->email ?? ''), $sig);
+        return self::resolveData((string) ($u->name ?? ''), (string) ($u->email ?? ''), $sig, $brand);
     }
 
     /** Há dados suficientes p/ renderizar? */
@@ -184,19 +218,23 @@ class SignatureRenderer
     public static function render(array $d, string $iconMode = 'data', bool $showPhoto = true, string $theme = 'light', bool $showTagline = true): string
     {
         $dark = $theme === 'dark';
+        $isBizify = ($d['brand'] ?? 'erpserv') === 'bizify';
         $name = trim((string) ($d['name'] ?? ''));
         $role = trim((string) ($d['role'] ?? ''));
 
-        // Paleta por tema.
-        $nameColor = $dark ? '#ffffff' : '#111827';
+        // Paleta por tema. Bizify: nome em azul-marinho da marca.
+        $nameColor = $dark ? '#ffffff' : ($isBizify ? '#2b2e83' : '#111827');
         $roleColor = $dark ? '#9CA3AF' : '#6b7280';
         $textColor = $dark ? '#E5E7EB' : '#111827';
         $linkColor = $dark ? '#93c5fd' : '#1d4ed8'; // endereços (e-mail/site) em AZUL
 
-        // Logo: soft-white no escuro; roxo no claro.
-        $logoSrc = $iconMode === 'cid'
-            ? ('cid:' . ($dark ? HelpDeskMailFooter::LOGO_WHITE_CID : HelpDeskMailFooter::LOGO_CID))
-            : ($dark ? self::softLogoDataUri() : HelpDeskMailFooter::logoDataUri());
+        // Logo: Bizify usa o logo colorido (data:URI → o treatBody converte p/ cid no e-mail).
+        // ERPSERV: soft-white no escuro; roxo no claro.
+        $logoSrc = $isBizify
+            ? self::bizifyLogoDataUri()
+            : ($iconMode === 'cid'
+                ? ('cid:' . ($dark ? HelpDeskMailFooter::LOGO_WHITE_CID : HelpDeskMailFooter::LOGO_CID))
+                : ($dark ? self::softLogoDataUri() : HelpDeskMailFooter::logoDataUri()));
 
         // ── COLUNA ESQUERDA: logo + bloco usuário (foto à ESQUERDA do nome) ──
         $photoCell = '';
@@ -215,14 +253,15 @@ class SignatureRenderer
             .   '<div style="font-size:13px;font-weight:bold;color:' . $nameColor . ';text-transform:uppercase;line-height:1.2;white-space:nowrap">' . e($name) . '</div>'
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
-        $leftInner = '<img src="' . $logoSrc . '" alt="ERPSERV" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
+        $leftInner = '<img src="' . $logoSrc . '" alt="' . ($isBizify ? 'Bizify' : 'ERPSERV') . '" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
             . $userBlock;
 
-        // ── BLOCO DIREITO: topo (faixa "LET'S DO IT" + redes) + contatos em COLUNA ÚNICA ──
-        // Faixa em CSS (não imagem) → sem a borda/placa do Apple Mail. Cor no claro = cor do logo.
-        $banner = $showTagline ? self::taglineHtml($dark ? '#C4B5FD' : '#4a2583') : '';
+        // ── BLOCO DIREITO: topo (faixa/handle + redes) + contatos em COLUNA ÚNICA ──
+        // ERPSERV: faixa "LET'S DO IT" em CSS. Bizify: handle @bizifyapp (azul da marca).
+        $bizHandle = '<span style="display:inline-block;vertical-align:middle;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;letter-spacing:.3px;color:' . ($dark ? '#5ec5f0' : '#29abe2') . '">@bizifyapp</span>';
+        $banner = $showTagline ? ($isBizify ? $bizHandle : self::taglineHtml($dark ? '#C4B5FD' : '#4a2583')) : '';
         $social = '';
-        foreach (self::SOCIAL as $s) {
+        foreach (($isBizify ? self::SOCIAL_BIZIFY : self::SOCIAL) as $s) {
             $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:4px;display:inline-block">'
                 . '<img src="' . self::iconSrc($s['icon'], $iconMode) . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
         }
