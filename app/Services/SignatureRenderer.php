@@ -338,7 +338,16 @@ class SignatureRenderer
                 . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="215" border="0" style="width:215px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
             $roleLine = $role !== '' ? '<div style="font-size:12px;color:' . $roleColor . ';margin-top:2px">' . e($role) . '</div>' : '';
+            // Foto do usuário (dinâmica) — vai na COLUNA DO MEIO como avatar redondo, acima do nome
+            // (a imagem do bloco à esquerda é FIXA; a foto muda por usuário). background-image → o
+            // Apple Mail não põe a "placa"; no e-mail o treatBody converte o data: em cid.
+            $bzPhoto = '';
+            if ($showPhoto && !empty($d['photo']) && (Str::startsWith($d['photo'], 'data:image') || filter_var($d['photo'], FILTER_VALIDATE_URL))) {
+                $bzPhoto = '<div style="margin:0 0 10px"><span style="display:inline-block;width:56px;height:56px;border-radius:50%;'
+                    . 'background-image:url(\'' . e($d['photo']) . '\');background-size:cover;background-position:center;background-repeat:no-repeat"></span></div>';
+            }
             $col2 = '<td width="240" valign="middle" style="width:240px;vertical-align:middle;padding-right:14px">'
+                . $bzPhoto
                 . '<div style="font-size:20px;font-weight:800;color:' . $nameColor . ';line-height:1.2">' . e($name) . '</div>'
                 . $roleLine
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
