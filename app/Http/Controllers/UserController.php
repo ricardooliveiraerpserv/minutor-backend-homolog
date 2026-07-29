@@ -1260,6 +1260,7 @@ class UserController extends Controller
             'name'                => 'nullable|string|max:160',
             'email'               => 'nullable|string|max:160',
             'user_id'             => 'nullable|integer',
+            'is_bizify'           => 'nullable|boolean', // empresa base selecionada no form (ainda não salva)
             'signature'           => 'nullable|array',
             'signature.role'      => 'nullable|string|max:120',
             'signature.mobile'    => 'nullable|string|max:60',
@@ -1290,11 +1291,16 @@ class UserController extends Controller
             if ($dataUrl) $sig['photo'] = $dataUrl;
         }
 
+        // Marca: se o form mandou a empresa base selecionada (is_bizify), respeita — assim o preview
+        // reflete a escolha ANTES de salvar. Senão, cai no valor salvo do alvo.
+        $brand = $request->has('is_bizify')
+            ? ($request->boolean('is_bizify') ? 'bizify' : 'erpserv')
+            : (($target && $target->is_bizify) ? 'bizify' : 'erpserv');
         $data = \App\Services\SignatureRenderer::resolveData(
             (string) ($v['name'] ?? ''),
             (string) ($v['email'] ?? ''),
             $sig,
-            ($target && $target->is_bizify) ? 'bizify' : 'erpserv',
+            $brand,
         );
         return response()->json(['data' => [
             'system' => \App\Services\SignatureRenderer::render($data, 'data', true, 'light'),

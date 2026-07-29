@@ -1665,7 +1665,11 @@ class HelpDeskTicketController extends Controller
                 // ao final da RESPOSTA AO CLIENTE com texto. Nota interna e anexo-só não assinam.
                 $body = $v['body'] ?? '';
                 if (($v['visibility'] ?? 'internal') === 'customer' && trim((string) $body) !== '') {
-                    $sig = \App\Services\SignatureRenderer::resolveFor($request->user());
+                    // Marca da assinatura: Bizify quando o AGENTE é Bizify OU o CHAMADO é da Bizify
+                    // (admin ERPSERV respondendo chamado Bizify assina Bizify → admins têm as DUAS).
+                    $bizId = \App\Models\Company::where('slug', 'bizify')->value('id');
+                    $sigBrand = ((optional($request->user())->is_bizify) || ($bizId && (int) $ticket->company_id === (int) $bizId)) ? 'bizify' : null;
+                    $sig = \App\Services\SignatureRenderer::resolveFor($request->user(), $sigBrand);
                     if (\App\Services\SignatureRenderer::hasData($sig)) {
                         // Assinatura COMPLETA (com a faixa "LET'S DO IT"). No dark mode do Apple Mail a
                         // faixa transparente ganha uma moldura fina (placa do cliente) — comportamento

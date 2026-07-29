@@ -138,10 +138,12 @@ class SignatureRenderer
     }
 
     /** Resolve a assinatura a usar: a do usuário (nome/e-mail do cadastro) ou o padrão da empresa. */
-    public static function resolveFor(?User $u): array
+    public static function resolveFor(?User $u, ?string $forceBrand = null): array
     {
         // Marca da assinatura: usuário da Bizify (is_bizify, derivado do home_company_id) → assinatura Bizify.
-        $brand = ($u && $u->is_bizify) ? 'bizify' : 'erpserv';
+        // $forceBrand permite o chamador impor a marca (ex.: resposta de um chamado da Bizify → assinatura
+        // Bizify mesmo que o AGENTE seja admin ERPSERV — assim admins têm as DUAS conforme o contexto).
+        $brand = $forceBrand ?: (($u && $u->is_bizify) ? 'bizify' : 'erpserv');
         if (!$u) return self::companyDefault($brand);
         $sig = is_array($u->signature) ? $u->signature : [];
         // Cargo EFETIVO: se o usuário personalizou (custom_cargo), usa o cargo próprio; senão usa o
