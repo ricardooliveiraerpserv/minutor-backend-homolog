@@ -370,6 +370,7 @@ class UserController extends Controller
             'signature.show_photo' => 'nullable|boolean',
             'signature.custom_cargo' => 'nullable|boolean',
             'signature.bizify_email' => 'nullable|string|max:160',
+            'signature.alt_email' => 'nullable|string|max:160',
             'enabled' => 'sometimes|boolean',
             'can_use_bot' => 'sometimes|boolean',
             'bot_allowed_scopes' => 'sometimes|nullable|array',
@@ -643,6 +644,7 @@ class UserController extends Controller
             'signature.show_photo' => 'nullable|boolean',
             'signature.custom_cargo' => 'nullable|boolean',
             'signature.bizify_email' => 'nullable|string|max:160',
+            'signature.alt_email' => 'nullable|string|max:160',
             'enabled' => 'sometimes|boolean',
             'can_use_bot' => 'sometimes|boolean',
             'bot_allowed_scopes' => 'sometimes|nullable|array',
@@ -1262,7 +1264,8 @@ class UserController extends Controller
             'name'                => 'nullable|string|max:160',
             'email'               => 'nullable|string|max:160',
             'user_id'             => 'nullable|integer',
-            'is_bizify'           => 'nullable|boolean', // empresa base selecionada no form (ainda não salva)
+            'is_bizify'           => 'nullable|boolean', // marca RENDERIZADA no preview (toggle ERPSERV/Bizify)
+            'home_is_bizify'      => 'nullable|boolean', // EMPRESA BASE (define qual assinatura usa o e-mail do cadastro)
             'signature'           => 'nullable|array',
             'signature.role'      => 'nullable|string|max:120',
             'signature.mobile'    => 'nullable|string|max:60',
@@ -1270,6 +1273,7 @@ class UserController extends Controller
             'signature.show_photo'=> 'nullable|boolean',
             'signature.custom_cargo'=> 'nullable|boolean',
             'signature.bizify_email'=> 'nullable|string|max:160',
+            'signature.alt_email' => 'nullable|string|max:160',
         ]);
 
         $sig = $v['signature'] ?? [];
@@ -1299,14 +1303,21 @@ class UserController extends Controller
         // logado na base Bizify (current_company) — admin segue a BASE LOGADA.
         $bizId = \App\Models\Company::where('slug', 'bizify')->value('id');
         $targetBizify = $target && ($target->is_bizify || ($bizId && (int) $target->current_company_id === (int) $bizId));
+        // EMPRESA BASE (homeBrand): do form (home_is_bizify) ou do alvo salvo. Define qual assinatura
+        // usa o e-mail do cadastro; a outra usa o secundário (alt_email).
+        $homeBrand = $request->has('home_is_bizify')
+            ? ($request->boolean('home_is_bizify') ? 'bizify' : 'erpserv')
+            : ($targetBizify ? 'bizify' : 'erpserv');
+        // Marca RENDERIZADA: o toggle do preview (is_bizify). Sem toggle, usa a própria empresa base.
         $brand = $request->has('is_bizify')
             ? ($request->boolean('is_bizify') ? 'bizify' : 'erpserv')
-            : ($targetBizify ? 'bizify' : 'erpserv');
+            : $homeBrand;
         $data = \App\Services\SignatureRenderer::resolveData(
             (string) ($v['name'] ?? ''),
             (string) ($v['email'] ?? ''),
             $sig,
             $brand,
+            $homeBrand,
         );
         return response()->json(['data' => [
             'system' => \App\Services\SignatureRenderer::render($data, 'data', true, 'light'),

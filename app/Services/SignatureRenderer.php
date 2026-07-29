@@ -122,7 +122,7 @@ class SignatureRenderer
      * Sem cargo nem celular → assinatura institucional da empresa. $brand ('erpserv'|'bizify')
      * troca logo, redes, site e cores — a Bizify não tem fixo nem cidade (só celular opcional).
      */
-    public static function resolveData(string $name, string $email, array $sig, string $brand = 'erpserv'): array
+    public static function resolveData(string $name, string $email, array $sig, string $brand = 'erpserv', string $homeBrand = 'erpserv'): array
     {
         $role   = trim((string) ($sig['role'] ?? ''));
         $mobile = trim((string) ($sig['mobile'] ?? ''));
@@ -132,15 +132,17 @@ class SignatureRenderer
             return self::companyDefault($brand);
         }
         $isBizify = $brand === 'bizify';
-        // E-mail Bizify: a assinatura Bizify usa SÓ o e-mail secundário (bizify_email). Se não
-        // preenchido, NÃO mostra e-mail (não cai no principal). A ERPSERV usa o e-mail do cadastro.
-        $bizEmail = trim((string) ($sig['bizify_email'] ?? ''));
+        // E-mail por EMPRESA BASE: a assinatura do brand da empresa base usa o e-mail do CADASTRO;
+        // a assinatura do OUTRO brand usa o e-mail SECUNDÁRIO (alt_email). Secundário vazio → sem
+        // linha de e-mail naquela assinatura (não cai no principal). Compat: aceita bizify_email antigo.
+        $altEmail = trim((string) ($sig['alt_email'] ?? $sig['bizify_email'] ?? ''));
+        $emailForBrand = ($brand === $homeBrand) ? $email : $altEmail;
         return [
             'name'    => $name,
             'role'    => $role,
             'phone'   => $mobile,                                          // celular/whatsapp — opcional (some se vazio)
             'phone2'  => $isBizify ? '' : self::COMPANY_LANDLINE,          // Bizify não tem fixo
-            'email'   => $isBizify ? $bizEmail : $email,                   // Bizify: só o secundário (vazio = sem e-mail)
+            'email'   => $emailForBrand,
             'website' => $isBizify ? 'bizify.com.br' : self::COMPANY_SITE,
             'city'    => $isBizify ? '' : self::COMPANY_CITY,              // Bizify sem cidade
             'photo'   => $photo,
@@ -154,7 +156,9 @@ class SignatureRenderer
         // Marca da assinatura: usuário da Bizify (is_bizify, derivado do home_company_id) → assinatura Bizify.
         // $forceBrand permite o chamador impor a marca (ex.: resposta de um chamado da Bizify → assinatura
         // Bizify mesmo que o AGENTE seja admin ERPSERV — assim admins têm as DUAS conforme o contexto).
-        $brand = $forceBrand ?: (($u && $u->is_bizify) ? 'bizify' : 'erpserv');
+        // Empresa BASE do usuário (define qual assinatura usa o e-mail do cadastro).
+        $homeBrand = ($u && $u->is_bizify) ? 'bizify' : 'erpserv';
+        $brand = $forceBrand ?: $homeBrand;
         if (!$u) return self::companyDefault($brand);
         $sig = is_array($u->signature) ? $u->signature : [];
         // Cargo EFETIVO: se o usuário personalizou (custom_cargo), usa o cargo próprio; senão usa o
@@ -174,7 +178,7 @@ class SignatureRenderer
             $dataUrl = $u->profilePhotoDataUrl();
             if ($dataUrl) $sig['photo'] = $dataUrl;
         }
-        return self::resolveData((string) ($u->name ?? ''), (string) ($u->email ?? ''), $sig, $brand);
+        return self::resolveData((string) ($u->name ?? ''), (string) ($u->email ?? ''), $sig, $brand, $homeBrand);
     }
 
     /** Há dados suficientes p/ renderizar? */
