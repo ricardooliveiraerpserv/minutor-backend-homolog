@@ -25,6 +25,10 @@ class ApiSecurityHeaders
         // script inline. CSP própria (self + inline) em vez de default-src 'none'.
         $vaultPopup = $request->is('api/v1/integrations/microsoft/callback');
 
+        // Páginas de aceite/recusa da solução (cliente pelo e-mail, sem login): HTML branded
+        // com estilo inline + logo (data:URI). CSP própria — senão renderiza cru e sem logo.
+        $acceptPage = $request->is('api/v1/hd/aceite/*');
+
         // Headers de segurança
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-Frame-Options', $framableInline ? 'SAMEORIGIN' : 'DENY');
@@ -35,6 +39,8 @@ class ApiSecurityHeaders
             $csp = "frame-ancestors 'self'";
         } elseif ($vaultPopup) {
             $csp = "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:";
+        } elseif ($acceptPage) {
+            $csp = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'";
         }
         $response->headers->set('Content-Security-Policy', $csp);
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none');

@@ -106,8 +106,14 @@ class HelpDeskAcceptController extends Controller
             \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail de encerramento (aceite) falhou: ' . $e->getMessage());
         }
 
-        return $this->page('Chamado encerrado', '<p>Prontinho! O chamado <b>' . e($ticket->ticket_number ?: ('#' . $ticket->id))
-            . '</b> foi encerrado. Obrigado pelo retorno. 👍</p><p style="color:#6b7280;font-size:13px;margin-top:12px">Você já pode fechar esta página.</p>');
+        return $this->page(
+            'Chamado encerrado!',
+            '<p>Prontinho! O chamado <b>' . e($ticket->ticket_number ?: ('#' . $ticket->id))
+                . '</b> foi <b>encerrado</b>. Muito obrigado pelo seu retorno — ficamos felizes em ter ajudado! 🎉</p>'
+                . '<p style="color:#6b7280;font-size:13px;margin-top:14px">Você já pode fechar esta página.</p>',
+            '🚀',
+            '#16a34a'
+        );
     }
 
     /** POST: recusa a solução com motivo → chamado volta para "Em atendimento". */
@@ -142,24 +148,37 @@ class HelpDeskAcceptController extends Controller
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'email']]);
         HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'email']]);
 
-        return $this->page('Recebemos sua recusa', '<p>Obrigado pelo retorno. O chamado <b>' . e($ticket->ticket_number ?: ('#' . $ticket->id))
-            . '</b> voltou para <b>Em atendimento</b> e nossa equipe já foi avisada para dar continuidade.</p>'
-            . '<p style="color:#6b7280;font-size:13px;margin-top:12px">Você já pode fechar esta página.</p>');
+        return $this->page(
+            'Recebemos sua recusa',
+            '<p>Obrigado pelo retorno. O chamado <b>' . e($ticket->ticket_number ?: ('#' . $ticket->id))
+                . '</b> voltou para <b>Em atendimento</b> e nossa equipe já foi avisada para dar continuidade.</p>'
+                . '<p style="color:#6b7280;font-size:13px;margin-top:14px">Você já pode fechar esta página.</p>',
+            '🔧'
+        );
     }
 
-    /** Página HTML branded (autossuficiente) — sem dependências externas. */
-    private function page(string $title, string $bodyHtml)
+    /**
+     * Página HTML branded (autossuficiente) — logo + tudo CENTRALIZADO.
+     * $icon: emoji grande de destaque (ex.: 🚀) para telas de sucesso. $accent: cor do topo.
+     */
+    private function page(string $title, string $bodyHtml, string $icon = '', string $accent = self::BRAND)
     {
+        $logo = \App\Services\HelpDeskMailFooter::whiteLogoDataUri();
+        $logoImg = $logo !== ''
+            ? '<img src="' . $logo . '" alt="ERPSERV" style="height:34px;width:auto;display:inline-block;border:0" />'
+            : '<div style="color:#fff;font-weight:800;font-size:20px;letter-spacing:.02em">ERPSERV</div>';
+        $iconHtml = $icon !== '' ? '<div style="font-size:60px;line-height:1;margin:2px 0 12px">' . $icon . '</div>' : '';
         $html = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . '</title></head>'
             . '<body style="margin:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#1f2937">'
-            . '<div style="max-width:520px;margin:6vh auto;padding:0 16px">'
-            . '<div style="background:#fff;border:1px solid #e6e8ec;border-radius:12px;overflow:hidden">'
-            . '<div style="height:4px;background:' . self::BRAND . '"></div>'
-            . '<div style="padding:26px 28px">'
-            . '<div style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8a94a6">Central de Atendimento · ERPSERV</div>'
-            . '<h1 style="margin:8px 0 14px;font-size:20px;color:#111827">' . e($title) . '</h1>'
-            . '<div style="font-size:15px;line-height:1.6">' . $bodyHtml . '</div>'
+            . '<div style="max-width:520px;margin:8vh auto;padding:0 16px">'
+            . '<div style="background:#fff;border:1px solid #e6e8ec;border-radius:16px;overflow:hidden;box-shadow:0 12px 34px rgba(17,24,39,.10)">'
+            . '<div style="background:' . $accent . ';padding:22px 24px;text-align:center">' . $logoImg . '</div>'
+            . '<div style="padding:32px 28px;text-align:center">'
+            . $iconHtml
+            . '<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a94a6">Central de Atendimento · ERPSERV</div>'
+            . '<h1 style="margin:8px 0 16px;font-size:22px;color:#111827">' . e($title) . '</h1>'
+            . '<div style="font-size:15px;line-height:1.65;color:#374151">' . $bodyHtml . '</div>'
             . '</div></div>'
             . '<div style="text-align:center;font-size:12px;color:#9ca3af;margin-top:16px">Mensagem da Central de Atendimento ERPSERV · Minutor</div>'
             . '</div></body></html>';
