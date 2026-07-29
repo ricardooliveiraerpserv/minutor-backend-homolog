@@ -253,7 +253,7 @@ class SignatureRenderer
             .   '<div style="font-size:13px;font-weight:bold;color:' . $nameColor . ';text-transform:uppercase;line-height:1.2;white-space:nowrap">' . e($name) . '</div>'
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
-        $left = '<td valign="top" style="vertical-align:top;padding-right:12px">'
+        $left = '<td class="sgL" valign="top" style="vertical-align:top;padding-right:12px">'
             . '<img src="' . $logoSrc . '" alt="' . ($isBizify ? 'Bizify' : 'ERPSERV') . '" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
             . $userBlock
             . '</td>';
@@ -284,13 +284,20 @@ class SignatureRenderer
             $colB .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor);
         }
         $grid = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-            . '<td valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
-            . '<td valign="top" style="vertical-align:top">' . $colB . '</td>'
+            . '<td class="sgA" valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
+            . '<td class="sgB" valign="top" style="vertical-align:top">' . $colB . '</td>'
             . '</tr></table>';
 
-        $right = '<td valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
+        $right = '<td class="sgR" valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
 
-        return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
+        // Media query SÓ p/ celular (≤480px): empilha as colunas (logo/dados e os 2 grupos de contato).
+        // No DESKTOP nada muda — a tabela continua idêntica. Corrige o e-mail quebrando letra a letra
+        // e o overlap com os botões no mobile, SEM alterar o formato aprovado.
+        $mq = '<style>@media only screen and (max-width:480px){'
+            . '.sgL,.sgR,.sgA,.sgB{display:block!important;width:100%!important;max-width:100%!important;padding-right:0!important}'
+            . '.sgL{padding-bottom:10px!important}}</style>';
+
+        return $mq . '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
             . '<tr>' . $left . $right . '</tr></table>';
     }
 }
