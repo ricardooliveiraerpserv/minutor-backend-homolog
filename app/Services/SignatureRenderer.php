@@ -34,7 +34,14 @@ class SignatureRenderer
     private const ICONS = ['phone', 'whatsapp', 'email', 'web', 'location', 'instagram', 'linkedin', 'youtube', 'facebook', 'lets-do-it', 'lets-do-it-dark'];
     private const ICON_CID_PREFIX = 'sig_icon_';
 
-    private static function iconPath(string $n): string { return public_path("sig-icons/$n.png"); }
+    private static function iconPath(string $n, string $brand = 'erpserv'): string
+    {
+        if ($brand === 'bizify') {
+            $bz = public_path("sig-icons-bizify/$n.png");
+            if (is_file($bz)) return $bz; // ícones azuis Bizify; se faltar algum, cai no roxo padrão
+        }
+        return public_path("sig-icons/$n.png");
+    }
 
     /** data:URI do logo BIZIFY (public/logo-bizify.png). */
     private static function bizifyLogoDataUri(): string
@@ -53,10 +60,11 @@ class SignatureRenderer
     public static function iconCid(string $n): string { return self::ICON_CID_PREFIX . $n . '@minutor'; }
 
     /** src do ícone: 'cid' (e-mail) ou 'data' (prévia/sistema). */
-    private static function iconSrc(string $n, string $mode): string
+    private static function iconSrc(string $n, string $mode, string $brand = 'erpserv'): string
     {
+        // modo cid (comunicação): usa os ícones padrão (roxo) — a via principal do HD é 'data'.
         if ($mode === 'cid') return 'cid:' . self::iconCid($n);
-        $p = self::iconPath($n);
+        $p = self::iconPath($n, $brand);
         return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
     }
 
@@ -203,9 +211,9 @@ class SignatureRenderer
     }
 
     /** Uma linha de contato (ícone PNG + conteúdo) com cor de texto do tema. */
-    private static function contactLine(string $icon, string $mode, string $html, string $textColor): string
+    private static function contactLine(string $icon, string $mode, string $html, string $textColor, string $brand = 'erpserv'): string
     {
-        $img = '<img src="' . self::iconSrc($icon, $mode) . '" width="20" height="20" alt="" border="0" style="width:20px;height:20px;display:inline-block;vertical-align:middle;border:0;outline:none;text-decoration:none;margin-right:8px" />';
+        $img = '<img src="' . self::iconSrc($icon, $mode, $brand) . '" width="20" height="20" alt="" border="0" style="width:20px;height:20px;display:inline-block;vertical-align:middle;border:0;outline:none;text-decoration:none;margin-right:8px" />';
         return '<div style="margin:0 0 7px;font-size:11px;color:' . $textColor . ';line-height:24px;white-space:nowrap">' . $img . $html . '</div>';
     }
 
@@ -267,7 +275,7 @@ class SignatureRenderer
         $social = '';
         foreach (($isBizify ? self::SOCIAL_BIZIFY : self::SOCIAL) as $s) {
             $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:4px;display:inline-block">'
-                . '<img src="' . self::iconSrc($s['icon'], $iconMode) . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
+                . '<img src="' . self::iconSrc($s['icon'], $iconMode, $isBizify ? 'bizify' : 'erpserv') . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
         }
         $topRow = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:16px"><tr>'
             . '<td valign="middle" style="vertical-align:middle">' . $banner . '</td>'
@@ -275,15 +283,16 @@ class SignatureRenderer
             . '</tr></table>';
 
         // contatos em 2 colunas: A (celular/fixo/cidade) | B (e-mail/site). Bizify não tem fixo/cidade.
+        $bk = $isBizify ? 'bizify' : 'erpserv';   // conjunto de ícones (azul Bizify × roxo ERPSERV)
         $colA = '';
-        if (!empty($d['phone']))  $colA .= self::contactLine('whatsapp', $iconMode, e($d['phone']), $textColor);
-        if (!empty($d['phone2'])) $colA .= self::contactLine('phone', $iconMode, e($d['phone2']), $textColor);
-        if (!empty($d['city']))   $colA .= self::contactLine('location', $iconMode, e($d['city']), $textColor);
+        if (!empty($d['phone']))  $colA .= self::contactLine('whatsapp', $iconMode, e($d['phone']), $textColor, $bk);
+        if (!empty($d['phone2'])) $colA .= self::contactLine('phone', $iconMode, e($d['phone2']), $textColor, $bk);
+        if (!empty($d['city']))   $colA .= self::contactLine('location', $iconMode, e($d['city']), $textColor, $bk);
         $colB = '';
-        if (!empty($d['email']))  $colB .= self::contactLine('email', $iconMode, '<a href="mailto:' . e($d['email']) . '" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['email']) . '</a>', $textColor);
+        if (!empty($d['email']))  $colB .= self::contactLine('email', $iconMode, '<a href="mailto:' . e($d['email']) . '" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['email']) . '</a>', $textColor, $bk);
         if (!empty($d['website'])) {
             $href = preg_match('#^https?://#i', $d['website']) ? $d['website'] : 'https://' . $d['website'];
-            $colB .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor);
+            $colB .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor, $bk);
         }
         $grid = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
             . '<td valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
