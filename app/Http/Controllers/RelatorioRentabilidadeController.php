@@ -154,13 +154,11 @@ class RelatorioRentabilidadeController extends Controller
         $jaNoRelatorio = [];
         foreach ($groups as $g) { $jaNoRelatorio[$g['user_id']] = true; }
 
+        // Fixos SEM apontamento: quem entra é decidido SÓ pela config Visibilidade (ocultos) —
+        // inclui coordenador/diretor/Bizify (não são mais excluídos). Precisa ter salário mensal (checado no loop).
         $fixosQuery = \App\Models\User::query()
             ->where('enabled', true)
-            ->where('type', 'consultor')
-            ->whereNull('coordinator_type')
-            ->where(fn ($q) => $q->whereNull('is_bizify')->orWhere('is_bizify', false))
-            ->where(fn ($q) => $q->whereNull('is_diretor')->orWhere('is_diretor', false))
-            ->where(fn ($q) => $q->whereNull('is_diretor_projetos')->orWhere('is_diretor_projetos', false))
+            ->where('type', '!=', 'cliente')
             ->whereNotIn('id', $this->rentabHiddenUserIds()) // oculta usuários da Rentabilidade (config admin)
             ->with('partner:id,pricing_type,hourly_rate');
         // Mesma empresa dos apontamentos (Timesheet é escopado por empresa quando o
