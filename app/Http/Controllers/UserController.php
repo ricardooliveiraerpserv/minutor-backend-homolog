@@ -1292,10 +1292,13 @@ class UserController extends Controller
         }
 
         // Marca: se o form mandou a empresa base selecionada (is_bizify), respeita — assim o preview
-        // reflete a escolha ANTES de salvar. Senão, cai no valor salvo do alvo.
+        // reflete a escolha ANTES de salvar. Senão, cai no alvo: Bizify se for is_bizify OU estiver
+        // logado na base Bizify (current_company) — admin segue a BASE LOGADA.
+        $bizId = \App\Models\Company::where('slug', 'bizify')->value('id');
+        $targetBizify = $target && ($target->is_bizify || ($bizId && (int) $target->current_company_id === (int) $bizId));
         $brand = $request->has('is_bizify')
             ? ($request->boolean('is_bizify') ? 'bizify' : 'erpserv')
-            : (($target && $target->is_bizify) ? 'bizify' : 'erpserv');
+            : ($targetBizify ? 'bizify' : 'erpserv');
         $data = \App\Services\SignatureRenderer::resolveData(
             (string) ($v['name'] ?? ''),
             (string) ($v['email'] ?? ''),
