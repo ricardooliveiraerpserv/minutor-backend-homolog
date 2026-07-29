@@ -1604,15 +1604,6 @@ class HelpDeskTicketController extends Controller
         if (is_string($request->input('solution')) && $request->input('solution') !== '') {
             $request->merge(['solution' => json_decode((string) $request->input('solution'), true)]);
         }
-        // DIAGNÓSTICO TEMPORÁRIO: anexo do formulário não chegava. Loga o que a request traz.
-        \Illuminate\Support\Facades\Log::info('HD.addComment.debug', [
-            'ticket'    => $ticket->id,
-            'form_kind' => $request->input('form_kind'),
-            'ct'        => substr((string) $request->header('Content-Type'), 0, 40),
-            'nfiles'    => count($request->allFiles()),
-            'has_files' => $request->hasFile('files'),
-            'keys'      => array_keys($request->all()),
-        ]);
         $v = $request->validate([
             'body'            => 'required_without:files|nullable|string', // interação pode ser só anexo/print (estilo e-mail)
             'visibility'      => 'nullable|in:internal,customer',

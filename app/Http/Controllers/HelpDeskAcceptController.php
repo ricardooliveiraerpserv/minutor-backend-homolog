@@ -32,28 +32,6 @@ class HelpDeskAcceptController extends Controller
         return $st && $st->is_resolved && !$st->is_terminal;
     }
 
-    /** TEMP DEBUG (remover): diagnóstico dos blocos da assinatura Bizify. */
-    public function sigDebug(\Illuminate\Http\Request $request)
-    {
-        $out = [];
-        $sig = ['role' => 'Consultor'];
-        // Testa a hipótese: foto grande no $sig quebra o render dos blocos?
-        if ($request->boolean('photo')) {
-            $sig['photo'] = 'data:image/png;base64,' . base64_encode(random_bytes(45000));
-            $out['with_photo'] = true;
-        }
-        $data = \App\Services\SignatureRenderer::resolveData('Aguinaldo Camilo', 'aguinaldo.camillo@erpserv.com.br', $sig, 'bizify');
-        $html = \App\Services\SignatureRenderer::render($data, 'data', true, 'light');
-        $out['brand'] = $data['brand'] ?? '(none)';
-        $out['data_has_photo'] = !empty($data['photo']);
-        $out['html_len'] = strlen($html);
-        $out['num_datauris'] = substr_count($html, 'data:image/png;base64,');
-        $out['has_w205'] = str_contains($html, 'width="205"');
-        $out['has_w165'] = str_contains($html, 'width="165"');
-        $out['peak_mem_mb'] = round(memory_get_peak_usage(true) / 1048576, 1);
-        return response()->json($out);
-    }
-
     /** Link assinado (30 dias) da tela de aceite/recusa — usado nos botões do e-mail. */
     public static function actionUrl(int $ticketId, string $acao): string
     {

@@ -136,9 +136,6 @@ Route::prefix('v1')->group(function () {
         Route::get('/hd/aceite/{ticket}',          [\App\Http\Controllers\HelpDeskAcceptController::class, 'show'])->name('hd.accept');
         Route::post('/hd/aceite/{ticket}/encerrar', [\App\Http\Controllers\HelpDeskAcceptController::class, 'accept'])->name('hd.accept.do');
         Route::post('/hd/aceite/{ticket}/recusar',  [\App\Http\Controllers\HelpDeskAcceptController::class, 'reject'])->name('hd.reject.do');
-
-        // TEMP DEBUG (remover): diagnóstico da assinatura Bizify (blocos).
-        Route::get('/sig-debug-bz', [\App\Http\Controllers\HelpDeskAcceptController::class, 'sigDebug']);
     });
 
     /**
