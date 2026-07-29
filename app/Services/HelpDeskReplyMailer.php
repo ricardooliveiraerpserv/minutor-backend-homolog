@@ -140,6 +140,28 @@ class HelpDeskReplyMailer
             $html
         ) ?? $html;
 
+        // 1b) Blocos decorativos da Bizify servidos por URL (…/sig-icons-bizify/xxx.png) → inline (cid).
+        //     No preview do sistema eles carregam por URL; no e-mail viram anexo inline (data: quebra).
+        $html = preg_replace_callback(
+            '#<img\b([^>]*?)\bsrc=["\']https?://[^"\']*/sig-icons-bizify/([a-z0-9-]+\.png)["\']([^>]*)>#i',
+            function ($m) use (&$inline, &$i, &$seen) {
+                $fp = public_path('sig-icons-bizify/' . $m[2]);
+                if (!is_file($fp)) return $m[0];
+                $bytes = (string) file_get_contents($fp);
+                $key = md5($bytes);
+                if (isset($seen[$key])) {
+                    $cid = $seen[$key];
+                } else {
+                    $i++;
+                    $cid = "hdblk{$i}@minutor";
+                    $inline[] = ['name' => $m[2], 'mime' => 'image/png', 'bytes' => $bytes, 'cid' => $cid];
+                    $seen[$key] = $cid;
+                }
+                return '<img' . $m[1] . ' src="cid:' . $cid . '"' . $m[3] . '>';
+            },
+            $html
+        ) ?? $html;
+
         // 2) Imagens com src RELATIVO (não cid:/http(s):/data:) → logo ERPSERV inline (cid).
         //    É o caso do "/logo.png" do cabeçalho do Detalhamento da Solução, que quebrava no e-mail.
         $usedLogo = false;
