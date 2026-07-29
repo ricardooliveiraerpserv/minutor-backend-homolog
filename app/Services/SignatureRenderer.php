@@ -311,13 +311,13 @@ class SignatureRenderer
         //    MEIO; grafismos (pontinhos / barras / anel PARCIAL) à DIREITA. Estrutura própria (o Bizify
         //    NÃO usa a estrutura da ERPSERV). Decorações como PNG (anel parcial, balão, telefone, nuvem).
         if ($isBizify) {
-            // Blocos por URL ABSOLUTA (não data URI): o navegador não renderiza o data URI grande dos
-            // blocos no preview (só os ícones pequenos). Via URL, carrega normal (CSP permite https:).
-            // No e-mail, o treatBody converte essa URL em anexo inline (cid).
+            // Blocos como DATA URI (embutidos): elimina o cache de imagem do navegador que servia versão
+            // antiga (por URL o browser nem pedia o arquivo — disk cache). Renderiza porque as colunas
+            // têm largura fixa (o que travava antes era o colapso da coluna, não o data URI). No e-mail o
+            // treatBody converte o data: em anexo inline (cid). PNG 256 cores → data URI leve (~47KB).
             $blockUri = function (string $f): string {
                 $p = public_path("sig-icons-bizify/$f.png");
-                // ?v=mtime → cache-busting: quando o arquivo muda, a URL muda e o navegador rebaixa a nova.
-                return is_file($p) ? rtrim((string) config('app.url'), '/') . "/sig-icons-bizify/$f.png?v=" . filemtime($p) : '';
+                return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
             };
             $bzContacts = '';
             if (!empty($d['phone']))   $bzContacts .= self::contactLine('phone', $iconMode, e($d['phone']), $textColor, 'bizify');
