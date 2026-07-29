@@ -332,21 +332,21 @@ class SignatureRenderer
             $rightBlock = $blockUri('block-right-hd');
             // Larguras EXPLÍCITAS por coluna (sem width="1"/max-width): numa tabela shrink de 3 colunas
             // o navegador dava toda a largura ao meio e colapsava col1/col3 (blocos "sumiam").
-            // Proporções do TEMPLATE (banner): bloco esquerdo grande à esq., bloco DIREITO o mais largo
-            // à dir., texto centralizado no meio. O espaço do meio é o do próprio template.
-            $col1 = '<td width="280" valign="top" style="width:280px;vertical-align:top;padding-right:10px">'
-                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="270" border="0" style="width:270px;height:auto;display:block;border:0;outline:none">' : '')
+            // Mesmas PROPORÇÕES do template (bloco DIREITO o mais largo), porém em tamanho menor (~730px).
+            // Texto centralizado verticalmente contra os blocos.
+            $col1 = '<td width="225" valign="middle" style="width:225px;vertical-align:middle;padding-right:8px">'
+                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="215" border="0" style="width:215px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
             $roleLine = $role !== '' ? '<div style="font-size:12px;color:' . $roleColor . ';margin-top:2px">' . e($role) . '</div>' : '';
-            $col2 = '<td width="260" valign="middle" style="width:260px;vertical-align:middle;padding-right:16px">'
-                . '<div style="font-size:21px;font-weight:800;color:' . $nameColor . ';line-height:1.2">' . e($name) . '</div>'
+            $col2 = '<td width="240" valign="middle" style="width:240px;vertical-align:middle;padding-right:14px">'
+                . '<div style="font-size:20px;font-weight:800;color:' . $nameColor . ';line-height:1.2">' . e($name) . '</div>'
                 . $roleLine
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
                 . '</td>';
-            $col3 = '<td width="345" valign="top" align="right" style="width:345px;vertical-align:top">'
-                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="335" border="0" style="width:335px;height:auto;display:block;border:0;outline:none">' : '')
+            $col3 = '<td width="265" valign="middle" align="right" style="width:265px;vertical-align:middle">'
+                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="255" border="0" style="width:255px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            return '<table role="presentation" width="885" cellpadding="0" cellspacing="0" border="0" style="width:885px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
+            return '<table role="presentation" width="730" cellpadding="0" cellspacing="0" border="0" style="width:730px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
                 . '<tr>' . $col1 . $col2 . $col3 . '</tr></table>';
         }
 
