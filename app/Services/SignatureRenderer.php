@@ -211,6 +211,36 @@ class SignatureRenderer
     }
 
     /** Uma linha de contato (ícone PNG + conteúdo) com cor de texto do tema. */
+    /** Grade de pontinhos (decoração Bizify, canto superior direito). Spans inline-block (email-safe). */
+    private static function bizifyDots(string $c, int $cols = 8, int $rows = 6): string
+    {
+        $dot = '<span style="display:inline-block;width:3px;height:3px;border-radius:50%;background:' . $c . ';margin:0 5px 0 0"></span>';
+        $row = str_repeat($dot, $cols);
+        $out = '';
+        for ($i = 0; $i < $rows; $i++) $out .= '<span style="display:block;line-height:8px;font-size:0">' . $row . '</span>';
+        return '<span style="display:inline-block;font-size:0;line-height:0">' . $out . '</span>';
+    }
+
+    /** Gráfico de barras crescentes (outline) — decoração Bizify. */
+    private static function bizifyBars(string $c): string
+    {
+        $bar = fn (int $h) => '<span style="display:inline-block;width:9px;height:' . $h . 'px;border:1px solid ' . $c . ';border-radius:2px 2px 0 0;margin:0 3px 0 0;vertical-align:bottom"></span>';
+        return '<span style="display:inline-block;vertical-align:bottom;font-size:0">' . $bar(7) . $bar(13) . $bar(19) . $bar(27) . $bar(35) . '</span>';
+    }
+
+    /** Anel/círculo (Outlook sem border-radius degrada p/ quadrado — aceitável). Decoração Bizify. */
+    private static function bizifyRing(string $c): string
+    {
+        return '<span style="display:inline-block;width:26px;height:26px;border:5px solid ' . $c . ';border-radius:50%;vertical-align:bottom;margin-left:8px"></span>';
+    }
+
+    /** "+" duplos (decoração Bizify, topo esquerdo). */
+    private static function bizifyPlus(string $c): string
+    {
+        return '<span style="display:inline-block;font-family:Arial,sans-serif;color:' . $c . ';font-weight:700;line-height:1">'
+            . '<span style="font-size:22px">+</span><span style="font-size:14px;vertical-align:top">+</span></span>';
+    }
+
     private static function contactLine(string $icon, string $mode, string $html, string $textColor, string $brand = 'erpserv'): string
     {
         $img = '<img src="' . self::iconSrc($icon, $mode, $brand) . '" width="20" height="20" alt="" border="0" style="width:20px;height:20px;display:inline-block;vertical-align:middle;border:0;outline:none;text-decoration:none;margin-right:8px" />';
@@ -264,6 +294,7 @@ class SignatureRenderer
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
         $left = '<td valign="top" style="vertical-align:top;padding-right:12px">'
+            . ($isBizify ? '<div style="margin:0 0 4px 2px">' . self::bizifyPlus('#6b3fd4') . '</div>' : '')
             . '<img src="' . $logoSrc . '" alt="' . ($isBizify ? 'Bizify' : 'ERPSERV') . '" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
             . $userBlock
             . '</td>';
@@ -301,7 +332,16 @@ class SignatureRenderer
 
         $right = '<td valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
 
+        // Coluna decorativa Bizify (à direita): grade de pontinhos no topo + barras/anel embaixo.
+        // Sem position:absolute (o Exchange remove) — decoração fica na coluna, no fluxo da tabela.
+        $decor = $isBizify
+            ? '<td valign="top" align="right" style="vertical-align:top;padding-left:20px">'
+                . '<div style="margin:2px 0 26px">' . self::bizifyDots('#7d9bdf') . '</div>'
+                . '<div style="white-space:nowrap">' . self::bizifyBars('#8fb0e8') . self::bizifyRing('#5b3fd4') . '</div>'
+                . '</td>'
+            : '';
+
         return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
-            . '<tr>' . $left . $right . '</tr></table>';
+            . '<tr>' . $left . $right . $decor . '</tr></table>';
     }
 }
