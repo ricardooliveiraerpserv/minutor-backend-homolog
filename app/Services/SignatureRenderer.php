@@ -332,8 +332,8 @@ class SignatureRenderer
             $rightBlock = $blockUri('block-right-hd');
             // Larguras EXPLÍCITAS por coluna (sem width="1"/max-width): numa tabela shrink de 3 colunas
             // o navegador dava toda a largura ao meio e colapsava col1/col3 (blocos "sumiam").
-            $col1 = '<td width="215" valign="top" style="width:215px;vertical-align:top;padding-right:16px">'
-                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="199" border="0" style="width:199px;height:auto;display:block;border:0;outline:none">' : '')
+            $col1 = '<td width="265" valign="top" style="width:265px;vertical-align:top;padding-right:14px">'
+                . ($leftBlock !== '' ? '<img src="' . $leftBlock . '" alt="Bizify" width="250" border="0" style="width:250px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
             $roleLine = $role !== '' ? '<div style="font-size:12px;color:' . $roleColor . ';margin-top:2px">' . e($role) . '</div>' : '';
             $col2 = '<td width="270" valign="top" style="width:270px;vertical-align:top;padding:22px 24px 0 0">'
@@ -341,10 +341,10 @@ class SignatureRenderer
                 . $roleLine
                 . '<div style="margin-top:12px">' . $bzContacts . '</div>'
                 . '</td>';
-            $col3 = '<td width="170" valign="top" align="right" style="width:170px;vertical-align:top">'
-                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="160" border="0" style="width:160px;height:auto;display:block;border:0;outline:none">' : '')
+            $col3 = '<td width="200" valign="top" align="right" style="width:200px;vertical-align:top">'
+                . ($rightBlock !== '' ? '<img src="' . $rightBlock . '" alt="" width="190" border="0" style="width:190px;height:auto;display:block;border:0;outline:none">' : '')
                 . '</td>';
-            return '<table role="presentation" width="655" cellpadding="0" cellspacing="0" border="0" style="width:655px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
+            return '<table role="presentation" width="735" cellpadding="0" cellspacing="0" border="0" style="width:735px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px;table-layout:fixed">'
                 . '<tr>' . $col1 . $col2 . $col3 . '</tr></table>';
         }
 
