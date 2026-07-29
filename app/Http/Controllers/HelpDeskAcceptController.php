@@ -32,6 +32,25 @@ class HelpDeskAcceptController extends Controller
         return $st && $st->is_resolved && !$st->is_terminal;
     }
 
+    /** TEMP DEBUG (remover): diagnóstico dos blocos da assinatura Bizify. */
+    public function sigDebug()
+    {
+        $out = [];
+        foreach (['block-left', 'block-right', 'email', 'web'] as $f) {
+            $fp = public_path("sig-icons-bizify/$f.png");
+            $out['files'][$f] = ['is_file' => is_file($fp), 'size' => is_file($fp) ? filesize($fp) : 0, 'path' => $fp];
+        }
+        $data = \App\Services\SignatureRenderer::resolveData('Teste Bizify', 'teste@bizify.com.br', ['role' => 'Consultor'], 'bizify');
+        $html = \App\Services\SignatureRenderer::render($data, 'data', true, 'light');
+        $out['brand'] = $data['brand'] ?? '(none)';
+        $out['html_len'] = strlen($html);
+        $out['num_datauris'] = substr_count($html, 'data:image/png;base64,');
+        $out['has_w205'] = str_contains($html, 'width="205"');
+        $out['has_w165'] = str_contains($html, 'width="165"');
+        $out['html_head'] = substr($html, 0, 500);
+        return response()->json($out);
+    }
+
     /** Link assinado (30 dias) da tela de aceite/recusa — usado nos botões do e-mail. */
     public static function actionUrl(int $ticketId, string $acao): string
     {
