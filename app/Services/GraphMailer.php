@@ -23,6 +23,8 @@ class GraphMailer
 
     /** Anexos inline (contentBytes) só valem até ~3 MB no total num único sendMail. */
     public const MAX_INLINE_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+    /** Teto por ARQUIVO no e-mail (createUploadSession cobre >3MB). Alinha com o upload (25MB). */
+    public const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
     /** true só quando as 3 credenciais estão preenchidas. */
     public static function enabled(): bool

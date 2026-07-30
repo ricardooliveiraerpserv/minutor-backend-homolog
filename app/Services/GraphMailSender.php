@@ -108,27 +108,32 @@ class GraphMailSender
                 $message['bccRecipients'] = array_map(fn ($e) => ['emailAddress' => ['address' => $e]], $bccClean);
             }
 
-            // Anexos em memória (bytes) — ex.: arquivos da resposta do chamado. Respeita o teto ~3 MB.
-            $total = 0;
+            // Anexos em memória. Até 25 MB POR ARQUIVO (createUploadSession p/ > ~3 MB). Imagens
+            // inline (cid) são pequenas (prints reduzidos) e vão como contentBytes no corpo.
+            $largeAtts = [];
             foreach ($inlineAttachments as $a) {
                 $bytes = (string) ($a['bytes'] ?? '');
                 if ($bytes === '') continue;
-                $total += strlen($bytes);
-                if ($total > GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
-                    return [false, 'Anexos excedem ~3 MB no total (upload session ainda não implementado).'];
+                $len = strlen($bytes);
+                if ($len > GraphMailer::MAX_ATTACHMENT_BYTES) {
+                    $mb = round($len / 1048576, 1);
+                    return [false, "O anexo '" . ($a['name'] ?? 'arquivo') . "' tem {$mb} MB; o limite por arquivo é 25 MB."];
                 }
-                $entry = [
-                    '@odata.type'  => '#microsoft.graph.fileAttachment',
-                    'name'         => (string) ($a['name'] ?? 'anexo'),
-                    'contentType'  => (string) ($a['mime'] ?? 'application/octet-stream'),
-                    'contentBytes' => base64_encode($bytes),
-                ];
-                // cid → imagem inline referenciada no corpo via <img src="cid:...">.
-                if (!empty($a['cid'])) {
-                    $entry['contentId'] = (string) $a['cid'];
-                    $entry['isInline']  = true;
+                $isCid = !empty($a['cid']);
+                if ($isCid || $len <= GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
+                    // pequeno / inline → contentBytes direto (um POST simples aguenta)
+                    $entry = [
+                        '@odata.type'  => '#microsoft.graph.fileAttachment',
+                        'name'         => (string) ($a['name'] ?? 'anexo'),
+                        'contentType'  => (string) ($a['mime'] ?? 'application/octet-stream'),
+                        'contentBytes' => base64_encode($bytes),
+                    ];
+                    if ($isCid) { $entry['contentId'] = (string) $a['cid']; $entry['isInline'] = true; }
+                    $message['attachments'][] = $entry;
+                } else {
+                    // grande (>3 MB) → só entra via upload session, num rascunho
+                    $largeAtts[] = ['name' => (string) ($a['name'] ?? 'anexo'), 'mime' => (string) ($a['mime'] ?? 'application/octet-stream'), 'bytes' => $bytes];
                 }
-                $message['attachments'][] = $entry;
             }
 
             $token = self::token();
@@ -137,9 +142,14 @@ class GraphMailSender
             // Graph (createReply) → cai na MESMA conversa na caixa do cliente ("e-mail único" com
             // histórico) em vez de mensagem solta. Qualquer falha no fluxo → fallback pro sendMail.
             if ($threadAnchorId) {
-                [$tOk, $tErr] = self::sendThreadedReply($token, $fromEmail, (string) $threadAnchorId, $message);
+                [$tOk, $tErr] = self::sendThreadedReply($token, $fromEmail, (string) $threadAnchorId, $message, $largeAtts);
                 if ($tOk) return [true, null];
                 \Illuminate\Support\Facades\Log::info("HelpDesk: threading indisponível ({$tErr}); enviando sem thread.");
+            }
+
+            // Sem thread mas COM anexo grande → precisa de rascunho + upload session (sendMail inline nao passa de ~3MB).
+            if (!empty($largeAtts)) {
+                return self::sendViaDraft($token, $fromEmail, $message, $largeAtts);
             }
 
             $url  = sprintf('%s/users/%s/sendMail', self::GRAPH_BASE, rawurlencode($fromEmail));
@@ -167,7 +177,7 @@ class GraphMailSender
      * @param array<string,mixed> $message
      * @return array{0: bool, 1: ?string}
      */
-    private static function sendThreadedReply(string $token, string $fromEmail, string $anchorId, array $message): array
+    private static function sendThreadedReply(string $token, string $fromEmail, string $anchorId, array $message, array $largeAtts = []): array
     {
         try {
             $base   = sprintf('%s/users/%s', self::GRAPH_BASE, rawurlencode($fromEmail));
@@ -189,10 +199,15 @@ class GraphMailSender
             ]);
             if (!$patch->successful()) return [false, 'patch HTTP ' . $patch->status()];
 
-            // 3) anexos (inclusive imagens inline cid) — um POST por anexo
+            // 3) anexos pequenos/inline (contentBytes) — um POST por anexo
             foreach ((array) ($message['attachments'] ?? []) as $att) {
                 $a = Http::withToken($token)->acceptJson()->asJson()->post($draft . '/attachments', $att);
                 if (!$a->successful()) return [false, 'attachment HTTP ' . $a->status()];
+            }
+            // 3b) anexos GRANDES (>3 MB) — via upload session (chunks)
+            foreach ($largeAtts as $la) {
+                [$uOk, $uErr] = self::uploadLargeAttachment($token, $draft, $la);
+                if (!$uOk) return [false, $uErr];
             }
 
             // 4) envia o rascunho (fica nos Itens Enviados, dentro da conversa)
@@ -203,5 +218,70 @@ class GraphMailSender
         } catch (\Throwable $e) {
             return [false, $e->getMessage()];
         }
+    }
+
+    /**
+     * Envio via RASCUNHO (não-threaded) para suportar anexos grandes: cria a mensagem como
+     * rascunho (com corpo + anexos pequenos), sobe os grandes por upload session e envia.
+     * @param array<string,mixed> $message
+     * @param array<int,array{name:string,mime:string,bytes:string}> $largeAtts
+     * @return array{0: bool, 1: ?string}
+     */
+    private static function sendViaDraft(string $token, string $fromEmail, array $message, array $largeAtts): array
+    {
+        try {
+            $base = sprintf('%s/users/%s', self::GRAPH_BASE, rawurlencode($fromEmail));
+            $r = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages', $message);
+            if (!$r->successful()) return [false, 'create draft HTTP ' . $r->status()];
+            $draftId = (string) $r->json('id');
+            if ($draftId === '') return [false, 'draft sem id'];
+            $draft = $base . '/messages/' . rawurlencode($draftId);
+            foreach ($largeAtts as $la) {
+                [$uOk, $uErr] = self::uploadLargeAttachment($token, $draft, $la);
+                if (!$uOk) return [false, $uErr];
+            }
+            $s = Http::withToken($token)->acceptJson()->withBody('{}', 'application/json')->post($draft . '/send');
+            if (!$s->successful()) return [false, 'send HTTP ' . $s->status()];
+            return [true, null];
+        } catch (\Throwable $e) {
+            return [false, $e->getMessage()];
+        }
+    }
+
+    /**
+     * Sobe UM anexo grande (>3 MB, até 25 MB) num rascunho via createUploadSession + PUT em chunks
+     * de 4 MB. A uploadUrl já vem pré-autenticada (sem Bearer). Último chunk devolve 201.
+     * @param array{name:string,mime:string,bytes:string} $la
+     * @return array{0: bool, 1: ?string}
+     */
+    private static function uploadLargeAttachment(string $token, string $draftUrl, array $la): array
+    {
+        $bytes = (string) $la['bytes'];
+        $size  = strlen($bytes);
+        $sess = Http::withToken($token)->acceptJson()->asJson()->post($draftUrl . '/attachments/createUploadSession', [
+            'AttachmentItem' => [
+                'attachmentType' => 'file',
+                'name'           => (string) $la['name'],
+                'size'           => $size,
+                'contentType'    => (string) ($la['mime'] ?? 'application/octet-stream'),
+            ],
+        ]);
+        if (!$sess->successful()) return [false, 'createUploadSession HTTP ' . $sess->status()];
+        $uploadUrl = (string) $sess->json('uploadUrl');
+        if ($uploadUrl === '') return [false, 'uploadSession sem uploadUrl'];
+
+        $chunk = 4 * 1024 * 1024;
+        $start = 0;
+        while ($start < $size) {
+            $end   = min($start + $chunk, $size) - 1;
+            $slice = substr($bytes, $start, $end - $start + 1);
+            $put = Http::withHeaders([
+                'Content-Length' => (string) strlen($slice),
+                'Content-Range'  => "bytes {$start}-{$end}/{$size}",
+            ])->withBody($slice, 'application/octet-stream')->put($uploadUrl);
+            if (!$put->successful()) return [false, 'upload chunk HTTP ' . $put->status()];
+            $start = $end + 1;
+        }
+        return [true, null];
     }
 }
