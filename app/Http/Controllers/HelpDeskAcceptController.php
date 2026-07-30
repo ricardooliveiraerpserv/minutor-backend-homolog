@@ -121,6 +121,18 @@ class HelpDeskAcceptController extends Controller
         HelpDeskTicketEvent::log($ticket->id, 'closed', ['to_value' => $fechado->label, 'meta' => ['via' => 'email', 'aceite_cliente' => true]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $fechado->key, 'meta' => ['via' => 'email']]);
 
+        // Interação no chamado: encerrado pelo CLIENTE (aceite via e-mail) e por quem.
+        $closerName = trim((string) ($ticket->requester_name ?: optional($ticket->contact)->name ?: optional($ticket->requester)->name));
+        $c = $ticket->comments()->create([
+            'author_user_id'    => null,
+            'author_contact_id' => $ticket->customer_contact_id,
+            'body'              => '🔒 Chamado encerrado pelo cliente' . ($closerName !== '' ? ' (' . $closerName . ')' : '') . '.',
+            'visibility'        => 'internal',
+            'channel'           => 'email',
+            'is_system'         => true,
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'close_email']]);
+
         // Cliente aceitou pelo e-mail → dispara os gatilhos de encerramento (ex.: "Chamado encerrado
         // → cliente") pra enviar o e-mail de encerramento. Sem actor_email: o próprio cliente recebe.
         // CompanyContext fixado na empresa do chamado → não casa o gatilho duplicado de outra empresa.

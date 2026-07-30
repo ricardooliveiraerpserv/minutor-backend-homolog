@@ -1068,6 +1068,17 @@ class HelpDeskTicketController extends Controller
         }
         $this->transitionStatus($ticket, $new, $v['note'] ?? null);
         $u = $request->user();
+        // Encerrou → registra uma INTERAÇÃO no chamado dizendo que foi encerrado e por QUEM.
+        if ($isClose) {
+            $c = $ticket->comments()->create([
+                'author_user_id' => $u?->id,
+                'body'           => '🔒 Chamado encerrado por ' . ($u?->name ?: 'atendente') . '.',
+                'visibility'     => 'internal',
+                'channel'        => 'interno',
+                'is_system'      => true,
+            ]);
+            HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'close']]);
+        }
         \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
