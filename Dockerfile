@@ -87,7 +87,12 @@ RUN sed -i \
       -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 10|' \
       /usr/local/etc/php-fpm.d/www.conf
 
-# Supervisor para rodar nginx + php-fpm juntos
+# Supervisor para rodar nginx + php-fpm + worker de fila juntos.
+# O worker (helpdesk-worker) processa a fila 'emails' (disparo de e-mail do Help Desk) quando
+# QUEUE_CONNECTION=database. Com QUEUE_CONNECTION=sync os jobs rodam inline e a fila 'jobs' fica
+# vazia → o worker apenas ociosa (inofensivo). Assim protege o Azure/Graph de rate limit/blacklist
+# sem precisar de um serviço worker pago à parte. --max-time=3600 recicla o processo de hora em hora
+# (supervisor reinicia). stopwaitsecs>timeout garante shutdown gracioso (termina o job atual).
 RUN printf '[supervisord]\n\
 nodaemon=true\n\
 [program:php-fpm]\n\
@@ -97,7 +102,19 @@ autorestart=true\n\
 [program:nginx]\n\
 command=nginx -g "daemon off;"\n\
 autostart=true\n\
-autorestart=true\n' > /etc/supervisord.conf
+autorestart=true\n\
+[program:helpdesk-worker]\n\
+command=php artisan queue:work database --queue=emails,default --sleep=3 --tries=5 --timeout=180 --max-time=3600\n\
+directory=/var/www\n\
+autostart=true\n\
+autorestart=true\n\
+startsecs=5\n\
+stopwaitsecs=190\n\
+stopsignal=TERM\n\
+stdout_logfile=/dev/stdout\n\
+stdout_logfile_maxbytes=0\n\
+stderr_logfile=/dev/stderr\n\
+stderr_logfile_maxbytes=0\n' > /etc/supervisord.conf
 
 EXPOSE 8080
 
