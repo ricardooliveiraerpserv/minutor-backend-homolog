@@ -31,7 +31,7 @@ class HelpDeskTriggerEngine
      */
     public static function queue(string $event, HelpDeskTicket $ticket, array $context = []): void
     {
-        \App\Jobs\ProcessHelpDeskTriggersJob::dispatch($event, $ticket->id, $context)->onQueue('emails');
+        \App\Jobs\ProcessHelpDeskTriggersJob::dispatch($event, $ticket->id, $context)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
     }
 
     public static function dispatch(string $event, HelpDeskTicket $ticket, array $context = []): void

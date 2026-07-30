@@ -17,6 +17,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Conexão dedicada dos e-mails do Help Desk
+    |--------------------------------------------------------------------------
+    |
+    | Roteia SÓ os jobs de e-mail do Help Desk para uma conexão específica
+    | (ex.: 'database'), sem tornar o app inteiro assíncrono. Quando null (default),
+    | os jobs seguem a conexão padrão acima — ou seja, com QUEUE_CONNECTION=sync
+    | rodam INLINE, exatamente como antes. Ligue só onde houver worker drenando a
+    | fila 'emails' (ex.: homolog): HELPDESK_EMAIL_QUEUE_CONNECTION=database.
+    |
+    */
+
+    'helpdesk_email_connection' => env('HELPDESK_EMAIL_QUEUE_CONNECTION') ?: null,
+
+    /*
+    |--------------------------------------------------------------------------
     | Queue Connections
     |--------------------------------------------------------------------------
     |

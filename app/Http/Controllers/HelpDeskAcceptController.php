@@ -194,7 +194,7 @@ class HelpDeskAcceptController extends Controller
         // Avisos DETERMINÍSTICOS de recusa (equipe + cliente) — NÃO dependem de gatilho configurado,
         // que era o motivo de "não recebi o e-mail da recusa". Vai pela fila 'emails' (throttle/retry).
         try {
-            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason)->onQueue('emails');
+            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch dos avisos de recusa falhou: ' . $e->getMessage());
         }

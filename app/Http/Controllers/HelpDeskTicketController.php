@@ -1720,7 +1720,7 @@ class HelpDeskTicketController extends Controller
         // Com QUEUE_CONNECTION=sync roda INLINE (comportamento atual); assíncrono quando a infra ligar
         // o worker + QUEUE_CONNECTION=database. Best-effort: nunca derruba a gravação do comentário.
         try {
-            \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id)->onQueue('emails');
+            \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de resposta lançou: ' . $e->getMessage());
         }

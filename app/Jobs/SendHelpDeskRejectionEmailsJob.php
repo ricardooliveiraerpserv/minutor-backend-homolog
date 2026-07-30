@@ -39,7 +39,7 @@ class SendHelpDeskRejectionEmailsJob implements ShouldQueue
 
     public function middleware(): array
     {
-        return config('queue.default') === 'sync' ? [] : [new RateLimited('helpdesk-email')];
+        return (($this->connection ?? config('queue.default')) === 'sync') ? [] : [new RateLimited('helpdesk-email')];
     }
 
     public function handle(): void

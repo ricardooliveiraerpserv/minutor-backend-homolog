@@ -43,7 +43,7 @@ class SendHelpDeskEmailJob implements ShouldQueue
     /** Throttle só quando há fila de verdade (sync roda inline sem throttle). */
     public function middleware(): array
     {
-        return config('queue.default') === 'sync' ? [] : [new RateLimited('helpdesk-email')];
+        return (($this->connection ?? config('queue.default')) === 'sync') ? [] : [new RateLimited('helpdesk-email')];
     }
 
     public function handle(): void
