@@ -1716,15 +1716,13 @@ class HelpDeskTicketController extends Controller
         // uma falha de saldo/projeto avisa o usuário, mas nunca perde a interação já gravada.
         $apontamentoWarning = $this->maybeCreateInteractionTimesheet($ticket, $comment, $effortMinutes, $workedDate, $request);
 
-        // Resposta pública → e-mail ao solicitante pelo mesmo OAuth/Graph (Mail.Send).
-        // Best-effort: nunca derruba a gravação do comentário.
+        // Resposta pública → e-mail ao solicitante via FILA (rate-limited; retry no 429 do Azure).
+        // Com QUEUE_CONNECTION=sync roda INLINE (comportamento atual); assíncrono quando a infra ligar
+        // o worker + QUEUE_CONNECTION=database. Best-effort: nunca derruba a gravação do comentário.
         try {
-            [$sent, $reason] = \App\Services\HelpDeskReplyMailer::sendPublicComment($ticket, $comment);
-            if ($sent) {
-                HelpDeskTicketEvent::log($ticket->id, 'email_sent', ['meta' => ['comment_id' => $comment->id]]);
-            }
+            \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id)->onQueue('emails');
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('HelpDesk: envio de resposta lançou: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de resposta lançou: ' . $e->getMessage());
         }
 
         // Gatilhos: interação feita por um AGENTE (usuário logado).
