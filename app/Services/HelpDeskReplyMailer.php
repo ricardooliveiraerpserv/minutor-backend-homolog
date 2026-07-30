@@ -339,9 +339,11 @@ class HelpDeskReplyMailer
             $html = HelpDeskMailComposer::composeSimple('Solução recusada pelo cliente', $msg, null, $header);
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);
-            // E-mail INTERNO (não threada no fio do cliente): assunto próprio e claro.
-            $subjTeam = '❌ Solução recusada — Chamado ' . ($ticket->ticket_number ?: ('#' . $ticket->id));
-            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $team, [], $subjTeam, $html, [], $inline, false);
+            // CONTINUAÇÃO do chamado: threada no mesmo fio do e-mail inicial (assunto Re: [nº] +
+            // graph_thread_msg_id) — a recusa vira mais uma mensagem da conversa, não um e-mail solto.
+            [$ok, $err] = GraphMailSender::sendAs(
+                (string) $from->email, $team, [], self::subjectFor($ticket), $html, [], $inline, false, [], $ticket->graph_thread_msg_id
+            );
             if (!$ok) Log::warning("HelpDesk: aviso de recusa à equipe falhou ({$ticket->ticket_number}): {$err}");
         }
 
