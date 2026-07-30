@@ -55,7 +55,7 @@ class HelpDeskRunScheduledReopens extends Command
                     'field' => 'status', 'from_value' => $old->key, 'to_value' => $em->key,
                     'meta' => ['auto' => true, 'reason' => 'scheduled_reopen', 'note' => $note],
                 ]);
-                HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['actor_id' => null, 'actor_email' => null]);
+                HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => null, 'actor_email' => null]);
                 $count++;
             } else {
                 // Status mudou no intervalo — só descarta o agendamento pendente.

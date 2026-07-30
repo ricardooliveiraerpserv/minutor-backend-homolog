@@ -24,6 +24,16 @@ class HelpDeskTriggerEngine
      * @param string $event   chave em HelpDeskTrigger::EVENTS
      * @param array<string,mixed> $context  ex.: ['comment_by'=>'client', 'actor_id'=>1, 'changed_field'=>'status_id']
      */
+    /**
+     * Versão ENFILEIRADA do dispatch: joga os gatilhos (e seus e-mails) na fila 'emails'
+     * pra não sobrecarregar o Azure. Com QUEUE_CONNECTION=sync roda inline (igual dispatch).
+     * @param array<string,mixed> $context
+     */
+    public static function queue(string $event, HelpDeskTicket $ticket, array $context = []): void
+    {
+        \App\Jobs\ProcessHelpDeskTriggersJob::dispatch($event, $ticket->id, $context)->onQueue('emails');
+    }
+
     public static function dispatch(string $event, HelpDeskTicket $ticket, array $context = []): void
     {
         $triggers = HelpDeskTrigger::where('enabled', true)->where('event', $event)

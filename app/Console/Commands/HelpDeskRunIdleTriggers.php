@@ -37,7 +37,7 @@ class HelpDeskRunIdleTriggers extends Command
 
         $before = $candidates->count();
         foreach ($candidates as $ticket) {
-            HelpDeskTriggerEngine::dispatch('idle_in_status', $ticket);
+            HelpDeskTriggerEngine::queue('idle_in_status', $ticket);
         }
 
         $this->info("Idle: {$triggers->count()} gatilho(s), {$before} chamado(s) parado(s) avaliado(s) (limiar mín. {$minHours}h).");

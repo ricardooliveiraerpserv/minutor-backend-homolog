@@ -115,7 +115,7 @@ class HelpDeskAcceptController extends Controller
             $companyCtx = app(\App\Services\CompanyContext::class);
             $companyCtx->set($ticket->company_id);
             try {
-                \App\Services\HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['via' => 'email_aceite']);
+                \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'email_aceite']);
             } finally {
                 $companyCtx->forget();
             }
@@ -195,7 +195,7 @@ class HelpDeskAcceptController extends Controller
             $companyCtx = app(\App\Services\CompanyContext::class);
             $companyCtx->set($ticket->company_id);
             try {
-                \App\Services\HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['via' => 'email_recusa', 'reopened' => true]);
+                \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'email_recusa', 'reopened' => true]);
             } finally {
                 $companyCtx->forget();
             }

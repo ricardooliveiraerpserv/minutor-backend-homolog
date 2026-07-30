@@ -700,7 +700,7 @@ class HelpDeskTicketController extends Controller
 
         $this->sla->apply($new);
         HelpDeskTicketEvent::log($new->id, 'created', ['to_value' => $new->subject, 'meta' => ['cloned_from' => $ticket->id, 'cloned_from_number' => $ticket->ticket_number]]);
-        \App\Services\HelpDeskTriggerEngine::dispatch('ticket_created', $new, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        \App\Services\HelpDeskTriggerEngine::queue('ticket_created', $new, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
 
         return response()->json(['data' => ['id' => $new->id, 'ticket_number' => $new->ticket_number]], 201);
     }
@@ -997,7 +997,7 @@ class HelpDeskTicketController extends Controller
         $this->sla->apply($ticket);
 
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject]);
-        \App\Services\HelpDeskTriggerEngine::dispatch('ticket_created', $ticket, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        \App\Services\HelpDeskTriggerEngine::queue('ticket_created', $ticket, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
 
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))], 201);
     }
@@ -1039,9 +1039,9 @@ class HelpDeskTicketController extends Controller
 
         $u = $request->user();
         if (array_key_exists('assignee_id', $v) && (int) $ticket->assignee_id !== (int) $oldAssignee) {
-            \App\Services\HelpDeskTriggerEngine::dispatch('assigned', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email, 'was_assigned' => !empty($oldAssignee), 'previous_assignee_id' => $oldAssignee]);
+            \App\Services\HelpDeskTriggerEngine::queue('assigned', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email, 'was_assigned' => !empty($oldAssignee), 'previous_assignee_id' => $oldAssignee]);
         }
-        \App\Services\HelpDeskTriggerEngine::dispatch('field_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        \App\Services\HelpDeskTriggerEngine::queue('field_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
 
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
@@ -1068,7 +1068,7 @@ class HelpDeskTicketController extends Controller
         }
         $this->transitionStatus($ticket, $new, $v['note'] ?? null);
         $u = $request->user();
-        \App\Services\HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
 
@@ -1457,7 +1457,7 @@ class HelpDeskTicketController extends Controller
         }
         $u = $request->user();
         if ((int) $ticket->assignee_id !== (int) $oldA) {
-            \App\Services\HelpDeskTriggerEngine::dispatch('assigned', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email, 'was_assigned' => !empty($oldA), 'previous_assignee_id' => $oldA]);
+            \App\Services\HelpDeskTriggerEngine::queue('assigned', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email, 'was_assigned' => !empty($oldA), 'previous_assignee_id' => $oldA]);
         }
         return response()->json(['data' => $this->decorate($ticket->fresh())]);
     }
@@ -1727,7 +1727,7 @@ class HelpDeskTicketController extends Controller
 
         // Gatilhos: interação feita por um AGENTE (usuário logado).
         $u = $request->user();
-        \App\Services\HelpDeskTriggerEngine::dispatch('comment_added', $ticket->fresh(), [
+        \App\Services\HelpDeskTriggerEngine::queue('comment_added', $ticket->fresh(), [
             'comment_by' => 'agent', 'visibility' => $comment->visibility, 'actor_id' => $u?->id, 'actor_email' => $u?->email,
         ]);
 
