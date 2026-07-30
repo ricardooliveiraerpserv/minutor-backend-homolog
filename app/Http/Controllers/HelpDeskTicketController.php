@@ -1757,25 +1757,42 @@ class HelpDeskTicketController extends Controller
         // uma falha de saldo/projeto avisa o usuário, mas nunca perde a interação já gravada.
         $apontamentoWarning = $this->maybeCreateInteractionTimesheet($ticket, $comment, $effortMinutes, $workedDate, $request);
 
-        // Enviar uma SOLUÇÃO (Detalhamento/GMUD/form dinâmico) RESOLVE o chamado: se ainda estiver
-        // aberto, move para o status resolvido da empresa ANTES do e-mail → a mensagem já sai com os
-        // botões Aceitar/Recusar (que exigem is_resolved). Fica ANTES do dispatch de propósito.
+        // Enviar uma SOLUÇÃO (Detalhamento/GMUD/form dinâmico) move o chamado para o status DEFINIDO
+        // no próprio formulário — ANTES do e-mail, para que a mensagem já saia com o status certo (e,
+        // quando for um status resolvido, com os botões Aceitar/Recusar, que exigem is_resolved).
+        //   • form dinâmico → helpdesk_forms.status_id do form usado (ex.: "Solução com GMUD" → solucao_gmud;
+        //     "Detalhamento da Solução" → resolvido; "Planejamento da GMUD" → planejamento_gmud, que NÃO
+        //     é resolvido e por isso corretamente NÃO gera botões).
+        //   • legado solution/gmud → resolvido / solucao_gmud.
+        // Confiável mesmo se o changeStatus do FE for pulado/engolido (classificação faltando etc.).
         if (in_array($comment->form_kind, ['solution', 'gmud', 'dynamic'], true)
             && $comment->visibility === 'customer'
-            && !(optional($ticket->status)->is_resolved || optional($ticket->status)->is_terminal)) {
-            $resolvedKey = $comment->form_kind === 'gmud' ? 'solucao_gmud' : 'resolvido';
-            $newStatus = HelpDeskStatus::withoutGlobalScopes()
-                ->where('company_id', $ticket->company_id)
-                ->where('is_resolved', true)->where('is_terminal', false)
-                ->orderByRaw('case when key = ? then 0 else 1 end', [$resolvedKey])
-                ->first();
-            if ($newStatus) {
+            && !optional($ticket->status)->is_terminal) {
+            $newStatus = null;
+            // 1) form dinâmico → status configurado no próprio form
+            if ($comment->form_kind === 'dynamic' && is_array($comment->solution) && !empty($comment->solution['form_id'])) {
+                $sid = \Illuminate\Support\Facades\DB::table('helpdesk_forms')->where('id', (int) $comment->solution['form_id'])->value('status_id');
+                if ($sid) $newStatus = HelpDeskStatus::withoutGlobalScopes()->find($sid);
+            }
+            // 2) legado (ou form sem status): resolvido / solucao_gmud da empresa
+            if (!$newStatus) {
+                $resolvedKey = $comment->form_kind === 'gmud' ? 'solucao_gmud' : 'resolvido';
+                $newStatus = HelpDeskStatus::withoutGlobalScopes()
+                    ->where('company_id', $ticket->company_id)
+                    ->where('is_resolved', true)->where('is_terminal', false)
+                    ->orderByRaw('case when key = ? then 0 else 1 end', [$resolvedKey])
+                    ->first();
+            }
+            // Só move se ainda não estiver nesse status (evita re-disparo / eventos duplicados).
+            if ($newStatus && (int) $ticket->status_id !== (int) $newStatus->id) {
                 $old = $ticket->status;
                 $ticket->status_id = $newStatus->id;
-                $ticket->resolved_at = $ticket->resolved_at ?: now();
+                if ($newStatus->is_resolved) $ticket->resolved_at = $ticket->resolved_at ?: now();
                 $ticket->last_activity_at = now();
                 $ticket->save();
-                HelpDeskTicketEvent::log($ticket->id, 'resolved', ['to_value' => $newStatus->label, 'meta' => ['via' => 'solution_auto']]);
+                if ($newStatus->is_resolved) {
+                    HelpDeskTicketEvent::log($ticket->id, 'resolved', ['to_value' => $newStatus->label, 'meta' => ['via' => 'solution_auto']]);
+                }
                 HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $newStatus->key, 'meta' => ['via' => 'solution_auto']]);
                 $ticket->refresh();
             }
