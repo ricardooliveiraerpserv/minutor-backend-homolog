@@ -43,6 +43,22 @@ class RelatorioRentabilidadeController extends Controller
             ->whereNotIn('user_id', $this->rentabHiddenUserIds()) // oculta usuários da Rentabilidade (config admin) — fora dos dados E dos totais
             ->get();
 
+        // R$/H do PROJETO = valor-hora do ÚLTIMO APORTE (motivo 'aporte', datado, até a competência),
+        // senão o hourly_rate do projeto. Reflete a última atualização (aporte), não só o valor do contrato.
+        $aporteRate = [];
+        $projIds = $timesheets->pluck('project_id')->filter()->unique()->values()->all();
+        if (!empty($projIds)) {
+            $cutoff = Carbon::create($y, $m, 1)->endOfMonth()->endOfDay();
+            foreach (\App\Models\HourContribution::whereIn('project_id', $projIds)
+                ->where('motivo', 'aporte')
+                ->whereNotNull('contributed_at')
+                ->where('contributed_at', '<=', $cutoff)
+                ->orderBy('contributed_at')->orderBy('id')
+                ->get(['project_id', 'hourly_rate', 'contributed_at']) as $c) {
+                $aporteRate[$c->project_id] = (float) $c->hourly_rate; // ordenado asc → último aporte vence
+            }
+        }
+
         // Metadados de custo por consultor: ['eff' => custo/hora, 'type' => hourly|monthly,
         // 'salary' => salário mensal cheio quando monthly (0 caso contrário)].
         $costMetaCache = [];
@@ -76,7 +92,7 @@ class RelatorioRentabilidadeController extends Controller
             // Horas REAIS = pro CUSTO do consultor (o acréscimo tem custo ZERO).
             $horasReal = round($ts->effort_minutes / 60, 4);
             $horas     = round($ts->billableMinutes() / 60, 4);
-            $rateProj = (float) ($ts->project->hourly_rate ?? 0);
+            $rateProj = $aporteRate[$ts->project_id] ?? (float) ($ts->project->hourly_rate ?? 0);
             $meta     = $costMeta($ts->user);
             $rateCons = $meta['eff'];
 
