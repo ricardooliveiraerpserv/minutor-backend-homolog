@@ -211,19 +211,13 @@ class HelpDeskAcceptController extends Controller
             }
         }
 
-        // Avisos DETERMINÍSTICOS de recusa (equipe + cliente) — NÃO dependem de gatilho configurado,
-        // que era o motivo de "não recebi o e-mail da recusa". Vai pela fila 'emails' (throttle/retry).
+        // UM ÚNICO e-mail de recusa (To cliente, Cc responsável), determinístico e threadado, pela
+        // fila 'emails' (throttle/retry). NÃO disparamos o gatilho status_changed aqui: ele geraria
+        // um 2º e-mail (duplicata) — o usuário quer uma única mensagem na sequência do chamado.
         try {
             \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch dos avisos de recusa falhou: ' . $e->getMessage());
-        }
-        // Além dos avisos garantidos, ainda dispara os gatilhos configurados (se houver) para
-        // qualquer automação extra que o admin tenha montado na reabertura.
-        try {
-            \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'email_recusa', 'reopened' => true]);
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('HelpDesk: gatilho de recusa falhou: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de recusa falhou: ' . $e->getMessage());
         }
 
         return $this->page(
