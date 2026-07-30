@@ -28,7 +28,7 @@ class SendHelpDeskRejectionEmailsJob implements ShouldQueue
     public int $tries = 5;
     public int $timeout = 180;
 
-    public function __construct(public int $ticketId, public string $reason)
+    public function __construct(public int $ticketId, public string $reason, public ?int $commentId = null)
     {
     }
 
@@ -52,7 +52,7 @@ class SendHelpDeskRejectionEmailsJob implements ShouldQueue
         $ctx = app(CompanyContext::class);
         $ctx->set($ticket->company_id);
         try {
-            HelpDeskReplyMailer::sendRejectionNotices($ticket, $this->reason);
+            HelpDeskReplyMailer::sendRejectionNotices($ticket, $this->reason, $this->commentId);
         } finally {
             $ctx->forget();
         }

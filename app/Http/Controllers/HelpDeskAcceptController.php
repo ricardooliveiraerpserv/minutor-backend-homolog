@@ -215,7 +215,7 @@ class HelpDeskAcceptController extends Controller
         // fila 'emails' (throttle/retry). NÃO disparamos o gatilho status_changed aqui: ele geraria
         // um 2º e-mail (duplicata) — o usuário quer uma única mensagem na sequência do chamado.
         try {
-            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason, $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de recusa falhou: ' . $e->getMessage());
         }

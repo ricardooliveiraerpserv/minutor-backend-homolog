@@ -331,7 +331,7 @@ class HelpDeskReplyMailer
      *  2) CLIENTE — confirmação de que recebemos a recusa e o chamado foi reaberto.
      * Nunca lança: falha de e-mail não pode derrubar a reabertura do chamado.
      */
-    public static function sendRejectionNotices(HelpDeskTicket $ticket, string $reason): void
+    public static function sendRejectionNotices(HelpDeskTicket $ticket, string $reason, ?int $excludeCommentId = null): void
     {
         if (!GraphMailSender::enabled()) return;
 
@@ -370,7 +370,10 @@ class HelpDeskReplyMailer
             . '<p style="margin:0 0 16px">O chamado foi <b>reaberto</b> e nossa equipe já foi acionada para dar continuidade. '
             . 'Você pode acompanhar tudo pelo portal.</p>'
             . '<p style="margin:0 0 8px">🔗 <a href="' . e($portal) . '" style="color:#1d4ed8;text-decoration:underline">'
-            . 'Acompanhar o chamado ' . $num . '</a></p>';
+            . 'Acompanhar o chamado ' . $num . '</a></p>'
+            // Fio COMPLETO da conversa abaixo do motivo (auto-contido, como os e-mails de resposta).
+            // Exclui o próprio comentário de recusa — o motivo já aparece no box acima.
+            . HelpDeskMailComposer::conversationHistoryHtml($ticket, $excludeCommentId);
         $html = HelpDeskMailComposer::composeSimple('Recebemos a sua recusa', $msg, null, $header);
         [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
         $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);
