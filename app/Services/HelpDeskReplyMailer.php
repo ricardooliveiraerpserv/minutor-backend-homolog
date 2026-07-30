@@ -299,6 +299,71 @@ class HelpDeskReplyMailer
         return [$ok, $err];
     }
 
+    /**
+     * Avisos DETERMINÍSTICOS de RECUSA da solução (não dependem de gatilho configurado):
+     *  1) EQUIPE (responsável, ou a conta do time se sem responsável) — "o cliente recusou".
+     *  2) CLIENTE — confirmação de que recebemos a recusa e o chamado foi reaberto.
+     * Nunca lança: falha de e-mail não pode derrubar a reabertura do chamado.
+     */
+    public static function sendRejectionNotices(HelpDeskTicket $ticket, string $reason): void
+    {
+        if (!GraphMailSender::enabled()) return;
+
+        $from = self::resolveFromAccount($ticket);
+        if (!$from) return;
+
+        $num       = e((string) ($ticket->ticket_number ?: ('#' . $ticket->id)));
+        $subj      = (string) $ticket->subject;
+        $header    = 'Chamado ' . ($ticket->ticket_number ?: ('#' . $ticket->id)) . ($subj !== '' ? ' — ' . $subj : '');
+        $clientNm  = trim((string) ($ticket->requester_name
+            ?: optional($ticket->contact)->name
+            ?: optional($ticket->requester)->name)) ?: 'Cliente';
+        $reasonBox = '<div style="margin:0 0 14px;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;'
+            . 'border-radius:8px;color:#7f1d1d;white-space:pre-wrap;word-break:break-word">' . nl2br(e($reason)) . '</div>';
+
+        // 1) EQUIPE — responsável; sem responsável, a própria conta do Help Desk (caixa do time).
+        $team = array_values(array_filter([optional($ticket->assignee)->email]));
+        if (empty($team)) $team = array_values(array_filter([(string) $from->email]));
+        if (!empty($team)) {
+            $agentUrl = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/tickets/' . $ticket->id;
+            $msg = '<p style="margin:0 0 12px">O cliente <b>' . e($clientNm) . '</b> '
+                . '<b style="color:#b91c1c">recusou a solução</b> do chamado <b>' . $num . '</b>.</p>'
+                . '<p style="margin:0 0 4px;font-weight:700;color:#111827">Motivo informado:</p>' . $reasonBox
+                . '<p style="margin:0 0 16px">O chamado foi <b>reaberto</b> e voltou para <b>Em atendimento</b>. '
+                . 'Dê continuidade ao atendimento.</p>'
+                . '<p style="margin:0 0 8px">🔗 <a href="' . e($agentUrl) . '" style="color:#7c3aed;text-decoration:underline">'
+                . 'Abrir o chamado ' . $num . '</a></p>';
+            $html = HelpDeskMailComposer::composeSimple('Solução recusada pelo cliente', $msg, null, $header);
+            [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
+            $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);
+            // E-mail INTERNO (não threada no fio do cliente): assunto próprio e claro.
+            $subjTeam = '❌ Solução recusada — Chamado ' . ($ticket->ticket_number ?: ('#' . $ticket->id));
+            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $team, [], $subjTeam, $html, [], $inline, false);
+            if (!$ok) Log::warning("HelpDesk: aviso de recusa à equipe falhou ({$ticket->ticket_number}): {$err}");
+        }
+
+        // 2) CLIENTE — confirmação (threada no fio do chamado, para cair na conversa dele).
+        $to = self::resolveRecipient($ticket);
+        if ($to) {
+            $portal = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $ticket->id;
+            $msg = '<p style="margin:0 0 12px">Olá,</p>'
+                . '<p style="margin:0 0 12px">Recebemos o seu retorno informando que a solução do chamado <b>' . $num . '</b> '
+                . 'não resolveu. Obrigado por nos avisar.</p>'
+                . '<p style="margin:0 0 4px;font-weight:700;color:#111827">O que você nos informou:</p>' . $reasonBox
+                . '<p style="margin:0 0 16px">O chamado foi <b>reaberto</b> e nossa equipe já foi acionada para dar continuidade. '
+                . 'Você pode acompanhar tudo pelo portal.</p>'
+                . '<p style="margin:0 0 8px">🔗 <a href="' . e($portal) . '" style="color:#1d4ed8;text-decoration:underline">'
+                . 'Acompanhar o chamado ' . $num . '</a></p>';
+            $html = HelpDeskMailComposer::composeSimple('Recebemos a sua recusa', $msg, null, $header);
+            [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
+            $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);
+            [$ok, $err] = GraphMailSender::sendAs(
+                (string) $from->email, [$to], [], self::subjectFor($ticket), $html, [], $inline, false, [], $ticket->graph_thread_msg_id
+            );
+            if (!$ok) Log::warning("HelpDesk: confirmação de recusa ao cliente falhou ({$ticket->ticket_number}→{$to}): {$err}");
+        }
+    }
+
     /** Assunto com token [HD-xxxxxx] + prefixo Re: — garante o threading no retorno. */
     public static function subjectFor(HelpDeskTicket $ticket): string
     {

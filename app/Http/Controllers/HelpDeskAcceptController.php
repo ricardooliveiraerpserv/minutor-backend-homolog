@@ -156,10 +156,12 @@ class HelpDeskAcceptController extends Controller
         app(HelpDeskSlaService::class)->computeBreaches($ticket);
         $ticket->save();
         $comment = $ticket->comments()->create([
-            'author_user_id' => null, // cliente pelo e-mail (sem login) — interação do cliente
-            'body'           => 'Solução recusada pelo cliente: ' . mb_substr($reason, 0, 2000),
-            'visibility'     => 'customer',
-            'channel'        => 'email',
+            'author_user_id'    => null, // cliente pelo e-mail (sem login) — interação do cliente
+            'author_contact_id' => $ticket->customer_contact_id, // QUEM recusou (contato do cliente), quando houver
+            'body'              => 'Solução recusada pelo cliente: ' . mb_substr($reason, 0, 2000),
+            'visibility'        => 'customer',
+            'channel'           => 'email',
+            'form_kind'         => 'rejection', // marcador estruturado → card vermelho "Solução recusada" no timeline
         ]);
         HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'email', 'motivo' => $reason]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'email']]);
@@ -189,18 +191,19 @@ class HelpDeskAcceptController extends Controller
             }
         }
 
-        // Dispara os gatilhos de status_changed (mesma mecânica do aceite) para notificar a equipe
-        // de que o cliente RECUSOU e o chamado voltou pra atendimento — o "retorno" que faltava.
+        // Avisos DETERMINÍSTICOS de recusa (equipe + cliente) — NÃO dependem de gatilho configurado,
+        // que era o motivo de "não recebi o e-mail da recusa". Vai pela fila 'emails' (throttle/retry).
         try {
-            $companyCtx = app(\App\Services\CompanyContext::class);
-            $companyCtx->set($ticket->company_id);
-            try {
-                \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'email_recusa', 'reopened' => true]);
-            } finally {
-                $companyCtx->forget();
-            }
+            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason)->onQueue('emails');
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail de recusa (gatilho) falhou: ' . $e->getMessage());
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch dos avisos de recusa falhou: ' . $e->getMessage());
+        }
+        // Além dos avisos garantidos, ainda dispara os gatilhos configurados (se houver) para
+        // qualquer automação extra que o admin tenha montado na reabertura.
+        try {
+            \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'email_recusa', 'reopened' => true]);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: gatilho de recusa falhou: ' . $e->getMessage());
         }
 
         return $this->page(
