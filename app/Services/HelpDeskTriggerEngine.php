@@ -245,7 +245,10 @@ class HelpDeskTriggerEngine
         $from = self::senderAccount($params['sender_account_id'] ?? null, $ticket);
         if (!$from) return;
 
-        $subject = self::render((string) ($params['subject'] ?? 'Chamado {ticket.number}'), $ticket);
+        // Assunto SEMPRE o do fio do chamado (Re: [nº] assunto). O Exchange agrupa a conversa pelo
+        // ConversationTopic (o assunto): um assunto customizado ("Chamado nº X encerrado") criava uma
+        // conversa NOVA no Apple Mail, fora do fio. O aviso ("encerrado" etc.) já está no CORPO.
+        $subject = \App\Services\HelpDeskReplyMailer::subjectFor($ticket);
 
         // Modo TEMPLATE (novo): admin informa mensagem + blocos → composer monta o layout
         // institucional (logo/cabeçalho/assinatura/rodapé já inclusos → sem o footer auto).
