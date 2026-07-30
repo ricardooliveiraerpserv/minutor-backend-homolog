@@ -40,7 +40,10 @@ class ApiSecurityHeaders
         } elseif ($vaultPopup) {
             $csp = "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:";
         } elseif ($acceptPage) {
-            $csp = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'";
+            // script-src inline: a tela de recusa usa um script inline para COLAR (Ctrl+V) print no
+            // anexo e mostrar miniatura. Conteúdo 100% gerado no servidor (sem dado do usuário no
+            // contexto de script) → 'unsafe-inline' aqui é seguro, como no popup do Cofre.
+            $csp = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'";
         }
         $response->headers->set('Content-Security-Policy', $csp);
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none');
