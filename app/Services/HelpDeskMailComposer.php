@@ -543,6 +543,21 @@ class HelpDeskMailComposer
             },
             $html
         ) ?? $html;
+        // 3) Imagens com src RELATIVO (não cid:/http(s):/data:) → logo ERPSERV inline (cid).
+        //    É o caso do "/logo.png" do cabeçalho do Detalhamento da Solução: em e-mail de gatilho
+        //    (compose/composeSimple) o caminho relativo não tem host e quebrava (ícone "?").
+        $usedLogo = false;
+        $html = preg_replace_callback(
+            '/<img\b([^>]*?)\bsrc=["\'](?!cid:|https?:|data:)[^"\']*["\']([^>]*)>/i',
+            function ($m) use (&$usedLogo) {
+                $usedLogo = true;
+                return '<img' . $m[1] . ' src="cid:' . HelpDeskMailFooter::LOGO_CID . '"' . $m[2] . '>';
+            },
+            $html
+        ) ?? $html;
+        if ($usedLogo && ($logo = HelpDeskMailFooter::inlineLogo())) {
+            $atts[] = $logo;
+        }
         return [$html, $atts];
     }
 }
