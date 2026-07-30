@@ -59,6 +59,12 @@ class HelpDeskTicketController extends Controller
         $data['previous_ticket'] = optional($ticket->relationLoaded('previousTicket')
             ? $ticket->previousTicket
             : $ticket->previousTicket()->first())->only(['id', 'ticket_number', 'subject']) ?: null;
+        // O usuário LOGADO é o SOLICITANTE deste chamado? (mesmo agente/admin) → habilita Aceitar/Recusar
+        // a solução no app. Casa por user_id OU por e-mail (chamado de origem e-mail não tem requester_user_id).
+        $data['is_requester'] = (bool) ($user && (
+            ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $user->id)
+            || ($ticket->requester_email && $user->email && strcasecmp((string) $ticket->requester_email, (string) $user->email) === 0)
+        ));
         return $data;
     }
 
