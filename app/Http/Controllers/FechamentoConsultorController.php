@@ -258,6 +258,7 @@ class FechamentoConsultorController extends Controller
                     'total'             => round($hourlyRate + $totalExtra, 2),
                     'horas_a_pagar'     => $horasExtras,
                     'horas_trabalhadas' => round($calc['worked_hours'] ?? $horasTrabalhadas, 2),
+                    'conflict_hours'    => round($calc['conflict_hours'] ?? 0, 2),
                     'effective_rate'    => $valorHoraExtra,
                     'taxa_label'        => 'Repasse no Mês',
                     'taxa_value'        => $hourlyRate,
@@ -1622,6 +1623,7 @@ class FechamentoConsultorController extends Controller
 
                     $bancoHoras[] = array_merge($base, [
                         'horas_trabalhadas'   => $calc['worked_hours'], // inclui inflação do consultant_extra_pct
+                        'conflict_hours'      => $calc['conflict_hours'] ?? 0, // horas descartadas por conflito 09–18
                         'daily_hours'         => (float) ($user->daily_hours ?? 8.0),
                         'working_days'        => $calc['working_days'],
                         'expected_hours'      => $calc['expected_hours'],
