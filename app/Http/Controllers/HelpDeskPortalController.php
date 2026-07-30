@@ -60,6 +60,16 @@ class HelpDeskPortalController extends Controller
     /** Garante que o chamado pertence à empresa do cliente. */
     private function ownTicket(Request $request, HelpDeskTicket $ticket): void
     {
+        $u = $request->user();
+        // SOLICITANTE do chamado — mesmo sendo agente/admin (sem customer_id): o chamado é dele,
+        // então pode ver/aceitar/recusar. Casa por user_id OU por e-mail (chamado de origem e-mail
+        // não tem requester_user_id). Só depois disso cai na regra de "cliente da mesma customer".
+        if ($u && (
+            ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $u->id)
+            || ($ticket->requester_email && $u->email && strcasecmp((string) $ticket->requester_email, (string) $u->email) === 0)
+        )) {
+            return;
+        }
         abort_unless((int) $ticket->customer_id === $this->customerId($request), 404);
     }
 
@@ -249,6 +259,20 @@ class HelpDeskPortalController extends Controller
         $ticket->save();
         HelpDeskTicketEvent::log($ticket->id, 'closed', ['to_value' => $fechado->label, 'meta' => ['via' => 'portal', 'aceite_cliente' => true]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $fechado->key, 'meta' => ['via' => 'portal']]);
+        // Interação de encerramento (quem encerrou) — mesmo conceito do aceite por e-mail.
+        $closerName = trim((string) optional($request->user())->name) ?: 'cliente';
+        $c = $ticket->comments()->create([
+            'author_user_id' => $request->user()->id,
+            'body'           => '🔒 Chamado encerrado por ' . $closerName . '.',
+            'visibility'     => 'internal', 'channel' => 'portal', 'is_system' => true,
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'close_portal']]);
+        // Gatilho de encerramento (e-mail "Chamado encerrado" com histórico/link).
+        try {
+            $ctx = app(\App\Services\CompanyContext::class); $ctx->set($ticket->company_id);
+            try { \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'portal_aceite']); }
+            finally { $ctx->forget(); }
+        } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('HelpDesk: gatilho de aceite (portal) falhou: ' . $e->getMessage()); }
         return response()->json(['data' => ['ok' => true]]);
     }
 
@@ -269,14 +293,20 @@ class HelpDeskPortalController extends Controller
         $this->sla->computeBreaches($ticket);
         $ticket->save();
         $comment = $ticket->comments()->create([
-            'author_user_id' => $request->user()->id,
-            'body'           => 'Solução recusada pelo cliente: ' . $v['reason'],
-            'visibility'     => 'customer',
-            'channel'        => 'portal',
+            'author_user_id'    => $request->user()->id,
+            'author_contact_id' => $ticket->customer_contact_id, // quem recusou (contato do cliente)
+            'body'              => 'Solução recusada pelo cliente: ' . $v['reason'],
+            'visibility'        => 'customer',
+            'channel'           => 'portal',
+            'form_kind'         => 'rejection', // card vermelho "Solução recusada" no timeline
         ]);
         HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'portal', 'motivo' => $v['reason']]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'portal']]);
         HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
+        // Aviso DETERMINÍSTICO de recusa (equipe + cliente), threadado — igual ao aceite/recusa por e-mail.
+        try {
+            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $v['reason'], $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+        } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de recusa (portal) falhou: ' . $e->getMessage()); }
         return response()->json(['data' => ['ok' => true]]);
     }
 
