@@ -80,6 +80,10 @@ class HelpDeskTicketController extends Controller
                 $canManual = ((bool) $user->can_timesheet_sustentacao) || $allowedInProject;
                 $data['apontamento_time_mode'] = $canManual ? 'hidden' : 'required';
             }
+            // ADMIN não tem obrigatoriedade de apontar horas → nunca 'required' (campo fica opcional).
+            if ($user->type === 'admin' && $data['apontamento_time_mode'] === 'required') {
+                $data['apontamento_time_mode'] = 'optional';
+            }
         }
         return $data;
     }
