@@ -65,18 +65,21 @@ class HelpDeskAcceptController extends Controller
             $post = URL::temporarySignedRoute('hd.reject.do', now()->addDays(30), ['ticket' => $ticket->id]);
             $body = '<p>Conte pra gente o que faltou na solução do chamado <b>' . $num . '</b>. '
                 . 'Ao enviar, o chamado volta para <b>Em atendimento</b> e nossa equipe retoma o tratamento.</p>'
-                . '<form method="post" action="' . e($post) . '" enctype="multipart/form-data" style="margin-top:16px">'
-                . '<textarea id="reason" name="reason" required maxlength="2000" rows="5" placeholder="Descreva o que não resolveu…" '
-                . 'style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;font-family:inherit"></textarea>'
+                . '<style>#reasonRich:empty:before{content:attr(data-ph);color:#9ca3af}#reasonRich:focus{border-color:#7c3aed}#reasonRich img{max-width:100%;height:auto;border-radius:8px;margin:6px 0;display:block}</style>'
+                . '<form method="post" action="' . e($post) . '" enctype="multipart/form-data" id="rejForm" style="margin-top:16px">'
+                // Editor RICO (contenteditable): o print colado entra INLINE no texto (vira <img data:>),
+                // não um anexo à parte. O innerHTML é serializado no submit para o campo oculto "reason".
+                . '<div id="reasonRich" contenteditable="true" data-ph="Descreva o que não resolveu… (você pode colar um print com Ctrl+V aqui no meio do texto)" '
+                . 'style="width:100%;box-sizing:border-box;min-height:130px;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;font-family:inherit;line-height:1.5;text-align:left;overflow:auto;outline:none"></div>'
+                . '<input type="hidden" name="reason" id="reason">'
                 . '<div style="margin-top:12px;text-align:left">'
-                . '<label style="font-size:13px;color:#6b7280;display:block;margin-bottom:6px">Anexar print ou arquivo (opcional) — dica: pode <b>colar (Ctrl+V)</b> uma imagem aqui.</label>'
+                . '<label style="font-size:13px;color:#6b7280;display:block;margin-bottom:6px">Ou anexe um arquivo (opcional). Prints podem ser <b>colados (Ctrl+V)</b> direto no campo acima, junto do texto.</label>'
                 . '<input id="anexos" type="file" name="anexos[]" multiple accept="image/*,.pdf,.docx,.xlsx,.txt,.csv" style="font-size:14px">'
                 . '<div id="anexInfo" style="font-size:12px;color:#16a34a;margin-top:6px"></div>'
-                . '<div id="anexPrev" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>'
                 . '</div>'
                 . '<button type="submit" style="margin-top:14px;background:#ef4444;color:#fff;border:0;border-radius:10px;padding:14px 28px;font-size:15px;font-weight:700;cursor:pointer">Enviar recusa</button>'
                 . '</form>'
-                . '<script>(function(){var inp=document.getElementById("anexos"),info=document.getElementById("anexInfo"),prev=document.getElementById("anexPrev");if(!inp)return;function render(){info.textContent=inp.files.length?inp.files.length+" arquivo(s) anexado(s).":"";if(!prev)return;prev.innerHTML="";for(var i=0;i<inp.files.length;i++){(function(f){if(f.type&&f.type.indexOf("image")===0){var r=new FileReader();r.onload=function(){var im=document.createElement("img");im.src=r.result;im.title=f.name;im.style.cssText="height:64px;width:64px;object-fit:cover;border:1px solid #e5e7eb;border-radius:8px";prev.appendChild(im);};r.readAsDataURL(f);}else{var d=document.createElement("div");d.textContent=f.name;d.style.cssText="font-size:12px;color:#6b7280;border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;align-self:center";prev.appendChild(d);}})(inp.files[i]);}}document.addEventListener("paste",function(e){var items=(e.clipboardData||{}).items||[],dt=new DataTransfer(),i,added=0;for(i=0;i<inp.files.length;i++)dt.items.add(inp.files[i]);for(i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){var fl=items[i].getAsFile();if(fl){dt.items.add(new File([fl],"print-"+Date.now()+".png",{type:fl.type||"image/png"}));added++;}}}if(added){e.preventDefault();try{inp.files=dt.files;}catch(_){}render();}});inp.addEventListener("change",render);})();</script>';
+                . '<script>(function(){var rich=document.getElementById("reasonRich"),hidden=document.getElementById("reason"),form=document.getElementById("rejForm"),inp=document.getElementById("anexos"),info=document.getElementById("anexInfo");if(!rich)return;rich.addEventListener("paste",function(e){var items=(e.clipboardData||{}).items||[],img=null,i;for(i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){img=items[i].getAsFile();break;}}if(!img)return;e.preventDefault();var r=new FileReader();r.onload=function(){var el=document.createElement("img");el.src=r.result;var sel=window.getSelection&&window.getSelection();if(sel&&sel.rangeCount){var rg=sel.getRangeAt(0);rg.deleteContents();rg.insertNode(el);var br=document.createElement("br");if(el.parentNode)el.parentNode.insertBefore(br,el.nextSibling);rg.setStartAfter(br);rg.collapse(true);sel.removeAllRanges();sel.addRange(rg);}else{rich.appendChild(el);}};r.readAsDataURL(img);});if(inp)inp.addEventListener("change",function(){info.textContent=inp.files.length?inp.files.length+" arquivo(s) anexado(s).":"";});form.addEventListener("submit",function(e){hidden.value=rich.innerHTML;var txt=(rich.textContent||"").replace(/\s+/g,""),hasImg=rich.querySelector("img");if(!txt&&!hasImg){e.preventDefault();rich.style.borderColor="#ef4444";rich.focus();}});})();</script>';
             return $this->page('Recusar solução · ' . $num, $body);
         }
 
@@ -138,9 +141,16 @@ class HelpDeskAcceptController extends Controller
     public function reject(Request $request, HelpDeskTicket $ticket)
     {
         abort_unless($request->hasValidSignature(), 403, 'Link inválido ou expirado.');
-        $reason = trim((string) $request->input('reason'));
-        if ($reason === '') {
-            return $this->page('Informe o motivo', '<p>Por favor, descreva o que não resolveu para reabrirmos o chamado. '
+        // O campo agora é um editor rico (contenteditable) → vem HTML com o print colado INLINE.
+        // Sanitiza (remove script/handlers, só imagens data:/http) e valida "vazio" (sem texto E sem imagem).
+        $reason = self::sanitizeRejectHtml((string) $request->input('reason'));
+        if (mb_strlen($reason) > 22 * 1024 * 1024) {
+            return $this->page('Conteúdo muito grande', '<p>O print colado ficou grande demais. Use uma imagem menor ou anexe pelo botão "Escolher arquivos".</p>');
+        }
+        $reasonPlain = trim((string) preg_replace('/\s+/', ' ', strip_tags($reason)));
+        $reasonHasImg = (bool) preg_match('/<img\b/i', $reason);
+        if ($reasonPlain === '' && !$reasonHasImg) {
+            return $this->page('Informe o motivo', '<p>Por favor, descreva o que não resolveu (ou cole um print) para reabrirmos o chamado. '
                 . 'Volte ao e-mail e clique novamente em "Recusar".</p>');
         }
         if (!$this->awaitingAcceptance($ticket)) {
@@ -159,12 +169,12 @@ class HelpDeskAcceptController extends Controller
         $comment = $ticket->comments()->create([
             'author_user_id'    => null, // cliente pelo e-mail (sem login) — interação do cliente
             'author_contact_id' => $ticket->customer_contact_id, // QUEM recusou (contato do cliente), quando houver
-            'body'              => 'Solução recusada pelo cliente: ' . mb_substr($reason, 0, 2000),
+            'body'              => $reason, // HTML do editor (texto + print inline); o rótulo vem do card/e-mail
             'visibility'        => 'customer',
             'channel'           => 'email',
             'form_kind'         => 'rejection', // marcador estruturado → card vermelho "Solução recusada" no timeline
         ]);
-        HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'email', 'motivo' => $reason]]);
+        HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'email', 'motivo' => mb_substr($reasonPlain, 0, 500)]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'email']]);
         HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'email']]);
 
@@ -214,6 +224,26 @@ class HelpDeskAcceptController extends Controller
                 . '<p style="color:#6b7280;font-size:13px;margin-top:14px">Você já pode fechar esta página.</p>',
             '🔧'
         );
+    }
+
+    /**
+     * Sanitiza o HTML do editor de recusa (vem do cliente, sem login). Política conservadora,
+     * no espírito do MailComposer::richHtml: remove tags perigosas, handlers on* e URLs javascript:,
+     * e só mantém <img> com src data:image/... ou http(s). Preserva texto + print inline.
+     */
+    private static function sanitizeRejectHtml(string $html): string
+    {
+        $html = trim($html);
+        if ($html === '') return '';
+        $html = preg_replace('/<\s*(script|style|iframe|object|embed|link|meta|form|base)\b[^>]*>.*?<\s*\/\s*\1\s*>/is', '', $html) ?? $html;
+        $html = preg_replace('/<\s*(script|style|iframe|object|embed|link|meta|form|base)\b[^>]*\/?>/i', '', $html) ?? $html;
+        $html = preg_replace('/\son\w+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $html) ?? $html; // handlers on*
+        $html = preg_replace('/\b(href|src)\s*=\s*("|\')\s*javascript:[^"\']*\2/i', '$1="#"', $html) ?? $html;
+        // só permite <img> com data:image/... ou http(s); remove qualquer outra <img>
+        $html = preg_replace_callback('/<img\b[^>]*>/i', function ($m) {
+            return preg_match('/\bsrc\s*=\s*("|\')(data:image\/[a-z0-9.+-]+;base64,|https?:\/\/)/i', $m[0]) ? $m[0] : '';
+        }, $html) ?? $html;
+        return trim($html);
     }
 
     /**

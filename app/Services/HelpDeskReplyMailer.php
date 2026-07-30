@@ -318,8 +318,11 @@ class HelpDeskReplyMailer
         $clientNm  = trim((string) ($ticket->requester_name
             ?: optional($ticket->contact)->name
             ?: optional($ticket->requester)->name)) ?: 'Cliente';
+        // $reason já vem como HTML sanitizado do editor de recusa (texto + print inline via <img data:>).
+        // Embutimos direto (sem escapar) — o composeSimple abaixo passa por inlineImages() e converte
+        // as imagens data: em anexos inline (cid), que os clientes de e-mail renderizam.
         $reasonBox = '<div style="margin:0 0 14px;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;'
-            . 'border-radius:8px;color:#7f1d1d;white-space:pre-wrap;word-break:break-word">' . nl2br(e($reason)) . '</div>';
+            . 'border-radius:8px;color:#7f1d1d;word-break:break-word">' . $reason . '</div>';
 
         // 1) EQUIPE — responsável; sem responsável, a própria conta do Help Desk (caixa do time).
         $team = array_values(array_filter([optional($ticket->assignee)->email]));
