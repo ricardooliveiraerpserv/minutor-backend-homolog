@@ -55,6 +55,10 @@ class HelpDeskTicketController extends Controller
         $data['continuation_ticket'] = optional($ticket->relationLoaded('continuations')
             ? $ticket->continuations->sortByDesc('id')->first()
             : $ticket->continuations()->orderByDesc('id')->first())->only(['id', 'ticket_number']) ?: null;
+        // Chamado de origem (quando ESTE é continuação de um encerrado) → banner/link "Ver chamado de origem".
+        $data['previous_ticket'] = optional($ticket->relationLoaded('previousTicket')
+            ? $ticket->previousTicket
+            : $ticket->previousTicket()->first())->only(['id', 'ticket_number', 'subject']) ?: null;
         return $data;
     }
 

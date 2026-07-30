@@ -530,8 +530,26 @@ class HelpDeskEmailIngestor
     private function stripQuotedHistory(string $html): string
     {
         if ($html === '') return $html;
-        if (preg_match('/n[aã]o\s+escreva\s+abaixo\s+desta\s+linha/iu', $html, $m, PREG_OFFSET_CAPTURE)) {
-            $cut = substr($html, 0, (int) $m[0][1]);
+        // Corta no PRIMEIRO marcador de "início do histórico citado" que aparecer. Além do nosso
+        // "não escreva abaixo desta linha", inclui os separadores do Outlook (desktop/web/mobile),
+        // que empurravam a thread inteira (com imagens base64) para a descrição da continuação.
+        $markers = [
+            '/n[aã]o\s+escreva\s+abaixo\s+desta\s+linha/iu',
+            '/<div\b[^>]*\bid=["\']appendonsend["\']/i',                 // Outlook web/desktop: início do original
+            '/<div\b[^>]*\bid=["\']divRplyFwdMsg["\']/i',               // Outlook: bloco "De:/Enviada:/Para:"
+            '/<div\b[^>]*\bid=["\']mail-editor-reference-message-container["\']/i',
+            '/<hr\b[^>]*\bid=["\']stopSpelling["\']/i',                 // Outlook desktop: <hr> antes do original
+            '/<blockquote\b/i',                                          // citação genérica (Gmail/Apple)
+        ];
+        $cutAt = null;
+        foreach ($markers as $re) {
+            if (preg_match($re, $html, $m, PREG_OFFSET_CAPTURE)) {
+                $pos = (int) $m[0][1];
+                if ($cutAt === null || $pos < $cutAt) $cutAt = $pos;
+            }
+        }
+        if ($cutAt !== null) {
+            $cut = substr($html, 0, $cutAt);
             // recua até o início da tag que contém o marcador, p/ não deixar tag meia-aberta
             $lastLt = strrpos($cut, '<');
             if ($lastLt !== false && strpos($cut, '>', $lastLt) === false) {

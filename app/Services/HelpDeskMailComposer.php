@@ -306,6 +306,19 @@ class HelpDeskMailComposer
      */
     public static function conversationHistoryHtml(HelpDeskTicket $ticket, ?int $excludeCommentId = null): string
     {
+        // Chamado de CONTINUAÇÃO (aberto ao responder um encerrado): é um chamado NOVO — NÃO repete o
+        // histórico do original. Mostra um LINK para consultar o chamado anterior.
+        if ($ticket->previous_ticket_id) {
+            $prev = $ticket->relationLoaded('previousTicket') ? $ticket->previousTicket : $ticket->previousTicket()->first();
+            if ($prev) {
+                $url = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $prev->id;
+                return '<div style="margin:22px 0 0;border-top:1px solid #e5e7eb;padding-top:14px">'
+                    . '<div style="font-size:13px;color:#4b5563">Este chamado dá continuidade ao chamado anterior <b>' . e((string) $prev->ticket_number) . '</b>.</div>'
+                    . '<div style="margin-top:8px"><a href="' . e($url) . '" style="display:inline-block;color:#1d4ed8;text-decoration:underline;font-size:13px">🔗 Consultar o chamado anterior</a></div>'
+                    . '</div>';
+            }
+        }
+
         $tz = 'America/Sao_Paulo';
         $items = [];
 
