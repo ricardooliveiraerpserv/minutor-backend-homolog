@@ -758,7 +758,7 @@ class ContractController extends Controller
         return response()->json($contract->fresh()->load(['customer:id,name', 'aditivoProject:id,name,code']));
     }
 
-    public function destroy(Contract $contract): JsonResponse
+    public function destroy(Request $request, Contract $contract): JsonResponse
     {
         // Aditivo: excluir REVERTE a alteração no projeto (só o aditivo mais recente).
         if ($contract->is_aditivo) {
@@ -780,8 +780,38 @@ class ContractController extends Controller
             $att->delete();
         }
 
+        // Auditoria da exclusão da requisição/contrato: QUEM, QUANDO, O QUÊ (snapshot), POR QUÊ (motivo).
+        \App\Models\ContractDeletionLog::create([
+            'contract_id'     => $contract->id,
+            'contract_name'   => $contract->project_name,
+            'customer_name'   => optional($contract->customer)->name,
+            'kanban_status'   => $contract->kanban_status,
+            'deleted_by'      => optional($request->user())->id,
+            'deleted_by_name' => optional($request->user())->name,
+            'reason'          => trim((string) $request->input('reason')) ?: null,
+            'snapshot'        => $contract->toArray(),
+            'company_id'      => $contract->company_id ?? null,
+        ]);
+
         $contract->delete();
         return response()->json(null, 204);
+    }
+
+    /** Log de exclusões de requisições/contratos no pipeline (auditoria). Admin. */
+    public function deletionLogs(Request $request): JsonResponse
+    {
+        if (!$request->user()?->isAdmin()) abort(403);
+        $logs = \App\Models\ContractDeletionLog::orderByDesc('created_at')->limit(500)->get()->map(fn ($l) => [
+            'id'              => $l->id,
+            'contract_id'     => $l->contract_id,
+            'contract_name'   => $l->contract_name,
+            'customer_name'   => $l->customer_name,
+            'kanban_status'   => $l->kanban_status,
+            'deleted_by_name' => $l->deleted_by_name,
+            'reason'          => $l->reason,
+            'deleted_at'      => optional($l->created_at)->toIso8601String(),
+        ]);
+        return response()->json(['data' => $logs]);
     }
 
     /**

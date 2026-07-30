@@ -1194,6 +1194,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/aditivo/eligible-projects',               [ContractController::class, 'aditivoEligibleProjects'])->name('contracts.aditivo.eligible');
             Route::post('/aditivo',                                [ContractController::class, 'storeAditivo'])->name('contracts.aditivo.store');
             Route::put('/aditivo/{contract}',                      [ContractController::class, 'updateAditivo'])->name('contracts.aditivo.update');
+            Route::get('/deletion-logs',                           [ContractController::class, 'deletionLogs'])->name('contracts.deletion-logs');
             Route::get('/{contract}',                              [ContractController::class, 'show'])->name('contracts.show');
             Route::put('/{contract}',                              [ContractController::class, 'update'])->name('contracts.update');
             Route::delete('/{contract}',                           [ContractController::class, 'destroy'])->name('contracts.destroy');
