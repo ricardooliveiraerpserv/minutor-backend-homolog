@@ -65,11 +65,17 @@ class HelpDeskAcceptController extends Controller
             $post = URL::temporarySignedRoute('hd.reject.do', now()->addDays(30), ['ticket' => $ticket->id]);
             $body = '<p>Conte pra gente o que faltou na solução do chamado <b>' . $num . '</b>. '
                 . 'Ao enviar, o chamado volta para <b>Em atendimento</b> e nossa equipe retoma o tratamento.</p>'
-                . '<form method="post" action="' . e($post) . '" style="margin-top:16px">'
-                . '<textarea name="reason" required maxlength="2000" rows="5" placeholder="Descreva o que não resolveu…" '
+                . '<form method="post" action="' . e($post) . '" enctype="multipart/form-data" style="margin-top:16px">'
+                . '<textarea id="reason" name="reason" required maxlength="2000" rows="5" placeholder="Descreva o que não resolveu…" '
                 . 'style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;font-family:inherit"></textarea>'
+                . '<div style="margin-top:12px;text-align:left">'
+                . '<label style="font-size:13px;color:#6b7280;display:block;margin-bottom:6px">Anexar print ou arquivo (opcional) — dica: pode <b>colar (Ctrl+V)</b> uma imagem aqui.</label>'
+                . '<input id="anexos" type="file" name="anexos[]" multiple accept="image/*,.pdf,.docx,.xlsx,.txt,.csv" style="font-size:14px">'
+                . '<div id="anexInfo" style="font-size:12px;color:#16a34a;margin-top:6px"></div>'
+                . '</div>'
                 . '<button type="submit" style="margin-top:14px;background:#ef4444;color:#fff;border:0;border-radius:10px;padding:14px 28px;font-size:15px;font-weight:700;cursor:pointer">Enviar recusa</button>'
-                . '</form>';
+                . '</form>'
+                . '<script>(function(){var inp=document.getElementById("anexos"),info=document.getElementById("anexInfo");if(!inp)return;function upd(){info.textContent=inp.files.length?inp.files.length+" arquivo(s) anexado(s).":"";}document.addEventListener("paste",function(e){var items=(e.clipboardData||{}).items||[],dt=new DataTransfer(),i;for(i=0;i<inp.files.length;i++)dt.items.add(inp.files[i]);var added=0;for(i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){var fl=items[i].getAsFile();if(fl){dt.items.add(new File([fl],"print-"+Date.now()+".png",{type:fl.type||"image/png"}));added++;}}}if(added){try{inp.files=dt.files;}catch(_){}upd();}});inp.addEventListener("change",upd);})();</script>';
             return $this->page('Recusar solução · ' . $num, $body);
         }
 
@@ -158,6 +164,44 @@ class HelpDeskAcceptController extends Controller
         HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'email', 'motivo' => $reason]]);
         HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'email']]);
         HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'email']]);
+
+        // Anexos enviados pelo cliente (print/arquivo) → grava na interação (visibility=customer).
+        // Sem login no link: usa o assignee (ou um admin) como ator do upload (internalStaff passa).
+        $files = $request->file('anexos', []);
+        if (!empty($files)) {
+            $actor = $ticket->assignee ?: \App\Models\User::where('type', 'admin')->where('enabled', true)->orderBy('id')->first();
+            if ($actor) {
+                $svc = app(\App\Attachments\AttachmentService::class);
+                foreach ((array) $files as $file) {
+                    if (!$file || !$file->isValid()) continue;
+                    try {
+                        $svc->store($actor, [
+                            'entity_type' => 'HELPDESK_TICKET_COMMENT',
+                            'entity_id'   => $comment->id,
+                            'category'    => str_starts_with((string) $file->getMimeType(), 'image/') ? 'image' : 'attachment',
+                            'visibility'  => 'customer',
+                            'file'        => $file,
+                        ], $request);
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::warning('HelpDesk: anexo da recusa falhou: ' . $e->getMessage());
+                    }
+                }
+            }
+        }
+
+        // Dispara os gatilhos de status_changed (mesma mecânica do aceite) para notificar a equipe
+        // de que o cliente RECUSOU e o chamado voltou pra atendimento — o "retorno" que faltava.
+        try {
+            $companyCtx = app(\App\Services\CompanyContext::class);
+            $companyCtx->set($ticket->company_id);
+            try {
+                \App\Services\HelpDeskTriggerEngine::dispatch('status_changed', $ticket->fresh(), ['via' => 'email_recusa', 'reopened' => true]);
+            } finally {
+                $companyCtx->forget();
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail de recusa (gatilho) falhou: ' . $e->getMessage());
+        }
 
         return $this->page(
             'Recebemos sua recusa',
