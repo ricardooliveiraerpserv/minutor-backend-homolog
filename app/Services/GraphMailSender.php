@@ -74,7 +74,7 @@ class GraphMailSender
      * @param array<int,array{name:string,mime:string,bytes:string,cid?:string}> $inlineAttachments  anexos em memória (cid = imagem inline)
      * @return array{0: bool, 1: ?string}
      */
-    public static function sendAs(string $fromEmail, array $to, array $cc, string $subject, string $htmlBody, array $attachmentPaths = [], array $inlineAttachments = [], bool $withFooter = true, array $bcc = [], ?string $threadAnchorId = null): array
+    public static function sendAs(string $fromEmail, array $to, array $cc, string $subject, string $htmlBody, array $attachmentPaths = [], array $inlineAttachments = [], bool $withFooter = true, array $bcc = [], ?string $threadAnchorId = null, bool $establishThread = false, ?string &$capturedAnchorId = null): array
     {
         if (!self::enabled()) {
             return [false, 'Microsoft Graph (envio) não configurado no servidor.'];
@@ -150,6 +150,16 @@ class GraphMailSender
                 [$tOk, $tErr] = self::sendThreadedReply($token, $fromEmail, (string) $threadAnchorId, $message, $largeAtts);
                 if ($tOk) return [true, null];
                 \Illuminate\Support\Facades\Log::info("HelpDesk: threading indisponível ({$tErr}); enviando sem thread.");
+            }
+
+            // ESTABELECER A THREAD: chamado sem âncora (ex.: criado no app, sem e-mail de entrada).
+            // Envia via rascunho e captura o id da mensagem enviada (Itens Enviados, pelo
+            // internetMessageId) → o chamador grava como âncora e os PRÓXIMOS e-mails threadam.
+            // Best-effort: se falhar, cai no sendMail normal abaixo (o e-mail NUNCA some).
+            if ($establishThread && !$threadAnchorId) {
+                [$aOk, $aErr] = self::sendViaDraftAndCaptureAnchor($token, $fromEmail, $message, $largeAtts, $capturedAnchorId);
+                if ($aOk) return [true, null];
+                \Illuminate\Support\Facades\Log::info("HelpDesk: não estabeleceu thread ({$aErr}); enviando sem thread.");
             }
 
             // COM anexo grande → rascunho + upload session. Se FALHAR, a rede de segurança abaixo
@@ -254,6 +264,55 @@ class GraphMailSender
             }
             $s = Http::withToken($token)->acceptJson()->withBody('{}', 'application/json')->post($draft . '/send');
             if (!$s->successful()) return [false, 'send HTTP ' . $s->status()];
+            return [true, null];
+        } catch (\Throwable $e) {
+            return [false, $e->getMessage()];
+        }
+    }
+
+    /**
+     * Envia via RASCUNHO (POST /messages → send) e captura o id da mensagem enviada como ÂNCORA da
+     * thread do chamado. O draft é criado com os anexos pequenos/inline (já em $message) e os grandes
+     * via upload session. Após enviar, procura a mensagem nos Itens Enviados pelo internetMessageId
+     * (estável entre pastas) e devolve o id de lá — válido para createReply futuro.
+     * A captura da âncora é BEST-EFFORT: o e-mail é enviado de qualquer forma; se não achar o id,
+     * $capturedAnchor fica null e tentamos de novo no próximo e-mail.
+     *
+     * @param array<string,mixed> $message
+     * @param array<int,array{name:string,mime:string,bytes:string,cid?:string}> $largeAtts
+     * @return array{0: bool, 1: ?string}
+     */
+    private static function sendViaDraftAndCaptureAnchor(string $token, string $fromEmail, array $message, array $largeAtts, ?string &$capturedAnchor): array
+    {
+        try {
+            $base = sprintf('%s/users/%s', self::GRAPH_BASE, rawurlencode($fromEmail));
+            $r = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages', $message);
+            if (!$r->successful()) return [false, 'create draft HTTP ' . $r->status()];
+            $draftId = (string) $r->json('id');
+            if ($draftId === '') return [false, 'draft sem id'];
+            $imid  = (string) $r->json('internetMessageId'); // Message-ID RFC — estável entre pastas
+            $draft = $base . '/messages/' . rawurlencode($draftId);
+            foreach ($largeAtts as $la) {
+                [$uOk, $uErr] = self::uploadLargeAttachment($token, $draft, $la);
+                if (!$uOk) return [false, $uErr];
+            }
+            $s = Http::withToken($token)->acceptJson()->withBody('{}', 'application/json')->post($draft . '/send');
+            if (!$s->successful()) return [false, 'send HTTP ' . $s->status()];
+
+            // Best-effort: acha a mensagem enviada (Itens Enviados) pelo internetMessageId → id âncora.
+            if ($imid !== '') {
+                $filter = "internetMessageId eq '" . str_replace("'", "''", $imid) . "'";
+                for ($i = 0; $i < 3; $i++) {
+                    try {
+                        $q = Http::withToken($token)->acceptJson()->get($base . '/mailFolders/sentitems/messages', [
+                            '$filter' => $filter, '$select' => 'id', '$top' => 1,
+                        ]);
+                        $id = $q->successful() ? (string) $q->json('value.0.id') : '';
+                        if ($id !== '') { $capturedAnchor = $id; break; }
+                    } catch (\Throwable $e) { /* ignora e tenta de novo */ }
+                    usleep(900000); // 0,9s — o Exchange leva um instante p/ mover p/ Itens Enviados
+                }
+            }
             return [true, null];
         } catch (\Throwable $e) {
             return [false, $e->getMessage()];

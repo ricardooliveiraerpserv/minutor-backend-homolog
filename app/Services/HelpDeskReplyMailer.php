@@ -59,13 +59,31 @@ class HelpDeskReplyMailer
         // incluso). O rodapé genérico duplicaria o logo E, pior, era anexado DEPOIS do </html> do
         // nosso documento, quebrando a estrutura e fazendo o cliente ignorar color-scheme:light
         // (voltava a inverter p/ dark). Sem ele, o card claro é respeitado.
+        $anchor = $ticket->graph_thread_msg_id; $captured = null;
         [$ok, $err] = GraphMailSender::sendAs(
-            (string) $from->email, [$to], $cc, self::subjectFor($ticket), $html, [], $attachments, false, [], $ticket->graph_thread_msg_id
+            (string) $from->email, [$to], $cc, self::subjectFor($ticket), $html, [], $attachments, false, [], $anchor, empty($anchor), $captured
         );
+        if (empty($anchor) && $captured) self::rememberAnchor($ticket, $captured);
         if (!$ok) {
             Log::warning("HelpDesk: e-mail de resposta falhou ({$ticket->ticket_number} → {$to}): {$err}");
         }
         return [$ok, $err];
+    }
+
+    /**
+     * Grava a âncora da thread (id da 1ª mensagem enviada) no chamado, para os próximos e-mails
+     * threadarem (createReply). Atualiza também a instância em memória → e-mails seguintes NO MESMO
+     * request já usam a âncora recém-criada. Update cirúrgico (só a coluna), sem tocar outros campos.
+     */
+    private static function rememberAnchor(HelpDeskTicket $ticket, string $anchorId): void
+    {
+        try {
+            $ticket->newQuery()->whereKey($ticket->getKey())->update(['graph_thread_msg_id' => $anchorId]);
+            $ticket->setAttribute('graph_thread_msg_id', $anchorId);
+            $ticket->syncOriginalAttribute('graph_thread_msg_id');
+        } catch (\Throwable $e) {
+            Log::warning("HelpDesk: falha ao gravar âncora da thread ({$ticket->ticket_number}): " . $e->getMessage());
+        }
     }
 
     /**
@@ -340,10 +358,13 @@ class HelpDeskReplyMailer
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);
             // CONTINUAÇÃO do chamado: threada no mesmo fio do e-mail inicial (assunto Re: [nº] +
-            // graph_thread_msg_id) — a recusa vira mais uma mensagem da conversa, não um e-mail solto.
+            // graph_thread_msg_id). Se o chamado ainda não tem âncora (criado no app), este 1º e-mail
+            // ESTABELECE a thread — o cliente (abaixo) já cai na mesma conversa.
+            $anchor = $ticket->graph_thread_msg_id; $captured = null;
             [$ok, $err] = GraphMailSender::sendAs(
-                (string) $from->email, $team, [], self::subjectFor($ticket), $html, [], $inline, false, [], $ticket->graph_thread_msg_id
+                (string) $from->email, $team, [], self::subjectFor($ticket), $html, [], $inline, false, [], $anchor, empty($anchor), $captured
             );
+            if (empty($anchor) && $captured) self::rememberAnchor($ticket, $captured);
             if (!$ok) Log::warning("HelpDesk: aviso de recusa à equipe falhou ({$ticket->ticket_number}): {$err}");
         }
 
@@ -362,9 +383,12 @@ class HelpDeskReplyMailer
             $html = HelpDeskMailComposer::composeSimple('Recebemos a sua recusa', $msg, null, $header);
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);
+            // Usa a âncora (recém-criada pelo e-mail da equipe acima, se for o caso) → mesma conversa.
+            $anchor = $ticket->graph_thread_msg_id; $captured = null;
             [$ok, $err] = GraphMailSender::sendAs(
-                (string) $from->email, [$to], [], self::subjectFor($ticket), $html, [], $inline, false, [], $ticket->graph_thread_msg_id
+                (string) $from->email, [$to], [], self::subjectFor($ticket), $html, [], $inline, false, [], $anchor, empty($anchor), $captured
             );
+            if (empty($anchor) && $captured) self::rememberAnchor($ticket, $captured);
             if (!$ok) Log::warning("HelpDesk: confirmação de recusa ao cliente falhou ({$ticket->ticket_number}→{$to}): {$err}");
         }
     }
