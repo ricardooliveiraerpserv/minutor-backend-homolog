@@ -313,6 +313,7 @@ class HelpDeskReplyMailer
 
         // Faixa roxa (header): sempre nº do chamado ATUAL + título.
         $headerLine = 'Chamado ' . $new->ticket_number . ' — ' . $new->subject;
+        $msg .= HelpDeskMailComposer::conversationHistoryHtml($new); // histórico completo em todo card
         $html = HelpDeskMailComposer::composeSimple($title, $msg, null, $headerLine);
         [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
         $inline = array_merge(HelpDeskMailComposer::inlineAssetsSimple(), $imgAtts);

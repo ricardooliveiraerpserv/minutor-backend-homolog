@@ -51,6 +51,10 @@ class HelpDeskMailComposer
             $blocksHtml .= self::renderBlock((string) $b, $ticket, $color);
         }
 
+        // Histórico COMPLETO da conversa — anexado em TODO card (qualquer situação/gatilho), como
+        // no e-mail de resposta. Vazio (chamado sem histórico) → não renderiza a linha.
+        $historyHtml = self::conversationHistoryHtml($ticket);
+
         // Dados do chamado (chrome do card — placeholders/mensagem NÃO mudam).
         $company    = e($tpl->company_name);
         $num        = e($ticket->ticket_number ?: ('#' . $ticket->id));
@@ -149,6 +153,8 @@ class HelpDeskMailComposer
         .       '</tr></table>'
         .       '<div style="font-size:12px;line-height:1.5;color:#9ca3af;margin-top:10px">Ou responda diretamente a este e-mail.</div>'
         .     '</td></tr>'
+        // ── HISTÓRICO DA CONVERSA (fio completo em todo card) ──
+        .     ($historyHtml !== '' ? '<tr><td style="padding:6px 28px 0">' . $historyHtml . '</td></tr>' : '')
         // ── ASSINATURA enxuta ──
         .     '<tr><td style="padding:18px 28px 22px">'
         .       '<div style="padding-top:16px;border-top:1px solid #eef0f3;font-size:14px;line-height:1.6;color:#374151">'
