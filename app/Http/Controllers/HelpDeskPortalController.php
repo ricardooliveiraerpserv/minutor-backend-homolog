@@ -252,9 +252,18 @@ class HelpDeskPortalController extends Controller
         $fechado = HelpDeskStatus::where('key', 'fechado')->first();
         abort_unless($fechado, 500, 'Status "fechado" não configurado.');
         $old = $ticket->status;
-        $ticket->status_id = $fechado->id;
-        if (!$ticket->closed_at) $ticket->closed_at = now();
-        $ticket->last_activity_at = now();
+        // Transição ATÔMICA: só o 1º request (status ainda resolvido) efetiva. Duplo-clique/duplo-submit
+        // concorrente afeta 0 linhas → no-op, sem duplicar a interação de encerramento nem o e-mail.
+        $resolvedIds = HelpDeskStatus::where('is_resolved', true)->where('is_terminal', false)->pluck('id')->all();
+        $affected = HelpDeskTicket::whereKey($ticket->id)->whereIn('status_id', $resolvedIds)->update([
+            'status_id'        => $fechado->id,
+            'closed_at'        => \Illuminate\Support\Facades\DB::raw('COALESCE(closed_at, now())'),
+            'last_activity_at' => now(),
+        ]);
+        if (!$affected) {
+            return response()->json(['data' => ['ok' => true]]); // já encerrado por requisição concorrente
+        }
+        $ticket->refresh();
         $this->sla->computeBreaches($ticket);
         $ticket->save();
         HelpDeskTicketEvent::log($ticket->id, 'closed', ['to_value' => $fechado->label, 'meta' => ['via' => 'portal', 'aceite_cliente' => true]]);
@@ -285,11 +294,20 @@ class HelpDeskPortalController extends Controller
         $em = HelpDeskStatus::where('key', 'em_andamento')->first();
         abort_unless($em, 500, 'Status "em andamento" não configurado.');
         $old = $ticket->status;
-        $ticket->status_id   = $em->id;
-        $ticket->reopened_at = now();
-        $ticket->resolved_at = null;
-        $ticket->reopen_count = (int) $ticket->reopen_count + 1;
-        $ticket->last_activity_at = now();
+        // Transição ATÔMICA: só o 1º request (status ainda resolvido) efetiva a recusa → evita
+        // duplicar a interação de recusa e o e-mail em duplo-clique/duplo-submit concorrente.
+        $resolvedIds = HelpDeskStatus::where('is_resolved', true)->where('is_terminal', false)->pluck('id')->all();
+        $affected = HelpDeskTicket::whereKey($ticket->id)->whereIn('status_id', $resolvedIds)->update([
+            'status_id'        => $em->id,
+            'reopened_at'      => now(),
+            'resolved_at'      => null,
+            'reopen_count'     => \Illuminate\Support\Facades\DB::raw('reopen_count + 1'),
+            'last_activity_at' => now(),
+        ]);
+        if (!$affected) {
+            return response()->json(['data' => ['ok' => true]]); // já recusado/reaberto por requisição concorrente
+        }
+        $ticket->refresh();
         $this->sla->computeBreaches($ticket);
         $ticket->save();
         $comment = $ticket->comments()->create([
