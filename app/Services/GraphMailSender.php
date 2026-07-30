@@ -108,9 +108,11 @@ class GraphMailSender
                 $message['bccRecipients'] = array_map(fn ($e) => ['emailAddress' => ['address' => $e]], $bccClean);
             }
 
-            // Anexos em memória. Até 25 MB POR ARQUIVO (createUploadSession p/ > ~3 MB). Imagens
-            // inline (cid) são pequenas (prints reduzidos) e vão como contentBytes no corpo.
+            // Anexos em memória. Até 25 MB POR ARQUIVO. Controla o TOTAL inline (contentBytes) p/
+            // NUNCA estourar o limite de ~3-4 MB de UMA requisição do Graph: o que couber vai inline;
+            // o excedente (inclusive imagens inline, preservando o cid) vai por createUploadSession.
             $largeAtts = [];
+            $inlineTotal = 0;
             foreach ($inlineAttachments as $a) {
                 $bytes = (string) ($a['bytes'] ?? '');
                 if ($bytes === '') continue;
@@ -120,8 +122,9 @@ class GraphMailSender
                     return [false, "O anexo '" . ($a['name'] ?? 'arquivo') . "' tem {$mb} MB; o limite por arquivo é 25 MB."];
                 }
                 $isCid = !empty($a['cid']);
-                if ($isCid || $len <= GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
-                    // pequeno / inline → contentBytes direto (um POST simples aguenta)
+                if ($len <= GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES && ($inlineTotal + $len) <= GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
+                    // cabe inline sem estourar o total → contentBytes direto
+                    $inlineTotal += $len;
                     $entry = [
                         '@odata.type'  => '#microsoft.graph.fileAttachment',
                         'name'         => (string) ($a['name'] ?? 'anexo'),
@@ -131,8 +134,10 @@ class GraphMailSender
                     if ($isCid) { $entry['contentId'] = (string) $a['cid']; $entry['isInline'] = true; }
                     $message['attachments'][] = $entry;
                 } else {
-                    // grande (>3 MB) → só entra via upload session, num rascunho
-                    $largeAtts[] = ['name' => (string) ($a['name'] ?? 'anexo'), 'mime' => (string) ($a['mime'] ?? 'application/octet-stream'), 'bytes' => $bytes];
+                    // grande OU estouraria o total → upload session (preserva cid/isInline p/ imagem inline)
+                    $la = ['name' => (string) ($a['name'] ?? 'anexo'), 'mime' => (string) ($a['mime'] ?? 'application/octet-stream'), 'bytes' => $bytes];
+                    if ($isCid) $la['cid'] = (string) $a['cid'];
+                    $largeAtts[] = $la;
                 }
             }
 
@@ -147,9 +152,16 @@ class GraphMailSender
                 \Illuminate\Support\Facades\Log::info("HelpDesk: threading indisponível ({$tErr}); enviando sem thread.");
             }
 
-            // Sem thread mas COM anexo grande → precisa de rascunho + upload session (sendMail inline nao passa de ~3MB).
+            // COM anexo grande → rascunho + upload session. Se FALHAR, a rede de segurança abaixo
+            // manda o e-mail mesmo assim (sem o anexo grande + aviso) — o e-mail NUNCA some.
             if (!empty($largeAtts)) {
-                return self::sendViaDraft($token, $fromEmail, $message, $largeAtts);
+                [$dOk, $dErr] = self::sendViaDraft($token, $fromEmail, $message, $largeAtts);
+                if ($dOk) return [true, null];
+                \Illuminate\Support\Facades\Log::warning("HelpDesk: upload de anexo grande falhou ({$dErr}); enviando e-mail sem o(s) anexo(s) grande(s).");
+                $names = implode(', ', array_map(fn ($x) => (string) ($x['name'] ?? 'arquivo'), $largeAtts));
+                if (isset($message['body']['content'])) {
+                    $message['body']['content'] .= '<p style="color:#b91c1c;font-size:13px;margin-top:12px">&#9888; Anexo(s) grande(s) n&atilde;o p&ocirc;de(puderam) ser enviado(s) por e-mail (' . e($names) . '); dispon&iacute;vel(is) no chamado.</p>';
+                }
             }
 
             $url  = sprintf('%s/users/%s/sendMail', self::GRAPH_BASE, rawurlencode($fromEmail));
@@ -258,19 +270,22 @@ class GraphMailSender
     {
         $bytes = (string) $la['bytes'];
         $size  = strlen($bytes);
+        $item = [
+            'attachmentType' => 'file',
+            'name'           => (string) $la['name'],
+            'size'           => $size,
+            'contentType'    => (string) ($la['mime'] ?? 'application/octet-stream'),
+        ];
+        if (!empty($la['cid'])) { $item['contentId'] = (string) $la['cid']; $item['isInline'] = true; }
         $sess = Http::withToken($token)->acceptJson()->asJson()->post($draftUrl . '/attachments/createUploadSession', [
-            'AttachmentItem' => [
-                'attachmentType' => 'file',
-                'name'           => (string) $la['name'],
-                'size'           => $size,
-                'contentType'    => (string) ($la['mime'] ?? 'application/octet-stream'),
-            ],
+            'AttachmentItem' => $item,
         ]);
         if (!$sess->successful()) return [false, 'createUploadSession HTTP ' . $sess->status()];
         $uploadUrl = (string) $sess->json('uploadUrl');
         if ($uploadUrl === '') return [false, 'uploadSession sem uploadUrl'];
 
-        $chunk = 4 * 1024 * 1024;
+        // Graph EXIGE cada chunk múltiplo de 320 KiB (327.680), exceto o último. 10*320KiB ≈ 3,1MB.
+        $chunk = 10 * 327680;
         $start = 0;
         while ($start < $size) {
             $end   = min($start + $chunk, $size) - 1;
