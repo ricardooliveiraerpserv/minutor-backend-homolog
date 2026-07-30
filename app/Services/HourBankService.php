@@ -114,6 +114,54 @@ class HourBankService
         return round($minutes / 60, 2);
     }
 
+    /**
+     * Horas NÃO contabilizadas ao banco por CONFLITO dentro do horário comercial.
+     *
+     * Regra: dentro da janela 09h–18h o teto é 9h/dia (o almoço pode não ter sido
+     * feito). Como apontamentos conflitantes em CLIENTES DIFERENTES são permitidos,
+     * a soma do tempo apontado DENTRO de 09–18 pode passar do fisicamente possível
+     * (ex.: 17h "dentro" de um dia). O excedente acima de 9h/dia dentro da janela é
+     * descartado do banco. Fora de 09–18 soma normal (não entra aqui).
+     *
+     * Retorna o TOTAL de horas descartadas no mês (soma por dia de max(0, janela−9)).
+     */
+    public function getConflictHours(int $userId, int $year, int $month, ?string $startDate = null): float
+    {
+        $query = Timesheet::where('user_id', $userId)
+            ->whereYear('date', $year)
+            ->whereMonth('date', $month)
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereIn('status', ['approved', 'pending'])
+            ->whereNotNull('start_time')
+            ->whereNotNull('end_time')
+            ->whereColumn('end_time', '>', 'start_time');
+
+        if ($startDate) {
+            $sd = Carbon::parse($startDate);
+            if ($sd->year === $year && $sd->month === $month) {
+                $query->where('date', '>=', $sd->format('Y-m-d'));
+            }
+        }
+
+        // Minutos de cada apontamento que caem DENTRO da janela 09h–18h, somados por dia.
+        $overlapMin = "GREATEST(0, EXTRACT(EPOCH FROM (LEAST(end_time, TIME '18:00') - GREATEST(start_time, TIME '09:00'))) / 60.0)";
+        $porDia = $query
+            ->selectRaw("date, SUM($overlapMin) AS janela_min")
+            ->groupBy('date')
+            ->pluck('janela_min', 'date');
+
+        $conflito = 0.0;
+        foreach ($porDia as $janelaMin) {
+            $janelaH = ((float) $janelaMin) / 60.0;
+            if ($janelaH > 9.0) {
+                $conflito += $janelaH - 9.0; // só o excedente acima de 9h/dia dentro de 09–18
+            }
+        }
+
+        return round($conflito, 2);
+    }
+
     // ─── Saldo Anterior ────────────────────────────────────────────────────
 
     /**
@@ -181,7 +229,9 @@ class HourBankService
             : $workingFull;
         $expectedHours   = round($workingUsed['working_days'] * $dailyHours, 2);
 
-        $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate) + $additionalWorkedHours, 2);
+        // Horas descartadas por conflito dentro de 09–18 (teto 9h/dia) NÃO entram no banco.
+        $conflictHours   = $this->getConflictHours($userId, $year, $month, $startDate);
+        $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate) - $conflictHours + $additionalWorkedHours, 2);
         $previousBalance = $this->getPreviousBalance($userId, $year, $month, $startDate);
 
         $monthBalance = round($workedHours - $expectedHours, 2);
@@ -208,6 +258,7 @@ class HourBankService
             'expected_hours_full' => $expectedFull,
             'is_current_month'    => $isCurrent,
             'worked_hours'        => $workedHours,
+            'conflict_hours'      => round($conflictHours, 2),
             'month_balance'       => $monthBalance,
             'previous_balance'    => round($previousBalance, 2),
             'accumulated_balance' => $accumulated,
@@ -337,7 +388,8 @@ class HourBankService
                 ? $this->calculateWorkingDays($year, $month, $startDate, now()->toDateString())
                 : $workingFull;
             $expectedHours = round($workingUsed['working_days'] * $dailyHours, 2);
-            $workedHours   = $this->getWorkedHours($userId, $year, $month, $startDate);
+            $conflictHours = $this->getConflictHours($userId, $year, $month, $startDate);
+            $workedHours   = round($this->getWorkedHours($userId, $year, $month, $startDate) - $conflictHours, 2);
 
             $monthBalance = round($workedHours - $expectedHours, 2);
             $accumulated  = round($prevFinalBalance + $monthBalance, 2);
@@ -361,6 +413,7 @@ class HourBankService
                 'expected_hours_full' => $expectedFull,
                 'is_current_month'    => $isCurrent,
                 'worked_hours'        => $workedHours,
+                'conflict_hours'      => round($conflictHours, 2),
                 'month_balance'       => $monthBalance,
                 'previous_balance'    => round($prevFinalBalance, 2),
                 'accumulated_balance' => $accumulated,
