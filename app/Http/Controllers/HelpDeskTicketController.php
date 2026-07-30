@@ -65,6 +65,22 @@ class HelpDeskTicketController extends Controller
             ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $user->id)
             || ($ticket->requester_email && $user->email && strcasecmp((string) $ticket->requester_email, (string) $user->email) === 0)
         ));
+        // Modo do campo de TEMPO (apontamento) no HD, seguindo a MESMA regra do app:
+        //  - contrato SEM integração de horas (helpdesk_integration_enabled) → 'optional' (exceção do contrato);
+        //  - com integração + consultor BLOQUEADO de apontar manual (nem global can_timesheet_sustentacao,
+        //    nem allow_manual_timesheet no projeto) → 'required' (deve apontar via HD);
+        //  - com integração + consultor que APONTA MANUAL → 'hidden' (aponta separado; campo some).
+        $data['apontamento_time_mode'] = 'optional';
+        if ($user) {
+            $contract = $ticket->relationLoaded('contract') ? $ticket->contract : ($ticket->contract_id ? $ticket->contract()->first() : null);
+            if ($contract && $contract->helpdesk_integration_enabled) {
+                $allowedInProject = $ticket->project_id && \Illuminate\Support\Facades\DB::table('project_consultants')
+                    ->where('project_id', $ticket->project_id)->where('user_id', $user->id)
+                    ->where('allow_manual_timesheet', true)->exists();
+                $canManual = ((bool) $user->can_timesheet_sustentacao) || $allowedInProject;
+                $data['apontamento_time_mode'] = $canManual ? 'hidden' : 'required';
+            }
+        }
         return $data;
     }
 
