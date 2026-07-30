@@ -126,6 +126,14 @@ class HelpDeskReplyMailer
      */
     private static function treatBody(string $html): array
     {
+        // Corpos com histórico + muitos prints (data:base64) chegam a >1 MB. O PCRE JIT tem um limite
+        // de STACK menor p/ subjects grandes → o preg_replace_callback retornava NULL no servidor e o
+        // corpo saía CRU (logo /logo.png e prints data: sem virar cid → quebrados). Subimos os limites
+        // e desligamos o JIT aqui p/ as conversões abaixo nunca falharem silenciosamente.
+        @ini_set('pcre.backtrack_limit', '100000000');
+        @ini_set('pcre.recursion_limit', '100000000');
+        @ini_set('pcre.jit', '0');
+
         $inline = [];
         $i = 0;
         $seen = []; // dedup por conteúdo (md5) → mesma imagem = 1 anexo (cid), reusado no fio inteiro

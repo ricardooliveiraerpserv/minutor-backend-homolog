@@ -511,6 +511,12 @@ class HelpDeskMailComposer
      */
     public static function inlineImages(string $html): array
     {
+        // Vide treatBody: corpos grandes (muitos prints base64) faziam o PCRE JIT falhar (null) e as
+        // imagens saíam cruas. Sobe limites e desliga o JIT p/ as conversões não falharem em silêncio.
+        @ini_set('pcre.backtrack_limit', '100000000');
+        @ini_set('pcre.recursion_limit', '100000000');
+        @ini_set('pcre.jit', '0');
+
         $atts = []; $i = 0;
         $html = preg_replace_callback(
             '/<img\b[^>]*\bsrc=["\']data:(image\/[a-zA-Z0-9.+-]+);base64,([^"\']+)["\'][^>]*>/i',
