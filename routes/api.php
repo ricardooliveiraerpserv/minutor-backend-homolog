@@ -1211,6 +1211,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/contract-requests',                     [\App\Http\Controllers\ContractRequestController::class, 'store'])->name('contract-requests.store');
         Route::post('/contract-requests/resolve-emails',      [\App\Http\Controllers\ContractRequestController::class, 'resolveEmails'])->name('contract-requests.resolve-emails');
         Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');
+        Route::delete('/contract-requests/{contractRequest}', [\App\Http\Controllers\ContractRequestController::class, 'destroy'])->name('contract-requests.destroy');
         Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review');
         Route::patch('/contract-requests/{contractRequest}/kanban-move', [\App\Http\Controllers\ContractController::class, 'requestKanbanMove'])->name('contract-requests.kanban-move');
         Route::post('/contract-requests/{contractRequest}/plan-decision', [\App\Http\Controllers\ContractController::class, 'requestPlanDecision'])->name('contract-requests.plan-decision');

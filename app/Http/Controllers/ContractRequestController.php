@@ -246,4 +246,25 @@ class ContractRequestController extends Controller
         }
         return $map;
     }
+
+    /** Exclui uma REQUISIÇÃO (soft-delete) registrando o log de auditoria (quem/quando/o quê/motivo). Admin. */
+    public function destroy(Request $request, ContractRequest $contractRequest): JsonResponse
+    {
+        if (!$request->user()?->isAdmin()) abort(403);
+
+        \App\Models\ContractDeletionLog::create([
+            'contract_id'     => $contractRequest->id, // id da requisição
+            'contract_name'   => \Illuminate\Support\Str::limit((string) $contractRequest->descricao, 120) ?: ('Requisição #' . $contractRequest->id),
+            'customer_name'   => optional($contractRequest->customer)->name,
+            'kanban_status'   => $contractRequest->kanban_column ?? $contractRequest->status,
+            'deleted_by'      => optional($request->user())->id,
+            'deleted_by_name' => optional($request->user())->name,
+            'reason'          => trim((string) $request->input('reason')) ?: null,
+            'snapshot'        => $contractRequest->toArray(),
+            'company_id'      => null,
+        ]);
+
+        $contractRequest->delete();
+        return response()->json(null, 204);
+    }
 }
