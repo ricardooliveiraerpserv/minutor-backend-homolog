@@ -109,6 +109,8 @@ class HelpDeskMailComposer
                         . '<div style="border-top:1px solid #eef0f3;margin-top:18px;line-height:0;font-size:0">&nbsp;</div>'
                     : '')
         .     '</td></tr>'
+        // ── ACEITE / RECUSA NO TOPO (logo após a saudação) — decide direto do e-mail, sem login ──
+        .     $acceptReject
         // ── CARD DO CHAMADO: card único, barra de status à esquerda, 2 colunas ──
         .     '<tr><td style="padding:18px 28px 4px">'
         .       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
@@ -142,8 +144,7 @@ class HelpDeskMailComposer
                     . $blocksHtml
                     . '</td></tr>'
                 : '')
-        // ── ACEITE / RECUSA (só quando resolvido) — decide direto do e-mail, sem login ──
-        .     $acceptReject
+        // (Aceite/Recusa foi movido para o TOPO, logo após a saudação.)
         // ── BOTÃO CTA grande e centralizado ──
         .     '<tr><td align="center" style="padding:24px 28px 6px">'
         .       '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'

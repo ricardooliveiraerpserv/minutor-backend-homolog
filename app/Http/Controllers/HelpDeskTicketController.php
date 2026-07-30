@@ -1716,6 +1716,30 @@ class HelpDeskTicketController extends Controller
         // uma falha de saldo/projeto avisa o usuário, mas nunca perde a interação já gravada.
         $apontamentoWarning = $this->maybeCreateInteractionTimesheet($ticket, $comment, $effortMinutes, $workedDate, $request);
 
+        // Enviar uma SOLUÇÃO (Detalhamento/GMUD/form dinâmico) RESOLVE o chamado: se ainda estiver
+        // aberto, move para o status resolvido da empresa ANTES do e-mail → a mensagem já sai com os
+        // botões Aceitar/Recusar (que exigem is_resolved). Fica ANTES do dispatch de propósito.
+        if (in_array($comment->form_kind, ['solution', 'gmud', 'dynamic'], true)
+            && $comment->visibility === 'customer'
+            && !(optional($ticket->status)->is_resolved || optional($ticket->status)->is_terminal)) {
+            $resolvedKey = $comment->form_kind === 'gmud' ? 'solucao_gmud' : 'resolvido';
+            $newStatus = HelpDeskStatus::withoutGlobalScopes()
+                ->where('company_id', $ticket->company_id)
+                ->where('is_resolved', true)->where('is_terminal', false)
+                ->orderByRaw('case when key = ? then 0 else 1 end', [$resolvedKey])
+                ->first();
+            if ($newStatus) {
+                $old = $ticket->status;
+                $ticket->status_id = $newStatus->id;
+                $ticket->resolved_at = $ticket->resolved_at ?: now();
+                $ticket->last_activity_at = now();
+                $ticket->save();
+                HelpDeskTicketEvent::log($ticket->id, 'resolved', ['to_value' => $newStatus->label, 'meta' => ['via' => 'solution_auto']]);
+                HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $newStatus->key, 'meta' => ['via' => 'solution_auto']]);
+                $ticket->refresh();
+            }
+        }
+
         // Resposta pública → e-mail ao solicitante via FILA (rate-limited; retry no 429 do Azure).
         // Com QUEUE_CONNECTION=sync roda INLINE (comportamento atual); assíncrono quando a infra ligar
         // o worker + QUEUE_CONNECTION=database. Best-effort: nunca derruba a gravação do comentário.

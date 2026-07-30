@@ -47,8 +47,8 @@ class HelpDeskReplyMailer
         // Anexa o HISTÓRICO da conversa (visível ao cliente) abaixo da nova resposta — "e-mail único"
         // com o fio inteiro (no espírito do portal do fornecedor). Exclui o próprio comentário atual.
         $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
+            . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar NO TOPO
             . (string) $comment->body
-            . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar
             . \App\Services\HelpDeskMailComposer::ticketLinkHtml($ticket)    // Link de acesso ao chamado (toda resposta)
             . \App\Services\HelpDeskMailComposer::conversationHistoryHtml($ticket, (int) $comment->id);
         [$html, $inlineImgs] = self::treatBody($bodyWithHistory);
