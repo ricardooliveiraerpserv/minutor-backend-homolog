@@ -498,9 +498,13 @@ class AttachableEntitiesRegistry
     public static function assertMime(string $entityType, string $mime): void
     {
         $def = self::definition($entityType);
-        if (!in_array($mime, $def['allowed_mime'], true)) {
-            throw InvalidMimeTypeException::for($entityType, $mime, $def['allowed_mime']);
-        }
+        if (in_array($mime, $def['allowed_mime'], true)) return;
+        // finfo classifica arquivos de TEXTO (logs, código, .txt/.csv com conteúdo "code-ish")
+        // como text/x-c, text/x-csrc, text/x-shellscript, etc. — variantes de texto puro. Se o
+        // tipo é text/* e a entidade já aceita text/plain, trata como texto. A checagem de
+        // EXTENSÃO (assertExtension) continua barrando .sh/.js/.exe, então não abre brecha.
+        if (str_starts_with($mime, 'text/') && in_array('text/plain', $def['allowed_mime'], true)) return;
+        throw InvalidMimeTypeException::for($entityType, $mime, $def['allowed_mime']);
     }
 
     /**
