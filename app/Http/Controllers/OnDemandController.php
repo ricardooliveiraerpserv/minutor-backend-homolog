@@ -244,8 +244,10 @@ class OnDemandController extends Controller
 
             foreach ($parentProjects as $project) {
                 $projectTotalValue = $project->calculateTotalProjectValue($competencia);
-                $projectTotalHours = $project->getTotalAvailableHours();
-                
+                // Horas VALORIZADAS (exclui aporte não valorizado) — consistente com o valor,
+                // senão o não valorizado dilui a média ponderada agregada.
+                $projectTotalHours = $project->getValuedAvailableHours();
+
                 if ($projectTotalHours > 0) {
                     $totalValue += $projectTotalValue;
                     $totalHours += $projectTotalHours;

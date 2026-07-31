@@ -121,9 +121,14 @@ class HourContributionController extends Controller
      */
     public function store(Request $request, Project $project): JsonResponse
     {
+        // Aporte NÃO VALORIZADO: só adiciona horas, sem valor e sem card. Quando ligado,
+        // o valor/hora deixa de ser obrigatório (e é gravado como null).
+        $naoValorizado = filter_var($request->input('nao_valorizado', false), FILTER_VALIDATE_BOOLEAN);
+
         $validated = $request->validate([
             'contributed_hours' => 'required|numeric|min:0.01|max:999999',
-            'hourly_rate' => 'required|numeric|min:0.01|max:9999.99',
+            'hourly_rate' => ($naoValorizado ? 'nullable' : 'required') . '|numeric|min:0.01|max:9999.99',
+            'nao_valorizado' => 'nullable|boolean',
             'description' => 'nullable|string|max:1000',
             'motivo' => 'nullable|in:aporte,excedentes,absorvidas',
             'contributed_at' => 'nullable|date',
@@ -157,7 +162,8 @@ class HourContributionController extends Controller
 
         $contribution = $project->hourContributions()->create([
             'contributed_hours' => $validated['contributed_hours'],
-            'hourly_rate'       => $validated['hourly_rate'],
+            'hourly_rate'       => $naoValorizado ? null : $validated['hourly_rate'],
+            'nao_valorizado'    => $naoValorizado,
             'description'       => $validated['description'] ?? null,
             'motivo'            => $validated['motivo'] ?? 'aporte',
             'contributed_by'    => $request->user()->id,
@@ -180,7 +186,8 @@ class HourContributionController extends Controller
 
         // Comunica novo aporte de horas em contrato existente.
         // Só para motivo 'aporte' (excedentes/absorvidas são ajustes internos).
-        if (($validated['motivo'] ?? 'aporte') === 'aporte') {
+        // Aporte NÃO valorizado é interno/administrativo → não comunica.
+        if (!$naoValorizado && ($validated['motivo'] ?? 'aporte') === 'aporte') {
             $this->notifyNewAporte($project, $contribution);
         }
 

@@ -1465,6 +1465,31 @@ class Project extends Model
     }
 
     /**
+     * Horas disponíveis que ENTRAM na média ponderada de valor — exclui aportes
+     * NÃO VALORIZADOS (somam saldo/apontáveis, mas não têm valor). Usado no cálculo
+     * do valor-hora ponderado AGREGADO (on-demand), pra não diluir a taxa.
+     */
+    public function getValuedAvailableHours(): float
+    {
+        $contributions = $this->relationLoaded('hourContributions')
+            ? $this->hourContributions
+            : $this->hourContributions()->get();
+
+        $valued = (float) $contributions->reject(fn ($c) => $c->nao_valorizado)->sum('contributed_hours');
+
+        if ($valued > 0) {
+            return (float) ($this->sold_hours ?? 0) + $valued;
+        }
+
+        // Sem aportes valorizados ativos: mesma regra de legado do getTotalAvailableHours.
+        $legacy = (float) ($this->hour_contribution ?? 0);
+        if ($legacy <= 0 || $this->hourContributions()->withTrashed()->exists()) {
+            return (float) ($this->sold_hours ?? 0);
+        }
+        return (float) ($this->sold_hours ?? 0) + $legacy;
+    }
+
+    /**
      * Calcular o valor total do projeto
      * Considera valor base + valor de todos os aportes
      *
@@ -1529,6 +1554,7 @@ class Project extends Model
             $totalValue = ($this->sold_hours ?? 0) * $rate;
 
             foreach ($contributions as $contribution) {
+                if ($contribution->nao_valorizado) continue; // não valorizado: horas contam no saldo, NÃO na média
                 $totalHours += $contribution->contributed_hours;
                 $totalValue += $contribution->getTotalValue();
             }

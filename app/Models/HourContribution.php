@@ -25,6 +25,7 @@ class HourContribution extends Model
         'project_id',
         'contributed_hours',
         'hourly_rate',
+        'nao_valorizado',
         'description',
         'motivo',
         'kanban_status',
@@ -49,6 +50,7 @@ class HourContribution extends Model
     protected $casts = [
         'contributed_hours' => 'decimal:2',
         'hourly_rate' => 'decimal:2',
+        'nao_valorizado' => 'boolean',
         'contributed_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
