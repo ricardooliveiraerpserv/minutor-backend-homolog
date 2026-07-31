@@ -25,7 +25,11 @@ class MeetingService
     public function create(array $data, ?User $actor): Meeting
     {
         return DB::transaction(function () use ($data, $actor) {
-            $starts = Carbon::parse($data['starts_at']);
+            // O FE manda a hora LOCAL (ex.: "2026-07-30T09:00:00") sem fuso. O app roda em UTC, então
+            // parsear direto gravaria 09:00 UTC (= 06:00 BRT). Interpreta no fuso da reunião p/ gravar
+            // o UTC certo — assim card, invite e Teams batem no horário que o usuário digitou.
+            $tz     = $data['timezone'] ?? 'America/Sao_Paulo';
+            $starts = Carbon::parse($data['starts_at'], $tz);
             $dur    = (int) ($data['duration_minutes'] ?? 30);
 
             $meeting = Meeting::create([
@@ -36,7 +40,7 @@ class MeetingService
                 'starts_at'         => $starts,
                 'ends_at'           => $starts->copy()->addMinutes($dur),
                 'duration_minutes'  => $dur,
-                'timezone'          => $data['timezone'] ?? 'America/Sao_Paulo',
+                'timezone'          => $tz,
                 'organizer_user_id' => $data['organizer_user_id'] ?? $actor?->id,
                 'origin_type'       => $data['origin_type'] ?? null,
                 'origin_id'         => $data['origin_id'] ?? null,
@@ -79,7 +83,8 @@ class MeetingService
 
     public function reschedule(Meeting $meeting, string $startsAt, ?int $durationMinutes = null): Meeting
     {
-        $starts = Carbon::parse($startsAt);
+        // Reagendar: mesma regra de fuso do create — interpreta a hora local no fuso da reunião.
+        $starts = Carbon::parse($startsAt, $meeting->timezone ?: 'America/Sao_Paulo');
         $dur = $durationMinutes ?? $meeting->duration_minutes ?? 30;
         $meeting->update([
             'starts_at' => $starts, 'ends_at' => $starts->copy()->addMinutes($dur),

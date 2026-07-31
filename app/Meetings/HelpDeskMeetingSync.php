@@ -113,9 +113,12 @@ class HelpDeskMeetingSync
     private function canceledBody(Meeting $meeting): string
     {
         $meeting->loadMissing('organizer');
-        $dia = optional($meeting->starts_at)->format('d/m/Y');
-        $ini = optional($meeting->starts_at)->format('H:i');
-        $fim = optional($meeting->ends_at)->format('H:i');
+        $tz  = $meeting->timezone ?: 'America/Sao_Paulo';
+        $start = $meeting->starts_at?->copy()->setTimezone($tz);
+        $end   = $meeting->ends_at?->copy()->setTimezone($tz);
+        $dia = $start?->format('d/m/Y');
+        $ini = $start?->format('H:i');
+        $fim = $end?->format('H:i');
 
         $linhas = [];
         $linhas[] = '<strong>Assunto:</strong> ' . e($meeting->title);
@@ -174,9 +177,13 @@ class HelpDeskMeetingSync
     {
         $meeting->loadMissing('participants', 'organizer');
         $prov   = ['teams' => 'Microsoft Teams', 'meet' => 'Google Meet', 'zoom' => 'Zoom', 'webex' => 'Webex', 'presencial' => 'Presencial'][$meeting->provider] ?? $meeting->provider;
-        $dia    = optional($meeting->starts_at)->format('d/m/Y');
-        $ini    = optional($meeting->starts_at)->format('H:i');
-        $fim    = optional($meeting->ends_at)->format('H:i');
+        // starts_at/ends_at são UTC (app tz); exibe no fuso da reunião p/ mostrar a hora que o usuário digitou.
+        $tz     = $meeting->timezone ?: 'America/Sao_Paulo';
+        $start  = $meeting->starts_at?->copy()->setTimezone($tz);
+        $end    = $meeting->ends_at?->copy()->setTimezone($tz);
+        $dia    = $start?->format('d/m/Y');
+        $ini    = $start?->format('H:i');
+        $fim    = $end?->format('H:i');
         $dur    = $meeting->duration_minutes;
         $parts  = $meeting->participants->map(fn ($p) => $p->name ?: $p->email)->filter()->implode(', ');
 
