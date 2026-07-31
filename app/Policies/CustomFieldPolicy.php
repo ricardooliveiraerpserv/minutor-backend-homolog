@@ -30,8 +30,8 @@ class CustomFieldPolicy
      */
     public function create(User $user): bool
     {
-        // Apenas administradores podem criar campos customizados
-        return $user->isAdmin();
+        // Admin OU quem tiver a permissão configurável de gerenciar campos.
+        return $user->isAdmin() || $user->hasAccess('crm.custom_fields.manage');
     }
 
     /**
@@ -39,8 +39,8 @@ class CustomFieldPolicy
      */
     public function update(User $user, CustomField $customField): bool
     {
-        // Apenas administradores podem atualizar campos customizados
-        return $user->isAdmin();
+        // Admin OU quem tiver a permissão configurável de gerenciar campos.
+        return $user->isAdmin() || $user->hasAccess('crm.custom_fields.manage');
     }
 
     /**
@@ -48,8 +48,8 @@ class CustomFieldPolicy
      */
     public function delete(User $user, CustomField $customField): bool
     {
-        // Apenas administradores podem deletar campos customizados
-        return $user->isAdmin();
+        // Admin OU quem tiver a permissão configurável de gerenciar campos.
+        return $user->isAdmin() || $user->hasAccess('crm.custom_fields.manage');
     }
 }
 

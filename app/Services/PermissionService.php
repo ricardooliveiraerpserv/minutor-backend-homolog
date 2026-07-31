@@ -107,7 +107,7 @@ class PermissionService
         'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
         'crm.opportunities.view', 'crm.opportunities.view_all',
         'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
-        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
+        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view', 'crm.custom_fields.manage',
         // Parceiros
         'partners.view', 'partners.manage',
         // Usuários
@@ -122,7 +122,7 @@ class PermissionService
         'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
         'crm.opportunities.view', 'crm.opportunities.view_all',
         'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
-        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
+        'crm.pipeline.manage', 'crm.convert', 'crm.reports.view', 'crm.custom_fields.manage',
         // Help Desk — acende o módulo no menu (sidebar). O acesso ao chamado em si
         // é decidido pelo HelpDeskAccessPolicy, não por esta chave.
         'help_desk.tickets.view',
@@ -183,7 +183,7 @@ class PermissionService
             'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
             'crm.opportunities.view', 'crm.opportunities.view_all',
             'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
-            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
+            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view', 'crm.custom_fields.manage',
             // Relatórios
             'reports.view', 'reports.export',
             // Banco de Competências (gestão completa)
@@ -195,7 +195,7 @@ class PermissionService
             'crm.view', 'crm.manage', 'crm.leads.view', 'crm.leads.manage',
             'crm.opportunities.view', 'crm.opportunities.view_all',
             'crm.opportunities.manage', 'crm.proposals.manage', 'crm.products.manage',
-            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view',
+            'crm.pipeline.manage', 'crm.convert', 'crm.reports.view', 'crm.custom_fields.manage',
             // Cofre de Senhas
             'vault.use',
             // Cofre de Ambientes

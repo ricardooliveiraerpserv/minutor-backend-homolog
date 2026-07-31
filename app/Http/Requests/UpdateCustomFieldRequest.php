@@ -42,7 +42,7 @@ class UpdateCustomFieldRequest extends FormRequest
         }
 
         return [
-            'context' => ['sometimes', Rule::in(['Project', 'Timesheet', 'Expense', 'Customer'])],
+            'context' => ['sometimes', Rule::in(['Project', 'Timesheet', 'Expense', 'Customer', 'Opportunity', 'Contact'])],
             'label' => ['sometimes', 'string', 'max:255'],
             'key' => [
                 'sometimes',

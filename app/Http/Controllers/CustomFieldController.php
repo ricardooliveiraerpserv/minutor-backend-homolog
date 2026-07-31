@@ -232,7 +232,9 @@ class CustomFieldController extends Controller
             'projects' => 'Project',
             'timesheets' => 'Timesheet',
             'expenses' => 'Expense',
-            'customers' => 'Customer',
+            'customers' => 'Customer',       // empresas/leads do CRM (mesma entidade)
+            'opportunities' => 'Opportunity', // pipeline/oportunidades do CRM
+            'contacts' => 'Contact',          // contatos do CRM (customer_contacts)
         ];
 
         $contextName = $contextMap[$context] ?? null;
@@ -240,7 +242,7 @@ class CustomFieldController extends Controller
         if (!$contextName) {
             return response()->json([
                 'error' => 'Invalid context',
-                'message' => 'O contexto deve ser projects, timesheets, expenses ou customers.'
+                'message' => 'O contexto deve ser projects, timesheets, expenses, customers, opportunities ou contacts.'
             ], 400);
         }
 
@@ -309,7 +311,9 @@ class CustomFieldController extends Controller
             'projects' => 'Project',
             'timesheets' => 'Timesheet',
             'expenses' => 'Expense',
-            'customers' => 'Customer',
+            'customers' => 'Customer',       // empresas/leads do CRM (mesma entidade)
+            'opportunities' => 'Opportunity', // pipeline/oportunidades do CRM
+            'contacts' => 'Contact',          // contatos do CRM (customer_contacts)
         ];
 
         $contextName = $contextMap[$context] ?? null;
@@ -317,7 +321,7 @@ class CustomFieldController extends Controller
         if (!$contextName) {
             return response()->json([
                 'error' => 'Invalid context',
-                'message' => 'O contexto deve ser projects, timesheets, expenses ou customers.'
+                'message' => 'O contexto deve ser projects, timesheets, expenses, customers, opportunities ou contacts.'
             ], 400);
         }
 
