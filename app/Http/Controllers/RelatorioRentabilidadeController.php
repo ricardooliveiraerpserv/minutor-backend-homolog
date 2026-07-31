@@ -51,6 +51,8 @@ class RelatorioRentabilidadeController extends Controller
             $cutoff = Carbon::create($y, $m, 1)->endOfMonth()->endOfDay();
             foreach (\App\Models\HourContribution::whereIn('project_id', $projIds)
                 ->where('motivo', 'aporte')
+                ->where('nao_valorizado', false) // aporte não valorizado não tem R$/h → não define o rate do projeto
+                ->whereNotNull('hourly_rate')
                 ->whereNotNull('contributed_at')
                 ->where('contributed_at', '<=', $cutoff)
                 ->orderBy('contributed_at')->orderBy('id')
