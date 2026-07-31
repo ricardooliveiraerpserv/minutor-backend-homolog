@@ -1624,7 +1624,7 @@ class HelpDeskTicketController extends Controller
     {
         abort_unless($comment->ticket_id === $ticket->id, 404);
         abort_unless($this->access->canEditComment($request->user(), $comment), 403, 'Seu perfil de acesso não permite editar interações.');
-        $request->validate(['file' => 'required|file|max:25600']);
+        $request->validate(['file' => 'required|file|max:51200']);
         $file = $request->file('file');
         $att = $svc->store($request->user(), [
             'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
@@ -1650,7 +1650,7 @@ class HelpDeskTicketController extends Controller
             'visibility'      => 'nullable|in:internal,customer',
             'channel'         => 'nullable|string|max:20',
             'files'           => 'nullable|array',
-            'files.*'         => 'file|max:25600',
+            'files.*'         => 'file|max:51200', // 50MB/arquivo (anexos de treinamento/patch). PHP: upload=52M/post=64M, nginx=64M.
             'idempotency_key' => 'nullable|string|max:80',
             // Tempo trabalhado nesta interação (opcional). Movimenta horas quando a
             // integração do contrato está ligada. total_hours: HH:MM ou decimal.
@@ -2021,7 +2021,7 @@ class HelpDeskTicketController extends Controller
 
     public function uploadAttachment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
-        $request->validate(['file' => 'required|file|max:25600']);
+        $request->validate(['file' => 'required|file|max:51200']);
         $att = $svc->store($request->user(), [
             'entity_type' => 'HELPDESK_TICKET', 'entity_id' => $ticket->id,
             'category' => 'attachment', 'file' => $request->file('file'),

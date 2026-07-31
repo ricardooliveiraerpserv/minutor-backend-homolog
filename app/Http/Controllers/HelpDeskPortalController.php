@@ -214,7 +214,7 @@ class HelpDeskPortalController extends Controller
         $v = $request->validate([
             'body'    => 'required_without:files|nullable|string',
             'files'   => 'nullable|array',
-            'files.*' => 'file|max:25600',
+            'files.*' => 'file|max:51200',
         ]);
         $comment = $ticket->comments()->create([
             'author_user_id' => $request->user()->id,
@@ -339,7 +339,7 @@ class HelpDeskPortalController extends Controller
     public function uploadAttachment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
         $this->ownTicket($request, $ticket);
-        $request->validate(['file' => 'required|file|max:25600']);
+        $request->validate(['file' => 'required|file|max:51200']);
         $att = $svc->store($request->user(), [
             'entity_type' => 'HELPDESK_TICKET', 'entity_id' => $ticket->id,
             'category'    => 'attachment', 'file' => $request->file('file'),

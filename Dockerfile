@@ -55,7 +55,7 @@ RUN printf 'server {\n\
     root /var/www/public;\n\
     index index.php;\n\
     disable_symlinks off;\n\
-    client_max_body_size 25M;\n\
+    client_max_body_size 64M;\n\
     location /storage/ {\n\
         alias /var/www/storage/app/public/;\n\
         try_files $uri =404;\n\
@@ -74,7 +74,7 @@ RUN printf 'server {\n\
 
 # Limite de upload PHP + timeout de execução (render de documento via Gotenberg
 # pode levar ~40-60s no plano free; o default 30s do PHP cortava e dava 500).
-RUN printf 'upload_max_filesize=20M\npost_max_size=25M\nmemory_limit=256M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
+RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=256M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
 
 # PHP-FPM pool: o default da imagem é max_children=5 — muito apertado.
 # Backend recebe tráfego de usuários + webhooks Movidesk (que podem segurar
