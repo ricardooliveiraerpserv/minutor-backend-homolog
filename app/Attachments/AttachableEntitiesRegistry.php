@@ -64,6 +64,19 @@ class AttachableEntitiesRegistry
         ...self::MIME_DOCS,
         ...self::MIME_IMAGES,
     ];
+    // Comprimidos (código-fonte RDMAKE/patch no HD). Vários navegadores/SOs rotulam .rar/.zip de formas
+    // diferentes — cobrir os aliases comuns evita rejeição de anexo legítimo.
+    private const MIME_ARCHIVES = [
+        'application/zip',
+        'application/x-zip-compressed',
+        'application/x-rar',
+        'application/x-rar-compressed',
+        'application/vnd.rar',
+        'application/x-7z-compressed',
+        'application/x-tar',
+        'application/gzip',
+        'application/x-gzip',
+    ];
 
     /**
      * Definição central. NÃO alterar em runtime — é constante (readonly por convenção).
@@ -280,9 +293,10 @@ class AttachableEntitiesRegistry
                     }
                     return false;
                 },
-                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
-                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv'],
-                'max_size_mb' => 25,
+                // Comprimidos liberados: o campo "Código Fonte (RDMAKE/Patch)" exige .zip/.rar/.7z etc.
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES],
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz'],
+                'max_size_mb' => 50,
             ],
 
             // ── HELPDESK_TICKET_COMMENT (anexos por interação, estilo e-mail) ──
@@ -299,9 +313,10 @@ class AttachableEntitiesRegistry
                     }
                     return false;
                 },
-                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
-                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv'],
-                'max_size_mb' => 25,
+                // Comprimidos liberados: o campo "Código Fonte (RDMAKE/Patch)" exige .zip/.rar/.7z etc.
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES],
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz'],
+                'max_size_mb' => 50,
             ],
 
             // ── PROJECT_MESSAGE (chat de projeto) ─────────────────────────────
