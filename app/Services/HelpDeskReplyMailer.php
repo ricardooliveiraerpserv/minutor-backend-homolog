@@ -23,7 +23,7 @@ class HelpDeskReplyMailer
      *
      * @return array{0: bool, 1: ?string}
      */
-    public static function sendPublicComment(HelpDeskTicket $ticket, HelpDeskTicketComment $comment): array
+    public static function sendPublicComment(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, array $extraCc = []): array
     {
         // Só resposta pública feita por um AGENTE (usuário). Inbound (author_contact_id) não reenvia.
         if ($comment->visibility !== 'customer' || empty($comment->author_user_id)) {
@@ -55,6 +55,12 @@ class HelpDeskReplyMailer
         $attachments = array_merge($inlineImgs, self::commentAttachments($comment));
 
         $cc = array_values(array_filter((array) $ticket->cc_emails, fn ($e) => $e && strcasecmp($e, $to) !== 0));
+        // Cc extra (ex.: participantes + criador de reunião do chamado) — deduplicado contra o To e o Cc atual.
+        foreach ($extraCc as $e) {
+            $e = trim((string) $e);
+            if ($e === '' || strcasecmp($e, $to) === 0) continue;
+            if (!in_array(strtolower($e), array_map('strtolower', $cc), true)) $cc[] = $e;
+        }
         // withFooter:false — a resposta JÁ termina com a assinatura formal do agente (logo ERPSERV
         // incluso). O rodapé genérico duplicaria o logo E, pior, era anexado DEPOIS do </html> do
         // nosso documento, quebrando a estrutura e fazendo o cliente ignorar color-scheme:light

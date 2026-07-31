@@ -37,7 +37,7 @@ class HelpDeskMeetingSync
         if (!$status) return;
 
         // 1) Interação no corpo do chamado com os dados da reunião.
-        $this->postInteraction($ticket, $meeting);
+        $comment = $this->postInteraction($ticket, $meeting);
 
         // 2) Reagendar sobre agendamento vigente: retoma antes (assa a pausa anterior no prazo).
         if ($ticket->sla_paused_at || $ticket->scheduled_until) {
@@ -66,6 +66,9 @@ class HelpDeskMeetingSync
             'to_value' => optional($ticket->scheduled_until)->toIso8601String(),
             'meta'     => ['reason' => 'meeting', 'meeting_id' => $meeting->id],
         ]);
+
+        // 5) E-mail do convite pelo MESMO fluxo das interações (threaded) → cliente + participantes + criador.
+        $this->dispatchMeetingEmail($ticket, $comment, $meeting);
     }
 
     /** Reunião cancelada → se o chamado estava "Reunião agendada", volta p/ "Em atendimento" + retoma SLA. */
@@ -95,12 +98,15 @@ class HelpDeskMeetingSync
             ]);
         }
 
-        $ticket->comments()->create([
+        $comment = $ticket->comments()->create([
             'author_user_id' => $meeting->organizer_user_id ?: $meeting->created_by_id,
             'body'           => $this->canceledBody($meeting),
             'visibility'     => 'customer',
             'channel'        => 'interno',
         ]);
+
+        // E-mail de cancelamento pelo MESMO fluxo das interações (threaded) → cliente + participantes + criador.
+        $this->dispatchMeetingEmail($ticket, $comment, $meeting);
     }
 
     /** Corpo da interação de reunião CANCELADA — mesmo padrão do convite (assunto, quando) + nota do SLA. */
@@ -126,17 +132,41 @@ class HelpDeskMeetingSync
 
     /**
      * Interação automática com as INFORMAÇÕES DO INVITE — em nome do usuário logado (organizador),
-     * VISÍVEL ao cliente (conversa + portal). Criada direto no model → NÃO dispara e-mail; o convite
-     * do Teams já vai pelos participantes.
+     * VISÍVEL ao cliente (conversa + portal). Retorna o comentário p/ o e-mail ser disparado pelo
+     * MESMO fluxo das interações do chamado (threaded).
      */
-    private function postInteraction(HelpDeskTicket $ticket, Meeting $meeting): void
+    private function postInteraction(HelpDeskTicket $ticket, Meeting $meeting): \App\Models\HelpDeskTicketComment
     {
-        $ticket->comments()->create([
+        return $ticket->comments()->create([
             'author_user_id' => $meeting->organizer_user_id ?: $meeting->created_by_id,
             'body'           => $this->inviteBody($meeting),
             'visibility'     => 'customer',
             'channel'        => 'interno',
         ]);
+    }
+
+    /** Cc do e-mail de reunião: participantes + criador/organizador (o cliente é o To da interação). */
+    private function meetingCc(Meeting $meeting): array
+    {
+        $meeting->loadMissing('participants', 'organizer', 'createdBy');
+        $cc = $meeting->participants->pluck('email')->all();
+        if ($meeting->organizer?->email)  $cc[] = $meeting->organizer->email;
+        if ($meeting->createdBy?->email)  $cc[] = $meeting->createdBy->email;
+        return array_values(array_unique(array_filter(array_map('trim', $cc))));
+    }
+
+    /**
+     * Dispara o e-mail da interação de reunião pelo MESMO fluxo das respostas do chamado (threaded,
+     * HTML, na conversa), com Cc = participantes + criador. Best-effort — não derruba o agendamento.
+     */
+    private function dispatchMeetingEmail(HelpDeskTicket $ticket, \App\Models\HelpDeskTicketComment $comment, Meeting $meeting): void
+    {
+        try {
+            \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id, $this->meetingCc($meeting))
+                ->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail de reunião falhou ao despachar: ' . $e->getMessage());
+        }
     }
 
     /** Corpo da interação = convite formatado (assunto, quando, duração, formato, organizador, link, pauta). */
