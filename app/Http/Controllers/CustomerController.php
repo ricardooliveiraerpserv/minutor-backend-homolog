@@ -611,6 +611,18 @@ class CustomerController extends Controller
      */
     public function destroy(Customer $customer): JsonResponse
     {
+        // Empresa AMARRADA ao cadastro de clientes NÃO se exclui: se tem contrato, projeto REAL
+        // (não os automáticos de Investimento Interno) ou oportunidade, é cliente de verdade → bloqueia.
+        // Só empresa "pura" (lead/prospect sem vínculos) pode ser excluída.
+        $hasContract    = \App\Models\Contract::where('customer_id', $customer->id)->exists();
+        $hasRealProject = Project::where('customer_id', $customer->id)->where('is_investimento_comercial', false)->exists();
+        $hasOpportunity = \App\Models\CrmOpportunity::where('customer_id', $customer->id)->exists();
+        if ($hasContract || $hasRealProject || $hasOpportunity) {
+            return response()->json([
+                'message' => 'Não é possível excluir: esta empresa está vinculada ao cadastro de clientes (possui contrato, projeto ou oportunidade). Só empresas sem vínculos podem ser excluídas.',
+            ], 422);
+        }
+
         // Bloquear exclusão se algum projeto auto (Investimento Interno) tiver movimento.
         $autoProjects = Project::where('customer_id', $customer->id)
             ->where('is_investimento_comercial', true)
