@@ -1263,7 +1263,8 @@ class ContractController extends Controller
             'serviceType:id,name,code',
             'executivoConta:id,name',
             'kanbanLogs:id,project_id,to_status,created_at',
-            'contractRequest:id,nivel_urgencia', // urgência herdada da requisição de origem
+            'contractRequest:id,nivel_urgencia',                     // link projects.contract_request_id (raro)
+            'originRequest:id,linked_project_id,nivel_urgencia',     // link contract_requests.linked_project_id (o usado)
         ])->where(function ($q) use ($demandProjectIds) {
             $q->where(function ($inner) {
                 $inner->whereNotNull('contract_id')
@@ -2318,7 +2319,7 @@ class ContractController extends Controller
             'id'                    => $project->id,
             'contract_id'           => $project->contract_id,
             'contract_request_id'   => $project->contract_request_id,
-            'nivel_urgencia'        => $project->contractRequest?->nivel_urgencia, // herdada da requisição de origem (null se criado direto)
+            'nivel_urgencia'        => $project->originRequest?->nivel_urgencia ?? $project->contractRequest?->nivel_urgencia, // herdada da requisição de origem (null se criado direto)
             'customer_name'         => $project->customer?->name,
             'customer_id'           => $project->customer_id,
             'project_name'          => $project->name,

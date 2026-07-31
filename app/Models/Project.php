@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Project extends Model
@@ -366,6 +367,15 @@ class Project extends Model
     public function contractRequest(): BelongsTo
     {
         return $this->belongsTo(ContractRequest::class);
+    }
+
+    /**
+     * Requisição de ORIGEM: a que gerou este projeto (link no lado da requisição,
+     * `contract_requests.linked_project_id`). Usado p/ herdar a urgência no card.
+     */
+    public function originRequest(): HasOne
+    {
+        return $this->hasOne(ContractRequest::class, 'linked_project_id');
     }
 
     public function architect(): BelongsTo
