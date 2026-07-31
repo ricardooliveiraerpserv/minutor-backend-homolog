@@ -22,7 +22,10 @@ class SaveCustomFieldValuesRequest extends FormRequest
      */
     public function rules(): array
     {
-        $context = $this->route('context');
+        // A rota traz o contexto em minúsculo (customers/opportunities/...); os campos são gravados com o
+        // nome do contexto (Customer/Opportunity/...). Mapeia p/ a validação por-campo funcionar de fato.
+        $map = ['projects' => 'Project', 'timesheets' => 'Timesheet', 'expenses' => 'Expense', 'customers' => 'Customer', 'opportunities' => 'Opportunity', 'contacts' => 'Contact'];
+        $context = $map[$this->route('context')] ?? $this->route('context');
         $rules = ['values' => ['required', 'array']];
 
         // Buscar todos os campos customizados do contexto
