@@ -42,6 +42,24 @@ class RelatorioRentabilidadeController extends Controller
             ->where('is_internal_action', false)
             ->get();
 
+        // R$/H do PROJETO = valor-hora do ÚLTIMO APORTE (motivo 'aporte', datado, até a competência),
+        // senão o hourly_rate do projeto. Reflete a última atualização (aporte), não só o valor do contrato.
+        $aporteRate = [];
+        $projIds = $timesheets->pluck('project_id')->filter()->unique()->values()->all();
+        if (!empty($projIds)) {
+            $cutoff = Carbon::create($y, $m, 1)->endOfMonth()->endOfDay();
+            foreach (\App\Models\HourContribution::whereIn('project_id', $projIds)
+                ->where('motivo', 'aporte')
+                ->where('nao_valorizado', false) // aporte não valorizado não tem R$/h → não define o rate do projeto
+                ->whereNotNull('hourly_rate')
+                ->whereNotNull('contributed_at')
+                ->where('contributed_at', '<=', $cutoff)
+                ->orderBy('contributed_at')->orderBy('id')
+                ->get(['project_id', 'hourly_rate', 'contributed_at']) as $c) {
+                $aporteRate[$c->project_id] = (float) $c->hourly_rate; // ordenado asc → último aporte vence
+            }
+        }
+
         // Metadados de custo por consultor: ['eff' => custo/hora, 'type' => hourly|monthly,
         // 'salary' => salário mensal cheio quando monthly (0 caso contrário)].
         $costMetaCache = [];

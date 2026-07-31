@@ -1529,6 +1529,7 @@ class ContractController extends Controller
                     'project.customer:id,name',
                     'contributedBy:id,name',
                 ])
+                ->where('nao_valorizado', false) // aporte não valorizado NÃO gera card no kanban
                 ->whereHas('project', fn($q) => $q->whereNull('parent_project_id'))
                 ->orderByDesc('contributed_at');
 
