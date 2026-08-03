@@ -75,6 +75,23 @@ class Adiantamento extends Model
     }
 
     /**
+     * REGIME DE CAIXA — mês da parcela DESCONTADA no fechamento da competência $yearMonth.
+     * O fechamento da competência M é pago em M+1, e a parcela é rotulada pelo mês em que
+     * o dinheiro efetivamente sai (caixa). Logo o fechamento da competência M desconta a
+     * parcela cujo mês de caixa = M+1. Ex.: fechamento de julho desconta a parcela de
+     * agosto (recebida em agosto, quando a folha de julho é paga) → mostra "04/24" p/ um
+     * adiantamento que começou a descontar em maio. Aritmética pura no "AAAA-MM" pra evitar
+     * pegadinhas de dia/timezone do Carbon.
+     */
+    private static function parcelaYmNoFechamento(string $yearMonth): string
+    {
+        [$y, $m] = array_map('intval', explode('-', $yearMonth));
+        $m++;
+        if ($m > 12) { $m = 1; $y++; }
+        return sprintf('%04d-%02d', $y, $m);
+    }
+
+    /**
      * Total de adiantamento a descontar de um beneficiário numa competência
      * (soma das parcelas de TODOS os adiantamentos dele que caem no mês —
      * empréstimo ainda não disponibilizado não conta).
@@ -83,7 +100,7 @@ class Adiantamento extends Model
     public static function descontoNoMes(string $tipo, int $beneficiarioId, string $yearMonth): float
     {
         return round((float) AdiantamentoParcela::query()
-            ->where('year_month', $yearMonth)
+            ->where('year_month', self::parcelaYmNoFechamento($yearMonth))
             ->whereHas('adiantamento', fn ($q) => self::whereBeneficiarioAtivo($q, $tipo, $beneficiarioId))
             ->sum('valor'), 2);
     }
@@ -140,7 +157,7 @@ class Adiantamento extends Model
     public static function descricaoNoMes(string $tipo, int $beneficiarioId, string $yearMonth): ?string
     {
         $descs = self::whereBeneficiarioAtivo(static::query(), $tipo, $beneficiarioId)
-            ->whereHas('parcelas', fn ($q) => $q->where('year_month', $yearMonth))
+            ->whereHas('parcelas', fn ($q) => $q->where('year_month', self::parcelaYmNoFechamento($yearMonth)))
             ->pluck('descricao')
             ->filter()
             ->unique()
@@ -156,7 +173,7 @@ class Adiantamento extends Model
     public static function parcelaLabelNoMes(string $tipo, int $beneficiarioId, string $yearMonth): ?string
     {
         $rows = AdiantamentoParcela::query()
-            ->where('year_month', $yearMonth)
+            ->where('year_month', self::parcelaYmNoFechamento($yearMonth))
             ->whereHas('adiantamento', fn ($q) => self::whereBeneficiarioAtivo($q, $tipo, $beneficiarioId))
             ->with('adiantamento:id,num_parcelas')
             ->orderBy('numero')
@@ -180,7 +197,7 @@ class Adiantamento extends Model
     public static function parcelasNoMes(string $tipo, int $beneficiarioId, string $yearMonth): array
     {
         return AdiantamentoParcela::query()
-            ->where('year_month', $yearMonth)
+            ->where('year_month', self::parcelaYmNoFechamento($yearMonth))
             ->whereHas('adiantamento', fn ($q) => self::whereBeneficiarioAtivo($q, $tipo, $beneficiarioId))
             ->with('adiantamento:id,num_parcelas,descricao')
             ->orderBy('numero')
