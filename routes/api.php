@@ -1336,13 +1336,13 @@ Route::prefix('v1')->group(function () {
         Route::put('/custom-fields/{customField}', [CustomFieldController::class, 'update'])->name('custom-fields.update');
         Route::delete('/custom-fields/{customField}', [CustomFieldController::class, 'destroy'])->name('custom-fields.destroy');
 
-        // Valores de campos customizados (contexto dinâmico: projects, timesheets, expenses, customers)
+        // Valores de campos customizados (contexto dinâmico: projects, timesheets, expenses, customers, opportunities, contacts)
         Route::get('/{context}/{entityId}/custom-field-values', [CustomFieldController::class, 'getValues'])
             ->name('custom-field-values.get')
-            ->where('context', 'projects|timesheets|expenses|customers');
+            ->where('context', 'projects|timesheets|expenses|customers|opportunities|contacts');
         Route::post('/{context}/{entityId}/custom-field-values', [CustomFieldController::class, 'saveValues'])
             ->name('custom-field-values.save')
-            ->where('context', 'projects|timesheets|expenses|customers');
+            ->where('context', 'projects|timesheets|expenses|customers|opportunities|contacts');
 
         // 👥 GRUPOS DE CONSULTORES - Protegido por permissões específicas (Admins sempre têm acesso)
         // Listar consultores disponíveis
