@@ -234,6 +234,8 @@ class ProjectController extends Controller
         if ($gestaoMode && !$parentProjectsOnly) {
             $withRelations[] = 'coordinators';
             $withRelations[] = 'executivoConta';
+            // Coordenador efetivo (override do Kanban) pra exibição override-first nas telas.
+            $withRelations[] = 'kanbanOverrideCoordinator';
             if ($withTeam) {
                 $withRelations[] = 'consultants';
                 // Grupos vinculados (necessário pra pré-selecionar no modal de Equipe).
@@ -1224,7 +1226,7 @@ class ProjectController extends Controller
         // Detalhes do contrato (Vendedor, Arquiteto, Executivo de Conta) — usados
         // pelo ProjectViewModal pra exibir os campos herdados na visão geral.
         try {
-            $project->load(['architect:id,name', 'executivoConta:id,name', 'vendedor:id,name']);
+            $project->load(['architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'kanbanOverrideCoordinator:id,name']);
         } catch (\Throwable $e) {
             // Se alguma relação ainda não existir, ignora silenciosamente.
         }
