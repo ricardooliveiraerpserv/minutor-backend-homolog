@@ -1258,6 +1258,7 @@ class ContractController extends Controller
             'customer.executive:id,name', 'customer.executiveBizify:id,name',
             'contract:id,project_name',
             'coordinators:id,name',
+            'kanbanOverrideCoordinator:id,name',
             'consultants:id,name',
             'contractType:id,name,code',
             'serviceType:id,name,code',
@@ -1821,7 +1822,7 @@ class ContractController extends Controller
                 }
             }
 
-            return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+            return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'kanbanOverrideCoordinator', 'consultants'])));
         }
 
         // Status move
@@ -1871,7 +1872,7 @@ class ContractController extends Controller
             $this->notifyProjectPhase($project, $phaseWorkflow);
         }
 
-        return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'consultants'])));
+        return response()->json($this->formatProjectCard($project->fresh(['customer', 'contract', 'coordinators', 'kanbanOverrideCoordinator', 'consultants'])));
     }
 
     public function sustentacaoMove(Request $request, Contract $contract): JsonResponse
@@ -2341,6 +2342,8 @@ class ContractController extends Controller
             // "Horas Apontáveis consumidas" = consumo real (reusa o breakdown já calculado).
             'coordination_consumed_hours' => $b['consumed'],
             'kanban_coordinator_override_id' => $project->kanban_coordinator_override_id,
+            // Nome do coordenador efetivo (override do Kanban) pra exibição override-first no card.
+            'kanban_coordinator_override_name' => $project->kanbanOverrideCoordinator?->name,
             'consultants'           => $project->consultants->pluck('name'),
             'executivo_conta_name'  => $this->cardExecutivoContaName($project->customer, $project->executivoConta),
             'contract_type'         => $project->contractType?->name,
