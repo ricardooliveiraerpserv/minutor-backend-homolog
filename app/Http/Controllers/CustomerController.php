@@ -214,6 +214,12 @@ class CustomerController extends Controller
         $status = $request->input('crm_status', 'cliente');
         $cgcRequired = Customer::statusRequiresCgc($status);
 
+        // Normaliza o CGC (tira máscara) ANTES de validar — senão a checagem `unique`
+        // compara a máscara do request contra os dígitos salvos e deixa passar duplicata.
+        if ($request->has('cgc')) {
+            $request->merge(['cgc' => filled($request->cgc) ? preg_replace('/[^0-9]/', '', $request->cgc) : null]);
+        }
+
         $validated = $request->validate([
             'name' => 'required|string|max:255|min:2',
             'company_name' => 'nullable|string|max:255',
@@ -232,6 +238,7 @@ class CustomerController extends Controller
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
             'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
             'cgc.required' => 'O CNPJ/CPF é obrigatório para clientes.',
+            'cgc.unique' => 'Já existe uma empresa cadastrada com este CNPJ/CPF.',
         ]);
         // emails_administrativos é gravado via setAdminEmails (sincroniza fechamento_email).
         unset($validated['emails_administrativos']);
@@ -363,6 +370,11 @@ class CustomerController extends Controller
      */
     public function update(Request $request, Customer $customer): JsonResponse
     {
+        // Normaliza o CGC (tira máscara) ANTES de validar — ver comentário no store().
+        if ($request->has('cgc')) {
+            $request->merge(['cgc' => filled($request->cgc) ? preg_replace('/[^0-9]/', '', $request->cgc) : null]);
+        }
+
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255|min:2',
             'company_name' => 'nullable|string|max:255',
@@ -380,6 +392,7 @@ class CustomerController extends Controller
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
             'code_prefix.unique' => 'Este prefixo já está sendo usado por outro cliente',
+            'cgc.unique' => 'Já existe uma empresa cadastrada com este CNPJ/CPF.',
         ]);
 
         if ($request->has('secondary_cgcs')) {

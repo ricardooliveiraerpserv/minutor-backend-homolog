@@ -31,6 +31,13 @@ class CustomerCrmController extends Controller
     /** Upsert do status/perfil/tags da empresa. */
     public function update(Request $request, Customer $customer): JsonResponse
     {
+        // Normaliza o CGC (tira máscara) ANTES de validar — senão a checagem `unique`
+        // compara a máscara do request contra os dígitos salvos e deixa passar duplicata
+        // (o índice único do banco então derruba o save com erro 500 em vez de alerta claro).
+        if ($request->has('cgc')) {
+            $request->merge(['cgc' => filled($request->cgc) ? preg_replace('/[^0-9]/', '', $request->cgc) : null]);
+        }
+
         $v = $request->validate([
             'crm_status'              => 'nullable|in:' . implode(',', Customer::CRM_STATUSES),
             'cgc'                     => ['nullable', 'string', 'unique:customers,cgc,' . $customer->id . ',id,deleted_at,NULL'],
@@ -45,6 +52,8 @@ class CustomerCrmController extends Controller
             'profile.indicacao'       => 'nullable|string|max:160',
             'tag_ids'                 => 'nullable|array',
             'tag_ids.*'               => 'integer|exists:crm_tags,id',
+        ], [
+            'cgc.unique' => 'Já existe uma empresa cadastrada com este CNPJ/CPF.',
         ]);
 
         // CNPJ/CPF (Item 1) — normaliza dígitos; pode ser limpado em lead/prospect.
