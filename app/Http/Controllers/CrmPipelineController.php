@@ -90,13 +90,13 @@ class CrmPipelineController extends Controller
     public function index(): JsonResponse
     {
         self::ensureSeeded();
-        self::qualificationPipeline(); // garante o pipeline de Leads
+        $qualId = self::qualificationPipeline()->id; // pipeline canônico de Leads (1 por empresa)
         $user = auth()->user();
         $pipes = CrmPipeline::with(['stages' => fn ($q) => $q->where('ativa', true)])
             ->where('arquivado', false)
-            ->where(function ($w) {
+            ->where(function ($w) use ($qualId) {
                 $w->where(fn ($x) => $x->where('tipo', 'comercial')->where('active', true))
-                  ->orWhere('tipo', 'qualificacao');
+                  ->orWhere('id', $qualId);
             })
             ->visibleTo($user)
             ->orderByRaw("CASE WHEN tipo = 'qualificacao' THEN 1 ELSE 0 END")
