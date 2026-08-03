@@ -167,8 +167,24 @@ class CrmOpportunityController extends Controller
         // Quais têm proposta enviada (p/ a saúde MEDDIC), em lote.
         $comProposta = \App\Models\CrmProposal::whereIn('opportunity_id', $opps->pluck('id'))->whereNull('deleted_at')
             ->whereNotIn('status', ['em_elaboracao', 'cancelada', 'reprovada', 'expirada'])->pluck('opportunity_id')->flip();
+        // Valores de campos personalizados (contexto Opportunity) em lote — alimentam colunas opcionais na lista.
+        $cfDefs = \App\Models\CustomField::forContext('Opportunity')->get(['id', 'key']);
+        $cfByOpp = [];
+        if ($cfDefs->isNotEmpty()) {
+            $keyById = $cfDefs->pluck('key', 'id'); // id => key
+            \App\Models\CustomFieldValue::whereIn('custom_field_id', $cfDefs->pluck('id'))
+                ->whereIn('entity_id', $opps->pluck('id'))
+                ->get(['custom_field_id', 'entity_id', 'value'])
+                ->each(function ($v) use (&$cfByOpp, $keyById) {
+                    $k = $keyById[$v->custom_field_id] ?? null;
+                    if ($k !== null) {
+                        $cfByOpp[$v->entity_id][$k] = $v->value;
+                    }
+                });
+        }
         return response()->json(['data' => $opps->map(fn ($o) => array_merge($this->decorate($o), [
             'saude' => $health->compute($o, $diasNaEtapa($o), ['proposta_enviada' => $comProposta->has($o->id)]),
+            'custom_fields' => (object) ($cfByOpp[$o->id] ?? []),
         ]))]);
     }
 
