@@ -258,26 +258,6 @@ class RelatorioRentabilidadeController extends Controller
             ->where('is_internal_action', false)
             ->get();
 
-        // R$/H do CLIENTE (receita) = valor-hora do ÚLTIMO APORTE (motivo 'aporte', datado, até a
-        // competência), senão o hourly_rate do projeto. Mesma regra da Consultor×Projeto: preserva
-        // o valor vigente NAQUELE período (a competência é o mês selecionado; o modo Período agrega
-        // mês a mês no FE, então cada mês traz o aporte vigente dele). Investimento usa o projeto real.
-        $aporteRate = [];
-        $projIds = $timesheets->flatMap(fn ($t) => [$t->project_id, $t->real_project_id])->filter()->unique()->values()->all();
-        if (!empty($projIds)) {
-            $cutoff = Carbon::create($y, $m, 1)->endOfMonth()->endOfDay();
-            foreach (\App\Models\HourContribution::whereIn('project_id', $projIds)
-                ->where('motivo', 'aporte')
-                ->where('nao_valorizado', false) // aporte não valorizado não tem R$/h
-                ->whereNotNull('hourly_rate')
-                ->whereNotNull('contributed_at')
-                ->where('contributed_at', '<=', $cutoff)
-                ->orderBy('contributed_at')->orderBy('id')
-                ->get(['project_id', 'hourly_rate', 'contributed_at']) as $c) {
-                $aporteRate[$c->project_id] = (float) $c->hourly_rate; // asc → último aporte vence
-            }
-        }
-
         $costRateCache = [];
         $costRate = function ($user) use (&$costRateCache, $from, $yearMonth) {
             if (!$user) return 0.0;
@@ -333,9 +313,8 @@ class RelatorioRentabilidadeController extends Controller
             $horasReal = round($ts->effort_minutes / 60, 4);
             $horas = round($ts->billableMinutes() / 60, 4);
             $rateCons = $costRate($ts->user);
-            $rateProj = $aporteRate[$proj->id] ?? (float) ($proj->hourly_rate ?? 0);
             $byCustomer[$cid]['horas']   += $horas;
-            $byCustomer[$cid]['receita'] += $horas * $rateProj;
+            $byCustomer[$cid]['receita'] += $horas * (float) ($proj->hourly_rate ?? 0);
             $byCustomer[$cid]['custo']   += $horas * $rateCons;
             // Breakdown por consultor dentro do cliente (p/ a margem do consultor na expansão).
             $uid = $ts->user_id;
