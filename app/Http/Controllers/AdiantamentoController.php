@@ -42,19 +42,19 @@ class AdiantamentoController extends Controller
         $users    = User::whereIn('id', $userIds)->pluck('name', 'id');
         $partners = Partner::whereIn('id', $partnerIds)->pluck('name', 'id');
 
-        // Progresso das parcelas: paga = competência JÁ PASSOU (< mês atual). O
-        // fechamento da competência M é pago em M+1, então a parcela do mês corrente
-        // ainda não saiu (só conta como paga quando o mês dela vira). Ex.: em jul/2026
-        // a parcela de julho (paga no fechamento de julho, recebido em agosto) NÃO conta.
+        // Progresso das parcelas — REGIME DE CAIXA (independente da folha): a parcela
+        // conta como paga NO PRÓPRIO mês dela (year_month <= mês atual), não no mês
+        // seguinte. Ex.: parcela de agosto conta como paga em agosto. Esta rotina não
+        // usa a lógica M+1 do fechamento da folha (revertido o ed2627f0 de 30/07).
         $currentYm = now()->format('Y-m');
 
         $data = $itens->map(function ($a) use ($users, $partners, $currentYm) {
             $totalParcelas = $a->parcelas->count();
-            $pagas = $a->parcelas->filter(fn ($p) => $p->year_month < $currentYm)->count();
+            $pagas = $a->parcelas->filter(fn ($p) => $p->year_month <= $currentYm)->count();
             $restantes = max(0, $totalParcelas - $pagas);
-            // Valor já pago (parcelas cujo mês já passou) e valor ainda devido (mês atual em diante).
-            $valorPago = round($a->parcelas->filter(fn ($p) => $p->year_month < $currentYm)->sum(fn ($p) => (float) $p->valor), 2);
-            $valorDevido = round($a->parcelas->filter(fn ($p) => $p->year_month >= $currentYm)->sum(fn ($p) => (float) $p->valor), 2);
+            // Valor já pago (parcelas até o mês atual, inclusive) e valor ainda devido (meses futuros).
+            $valorPago = round($a->parcelas->filter(fn ($p) => $p->year_month <= $currentYm)->sum(fn ($p) => (float) $p->valor), 2);
+            $valorDevido = round($a->parcelas->filter(fn ($p) => $p->year_month > $currentYm)->sum(fn ($p) => (float) $p->valor), 2);
 
             return [
             'id'                   => $a->id,
