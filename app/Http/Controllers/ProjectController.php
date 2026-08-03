@@ -301,8 +301,16 @@ class ProjectController extends Controller
                 $isSustentacao = $currentUser->coordinator_type === 'sustentacao';
                 if ($parentProjectsOnly) {
                     $query->where(function ($q) use ($currentUser, $isSustentacao) {
-                        $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id))
-                          ->orWhereHas('childProjects.coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                        // Coordenador efetivo (override do Kanban vence M2M), no pai e nos filhos.
+                        $effClosure = function ($eff) use ($currentUser) {
+                            $eff->where('kanban_coordinator_override_id', $currentUser->id)
+                                ->orWhere(function ($m2m) use ($currentUser) {
+                                    $m2m->whereNull('kanban_coordinator_override_id')
+                                        ->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                                });
+                        };
+                        $q->where($effClosure)
+                          ->orWhereHas('childProjects', $effClosure);
                         if ($isSustentacao) {
                             $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'))
                               ->orWhere(fn($sq) => $sq->where('is_investimento_comercial', true)->where('categoria_interna', 'Suporte'));
@@ -310,7 +318,16 @@ class ProjectController extends Controller
                     });
                 } else {
                     $query->where(function ($q) use ($currentUser, $isSustentacao, $includeSustOnDemandChildren) {
-                        $q->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                        // Coordenador efetivo: override do Kanban de Contratos vence sobre o M2M
+                        // coordinators. Se o projeto tem override, pertence SÓ ao coordenador do
+                        // override (ex.: NORSUL com override=Guilherme não aparece pra Aline do M2M).
+                        $q->where(function ($eff) use ($currentUser) {
+                            $eff->where('kanban_coordinator_override_id', $currentUser->id)
+                                ->orWhere(function ($m2m) use ($currentUser) {
+                                    $m2m->whereNull('kanban_coordinator_override_id')
+                                        ->whereHas('coordinators', fn($sq) => $sq->where('users.id', $currentUser->id));
+                                });
+                        });
                         if ($isSustentacao) {
                             $q->orWhereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao'))
                               ->orWhere(fn($sq) => $sq->where('is_investimento_comercial', true)->where('categoria_interna', 'Suporte'));
