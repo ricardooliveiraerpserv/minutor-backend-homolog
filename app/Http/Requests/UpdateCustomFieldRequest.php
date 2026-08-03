@@ -42,7 +42,7 @@ class UpdateCustomFieldRequest extends FormRequest
         }
 
         return [
-            'context' => ['sometimes', Rule::in(['Project', 'Timesheet', 'Expense', 'Customer', 'Opportunity', 'Contact', 'Product'])],
+            'context' => ['sometimes', Rule::in(['Project', 'Timesheet', 'Expense', 'Customer', 'Opportunity', 'Contact', 'Product', 'Task', 'Proposal'])],
             'label' => ['sometimes', 'string', 'max:255'],
             'key' => [
                 'sometimes',
@@ -77,7 +77,7 @@ class UpdateCustomFieldRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'context.in' => 'O contexto deve ser Project, Timesheet, Expense, Customer, Opportunity, Contact ou Product.',
+            'context.in' => 'O contexto deve ser Project, Timesheet, Expense, Customer, Opportunity, Contact, Product, Task ou Proposal.',
             'label.string' => 'O label deve ser uma string.',
             'key.regex' => 'A chave deve conter apenas letras minúsculas, números e underscore.',
             'key.unique' => 'Já existe um campo com esta chave neste contexto.',

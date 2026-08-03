@@ -236,6 +236,8 @@ class CustomFieldController extends Controller
             'opportunities' => 'Opportunity', // pipeline/oportunidades do CRM
             'contacts' => 'Contact',          // contatos do CRM (customer_contacts)
             'products' => 'Product',          // produtos/serviços do CRM (crm_products)
+            'tasks' => 'Task',                // tarefas do CRM (crm_tasks)
+            'proposals' => 'Proposal',        // propostas do CRM (crm_proposals)
         ];
 
         $contextName = $contextMap[$context] ?? null;
@@ -243,7 +245,7 @@ class CustomFieldController extends Controller
         if (!$contextName) {
             return response()->json([
                 'error' => 'Invalid context',
-                'message' => 'O contexto deve ser projects, timesheets, expenses, customers, opportunities, contacts ou products.'
+                'message' => 'O contexto deve ser projects, timesheets, expenses, customers, opportunities, contacts, products, tasks ou proposals.'
             ], 400);
         }
 
@@ -316,6 +318,8 @@ class CustomFieldController extends Controller
             'opportunities' => 'Opportunity', // pipeline/oportunidades do CRM
             'contacts' => 'Contact',          // contatos do CRM (customer_contacts)
             'products' => 'Product',          // produtos/serviços do CRM (crm_products)
+            'tasks' => 'Task',                // tarefas do CRM (crm_tasks)
+            'proposals' => 'Proposal',        // propostas do CRM (crm_proposals)
         ];
 
         $contextName = $contextMap[$context] ?? null;
@@ -323,7 +327,7 @@ class CustomFieldController extends Controller
         if (!$contextName) {
             return response()->json([
                 'error' => 'Invalid context',
-                'message' => 'O contexto deve ser projects, timesheets, expenses, customers, opportunities, contacts ou products.'
+                'message' => 'O contexto deve ser projects, timesheets, expenses, customers, opportunities, contacts, products, tasks ou proposals.'
             ], 400);
         }
 

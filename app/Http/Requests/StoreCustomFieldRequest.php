@@ -23,7 +23,7 @@ class StoreCustomFieldRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'context' => ['required', Rule::in(['Project', 'Timesheet', 'Expense', 'Customer', 'Opportunity', 'Contact', 'Product'])],
+            'context' => ['required', Rule::in(['Project', 'Timesheet', 'Expense', 'Customer', 'Opportunity', 'Contact', 'Product', 'Task', 'Proposal'])],
             'label' => ['required', 'string', 'max:255'],
             'key' => [
                 'required',
@@ -54,7 +54,7 @@ class StoreCustomFieldRequest extends FormRequest
     {
         return [
             'context.required' => 'O contexto é obrigatório.',
-            'context.in' => 'O contexto deve ser Project, Timesheet, Expense, Customer, Opportunity, Contact ou Product.',
+            'context.in' => 'O contexto deve ser Project, Timesheet, Expense, Customer, Opportunity, Contact, Product, Task ou Proposal.',
             'label.required' => 'O label é obrigatório.',
             'key.required' => 'A chave é obrigatória.',
             'key.regex' => 'A chave deve conter apenas letras minúsculas, números e underscore.',
