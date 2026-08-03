@@ -82,13 +82,26 @@ class CrmPipelineController extends Controller
         return CrmPipeline::where('tipo', 'qualificacao')->first() ?? self::ensureQualificationSeeded();
     }
 
-    /** Funis COMERCIAIS ativos (tipo=comercial) — usados no kanban de oportunidades. */
+    /**
+     * Pipelines visíveis ao usuário para o seletor de /crm/pipeline: funis COMERCIAIS
+     * ativos + o pipeline de QUALIFICAÇÃO (Leads), filtrados por visibilidade
+     * (admin vê todos; demais só os liberados). Leads vem por último.
+     */
     public function index(): JsonResponse
     {
         self::ensureSeeded();
-        return response()->json(['data' => CrmPipeline::with(['stages' => fn ($q) => $q->where('ativa', true)])
-            ->where('active', true)->where('arquivado', false)->where('tipo', 'comercial')
-            ->orderBy('ordem')->get()]);
+        self::qualificationPipeline(); // garante o pipeline de Leads
+        $user = auth()->user();
+        $pipes = CrmPipeline::with(['stages' => fn ($q) => $q->where('ativa', true)])
+            ->where('arquivado', false)
+            ->where(function ($w) {
+                $w->where(fn ($x) => $x->where('tipo', 'comercial')->where('active', true))
+                  ->orWhere('tipo', 'qualificacao');
+            })
+            ->visibleTo($user)
+            ->orderByRaw("CASE WHEN tipo = 'qualificacao' THEN 1 ELSE 0 END")
+            ->orderBy('ordem')->get();
+        return response()->json(['data' => $pipes]);
     }
 
     // ── GESTÃO (Fase 1 — config sem desenvolvimento) ─────────────────────────
@@ -112,6 +125,7 @@ class CrmPipelineController extends Controller
     private function decoratePipeline(CrmPipeline $p): array
     {
         return array_merge($p->toArray(), [
+            'visible_user_ids' => $p->visibleUsers()->pluck('users.id')->values(),
             'stages' => $p->stages->map(fn ($s) => array_merge($s->toArray(), [
                 'oportunidades_count' => CrmOpportunity::where('stage_id', $s->id)->count(),
             ]))->values(),
@@ -141,9 +155,17 @@ class CrmPipelineController extends Controller
             'name' => 'sometimes|string|max:80', 'descricao' => 'nullable|string|max:200',
             'cor' => 'nullable|string|max:16', 'active' => 'boolean', 'bloqueado' => 'boolean', 'arquivado' => 'boolean',
             'tipos_empresa' => 'nullable|array', 'tipos_empresa.*' => 'in:' . implode(',', \App\Models\Customer::CRM_STATUSES),
+            'visible_user_ids' => 'sometimes|array', 'visible_user_ids.*' => 'integer|exists:users,id',
         ]);
+        // Visibilidade: sincroniza a lista de usuários liberados (não é coluna).
+        if (array_key_exists('visible_user_ids', $v)) {
+            $pipeline->visibleUsers()->sync($v['visible_user_ids']);
+            unset($v['visible_user_ids']);
+        }
         $antes = $pipeline->only(array_keys($v));
-        $pipeline->update($v);
+        if (!empty($v)) {
+            $pipeline->update($v);
+        }
         $acao = array_key_exists('arquivado', $v) && $v['arquivado'] ? 'pipeline_arquivado' : 'pipeline_alterado';
         CrmPipelineEvent::log($acao, $pipeline->id, null, "Pipeline \"{$pipeline->name}\"", $antes, $v);
         return response()->json(['data' => $this->decoratePipeline($pipeline->fresh('stages'))]);

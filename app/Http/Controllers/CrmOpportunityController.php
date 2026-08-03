@@ -78,6 +78,11 @@ class CrmOpportunityController extends Controller
         if (!$pipelineId) {
             return response()->json(['message' => 'pipeline_id obrigatório'], 422);
         }
+        // Visibilidade por pipeline: só admin ou usuários liberados.
+        $pipeline = CrmPipeline::find($pipelineId);
+        if (!$pipeline || !$pipeline->canBeSeenBy($request->user())) {
+            return response()->json(['message' => 'Sem acesso a este pipeline.'], 403);
+        }
         $stages = CrmPipelineStage::where('pipeline_id', $pipelineId)->orderBy('ordem')->get();
         $opps = $this->withRels(CrmOpportunity::where('pipeline_id', $pipelineId))
             ->when($request->filled('responsavel_id'), fn ($q) => $q->where('responsavel_id', $request->responsavel_id))

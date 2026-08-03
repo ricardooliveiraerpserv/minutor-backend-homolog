@@ -140,6 +140,10 @@ class CrmLeadController extends Controller
     public function index(): JsonResponse
     {
         $pipe = $this->pipeline();
+        // Visibilidade: Leads agora é um pipeline (qualificação) — só admin ou liberados.
+        if (!$pipe->canBeSeenBy(request()->user())) {
+            return response()->json(['message' => 'Sem acesso ao pipeline de Leads.'], 403);
+        }
         $customers = Customer::where('crm_status', 'lead')
             ->with(['crmProfile.leadSource', 'executive:id,name', 'contacts'])
             ->orderByDesc('id')->get();
