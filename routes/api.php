@@ -216,6 +216,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('/meetings/{meeting}',                 [\App\Http\Controllers\MeetingController::class, 'destroy']);
         Route::put('/meetings/{meeting}/participants',       [\App\Http\Controllers\MeetingController::class, 'syncParticipants']);
         Route::post('/meetings/{meeting}/tasks',             [\App\Http\Controllers\MeetingController::class, 'storeTask']);
+        Route::put('/meetings/{meeting}/tasks/{task}',       [\App\Http\Controllers\MeetingController::class, 'updateTask']);
         Route::patch('/meetings/{meeting}/tasks/{task}/toggle', [\App\Http\Controllers\MeetingController::class, 'toggleTask']);
         Route::delete('/meetings/{meeting}/tasks/{task}',    [\App\Http\Controllers\MeetingController::class, 'deleteTask']);
 
