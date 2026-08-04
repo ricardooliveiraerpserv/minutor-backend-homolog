@@ -571,6 +571,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/dashboard/relacionamento', [\App\Http\Controllers\CrmDashboardController::class, 'relacionamento']);
         Route::get('/crm/dashboard/risco-renovacao', [\App\Http\Controllers\CrmDashboardController::class, 'riscoRenovacao']);
         Route::get('/crm/carteira', [\App\Http\Controllers\CrmCarteiraController::class, 'index']);
+        Route::get('/crm/search', [\App\Http\Controllers\CrmSearchController::class, 'index']);
         // Plataforma de Documentos (Fase 0.7) — download do PDF congelado por versão.
         Route::get('/documents/{document}/download', [\App\Http\Controllers\DocumentController::class, 'download']);
         // Saneamento cadastral (Item 2) — somente leitura.
@@ -1532,6 +1533,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/dashboard/relacionamento', [\App\Http\Controllers\CrmDashboardController::class, 'relacionamento']);
         Route::get('/crm/dashboard/risco-renovacao', [\App\Http\Controllers\CrmDashboardController::class, 'riscoRenovacao']);
         Route::get('/crm/carteira', [\App\Http\Controllers\CrmCarteiraController::class, 'index']);
+        Route::get('/crm/search', [\App\Http\Controllers\CrmSearchController::class, 'index']);
         // Plataforma de Documentos (Fase 0.7) — download do PDF congelado por versão.
         Route::get('/documents/{document}/download', [\App\Http\Controllers\DocumentController::class, 'download']);
         // Saneamento cadastral (Item 2) — somente leitura.
