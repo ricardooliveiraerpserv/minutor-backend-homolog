@@ -72,6 +72,13 @@ class ContractHourMultiplierController extends Controller
         $data = $this->validated($request);
 
         $contract = Contract::findOrFail($data['contract_id']);
+
+        // Projetos Fechados (escopo/valor fixo) não entram no multiplicador — nem o excedente.
+        $rootProject = \App\Models\Project::query()->with('contractType:id,code,name')->find($contract->project_id);
+        if ($rootProject && $rootProject->isClosedContract()) {
+            return response()->json(['message' => 'Projetos Fechados não entram no multiplicador de horas (nem o excedente).'], 422);
+        }
+
         $data['customer_id'] = $contract->customer_id;
         $data['created_by_id'] = Auth::id();
 

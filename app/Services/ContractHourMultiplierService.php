@@ -27,6 +27,8 @@ class ContractHourMultiplierService
     private array $factorCache = [];
     /** cache: projectId => ?contractId */
     private array $projectContract = [];
+    /** cache: projectId => bool (projeto do tipo Fechado) */
+    private array $closedCache = [];
 
     private static function d($date): string
     {
@@ -76,7 +78,31 @@ class ContractHourMultiplierService
     /** % derivado pro timesheet (resolve contrato do projeto). Alimenta contract_client_pct. */
     public function pctForTimesheet(?int $projectId, $date): ?float
     {
+        // Projeto FECHADO nunca multiplica — nem o excedente (o excedente lê o mesmo
+        // contract_client_pct do apontamento; deixando null aqui, exclui em todas as rotinas).
+        if ($this->isClosedProject($projectId)) return null;
         return $this->rulePercentFor($this->contractIdOfProject($projectId), $date);
+    }
+
+    /** Projeto do tipo "Fechado" (escopo/valor fixo) — EXCLUÍDO do multiplicador. */
+    public function isClosedProject(?int $projectId): bool
+    {
+        if (!$projectId) return false;
+        if (array_key_exists($projectId, $this->closedCache)) {
+            return $this->closedCache[$projectId];
+        }
+        $p = \App\Models\Project::query()->with('contractType:id,code,name')->find($projectId);
+        return $this->closedCache[$projectId] = ($p?->isClosedContract() ?? false);
+    }
+
+    /** Dentre os project ids dados, os que são do tipo Fechado (1 query). */
+    private function closedProjectIds(array $projectIds): array
+    {
+        if (!$projectIds) return [];
+        return \App\Models\Project::query()
+            ->whereIn('id', $projectIds)
+            ->whereHas('contractType', fn ($q) => $q->where(fn ($w) => $w->where('code', 'closed')->orWhereRaw('LOWER(name) = ?', ['fechado'])))
+            ->pluck('id')->map(fn ($v) => (int) $v)->all();
     }
 
     /** Projetos governados por um contrato: o projeto do contrato + descendentes (BFS). */
@@ -108,10 +134,19 @@ class ContractHourMultiplierService
         $projectIds = $this->projectIdsOfContract($contractId);
         if (!$projectIds) return;
 
+        // Projetos FECHADOS ficam de fora do multiplicador (nem excedente): pct sempre NULL.
+        $closed = $this->closedProjectIds($projectIds);
+        if ($closed) {
+            \App\Models\Timesheet::query()->whereIn('project_id', $closed)
+                ->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
+        }
+        $openIds = array_values(array_diff($projectIds, $closed));
+        if (!$openIds) return;
+
         $rule = ContractHourMultiplier::query()
             ->where('contract_id', $contractId)->where('active', true)->first();
 
-        $base = \App\Models\Timesheet::query()->whereIn('project_id', $projectIds);
+        $base = \App\Models\Timesheet::query()->whereIn('project_id', $openIds);
 
         if (!$rule) {
             (clone $base)->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
