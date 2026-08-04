@@ -133,7 +133,7 @@ class MeetingController extends Controller
         $u = $this->manager($request);
         $m = $this->findVisible($u, $meeting);
         $v = $request->validate([
-            'title'       => 'required|string|max:250',
+            'title'       => 'required|string|max:5000',
             'description' => 'nullable|string',
             'assigned_to' => 'required|integer|exists:users,id',
             'due_date'    => 'nullable|date',
@@ -154,6 +154,30 @@ class MeetingController extends Controller
             'entity_id'   => $m->id,
         ]);
         return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator']))], 201);
+    }
+
+    /** Editar tarefa da reunião (título/responsável/prazo) — criador ou admin. */
+    public function updateTask(Request $request, int $meeting, int $task): JsonResponse
+    {
+        $u = $this->manager($request);
+        $m = $this->findVisible($u, $meeting);
+        $t = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->findOrFail($task);
+        abort_unless($u->isAdmin() || $t->created_by === $u->id, 403, 'Apenas quem criou a tarefa (ou admin) pode editá-la.');
+
+        $v = $request->validate([
+            'title'       => 'required|string|max:5000',
+            'assigned_to' => 'required|integer|exists:users,id',
+            'due_date'    => 'nullable|date',
+        ]);
+        $participantIds = $m->participants()->pluck('users.id')->push($m->created_by_id)->unique();
+        abort_unless($participantIds->contains((int) $v['assigned_to']), 422, 'O responsável precisa ser um participante da reunião.');
+
+        $t->update([
+            'title'       => trim($v['title']),
+            'assigned_to' => (int) $v['assigned_to'],
+            'due_date'    => $v['due_date'] ?? null,
+        ]);
+        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator']))]);
     }
 
     public function deleteTask(Request $request, int $meeting, int $task): JsonResponse
