@@ -2185,6 +2185,7 @@ class TimesheetController extends Controller
             'id'             => $t->id,
             'date'           => $t->date->format('Y-m-d'),
             'year_month'     => $t->date->format('Y-m'),
+            'created_at'     => optional($t->created_at)->toISOString(), // data+hora de inclusão (UTC; FE formata em São Paulo)
             'colaborador'    => $t->user?->name ?? '—',
             'cliente'        => $t->customer?->name ?? '—',
             'projeto'        => $t->project?->name ?? '—',
