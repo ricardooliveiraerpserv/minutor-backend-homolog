@@ -106,6 +106,10 @@ class FechamentoClienteController extends Controller
                 'total_servicos' => (float) ($f?->total_servicos ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
                 'total_geral'    => (float) ($f?->total_geral ?? 0),
+                // Desconto persistido (valor + descritivo) — o FE pré-carrega os campos
+                // e mostra o botão Excluir quando > 0; sem isso o painel abria zerado.
+                'desconto'           => (float) ($f?->desconto ?? 0),
+                'desconto_descricao' => $f?->desconto_descricao,
                 'closed_at'      => $f?->closed_at?->toISOString(),
                 'closed_by_name' => $f?->closedByUser?->name,
                 'envio_em'       => $envioMap[$customer->id]['envio_em'] ?? null,
