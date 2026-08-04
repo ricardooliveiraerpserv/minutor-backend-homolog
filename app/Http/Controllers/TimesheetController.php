@@ -405,13 +405,13 @@ class TimesheetController extends Controller
         if ($request->filled('start_date')) {
             $endDate = $request->filled('end_date') ? $request->end_date : now()->toDateString();
             if ($useCreatedAt) {
-                $query->whereRaw('timesheets.created_at::date BETWEEN ? AND ?', [$request->start_date, $endDate]);
+                $query->whereRaw("(timesheets.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN ? AND ?", [$request->start_date, $endDate]);
             } else {
                 $query->inPeriod($request->start_date, $endDate);
             }
         } elseif ($request->filled('end_date')) {
             if ($useCreatedAt) {
-                $query->whereRaw('timesheets.created_at::date <= ?', [$request->end_date]);
+                $query->whereRaw("(timesheets.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date <= ?", [$request->end_date]);
             } else {
                 $query->where('timesheets.date', '<=', $request->end_date);
             }
@@ -2782,7 +2782,7 @@ class TimesheetController extends Controller
 
         // date_field: 'date' (padrão) ou 'created_at' (data de inclusão).
         $useCreatedAt = $request->input('date_field') === 'created_at';
-        $periodCol = $useCreatedAt ? 'timesheets.created_at::date' : 'timesheets.date';
+        $periodCol = $useCreatedAt ? "(timesheets.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date" : 'timesheets.date';
 
         // 1) Tickets que tiveram apontamento no período
         $ticketsInPeriod = (clone $base)
