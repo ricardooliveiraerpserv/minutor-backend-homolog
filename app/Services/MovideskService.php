@@ -1277,18 +1277,45 @@ class MovideskService
      * fechado E sem ProjectOpenPeriod reaberto pro projeto+mês). Quando true, o
      * apontamento vindo da integração entra como STATUS_LATE (aguarda aprovação).
      */
+    /**
+     * Um apontamento NOVO da integração vira ATRASO quando chega DEPOIS do prazo de
+     * digitação da competência: 2º DIA ÚTIL do mês SEGUINTE, às 23:59:59 (São Paulo).
+     * Antes do prazo entra normal; depois vira atraso (aguarda aprovação). A regra é o
+     * PRAZO — não o momento em que o admin fecha a competência. Exceção: projeto com a
+     * competência REABERTA (ProjectOpenPeriod) continua aceitando.
+     */
     private function isCompetenciaFechada(string $date, int $projectId): bool
     {
-        $ym   = \Carbon\Carbon::parse($date)->format('Y-m');
-        $fech = \App\Models\FechamentoAdministrativo::where('year_month', $ym)->first();
-        if (!$fech || !$fech->isClosed()) {
-            return false;
+        $ym = \Carbon\Carbon::parse($date)->format('Y-m');
+        if (\Carbon\Carbon::now('America/Sao_Paulo')->lte($this->competenciaDeadline($ym))) {
+            return false; // dentro do prazo
         }
         $reaberto = \App\Models\ProjectOpenPeriod::where('project_id', $projectId)
             ->where('year_month', $ym)
             ->whereNull('closed_at')
             ->exists();
         return !$reaberto;
+    }
+
+    /** 2º dia útil do mês SEGUINTE à competência $ym, às 23:59:59, no fuso de São Paulo. */
+    private function competenciaDeadline(string $ym): \Carbon\Carbon
+    {
+        [$y, $m] = array_map('intval', explode('-', $ym));
+        $cursor  = \Carbon\Carbon::create($y, $m, 1, 0, 0, 0, 'America/Sao_Paulo')->addMonthNoOverflow();
+        $mesYm   = $cursor->format('Y-m');
+        $feriados = \App\Models\Holiday::whereRaw("to_char(date, 'YYYY-MM') = ?", [$mesYm])
+            ->where('active', true)->pluck('date')
+            ->map(fn ($d) => \Carbon\Carbon::parse($d)->toDateString())->all();
+        $uteis = 0;
+        while (true) {
+            if (!$cursor->isWeekend() && !in_array($cursor->toDateString(), $feriados, true)) {
+                if (++$uteis === 2) {
+                    break;
+                }
+            }
+            $cursor->addDay();
+        }
+        return $cursor->setTime(23, 59, 59);
     }
 
     /** Empresa da integração Movidesk: SEMPRE ERPSERV (resolvida por slug, cacheada). */
