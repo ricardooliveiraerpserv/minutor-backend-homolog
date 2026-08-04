@@ -90,15 +90,35 @@ class CustomerCrmController extends Controller
     }
 
     /** Lista de tags (e cria sob demanda). */
-    public function tagsIndex(): JsonResponse
+    public function tagsIndex(Request $request): JsonResponse
     {
-        return response()->json(['data' => CrmTag::orderBy('name')->get()]);
+        $q = CrmTag::orderBy('name');
+        if ($request->boolean('only_active')) $q->where('active', true);
+        return response()->json(['data' => $q->get()]);
     }
 
     public function tagsStore(Request $request): JsonResponse
     {
         $v = $request->validate(['name' => 'required|string|max:60|unique:crm_tags,name', 'color' => 'nullable|string|max:16']);
-        return response()->json(['data' => CrmTag::create($v)], 201);
+        return response()->json(['data' => CrmTag::create($v + ['active' => true])], 201);
+    }
+
+    public function tagsUpdate(Request $request, CrmTag $tag): JsonResponse
+    {
+        $v = $request->validate([
+            'name'   => 'sometimes|string|max:60|unique:crm_tags,name,' . $tag->id,
+            'color'  => 'nullable|string|max:16',
+            'active' => 'boolean',
+        ]);
+        $tag->update($v);
+        return response()->json(['data' => $tag]);
+    }
+
+    public function tagsDestroy(CrmTag $tag): JsonResponse
+    {
+        $tag->customers()->detach(); // remove os vínculos com empresas
+        $tag->delete();
+        return response()->json(['data' => true]);
     }
 
     /**

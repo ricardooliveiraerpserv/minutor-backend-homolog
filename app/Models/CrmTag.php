@@ -9,7 +9,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 class CrmTag extends Model
 {
     use \App\Models\Concerns\BelongsToCompany;
-    protected $fillable = ['name', 'color'];
+    protected $fillable = ['name', 'color', 'active'];
+    protected $casts = ['active' => 'boolean'];
 
     public function customers(): BelongsToMany
     {

@@ -496,6 +496,8 @@ Route::prefix('v1')->group(function () {
         Route::delete('/crm/products/{crmProduct}', [\App\Http\Controllers\CrmProductController::class, 'destroy']);
         Route::get('/crm/tags',  [\App\Http\Controllers\CustomerCrmController::class, 'tagsIndex']);
         Route::post('/crm/tags', [\App\Http\Controllers\CustomerCrmController::class, 'tagsStore']);
+        Route::put('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsUpdate']);
+        Route::delete('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsDestroy']);
         Route::get('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'show']);
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1396,6 +1398,8 @@ Route::prefix('v1')->group(function () {
         Route::delete('/crm/products/{crmProduct}', [\App\Http\Controllers\CrmProductController::class, 'destroy']);
         Route::get('/crm/tags',  [\App\Http\Controllers\CustomerCrmController::class, 'tagsIndex']);
         Route::post('/crm/tags', [\App\Http\Controllers\CustomerCrmController::class, 'tagsStore']);
+        Route::put('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsUpdate']);
+        Route::delete('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsDestroy']);
         Route::get('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'show']);
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
