@@ -209,6 +209,7 @@ class RelatorioRentabilidadeController extends Controller
         foreach ($fixosZerados as $z) { $monthlyIds[$z['user_id']] = true; }
         $fixosExtras = [];
         $custoRealBancoByUser = []; // user_id => custo REAL do mês (salário + hora extra banco zerado) — só banco_de_horas
+        $conflictBancoByUser = [];  // user_id => horas de duplicidade 09–18 no mês (p/ mostrar horas reais)
         if (!empty($monthlyIds)) {
             $bankSvc = app(\App\Services\HourBankService::class);
             foreach (\App\Models\User::whereIn('id', array_keys($monthlyIds))->get() as $u) {
@@ -228,6 +229,7 @@ class RelatorioRentabilidadeController extends Controller
                 $overtime = round($horasExtraMes * $valorHoraExtra, 2);
                 // Custo REAL do mês do consultor banco de horas = salário + hora extra (banco zerado).
                 $custoRealBancoByUser[$u->id] = round($meta['salary'] + $overtime, 2);
+                $conflictBancoByUser[$u->id]  = round((float) ($calc['conflict_hours'] ?? 0), 2);
                 if ($overtime != 0.0) { $fixosExtras[] = ['user_id' => $u->id, 'extra_cost' => $overtime]; }
             }
         }
@@ -251,6 +253,12 @@ class RelatorioRentabilidadeController extends Controller
                 $r['custo'] = round($custoRealBancoByUser[$uid] * ($r['horas'] / $horasBancoByUser[$uid]), 2);
                 $r['margem'] = round($r['receita'] - $r['custo'], 2);
                 $r['margem_pct'] = $r['receita'] > 0 ? round($r['margem'] / $r['receita'] * 100, 1) : null;
+                // Horas REAIS: desconta a duplicidade 09–18 proporcional (mostra as horas
+                // trabalhadas reais — ex.: 221,5h em vez de 236,5h). Receita/custo já calculados.
+                $conf = $conflictBancoByUser[$uid] ?? 0.0;
+                if ($conf > 0 && $horasBancoByUser[$uid] > $conf) {
+                    $r['horas'] = round($r['horas'] * ($horasBancoByUser[$uid] - $conf) / $horasBancoByUser[$uid], 2);
+                }
             }
             unset($r);
         }
