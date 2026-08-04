@@ -596,6 +596,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/loss-reasons',  [\App\Http\Controllers\CrmLossReasonController::class, 'index']);
         Route::post('/crm/loss-reasons', [\App\Http\Controllers\CrmLossReasonController::class, 'store']);
         Route::put('/crm/loss-reasons/{lossReason}', [\App\Http\Controllers\CrmLossReasonController::class, 'update']);
+        Route::get('/crm/segments',  [\App\Http\Controllers\CrmSegmentController::class, 'index']);
+        Route::post('/crm/segments', [\App\Http\Controllers\CrmSegmentController::class, 'store']);
+        Route::put('/crm/segments/{segment}', [\App\Http\Controllers\CrmSegmentController::class, 'update']);
+        Route::delete('/crm/segments/{segment}', [\App\Http\Controllers\CrmSegmentController::class, 'destroy']);
 
         // Tipos de contato (follow-up) — cadastro
         Route::get('/crm/contact-types',  [\App\Http\Controllers\CrmContactTypeController::class, 'index']);
@@ -1562,6 +1566,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/loss-reasons',  [\App\Http\Controllers\CrmLossReasonController::class, 'index']);
         Route::post('/crm/loss-reasons', [\App\Http\Controllers\CrmLossReasonController::class, 'store']);
         Route::put('/crm/loss-reasons/{lossReason}', [\App\Http\Controllers\CrmLossReasonController::class, 'update']);
+        Route::get('/crm/segments',  [\App\Http\Controllers\CrmSegmentController::class, 'index']);
+        Route::post('/crm/segments', [\App\Http\Controllers\CrmSegmentController::class, 'store']);
+        Route::put('/crm/segments/{segment}', [\App\Http\Controllers\CrmSegmentController::class, 'update']);
+        Route::delete('/crm/segments/{segment}', [\App\Http\Controllers\CrmSegmentController::class, 'destroy']);
 
         // Tipos de contato (follow-up) — cadastro
         Route::get('/crm/contact-types',  [\App\Http\Controllers\CrmContactTypeController::class, 'index']);
