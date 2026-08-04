@@ -238,9 +238,16 @@ class TimesheetController extends Controller
             if ($user->coordinator_type === 'sustentacao') {
                 // sustentacao/cloud + Investimento Suporte (suporte de TODAS as empresas, mesmo
                 // com service_type 'Projeto') — igual ApprovalController.
-                $query->where(function ($outer) {
+                $inclOnDemandChildren = $request->boolean('include_sust_ondemand_children');
+                $query->where(function ($outer) use ($inclOnDemandChildren) {
                     $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
                           ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                    // Relatório de Apontamentos: filho On Demand cujo pai é sustentação (param include_sust_ondemand_children).
+                    if ($inclOnDemandChildren) {
+                        $outer->orWhere(fn ($c) => $c
+                            ->whereHas('project.contractType', fn ($ct) => $ct->where('code', 'on_demand'))
+                            ->whereHas('project.parentProject.serviceType', fn ($st) => $st->where('code', 'sustentacao')));
+                    }
                 });
             }
         }
@@ -2755,9 +2762,16 @@ class TimesheetController extends Controller
             // Coord projetos: vê tudo. Sustentação: restrito ao escopo.
             if ($user->coordinator_type === 'sustentacao') {
                 // sustentacao/cloud + Investimento Suporte (suporte de todas as empresas) — igual ApprovalController.
-                $base->where(function ($outer) {
+                $inclOnDemandChildren = $request->boolean('include_sust_ondemand_children');
+                $base->where(function ($outer) use ($inclOnDemandChildren) {
                     $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
                           ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                    // Relatório de Apontamentos: filho On Demand cujo pai é sustentação (param include_sust_ondemand_children).
+                    if ($inclOnDemandChildren) {
+                        $outer->orWhere(fn ($c) => $c
+                            ->whereHas('project.contractType', fn ($ct) => $ct->where('code', 'on_demand'))
+                            ->whereHas('project.parentProject.serviceType', fn ($st) => $st->where('code', 'sustentacao')));
+                    }
                 });
             }
         }
