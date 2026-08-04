@@ -198,9 +198,12 @@ class RelatorioRentabilidadeController extends Controller
             ];
         }
 
-        // Hora extra do BANCO DE HORAS — mesma conta do Fechamento do Consultor:
-        // horas extras pagas (HourBankService) × (salário/160). Só p/ 'banco_de_horas';
-        // fixo/horista NÃO entram aqui. O FE soma isto no Custo Fixo do consultor.
+        // Hora extra do BANCO DE HORAS na RENTABILIDADE — simula "banco ZERADO":
+        // reconhece a hora extra GERADA no mês (worked_net − expected, já sem a
+        // duplicidade 09–18), como se tivéssemos que pagá-la, SEM o saldo acumulado
+        // do banco amortecer. Difere do Fechamento (que paga pelo banco real via
+        // paid_hours) de propósito — aqui é custo econômico do mês. × (salário/160).
+        // Só p/ 'banco_de_horas'; fixo/horista NÃO entram. O FE soma no Custo Fixo.
         $monthlyIds = [];
         foreach ($groups as $g) { if (($g['rate_type'] ?? '') === 'monthly') $monthlyIds[$g['user_id']] = true; }
         foreach ($fixosZerados as $z) { $monthlyIds[$z['user_id']] = true; }
@@ -219,7 +222,9 @@ class RelatorioRentabilidadeController extends Controller
                 $startDate = $u->bank_hours_start_date ? $u->bank_hours_start_date->format('Y-m-d') : null;
                 $calc = $bankSvc->calculateMonth($u->id, $y, $m, (float) ($u->daily_hours ?? 8.0), $startDate, $extraHoursForBank);
                 $valorHoraExtra = round($meta['salary'] / 160, 4);
-                $overtime = round((float) ($calc['paid_hours'] ?? 0) * $valorHoraExtra, 2);
+                // Banco zerado: extra do mês = max(0, saldo SÓ deste mês) (não paid_hours, que usa o acumulado).
+                $horasExtraMes = max(0.0, (float) ($calc['month_balance'] ?? 0));
+                $overtime = round($horasExtraMes * $valorHoraExtra, 2);
                 if ($overtime != 0.0) { $fixosExtras[] = ['user_id' => $u->id, 'extra_cost' => $overtime]; }
             }
         }
