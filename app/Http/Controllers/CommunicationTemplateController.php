@@ -41,6 +41,29 @@ class CommunicationTemplateController extends Controller
         return response()->json(['data' => ['id' => $t->id, 'nome' => $t->nome]], 201);
     }
 
+    public function update(Request $request, CommunicationTemplate $communicationTemplate): JsonResponse
+    {
+        $u = $this->manager($request);
+        abort_unless($u->isAdmin() || $communicationTemplate->owner_id === $u->id, 403);
+
+        $v = $request->validate([
+            'nome'             => 'required|string|max:200',
+            'tipo_comunicacao' => 'nullable|in:aviso,formal,marketing',
+            'title'            => 'nullable|string|max:250',
+            'message'          => 'nullable|string',
+            'structure'        => 'nullable|array',
+        ]);
+
+        // structure só é sobrescrita quando enviada (edição pela aba "Novo envio");
+        // a edição simples (nome/tipo/título/mensagem) preserva a formatação rica existente.
+        if (!$request->has('structure')) {
+            unset($v['structure']);
+        }
+
+        $communicationTemplate->update($v);
+        return response()->json(['data' => ['id' => $communicationTemplate->id, 'nome' => $communicationTemplate->nome]]);
+    }
+
     public function destroy(Request $request, CommunicationTemplate $communicationTemplate): JsonResponse
     {
         $u = $this->manager($request);
