@@ -247,6 +247,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/communication-groups/{group}/blocks/{block}/copy', [\App\Http\Controllers\CommunicationGroupController::class, 'copyBlock']);
         Route::get('/communication-templates',       [\App\Http\Controllers\CommunicationTemplateController::class, 'index']);
         Route::post('/communication-templates',      [\App\Http\Controllers\CommunicationTemplateController::class, 'store']);
+        Route::put('/communication-templates/{communicationTemplate}', [\App\Http\Controllers\CommunicationTemplateController::class, 'update']);
         Route::delete('/communication-templates/{communicationTemplate}', [\App\Http\Controllers\CommunicationTemplateController::class, 'destroy']);
 
         // Rotinas de Equipe (task_groups)
