@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CrmAccountHealthSnapshot;
 use App\Models\Customer;
 use App\Models\User;
+use App\Services\AccountHealthService;
 use App\Services\PermissionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -12,13 +13,16 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Roadmap Fase 4 — Carteira do Executivo: visão consolidada da carteira (clientes,
- * receita, margem, renovações, follow-ups, projetos em risco, críticos, sem interação).
- * Reusa Saúde da Conta (snapshots) + agregados existentes. Empresa única.
+ * Roadmap Fase 4 — Carteira do Executivo: visão consolidada e ÚNICA da carteira.
+ * Unifica a Saúde da Conta (score/status/motivos, calculada ao vivo quando não há
+ * snapshot) com os agregados comerciais (receita, margem, renovações, follow-ups,
+ * projetos em risco, dias sem interação). Empresa única — reusa `customers`.
  */
 class CrmCarteiraController extends Controller
 {
     use \App\Http\Traits\FiltersByActiveCompany;
+
+    public function __construct(private AccountHealthService $health) {}
 
     private function authorizeView(): array
     {
@@ -71,25 +75,45 @@ class CrmCarteiraController extends Controller
             ->groupBy('p.customer_id')->pluck('risco', 'customer_id');
 
         $hoje = now()->startOfDay();
-        if ($request->filled('saude')) $customers = $customers->filter(fn ($c) => ($snap[$c->id]->status ?? null) === $request->saude);
 
         $linhas = $customers->map(function ($c) use ($snap, $won, $oppUlt, $renov, $fups, $projRisk, $hoje) {
             $ult = collect([$c->crmProfile?->ultima_interacao_at, ($oppUlt[$c->id] ?? null) ? Carbon::parse($oppUlt[$c->id]) : null])->filter()->max();
             // Consistente com /relacionamento: sem interação registrada → conta a partir do cadastro.
             $base = $ult ?: $c->created_at;
             $dias = $base ? (int) Carbon::parse($base)->diffInDays($hoje) : null;
+
+            // Saúde: usa o último snapshot (acesso SEGURO via ->get, evita "Undefined array key");
+            // sem snapshot → calcula ao vivo (unifica a Saúde da Conta na Carteira).
+            $s = $snap->get($c->id);
+            $margem = ($s && $s->margem !== null) ? (float) $s->margem : null;
+            if ($s) {
+                $saude = $s->status;
+                $score = (int) $s->score;
+                $motivos = collect($s->motivos ?? [])->pluck('texto')->filter()->values()->all();
+            } else {
+                $h = $this->health->compute($c, $margem);
+                $saude = $h['status'];
+                $score = (int) $h['score'];
+                $motivos = collect($h['motivos'] ?? [])->pluck('texto')->filter()->values()->all();
+            }
+
             return [
                 'customer_id' => $c->id, 'name' => $c->name, 'crm_status' => $c->crm_status,
                 'segmento' => $c->crmProfile?->segment, 'regiao' => $c->crmProfile?->region, 'executivo' => $c->executive?->name,
-                'saude' => $snap[$c->id]->status ?? null,
+                'saude' => $saude,
+                'score' => $score,
+                'motivos' => $motivos,
                 'receita' => round((float) ($won[$c->id] ?? 0), 2),
-                'margem' => $snap[$c->id]?->margem !== null ? (float) $snap[$c->id]->margem : null,
+                'margem' => $margem,
                 'renovacoes_abertas' => (int) ($renov[$c->id] ?? 0),
                 'followups_pendentes' => (int) ($fups[$c->id] ?? 0),
                 'projetos_risco' => (int) ($projRisk[$c->id] ?? 0),
                 'dias_sem_interacao' => $dias,
             ];
         })->values();
+
+        // Filtro por saúde (aplicado após o cálculo ao vivo).
+        if ($request->filled('saude')) $linhas = $linhas->where('saude', $request->saude)->values();
 
         return response()->json(['data' => [
             'executivo_id' => $execId,
@@ -103,6 +127,8 @@ class CrmCarteiraController extends Controller
                 'followups_pendentes'   => $linhas->sum('followups_pendentes'),
                 'projetos_risco'        => $linhas->sum('projetos_risco'),
                 'clientes_criticos'     => $linhas->where('saude', 'critico')->count(),
+                'clientes_atencao'      => $linhas->where('saude', 'atencao')->count(),
+                'clientes_saudaveis'    => $linhas->where('saude', 'saudavel')->count(),
                 'clientes_sem_interacao' => $linhas->filter(fn ($l) => ($l['dias_sem_interacao'] ?? 0) >= 30)->count(),
             ],
             'clientes' => $linhas->sortByDesc(fn ($l) => $l['saude'] === 'critico' ? 2 : ($l['saude'] === 'atencao' ? 1 : 0))->values(),
