@@ -125,7 +125,7 @@
                     @if(!empty($temDesconto))
                     <div style="font-size:13px;color:#9CC7CE;line-height:1.7;padding-bottom:10px;border-bottom:1px solid #1C5763;margin-bottom:10px;">
                       <span style="display:inline-block;min-width:170px;">Subtotal dos serviços</span> <span style="color:#CFE9ED;">{{ $subtotalFmt }}</span><br>
-                      <span style="display:inline-block;min-width:170px;">Desconto@if(!empty($descontoDescricao)) <span style="color:#7FB4BD;">({{ $descontoDescricao }})</span>@endif</span> <span style="color:#FCA5A5;">&minus; {{ $descontoFmt }}</span>
+                      <span style="display:inline-block;min-width:170px;">Desconto {!! !empty($descontoDescricao) ? '<span style="color:#7FB4BD;">(' . e($descontoDescricao) . ')</span>' : '' !!}</span> <span style="color:#FCA5A5;">&minus; {{ $descontoFmt }}</span>
                     </div>
                     @endif
                     <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#5EEAD4;">
