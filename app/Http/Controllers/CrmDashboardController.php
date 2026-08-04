@@ -72,7 +72,7 @@ class CrmDashboardController extends Controller
             ->join('crm_products as pr', 'pr.id', '=', 'op.crm_product_id')
             ->where('o.status', 'ganho')->whereNull('o.deleted_at')
             ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('o.company_id', $cid))
-            ->selectRaw("COALESCE(pr.categoria, 'Sem categoria') as categoria, SUM(op.quantidade * op.valor) as valor")
+            ->selectRaw("COALESCE(op.categoria, pr.categoria, 'Sem categoria') as categoria, SUM(op.quantidade * op.valor) as valor")
             ->groupBy('categoria')->orderByDesc('valor')->get()
             ->map(fn ($r) => ['categoria' => $r->categoria, 'valor' => (float) $r->valor]);
 

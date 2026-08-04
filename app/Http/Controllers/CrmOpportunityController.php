@@ -552,12 +552,19 @@ class CrmOpportunityController extends Controller
     public function addProduct(Request $request, CrmOpportunity $opportunity): JsonResponse
     {
         $v = $request->validate([
-            'crm_product_id' => 'required|exists:crm_products,id',
-            'quantidade'     => 'nullable|numeric|min:0',
-            'valor'          => 'nullable|numeric|min:0',
+            'crm_product_id'    => 'required|exists:crm_products,id',
+            'quantidade'        => 'nullable|numeric|min:0',
+            'valor'             => 'nullable|numeric|min:0',
+            'categoria'         => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::CATEGORIAS),
+            'tipo_precificacao' => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::PRECIFICACOES),
         ]);
         $produto = \App\Models\CrmProduct::find($v['crm_product_id']);
-        $pivot = ['quantidade' => $v['quantidade'] ?? 1, 'valor' => $v['valor'] ?? $produto->valor ?? 0];
+        $pivot = [
+            'quantidade'        => $v['quantidade'] ?? 1,
+            'valor'             => $v['valor'] ?? $produto->valor ?? 0,
+            'categoria'         => $v['categoria'] ?? null,
+            'tipo_precificacao' => $v['tipo_precificacao'] ?? null,
+        ];
 
         if ($opportunity->products()->where('crm_product_id', $v['crm_product_id'])->exists()) {
             $opportunity->products()->updateExistingPivot($v['crm_product_id'], $pivot);
@@ -572,13 +579,17 @@ class CrmOpportunityController extends Controller
     public function updateProduct(Request $request, CrmOpportunity $opportunity, int $product): JsonResponse
     {
         $v = $request->validate([
-            'quantidade' => 'nullable|numeric|min:0',
-            'valor'      => 'nullable|numeric|min:0',
+            'quantidade'        => 'nullable|numeric|min:0',
+            'valor'             => 'nullable|numeric|min:0',
+            'categoria'         => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::CATEGORIAS),
+            'tipo_precificacao' => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::PRECIFICACOES),
         ]);
         abort_unless($opportunity->products()->where('crm_product_id', $product)->exists(), 404);
         $opportunity->products()->updateExistingPivot($product, array_filter([
-            'quantidade' => $v['quantidade'] ?? null,
-            'valor'      => $v['valor'] ?? null,
+            'quantidade'        => $v['quantidade'] ?? null,
+            'valor'             => $v['valor'] ?? null,
+            'categoria'         => $request->has('categoria') ? ($v['categoria'] ?? null) : null,
+            'tipo_precificacao' => $request->has('tipo_precificacao') ? ($v['tipo_precificacao'] ?? null) : null,
         ], fn ($x) => $x !== null));
         $this->recomputeValor($opportunity);
         return $this->show($opportunity->fresh());

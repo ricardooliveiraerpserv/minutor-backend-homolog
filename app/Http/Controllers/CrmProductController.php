@@ -22,8 +22,8 @@ class CrmProductController extends Controller
     {
         return [
             'name'               => 'required|string|max:160',
-            'categoria'          => 'required|string|in:' . implode(',', CrmProduct::CATEGORIAS),
-            'tipo_precificacao'  => 'required|string|in:' . implode(',', CrmProduct::PRECIFICACOES),
+            // Categoria e Precificação migraram para a OPORTUNIDADE (por produto vinculado).
+            'origem'             => 'nullable|string|in:' . implode(',', CrmProduct::ORIGENS),
             'valor'              => 'nullable|numeric|min:0',
             'descricao_tecnica'  => 'nullable|string',
             'ativo'              => 'boolean',

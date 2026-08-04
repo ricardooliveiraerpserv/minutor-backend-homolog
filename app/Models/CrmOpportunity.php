@@ -60,6 +60,6 @@ class CrmOpportunity extends Model
     public function products(): BelongsToMany
     {
         return $this->belongsToMany(CrmProduct::class, 'crm_opportunity_products', 'opportunity_id', 'crm_product_id')
-            ->withPivot(['quantidade', 'valor'])->withTimestamps();
+            ->withPivot(['quantidade', 'valor', 'categoria', 'tipo_precificacao'])->withTimestamps();
     }
 }
