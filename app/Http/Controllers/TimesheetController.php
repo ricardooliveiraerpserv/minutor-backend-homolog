@@ -2172,7 +2172,14 @@ class TimesheetController extends Controller
      */
     public function atrasos(Request $request): JsonResponse
     {
-        $query = Timesheet::with(['user:id,name', 'customer:id,name', 'project:id,name,code'])
+        $query = Timesheet::with([
+                'user:id,name', 'customer:id,name',
+                'project:id,name,code,customer_id,kanban_coordinator_override_id',
+                'project.coordinators:id,name',
+                'project.kanbanOverrideCoordinator:id,name',
+                'project.customer:id,name,executive_id',
+                'project.customer.executive:id,name',
+            ])
             ->where('status', Timesheet::STATUS_LATE)
             ->whereNull('deleted_at')
             ->orderBy('date');
@@ -2181,20 +2188,31 @@ class TimesheetController extends Controller
             $query->whereRaw("to_char(date, 'YYYY-MM') = ?", [$request->query('year_month')]);
         }
 
-        $rows = $query->get()->map(fn ($t) => [
-            'id'             => $t->id,
-            'date'           => $t->date->format('Y-m-d'),
-            'year_month'     => $t->date->format('Y-m'),
-            'created_at'     => optional($t->created_at)->toISOString(), // data+hora de inclusão (UTC; FE formata em São Paulo)
-            'colaborador'    => $t->user?->name ?? '—',
-            'cliente'        => $t->customer?->name ?? '—',
-            'projeto'        => $t->project?->name ?? '—',
-            'projeto_codigo' => $t->project?->code ?? '—',
-            'ticket'         => $t->ticket,
-            'horas'          => round($t->effort_minutes / 60, 2),
-            'observacao'     => $t->observation,
-            'date_locked'    => (bool) $t->date_locked,
-        ]);
+        $rows = $query->get()->map(function ($t) {
+            // Coordenador efetivo: override do kanban → coordenadores do projeto.
+            $coord = $t->project?->kanbanOverrideCoordinator?->name;
+            if (!$coord && $t->project) {
+                $coord = $t->project->coordinators->pluck('name')->filter()->join(', ') ?: null;
+            }
+            return [
+                'id'             => $t->id,
+                'date'           => $t->date->format('Y-m-d'),
+                'year_month'     => $t->date->format('Y-m'),
+                'created_at'     => optional($t->created_at)->toISOString(), // data+hora de inclusão (UTC; FE formata em São Paulo)
+                'colaborador'    => $t->user?->name ?? '—',
+                'cliente'        => $t->customer?->name ?? '—',
+                'projeto'        => $t->project?->name ?? '—',
+                'projeto_codigo' => $t->project?->code ?? '—',
+                'project_id'     => $t->project?->id,
+                'coordenador'    => $coord,
+                'executivo'      => $t->project?->customer?->executive?->name,
+                'ticket'         => $t->ticket,
+                'horas'          => round($t->effort_minutes / 60, 2),
+                'effort_minutes' => (int) $t->effort_minutes,
+                'observacao'     => $t->observation,
+                'date_locked'    => (bool) $t->date_locked,
+            ];
+        });
 
         return response()->json(['data' => $rows]);
     }
