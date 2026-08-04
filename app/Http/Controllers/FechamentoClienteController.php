@@ -616,6 +616,39 @@ class FechamentoClienteController extends Controller
         return response()->json(['message' => "Fechamento do cliente para {$yearMonth} encerrado.", 'fechamento' => $fechamento]);
     }
 
+    // ─── Desconto ────────────────────────────────────────────────────────────
+
+    /**
+     * Salva o desconto (valor + descritivo) do cliente/competência. Pode ser gravado
+     * antes do fechamento (cria o registro como 'open'). O FE abate o desconto do
+     * Valor a Pagar (totalGeral − desconto). Não altera fechamento já encerrado.
+     */
+    public function salvarDesconto(Request $request, string $customerId, string $yearMonth): JsonResponse
+    {
+        $v = $request->validate([
+            'desconto'           => 'nullable|numeric|min:0',
+            'desconto_descricao' => 'nullable|string|max:2000',
+        ]);
+
+        $fechamento = FechamentoCliente::firstOrNew([
+            'customer_id' => $customerId,
+            'year_month'  => $yearMonth,
+        ]);
+
+        if ($fechamento->exists && $fechamento->isClosed()) {
+            return response()->json(['message' => 'Fechamento já está encerrado — reabra para alterar o desconto.'], 422);
+        }
+
+        $fechamento->desconto           = $v['desconto'] ?? 0;
+        $fechamento->desconto_descricao = $v['desconto_descricao'] ?? null;
+        if (!$fechamento->exists) {
+            $fechamento->status = 'open';
+        }
+        $fechamento->save();
+
+        return response()->json(['message' => 'Desconto salvo.', 'fechamento' => $fechamento]);
+    }
+
     // ─── Reabrir ─────────────────────────────────────────────────────────────
 
     public function reabrir(Request $request, string $customerId, string $yearMonth): JsonResponse
