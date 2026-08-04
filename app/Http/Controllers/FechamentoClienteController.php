@@ -1069,6 +1069,25 @@ class FechamentoClienteController extends Controller
     }
 
     /**
+     * Desconto do fechamento do cliente/competência (valor + descritivo), salvo em
+     * salvarDesconto(). O total_geral (snapshot do fechar) é SEMPRE bruto, então o
+     * desconto é abatido na exibição (relatório/e-mail) → líquido = bruto − desconto.
+     *
+     * @return array{valor: float, descricao: ?string}
+     */
+    private function descontoInfo(int $customerId, string $yearMonth): array
+    {
+        $f = FechamentoCliente::where('customer_id', $customerId)
+            ->where('year_month', $yearMonth)
+            ->first();
+
+        return [
+            'valor'     => round((float) ($f->desconto ?? 0), 2),
+            'descricao' => $f?->desconto_descricao,
+        ];
+    }
+
+    /**
      * Linhas achatadas de apontamentos do cliente (a partir de apontamentosData),
      * uma por timesheet, prontas pro XLSX / PDF. Quando Vedamotors, o campo "titulo"
      * passa a ser o ticket Vedamotors extraído (NNNN-NNNNNN ou "Sem ticket").
@@ -1413,6 +1432,15 @@ class FechamentoClienteController extends Controller
             : $this->clienteTotal((int) $customer->id, $yearMonth);
         $totalHoras = round(collect($rows)->sum('horas'), 2);
 
+        // Desconto (nível cliente/competência): só abate no relatório do cliente
+        // INTEIRO — quando filtrado por um projeto, o total é subconjunto e o desconto
+        // do fechamento não se aplica. Líquido = bruto − desconto (mín. 0).
+        $desc          = $projectId === null
+            ? $this->descontoInfo((int) $customer->id, $yearMonth)
+            : ['valor' => 0.0, 'descricao' => null];
+        $descontoValor = $desc['valor'];
+        $netValue      = max(0, round($totalValue - $descontoValor, 2));
+
         $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
         $projetosList = array_values(array_map(
             fn ($p) => ['codigo' => $p['projeto_codigo'] ?? '—', 'nome' => $p['projeto_nome'] ?? '—'],
@@ -1457,7 +1485,11 @@ class FechamentoClienteController extends Controller
             'emitidoEm'            => now()->format('d/m/Y'),
             'projetos'             => $projetosList,
             'totalHorasFmt'        => $this->fmtHoras($totalHoras),
-            'valorTotal'           => $this->brl($totalValue),
+            'valorTotal'           => $this->brl($netValue),
+            'temDesconto'          => $descontoValor > 0,
+            'subtotalFmt'          => $this->brl($totalValue),
+            'descontoFmt'          => $this->brl($descontoValor),
+            'descontoDescricao'    => $desc['descricao'],
             'valorHoraResumo'      => $valorHoraResumo,
             'grupos'               => $this->buildPdfGroups($rows),
             'vedamotors'           => $vedamotors,
@@ -1554,7 +1586,11 @@ class FechamentoClienteController extends Controller
         $mensagemPadrao = $this->defaultMensagem($periodo, $mode);
 
         $projetosList = [];
-        $valorTotal   = $this->brl($this->despesaTotal((int) $customer->id, $yearMonth));
+        $grossValue   = $this->despesaTotal((int) $customer->id, $yearMonth);
+        // Desconto só no modo serviços e sem filtro de projeto (nível cliente inteiro).
+        $desc         = ($mode !== 'despesa' && $projectId === null)
+            ? $this->descontoInfo((int) $customer->id, $yearMonth)
+            : ['valor' => 0.0, 'descricao' => null];
         if ($mode !== 'despesa') {
             $apData       = $this->apontamentosData((int) $customer->id, $yearMonth, $yearMonth, 'on_demand', $projectId);
             $projetosList = array_values(array_map(
@@ -1564,11 +1600,14 @@ class FechamentoClienteController extends Controller
             // Valor total: dos rows filtrados quando há projectId; cliente inteiro caso contrário.
             if ($projectId) {
                 $rowsFiltered = $this->clienteApontamentosFlat((int) $customer->id, $yearMonth, $this->isVedamotors($customer), $projectId);
-                $valorTotal   = $this->brl(round(collect($rowsFiltered)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2));
+                $grossValue   = round(collect($rowsFiltered)->sum(fn ($r) => (float) $r['horas'] * (float) ($r['valor_hora'] ?? 0)), 2);
             } else {
-                $valorTotal   = $this->brl($this->clienteTotal((int) $customer->id, $yearMonth));
+                $grossValue   = $this->clienteTotal((int) $customer->id, $yearMonth);
             }
         }
+        $descontoValor = $desc['valor'];
+        $netValue      = max(0, round($grossValue - $descontoValor, 2));
+        $valorTotal    = $this->brl($netValue);
 
         // Semeia a partir do modelo do cadastro (cliente é único), se houver ativo.
         $svc  = app(\App\Services\FechamentoEmailTemplateService::class);
@@ -1585,6 +1624,10 @@ class FechamentoClienteController extends Controller
             'periodo'         => $periodo,
             'mode'            => $mode,
             'valorTotal'      => $valorTotal,
+            'temDesconto'     => $descontoValor > 0,
+            'subtotalFmt'     => $this->brl($grossValue),
+            'descontoFmt'     => $this->brl($descontoValor),
+            'descontoDescricao' => $desc['descricao'],
             'withAttachments' => true,
             'mensagem'        => $mensagem,
             'projetos'        => $projetosList,
@@ -1672,7 +1715,14 @@ class FechamentoClienteController extends Controller
             : 'Fechamento ' . $this->periodoMMAAAA($yearMonth) . ' | Relatório de Apontamentos - ' . $customer->name;
 
         $files      = $this->generateClienteFiles($customer, $yearMonth, $mode, $projectId);
-        $totalValue = $files['total_value'];
+        $grossValue = $files['total_value'];
+        // Desconto (nível cliente/competência) abatido no valor do corpo do e-mail;
+        // o PDF anexo já sai com o desconto via buildReportViewData. Só serviços + cliente inteiro.
+        $descInfo      = ($mode !== 'despesa' && $projectId === null)
+            ? $this->descontoInfo((int) $customer->id, $yearMonth)
+            : ['valor' => 0.0, 'descricao' => null];
+        $descontoValor = $descInfo['valor'];
+        $totalValue    = max(0, round($grossValue - $descontoValor, 2));
 
         // Modelo de e-mail do cadastro (cliente é único). Só quando NÃO houve corpo
         // manual; cai no default acima se não houver modelo ativo.
@@ -1735,6 +1785,10 @@ class FechamentoClienteController extends Controller
                 senderName:      $sender->name,
                 periodo:         $periodo,
                 valorTotal:      $this->brl($totalValue),
+                temDesconto:     $descontoValor > 0,
+                subtotalFmt:     $this->brl($grossValue),
+                descontoFmt:     $this->brl($descontoValor),
+                descontoDescricao: $descInfo['descricao'],
                 subjectLine:     $subject,
                 pdfPath:         $files['pdf_full'],
                 xlsxPath:        $files['xlsx_full'],

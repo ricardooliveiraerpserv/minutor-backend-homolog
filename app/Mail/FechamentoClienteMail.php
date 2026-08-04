@@ -50,6 +50,12 @@ class FechamentoClienteMail extends Mailable
         public string $mode = 'servicos',
         // Caminhos absolutos de anexos extras (além do PDF+XLSX) escolhidos pelo usuário.
         public array $extraAttachments = [],
+        // Desconto do fechamento (abatido no valorTotal). temDesconto controla a exibição
+        // das linhas "Subtotal / Desconto" acima do valor a pagar no e-mail.
+        public bool $temDesconto = false,
+        public string $subtotalFmt = '',
+        public string $descontoFmt = '',
+        public ?string $descontoDescricao = null,
     ) {
     }
 
@@ -95,6 +101,10 @@ class FechamentoClienteMail extends Mailable
                 'periodo'         => $this->periodo,
                 'mode'            => $this->mode,
                 'valorTotal'      => $this->valorTotal,
+                'temDesconto'     => $this->temDesconto,
+                'subtotalFmt'     => $this->subtotalFmt,
+                'descontoFmt'     => $this->descontoFmt,
+                'descontoDescricao' => $this->descontoDescricao,
                 'mensagem'        => $this->mensagem ?? '',
                 'projetos'        => $this->projetos,
                 'withAttachments' => $this->withAttachments,
