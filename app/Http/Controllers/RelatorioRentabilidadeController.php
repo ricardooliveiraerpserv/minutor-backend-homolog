@@ -208,6 +208,7 @@ class RelatorioRentabilidadeController extends Controller
         foreach ($groups as $g) { if (($g['rate_type'] ?? '') === 'monthly') $monthlyIds[$g['user_id']] = true; }
         foreach ($fixosZerados as $z) { $monthlyIds[$z['user_id']] = true; }
         $fixosExtras = [];
+        $custoRealBancoByUser = []; // user_id => custo REAL do mês (salário + hora extra banco zerado) — só banco_de_horas
         if (!empty($monthlyIds)) {
             $bankSvc = app(\App\Services\HourBankService::class);
             foreach (\App\Models\User::whereIn('id', array_keys($monthlyIds))->get() as $u) {
@@ -225,8 +226,33 @@ class RelatorioRentabilidadeController extends Controller
                 // Banco zerado: extra do mês = max(0, saldo SÓ deste mês) (não paid_hours, que usa o acumulado).
                 $horasExtraMes = max(0.0, (float) ($calc['month_balance'] ?? 0));
                 $overtime = round($horasExtraMes * $valorHoraExtra, 2);
+                // Custo REAL do mês do consultor banco de horas = salário + hora extra (banco zerado).
+                $custoRealBancoByUser[$u->id] = round($meta['salary'] + $overtime, 2);
                 if ($overtime != 0.0) { $fixosExtras[] = ['user_id' => $u->id, 'extra_cost' => $overtime]; }
             }
+        }
+
+        // CUSTO REAL por projeto p/ banco de horas: em vez de horas×R$/h (que conta a
+        // duplicidade e superestima), rateia o custo REAL do mês (salário + hora extra
+        // banco zerado) pelas horas de cada projeto. Receita fica INTACTA (conta tudo,
+        // até as 15h). Só banco_de_horas; horista/fixo continuam como estavam.
+        if (!empty($custoRealBancoByUser)) {
+            $horasBancoByUser = [];
+            foreach ($rows as $r) {
+                if (isset($custoRealBancoByUser[$r['user_id']])) {
+                    $horasBancoByUser[$r['user_id']] = ($horasBancoByUser[$r['user_id']] ?? 0) + $r['horas'];
+                }
+            }
+            foreach ($rows as &$r) {
+                $uid = $r['user_id'];
+                if (!isset($custoRealBancoByUser[$uid]) || ($horasBancoByUser[$uid] ?? 0) <= 0) {
+                    continue;
+                }
+                $r['custo'] = round($custoRealBancoByUser[$uid] * ($r['horas'] / $horasBancoByUser[$uid]), 2);
+                $r['margem'] = round($r['receita'] - $r['custo'], 2);
+                $r['margem_pct'] = $r['receita'] > 0 ? round($r['margem'] / $r['receita'] * 100, 1) : null;
+            }
+            unset($r);
         }
 
         return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados, 'fixos_extras' => $fixosExtras]]);
