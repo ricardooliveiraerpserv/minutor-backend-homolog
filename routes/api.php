@@ -536,6 +536,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'metas']);
         Route::put('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'setMeta']);
         Route::get('/crm/comissoes/cockpit', [\App\Http\Controllers\CrmFinanceController::class, 'comissoesCockpit']);
+        Route::post('/crm/comissoes/apurar', [\App\Http\Controllers\CrmFinanceController::class, 'apurar']);
+        Route::get('/crm/comissoes/lancamentos', [\App\Http\Controllers\CrmFinanceController::class, 'lancamentos']);
+        Route::post('/crm/comissoes/lancamentos/{commission}/status', [\App\Http\Controllers\CrmFinanceController::class, 'commissionStatus']);
         // Equipes de Vendas (materializa o escopo "Equipe")
         Route::get('/crm/sales-teams', [\App\Http\Controllers\CrmSalesTeamController::class, 'index']);
         Route::post('/crm/sales-teams', [\App\Http\Controllers\CrmSalesTeamController::class, 'store']);

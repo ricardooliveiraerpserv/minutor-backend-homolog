@@ -7,6 +7,7 @@ use App\Models\CrmPipelineStage;
 use App\Models\CrmSalesTarget;
 use App\Models\CrmSalesTeam;
 use App\Models\CrmCommissionRate;
+use App\Models\CrmCommission;
 use App\Models\User;
 use App\Services\PolicyResolver;
 use Illuminate\Http\JsonResponse;
@@ -408,10 +409,26 @@ class CrmFinanceController extends Controller
         $maiorVenda = $won->sortByDesc('valor')->first();
         $melhor = $ranking->first();
 
+        // Ciclo de pagamento (lançamentos apurados no mês)
+        $entries = $ids->isEmpty() ? collect() : CrmCommission::where('competencia', $comp)->whereIn('user_id', $ids)->get();
+        $st = fn ($s) => (float) $entries->where('status', $s)->sum('valor');
+        $pagamento = [
+            'apurada' => $st('apurada'), 'aprovada' => $st('aprovada'), 'paga' => $st('paga'),
+            'bloqueada' => $st('bloqueada'), 'cancelada' => $st('cancelada'),
+            'pendente' => $st('apurada') + $st('aprovada'),
+            'total_apurado' => (float) $entries->where('status', '!=', 'cancelada')->sum('valor'),
+            'nao_apuradas' => $ganhos - $entries->count(), // negócios ganhos sem lançamento
+            'count' => $entries->count(),
+        ];
+        $hasTracking = $entries->isNotEmpty();
+        $distStatus = collect(['paga' => 'Paga', 'aprovada' => 'Aprovada', 'apurada' => 'Apurada', 'bloqueada' => 'Bloqueada'])
+            ->map(fn ($lbl, $s) => ['name' => $lbl, 'valor' => $st($s)])->filter(fn ($x) => $x['valor'] > 0)->values();
+
         return response()->json(['data' => [
             'competencia' => $comp, 'can_edit' => $this->canEditScope($u, 'commission.view'),
             'teams' => $this->teamsFor($u), 'team_id' => $teamId ?: null,
-            'percentual_padrao' => $default, 'has_payment_tracking' => false,
+            'percentual_padrao' => $default, 'has_payment_tracking' => $hasTracking,
+            'pagamento' => $pagamento, 'distribuicao_status' => $distStatus,
             'kpis' => [
                 'base' => $baseTotal, 'base_delta' => $delta($baseTotal, $basePrev),
                 'comissao' => $comTotal, 'comissao_delta' => $delta($comTotal, $comPrev),
@@ -434,6 +451,83 @@ class CrmFinanceController extends Controller
                 'pendente' => $comTotal, // sem ciclo de pagamento ainda → tudo apurado
             ],
         ]]);
+    }
+
+    /** Apura (gera lançamentos de) comissão das oportunidades ganhas no mês ainda sem lançamento. */
+    public function apurar(Request $r): JsonResponse
+    {
+        $u = $r->user();
+        abort_unless($this->canEditScope($u, 'commission.view'), 403, 'Sem permissão para apurar comissões.');
+        $comp = $this->comp($r);
+        [$y, $m] = array_map('intval', explode('-', $comp));
+        $start = Carbon::create($y, $m, 1)->startOfMonth();
+        $end = (clone $start)->endOfMonth();
+        $ids = $this->responsaveis()->pluck('id');
+        $rates = CrmCommissionRate::when($this->companyId(), fn ($q, $c) => $q->where('company_id', $c))->get();
+        $default = (float) (optional($rates->firstWhere('user_id', null))->percentual ?? 0);
+        $byUser = $rates->whereNotNull('user_id')->keyBy('user_id');
+        $rateOf = fn ($uid) => $byUser->has($uid) ? (float) $byUser[$uid]->percentual : $default;
+
+        $won = $ids->isEmpty() ? collect() : CrmOpportunity::where('status', 'ganho')
+            ->whereBetween('fechamento_at', [$start, $end])->whereIn('responsavel_id', $ids)
+            ->get(['id', 'responsavel_id', 'valor']);
+        $existing = CrmCommission::whereIn('opportunity_id', $won->pluck('id'))->pluck('opportunity_id')->flip();
+        $n = 0;
+        foreach ($won as $o) {
+            if ($existing->has($o->id) || !$o->responsavel_id) continue;
+            $pct = $rateOf($o->responsavel_id);
+            $base = (float) $o->valor;
+            CrmCommission::create([
+                'opportunity_id' => $o->id, 'user_id' => $o->responsavel_id, 'competencia' => $comp,
+                'base' => $base, 'percentual' => $pct, 'valor' => round($base * $pct / 100, 2),
+                'status' => 'apurada', 'created_by_id' => $u->id,
+            ]);
+            $n++;
+        }
+        return response()->json(['data' => ['apuradas' => $n, 'competencia' => $comp]]);
+    }
+
+    /** Lançamentos de comissão (por negócio) — drill-down e ações de status. */
+    public function lancamentos(Request $r): JsonResponse
+    {
+        $u = $r->user();
+        if ($u && !$u->isAdmin() && $this->resolver->scope($u, 'crm', 'commission.view', 'all') === 'none')
+            abort(403, 'Seu perfil não permite ver comissões.');
+        $comp = $this->comp($r);
+        $resp = $this->applyScope($this->responsaveis(), 'commission.view', $u);
+        if ($teamId = (int) $r->query('team_id')) $resp = $resp->whereIn('id', $this->teamMemberIds($teamId))->values();
+        $ids = $resp->pluck('id');
+        $q = CrmCommission::where('competencia', $comp)->whereIn('user_id', $ids)
+            ->with(['opportunity:id,title,customer_id', 'opportunity.customer:id,name', 'user:id,name']);
+        if ($status = $r->query('status')) $q->where('status', $status);
+        $rows = $q->orderByDesc('valor')->get()->map(fn ($c) => [
+            'id' => $c->id, 'negocio' => $c->opportunity?->title, 'cliente' => $c->opportunity?->customer?->name,
+            'responsavel' => $c->user?->name, 'base' => (float) $c->base, 'percentual' => (float) $c->percentual,
+            'valor' => (float) $c->valor, 'status' => $c->status,
+            'aprovado_em' => $c->approved_at?->toDateString(), 'pago_em' => $c->paid_at?->toDateString(),
+            'motivo' => $c->motivo, 'transicoes' => CrmCommission::TRANSITIONS[$c->status] ?? [],
+        ]);
+        return response()->json(['data' => [
+            'competencia' => $comp, 'can_edit' => $this->canEditScope($u, 'commission.view'),
+            'rows' => $rows->values(),
+        ]]);
+    }
+
+    /** Transição de status de um lançamento (aprovar/pagar/bloquear/cancelar/desbloquear). */
+    public function commissionStatus(Request $r, CrmCommission $commission): JsonResponse
+    {
+        $u = $r->user();
+        abort_unless($this->canEditScope($u, 'commission.view'), 403, 'Sem permissão para alterar comissões.');
+        $v = $r->validate(['status' => 'required|string', 'motivo' => 'nullable|string|max:200']);
+        $to = $v['status'];
+        abort_unless(in_array($to, CrmCommission::TRANSITIONS[$commission->status] ?? [], true), 422, "Transição {$commission->status} → {$to} não permitida.");
+        $commission->status = $to;
+        if ($to === 'aprovada') { $commission->approved_by_id = $u->id; $commission->approved_at = now(); }
+        if ($to === 'paga') { $commission->paid_at = now(); if (!$commission->approved_at) { $commission->approved_at = now(); $commission->approved_by_id = $u->id; } }
+        if (in_array($to, ['bloqueada', 'cancelada'], true)) $commission->motivo = $v['motivo'] ?? null;
+        if ($to === 'apurada') $commission->motivo = null; // desbloqueio
+        $commission->save();
+        return response()->json(['data' => ['id' => $commission->id, 'status' => $to]]);
     }
 
     // ── RENTABILIDADE ─────────────────────────────────────────────────────────
