@@ -1212,6 +1212,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-requests',                      [\App\Http\Controllers\ContractRequestController::class, 'index'])->name('contract-requests.index');
         Route::post('/contract-requests',                     [\App\Http\Controllers\ContractRequestController::class, 'store'])->name('contract-requests.store');
         Route::post('/contract-requests/resolve-emails',      [\App\Http\Controllers\ContractRequestController::class, 'resolveEmails'])->name('contract-requests.resolve-emails');
+        Route::get('/contract-requests/contact-suggestions',  [\App\Http\Controllers\ContractRequestController::class, 'contactSuggestions'])->name('contract-requests.contact-suggestions');
         Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');
         Route::delete('/contract-requests/{contractRequest}', [\App\Http\Controllers\ContractRequestController::class, 'destroy'])->name('contract-requests.destroy');
         Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review');
