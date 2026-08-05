@@ -4,7 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\CrmOpportunity;
 use App\Models\CrmPipelineStage;
-use App\Models\CrmGoal;
+use App\Models\CrmSalesTarget;
+use App\Models\CrmSalesTeam;
 use App\Models\CrmCommissionRate;
 use App\Models\User;
 use App\Services\PolicyResolver;
@@ -59,7 +60,8 @@ class CrmFinanceController extends Controller
         $scope = $this->resolver->scope($u, 'crm', $key, 'all');
         if ($scope === 'none') return collect();
         if ($scope === 'own')  return $rows->where('id', $u->id)->values();
-        return $rows; // team/assigned/all → aberto (equipe não materializada)
+        if ($scope === 'team') { $vis = CrmSalesTeam::visibleUserIds($u); return $rows->whereIn('id', $vis)->values(); }
+        return $rows; // all/assigned → aberto
     }
 
     /** Pode editar (definir metas/percentuais): admin, administrativo, policy.manage ou escopo team/all. */
@@ -79,7 +81,7 @@ class CrmFinanceController extends Controller
         $comp = $this->comp($r);
         $resp = $this->applyScope($this->responsaveis(), 'goals.view', $u);
         $real = $this->realizadoPorResp($comp);
-        $goals = CrmGoal::where('competencia', $comp)->get()->keyBy('user_id');
+        $goals = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
         $rows = $resp->map(function ($x) use ($real, $goals) {
             $meta = (float) ($goals[$x->id]->valor_meta ?? 0);
             $realizado = (float) ($real[$x->id]->total ?? 0);
@@ -105,9 +107,10 @@ class CrmFinanceController extends Controller
             'competencia' => 'required|regex:/^\d{4}-\d{2}$/',
             'valor_meta' => 'required|numeric|min:0',
         ]);
-        $g = CrmGoal::updateOrCreate(
-            ['company_id' => $this->companyId(), 'user_id' => $v['user_id'], 'competencia' => $v['competencia']],
-            ['valor_meta' => $v['valor_meta']]
+        // Reusa a meta canônica (crm_sales_targets). company_id é carimbado pelo BelongsToCompany.
+        $g = CrmSalesTarget::updateOrCreate(
+            ['periodo' => $v['competencia'], 'user_id' => $v['user_id']],
+            ['valor_meta' => $v['valor_meta'], 'created_by_id' => auth()->id()]
         );
         return response()->json(['data' => $g]);
     }
@@ -132,8 +135,8 @@ class CrmFinanceController extends Controller
         $ids = $resp->pluck('id');
         $cid = $this->companyId();
 
-        $goals = CrmGoal::where('competencia', $comp)->when($cid, fn ($q, $c) => $q->where('company_id', $c))->get()->keyBy('user_id');
-        $goalsPrev = CrmGoal::where('competencia', $prev->format('Y-m'))->when($cid, fn ($q, $c) => $q->where('company_id', $c))->get()->keyBy('user_id');
+        $goals = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
+        $goalsPrev = CrmSalesTarget::where('periodo', $prev->format('Y-m'))->whereNotNull('user_id')->get()->keyBy('user_id');
 
         // Oportunidades (escopo = responsáveis filtrados)
         $won = $ids->isEmpty() ? collect() : CrmOpportunity::where('status', 'ganho')
@@ -254,13 +257,12 @@ class CrmFinanceController extends Controller
         abort_unless($this->canEditScope($r->user(), 'goals.view'), 403, 'Sem permissão para definir metas.');
         $to = $this->comp($r);
         $from = Carbon::createFromFormat('Y-m', $to)->startOfMonth()->subMonthNoOverflow()->format('Y-m');
-        $cid = $this->companyId();
-        $prev = CrmGoal::where('competencia', $from)->when($cid, fn ($q, $c) => $q->where('company_id', $c))->get();
+        $prev = CrmSalesTarget::where('periodo', $from)->whereNotNull('user_id')->get();
         $n = 0;
         foreach ($prev as $g) {
-            CrmGoal::firstOrCreate(
-                ['company_id' => $cid, 'user_id' => $g->user_id, 'competencia' => $to],
-                ['valor_meta' => $g->valor_meta]
+            CrmSalesTarget::firstOrCreate(
+                ['periodo' => $to, 'user_id' => $g->user_id],
+                ['valor_meta' => $g->valor_meta, 'created_by_id' => auth()->id()]
             )->wasRecentlyCreated && $n++;
         }
         return response()->json(['data' => ['copiadas' => $n, 'de' => $from, 'para' => $to]]);
@@ -429,6 +431,7 @@ class CrmFinanceController extends Controller
         if (!$u->isAdmin()) {
             $os = $this->resolver->scope($u, 'crm', 'opp.view', 'all');
             if ($os === 'own') $q->where('responsavel_id', $u->id);
+            elseif ($os === 'team') $q->whereIn('responsavel_id', CrmSalesTeam::visibleUserIds($u));
             elseif ($os === 'none') $q->whereRaw('1 = 0');
         }
         $rows = $q->orderByDesc('fechamento_at')->get()->map(function ($o) {

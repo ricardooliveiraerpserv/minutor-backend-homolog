@@ -66,6 +66,7 @@ class CrmOpportunityController extends Controller
         if (!$u || $u->isAdmin()) return $query;
         $scope = app(\App\Services\PolicyResolver::class)->scope($u, 'crm', 'opp.view', 'all');
         if ($scope === 'own')  return $query->where('responsavel_id', $u->id);
+        if ($scope === 'team') return $query->whereIn('responsavel_id', \App\Models\CrmSalesTeam::visibleUserIds($u));
         if ($scope === 'none') return $query->whereRaw('1 = 0');
         return $query;
     }

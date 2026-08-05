@@ -536,6 +536,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'metas']);
         Route::put('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'setMeta']);
         Route::get('/crm/comissoes/cockpit', [\App\Http\Controllers\CrmFinanceController::class, 'comissoesCockpit']);
+        // Equipes de Vendas (materializa o escopo "Equipe")
+        Route::get('/crm/sales-teams', [\App\Http\Controllers\CrmSalesTeamController::class, 'index']);
+        Route::post('/crm/sales-teams', [\App\Http\Controllers\CrmSalesTeamController::class, 'store']);
+        Route::put('/crm/sales-teams/{team}', [\App\Http\Controllers\CrmSalesTeamController::class, 'update']);
+        Route::delete('/crm/sales-teams/{team}', [\App\Http\Controllers\CrmSalesTeamController::class, 'destroy']);
         Route::get('/crm/comissoes', [\App\Http\Controllers\CrmFinanceController::class, 'comissoes']);
         Route::put('/crm/comissoes/rate', [\App\Http\Controllers\CrmFinanceController::class, 'setRate']);
         Route::get('/crm/rentabilidade', [\App\Http\Controllers\CrmFinanceController::class, 'rentabilidade']);
