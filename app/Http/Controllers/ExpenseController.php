@@ -264,9 +264,13 @@ class ExpenseController extends Controller
             // "Meus projetos / Todos" no FE manda coordinator_id[]=user.id.
             if ($user->coordinator_type === 'sustentacao') {
                 // sustentacao/cloud + Investimento Suporte (suporte de todas as empresas) — igual ApprovalController.
-                $query->where(function ($outer) {
+                $query->where(function ($outer) use ($user) {
                     $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
-                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"))
+                          // EXCEÇÃO: projetos que o coord coordena (override dele OU coordenador do
+                          // projeto), de qualquer serviceType. (pedido Ricardo, prod 2026-08-05)
+                          ->orWhereHas('project', fn ($q) => $q->where('kanban_coordinator_override_id', $user->id))
+                          ->orWhereHas('project.coordinators', fn ($q) => $q->where('users.id', $user->id));
                 });
             }
         }
