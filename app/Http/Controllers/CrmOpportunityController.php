@@ -398,9 +398,38 @@ class CrmOpportunityController extends Controller
         return response()->json(['data' => $this->decorate($o->fresh())], 201);
     }
 
+    /** Política Comercial — bloqueia transição para etapa Ganha/Perdida sem permissão. */
+    private function guardStageTransition(?int $stageId, $user): ?JsonResponse
+    {
+        if (!$stageId || !$user || $user->isAdmin()) return null;
+        $stage = CrmPipelineStage::find($stageId);
+        if (!$stage) return null;
+        $pol = app(\App\Services\PolicyResolver::class);
+        if ($stage->is_won && !$pol->can($user, 'crm', 'opp.win'))
+            return response()->json(['message' => 'Seu perfil não permite marcar oportunidade como ganha.'], 403);
+        if ($stage->is_lost && !$pol->can($user, 'crm', 'opp.lose'))
+            return response()->json(['message' => 'Seu perfil não permite marcar oportunidade como perdida.'], 403);
+        return null;
+    }
+
     public function update(Request $request, CrmOpportunity $opportunity): JsonResponse
     {
         $v = $request->validate($this->rules(false));
+
+        // Política Comercial — editar (escopo) · reatribuir · transição ganha/perdida.
+        $u = $request->user();
+        if ($u && !$u->isAdmin()) {
+            $pol = app(\App\Services\PolicyResolver::class);
+            $editScope = $pol->scope($u, 'crm', 'opp.edit', 'all');
+            if ($editScope === 'none' || ($editScope === 'own' && (int) $opportunity->responsavel_id !== (int) $u->id))
+                return response()->json(['message' => 'Seu perfil não permite editar esta oportunidade.'], 403);
+            if (array_key_exists('responsavel_id', $v) && (int) $v['responsavel_id'] !== (int) $opportunity->responsavel_id && !$pol->can($u, 'crm', 'opp.reassign'))
+                return response()->json(['message' => 'Seu perfil não permite alterar o responsável.'], 403);
+            if (array_key_exists('stage_id', $v) && (int) $v['stage_id'] !== (int) $opportunity->stage_id) {
+                if ($r = $this->guardStageTransition((int) $v['stage_id'], $u)) return $r;
+            }
+        }
+
         $oldStage = $opportunity->stage_id;
         $oldValor = (float) $opportunity->valor;
         $oldProb  = $opportunity->probabilidade; // override manual anterior (pode ser null)
@@ -461,6 +490,9 @@ class CrmOpportunityController extends Controller
             'loss_reason_id' => 'nullable|exists:crm_loss_reasons,id',
         ]);
         $stage = CrmPipelineStage::find($v['stage_id']);
+
+        // Política Comercial — Ganha/Perdida exigem permissão.
+        if ($r = $this->guardStageTransition((int) $v['stage_id'], $request->user())) return $r;
 
         // Fase 2 — regras de transição CONFIGURÁVEIS por etapa (substitui o hardcoded).
         $faltantes = $stage ? $this->missingStageRequirements($opportunity, $stage) : [];

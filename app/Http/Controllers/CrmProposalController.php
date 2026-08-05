@@ -44,6 +44,11 @@ class CrmProposalController extends Controller
 
     public function store(Request $request, CrmProposalService $svc): JsonResponse
     {
+        // Política Comercial — gerar propostas exige permissão do perfil.
+        $u = $request->user();
+        if ($u && !$u->isAdmin() && !app(\App\Services\PolicyResolver::class)->can($u, 'crm', 'proposals.create')) {
+            return response()->json(['message' => 'Seu perfil não permite gerar propostas.'], 403);
+        }
         // REGRA: oportunidade com proposta ASSINADA (ou já liberada/convertida) NÃO aceita nova proposta —
         // a negociação está fechada. Para revisar, cancele a assinatura/contrato.
         $oppId = $request->input('opportunity_id');
