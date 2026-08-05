@@ -17,9 +17,9 @@ class CrmResponsavelController extends Controller
     public function index(Request $request): JsonResponse
     {
         $users = User::query()
-            // Responsável comercial é usuário interno: não listar clientes nem parceiros.
-            ->where(fn ($q) => $q->whereNull('type')
-                ->orWhere(fn ($w) => $w->where('type', '!=', 'cliente')->where('type', 'not like', 'parceiro%')))
+            // Só perfis Administrador e Comercial podem ser responsáveis comerciais.
+            // (mantém quem já está vinculado para permitir desvincular legados)
+            ->where(fn ($q) => $q->whereIn('type', ['admin', 'comercial'])->orWhere('is_crm_responsavel', true))
             ->when($request->boolean('somente_responsaveis'), fn ($q) => $q->where('is_crm_responsavel', true))
             ->orderBy('name')
             ->get(['id', 'name', 'type', 'is_executive', 'is_crm_responsavel']);

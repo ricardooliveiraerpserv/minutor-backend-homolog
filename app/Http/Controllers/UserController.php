@@ -154,7 +154,7 @@ class UserController extends Controller
             $roleTypeMap = [
                 'Administrator' => 'admin', 'Coordenador' => 'coordenador',
                 'Consultor' => 'consultor', 'Consultant' => 'consultor',
-                'Cliente' => 'cliente', 'Parceiro ADM' => 'parceiro_admin',
+                'Cliente' => 'cliente', 'Parceiro ADM' => 'parceiro_admin', 'Comercial' => 'comercial',
             ];
             $typeFilter = $roleTypeMap[$request->role] ?? $request->role;
             $query->where('type', $typeFilter);
@@ -409,7 +409,7 @@ class UserController extends Controller
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
-            'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
+            'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin,comercial',
             // Acesso por módulo (só interpretado p/ cliente): ['projetos','help_desk']. Ausente/null = todos.
             'allowed_modules'   => 'sometimes|nullable|array',
             'allowed_modules.*' => 'string|in:projetos,help_desk',
@@ -684,7 +684,7 @@ class UserController extends Controller
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'sometimes|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
-            'type' => 'sometimes|nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
+            'type' => 'sometimes|nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin,comercial',
             'allowed_modules'   => 'sometimes|nullable|array',
             'allowed_modules.*' => 'string|in:projetos,help_desk',
             'coordinator_type' => 'sometimes|nullable|in:projetos,sustentacao',
