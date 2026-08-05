@@ -239,9 +239,17 @@ class TimesheetController extends Controller
                 // sustentacao/cloud + Investimento Suporte (suporte de TODAS as empresas, mesmo
                 // com service_type 'Projeto') — igual ApprovalController.
                 $inclOnDemandChildren = $request->boolean('include_sust_ondemand_children');
-                $query->where(function ($outer) use ($inclOnDemandChildren) {
+                $uid = (int) $user->id;
+                $query->where(function ($outer) use ($inclOnDemandChildren, $uid) {
                     $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
-                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                          ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"))
+                          // Coordenador efetivo: projetos de QUALQUER serviceType em que este coord de
+                          // sustentação é o override do Kanban, OU (sem override) é coordenador do
+                          // projeto — devem aparecer no portal dele. (pedido Ricardo, prod 2026-08-05)
+                          ->orWhereHas('project', fn ($q) => $q->where('kanban_coordinator_override_id', $uid))
+                          ->orWhere(fn ($c) => $c
+                              ->whereHas('project', fn ($pq) => $pq->whereNull('kanban_coordinator_override_id'))
+                              ->whereHas('project.coordinators', fn ($cq) => $cq->where('users.id', $uid)));
                     // Relatório de Apontamentos: filho On Demand cujo pai é sustentação (param include_sust_ondemand_children).
                     if ($inclOnDemandChildren) {
                         $outer->orWhere(fn ($c) => $c
