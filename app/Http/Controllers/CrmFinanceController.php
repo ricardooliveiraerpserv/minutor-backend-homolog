@@ -513,7 +513,7 @@ class CrmFinanceController extends Controller
         $openByResp = $open->groupBy('responsavel_id');
         $peso = fn ($o) => (float) $o->valor * ((float) ($o->probabilidade ?? $o->stage?->probabilidade ?? 0) / 100);
 
-        $ranking = $resp->map(function ($x) use ($wonByResp, $openByResp, $rateOf, $peso) {
+        $ranking = $resp->map(function ($x) use ($wonByResp, $openByResp, $rateOf, $peso, $byUser) {
             $w = $wonByResp->get($x->id) ?? collect();
             $base = (float) $w->sum('valor');
             $neg = $w->count();
