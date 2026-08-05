@@ -120,10 +120,19 @@ class ClosingService
 
     // ── Está fechado? (com escopo de usuário) ─────────────────────────────────
 
-    public function isMonthClosed(string $date, int $projectId, ?int $userId = null): bool
+    /**
+     * MENSAL fechado. $forIntegration=true → prazo do 2º dia útil conta SEM grandfather
+     * (preserva a regra de ATRASO da integração, que sempre existiu). No lançamento manual
+     * (false) o prazo mensal só conta "daqui pra frente" (>= ativação) — antes o manual só
+     * era bloqueado pelo Fechamento Administrativo, então não regride meses antigos.
+     */
+    public function isMonthClosed(string $date, int $projectId, ?int $userId = null, bool $forIntegration = false): bool
     {
-        $ym = Carbon::parse($date, self::TZ)->format('Y-m');
-        $closedReason = Carbon::now(self::TZ)->gt($this->monthDeadline($ym))
+        $ym       = Carbon::parse($date, self::TZ)->format('Y-m');
+        $deadline = $this->monthDeadline($ym);
+        $deadlineCounts = Carbon::now(self::TZ)->gt($deadline)
+            && ($forIntegration || $deadline->gte($this->weeklyActivatedAt()));
+        $closedReason = $deadlineCounts
             || $this->adminMonthClosed($ym)
             || $this->hasClosure('month', $ym, $projectId, $userId);
         if (!$closedReason) return false;
@@ -147,9 +156,9 @@ class ClosingService
     }
 
     /** Bloqueio COMBINADO (integração + lançamento manual). $userId = quem apontou. */
-    public function isPeriodClosed(string $date, int $projectId, ?int $userId = null): bool
+    public function isPeriodClosed(string $date, int $projectId, ?int $userId = null, bool $forIntegration = false): bool
     {
-        return $this->isMonthClosed($date, $projectId, $userId) || $this->isWeekClosed($date, $projectId, $userId);
+        return $this->isMonthClosed($date, $projectId, $userId, $forIntegration) || $this->isWeekClosed($date, $projectId, $userId);
     }
 
     // ── Status para o painel (visão GLOBAL: project null + user null) ─────────
@@ -176,7 +185,8 @@ class ClosingService
     public function monthStatusGlobal(string $ym): array
     {
         $deadline = $this->monthDeadline($ym);
-        $past     = Carbon::now(self::TZ)->gt($deadline);
+        // Painel reflete o bloqueio MANUAL: prazo mensal só "fecha" daqui pra frente (>= ativação).
+        $past     = Carbon::now(self::TZ)->gt($deadline) && $deadline->gte($this->weeklyActivatedAt());
         $reopen   = ProjectOpenPeriod::where('year_month', $ym)->whereNull('project_id')->whereNull('user_id')
             ->whereNull('closed_at')->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))->first();
         $closure  = CompetenceClosure::where('period_kind', 'month')->where('period_key', $ym)->whereNull('project_id')->whereNull('user_id')->exists();
