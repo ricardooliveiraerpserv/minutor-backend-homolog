@@ -976,9 +976,11 @@ class TimesheetController extends Controller
         $yearMonth = $serviceDate->format('Y-m');
         $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
         if ($fechamentoAdm?->isClosed()) {
+            // Reabertura mensal respeita o auto-fechamento (23:59 do dia da reabertura).
             $projectHasOpenPeriod = \App\Models\ProjectOpenPeriod::where('project_id', $project->id)
                 ->where('year_month', $yearMonth)
                 ->whereNull('closed_at')
+                ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
                 ->exists();
 
             if (!$projectHasOpenPeriod) {
@@ -989,6 +991,17 @@ class TimesheetController extends Controller
                     'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos.",
                 ], 422);
             }
+        }
+
+        // Bloqueio SEMANAL (coexiste com o mensal): prazo = 2º dia útil da semana seguinte, 23:59 SP.
+        // Respeita reabertura semanal (global ou do projeto). Regra em ClosingService.
+        if (app(\App\Services\ClosingService::class)->isWeekClosed($request->date, (int) $project->id)) {
+            return response()->json([
+                'code'          => 'WEEK_CLOSED',
+                'type'          => 'error',
+                'message'       => 'Semana fechada',
+                'detailMessage' => 'O prazo de digitação de horas desta semana (2º dia útil da semana seguinte, 23:59) já venceu. Solicite a reabertura da semana.',
+            ], 422);
         }
 
         // Verificar prazo limite para lançamento retroativo de horas

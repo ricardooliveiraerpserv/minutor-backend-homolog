@@ -7,9 +7,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ProjectOpenPeriod extends Model
 {
-    protected $fillable = ['project_id', 'year_month', 'opened_by', 'closed_by', 'closed_at'];
+    protected $fillable = ['project_id', 'year_month', 'opened_by', 'closed_by', 'closed_at', 'auto_close_at'];
 
-    protected $casts = ['closed_at' => 'datetime'];
+    protected $casts = ['closed_at' => 'datetime', 'auto_close_at' => 'datetime'];
 
     public function isActive(): bool
     {

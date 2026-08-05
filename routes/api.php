@@ -1137,6 +1137,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/open-periods',  [ProjectController::class, 'listOpenPeriods'])->name('projects.open-periods.index');
         Route::post('/projects/{project}/open-period',  [ProjectController::class, 'openPeriod'])->name('projects.open-periods.open');
         Route::post('/projects/{project}/close-periods',[ProjectController::class, 'closePeriods'])->name('projects.open-periods.close');
+
+        // Fechamento SEMANAL (status das semanas, reabertura global/projeto, log de encerramentos).
+        Route::get('/weekly-closings',        [\App\Http\Controllers\WeeklyClosingController::class, 'index'])->name('weekly-closings.index');
+        Route::get('/weekly-closings/logs',   [\App\Http\Controllers\WeeklyClosingController::class, 'logs'])->name('weekly-closings.logs');
+        Route::post('/weekly-closings/reopen',[\App\Http\Controllers\WeeklyClosingController::class, 'reopen'])->name('weekly-closings.reopen');
+        Route::post('/weekly-closings/close', [\App\Http\Controllers\WeeklyClosingController::class, 'close'])->name('weekly-closings.close');
         // Visão global (Configurações): todos os períodos abertos + fechar em lote.
         Route::get('/projects-open-periods',            [ProjectController::class, 'allOpenPeriods'])->name('projects.open-periods.all');
         Route::post('/projects-open-periods/close-all', [ProjectController::class, 'closeAllOpenPeriods'])->name('projects.open-periods.close-all');
