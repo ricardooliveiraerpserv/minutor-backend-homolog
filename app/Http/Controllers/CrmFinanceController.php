@@ -10,6 +10,7 @@ use App\Models\CrmSalesTeam;
 use App\Models\CrmCommissionRate;
 use App\Models\CrmCommission;
 use App\Models\CrmCommissionPolicy;
+use App\Models\CrmCommissionSetting;
 use App\Models\User;
 use App\Services\PolicyResolver;
 use Illuminate\Http\JsonResponse;
@@ -30,6 +31,12 @@ class CrmFinanceController extends Controller
     public function __construct(private PolicyResolver $resolver) {}
 
     private function companyId(): ?int { return $this->activeCompanyId(); }
+
+    /** % padrão vem da Política Padrão da empresa (config isolada da operação). */
+    private function defaultPct(): float
+    {
+        return (float) (CrmCommissionSetting::where('company_id', $this->companyId())->value('percentual_padrao') ?? 0);
+    }
 
     /** Competência 'YYYY-MM' da query (default: mês atual). */
     private function comp(Request $r): string
@@ -432,7 +439,7 @@ class CrmFinanceController extends Controller
         $resp = $this->applyScope($this->responsaveis(), 'commission.view', $u);
         $real = $this->realizadoPorResp($comp);
         $rates = CrmCommissionRate::get();
-        $default = (float) (optional($rates->firstWhere('user_id', null))->percentual ?? 0);
+        $default = $this->defaultPct();
         $byUser = $rates->whereNotNull('user_id')->keyBy('user_id');
         $rows = $resp->map(function ($x) use ($real, $byUser, $default) {
             $base = (float) ($real[$x->id]->total ?? 0);
@@ -482,7 +489,7 @@ class CrmFinanceController extends Controller
         $cid = $this->companyId();
 
         $rates = CrmCommissionRate::when($cid, fn ($q, $c) => $q->where('company_id', $c))->get();
-        $default = (float) (optional($rates->firstWhere('user_id', null))->percentual ?? 0);
+        $default = $this->defaultPct();
         $byUser = $rates->whereNotNull('user_id')->keyBy('user_id');
         $rateOf = fn ($uid) => $byUser->has($uid) ? (float) $byUser[$uid]->percentual : $default;
         $delta = fn ($a, $b) => $b > 0 ? round(($a - $b) / $b * 100, 1) : null;
@@ -515,7 +522,8 @@ class CrmFinanceController extends Controller
             return [
                 'user_id' => $x->id, 'name' => $x->name, 'cargo' => $x->type,
                 'base' => $base, 'negocios' => $neg, 'ticket' => $neg ? round($base / $neg, 2) : 0,
-                'percentual' => $pct, 'comissao' => round($base * $pct / 100, 2),
+                'percentual' => $pct, 'pct_origem' => $byUser->has($x->id) ? 'excecao' : 'padrao',
+                'comissao' => round($base * $pct / 100, 2),
                 'pipeline' => (float) $o->sum('valor'),
                 'forecast_comissao' => round(((float) $o->sum($peso)) * $pct / 100, 2),
             ];
@@ -604,7 +612,7 @@ class CrmFinanceController extends Controller
         $end = (clone $start)->endOfMonth();
         $ids = $this->responsaveis()->pluck('id');
         $rates = CrmCommissionRate::when($this->companyId(), fn ($q, $c) => $q->where('company_id', $c))->get();
-        $default = (float) (optional($rates->firstWhere('user_id', null))->percentual ?? 0);
+        $default = $this->defaultPct();
         $byUser = $rates->whereNotNull('user_id')->keyBy('user_id');
         $rateOf = fn ($uid) => $byUser->has($uid) ? (float) $byUser[$uid]->percentual : $default;
 
@@ -616,12 +624,15 @@ class CrmFinanceController extends Controller
         // Atingimento de meta por vendedor (para políticas progressivas)
         $realizadoSeller = $won->groupBy('responsavel_id')->map(fn ($g) => (float) $g->sum('valor'));
         $metas = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
+        // Base de cálculo da Política Padrão (valor da venda ou margem)
+        $baseCalc = CrmCommissionSetting::where('company_id', $this->companyId())->value('base_calculo') ?? 'valor';
         $n = 0;
         foreach ($won as $o) {
             if ($existing->has($o->id) || !$o->responsavel_id) continue;
-            $base = (float) $o->valor;
+            $valorBruto = (float) $o->valor;
             $custo = (float) (($o->detalhes['custo'] ?? 0));
-            $margem = $base > 0 ? round(($base - $custo) / $base * 100, 2) : null;
+            $margem = $valorBruto > 0 ? round(($valorBruto - $custo) / $valorBruto * 100, 2) : null;
+            $base = $baseCalc === 'margem' ? max(0, $valorBruto - $custo) : $valorBruto;
             $meta = (float) ($metas[$o->responsavel_id]->valor_meta ?? 0);
             $ating = $meta > 0 ? round(($realizadoSeller[$o->responsavel_id] ?? 0) / $meta * 100, 2) : null;
             // Política de comissão resolve o %; sem regra → cai no % do vendedor/padrão.

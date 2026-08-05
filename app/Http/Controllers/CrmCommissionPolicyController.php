@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Models\CrmCommissionPolicy;
 use App\Models\CrmCommissionRate;
+use App\Models\CrmCommissionSetting;
+use App\Models\CrmCommissionRateHistory;
 use App\Models\CrmPipeline;
 use App\Models\User;
 use App\Services\PolicyResolver;
@@ -43,16 +45,119 @@ class CrmCommissionPolicyController extends Controller
         ];
     }
 
+    /** Singleton da Política Padrão da empresa. */
+    private function settings(): CrmCommissionSetting
+    {
+        return CrmCommissionSetting::firstOrCreate(['company_id' => $this->companyId()], []);
+    }
+
     public function index(): JsonResponse
     {
         $this->assertManage();
         $policies = CrmCommissionPolicy::orderBy('priority')->orderBy('id')->get();
         $pipelines = CrmPipeline::orderBy('name')->get(['id', 'name']);
         $cargos = User::where('is_crm_responsavel', true)->whereNotNull('type')->distinct()->orderBy('type')->pluck('type');
+        $s = $this->settings();
+        $resp = User::where('is_crm_responsavel', true)->orderBy('name')->get(['id', 'name', 'type']);
+        $rates = CrmCommissionRate::whereNotNull('user_id')->get()->keyBy('user_id');
+        $exceptions = $resp->map(fn ($u) => [
+            'user_id' => $u->id, 'name' => $u->name, 'cargo' => $u->type,
+            'percentual' => $rates->has($u->id) ? (float) $rates[$u->id]->percentual : null,
+            'vigencia_inicio' => $rates[$u->id]->vigencia_inicio ?? null,
+            'vigencia_fim' => $rates[$u->id]->vigencia_fim ?? null,
+            'motivo' => $rates[$u->id]->motivo ?? null,
+        ])->values();
         return response()->json(['data' => [
             'policies' => $policies->map(fn ($p) => $this->present($p))->values(),
             'pipelines' => $pipelines, 'cargos' => $cargos->values(),
+            'settings' => [
+                'percentual_padrao' => (float) $s->percentual_padrao, 'base_calculo' => $s->base_calculo,
+                'pagamento' => $s->pagamento, 'forma_calculo' => $s->forma_calculo,
+            ],
+            'exceptions' => $exceptions,
         ]]);
+    }
+
+    /** Política Padrão da empresa. */
+    public function setSettings(Request $r): JsonResponse
+    {
+        $this->assertManage();
+        $v = $r->validate([
+            'percentual_padrao' => 'required|numeric|min:0|max:100',
+            'base_calculo' => 'required|in:valor,receita_liquida,margem',
+            'pagamento' => 'required|in:ganho,faturado,recebido',
+            'forma_calculo' => 'required|in:fixo,progressivo,faixa,margem',
+            'motivo' => 'nullable|string|max:200',
+        ]);
+        $s = $this->settings();
+        $anterior = (float) $s->percentual_padrao;
+        $s->update([
+            'percentual_padrao' => $v['percentual_padrao'], 'base_calculo' => $v['base_calculo'],
+            'pagamento' => $v['pagamento'], 'forma_calculo' => $v['forma_calculo'],
+        ]);
+        CrmCommissionRateHistory::create([
+            'user_id' => null, 'valor_anterior' => $anterior, 'valor_novo' => (float) $v['percentual_padrao'],
+            'campo' => 'politica_padrao', 'motivo' => $v['motivo'] ?? null,
+            'changed_by_id' => auth()->id(), 'ip' => $r->ip(), 'created_at' => now(),
+        ]);
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    /** Exceção de comissão por vendedor (com motivo → auditoria). */
+    public function setException(Request $r): JsonResponse
+    {
+        $this->assertManage();
+        $v = $r->validate([
+            'user_id' => 'required|exists:users,id',
+            'percentual' => 'required|numeric|min:0|max:100',
+            'vigencia_inicio' => 'nullable|date',
+            'vigencia_fim' => 'nullable|date',
+            'motivo' => 'required|string|max:200',
+        ]);
+        $existing = CrmCommissionRate::where('company_id', $this->companyId())->where('user_id', $v['user_id'])->first();
+        $anterior = $existing ? (float) $existing->percentual : null;
+        $rate = CrmCommissionRate::updateOrCreate(
+            ['company_id' => $this->companyId(), 'user_id' => $v['user_id']],
+            ['percentual' => $v['percentual'], 'vigencia_inicio' => $v['vigencia_inicio'] ?? null,
+             'vigencia_fim' => $v['vigencia_fim'] ?? null, 'motivo' => $v['motivo']]
+        );
+        CrmCommissionRateHistory::create([
+            'user_id' => $v['user_id'], 'valor_anterior' => $anterior, 'valor_novo' => (float) $v['percentual'],
+            'campo' => 'percentual', 'motivo' => $v['motivo'], 'changed_by_id' => auth()->id(),
+            'ip' => $r->ip(), 'created_at' => now(),
+        ]);
+        return response()->json(['data' => ['id' => $rate->id]]);
+    }
+
+    /** Remove a exceção (volta a usar a Política Padrão). */
+    public function deleteException(Request $r, User $user): JsonResponse
+    {
+        $this->assertManage();
+        $rate = CrmCommissionRate::where('company_id', $this->companyId())->where('user_id', $user->id)->first();
+        if ($rate) {
+            CrmCommissionRateHistory::create([
+                'user_id' => $user->id, 'valor_anterior' => (float) $rate->percentual, 'valor_novo' => null,
+                'campo' => 'percentual', 'motivo' => 'Removida (volta à política padrão)',
+                'changed_by_id' => auth()->id(), 'ip' => $r->ip(), 'created_at' => now(),
+            ]);
+            $rate->delete();
+        }
+        return response()->json(['data' => ['deleted' => true]]);
+    }
+
+    /** Auditoria de alterações de política/exceção. */
+    public function rateHistory(): JsonResponse
+    {
+        $this->assertManage();
+        $names = User::whereNotNull('name')->pluck('name', 'id');
+        $rows = CrmCommissionRateHistory::with('changedBy:id,name')->orderByDesc('created_at')->limit(200)->get()->map(fn ($h) => [
+            'id' => $h->id, 'alvo' => $h->user_id ? ($names[$h->user_id] ?? '—') : 'Política padrão',
+            'campo' => $h->campo, 'valor_anterior' => $h->valor_anterior !== null ? (float) $h->valor_anterior : null,
+            'valor_novo' => $h->valor_novo !== null ? (float) $h->valor_novo : null,
+            'motivo' => $h->motivo, 'por' => $h->changedBy?->name, 'ip' => $h->ip,
+            'em' => $h->created_at?->toDateTimeString(),
+        ]);
+        return response()->json(['data' => $rows->values()]);
     }
 
     private function validated(Request $r): array

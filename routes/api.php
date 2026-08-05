@@ -545,6 +545,11 @@ Route::prefix('v1')->group(function () {
         // Políticas de Comissão (regras condicionais de %) + simulador
         Route::get('/crm/comissoes/politicas', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'index']);
         Route::post('/crm/comissoes/politicas', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'store']);
+        // Literais ANTES do {policy} para não colidir com o wildcard
+        Route::put('/crm/comissoes/politicas/settings', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'setSettings']);
+        Route::put('/crm/comissoes/politicas/excecao', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'setException']);
+        Route::delete('/crm/comissoes/politicas/excecao/{user}', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'deleteException']);
+        Route::get('/crm/comissoes/politicas/historico', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'rateHistory']);
         Route::put('/crm/comissoes/politicas/{policy}', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'update']);
         Route::delete('/crm/comissoes/politicas/{policy}', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'destroy']);
         Route::post('/crm/comissoes/simular', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'simular']);
