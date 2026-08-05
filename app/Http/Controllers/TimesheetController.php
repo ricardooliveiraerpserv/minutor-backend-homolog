@@ -971,32 +971,20 @@ class TimesheetController extends Controller
             }
         }
 
-        // Bloquear apontamento em competência administrativamente fechada
+        // Bloqueio de competência (mês OU semana) — regra única no ClosingService, com o
+        // ESCOPO do dono das horas ($timesheetUserId): reabertura para esse usuário libera.
+        // Inclui o fechamento administrativo (isMonthClosed) + prazos + encerramentos manuais.
         $serviceDate = \Carbon\Carbon::parse($request->date);
-        $yearMonth = $serviceDate->format('Y-m');
-        $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
-        if ($fechamentoAdm?->isClosed()) {
-            // Reabertura mensal respeita o auto-fechamento (23:59 do dia da reabertura).
-            $projectHasOpenPeriod = \App\Models\ProjectOpenPeriod::where('project_id', $project->id)
-                ->where('year_month', $yearMonth)
-                ->whereNull('closed_at')
-                ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-                ->exists();
-
-            if (!$projectHasOpenPeriod) {
-                return response()->json([
-                    'code'          => 'PERIOD_CLOSED',
-                    'type'          => 'error',
-                    'message'       => 'Competência fechada',
-                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos.",
-                ], 422);
-            }
-        }
-
-        // Bloqueio SEMANAL (coexiste com o mensal): prazo = 2º dia útil da semana seguinte, 23:59 SP.
-        // Respeita reabertura semanal (global ou do projeto). Regra em ClosingService.
-        if (app(\App\Services\ClosingService::class)->isWeekClosed($request->date, (int) $project->id)) {
-            return response()->json([
+        $closing     = app(\App\Services\ClosingService::class);
+        $monthClosed = $closing->isMonthClosed($request->date, (int) $project->id, (int) $timesheetUserId);
+        $weekClosed  = $closing->isWeekClosed($request->date, (int) $project->id, (int) $timesheetUserId);
+        if ($monthClosed || $weekClosed) {
+            return response()->json($monthClosed ? [
+                'code'          => 'PERIOD_CLOSED',
+                'type'          => 'error',
+                'message'       => 'Competência fechada',
+                'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos. Solicite a reabertura no painel de Fechamento Semanal.",
+            ] : [
                 'code'          => 'WEEK_CLOSED',
                 'type'          => 'error',
                 'message'       => 'Semana fechada',
@@ -1594,23 +1582,26 @@ class TimesheetController extends Controller
             $serviceDate = \Carbon\Carbon::parse($validatedData['date']);
 
             // Bloquear edição de apontamento em competência administrativamente fechada
-            $yearMonth = $serviceDate->format('Y-m');
-            $fechamentoAdm = \App\Models\FechamentoAdministrativo::where('year_month', $yearMonth)->first();
-            if ($fechamentoAdm?->isClosed()) {
-                $editProject = $projectForValidation;
-                $projectHasOpenPeriod = \App\Models\ProjectOpenPeriod::where('project_id', $editProject->id)
-                    ->where('year_month', $yearMonth)
-                    ->whereNull('closed_at')
-                    ->exists();
-
-                if (!$projectHasOpenPeriod) {
-                    return response()->json([
-                        'code'          => 'PERIOD_CLOSED',
-                        'type'          => 'error',
-                        'message'       => 'Competência fechada',
-                        'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações.",
-                    ], 422);
-                }
+            // Bloqueio de competência (mês OU semana) na EDIÇÃO — mesma regra do store,
+            // no escopo do dono das horas ($timesheet->user_id).
+            $editClosing = app(\App\Services\ClosingService::class);
+            $editUid     = (int) $timesheet->user_id;
+            $editPid     = (int) $projectForValidation->id;
+            if ($editClosing->isMonthClosed($serviceDate->toDateString(), $editPid, $editUid)) {
+                return response()->json([
+                    'code'          => 'PERIOD_CLOSED',
+                    'type'          => 'error',
+                    'message'       => 'Competência fechada',
+                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações. Solicite a reabertura no painel de Fechamento Semanal.",
+                ], 422);
+            }
+            if ($editClosing->isWeekClosed($serviceDate->toDateString(), $editPid, $editUid)) {
+                return response()->json([
+                    'code'          => 'WEEK_CLOSED',
+                    'type'          => 'error',
+                    'message'       => 'Semana fechada',
+                    'detailMessage' => 'O prazo de digitação desta semana já venceu e não aceita alterações. Solicite a reabertura da semana.',
+                ], 422);
             }
 
             if (!$projectForValidation->isWithinTimesheetDeadline($serviceDate)) {

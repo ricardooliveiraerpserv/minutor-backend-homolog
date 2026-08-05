@@ -11,7 +11,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class WeekOpenPeriod extends Model
 {
-    protected $fillable = ['project_id', 'week_start', 'opened_by', 'closed_by', 'auto_close_at', 'closed_at'];
+    protected $fillable = ['project_id', 'user_id', 'week_start', 'opened_by', 'closed_by', 'auto_close_at', 'closed_at'];
 
     protected $casts = [
         'week_start'    => 'date',

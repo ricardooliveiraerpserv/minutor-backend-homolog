@@ -1377,7 +1377,7 @@ class MovideskService
 
             if ($data['is_internal_action'] ?? false) {
                 $timesheet->status = Timesheet::STATUS_INTERNAL;
-            } elseif (!$jaExistiu && app(\App\Services\ClosingService::class)->isPeriodClosed($data['date'], (int) $data['project_id'])) {
+            } elseif (!$jaExistiu && app(\App\Services\ClosingService::class)->isPeriodClosed($data['date'], (int) $data['project_id'], (int) ($data['user_id'] ?? 0) ?: null)) {
                 // Atraso pós-fechamento: apontamento NOVO chegou pela integração com data em
                 // competência (mês) OU semana já fechada. NÃO entra no período — aguarda
                 // aprovação na tela de Atrasos. Regra centralizada em ClosingService.
