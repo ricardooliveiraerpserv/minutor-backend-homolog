@@ -520,7 +520,15 @@ class FechamentoConsultorController extends Controller
         }
 
         // ── Apontamentos: tipo → cliente → linhas (8 colunas, espelha a tela) ──
-        $fmtTime = fn ($t) => !$t ? '—' : (str_contains((string) $t, 'T') ? substr((string) $t, 11, 5) : substr((string) $t, 0, 5));
+        // Início/Fim = hora HH:MM. start_time/end_time vêm do model como Carbon
+        // (cast datetime:H:i) → (string)$carbon = "Y-m-d H:i:s" (sem 'T'), então o
+        // substr(0,5) antigo pegava o ANO ("2026-"). Robusto p/ Carbon e qualquer string.
+        $fmtTime = function ($t) {
+            if (!$t) return '—';
+            if ($t instanceof \Carbon\CarbonInterface) return $t->format('H:i');
+            $s = str_replace('T', ' ', (string) $t);
+            return str_contains($s, ' ') ? substr($s, 11, 5) : substr($s, 0, 5);
+        };
         $grupos = [];
         if (!$soDespesa) {
             $byTipo = [];
