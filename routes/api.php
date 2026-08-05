@@ -533,6 +533,8 @@ Route::prefix('v1')->group(function () {
         // Financeiro CRM (Política Comercial): Metas, Comissões, Rentabilidade
         Route::get('/crm/metas/cockpit', [\App\Http\Controllers\CrmFinanceController::class, 'cockpit']);
         Route::post('/crm/metas/duplicate', [\App\Http\Controllers\CrmFinanceController::class, 'duplicateMetas']);
+        Route::get('/crm/metas/historico', [\App\Http\Controllers\CrmFinanceController::class, 'metasHistorico']);
+        Route::post('/crm/metas/importar', [\App\Http\Controllers\CrmFinanceController::class, 'importarMetas']);
         Route::get('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'metas']);
         Route::put('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'setMeta']);
         Route::get('/crm/comissoes/cockpit', [\App\Http\Controllers\CrmFinanceController::class, 'comissoesCockpit']);

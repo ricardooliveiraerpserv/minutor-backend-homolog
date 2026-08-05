@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\CrmOpportunity;
 use App\Models\CrmPipelineStage;
 use App\Models\CrmSalesTarget;
+use App\Models\CrmSalesTargetHistory;
 use App\Models\CrmSalesTeam;
 use App\Models\CrmCommissionRate;
 use App\Models\CrmCommission;
@@ -94,28 +95,57 @@ class CrmFinanceController extends Controller
     }
 
     // ── METAS ────────────────────────────────────────────────────────────────
+    public const META_TIPOS = ['receita', 'margem', 'quantidade', 'novos_clientes', 'receita_recorrente', 'receita_projeto', 'receita_sustentacao'];
+
+    /** Realizado conforme o tipo da meta (receita=R$, margem=R$-custo, quantidade/novos=contagem). */
+    private function realizadoTipo(Collection $won, string $tipo): float
+    {
+        return match ($tipo) {
+            'quantidade' => (float) $won->count(),
+            'novos_clientes' => (float) $won->where('tipo', 'novo_cliente')->count(),
+            'margem' => (float) $won->sum(fn ($o) => (float) $o->valor - (float) (($o->detalhes['custo'] ?? 0))),
+            default => (float) $won->sum('valor'), // receita e sub-tipos de receita
+        };
+    }
+
     public function metas(Request $r): JsonResponse
     {
         $u = $r->user();
         if ($u && !$u->isAdmin() && $this->resolver->scope($u, 'crm', 'goals.view', 'all') === 'none')
             abort(403, 'Seu perfil não permite ver metas.');
         $comp = $this->comp($r);
+        [$y, $m] = array_map('intval', explode('-', $comp));
+        $start = Carbon::create($y, $m, 1)->startOfMonth();
+        $end = (clone $start)->endOfMonth();
         $resp = $this->applyScope($this->responsaveis(), 'goals.view', $u);
-        $real = $this->realizadoPorResp($comp);
+        $ids = $resp->pluck('id');
         $goals = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
-        $rows = $resp->map(function ($x) use ($real, $goals) {
-            $meta = (float) ($goals[$x->id]->valor_meta ?? 0);
-            $realizado = (float) ($real[$x->id]->total ?? 0);
+        $won = $ids->isEmpty() ? collect() : CrmOpportunity::where('status', 'ganho')
+            ->whereBetween('fechamento_at', [$start, $end])->whereIn('responsavel_id', $ids)
+            ->get(['responsavel_id', 'valor', 'tipo', 'detalhes']);
+        $wonByResp = $won->groupBy('responsavel_id');
+        $ultima = $ids->isEmpty() ? collect() : CrmSalesTargetHistory::where('periodo', $comp)->whereIn('user_id', $ids)
+            ->selectRaw('user_id, max(created_at) as last')->groupBy('user_id')->pluck('last', 'user_id');
+
+        $rows = $resp->map(function ($x) use ($goals, $wonByResp, $ultima) {
+            $g = $goals[$x->id] ?? null;
+            $meta = (float) ($g->valor_meta ?? 0);
+            $tipo = $g->tipo ?? 'receita';
+            $realizado = $this->realizadoTipo($wonByResp->get($x->id) ?? collect(), $tipo);
             return [
-                'user_id' => $x->id, 'name' => $x->name,
-                'meta' => $meta, 'realizado' => $realizado,
-                'qtd' => (int) ($real[$x->id]->qtd ?? 0),
+                'user_id' => $x->id, 'name' => $x->name, 'meta' => $meta, 'tipo' => $tipo,
+                'observacao' => $g->observacao ?? null, 'realizado' => $realizado,
+                'qtd' => ($wonByResp->get($x->id) ?? collect())->count(),
                 'pct' => $meta > 0 ? round($realizado / $meta * 100, 1) : null,
+                'ultima_alteracao' => $ultima->get($x->id) ? Carbon::parse($ultima->get($x->id))->toDateTimeString() : null,
             ];
         })->values();
+        // Totais só de metas de receita (não misturar R$ com quantidade)
+        $recTipos = ['receita', 'receita_recorrente', 'receita_projeto', 'receita_sustentacao'];
+        $recRows = $rows->whereIn('tipo', $recTipos);
         return response()->json(['data' => [
             'competencia' => $comp, 'can_edit' => $this->canEditScope($u, 'goals.view'),
-            'total_meta' => (float) $rows->sum('meta'), 'total_realizado' => (float) $rows->sum('realizado'),
+            'total_meta' => (float) $recRows->sum('meta'), 'total_realizado' => (float) $recRows->sum('realizado'),
             'rows' => $rows,
         ]]);
     }
@@ -127,13 +157,83 @@ class CrmFinanceController extends Controller
             'user_id' => 'required|exists:users,id',
             'competencia' => 'required|regex:/^\d{4}-\d{2}$/',
             'valor_meta' => 'required|numeric|min:0',
+            'tipo' => 'nullable|in:' . implode(',', self::META_TIPOS),
+            'observacao' => 'nullable|string|max:500',
+            'modo' => 'nullable|in:substituir,somar',
+            'replicar_meses' => 'nullable|integer|min:0|max:11',
         ]);
-        // Reusa a meta canônica (crm_sales_targets). company_id é carimbado pelo BelongsToCompany.
-        $g = CrmSalesTarget::updateOrCreate(
-            ['periodo' => $v['competencia'], 'user_id' => $v['user_id']],
-            ['valor_meta' => $v['valor_meta'], 'created_by_id' => auth()->id()]
-        );
-        return response()->json(['data' => $g]);
+        $tipo = $v['tipo'] ?? 'receita';
+        $modo = $v['modo'] ?? 'substituir';
+        $meses = (int) ($v['replicar_meses'] ?? 0);
+        $saved = [];
+        for ($k = 0; $k <= $meses; $k++) {
+            $periodo = Carbon::createFromFormat('Y-m', $v['competencia'])->startOfMonth()->addMonthsNoOverflow($k)->format('Y-m');
+            $existing = CrmSalesTarget::where('periodo', $periodo)->where('user_id', $v['user_id'])->first();
+            $anterior = $existing ? (float) $existing->valor_meta : null;
+            $novo = $modo === 'somar' ? (($anterior ?? 0) + (float) $v['valor_meta']) : (float) $v['valor_meta'];
+            $target = CrmSalesTarget::updateOrCreate(
+                ['periodo' => $periodo, 'user_id' => $v['user_id']],
+                ['valor_meta' => $novo, 'tipo' => $tipo, 'observacao' => $v['observacao'] ?? null, 'created_by_id' => auth()->id()]
+            );
+            CrmSalesTargetHistory::create([
+                'target_id' => $target->id, 'user_id' => $v['user_id'], 'periodo' => $periodo, 'tipo' => $tipo,
+                'valor_anterior' => $anterior, 'valor_novo' => $novo, 'observacao' => $v['observacao'] ?? null,
+                'changed_by_id' => auth()->id(), 'created_at' => now(),
+            ]);
+            $saved[] = $periodo;
+        }
+        return response()->json(['data' => ['periodos' => $saved]]);
+    }
+
+    /** Histórico de alterações de meta (auditoria). */
+    public function metasHistorico(Request $r): JsonResponse
+    {
+        $u = $r->user();
+        if ($u && !$u->isAdmin() && $this->resolver->scope($u, 'crm', 'goals.view', 'all') === 'none')
+            abort(403, 'Seu perfil não permite ver metas.');
+        $resp = $this->applyScope($this->responsaveis(), 'goals.view', $u);
+        $ids = $resp->pluck('id');
+        $names = $resp->pluck('name', 'id');
+        $q = CrmSalesTargetHistory::whereIn('user_id', $ids)->with('changedBy:id,name')->orderByDesc('created_at')->limit(200);
+        if ($uid = (int) $r->query('user_id')) $q->where('user_id', $uid);
+        if ($p = $r->query('competencia')) $q->where('periodo', $p);
+        $rows = $q->get()->map(fn ($h) => [
+            'id' => $h->id, 'responsavel' => $names[$h->user_id] ?? '—', 'periodo' => $h->periodo, 'tipo' => $h->tipo,
+            'valor_anterior' => $h->valor_anterior !== null ? (float) $h->valor_anterior : null,
+            'valor_novo' => (float) $h->valor_novo, 'observacao' => $h->observacao,
+            'por' => $h->changedBy?->name, 'em' => $h->created_at?->toDateTimeString(),
+        ]);
+        return response()->json(['data' => $rows->values()]);
+    }
+
+    /** Importação em massa de metas (rows: [{user_id, valor_meta}]). */
+    public function importarMetas(Request $r): JsonResponse
+    {
+        abort_unless($this->canEditScope($r->user(), 'goals.view'), 403, 'Sem permissão para definir metas.');
+        $v = $r->validate([
+            'competencia' => 'required|regex:/^\d{4}-\d{2}$/',
+            'tipo' => 'nullable|in:' . implode(',', self::META_TIPOS),
+            'rows' => 'required|array|min:1',
+            'rows.*.user_id' => 'required|integer|exists:users,id',
+            'rows.*.valor_meta' => 'required|numeric|min:0',
+        ]);
+        $tipo = $v['tipo'] ?? 'receita';
+        $n = 0;
+        foreach ($v['rows'] as $row) {
+            $existing = CrmSalesTarget::where('periodo', $v['competencia'])->where('user_id', $row['user_id'])->first();
+            $anterior = $existing ? (float) $existing->valor_meta : null;
+            $t = CrmSalesTarget::updateOrCreate(
+                ['periodo' => $v['competencia'], 'user_id' => $row['user_id']],
+                ['valor_meta' => $row['valor_meta'], 'tipo' => $tipo, 'created_by_id' => auth()->id()]
+            );
+            CrmSalesTargetHistory::create([
+                'target_id' => $t->id, 'user_id' => $row['user_id'], 'periodo' => $v['competencia'], 'tipo' => $tipo,
+                'valor_anterior' => $anterior, 'valor_novo' => (float) $row['valor_meta'], 'observacao' => 'Importação',
+                'changed_by_id' => auth()->id(), 'created_at' => now(),
+            ]);
+            $n++;
+        }
+        return response()->json(['data' => ['importadas' => $n]]);
     }
 
     // ── COCKPIT (visão executiva de Metas) ────────────────────────────────────

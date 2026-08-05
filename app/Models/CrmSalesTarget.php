@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class CrmSalesTarget extends Model
 {
     use \App\Models\Concerns\BelongsToCompany;
-    protected $fillable = ['periodo', 'user_id', 'valor_meta', 'created_by_id'];
+    protected $fillable = ['periodo', 'user_id', 'valor_meta', 'tipo', 'observacao', 'created_by_id'];
     protected $casts = ['valor_meta' => 'decimal:2'];
 
     public function user(): BelongsTo { return $this->belongsTo(User::class, 'user_id'); }
