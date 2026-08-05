@@ -531,8 +531,11 @@ Route::prefix('v1')->group(function () {
         Route::put('/policies/{module}/users/{user}/overrides', [\App\Http\Controllers\PolicyController::class, 'setOverrides']);
         Route::get('/me/policies', [\App\Http\Controllers\PolicyController::class, 'me']);
         // Financeiro CRM (Política Comercial): Metas, Comissões, Rentabilidade
+        Route::get('/crm/metas/cockpit', [\App\Http\Controllers\CrmFinanceController::class, 'cockpit']);
+        Route::post('/crm/metas/duplicate', [\App\Http\Controllers\CrmFinanceController::class, 'duplicateMetas']);
         Route::get('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'metas']);
         Route::put('/crm/metas', [\App\Http\Controllers\CrmFinanceController::class, 'setMeta']);
+        Route::get('/crm/comissoes/cockpit', [\App\Http\Controllers\CrmFinanceController::class, 'comissoesCockpit']);
         Route::get('/crm/comissoes', [\App\Http\Controllers\CrmFinanceController::class, 'comissoes']);
         Route::put('/crm/comissoes/rate', [\App\Http\Controllers\CrmFinanceController::class, 'setRate']);
         Route::get('/crm/rentabilidade', [\App\Http\Controllers\CrmFinanceController::class, 'rentabilidade']);
