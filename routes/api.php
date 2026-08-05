@@ -522,6 +522,14 @@ Route::prefix('v1')->group(function () {
         Route::delete('/crm/stage-automations/{automation}', [\App\Http\Controllers\CrmStageAutomationController::class, 'destroy']);
         Route::get('/crm/users', [\App\Http\Controllers\CrmOpportunityController::class, 'crmUsers']);
         Route::get('/crm/responsaveis', [\App\Http\Controllers\CrmResponsavelController::class, 'index']);
+        // Motor de Políticas de Acesso (genérico; CRM = Política Comercial)
+        Route::get('/policies/{module}/catalog', [\App\Http\Controllers\PolicyController::class, 'catalog']);
+        Route::get('/policies/{module}/roles', [\App\Http\Controllers\PolicyController::class, 'roles']);
+        Route::put('/policies/{module}/roles/{role}', [\App\Http\Controllers\PolicyController::class, 'updateRole']);
+        Route::get('/policies/{module}/users/{user}', [\App\Http\Controllers\PolicyController::class, 'userShow']);
+        Route::put('/policies/{module}/users/{user}/assignment', [\App\Http\Controllers\PolicyController::class, 'setAssignment']);
+        Route::put('/policies/{module}/users/{user}/overrides', [\App\Http\Controllers\PolicyController::class, 'setOverrides']);
+        Route::get('/me/policies', [\App\Http\Controllers\PolicyController::class, 'me']);
         Route::put('/crm/responsaveis/{user}', [\App\Http\Controllers\CrmResponsavelController::class, 'update']);
         Route::get('/crm/opportunities/kanban', [\App\Http\Controllers\CrmOpportunityController::class, 'kanban']);
         Route::get('/crm/opportunities/export', [\App\Http\Controllers\CrmOpportunityController::class, 'export']);
