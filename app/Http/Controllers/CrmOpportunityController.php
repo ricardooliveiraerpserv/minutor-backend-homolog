@@ -44,10 +44,26 @@ class CrmOpportunityController extends Controller
         ]);
     }
 
+    /**
+     * Política Comercial — escopo de visualização de oportunidades (opp.view).
+     * Admin faz bypass; 'own' restringe ao responsável; 'none' zera; 'all/team/assigned'
+     * ficam sem restrição nesta fase (equipe de vendas ainda não materializada → erra aberto).
+     * Inerte até um usuário não-admin receber um perfil com escopo restritivo.
+     */
+    private function applyOppScope($query)
+    {
+        $u = auth()->user();
+        if (!$u || $u->isAdmin()) return $query;
+        $scope = app(\App\Services\PolicyResolver::class)->scope($u, 'crm', 'opp.view', 'all');
+        if ($scope === 'own')  return $query->where('responsavel_id', $u->id);
+        if ($scope === 'none') return $query->whereRaw('1 = 0');
+        return $query;
+    }
+
     /** Filtros compartilhados pela lista analítica e pelo export (Item 2). */
     private function filtered(Request $request)
     {
-        return $this->withRels(CrmOpportunity::query())
+        return $this->applyOppScope($this->withRels(CrmOpportunity::query()))
             ->when($request->filled('pipeline_id'), fn ($x) => $x->where('pipeline_id', $request->pipeline_id))
             ->when($request->filled('stage_id'), fn ($x) => $x->where('stage_id', $request->stage_id))
             ->when($request->filled('status'), fn ($x) => $x->where('status', $request->status))
@@ -84,7 +100,7 @@ class CrmOpportunityController extends Controller
             return response()->json(['message' => 'Sem acesso a este pipeline.'], 403);
         }
         $stages = CrmPipelineStage::where('pipeline_id', $pipelineId)->orderBy('ordem')->get();
-        $opps = $this->withRels(CrmOpportunity::where('pipeline_id', $pipelineId))
+        $opps = $this->applyOppScope($this->withRels(CrmOpportunity::where('pipeline_id', $pipelineId)))
             ->when($request->filled('responsavel_id'), fn ($q) => $q->where('responsavel_id', $request->responsavel_id))
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
             ->orderByDesc('updated_at')->get();
