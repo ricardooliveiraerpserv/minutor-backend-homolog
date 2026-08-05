@@ -493,16 +493,27 @@ class UserController extends Controller
                 $user->syncDashboardTypes($dashboardTypes);
             }
 
-            // Enviar email de boas-vindas com a senha (definida pelo admin ou gerada)
-            $user->notify(new WelcomeNotification($temporaryPassword));
-
             DB::commit();
 
             $user->load(['customer']);
 
+            // E-mail de boas-vindas é NÃO-FATAL: SMTP indisponível não pode derrubar a
+            // criação do usuário (senão o admin fica travado). Falhou → loga e segue;
+            // o admin pode usar "Reenviar" depois.
+            $welcomeSent = true;
+            try {
+                $user->notify(new WelcomeNotification($temporaryPassword));
+            } catch (\Throwable $mailEx) {
+                $welcomeSent = false;
+                \Log::warning('⚠️ [USER CREATED] Falha ao enviar e-mail de boas-vindas (usuário criado mesmo assim)', [
+                    'user_id' => $user->id, 'error' => $mailEx->getMessage(),
+                ]);
+            }
+
             // Adicionar tipos de dashboard permitidos na resposta
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            $userData['welcome_email_sent'] = $welcomeSent;
 
             \Log::info('✅ [USER CREATED] Usuário criado com sucesso:', [
                 'user_id' => $user->id,
@@ -510,7 +521,7 @@ class UserController extends Controller
                 'customer_id' => $user->customer_id,
                 'dashboard_types' => $userData['dashboard_types'],
                 'password_source' => $adminProvidedPassword ? 'admin_defined' : 'auto_generated',
-                'welcome_email_sent' => true,
+                'welcome_email_sent' => $welcomeSent,
             ]);
 
             return response()->json($userData, 201);
