@@ -32,12 +32,11 @@ class CrmFinanceController extends Controller
         return preg_match('/^\d{4}-\d{2}$/', $c) ? $c : now()->format('Y-m');
     }
 
-    /** Responsáveis internos (mesma exclusão de cliente/parceiro da tela de Responsáveis). */
+    /** Somente quem foi marcado como Responsável comercial (flag is_crm_responsavel). */
     private function responsaveis(): Collection
     {
         return User::query()
-            ->where(fn ($q) => $q->whereNull('type')
-                ->orWhere(fn ($w) => $w->where('type', '!=', 'cliente')->where('type', 'not like', 'parceiro%')))
+            ->where('is_crm_responsavel', true)
             ->orderBy('name')->get(['id', 'name']);
     }
 
