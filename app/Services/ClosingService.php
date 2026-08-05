@@ -3,21 +3,23 @@
 namespace App\Services;
 
 use App\Models\ClosingLog;
+use App\Models\CompetenceClosure;
+use App\Models\FechamentoAdministrativo;
 use App\Models\Holiday;
 use App\Models\ProjectOpenPeriod;
 use App\Models\User;
 use App\Models\WeekOpenPeriod;
 use Carbon\Carbon;
-use Illuminate\Support\Facades\DB;
 
 /**
- * Fonte ÚNICA das regras de fechamento de horas (mensal + semanal).
+ * Fonte ÚNICA das regras de abertura/fechamento de horas (mensal + semanal).
  *
- * MENSAL: prazo = 2º dia útil do mês SEGUINTE, 23:59 SP (mantém a regra existente).
- * SEMANAL: semana = segunda→domingo; prazo = 2º dia útil da semana SEGUINTE, 23:59 SP.
- * Ambas COEXISTEM (não se sobrepõem): um apontamento é bloqueado/atrasado se QUALQUER
- * uma das duas estiver fechada. Reabertura (mês/semana, global/projeto) auto-fecha às
- * 23:59 do dia da reabertura.
+ * MENSAL: prazo = 2º dia útil do mês SEGUINTE, 23:59 SP. SEMANAL: semana = segunda→domingo;
+ * prazo = 2º dia útil da semana SEGUINTE, 23:59 SP. COEXISTEM: bloqueia se mês OU semana fechada.
+ *
+ * Reabertura/encerramento têm ESCOPO: projeto (null=global) + usuário (null=todos). Reabertura
+ * auto-fecha às 23:59 do dia. Encerramento (CompetenceClosure) fecha o período ANTES do prazo.
+ * Reabrir o MÊS libera também as SEMANAS do mês (mesmo escopo/usuário).
  */
 class ClosingService
 {
@@ -25,13 +27,17 @@ class ClosingService
 
     // ── Datas / prazos ────────────────────────────────────────────────────────
 
-    /** Segunda-feira (00:00 SP) da semana da data informada. */
     public function weekStart(string $date): Carbon
     {
         return Carbon::parse($date, self::TZ)->startOfDay()->startOfWeek(Carbon::MONDAY);
     }
 
-    /** 2º dia útil (pula fim de semana + feriados ativos) a partir de $from, às 23:59:59 SP. */
+    /** Mês (Y-m) ao qual a semana pertence — o da SEGUNDA-feira. */
+    public function weekMonth(Carbon $weekStart): string
+    {
+        return $weekStart->format('Y-m');
+    }
+
     private function secondBusinessDayDeadline(Carbon $from): Carbon
     {
         $cursor   = $from->copy()->startOfDay();
@@ -46,7 +52,6 @@ class ClosingService
         return $cursor->setTime(23, 59, 59);
     }
 
-    /** Feriados ativos no intervalo [$from - 5d, $from + 15d] (cobre a busca do 2º dia útil). */
     private function holidaysAround(Carbon $from): array
     {
         return Holiday::whereBetween('date', [$from->copy()->subDays(5)->toDateString(), $from->copy()->addDays(15)->toDateString()])
@@ -54,7 +59,6 @@ class ClosingService
             ->map(fn ($d) => Carbon::parse($d)->toDateString())->all();
     }
 
-    /** Prazo mensal: 2º dia útil do mês SEGUINTE a $ym, 23:59 SP. */
     public function monthDeadline(string $ym): Carbon
     {
         [$y, $m] = array_map('intval', explode('-', $ym));
@@ -62,7 +66,6 @@ class ClosingService
         return $this->secondBusinessDayDeadline($next);
     }
 
-    /** Prazo semanal: 2º dia útil da semana SEGUINTE (segunda seguinte), 23:59 SP. */
     public function weekDeadline(Carbon $weekStart): Carbon
     {
         return $this->secondBusinessDayDeadline($weekStart->copy()->addWeek());
@@ -75,66 +78,178 @@ class ClosingService
         return $at ? Carbon::parse($at) : Carbon::now(self::TZ);
     }
 
-    // ── Está fechado? ─────────────────────────────────────────────────────────
+    // ── Escopo (projeto null=global; usuário null=todos) ──────────────────────
 
-    /** MENSAL: prazo venceu e sem reabertura ativa (mês) do projeto. */
-    public function isMonthClosed(string $date, int $projectId): bool
+    private function scoped($query, ?int $projectId, ?int $userId)
     {
-        $ym = Carbon::parse($date, self::TZ)->format('Y-m');
-        if (Carbon::now(self::TZ)->lte($this->monthDeadline($ym))) return false;
-
-        // auto_close_at é gravado como instante UTC → comparar com now() (tz do app = UTC).
-        $reaberto = ProjectOpenPeriod::where('project_id', $projectId)
-            ->where('year_month', $ym)
-            ->whereNull('closed_at')
-            ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->exists();
-        return !$reaberto;
+        return $query
+            ->where(fn ($q) => $q->whereNull('project_id')->orWhere('project_id', $projectId))
+            ->where(fn ($q) => $q->whereNull('user_id')->orWhere('user_id', $userId));
     }
 
-    /** SEMANAL: prazo venceu (e >= ativação) e sem reabertura ativa (global OU do projeto). */
-    public function isWeekClosed(string $date, int $projectId): bool
+    private function activeMonthReopen(string $ym, ?int $projectId, ?int $userId): bool
+    {
+        return $this->scoped(
+            ProjectOpenPeriod::where('year_month', $ym)->whereNull('closed_at')
+                ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now())),
+            $projectId, $userId
+        )->exists();
+    }
+
+    private function activeWeekReopen(string $weekStartDate, ?int $projectId, ?int $userId): bool
+    {
+        return $this->scoped(
+            WeekOpenPeriod::where('week_start', $weekStartDate)->whereNull('closed_at')
+                ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now())),
+            $projectId, $userId
+        )->exists();
+    }
+
+    private function hasClosure(string $kind, string $key, ?int $projectId, ?int $userId): bool
+    {
+        return $this->scoped(
+            CompetenceClosure::where('period_kind', $kind)->where('period_key', $key),
+            $projectId, $userId
+        )->exists();
+    }
+
+    private function adminMonthClosed(string $ym): bool
+    {
+        return (bool) FechamentoAdministrativo::where('year_month', $ym)->first()?->isClosed();
+    }
+
+    // ── Está fechado? (com escopo de usuário) ─────────────────────────────────
+
+    public function isMonthClosed(string $date, int $projectId, ?int $userId = null): bool
+    {
+        $ym = Carbon::parse($date, self::TZ)->format('Y-m');
+        $closedReason = Carbon::now(self::TZ)->gt($this->monthDeadline($ym))
+            || $this->adminMonthClosed($ym)
+            || $this->hasClosure('month', $ym, $projectId, $userId);
+        if (!$closedReason) return false;
+        return !$this->activeMonthReopen($ym, $projectId, $userId);
+    }
+
+    public function isWeekClosed(string $date, int $projectId, ?int $userId = null): bool
     {
         $weekStart = $this->weekStart($date);
         $deadline  = $this->weekDeadline($weekStart);
         $now       = Carbon::now(self::TZ);
+        $wsDate    = $weekStart->toDateString();
 
-        if ($now->lte($deadline)) return false;                 // dentro do prazo
-        if ($deadline->lt($this->weeklyActivatedAt())) return false; // grandfather (daqui pra frente)
+        $deadlinePassed = $now->gt($deadline) && $deadline->gte($this->weeklyActivatedAt());
+        $closedReason   = $deadlinePassed || $this->hasClosure('week', $wsDate, $projectId, $userId);
+        if (!$closedReason) return false;
 
-        $reaberto = WeekOpenPeriod::where('week_start', $weekStart->toDateString())
-            ->where(fn ($q) => $q->whereNull('project_id')->orWhere('project_id', $projectId)) // global OU do projeto
-            ->whereNull('closed_at')
-            ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now())) // UTC
-            ->exists();
-        return !$reaberto;
+        // Reabertura da SEMANA ou reabertura do MÊS (libera o mês inteiro) abrem a semana.
+        return !($this->activeWeekReopen($wsDate, $projectId, $userId)
+            || $this->activeMonthReopen($this->weekMonth($weekStart), $projectId, $userId));
     }
 
-    /** Bloqueio COMBINADO usado na integração e no lançamento manual. */
-    public function isPeriodClosed(string $date, int $projectId): bool
+    /** Bloqueio COMBINADO (integração + lançamento manual). $userId = quem apontou. */
+    public function isPeriodClosed(string $date, int $projectId, ?int $userId = null): bool
     {
-        return $this->isMonthClosed($date, $projectId) || $this->isWeekClosed($date, $projectId);
+        return $this->isMonthClosed($date, $projectId, $userId) || $this->isWeekClosed($date, $projectId, $userId);
     }
 
-    // ── Reabertura ────────────────────────────────────────────────────────────
+    // ── Status para o painel (visão GLOBAL: project null + user null) ─────────
 
-    /** Instante (UTC) equivalente às 23:59:59 SP de HOJE — fim automático da reabertura. */
+    /** @return array{status:string, auto_close_at:?string, deadline:string} */
+    public function weekStatusGlobal(Carbon $weekStart): array
+    {
+        $ws       = $weekStart->toDateString();
+        $deadline = $this->weekDeadline($weekStart);
+        $past     = Carbon::now(self::TZ)->gt($deadline) && $deadline->gte($this->weeklyActivatedAt());
+
+        $reopen = WeekOpenPeriod::where('week_start', $ws)->whereNull('project_id')->whereNull('user_id')
+            ->whereNull('closed_at')->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))->first();
+        $monthReopen = ProjectOpenPeriod::where('year_month', $this->weekMonth($weekStart))->whereNull('project_id')->whereNull('user_id')
+            ->whereNull('closed_at')->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))->first();
+        $closure = CompetenceClosure::where('period_kind', 'week')->where('period_key', $ws)->whereNull('project_id')->whereNull('user_id')->exists();
+
+        $active = $reopen ?: $monthReopen;
+        $status = $active ? 'reaberta' : (($past || $closure) ? 'fechada' : 'aberta');
+        return ['status' => $status, 'auto_close_at' => optional($active?->auto_close_at)->toIso8601String(), 'deadline' => $deadline->toIso8601String()];
+    }
+
+    /** @return array{status:string, auto_close_at:?string, deadline:string} */
+    public function monthStatusGlobal(string $ym): array
+    {
+        $deadline = $this->monthDeadline($ym);
+        $past     = Carbon::now(self::TZ)->gt($deadline);
+        $reopen   = ProjectOpenPeriod::where('year_month', $ym)->whereNull('project_id')->whereNull('user_id')
+            ->whereNull('closed_at')->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))->first();
+        $closure  = CompetenceClosure::where('period_kind', 'month')->where('period_key', $ym)->whereNull('project_id')->whereNull('user_id')->exists();
+
+        $status = $reopen ? 'reaberta' : (($past || $this->adminMonthClosed($ym) || $closure) ? 'fechada' : 'aberta');
+        return ['status' => $status, 'auto_close_at' => optional($reopen?->auto_close_at)->toIso8601String(), 'deadline' => $deadline->toIso8601String()];
+    }
+
+    // ── Reabertura / Encerramento ─────────────────────────────────────────────
+
     private function autoCloseToday(): Carbon
     {
         return Carbon::now(self::TZ)->setTime(23, 59, 59)->setTimezone('UTC');
     }
 
-    /** Reabre a semana (global se $projectId null; senão só do projeto) até 23:59 de hoje. */
-    public function reopenWeek(Carbon $weekStart, ?int $projectId, User $user): WeekOpenPeriod
+    private function scopeNote(?int $projectId, ?int $userId): string
+    {
+        $parts = [];
+        $parts[] = $projectId ? "projeto {$projectId}" : 'global';
+        if ($userId) $parts[] = "usuário {$userId}";
+        return implode(', ', $parts);
+    }
+
+    public function reopenWeek(Carbon $weekStart, ?int $projectId, ?int $userId, User $user): WeekOpenPeriod
     {
         $period = WeekOpenPeriod::updateOrCreate(
-            ['project_id' => $projectId, 'week_start' => $weekStart->toDateString()],
+            ['project_id' => $projectId, 'user_id' => $userId, 'week_start' => $weekStart->toDateString()],
             ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null, 'auto_close_at' => $this->autoCloseToday()]
         );
-        $this->log('week_reopen', 'week', $this->weekDeadline($weekStart)->toDateString(), $projectId, $user->id,
-            ($projectId ? "Semana reaberta (projeto {$projectId})" : 'Semana reaberta (global)') . ' até 23:59');
+        $this->log('week_reopen', 'week', $weekStart->toDateString(), $projectId, $user->id,
+            'Semana reaberta (' . $this->scopeNote($projectId, $userId) . ') até 23:59');
         return $period;
     }
+
+    public function reopenMonth(string $ym, ?int $projectId, ?int $userId, User $user): ProjectOpenPeriod
+    {
+        $period = ProjectOpenPeriod::updateOrCreate(
+            ['project_id' => $projectId, 'user_id' => $userId, 'year_month' => $ym],
+            ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null, 'auto_close_at' => $this->autoCloseToday()]
+        );
+        $this->log('month_reopen', 'month', $ym, $projectId, $user->id,
+            'Competência reaberta (' . $this->scopeNote($projectId, $userId) . ') até 23:59');
+        return $period;
+    }
+
+    /** Encerra a SEMANA já (fecha reabertura ativa do escopo + grava closure). */
+    public function closeWeek(Carbon $weekStart, ?int $projectId, ?int $userId, User $user): void
+    {
+        $ws = $weekStart->toDateString();
+        $this->scoped(WeekOpenPeriod::where('week_start', $ws)->whereNull('closed_at'), $projectId, $userId)
+            ->update(['closed_at' => now(), 'closed_by' => $user->id]);
+        CompetenceClosure::updateOrCreate(
+            ['period_kind' => 'week', 'period_key' => $ws, 'project_id' => $projectId, 'user_id' => $userId],
+            ['closed_by' => $user->id, 'closed_at' => now()]
+        );
+        $this->log('week_manual_close', 'week', $ws, $projectId, $user->id,
+            'Semana encerrada (' . $this->scopeNote($projectId, $userId) . ')');
+    }
+
+    /** Encerra o MÊS já (fecha reabertura ativa do escopo + grava closure). */
+    public function closeMonth(string $ym, ?int $projectId, ?int $userId, User $user): void
+    {
+        $this->scoped(ProjectOpenPeriod::where('year_month', $ym)->whereNull('closed_at'), $projectId, $userId)
+            ->update(['closed_at' => now(), 'closed_by' => $user->id]);
+        CompetenceClosure::updateOrCreate(
+            ['period_kind' => 'month', 'period_key' => $ym, 'project_id' => $projectId, 'user_id' => $userId],
+            ['closed_by' => $user->id, 'closed_at' => now()]
+        );
+        $this->log('month_manual_close', 'month', $ym, $projectId, $user->id,
+            'Competência encerrada (' . $this->scopeNote($projectId, $userId) . ')');
+    }
+
+    // ── Log ───────────────────────────────────────────────────────────────────
 
     public function log(string $event, string $kind, string $key, ?int $projectId, ?int $userId, ?string $note = null): void
     {
