@@ -248,3 +248,13 @@ Schedule::command('tasks:notify-overdue')
   ->name('tasks-notify-overdue')
   ->description('Notifica o responsável sobre tarefas atrasadas')
   ->withoutOverlapping();
+
+// Log de encerramentos (fechamento SEMANAL por prazo + auto-fechamento de reaberturas
+// semana/mês). Idempotente — só registra os eventos p/ acompanhamento; o bloqueio em si
+// é lazy (compara now vs prazo/auto_close_at) e não depende deste comando.
+Schedule::command('closing:log')
+  ->hourly()
+  ->name('closing-log')
+  ->description('Registra encerramentos semanais e auto-fechamentos de reabertura no closing_logs')
+  ->withoutOverlapping()
+  ->runInBackground();

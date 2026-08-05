@@ -3729,10 +3729,13 @@ class ProjectController extends Controller
             return response()->json(['message' => 'Só é possível abrir meses anteriores ao mês atual.'], 422);
         }
 
+        // Reabertura mensal auto-fecha às 23:59 SP do dia da reabertura (instante UTC).
+        $autoClose = \Carbon\Carbon::now('America/Sao_Paulo')->setTime(23, 59, 59)->setTimezone('UTC');
         $period = \App\Models\ProjectOpenPeriod::updateOrCreate(
             ['project_id' => $project->id, 'year_month' => $data['year_month']],
-            ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null]
+            ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null, 'auto_close_at' => $autoClose]
         );
+        app(\App\Services\ClosingService::class)->log('month_reopen', 'month', $data['year_month'], $project->id, $user->id, 'Competência reaberta até 23:59');
 
         return response()->json(['data' => $period], 201);
     }
