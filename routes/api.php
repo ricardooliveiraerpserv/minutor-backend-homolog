@@ -539,6 +539,12 @@ Route::prefix('v1')->group(function () {
         Route::post('/crm/comissoes/apurar', [\App\Http\Controllers\CrmFinanceController::class, 'apurar']);
         Route::get('/crm/comissoes/lancamentos', [\App\Http\Controllers\CrmFinanceController::class, 'lancamentos']);
         Route::post('/crm/comissoes/lancamentos/{commission}/status', [\App\Http\Controllers\CrmFinanceController::class, 'commissionStatus']);
+        // Políticas de Comissão (regras condicionais de %) + simulador
+        Route::get('/crm/comissoes/politicas', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'index']);
+        Route::post('/crm/comissoes/politicas', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'store']);
+        Route::put('/crm/comissoes/politicas/{policy}', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'update']);
+        Route::delete('/crm/comissoes/politicas/{policy}', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'destroy']);
+        Route::post('/crm/comissoes/simular', [\App\Http\Controllers\CrmCommissionPolicyController::class, 'simular']);
         // Equipes de Vendas (materializa o escopo "Equipe")
         Route::get('/crm/sales-teams', [\App\Http\Controllers\CrmSalesTeamController::class, 'index']);
         Route::post('/crm/sales-teams', [\App\Http\Controllers\CrmSalesTeamController::class, 'store']);

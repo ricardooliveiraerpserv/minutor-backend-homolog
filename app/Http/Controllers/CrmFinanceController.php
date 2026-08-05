@@ -8,6 +8,7 @@ use App\Models\CrmSalesTarget;
 use App\Models\CrmSalesTeam;
 use App\Models\CrmCommissionRate;
 use App\Models\CrmCommission;
+use App\Models\CrmCommissionPolicy;
 use App\Models\User;
 use App\Services\PolicyResolver;
 use Illuminate\Http\JsonResponse;
@@ -470,13 +471,17 @@ class CrmFinanceController extends Controller
 
         $won = $ids->isEmpty() ? collect() : CrmOpportunity::where('status', 'ganho')
             ->whereBetween('fechamento_at', [$start, $end])->whereIn('responsavel_id', $ids)
-            ->get(['id', 'responsavel_id', 'valor']);
+            ->get(['id', 'responsavel_id', 'valor', 'pipeline_id', 'detalhes']);
         $existing = CrmCommission::whereIn('opportunity_id', $won->pluck('id'))->pluck('opportunity_id')->flip();
+        $cargos = User::whereIn('id', $won->pluck('responsavel_id')->filter()->unique())->pluck('type', 'id');
         $n = 0;
         foreach ($won as $o) {
             if ($existing->has($o->id) || !$o->responsavel_id) continue;
-            $pct = $rateOf($o->responsavel_id);
             $base = (float) $o->valor;
+            $custo = (float) (($o->detalhes['custo'] ?? 0));
+            $margem = $base > 0 ? round(($base - $custo) / $base * 100, 2) : null;
+            // Política de comissão resolve o %; sem regra → cai no % do vendedor/padrão.
+            [$pct] = CrmCommissionPolicy::resolve($cargos[$o->responsavel_id] ?? null, $o->pipeline_id, $base, $margem, $rateOf($o->responsavel_id));
             CrmCommission::create([
                 'opportunity_id' => $o->id, 'user_id' => $o->responsavel_id, 'competencia' => $comp,
                 'base' => $base, 'percentual' => $pct, 'valor' => round($base * $pct / 100, 2),
