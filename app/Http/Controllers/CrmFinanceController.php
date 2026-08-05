@@ -39,7 +39,7 @@ class CrmFinanceController extends Controller
     {
         return User::query()
             ->where('is_crm_responsavel', true)
-            ->orderBy('name')->get(['id', 'name', 'role', 'type']);
+            ->orderBy('name')->get(['id', 'name', 'type']);
     }
 
     /** Realizado (R$ ganho) e qtd por responsavel_id na competência. */
@@ -167,7 +167,7 @@ class CrmFinanceController extends Controller
             $forecast = $realizado + (float) $o->sum($peso);
             return [
                 'user_id' => $x->id, 'name' => $x->name,
-                'cargo' => $x->role ?: $x->type,
+                'cargo' => $x->type,
                 'meta' => $meta, 'realizado' => $realizado, 'negocios' => $negocios,
                 'ticket' => $negocios ? round($realizado / $negocios, 2) : 0,
                 'pipeline' => $pipeline, 'forecast' => round($forecast, 2),
@@ -356,7 +356,7 @@ class CrmFinanceController extends Controller
             $o = $openByResp->get($x->id) ?? collect();
             $pct = $rateOf($x->id);
             return [
-                'user_id' => $x->id, 'name' => $x->name, 'cargo' => $x->role ?: $x->type,
+                'user_id' => $x->id, 'name' => $x->name, 'cargo' => $x->type,
                 'base' => $base, 'negocios' => $neg, 'ticket' => $neg ? round($base / $neg, 2) : 0,
                 'percentual' => $pct, 'comissao' => round($base * $pct / 100, 2),
                 'pipeline' => (float) $o->sum('valor'),
