@@ -14,8 +14,8 @@ use Carbon\Carbon;
 /**
  * Fonte ÚNICA das regras de abertura/fechamento de horas (mensal + semanal).
  *
- * MENSAL: prazo = 2º dia útil do mês SEGUINTE, 23:59 SP. SEMANAL: semana = segunda→domingo;
- * prazo = 2º dia útil da semana SEGUINTE, 23:59 SP. COEXISTEM: bloqueia se mês OU semana fechada.
+ * MENSAL: prazo = 1º dia útil do mês SEGUINTE, 23:59 SP. SEMANAL: semana = segunda→domingo;
+ * prazo = 1º dia útil da semana SEGUINTE, 23:59 SP. COEXISTEM: bloqueia se mês OU semana fechada.
  *
  * Reabertura/encerramento têm ESCOPO: projeto (null=global) + usuário (null=todos). Reabertura
  * auto-fecha às 23:59 do dia. Encerramento (CompetenceClosure) fecha o período ANTES do prazo.
@@ -38,15 +38,12 @@ class ClosingService
         return $weekStart->format('Y-m');
     }
 
-    private function secondBusinessDayDeadline(Carbon $from): Carbon
+    /** 1º dia útil (pula fim de semana + feriados ativos) a partir de $from, às 23:59:59 SP. */
+    private function firstBusinessDayDeadline(Carbon $from): Carbon
     {
         $cursor   = $from->copy()->startOfDay();
         $feriados = $this->holidaysAround($cursor);
-        $uteis    = 0;
-        while (true) {
-            if (!$cursor->isWeekend() && !in_array($cursor->toDateString(), $feriados, true)) {
-                if (++$uteis === 2) break;
-            }
+        while ($cursor->isWeekend() || in_array($cursor->toDateString(), $feriados, true)) {
             $cursor->addDay();
         }
         return $cursor->setTime(23, 59, 59);
@@ -63,12 +60,12 @@ class ClosingService
     {
         [$y, $m] = array_map('intval', explode('-', $ym));
         $next = Carbon::create($y, $m, 1, 0, 0, 0, self::TZ)->addMonthNoOverflow();
-        return $this->secondBusinessDayDeadline($next);
+        return $this->firstBusinessDayDeadline($next);
     }
 
     public function weekDeadline(Carbon $weekStart): Carbon
     {
-        return $this->secondBusinessDayDeadline($weekStart->copy()->addWeek());
+        return $this->firstBusinessDayDeadline($weekStart->copy()->addWeek());
     }
 
     /** Marco "daqui pra frente": semanas com prazo < isso nunca fecham pela regra semanal. */
@@ -121,7 +118,7 @@ class ClosingService
     // ── Está fechado? (com escopo de usuário) ─────────────────────────────────
 
     /**
-     * MENSAL fechado. $forIntegration=true → prazo do 2º dia útil conta SEM grandfather
+     * MENSAL fechado. $forIntegration=true → prazo do 1º dia útil conta SEM grandfather
      * (preserva a regra de ATRASO da integração, que sempre existiu). No lançamento manual
      * (false) o prazo mensal só conta "daqui pra frente" (>= ativação) — antes o manual só
      * era bloqueado pelo Fechamento Administrativo, então não regride meses antigos.
