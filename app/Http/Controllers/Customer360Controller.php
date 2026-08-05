@@ -405,22 +405,22 @@ class Customer360Controller extends Controller
         if ($comercial) {
             $oppIds = CrmOpportunity::where('customer_id', $customer->id)->pluck('id');
             $merged = $merged->concat(
-                CrmCustomerEvent::where('customer_id', $customer->id)->orderByDesc('created_at')->limit(50)->get()
-                    ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'lead', 'type' => $e->event_type, 'label' => $e->label])
+                CrmCustomerEvent::where('customer_id', $customer->id)->with('triggeredBy:id,name')->orderByDesc('created_at')->limit(50)->get()
+                    ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'lead', 'type' => $e->event_type, 'label' => $e->label, 'user' => $e->triggeredBy?->name])
             )->concat(
-                CrmOpportunityEvent::whereIn('opportunity_id', $oppIds)->orderByDesc('created_at')->limit(50)->get()
-                    ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'crm', 'type' => $e->event_type, 'label' => $e->to_value])
+                CrmOpportunityEvent::whereIn('opportunity_id', $oppIds)->with('triggeredBy:id,name')->orderByDesc('created_at')->limit(50)->get()
+                    ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'crm', 'type' => $e->event_type, 'label' => $e->to_value, 'user' => $e->triggeredBy?->name])
             )->concat(
                 // Fase 7 — follow-ups (relacionamento) na timeline.
-                \App\Models\CrmTask::where('customer_id', $customer->id)->orderByDesc('id')->limit(50)->get()
+                \App\Models\CrmTask::where('customer_id', $customer->id)->with('responsavel:id,name')->orderByDesc('id')->limit(50)->get()
                     ->map(fn ($t) => ['when' => $t->concluida_at ?? $t->data ?? $t->created_at, 'source' => 'followup',
-                        'type' => $t->categoria ?: $t->tipo, 'label' => $t->titulo])
+                        'type' => $t->categoria ?: $t->tipo, 'label' => $t->titulo, 'user' => $t->responsavel?->name])
             );
         }
         // Eventos de contrato — operacionais (visíveis a quem acessa a empresa).
         $merged = $merged->concat(
-            ContractEvent::whereIn('contract_id', $contractIds)->orderByDesc('created_at')->limit(50)->get()
-                ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'contrato', 'type' => $e->event_type, 'label' => $e->to_value ?? $e->field])
+            ContractEvent::whereIn('contract_id', $contractIds)->with('triggeredBy:id,name')->orderByDesc('created_at')->limit(50)->get()
+                ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'contrato', 'type' => $e->event_type, 'label' => $e->to_value ?? $e->field, 'user' => $e->triggeredBy?->name])
         );
 
         $ordenado = $merged->sortByDesc('when')->values();
