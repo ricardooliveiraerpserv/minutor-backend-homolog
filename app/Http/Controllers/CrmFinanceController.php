@@ -425,11 +425,19 @@ class CrmFinanceController extends Controller
         $distStatus = collect(['paga' => 'Paga', 'aprovada' => 'Aprovada', 'apurada' => 'Apurada', 'bloqueada' => 'Bloqueada'])
             ->map(fn ($lbl, $s) => ['name' => $lbl, 'valor' => $st($s)])->filter(fn ($x) => $x['valor'] > 0)->values();
 
+        // Alertas automáticos (pendências operacionais)
+        $cnt = fn ($s) => $entries->where('status', $s)->count();
+        $alertas = [];
+        if ($pagamento['nao_apuradas'] > 0) $alertas[] = ['nivel' => 'warning', 'texto' => $pagamento['nao_apuradas'] . ' negócio(s) ganho(s) ainda não apurado(s)'];
+        if ($cnt('apurada') > 0) $alertas[] = ['nivel' => 'info', 'texto' => $cnt('apurada') . ' comissão(ões) aguardando aprovação'];
+        if ($cnt('aprovada') > 0) $alertas[] = ['nivel' => 'info', 'texto' => $cnt('aprovada') . ' aprovada(s) aguardando pagamento'];
+        if ($cnt('bloqueada') > 0) $alertas[] = ['nivel' => 'danger', 'texto' => $cnt('bloqueada') . ' comissão(ões) bloqueada(s)'];
+
         return response()->json(['data' => [
             'competencia' => $comp, 'can_edit' => $this->canEditScope($u, 'commission.view'),
             'teams' => $this->teamsFor($u), 'team_id' => $teamId ?: null,
             'percentual_padrao' => $default, 'has_payment_tracking' => $hasTracking,
-            'pagamento' => $pagamento, 'distribuicao_status' => $distStatus,
+            'pagamento' => $pagamento, 'distribuicao_status' => $distStatus, 'alertas' => $alertas,
             'kpis' => [
                 'base' => $baseTotal, 'base_delta' => $delta($baseTotal, $basePrev),
                 'comissao' => $comTotal, 'comissao_delta' => $delta($comTotal, $comPrev),
@@ -505,6 +513,7 @@ class CrmFinanceController extends Controller
         $q = CrmCommission::where('competencia', $comp)->whereIn('user_id', $ids)
             ->with(['opportunity:id,title,customer_id', 'opportunity.customer:id,name', 'user:id,name']);
         if ($status = $r->query('status')) $q->where('status', $status);
+        if ($uid = (int) $r->query('user_id')) $q->where('user_id', $uid);
         $rows = $q->orderByDesc('valor')->get()->map(fn ($c) => [
             'id' => $c->id, 'negocio' => $c->opportunity?->title, 'cliente' => $c->opportunity?->customer?->name,
             'responsavel' => $c->user?->name, 'base' => (float) $c->base, 'percentual' => (float) $c->percentual,
