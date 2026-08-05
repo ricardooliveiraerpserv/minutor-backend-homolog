@@ -32,11 +32,13 @@ class CrmCommissionPolicyController extends Controller
     {
         return [
             'id' => $p->id, 'name' => $p->name, 'active' => (bool) $p->active, 'priority' => (int) $p->priority,
-            'cargo' => $p->cargo, 'pipeline_id' => $p->pipeline_id,
+            'cargo' => $p->cargo, 'pipeline_id' => $p->pipeline_id, 'tipo_negocio' => $p->tipo_negocio,
             'min_valor' => $p->min_valor !== null ? (float) $p->min_valor : null,
             'max_valor' => $p->max_valor !== null ? (float) $p->max_valor : null,
             'min_margem' => $p->min_margem !== null ? (float) $p->min_margem : null,
             'max_margem' => $p->max_margem !== null ? (float) $p->max_margem : null,
+            'min_atingimento' => $p->min_atingimento !== null ? (float) $p->min_atingimento : null,
+            'max_atingimento' => $p->max_atingimento !== null ? (float) $p->max_atingimento : null,
             'percentual' => (float) $p->percentual,
         ];
     }
@@ -61,10 +63,13 @@ class CrmCommissionPolicyController extends Controller
             'priority' => 'integer|min:0',
             'cargo' => 'nullable|string|max:40',
             'pipeline_id' => 'nullable|exists:crm_pipelines,id',
+            'tipo_negocio' => 'nullable|string|max:40',
             'min_valor' => 'nullable|numeric|min:0',
             'max_valor' => 'nullable|numeric|min:0',
             'min_margem' => 'nullable|numeric',
             'max_margem' => 'nullable|numeric',
+            'min_atingimento' => 'nullable|numeric',
+            'max_atingimento' => 'nullable|numeric',
             'percentual' => 'required|numeric|min:0|max:100',
         ]);
     }
@@ -99,6 +104,8 @@ class CrmCommissionPolicyController extends Controller
             'margem' => 'nullable|numeric',
             'cargo' => 'nullable|string|max:40',
             'pipeline_id' => 'nullable|integer',
+            'tipo_negocio' => 'nullable|string|max:40',
+            'atingimento' => 'nullable|numeric',
             'responsavel_id' => 'nullable|exists:users,id',
         ]);
         $cargo = $v['cargo'] ?? null;
@@ -109,7 +116,11 @@ class CrmCommissionPolicyController extends Controller
         $fallback = !empty($v['responsavel_id']) && ($rr = $rates->firstWhere('user_id', $v['responsavel_id']))
             ? (float) $rr->percentual : $default;
 
-        [$pct, $regra] = CrmCommissionPolicy::resolve($cargo, $v['pipeline_id'] ?? null, (float) $v['valor'], isset($v['margem']) ? (float) $v['margem'] : null, $fallback);
+        [$pct, $regra] = CrmCommissionPolicy::resolve([
+            'cargo' => $cargo, 'pipeline_id' => $v['pipeline_id'] ?? null, 'valor' => (float) $v['valor'],
+            'margem' => isset($v['margem']) ? (float) $v['margem'] : null, 'tipo' => $v['tipo_negocio'] ?? null,
+            'atingimento' => isset($v['atingimento']) ? (float) $v['atingimento'] : null,
+        ], $fallback);
         $base = (float) $v['valor'];
         return response()->json(['data' => [
             'base' => $base, 'percentual' => $pct, 'comissao' => round($base * $pct / 100, 2),

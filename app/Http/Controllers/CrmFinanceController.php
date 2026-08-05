@@ -479,17 +479,25 @@ class CrmFinanceController extends Controller
 
         $won = $ids->isEmpty() ? collect() : CrmOpportunity::where('status', 'ganho')
             ->whereBetween('fechamento_at', [$start, $end])->whereIn('responsavel_id', $ids)
-            ->get(['id', 'responsavel_id', 'valor', 'pipeline_id', 'detalhes']);
+            ->get(['id', 'responsavel_id', 'valor', 'pipeline_id', 'tipo', 'detalhes']);
         $existing = CrmCommission::whereIn('opportunity_id', $won->pluck('id'))->pluck('opportunity_id')->flip();
         $cargos = User::whereIn('id', $won->pluck('responsavel_id')->filter()->unique())->pluck('type', 'id');
+        // Atingimento de meta por vendedor (para políticas progressivas)
+        $realizadoSeller = $won->groupBy('responsavel_id')->map(fn ($g) => (float) $g->sum('valor'));
+        $metas = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
         $n = 0;
         foreach ($won as $o) {
             if ($existing->has($o->id) || !$o->responsavel_id) continue;
             $base = (float) $o->valor;
             $custo = (float) (($o->detalhes['custo'] ?? 0));
             $margem = $base > 0 ? round(($base - $custo) / $base * 100, 2) : null;
+            $meta = (float) ($metas[$o->responsavel_id]->valor_meta ?? 0);
+            $ating = $meta > 0 ? round(($realizadoSeller[$o->responsavel_id] ?? 0) / $meta * 100, 2) : null;
             // Política de comissão resolve o %; sem regra → cai no % do vendedor/padrão.
-            [$pct] = CrmCommissionPolicy::resolve($cargos[$o->responsavel_id] ?? null, $o->pipeline_id, $base, $margem, $rateOf($o->responsavel_id));
+            [$pct] = CrmCommissionPolicy::resolve([
+                'cargo' => $cargos[$o->responsavel_id] ?? null, 'pipeline_id' => $o->pipeline_id,
+                'valor' => $base, 'margem' => $margem, 'tipo' => $o->tipo, 'atingimento' => $ating,
+            ], $rateOf($o->responsavel_id));
             CrmCommission::create([
                 'opportunity_id' => $o->id, 'user_id' => $o->responsavel_id, 'competencia' => $comp,
                 'base' => $base, 'percentual' => $pct, 'valor' => round($base * $pct / 100, 2),
