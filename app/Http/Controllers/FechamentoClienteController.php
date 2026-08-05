@@ -363,7 +363,7 @@ class FechamentoClienteController extends Controller
             return ['projetos' => [], 'total_horas' => 0.0, 'total_geral' => 0.0];
         }
 
-        $projects = Project::with(['contractType:id,name,code', 'hourlyRateChanges'])
+        $projects = Project::with(['contractType:id,name,code', 'hourlyRateChanges', 'projectValueChanges'])
             ->whereIn('id', $projectIds)
             ->get()
             ->keyBy('id');
@@ -376,7 +376,7 @@ class FechamentoClienteController extends Controller
         }
         $missingParents = array_diff(array_unique(array_values($effectiveId)), $projects->keys()->all());
         if (!empty($missingParents)) {
-            Project::with(['contractType:id,name,code', 'hourlyRateChanges'])
+            Project::with(['contractType:id,name,code', 'hourlyRateChanges', 'projectValueChanges'])
                 ->whereIn('id', $missingParents)
                 ->get()
                 ->each(fn ($p) => $projects[$p->id] = $p);
@@ -720,7 +720,7 @@ class FechamentoClienteController extends Controller
             return [];
         }
 
-        $projects = Project::with(['contractType:id,name,code', 'hourlyRateChanges'])
+        $projects = Project::with(['contractType:id,name,code', 'hourlyRateChanges', 'projectValueChanges'])
             ->whereIn('id', $projectIds)
             ->get();
 
@@ -784,7 +784,10 @@ class FechamentoClienteController extends Controller
             $consumedAll  = round((int) ($totalConsumedByProject[$project->id] ?? 0) / 60, 2);
             $contractCode = strtolower($project->contractType->code ?? '');
             $hourlyRate   = (float) ($project->hourlyRateForCompetencia($yearMonth) ?? 0);
-            $projectValue = (float) ($project->project_value ?? 0);
+            // Valor do projeto POR COMPETÊNCIA (fechado/Cloud) — respeita a vigência do
+            // reajuste; sem vigências gravadas cai no project_value atual (comportamento
+            // idêntico ao anterior para todos os projetos legados).
+            $projectValue = (float) ($project->projectValueForCompetencia($yearMonth) ?? 0);
             $soldHours    = (float) ($project->sold_hours ?? 0);
 
             $isBancoHoras = in_array($contractCode, ['fixed_hours', 'monthly_hours', 'banco_horas', 'bank_hours'])

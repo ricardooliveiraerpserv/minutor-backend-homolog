@@ -283,6 +283,19 @@ class Project extends Model
             ->orderBy('effective_from');
     }
 
+    /**
+     * Alterações de valor do PROJETO (contrato fechado/Cloud) COM vigência
+     * (effective_from), ordenadas. Vêm de project_change_logs (field_name='project_value').
+     * Espelha hourlyRateChanges — garante que reajuste/aditivo não mude meses passados.
+     */
+    public function projectValueChanges(): HasMany
+    {
+        return $this->hasMany(\App\Models\ProjectChangeLog::class)
+            ->where('field_name', 'project_value')
+            ->whereNotNull('effective_from')
+            ->orderBy('effective_from');
+    }
+
     /** Logs de movimentação de coluna (status) no kanban Demandas e Projetos. */
     public function kanbanLogs(): HasMany
     {
@@ -329,6 +342,32 @@ class Project extends Model
         return $aplicavel
             ? (float) $aplicavel->new_value
             : (float) ($changes->first()->old_value ?? $this->hourly_rate ?? 0);
+    }
+
+    /**
+     * Valor do PROJETO vigente numa competência (YYYY-MM) — contrato fechado/Cloud:
+     * a vigência mais recente com effective_from <= competência; antes da 1ª usa o
+     * valor anterior a ela; sem vigências, cai no project_value atual. Igual à lógica
+     * de hourlyRateForCompetencia — mantém fechamentos de meses anteriores intactos.
+     */
+    public function projectValueForCompetencia(string $yearMonth): float
+    {
+        $changes = $this->relationLoaded('projectValueChanges')
+            ? $this->projectValueChanges
+            : $this->projectValueChanges()->get();
+
+        if ($changes->isEmpty()) {
+            return (float) ($this->project_value ?? 0);
+        }
+
+        $comp = \Carbon\Carbon::parse($yearMonth . '-01')->startOfMonth();
+        $aplicavel = $changes->last(
+            fn ($c) => \Carbon\Carbon::parse($c->effective_from)->startOfMonth()->lessThanOrEqualTo($comp)
+        );
+
+        return $aplicavel
+            ? (float) $aplicavel->new_value
+            : (float) ($changes->first()->old_value ?? $this->project_value ?? 0);
     }
 
     /**

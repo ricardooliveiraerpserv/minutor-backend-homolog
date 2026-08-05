@@ -2867,11 +2867,43 @@ class ContractController extends Controller
 
             // Rotina de reajuste mantém o PROJETO sincronizado com o contrato
             // (projeto e contrato sempre iguais). on_demand: valor_hora → hourly_rate;
-            // demais: valor_projeto → project_value. Sobrescreve o valor atual — sem
-            // vigência (operação recente, sem histórico a preservar).
+            // demais: valor_projeto → project_value. Grava a VIGÊNCIA do novo valor
+            // (project_change_logs.effective_from) para NÃO reescrever meses anteriores
+            // — o novo valor passa a valer a partir do mês SEGUINTE ao período reajustado
+            // (mês após periodo_fim); antes disso as competências mantêm o valor antigo.
             if ($contract->project_id) {
                 $projField = $field === 'valor_hora' ? 'hourly_rate' : 'project_value';
-                Project::where('id', $contract->project_id)->update([$projField => $valorNovo]);
+                $proj = Project::find($contract->project_id);
+                if ($proj) {
+                    $oldVal = (float) ($proj->{$projField} ?? 0);
+                    $proj->update([$projField => $valorNovo]);
+                    if (round($oldVal, 2) !== round((float) $valorNovo, 2)) {
+                        $eff = $pFim
+                            ? Carbon::parse($pFim)->startOfMonth()->addMonth()->toDateString()
+                            : Carbon::now()->startOfMonth()->toDateString();
+                        // Dedup por (campo, effective_from): reajuste repetido no mesmo
+                        // marco sobrescreve a vigência ao invés de duplicar.
+                        $log = \App\Models\ProjectChangeLog::where('project_id', $proj->id)
+                            ->where('field_name', $projField)
+                            ->where('effective_from', $eff)
+                            ->first();
+                        $payload = [
+                            'project_id'     => $proj->id,
+                            'changed_by'     => $request->user()?->id,
+                            'field_name'     => $projField,
+                            'old_value'      => (string) $oldVal,
+                            'new_value'      => (string) $valorNovo,
+                            'reason'         => 'Reajuste ' . EconomicIndexService::canonical($validated['indice'])
+                                . ($pLabel ? ' (' . $pLabel . ')' : ''),
+                            'effective_from' => $eff,
+                        ];
+                        if ($log) {
+                            $log->update($payload);
+                        } else {
+                            \App\Models\ProjectChangeLog::create($payload);
+                        }
+                    }
+                }
             }
 
             ContractValueChange::create([
