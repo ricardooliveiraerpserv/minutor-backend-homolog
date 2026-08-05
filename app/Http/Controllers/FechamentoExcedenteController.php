@@ -42,6 +42,53 @@ class FechamentoExcedenteController extends Controller
     }
 
     /**
+     * Apuração da competência.
+     *  • BH MENSAL: excedente = saldo acumulado NO FIM da competência (déficit), usando o
+     *    extrato mês-a-mês (monthlyStatement). Isso EXCLUI o mês atual/futuro — as horas
+     *    mensais do mês corrente NÃO entram na apuração do fechamento. O acerto do que já
+     *    foi cobrado em meses anteriores é feito por APORTE (processo interno), NÃO abatido aqui.
+     *  • BH FIXO/FECHADO: estado atual (managementBreakdown), incremental sobre o já cobrado.
+     */
+    private function apuracao(Project $p, string $yearMonth): array
+    {
+        if ($p->isBankHoursMonthly()) {
+            $bal = $this->monthlyBalanceAt($p, $yearMonth);
+            return [
+                'basis'      => 'monthly',
+                'monthly'    => true,
+                'contracted' => round($bal['vendidas'] ?? 0.0, 2),
+                'consumed'   => round($bal['consumed'] ?? 0.0, 2),
+                'excess'     => $bal ? max(0, round(-$bal['balance'], 2)) : 0.0,
+            ];
+        }
+        $ap = $p->excessHoursApuracao($yearMonth);
+        $ap['monthly'] = false;
+        return $ap;
+    }
+
+    /** Saldo (déficit/superávit) no FIM da competência via extrato mês-a-mês. */
+    private function monthlyBalanceAt(Project $p, string $yearMonth): ?array
+    {
+        $resp = json_decode(app(ProjectController::class)->monthlyStatement($p)->getContent(), true);
+        foreach (($resp['rows'] ?? []) as $r) {
+            if (($r['year_month'] ?? null) === $yearMonth) {
+                return [
+                    'balance'  => (float) ($r['balance_hours'] ?? 0),
+                    'vendidas' => (float) ($r['vendidas_hours'] ?? 0),
+                    'consumed' => (float) ($r['accumulated_consumption_hours'] ?? 0),
+                ];
+            }
+        }
+        return null;
+    }
+
+    /** Excedente PENDENTE a cobrar. BH Mensal = saldo do mês (acerto via aporte); demais = incremental. */
+    private function excessPendente(array $ap, float $jaCobrado): float
+    {
+        return ($ap['monthly'] ?? false) ? $ap['excess'] : max(0, round($ap['excess'] - $jaCobrado, 2));
+    }
+
+    /**
      * Monta as linhas de excedente da competência para uma coleção de projetos.
      * Reusado pela listagem (index) e pelo relatório por cliente.
      */
@@ -59,14 +106,12 @@ class FechamentoExcedenteController extends Controller
             ->whereIn('project_id', $ids)->get()->keyBy('project_id');
 
         return $projects->map(function (Project $p) use ($yearMonth, $charged, $records) {
-            $ap   = $p->excessHoursApuracao($yearMonth);
+            $ap   = $this->apuracao($p, $yearMonth);
             $rate = (float) ($p->additional_hourly_rate ?? 0);
             $rec  = $records->get($p->id);
 
-            // Excedente PENDENTE a cobrar. Todos os tipos (BH Mensal/Fixo/Fechado) apuram
-            // pelo SALDO ACUMULADO → incremental: excedente atual − já cobrado (qualquer competência).
             $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
-            $excessPend = max(0, round($ap['excess'] - $jaCobrado, 2));
+            $excessPend = $this->excessPendente($ap, $jaCobrado);
 
             $excess = $rec ? (float) $rec->excess_hours : $excessPend;
             $status = $rec?->status ?? ExcessHourCharge::STATUS_PENDENTE;
@@ -154,14 +199,14 @@ class FechamentoExcedenteController extends Controller
             return response()->json(['message' => 'Projeto não elegível a horas excedentes.'], 422);
         }
 
-        $ap   = $p->excessHoursApuracao($yearMonth);
+        $ap   = $this->apuracao($p, $yearMonth);
         $rate = (float) ($p->additional_hourly_rate ?? 0);
 
-        // Todos os tipos (BH Mensal/Fixo/Fechado) apuram pelo saldo acumulado → o excedente
-        // a registrar é o incremental (atual − já cobrado em qualquer competência).
+        // BH Mensal: excedente = saldo do fim da competência (acerto do já-cobrado via aporte).
+        // BH Fixo/Fechado: incremental (atual − já cobrado em qualquer competência).
         $jaCobrado = (float) ExcessHourCharge::where('status', ExcessHourCharge::STATUS_COBRADO)
             ->where('project_id', $p->id)->sum('excess_hours');
-        $excess = max(0, round($ap['excess'] - $jaCobrado, 2));
+        $excess = $this->excessPendente($ap, $jaCobrado);
 
         $rec = ExcessHourCharge::updateOrCreate(
             ['project_id' => $p->id, 'year_month' => $yearMonth],
