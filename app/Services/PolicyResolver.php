@@ -33,10 +33,12 @@ class PolicyResolver
             return $this->cache[$ck] = $this->fill($caps, fn ($c) => PolicyCatalog::maxValue($c));
         }
 
-        $assignment = PolicyAssignment::where('user_id', $user->id)->where('module', $module)->first();
-        $defaults = $assignment && $assignment->role_id
-            ? (PolicyRole::whereKey($assignment->role_id)->value('defaults') ?? [])
-            : [];
+        // Base IRRESTRITA quando não há perfil atribuído (INERTE até configurar). Overrides
+        // aplicam por cima em qualquer caso. Só um perfil (role) torna as chaves não-definidas
+        // restritivas (fallback) — é o comportamento esperado de um perfil "Personalizado" vazio.
+        $assignment = PolicyAssignment::where('user_id', $user->id)->where('module', $module)->whereNotNull('role_id')->first();
+        $hasRole = (bool) $assignment;
+        $defaults = $hasRole ? (PolicyRole::whereKey($assignment->role_id)->value('defaults') ?? []) : [];
 
         $overrides = PolicyOverride::where('user_id', $user->id)->where('module', $module)->get()
             ->keyBy('key')->map(fn ($o) => $o->value['v'] ?? null);
@@ -44,8 +46,8 @@ class PolicyResolver
         $out = [];
         foreach ($caps as $key => $cap) {
             if ($overrides->has($key)) $out[$key] = $overrides[$key];
-            elseif (array_key_exists($key, $defaults)) $out[$key] = $defaults[$key];
-            else $out[$key] = PolicyCatalog::fallback($cap);
+            elseif ($hasRole) $out[$key] = array_key_exists($key, $defaults) ? $defaults[$key] : PolicyCatalog::fallback($cap);
+            else $out[$key] = PolicyCatalog::maxValue($cap); // sem perfil → irrestrito
         }
         return $this->cache[$ck] = $out;
     }

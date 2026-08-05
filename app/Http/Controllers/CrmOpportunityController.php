@@ -30,7 +30,7 @@ class CrmOpportunityController extends Controller
         $aberto = $o->status === 'aberto';
         $diasSemInteracao = $o->ultima_interacao_at ? (int) $o->ultima_interacao_at->diffInDays(now()) : null;
         $ponderado = round((float) $o->valor * $prob / 100, 2);
-        return array_merge($o->toArray(), [
+        $data = array_merge($o->toArray(), [
             'sem_proxima_acao'      => $aberto && $o->proxima_acao_at === null,
             'proxima_acao_vencida'  => $aberto && $o->proxima_acao_at !== null && $o->proxima_acao_at->isPast(),
             'dias_sem_interacao'    => $diasSemInteracao,
@@ -42,6 +42,16 @@ class CrmOpportunityController extends Controller
             'valor_ponderado'       => $ponderado,
             'forecast_vencido'      => $aberto && $o->previsao_fechamento !== null && $o->previsao_fechamento->endOfDay()->isPast(),
         ]);
+
+        // Política Comercial — mascara valores quando o perfil não permite ver (values.view).
+        $u = auth()->user();
+        if ($u && !$u->isAdmin() && !app(\App\Services\PolicyResolver::class)->can($u, 'crm', 'values.view')) {
+            $data['valor'] = null;
+            $data['forecast'] = null;
+            $data['valor_ponderado'] = null;
+            $data['values_masked'] = true;
+        }
+        return $data;
     }
 
     /**
