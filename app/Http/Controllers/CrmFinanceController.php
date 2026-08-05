@@ -64,6 +64,25 @@ class CrmFinanceController extends Controller
         return $rows; // all/assigned → aberto
     }
 
+    /** IDs de membros (+ gestor) de uma equipe, para o filtro "por equipe". */
+    private function teamMemberIds(int $teamId): Collection
+    {
+        $t = CrmSalesTeam::with('members:id')->find($teamId);
+        if (!$t) return collect();
+        return $t->members->pluck('id')->push($t->manager_id)->filter()->unique()->values();
+    }
+
+    /** Equipes que o usuário pode filtrar (admin/gestor de política = todas; senão as suas). */
+    private function teamsFor(?User $u): Collection
+    {
+        if (!$u) return collect();
+        if ($u->isAdmin() || $u->type === 'administrativo' || $this->resolver->can($u, 'crm', 'policy.manage'))
+            return CrmSalesTeam::where('active', true)->orderBy('name')->get(['id', 'name']);
+        return CrmSalesTeam::where('active', true)
+            ->where(fn ($q) => $q->where('manager_id', $u->id)->orWhereHas('members', fn ($m) => $m->where('users.id', $u->id)))
+            ->orderBy('name')->get(['id', 'name']);
+    }
+
     /** Pode editar (definir metas/percentuais): admin, administrativo, policy.manage ou escopo team/all. */
     private function canEditScope(?User $u, string $key): bool
     {
@@ -132,6 +151,7 @@ class CrmFinanceController extends Controller
         $diaCorrente = ($today->year === $y && $today->month === $m) ? $today->day : $dim;
 
         $resp = $this->applyScope($this->responsaveis(), 'goals.view', $u);
+        if ($teamId = (int) $r->query('team_id')) $resp = $resp->whereIn('id', $this->teamMemberIds($teamId))->values();
         $ids = $resp->pluck('id');
         $cid = $this->companyId();
 
@@ -224,6 +244,7 @@ class CrmFinanceController extends Controller
 
         return response()->json(['data' => [
             'competencia' => $comp, 'can_edit' => $this->canEditScope($u, 'goals.view'),
+            'teams' => $this->teamsFor($u), 'team_id' => $teamId ?: null,
             'dias_mes' => $dim, 'dia_corrente' => $diaCorrente,
             'kpis' => [
                 'meta' => $metaTotal, 'meta_delta' => $delta($metaTotal, $metaPrev),
@@ -323,6 +344,7 @@ class CrmFinanceController extends Controller
         $end = (clone $start)->endOfMonth();
         $prev = (clone $start)->subMonthNoOverflow();
         $resp = $this->applyScope($this->responsaveis(), 'commission.view', $u);
+        if ($teamId = (int) $r->query('team_id')) $resp = $resp->whereIn('id', $this->teamMemberIds($teamId))->values();
         $ids = $resp->pluck('id');
         $cid = $this->companyId();
 
@@ -388,6 +410,7 @@ class CrmFinanceController extends Controller
 
         return response()->json(['data' => [
             'competencia' => $comp, 'can_edit' => $this->canEditScope($u, 'commission.view'),
+            'teams' => $this->teamsFor($u), 'team_id' => $teamId ?: null,
             'percentual_padrao' => $default, 'has_payment_tracking' => false,
             'kpis' => [
                 'base' => $baseTotal, 'base_delta' => $delta($baseTotal, $basePrev),
