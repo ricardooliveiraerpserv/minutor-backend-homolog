@@ -186,6 +186,50 @@ class ContractRequestController extends Controller
      * Body: { "emails": ["a@x.com", ...], "customer_id": 123 (admin/coord) }
      * Resp: { "results": [{ "email": "a@x.com", "user": { "id": 1, "name": "..." } | null }] }
      */
+    /**
+     * Sugestões de contatos para o campo "Em cópia" da requisição: contatos do CLIENTE
+     * selecionado (users type=cliente do customer) + equipe/consultores ERPSERV (internos),
+     * filtrados por nome/e-mail. Cliente logado usa o próprio customer.
+     *
+     * Query: ?customer_id=123&q=alex  → { "data": [{name,email,kind: 'cliente'|'erpserv'}] }
+     */
+    public function contactSuggestions(Request $request): JsonResponse
+    {
+        $q    = trim((string) $request->query('q', ''));
+        $user = auth()->user();
+        $customerId = $user?->isCliente()
+            ? $user->customer_id
+            : ($request->query('customer_id') ? (int) $request->query('customer_id') : null);
+
+        $applyQ = function ($query) use ($q) {
+            if ($q !== '') {
+                $like = '%' . mb_strtolower($q) . '%';
+                $query->where(function ($w) use ($like) {
+                    $w->whereRaw('LOWER(name) LIKE ?', [$like])
+                      ->orWhereRaw('LOWER(email) LIKE ?', [$like]);
+                });
+            }
+            return $query;
+        };
+
+        $out = collect();
+
+        // 1) Contatos do cliente selecionado.
+        if ($customerId) {
+            $applyQ(User::where('type', 'cliente')->where('customer_id', $customerId)->whereNotNull('email'))
+                ->orderBy('name')->limit(20)->get(['id', 'name', 'email'])
+                ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'cliente']));
+        }
+
+        // 2) Equipe/consultores ERPSERV (internos). Respeita o escopo de empresa ativo.
+        $applyQ(User::whereIn('type', ['consultor', 'coordenador', 'administrativo', 'admin'])->whereNotNull('email'))
+            ->orderBy('name')->limit(20)->get(['id', 'name', 'email'])
+            ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'erpserv']));
+
+        $data = $out->unique('email')->values();
+        return response()->json(['data' => $data]);
+    }
+
     public function resolveEmails(Request $request): JsonResponse
     {
         $validated = $request->validate([
