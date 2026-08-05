@@ -139,16 +139,16 @@ class CustomerCrmController extends Controller
 
         // Eventos no nível da empresa — fazem a timeline COMEÇAR na fase Lead.
         $leadEvents = \App\Models\CrmCustomerEvent::where('customer_id', $customer->id)
-            ->orderByDesc('created_at')->limit(100)->get()
-            ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'lead', 'type' => $e->event_type, 'label' => $e->label]);
+            ->with('triggeredBy:id,name')->orderByDesc('created_at')->limit(100)->get()
+            ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'lead', 'type' => $e->event_type, 'label' => $e->label, 'user' => $e->triggeredBy?->name]);
 
         $crmEvents = \App\Models\CrmOpportunityEvent::whereIn('opportunity_id', $oppIds)
-            ->orderByDesc('created_at')->limit(100)->get()
-            ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'crm', 'type' => $e->event_type, 'label' => $e->to_value]);
+            ->with('triggeredBy:id,name')->orderByDesc('created_at')->limit(100)->get()
+            ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'crm', 'type' => $e->event_type, 'label' => $e->to_value, 'user' => $e->triggeredBy?->name]);
 
         $contractEvents = \App\Models\ContractEvent::whereIn('contract_id', $contractIds)
-            ->orderByDesc('created_at')->limit(100)->get()
-            ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'contrato', 'type' => $e->event_type, 'label' => $e->to_value ?? $e->field]);
+            ->with('triggeredBy:id,name')->orderByDesc('created_at')->limit(100)->get()
+            ->map(fn ($e) => ['when' => $e->created_at, 'source' => 'contrato', 'type' => $e->event_type, 'label' => $e->to_value ?? $e->field, 'user' => $e->triggeredBy?->name]);
 
         $timeline = $leadEvents->concat($crmEvents)->concat($contractEvents)
             ->sortByDesc('when')->values()->take(150);
