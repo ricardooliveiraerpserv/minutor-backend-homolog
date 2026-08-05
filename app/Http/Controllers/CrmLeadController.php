@@ -144,18 +144,12 @@ class CrmLeadController extends Controller
         if (!$pipe->canBeSeenBy(request()->user())) {
             return response()->json(['message' => 'Sem acesso ao pipeline de Leads.'], 403);
         }
-        // Política Comercial — escopo de visualização de leads (leads.view). Dono = executive_id.
-        // Admin bypass; 'own'→só os seus; 'none'→nenhum; 'all/team/assigned'→sem restrição (fase atual).
-        $q = Customer::where('crm_status', 'lead')
+        // Leads é um funil como os demais: a visibilidade é do funil (canBeSeenBy /
+        // pipelines.view "Atribuídos"), sem escopo de registro próprio de leads.
+        $customers = Customer::where('crm_status', 'lead')
             ->with(['crmProfile.leadSource', 'executive:id,name', 'contacts'])
-            ->orderByDesc('id');
-        $u = request()->user();
-        if ($u && !$u->isAdmin()) {
-            $scope = app(\App\Services\PolicyResolver::class)->scope($u, 'crm', 'leads.view', 'all');
-            if ($scope === 'own')  $q->where('executive_id', $u->id);
-            elseif ($scope === 'none') $q->whereRaw('1 = 0');
-        }
-        $customers = $q->get();
+            ->orderByDesc('id')
+            ->get();
         $ids = $customers->pluck('id');
         $tiposNome = CrmContactType::pluck('nome', 'slug');
         // Follow-ups concluídos por lead (lote).

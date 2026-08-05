@@ -58,9 +58,8 @@ class PolicyCatalog
         'crm' => [
             'label' => 'Política Comercial',
             'blocks' => [
-                ['id' => 'pipelines_leads', 'label' => 'Pipelines & Leads', 'caps' => [
-                    ['key' => 'pipelines.view', 'label' => 'Funis visíveis', 'control' => 'scope', 'options' => ['all', 'assigned', 'none'], 'help' => 'Quais pipelines o usuário opera. "Atribuídos" usa a liberação por funil.'],
-                    ['key' => 'leads.view', 'label' => 'Ver leads', 'control' => 'scope', 'options' => ['all', 'team', 'own', 'none'], 'help' => 'Universo de leads visível na fila e na carteira.'],
+                ['id' => 'pipelines_leads', 'label' => 'Pipelines', 'caps' => [
+                    ['key' => 'pipelines.view', 'label' => 'Funis visíveis', 'control' => 'scope', 'options' => ['all', 'assigned', 'none'], 'help' => 'Quais pipelines o usuário opera (inclui o funil de Leads). "Atribuídos" usa a liberação por funil.'],
                 ]],
                 ['id' => 'oportunidades', 'label' => 'Oportunidades', 'caps' => [
                     ['key' => 'opp.view', 'label' => 'Visualizar', 'control' => 'scope', 'options' => ['all', 'team', 'own', 'none'], 'help' => 'Universo de oportunidades visível.'],
@@ -98,43 +97,43 @@ class PolicyCatalog
     private const ROLES = [
         'crm' => [
             ['name' => 'Administrador', 'sort' => 1, 'defaults' => [
-                'pipelines.view' => 'all', 'leads.view' => 'all', 'opp.view' => 'all', 'opp.edit' => 'all',
+                'pipelines.view' => 'all', 'opp.view' => 'all', 'opp.edit' => 'all',
                 'opp.reassign' => true, 'opp.win' => true, 'opp.lose' => true, 'opp.delete' => true, 'proposals.create' => true,
                 'customers.view' => 'all', 'values.view' => true, 'commission.view' => 'all', 'goals.view' => 'all', 'profit.view' => true,
                 'dashboards.view' => 'all', 'indicators.view' => 'all', 'reports.export' => true, 'policy.manage' => true,
             ]],
             ['name' => 'Diretor Comercial', 'sort' => 2, 'defaults' => [
-                'pipelines.view' => 'all', 'leads.view' => 'all', 'opp.view' => 'all', 'opp.edit' => 'team',
+                'pipelines.view' => 'all', 'opp.view' => 'all', 'opp.edit' => 'team',
                 'opp.reassign' => true, 'opp.win' => true, 'opp.lose' => true, 'opp.delete' => false, 'proposals.create' => true,
                 'customers.view' => 'all', 'values.view' => true, 'commission.view' => 'all', 'goals.view' => 'all', 'profit.view' => true,
                 'dashboards.view' => 'all', 'indicators.view' => 'all', 'reports.export' => true, 'policy.manage' => false,
             ]],
             ['name' => 'Gerente Comercial', 'sort' => 3, 'defaults' => [
-                'pipelines.view' => 'all', 'leads.view' => 'team', 'opp.view' => 'team', 'opp.edit' => 'team',
+                'pipelines.view' => 'all', 'opp.view' => 'team', 'opp.edit' => 'team',
                 'opp.reassign' => true, 'opp.win' => true, 'opp.lose' => true, 'opp.delete' => false, 'proposals.create' => true,
                 'customers.view' => 'team', 'values.view' => true, 'commission.view' => 'team', 'goals.view' => 'team', 'profit.view' => false,
                 'dashboards.view' => 'team', 'indicators.view' => 'team', 'reports.export' => true, 'policy.manage' => false,
             ]],
             ['name' => 'Executivo Comercial', 'sort' => 4, 'defaults' => [
-                'pipelines.view' => 'assigned', 'leads.view' => 'own', 'opp.view' => 'own', 'opp.edit' => 'own',
+                'pipelines.view' => 'assigned', 'opp.view' => 'own', 'opp.edit' => 'own',
                 'opp.reassign' => false, 'opp.win' => true, 'opp.lose' => true, 'opp.delete' => false, 'proposals.create' => true,
                 'customers.view' => 'own', 'values.view' => true, 'commission.view' => 'own', 'goals.view' => 'own', 'profit.view' => false,
                 'dashboards.view' => 'own', 'indicators.view' => 'own', 'reports.export' => false, 'policy.manage' => false,
             ]],
             ['name' => 'SDR', 'sort' => 5, 'defaults' => [
-                'pipelines.view' => 'assigned', 'leads.view' => 'team', 'opp.view' => 'own', 'opp.edit' => 'own',
+                'pipelines.view' => 'assigned', 'opp.view' => 'own', 'opp.edit' => 'own',
                 'opp.reassign' => false, 'opp.win' => false, 'opp.lose' => true, 'opp.delete' => false, 'proposals.create' => false,
                 'customers.view' => 'team', 'values.view' => false, 'commission.view' => 'none', 'goals.view' => 'own', 'profit.view' => false,
                 'dashboards.view' => 'own', 'indicators.view' => 'own', 'reports.export' => false, 'policy.manage' => false,
             ]],
             ['name' => 'Pré-vendas', 'sort' => 6, 'defaults' => [
-                'pipelines.view' => 'assigned', 'leads.view' => 'team', 'opp.view' => 'team', 'opp.edit' => 'own',
+                'pipelines.view' => 'assigned', 'opp.view' => 'team', 'opp.edit' => 'own',
                 'opp.reassign' => false, 'opp.win' => false, 'opp.lose' => true, 'opp.delete' => false, 'proposals.create' => true,
                 'customers.view' => 'team', 'values.view' => true, 'commission.view' => 'own', 'goals.view' => 'own', 'profit.view' => false,
                 'dashboards.view' => 'own', 'indicators.view' => 'own', 'reports.export' => false, 'policy.manage' => false,
             ]],
             ['name' => 'Parceiro', 'sort' => 7, 'defaults' => [
-                'pipelines.view' => 'assigned', 'leads.view' => 'own', 'opp.view' => 'own', 'opp.edit' => 'own',
+                'pipelines.view' => 'assigned', 'opp.view' => 'own', 'opp.edit' => 'own',
                 'opp.reassign' => false, 'opp.win' => false, 'opp.lose' => false, 'opp.delete' => false, 'proposals.create' => false,
                 'customers.view' => 'own', 'values.view' => true, 'commission.view' => 'own', 'goals.view' => 'none', 'profit.view' => false,
                 'dashboards.view' => 'none', 'indicators.view' => 'none', 'reports.export' => false, 'policy.manage' => false,
