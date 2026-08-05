@@ -133,7 +133,7 @@ class CrmFinanceController extends Controller
             $tipo = $g->tipo ?? 'receita';
             $realizado = $this->realizadoTipo($wonByResp->get($x->id) ?? collect(), $tipo);
             return [
-                'user_id' => $x->id, 'name' => $x->name, 'meta' => $meta, 'tipo' => $tipo,
+                'user_id' => $x->id, 'name' => $x->name, 'cargo' => $x->type, 'meta' => $meta, 'tipo' => $tipo,
                 'observacao' => $g->observacao ?? null, 'realizado' => $realizado,
                 'qtd' => ($wonByResp->get($x->id) ?? collect())->count(),
                 'pct' => $meta > 0 ? round($realizado / $meta * 100, 1) : null,
@@ -158,11 +158,13 @@ class CrmFinanceController extends Controller
             'competencia' => 'required|regex:/^\d{4}-\d{2}$/',
             'valor_meta' => 'required|numeric|min:0',
             'tipo' => 'nullable|in:' . implode(',', self::META_TIPOS),
+            'escopo' => 'nullable|in:individual,equipe,unidade,empresa',
             'observacao' => 'nullable|string|max:500',
             'modo' => 'nullable|in:substituir,somar',
             'replicar_meses' => 'nullable|integer|min:0|max:11',
         ]);
         $tipo = $v['tipo'] ?? 'receita';
+        $escopo = $v['escopo'] ?? 'individual';
         $modo = $v['modo'] ?? 'substituir';
         $meses = (int) ($v['replicar_meses'] ?? 0);
         $saved = [];
@@ -173,7 +175,7 @@ class CrmFinanceController extends Controller
             $novo = $modo === 'somar' ? (($anterior ?? 0) + (float) $v['valor_meta']) : (float) $v['valor_meta'];
             $target = CrmSalesTarget::updateOrCreate(
                 ['periodo' => $periodo, 'user_id' => $v['user_id']],
-                ['valor_meta' => $novo, 'tipo' => $tipo, 'observacao' => $v['observacao'] ?? null, 'created_by_id' => auth()->id()]
+                ['valor_meta' => $novo, 'tipo' => $tipo, 'escopo' => $escopo, 'observacao' => $v['observacao'] ?? null, 'created_by_id' => auth()->id()]
             );
             CrmSalesTargetHistory::create([
                 'target_id' => $target->id, 'user_id' => $v['user_id'], 'periodo' => $periodo, 'tipo' => $tipo,
@@ -183,6 +185,35 @@ class CrmFinanceController extends Controller
             $saved[] = $periodo;
         }
         return response()->json(['data' => ['periodos' => $saved]]);
+    }
+
+    /** Meta vigente + desempenho de um responsável na competência (para o modal). */
+    public function metaAtual(Request $r): JsonResponse
+    {
+        $u = $r->user();
+        if ($u && !$u->isAdmin() && $this->resolver->scope($u, 'crm', 'goals.view', 'all') === 'none')
+            abort(403, 'Seu perfil não permite ver metas.');
+        $v = $r->validate([
+            'user_id' => 'required|exists:users,id',
+            'competencia' => 'required|regex:/^\d{4}-\d{2}$/',
+        ]);
+        [$y, $m] = array_map('intval', explode('-', $v['competencia']));
+        $start = Carbon::create($y, $m, 1)->startOfMonth();
+        $end = (clone $start)->endOfMonth();
+        $g = CrmSalesTarget::where('periodo', $v['competencia'])->where('user_id', $v['user_id'])->first();
+        $tipo = $g->tipo ?? 'receita';
+        $won = CrmOpportunity::where('status', 'ganho')->whereBetween('fechamento_at', [$start, $end])
+            ->where('responsavel_id', $v['user_id'])->get(['valor', 'tipo', 'detalhes']);
+        $realizado = $this->realizadoTipo($won, $tipo);
+        $meta = (float) ($g->valor_meta ?? 0);
+        $h = CrmSalesTargetHistory::where('periodo', $v['competencia'])->where('user_id', $v['user_id'])
+            ->with('changedBy:id,name')->orderByDesc('created_at')->first();
+        return response()->json(['data' => [
+            'existe' => (bool) $g, 'meta' => $meta, 'tipo' => $tipo, 'escopo' => $g->escopo ?? 'individual',
+            'observacao' => $g->observacao ?? null, 'realizado' => $realizado,
+            'pct' => $meta > 0 ? round($realizado / $meta * 100, 1) : null,
+            'ultima_alteracao' => $h?->created_at?->toDateTimeString(), 'por' => $h?->changedBy?->name,
+        ]]);
     }
 
     /** Histórico de alterações de meta (auditoria). */
