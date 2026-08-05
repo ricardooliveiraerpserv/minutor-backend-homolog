@@ -61,6 +61,8 @@ class HelpDeskController extends Controller
             // Escopo de visão na fila: 'all' vê os de outros; 'assigned' só os próprios → esconde o
             // toggle "apenas meus chamados" (redundante), 'none' não vê nada.
             'view_scope'     => app(\App\Services\HelpDeskAccessPolicy::class)->viewScope(auth()->user()),
+            // Ações em massa liberadas para o perfil do agente (barra de seleção da lista).
+            'my_perms'       => app(\App\Services\HelpDeskAccessPolicy::class)->bulkPermsMap(auth()->user()),
         ]]);
     }
 

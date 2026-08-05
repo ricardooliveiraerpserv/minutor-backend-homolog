@@ -933,6 +933,88 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => ['reassigned' => $count]]);
     }
 
+    /**
+     * Atualização em massa dos chamados selecionados na lista.
+     * action ∈ delete|level|service|category|urgency|responsible. Gate por perfil de acesso.
+     */
+    public function bulkUpdate(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'action'       => 'required|in:delete,level,service,category,urgency,responsible',
+            'ticket_ids'   => 'required|array|min:1',
+            'ticket_ids.*' => 'integer|exists:helpdesk_tickets,id',
+            'value'        => 'nullable',
+        ]);
+        $u = $request->user();
+        $action = $v['action'];
+        abort_unless($this->access->canBulk($u, $action), 403, 'Sem permissão para esta ação em massa (perfil de acesso).');
+
+        // Normaliza/valida o valor por ação e resolve o campo alvo.
+        $value = $v['value'] ?? null;
+        $field = null;
+        switch ($action) {
+            case 'delete':
+                break;
+            case 'level':
+                abort_unless($value === null || in_array($value, ['N1', 'N2', 'N3'], true), 422, 'Nível de atendimento inválido.');
+                $field = 'level';
+                break;
+            case 'urgency':
+                abort_unless(in_array($value, HelpDeskTicket::PRIORITIES, true), 422, 'Urgência inválida.');
+                $field = 'priority';
+                break;
+            case 'service':
+                $value = $value ? (int) $value : null;
+                if ($value) abort_unless(\App\Models\HelpDeskService::whereKey($value)->exists(), 422, 'Serviço inválido.');
+                $field = 'service_id';
+                break;
+            case 'category':
+                $value = $value ? (int) $value : null;
+                if ($value) abort_unless(\App\Models\HelpDeskCategory::whereKey($value)->exists(), 422, 'Categoria inválida.');
+                $field = 'category_id';
+                break;
+            case 'responsible':
+                $value = $value ? (int) $value : null;
+                if ($value) abort_unless($this->access->canBeAssignee(\App\Models\User::find($value)), 422, 'O agente selecionado não pode ser responsável (perfil de acesso).');
+                $field = 'assignee_id';
+                break;
+        }
+
+        $count = 0;
+        \Illuminate\Support\Facades\DB::transaction(function () use ($v, $action, $field, $value, $u, &$count) {
+            $tickets = HelpDeskTicket::whereIn('id', $v['ticket_ids'])->lockForUpdate()->get();
+            foreach ($tickets as $t) {
+                if ($action === 'delete') {
+                    $t->delete();
+                    HelpDeskTicketEvent::log($t->id, 'deleted', ['field' => 'deleted']);
+                    $count++;
+                    continue;
+                }
+                $old = $t->{$field};
+                if ((string) $old === (string) $value) continue;
+                $t->{$field} = $value;
+                $t->last_activity_at = now();
+                $t->save();
+                $evt = match ($action) {
+                    'urgency'     => 'priority_changed',
+                    'responsible' => 'assigned',
+                    default       => 'field_changed',
+                };
+                HelpDeskTicketEvent::log($t->id, $evt, ['field' => $field, 'from_value' => (string) $old, 'to_value' => (string) $value]);
+                if ($action === 'responsible') {
+                    \App\Services\HelpDeskTriggerEngine::queue('assigned', $t->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email, 'was_assigned' => !empty($old), 'previous_assignee_id' => $old]);
+                } else {
+                    \App\Services\HelpDeskTriggerEngine::queue('field_changed', $t->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+                }
+                $count++;
+            }
+        });
+        try {
+            $this->telemetry->record('bulk_update', 'performed', ['user_id' => $u?->id, 'metadata' => ['action' => $action, 'count' => $count]]);
+        } catch (\Throwable $e) { /* telemetria não bloqueia a operação */ }
+        return response()->json(['data' => ['updated' => $count]]);
+    }
+
     private function rules(bool $creating): array
     {
         return [

@@ -83,6 +83,29 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.delete_tickets', true);
     }
 
+    /**
+     * Atualização em massa (barra de seleção da lista de chamados). Gate em 2 níveis:
+     * o master `tickets.bulk_actions` + a ação específica `tickets.bulk.{action}`.
+     * $action ∈ delete|level|service|category|urgency|responsible. Default: liberado.
+     */
+    public function canBulk(?User $user, string $action): bool
+    {
+        if ($this->unrestricted($user)) return true;
+        if (!(bool) $this->perm($user, 'tickets.bulk_actions', true)) return false;
+        return (bool) $this->perm($user, 'tickets.bulk.' . $action, true);
+    }
+
+    /** Mapa das ações em massa permitidas (para o FE montar a barra). */
+    public function bulkPermsMap(?User $user): array
+    {
+        $master = $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.bulk_actions', true);
+        $m = ['enabled' => $master];
+        foreach (['delete', 'level', 'service', 'category', 'urgency', 'responsible'] as $a) {
+            $m[$a] = $master && $this->canBulk($user, $a);
+        }
+        return $m;
+    }
+
     /** Pode gerar a versão para impressão/PDF do chamado. Default: sim. */
     public function canPrint(?User $user): bool
     {
