@@ -824,9 +824,13 @@ class ApprovalController extends Controller
         if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
             // Coord de sustentação vê fila de sustentacao/cloud + Investimento Suporte
             // (service_type 'Projeto', mas é suporte — deve entrar na aprovação dele).
-            $query->where(function ($outer) {
+            $query->where(function ($outer) use ($user) {
                 $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
-                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"))
+                      // EXCEÇÃO: projetos que o coord coordena (override dele OU coordenador do
+                      // projeto), de qualquer serviceType. (pedido Ricardo, prod 2026-08-05)
+                      ->orWhereHas('project', fn ($q) => $q->where('kanban_coordinator_override_id', $user->id))
+                      ->orWhereHas('project.coordinators', fn ($q) => $q->where('users.id', $user->id));
             });
             $this->excludeOverriddenProjects($query, $user);
         }
@@ -927,9 +931,13 @@ class ApprovalController extends Controller
         if (!$user->isAdmin() && $user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
             // Coord de sustentação vê fila de sustentacao/cloud + Investimento Suporte
             // (service_type 'Projeto', mas é suporte — deve entrar na aprovação dele).
-            $query->where(function ($outer) {
+            $query->where(function ($outer) use ($user) {
                 $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
-                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"))
+                      // EXCEÇÃO: projetos que o coord coordena (override dele OU coordenador do
+                      // projeto), de qualquer serviceType. (pedido Ricardo, prod 2026-08-05)
+                      ->orWhereHas('project', fn ($q) => $q->where('kanban_coordinator_override_id', $user->id))
+                      ->orWhereHas('project.coordinators', fn ($q) => $q->where('users.id', $user->id));
             });
             $this->excludeOverriddenProjects($query, $user);
         }

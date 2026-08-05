@@ -35,17 +35,34 @@ class SustentacaoScopeService
     public function projectIds(?int $customerId = null): array
     {
         $stIds = $this->serviceTypeIds();
-        if (empty($stIds)) return [];
 
-        // Projetos elegíveis ao Portal de Sustentação: os de service_type de sustentação
-        // MAIS os "Investimento Suporte" (service_type 'Projeto', mas operacionalmente são
-        // suporte e devem ser geridos/aprovados pelo coordenador de sustentação).
-        $q = Project::where(function ($sub) use ($stIds) {
-                $sub->whereIn('service_type_id', $stIds)
-                    ->orWhereRaw("LOWER(TRIM(name)) = 'investimento suporte'");
-            })
-            ->whereNull('deleted_at')
-            ->whereNull('kanban_coordinator_override_id');
+        // Regra (pedido Ricardo): o Portal pega SOMENTE sustentação, EXCETO se o coordenador
+        // de sustentação logado coordena algum projeto — aí esse projeto (de QUALQUER
+        // serviceType) também entra.
+        $user        = auth()->user();
+        $isSustCoord = $user && $user->coordinator_type === 'sustentacao';
+        $uid         = $user?->id;
+
+        $q = Project::whereNull('deleted_at')->where(function ($w) use ($stIds, $isSustCoord, $uid) {
+            // (1) Base do Portal: service_type de sustentação (ou "Investimento Suporte",
+            //     service_type 'Projeto' mas operacionalmente suporte) SEM override de coord.
+            $w->where(function ($sub) use ($stIds) {
+                $sub->where(function ($s) use ($stIds) {
+                        $s->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'");
+                        if (!empty($stIds)) $s->orWhereIn('service_type_id', $stIds);
+                    })
+                    ->whereNull('kanban_coordinator_override_id');
+            });
+            // (2) EXCEÇÃO: projetos que ESTE coord de sustentação coordena — override dele,
+            //     OU coordenador do projeto (sem override) — de qualquer serviceType.
+            if ($isSustCoord && $uid) {
+                $w->orWhere('kanban_coordinator_override_id', $uid)
+                  ->orWhere(function ($s) use ($uid) {
+                      $s->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('coordinators', fn ($c) => $c->where('users.id', $uid));
+                  });
+            }
+        });
 
         if ($customerId) $q->where('customer_id', $customerId);
 
