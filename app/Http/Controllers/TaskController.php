@@ -88,6 +88,10 @@ class TaskController extends Controller
             $task->forceFill(['completed_at' => now(), 'completed_by' => $u->id])->save();
             $this->spawnNextOccurrence($task);
             $this->notifyCreator($task, $u);     // avisa o criador (se for outro)
+            // Tarefa de reunião concluída pelo Meu Dia → pop-up p/ todos os envolvidos da reunião.
+            if ($task->entity_type === 'meeting') {
+                \App\Http\Controllers\MeetingController::notifyTaskCompletion($task, $u);
+            }
         } elseif ($wasCompleted && !$task->completed) {
             $task->forceFill(['completed_at' => null, 'completed_by' => null])->save();
         }
