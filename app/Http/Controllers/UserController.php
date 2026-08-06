@@ -183,6 +183,13 @@ class UserController extends Controller
         if ($request->filled('contract_type')) {
             $query->whereIn('contract_type', array_filter(array_map('trim', explode(',', (string) $request->contract_type))));
         }
+        if ($request->filled('consultant_type')) {
+            $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type))));
+        }
+        // Liberação da sustentação (can_timesheet_sustentacao): '1' liberado | '0' bloqueado.
+        if ($request->filled('sustentacao')) {
+            $query->where('can_timesheet_sustentacao', $request->input('sustentacao') === '1' || $request->input('sustentacao') === 1 || $request->input('sustentacao') === true);
+        }
 
         if ($request->filled('exclude_type')) {
             $query->where('type', '!=', $request->exclude_type);
