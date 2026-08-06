@@ -52,7 +52,7 @@ class Customer360Controller extends Controller
         $sig = ($ctx['comercial'] ? 'c' : '-') . ($ctx['financeiro'] ? 'f' : '-') . ($ctx['serv'] ? 's' : '-') . ($ctx['despesas'] ? 'd' : '-');
 
         $allowed = collect(['header', 'resumo', 'timeline']);
-        if ($ctx['comercial'])  $allowed->push('crm', 'saude');
+        if ($ctx['comercial'])  $allowed->push('crm', 'saude', 'negociacoes');
         if ($ctx['financeiro']) $allowed->push('adm', 'financeiro');
         if ($ctx['serv'])       $allowed->push('serv');
 
@@ -238,6 +238,66 @@ class Customer360Controller extends Controller
                 'title' => $o->title, 'motivo' => $o->lossReason?->name ?? $o->motivo,
             ])->values(),
             'produtos_interesse' => $produtos,
+        ];
+    }
+
+    /**
+     * Resumo de Negociações (oportunidades) da empresa: KPIs executivos + lista enriquecida
+     * (etapa, responsável, qualificação/estrelas, status, valor, próxima tarefa) p/ a Visão 360°.
+     * Gated comercial (crm.view). Não mascara valor (seção já restrita a perfil comercial).
+     */
+    private function negociacoes(Customer $customer, array $ctx = []): array
+    {
+        $all = CrmOpportunity::where('customer_id', $customer->id)
+            ->with(['stage:id,name,is_won,is_lost,probabilidade', 'responsavel:id,name'])
+            ->orderByDesc('id')->get();
+
+        // Próxima tarefa aberta por oportunidade (mesma lógica do kanban: 1ª por data).
+        $prox = [];
+        \App\Models\CrmTask::whereIn('opportunity_id', $all->pluck('id'))
+            ->whereNull('concluida_at')->whereNotNull('data')->orderBy('data')
+            ->get(['id', 'opportunity_id', 'tipo', 'titulo', 'data'])
+            ->each(function ($t) use (&$prox) {
+                if (!isset($prox[$t->opportunity_id])) {
+                    $prox[$t->opportunity_id] = ['tipo' => $t->tipo, 'titulo' => $t->titulo, 'data' => optional($t->data)->toDateString()];
+                }
+            });
+
+        $abertas  = $all->where('status', 'aberto');
+        $ganhas   = $all->where('status', 'ganho');
+        $perdidas = $all->where('status', 'perdido');
+
+        // Tempo médio até a venda (dias) = média(fechamento_at − created_at) das ganhas.
+        $dias = $ganhas->filter(fn ($o) => $o->fechamento_at && $o->created_at)
+            ->map(fn ($o) => $o->created_at->diffInDays($o->fechamento_at));
+        $tempoMedio = $dias->count() ? (int) round($dias->avg()) : null;
+
+        $estrelas = ['frio' => 1, 'morno' => 2, 'quente' => 3];
+
+        return [
+            'kpis' => [
+                'valor_andamento'  => round((float) $abertas->sum('valor'), 2),
+                'valor_vendido'    => round((float) $ganhas->sum('valor'), 2),
+                'valor_perdido'    => round((float) $perdidas->sum('valor'), 2),
+                'total'            => $all->count(),
+                'ticket_medio'     => $ganhas->count() ? round((float) $ganhas->avg('valor'), 2) : 0,
+                'tempo_medio_dias' => $tempoMedio,
+                'abertas'          => $abertas->count(),
+                'ganhas'           => $ganhas->count(),
+                'perdidas'         => $perdidas->count(),
+            ],
+            'negociacoes' => $all->map(fn ($o) => [
+                'id'             => $o->id,
+                'title'          => $o->title,
+                'status'         => $o->status,                              // aberto | ganho | perdido
+                'stage'          => $o->stage?->name,
+                'valor'          => (float) $o->valor,
+                'responsavel'    => $o->responsavel?->name,
+                'qualificacao'   => $o->qualificacao,                        // frio | morno | quente
+                'estrelas'       => $estrelas[$o->qualificacao] ?? null,
+                'probabilidade'  => $o->probabilidade ?? $o->stage?->probabilidade,
+                'proxima_tarefa' => $prox[$o->id] ?? null,
+            ])->values(),
         ];
     }
 
