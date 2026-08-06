@@ -88,11 +88,21 @@ class KanbanLogController extends Controller
         // Só projetos do pipeline Demandas e Projetos (categoria projeto) — exclui SUSTENTAÇÃO/CLOUD.
         $projects = \App\Models\Project::whereIn('id', $logsByProject->keys())
             ->whereDoesntHave('serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
-            ->with(['customer:id,name', 'executivoConta:id,name', 'kanbanOverrideCoordinator:id,name', 'coordinators:id,name'])
+            ->with(['customer:id,name,executive_id,executive_bizify_id', 'customer.executive:id,name', 'customer.executiveBizify:id,name', 'executivoConta:id,name', 'kanbanOverrideCoordinator:id,name', 'coordinators:id,name'])
             ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status', 'service_type_id', 'executivo_conta_id', 'kanban_coordinator_override_id'])->keyBy('id');
 
         $daysBetween = fn ($a, $b) => (int) \Carbon\Carbon::parse($a)->startOfDay()->diffInDays(\Carbon\Carbon::parse($b)->startOfDay());  // dias de calendario (cheios)
         $col = fn ($status) => $statusToCol[$status] ?? $status;
+
+        // Executivo por empresa ATIVA (igual aos cards do pipeline): Bizify → executivo Bizify do cliente;
+        // ERPSERV → override do projeto, senão o executivo ERPSERV do cliente. Muitos projetos não têm
+        // executivo_conta_id gravado (ele vem do CLIENTE), então cair só no override deixava a coluna vazia.
+        $activeIsBizify = config('multiempresa.scoping_enabled')
+            && ($aid = app(\App\Services\CompanyContext::class)->id())
+            && \App\Models\Company::where('id', $aid)->where('slug', 'bizify')->exists();
+        $execName = fn ($proj) => $activeIsBizify
+            ? $proj->customer?->executiveBizify?->name
+            : ($proj->executivoConta?->name ?? $proj->customer?->executive?->name);
 
         $usedCols = [];
         $rows = [];
@@ -127,7 +137,7 @@ class KanbanLogController extends Controller
                 'customer'       => $proj->customer?->name ?? '—',
                 // Coordenador efetivo: override do kanban primeiro, senão o coordenador do projeto (pivot).
                 'coordinator'    => $proj->kanbanOverrideCoordinator?->name ?? $proj->coordinators->first()?->name ?? '—',
-                'executive'      => $proj->executivoConta?->name ?? '—',
+                'executive'      => $execName($proj) ?? '—',
                 'created_at'     => $proj->created_at?->toIso8601String(),
                 'current'        => $proj->status,
                 'current_label'  => $labels[$col($proj->status)] ?? $proj->status,
