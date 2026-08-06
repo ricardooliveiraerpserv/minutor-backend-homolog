@@ -137,6 +137,7 @@ class NotificationController extends Controller
                 ->orWhereJsonContains('target_users', $u->id)
                 ->orWhere('created_by', $u->id)   // o autor sempre vê o que publicou (acompanhamento + voto na própria enquete)
                 ->when($u->contract_type, fn ($w) => $w->orWhereJsonContains('target_contract_types', $u->contract_type))
+                ->when($u->work_bond, fn ($w) => $w->orWhereJsonContains('target_bonds', $u->work_bond))
                 ->when($u->customer_id, fn ($w) => $w
                     ->orWhere('target_customer_id', $u->customer_id)
                     ->orWhereJsonContains('target_customer_ids', $u->customer_id)))
@@ -307,13 +308,14 @@ class NotificationController extends Controller
             (array) ($n->target_customer_ids ?? []),
             $n->target_customer_id ? [$n->target_customer_id] : []
         ));
-        $hasTarget = $n->target_roles || $n->target_users || $n->target_contract_types || $customerIds;
+        $hasTarget = $n->target_roles || $n->target_users || $n->target_contract_types || $n->target_bonds || $customerIds;
         if (!$hasTarget) return collect();
         return \App\Models\User::query()
             ->where(function ($w) use ($n, $customerIds) {
                 if ($n->target_roles)          $w->orWhereIn('type', $n->target_roles);
                 if ($n->target_users)          $w->orWhereIn('id', $n->target_users);
                 if ($n->target_contract_types) $w->orWhereIn('contract_type', $n->target_contract_types);
+                if ($n->target_bonds)          $w->orWhereIn('work_bond', $n->target_bonds);
                 if ($customerIds)              $w->orWhereIn('customer_id', $customerIds);
             })
             ->get(['id', 'name', 'email']);
@@ -474,6 +476,8 @@ class NotificationController extends Controller
             'target_roles'          => 'nullable|array',
             'target_users'          => 'nullable|array',
             'target_contract_types' => 'nullable|array',
+            'target_bonds'          => 'nullable|array',
+            'target_bonds.*'        => 'in:fixo,freelance',
             'target_customer_id'    => 'nullable|exists:customers,id',
             'target_customer_ids'   => 'nullable|array',
             'target_customer_ids.*' => 'integer|exists:customers,id',
@@ -510,13 +514,14 @@ class NotificationController extends Controller
             (array) ($n->target_customer_ids ?? []),
             $n->target_customer_id ? [$n->target_customer_id] : []
         ));
-        $hasTarget = $n->target_roles || $n->target_users || $n->target_contract_types || $customerIds;
+        $hasTarget = $n->target_roles || $n->target_users || $n->target_contract_types || $n->target_bonds || $customerIds;
         if (!$hasTarget) return [];
         return \App\Models\User::query()->whereNotNull('email')
             ->where(function ($w) use ($n, $customerIds) {
                 if ($n->target_roles)          $w->orWhereIn('type', $n->target_roles);
                 if ($n->target_users)          $w->orWhereIn('id', $n->target_users);
                 if ($n->target_contract_types) $w->orWhereIn('contract_type', $n->target_contract_types);
+                if ($n->target_bonds)          $w->orWhereIn('work_bond', $n->target_bonds);
                 if ($customerIds)              $w->orWhereIn('customer_id', $customerIds);
             })
             ->pluck('email')->map(fn ($e) => mb_strtolower(trim($e)))->filter()->unique()->values()->all();
