@@ -59,6 +59,7 @@ class User extends Authenticatable
         'rate_type',
         'daily_hours',
         'consultant_type',
+        'work_bond',
         'contract_type',
         // Folha de pagamento (planilha de importação)
         'full_name',
