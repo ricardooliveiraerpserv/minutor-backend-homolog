@@ -55,6 +55,8 @@ class FireRecurringNotifications extends Command
         return match ($n->recurrence) {
             'every_days'   => !$n->last_fired_at
                                 || $n->last_fired_at->copy()->startOfDay()->addDays($v)->lte($today->copy()->startOfDay()),
+            // Semanal: dispara nos dias da semana marcados (0=domingo … 6=sábado). 1x/dia garantido acima.
+            'weekly'       => in_array((int) $today->dayOfWeek, array_map('intval', (array) ($n->recurrence_weekdays ?? [])), true),
             'day_of_month' => $today->day === min($v, $today->daysInMonth), // dia 31 em mês curto = último dia
             'business_day' => optional($this->nthBusinessDay($today, $v))->isSameDay($today) ?? false,
             default        => false,

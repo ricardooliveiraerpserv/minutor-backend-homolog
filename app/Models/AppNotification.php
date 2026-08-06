@@ -19,7 +19,7 @@ class AppNotification extends Model
         'title', 'message', 'type', 'priority', 'target_roles', 'target_users',
         'target_contract_types', 'target_bonds', 'excluded_user_ids', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
         'requires_ack', 'cta_label', 'cta_url', 'actions', 'version', 'created_by', 'expires_at',
-        'recurrence', 'recurrence_value', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
+        'recurrence', 'recurrence_value', 'recurrence_weekdays', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
     ];
 
     protected $casts = [
@@ -35,6 +35,7 @@ class AppNotification extends Model
         'visible'               => 'boolean',
         'is_template'           => 'boolean',
         'recurrence_value'      => 'integer',
+        'recurrence_weekdays'   => 'array',
         'version'               => 'integer',
         'expires_at'            => 'datetime',
         'last_fired_at'         => 'datetime',
@@ -42,7 +43,7 @@ class AppNotification extends Model
     ];
 
     public const TYPES = ['info', 'action', 'require_ack', 'poll', 'aviso', 'formal'];
-    public const RECURRENCES = ['none', 'every_hours', 'every_days', 'day_of_month', 'business_day'];
+    public const RECURRENCES = ['none', 'every_hours', 'every_days', 'weekly', 'day_of_month', 'business_day'];
     public const PRIORITIES = ['low', 'medium', 'high', 'critical'];
     public const PRIORITY_RANK = ['critical' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
 

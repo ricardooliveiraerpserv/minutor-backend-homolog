@@ -490,6 +490,8 @@ class NotificationController extends Controller
             'visible'               => 'nullable|boolean',
             'recurrence'            => 'nullable|in:' . implode(',', AppNotification::RECURRENCES),
             'recurrence_value'      => 'nullable|integer|min:1|max:744',
+            'recurrence_weekdays'   => 'nullable|array',
+            'recurrence_weekdays.*' => 'integer|min:0|max:6',
             'is_template'           => 'nullable|boolean',
             'template_name'         => 'nullable|string|max:120',
             'requires_ack' => 'nullable|boolean',

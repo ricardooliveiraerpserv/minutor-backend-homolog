@@ -214,6 +214,10 @@ class UserController extends Controller
         } elseif ($status === 'inactive') {
             $query->where('enabled', false);
         }
+        // O FE (tela de Usuários) envia ?enabled=1|0 — aplica igual aos contadores.
+        if ($request->filled('enabled')) {
+            $query->where('enabled', $request->input('enabled') === '1' || $request->input('enabled') === 1 || $request->input('enabled') === true);
+        }
 
         // Ordenação padrão PO-UI
         $orderFields = $request->get('order', 'name');
