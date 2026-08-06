@@ -252,6 +252,7 @@ class UserController extends Controller
         // Resposta no padrão PO-UI
         return response()->json([
             'hasNext' => $users->hasMorePages(),
+            'total'   => $users->total(),   // total do filtro atual (todas as páginas)
             'items' => $items
         ]);
     }
