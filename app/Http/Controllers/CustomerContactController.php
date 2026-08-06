@@ -42,7 +42,7 @@ class CustomerContactController extends Controller
             'customer_id' => 'required|exists:customers,id',
             'name'        => 'required|string|max:255',
             'cargo'       => 'nullable|string|max:255',
-            'email'       => 'nullable|email|max:255',
+            'email'       => 'required|email|max:255',
             'phone'       => 'nullable|string|max:50',
             // CRM
             'departamento'       => 'nullable|string|max:120',
@@ -62,7 +62,7 @@ class CustomerContactController extends Controller
             'customer_id' => 'sometimes|exists:customers,id',
             'name'        => 'sometimes|required|string|max:255',
             'cargo'       => 'nullable|string|max:255',
-            'email'       => 'nullable|email|max:255',
+            'email'       => 'sometimes|required|email|max:255',
             'phone'       => 'nullable|string|max:50',
             // CRM
             'departamento'       => 'nullable|string|max:120',
