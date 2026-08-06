@@ -133,30 +133,30 @@ class MeetingController extends Controller
         $u = $this->manager($request);
         $m = $this->findVisible($u, $meeting);
         $v = $request->validate([
-            'title'       => 'required|string|max:5000',
-            'description' => 'nullable|string',
-            'assigned_to' => 'required|integer|exists:users,id',
-            'due_date'    => 'nullable|date',
+            'title'         => 'required|string|max:5000',
+            'description'   => 'nullable|string',
+            'assigned_to'   => 'required|array|min:1',       // múltiplos responsáveis
+            'assigned_to.*' => 'integer|exists:users,id',
+            'due_date'      => 'required|date',              // prazo obrigatório
         ]);
-        // o responsável deve ser um envolvido na reunião
-        $participantIds = $m->participants()->pluck('users.id')->push($m->created_by_id)->unique();
-        abort_unless($participantIds->contains((int) $v['assigned_to']), 422, 'O responsável precisa ser um participante da reunião.');
+        $assignees = $this->validateAssignees($m, $v['assigned_to']);
 
         $t = Task::create([
             'user_id'     => $u->id,
             'created_by'  => $u->id,
-            'assigned_to' => (int) $v['assigned_to'],
+            'assigned_to' => $assignees[0],                  // principal (compat Minhas Tarefas/Calendário)
             'title'       => trim($v['title']),
             'description' => $v['description'] ?? null,
-            'due_date'    => $v['due_date'] ?? null,
+            'due_date'    => $v['due_date'],
             'completed'   => false,
             'entity_type' => 'meeting',
             'entity_id'   => $m->id,
         ]);
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator']))], 201);
+        $t->assignees()->sync($assignees);                  // todos (inclui o principal)
+        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name']))], 201);
     }
 
-    /** Editar tarefa da reunião (título/responsável/prazo) — criador ou admin. */
+    /** Editar tarefa da reunião (título/responsáveis/prazo) — criador ou admin. */
     public function updateTask(Request $request, int $meeting, int $task): JsonResponse
     {
         $u = $this->manager($request);
@@ -165,19 +165,32 @@ class MeetingController extends Controller
         abort_unless($u->isAdmin() || $t->created_by === $u->id, 403, 'Apenas quem criou a tarefa (ou admin) pode editá-la.');
 
         $v = $request->validate([
-            'title'       => 'required|string|max:5000',
-            'assigned_to' => 'required|integer|exists:users,id',
-            'due_date'    => 'nullable|date',
+            'title'         => 'required|string|max:5000',
+            'assigned_to'   => 'required|array|min:1',
+            'assigned_to.*' => 'integer|exists:users,id',
+            'due_date'      => 'required|date',
         ]);
-        $participantIds = $m->participants()->pluck('users.id')->push($m->created_by_id)->unique();
-        abort_unless($participantIds->contains((int) $v['assigned_to']), 422, 'O responsável precisa ser um participante da reunião.');
+        $assignees = $this->validateAssignees($m, $v['assigned_to']);
 
         $t->update([
             'title'       => trim($v['title']),
-            'assigned_to' => (int) $v['assigned_to'],
-            'due_date'    => $v['due_date'] ?? null,
+            'assigned_to' => $assignees[0],
+            'due_date'    => $v['due_date'],
         ]);
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator']))]);
+        $t->assignees()->sync($assignees);
+        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name']))]);
+    }
+
+    /** Normaliza + valida que TODOS os responsáveis são participantes da reunião. Retorna ids únicos. */
+    private function validateAssignees(Meeting $m, array $ids): array
+    {
+        $ids = collect($ids)->map(fn ($i) => (int) $i)->filter()->unique()->values();
+        abort_if($ids->isEmpty(), 422, 'Informe ao menos um responsável.');
+        $participantIds = $m->participants()->pluck('users.id')->push($m->created_by_id)->unique();
+        foreach ($ids as $id) {
+            abort_unless($participantIds->contains($id), 422, 'Todo responsável precisa ser um participante da reunião.');
+        }
+        return $ids->all();
     }
 
     public function deleteTask(Request $request, int $meeting, int $task): JsonResponse
@@ -190,22 +203,88 @@ class MeetingController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    /** Concluir/reabrir tarefa da reunião — só o responsável. */
+    /** Concluir/reabrir tarefa da reunião — QUALQUER responsável (conclui p/ todos) ou admin. */
     public function toggleTask(Request $request, int $meeting, int $task): JsonResponse
     {
         $u = $this->manager($request);
         $m = $this->findVisible($u, $meeting);
-        $t = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->findOrFail($task);
-        abort_unless($t->assigned_to === $u->id || $u->isAdmin(), 403, 'Apenas o responsável pode concluir/reabrir.');
+        $t = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->with('assignees:id')->findOrFail($task);
+        abort_unless($u->isAdmin() || in_array($u->id, $t->allAssigneeIds(), true), 403, 'Apenas um responsável pode concluir/reabrir.');
         $done = !$t->completed;
+        // Tarefa é ÚNICA: concluir marca a task inteira → conclui p/ TODOS os responsáveis.
         $t->update(['completed' => $done, 'completed_at' => $done ? now() : null, 'completed_by' => $done ? $u->id : null]);
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator']))]);
+        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name']))]);
+    }
+
+    /**
+     * Lista consolidada de tarefas de reunião PENDENTES (todas as reuniões visíveis),
+     * agrupadas por responsável, com a reunião de origem (p/ direcionar) e filtro por reunião.
+     * GET /meetings/tasks/pending?meeting_id=&include_done=0
+     */
+    public function pendingTasks(Request $request): JsonResponse
+    {
+        $u = $this->manager($request);
+        $meetingIds = Meeting::visibleTo($u)->pluck('id');       // respeita visibilidade (admin vê tudo)
+
+        $q = Task::where('entity_type', 'meeting')
+            ->whereIn('entity_id', $meetingIds)
+            ->with(['assignees:id,name', 'assignee:id,name']);
+        if ($request->filled('meeting_id')) {
+            $q->where('entity_id', (int) $request->query('meeting_id'));
+        }
+        if (!$request->boolean('include_done')) {
+            $q->where('completed', false);
+        }
+        $tasks = $q->orderByRaw('due_date is null')->orderBy('due_date')->orderByDesc('id')->get();
+
+        $meetingsById = Meeting::whereIn('id', $tasks->pluck('entity_id')->unique())
+            ->get(['id', 'title', 'meeting_date'])->keyBy('id');
+
+        // Agrupa por RESPONSÁVEL (uma tarefa com N responsáveis aparece p/ cada um).
+        $byUser = [];
+        foreach ($tasks as $t) {
+            $m = $meetingsById->get($t->entity_id);
+            $row = [
+                'task_id'       => $t->id,
+                'title'         => $t->title,
+                'due_date'      => optional($t->due_date)->format('Y-m-d'),
+                'completed'     => (bool) $t->completed,
+                'meeting_id'    => $t->entity_id,
+                'meeting_title' => $m?->title ?? '—',
+                'assignees'     => $this->assigneeList($t),
+            ];
+            foreach ($this->assigneeList($t) as $a) {
+                $byUser[$a['id']] ??= ['user_id' => $a['id'], 'user_name' => $a['name'], 'tasks' => []];
+                $byUser[$a['id']]['tasks'][] = $row;
+            }
+        }
+        // Ordena grupos por nome; sem responsável ("—") ao fim.
+        $groups = collect($byUser)->sortBy('user_name', SORT_NATURAL | SORT_FLAG_CASE)->values();
+
+        // Reuniões (p/ o filtro do FE).
+        $meetingOptions = Meeting::visibleTo($u)->orderByDesc('id')->get(['id', 'title'])
+            ->map(fn ($m) => ['id' => $m->id, 'title' => $m->title])->values();
+
+        return response()->json(['data' => ['groups' => $groups, 'meetings' => $meetingOptions]]);
+    }
+
+    /** Lista de responsáveis (pivot ∪ assigned_to) já como [{id,name}]. */
+    private function assigneeList(Task $t): array
+    {
+        $names = [];
+        foreach ($t->relationLoaded('assignees') ? $t->assignees : $t->assignees()->get(['users.id', 'name']) as $a) {
+            $names[$a->id] = $a->name;
+        }
+        if ($t->assigned_to && !isset($names[$t->assigned_to])) {
+            $names[$t->assigned_to] = $t->assignee?->name ?? '—';
+        }
+        return collect($names)->map(fn ($name, $id) => ['id' => (int) $id, 'name' => $name])->values()->all();
     }
 
     private function serialize(Meeting $m, User $u): array
     {
         $tasks = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)
-            ->with(['assignee:id,name', 'creator:id,name'])->orderBy('completed')->orderByRaw('due_date is null')->orderBy('due_date')->get();
+            ->with(['assignee:id,name', 'creator:id,name', 'assignees:id,name'])->orderBy('completed')->orderByRaw('due_date is null')->orderBy('due_date')->get();
         return [
             'id' => $m->id,
             'title' => $m->title,
@@ -223,12 +302,15 @@ class MeetingController extends Controller
 
     private function serializeTask(Task $t): array
     {
+        $assignees = $this->assigneeList($t);
         return [
             'id' => $t->id,
             'title' => $t->title,
             'description' => $t->description,
-            'assigned_to' => $t->assigned_to,
+            'assigned_to' => $t->assigned_to,                                   // principal (compat)
             'assignee_name' => $t->assignee?->name,
+            'assignees' => $assignees,                                          // TODOS os responsáveis [{id,name}]
+            'assignee_ids' => array_map(fn ($a) => $a['id'], $assignees),
             'created_by' => $t->created_by,
             'due_date' => optional($t->due_date)->format('Y-m-d'),
             'completed' => (bool) $t->completed,

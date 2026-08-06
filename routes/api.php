@@ -209,6 +209,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/tasks/{task}',       [\App\Http\Controllers\TaskController::class, 'update']);
         Route::delete('/tasks/{task}',    [\App\Http\Controllers\TaskController::class, 'destroy']);
         // Central de Reunião (admin/coordenador; visível só aos envolvidos)
+        Route::get('/meetings/tasks/pending',                [\App\Http\Controllers\MeetingController::class, 'pendingTasks']);
         Route::get('/meetings',                              [\App\Http\Controllers\MeetingController::class, 'index']);
         Route::post('/meetings',                             [\App\Http\Controllers\MeetingController::class, 'store']);
         Route::get('/meetings/{meeting}',                    [\App\Http\Controllers\MeetingController::class, 'show']);

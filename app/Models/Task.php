@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Carbon;
 
 /** Tarefa rápida pessoal (Smart To-Do). Sempre escopada ao user_id. */
@@ -35,6 +36,22 @@ class Task extends Model
     public function creator(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
     public function assignee(): BelongsTo { return $this->belongsTo(User::class, 'assigned_to'); }
     public function completer(): BelongsTo { return $this->belongsTo(User::class, 'completed_by'); }
+
+    /** Responsáveis (múltiplos) — pivot task_assignees. Inclui o principal (assigned_to). */
+    public function assignees(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'task_assignees', 'task_id', 'user_id')->withTimestamps();
+    }
+
+    /** Ids de TODOS os responsáveis (pivot ∪ assigned_to) — robusto p/ tarefas antigas sem pivot. */
+    public function allAssigneeIds(): array
+    {
+        $ids = $this->relationLoaded('assignees')
+            ? $this->assignees->pluck('id')->all()
+            : $this->assignees()->pluck('users.id')->all();
+        if ($this->assigned_to) $ids[] = (int) $this->assigned_to;
+        return array_values(array_unique(array_map('intval', $ids)));
+    }
 
     /** Próxima data de recorrência a partir de uma base. Diário/semanal com dias = próximo dia marcado. */
     public function nextDueDate(?Carbon $base = null): ?Carbon
