@@ -238,6 +238,7 @@ class UserController extends Controller
         $items = collect($users->items())->map(function ($user) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
             return $userData;
         })->toArray();
 
