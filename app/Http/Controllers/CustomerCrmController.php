@@ -50,6 +50,8 @@ class CustomerCrmController extends Controller
             'profile.num_funcionarios'     => 'nullable|integer|min:0',
             'profile.erp_atual'       => 'nullable|string|max:120',
             'profile.indicacao'       => 'nullable|string|max:160',
+            'profile.site'            => 'nullable|string|max:200',
+            'profile.endereco'        => 'nullable|string|max:255',
             'tag_ids'                 => 'nullable|array',
             'tag_ids.*'               => 'integer|exists:crm_tags,id',
         ], [
