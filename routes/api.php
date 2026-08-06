@@ -302,6 +302,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('/help-desk/services/{service}',   [\App\Http\Controllers\HelpDeskServiceController::class, 'destroy']);
         Route::get('/help-desk/sla-policies/{policy}',   [\App\Http\Controllers\HelpDeskSlaController::class, 'show']);
         Route::put('/help-desk/sla-policies/{policy}',   [\App\Http\Controllers\HelpDeskSlaController::class, 'update']);
+        Route::post('/help-desk/sla-policies/{policy}/duplicate', [\App\Http\Controllers\HelpDeskSlaController::class, 'duplicate']);
         Route::delete('/help-desk/sla-policies/{policy}', [\App\Http\Controllers\HelpDeskSlaController::class, 'destroy']);
         Route::put('/help-desk/statuses/{status}',       [\App\Http\Controllers\HelpDeskStatusController::class, 'update']);
         Route::delete('/help-desk/statuses/{status}',    [\App\Http\Controllers\HelpDeskStatusController::class, 'destroy']);

@@ -104,6 +104,36 @@ class HelpDeskSlaController extends Controller
         return response()->json(null, 204);
     }
 
+    /** Duplica a política (regras, pausas, feriados) para vincular a um contrato específico. NÃO copia clientes nem o "padrão". */
+    public function duplicate(HelpDeskSlaPolicy $policy): JsonResponse
+    {
+        $policy->load(['targets.pauses', 'holidays']);
+        return DB::transaction(function () use ($policy) {
+            $copy = HelpDeskSlaPolicy::create([
+                'name'                  => 'Cópia de ' . $policy->name,
+                'description'           => $policy->description,
+                'business_hours'        => $policy->business_hours,
+                'timezone'              => $policy->timezone,
+                'use_national_holidays' => $policy->use_national_holidays,
+                'is_default'            => false,
+                'active'                => true,
+            ]);
+            foreach ($policy->targets as $t) {
+                $nt = $copy->targets()->create([
+                    'priority' => $t->priority, 'name' => $t->name, 'enabled' => $t->enabled,
+                    'first_response_minutes' => $t->first_response_minutes, 'resolution_minutes' => $t->resolution_minutes,
+                    'first_response_channels' => $t->first_response_channels, 'pause_on_approval' => $t->pause_on_approval,
+                    'max_agent_actions' => $t->max_agent_actions, 'conditions' => $t->conditions,
+                ]);
+                foreach ($t->pauses as $p) $nt->pauses()->create(['status_key' => $p->status_key]);
+            }
+            foreach ($policy->holidays as $h) {
+                $copy->holidays()->create(['date' => $h->date, 'name' => $h->name, 'yearly' => $h->yearly]);
+            }
+            return response()->json(['data' => $copy->load(['targets.pauses', 'holidays', 'customers:id,name'])], 201);
+        });
+    }
+
     private function upsertTargets(HelpDeskSlaPolicy $policy, array $targets): void
     {
         foreach ($targets as $t) {
