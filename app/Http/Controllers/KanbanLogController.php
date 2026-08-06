@@ -64,42 +64,60 @@ class KanbanLogController extends Controller
      */
     public function columnHistory(\Illuminate\Http\Request $request): JsonResponse
     {
-        // Ordem/labels das colunas do fluxo.
-        $order  = ['backlog', 'planning', 'awaiting_start', 'started', 'liberado_para_testes', 'em_producao', 'paused', 'finished', 'cancelled'];
-        $labels = [
-            'backlog' => 'Backlog', 'planning' => 'Em Planejamento', 'awaiting_start' => 'Aguardando Início',
-            'started' => 'Em Andamento', 'liberado_para_testes' => 'Em Testes', 'em_producao' => 'Em Produção',
-            'paused' => 'Pausado', 'finished' => 'Concluído', 'cancelled' => 'Cancelado',
+        // Mapeia STATUS do projeto → COLUNA do pipeline Demandas e Projetos (agrupa backlog+awaiting_start).
+        $statusToCol = [
+            'backlog' => 'backlog', 'awaiting_start' => 'backlog',
+            'planning' => 'planning', 'started' => 'started',
+            'liberado_para_testes' => 'homologacao', 'em_producao' => 'em_producao',
+            'paused' => 'paused', 'finished' => 'finished', 'cancelled' => 'cancelled',
         ];
+        // Ordem/labels iguais às colunas do pipeline.
+        $order  = ['backlog', 'planning', 'started', 'homologacao', 'em_producao', 'paused', 'finished', 'cancelled'];
+        $labels = [
+            'backlog' => 'Backlog', 'planning' => 'Em Planejamento', 'started' => 'Em Andamento',
+            'homologacao' => 'Em Homologação', 'em_producao' => 'Em Produção',
+            'paused' => 'Pausado', 'finished' => 'Encerrado', 'cancelled' => 'Cancelado',
+        ];
+        // Terminais: quando o projeto está PARADO nelas (coluna atual), o cronômetro NÃO corre.
+        $terminal = ['finished', 'cancelled'];
 
         $logsByProject = \App\Models\ProjectKanbanLog::orderBy('project_id')->orderBy('created_at')
             ->get(['project_id', 'from_status', 'to_status', 'created_at'])
             ->groupBy('project_id');
 
+        // Só projetos do pipeline Demandas e Projetos (categoria projeto) — exclui SUSTENTAÇÃO/CLOUD.
         $projects = \App\Models\Project::whereIn('id', $logsByProject->keys())
+            ->whereDoesntHave('serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
             ->with('customer:id,name')
-            ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status'])->keyBy('id');
+            ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status', 'service_type_id'])->keyBy('id');
 
         $daysBetween = fn ($a, $b) => max(0.0, round(\Carbon\Carbon::parse($a)->floatDiffInDays(\Carbon\Carbon::parse($b)), 1));
+        $col = fn ($status) => $statusToCol[$status] ?? $status;
 
         $usedCols = [];
         $rows = [];
         foreach ($logsByProject as $pid => $plogs) {
             $proj = $projects->get($pid);
-            if (!$proj) continue;
+            if (!$proj) continue;   // filtrado (sustentação) → fora
             $plogs = $plogs->values();
             $byCol = [];
 
             // Coluna inicial (from do 1º log): do início do projeto até o 1º log.
             $first = $plogs->first();
             if ($first->from_status && $proj->created_at) {
-                $byCol[$first->from_status] = ($byCol[$first->from_status] ?? 0) + $daysBetween($proj->created_at, $first->created_at);
+                $c = $col($first->from_status);
+                $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($proj->created_at, $first->created_at);
             }
             // Cada segmento: to_status[i] até o próximo log (ou agora se for o último = coluna atual).
-            for ($i = 0; $i < $plogs->count(); $i++) {
-                $col = $plogs[$i]->to_status;
-                $end = ($i + 1 < $plogs->count()) ? $plogs[$i + 1]->created_at : now();
-                $byCol[$col] = ($byCol[$col] ?? 0) + $daysBetween($plogs[$i]->created_at, $end);
+            $n = $plogs->count();
+            for ($i = 0; $i < $n; $i++) {
+                $status = $plogs[$i]->to_status;
+                $isLast = ($i + 1 >= $n);
+                // Coluna atual em Encerrado/Cancelado: para de contar (não soma o segmento aberto).
+                if ($isLast && in_array($status, $terminal, true)) continue;
+                $end = $isLast ? now() : $plogs[$i + 1]->created_at;
+                $c = $col($status);
+                $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($plogs[$i]->created_at, $end);
             }
             foreach (array_keys($byCol) as $c) $usedCols[$c] = true;
             $rows[] = [
@@ -108,13 +126,14 @@ class KanbanLogController extends Controller
                 'name'           => $proj->name,
                 'customer'       => $proj->customer?->name ?? '—',
                 'current'        => $proj->status,
+                'current_label'  => $labels[$col($proj->status)] ?? $proj->status,
                 'days_by_column' => array_map(fn ($d) => round($d, 1), $byCol),
                 'total'          => round(array_sum($byCol), 1),
             ];
         }
         usort($rows, fn ($a, $b) => $b['total'] <=> $a['total']);
 
-        // Só as colunas que apareceram, na ordem do fluxo (+ eventuais fora da lista, ao fim).
+        // Colunas usadas, na ordem do pipeline.
         $columns = array_values(array_filter($order, fn ($c) => isset($usedCols[$c])));
         foreach (array_keys($usedCols) as $c) if (!in_array($c, $columns, true)) $columns[] = $c;
 
