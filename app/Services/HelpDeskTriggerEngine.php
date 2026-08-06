@@ -225,15 +225,15 @@ class HelpDeskTriggerEngine
         HelpDeskTicketEvent::log($ticket->id, 'assign', ['meta' => ['via' => 'trigger']]);
     }
 
-    /** Registra no histórico do chamado que a notificação foi enviada (p/ quem + ok/erro). */
-    private static function logEmailSent(HelpDeskTicket $ticket, array $to, array $params, bool $ok, ?string $err, ?string $triggerName): void
+    /** Registra no histórico do chamado que a notificação foi enviada (p/ quem + cópia + ok/erro). */
+    private static function logEmailSent(HelpDeskTicket $ticket, array $to, array $cc, array $params, bool $ok, ?string $err, ?string $triggerName): void
     {
         $toList = (array) ($params['to'] ?? []);
         $publico = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'cliente'
             : (in_array('responsavel', $toList, true) ? 'responsavel' : 'equipe');
         HelpDeskTicketEvent::log($ticket->id, 'email_sent', [
             'to_value' => implode(', ', $to),
-            'meta' => ['to' => $to, 'ok' => $ok, 'error' => $err, 'publico' => $publico, 'regra' => $triggerName, 'via' => 'trigger'],
+            'meta' => ['to' => $to, 'cc' => $cc, 'ok' => $ok, 'error' => $err, 'publico' => $publico, 'regra' => $triggerName, 'via' => 'trigger'],
         ]);
     }
 
@@ -262,6 +262,17 @@ class HelpDeskTriggerEngine
         // conversa NOVA no Apple Mail, fora do fio. O aviso ("encerrado" etc.) já está no CORPO.
         $subject = \App\Services\HelpDeskReplyMailer::subjectFor($ticket);
 
+        // CC de ACOMPANHAMENTO: quem está "em cópia" no chamado recebe TUDO que vai ao CLIENTE.
+        // Só quando o público inclui o cliente/solicitante (nunca em avisos internos ao agente).
+        $toList = (array) ($params['to'] ?? []);
+        $cc = [];
+        if (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) {
+            $cc = array_values(array_filter(
+                array_map('trim', (array) $ticket->cc_emails),
+                fn ($e) => $e !== '' && !in_array(mb_strtolower($e), array_map('mb_strtolower', $to), true)
+            ));
+        }
+
         // Modo TEMPLATE (novo): admin informa mensagem + blocos → composer monta o layout
         // institucional (logo/cabeçalho/assinatura/rodapé já inclusos → sem o footer auto).
         // Modo RAW (legado): body HTML/texto renderizado direto + footer padrão. Compat preservada.
@@ -280,13 +291,13 @@ class HelpDeskTriggerEngine
             // Imagens/assinatura do chamado (data:) → cid inline, pra renderizarem no e-mail.
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
-            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
+            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
         } else {
             $body = nl2br(self::render((string) ($params['body'] ?? ''), $ticket));
             $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . $body . '</div>';
-            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
+            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
         }
-        self::logEmailSent($ticket, $to, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
+        self::logEmailSent($ticket, $to, $cc, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
     }
 
     /** Resolve um destinatário simbólico em e-mail. Aceita também e-mail fixo (contém @). */
