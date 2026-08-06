@@ -41,8 +41,6 @@ class SkillHireCard extends Model
     /** Recursos a provisionar no onboarding (checkboxes do script). */
     public const RECURSOS = [
         'flash' => 'Cartão Flash',
-        'artia' => 'Artia',
-        'email' => 'E-mail',
         'headset' => 'Headset',
         'notebook' => 'Notebook',
         'mouse' => 'Mouse',
@@ -77,6 +75,7 @@ class SkillHireCard extends Model
             'guaranteed_hours' => '',            // horas garantidas
             'empresa' => 'erpserv',              // erpserv | bizify (base da folha → is_bizify)
             'recursos' => [],                    // chaves de RECURSOS
+            'email_criado' => '',                // sim | nao (e-mail corporativo já criado?)
             'incluir_whatsapp' => '',            // sim | nao
             'whatsapp_date' => '',               // data em que pode ser incluído no WhatsApp (se sim)
             'cpf' => (string) ($data['cpf'] ?? ''),
