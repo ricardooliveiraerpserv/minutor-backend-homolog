@@ -17,7 +17,7 @@ class AppNotification extends Model
 
     protected $fillable = [
         'title', 'message', 'type', 'priority', 'target_roles', 'target_users',
-        'target_contract_types', 'target_bonds', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
+        'target_contract_types', 'target_bonds', 'excluded_user_ids', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
         'requires_ack', 'cta_label', 'cta_url', 'actions', 'version', 'created_by', 'expires_at',
         'recurrence', 'recurrence_value', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
     ];
@@ -27,6 +27,7 @@ class AppNotification extends Model
         'target_users'          => 'array',
         'target_contract_types' => 'array',
         'target_bonds'          => 'array',
+        'excluded_user_ids'     => 'array',
         'target_customer_ids'   => 'array',
         'actions'               => 'array',
         'requires_ack'          => 'boolean',

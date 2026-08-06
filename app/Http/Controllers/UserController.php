@@ -176,6 +176,14 @@ class UserController extends Controller
             $query->where('coordinator_type', $request->coordinator_type);
         }
 
+        // Filtros p/ montar os destinatários da Central de Comunicação (membros de um grupo).
+        if ($request->filled('work_bond')) {
+            $query->whereIn('work_bond', array_filter(array_map('trim', explode(',', (string) $request->work_bond))));
+        }
+        if ($request->filled('contract_type')) {
+            $query->whereIn('contract_type', array_filter(array_map('trim', explode(',', (string) $request->contract_type))));
+        }
+
         if ($request->filled('exclude_type')) {
             $query->where('type', '!=', $request->exclude_type);
         }
