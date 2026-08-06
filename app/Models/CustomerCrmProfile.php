@@ -13,7 +13,7 @@ class CustomerCrmProfile extends Model
 
     protected $fillable = [
         'customer_id', 'region', 'segment', 'porte',
-        'faturamento_estimado', 'num_funcionarios', 'erp_atual', 'indicacao', 'site', 'endereco',
+        'faturamento_estimado', 'num_funcionarios', 'erp_atual', 'indicacao', 'site', 'cep', 'endereco',
         // Camada de Leads / qualificação
         'lead_source_id', 'qualification_stage_id', 'observacoes', 'valor_potencial',
         'previsao_fechamento', 'previsao_competencia',
