@@ -614,6 +614,7 @@ class CrmOpportunityController extends Controller
             'crm_product_id'    => 'required|exists:crm_products,id',
             'quantidade'        => 'nullable|numeric|min:0',
             'valor'             => 'nullable|numeric|min:0',
+            'custo'             => 'nullable|numeric|min:0',
             'categoria'         => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::CATEGORIAS),
             'tipo_precificacao' => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::PRECIFICACOES),
         ]);
@@ -621,6 +622,7 @@ class CrmOpportunityController extends Controller
         $pivot = [
             'quantidade'        => $v['quantidade'] ?? 1,
             'valor'             => $v['valor'] ?? $produto->valor ?? 0,
+            'custo'             => $v['custo'] ?? 0,
             'categoria'         => $v['categoria'] ?? null,
             'tipo_precificacao' => $v['tipo_precificacao'] ?? null,
         ];
@@ -640,6 +642,7 @@ class CrmOpportunityController extends Controller
         $v = $request->validate([
             'quantidade'        => 'nullable|numeric|min:0',
             'valor'             => 'nullable|numeric|min:0',
+            'custo'             => 'nullable|numeric|min:0',
             'categoria'         => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::CATEGORIAS),
             'tipo_precificacao' => 'nullable|string|in:' . implode(',', \App\Models\CrmProduct::PRECIFICACOES),
         ]);
@@ -647,6 +650,7 @@ class CrmOpportunityController extends Controller
         $opportunity->products()->updateExistingPivot($product, array_filter([
             'quantidade'        => $v['quantidade'] ?? null,
             'valor'             => $v['valor'] ?? null,
+            'custo'             => $request->has('custo') ? ($v['custo'] ?? 0) : null,
             'categoria'         => $request->has('categoria') ? ($v['categoria'] ?? null) : null,
             'tipo_precificacao' => $request->has('tipo_precificacao') ? ($v['tipo_precificacao'] ?? null) : null,
         ], fn ($x) => $x !== null));
