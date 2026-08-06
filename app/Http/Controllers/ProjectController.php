@@ -170,7 +170,7 @@ class ProjectController extends Controller
         // Idem para o dashboard /gestao-projetos (modo gestao): a tela carrega TODOS os
         // projetos pra filtrar/ordenar no client; o cap de 200 cortava os últimos (ex.:
         // projetos "[SUPORTE]..." que ordenam por nome depois do Z e caíam fora da página).
-        $maxPerPage = ($request->boolean('only_investimento_comercial') || $request->boolean('gestao')) ? 2000 : 200;
+        $maxPerPage = ($request->boolean('only_investimento_comercial') || $request->boolean('gestao') || $request->boolean('minimal')) ? 2000 : 200;
         $perPage = min($request->get('pageSize', $request->get('per_page', 15)), $maxPerPage);
         $minimal = $request->boolean('minimal');
         $search = $request->get('filter') ?? $request->get('search');
@@ -188,7 +188,7 @@ class ProjectController extends Controller
         // Modo minimal: retorna apenas id, name, code (para dropdowns). Inclui
         // parent_project_id p/ os seletores montarem a árvore (filho com seta ↳).
         if ($minimal) {
-            $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id');
+            $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id', 'customer_id');
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
             elseif ($status === 'open') $q->open();
