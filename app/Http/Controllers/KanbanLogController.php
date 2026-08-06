@@ -71,14 +71,14 @@ class KanbanLogController extends Controller
             'liberado_para_testes' => 'homologacao', 'em_producao' => 'em_producao',
             'paused' => 'paused', 'finished' => 'finished', 'cancelled' => 'cancelled',
         ];
-        // Ordem/labels iguais às colunas do pipeline.
-        $order  = ['backlog', 'planning', 'started', 'homologacao', 'em_producao', 'paused', 'finished', 'cancelled'];
+        // Ordem/labels das colunas EXIBIDAS (sem Encerrado/Cancelado — nelas o contador para).
+        $order  = ['backlog', 'planning', 'started', 'homologacao', 'em_producao', 'paused'];
         $labels = [
             'backlog' => 'Backlog', 'planning' => 'Em Planejamento', 'started' => 'Em Andamento',
-            'homologacao' => 'Em Homologação', 'em_producao' => 'Em Produção',
-            'paused' => 'Pausado', 'finished' => 'Encerrado', 'cancelled' => 'Cancelado',
+            'homologacao' => 'Em Homologação', 'em_producao' => 'Em Produção', 'paused' => 'Pausado',
+            'finished' => 'Encerrado', 'cancelled' => 'Cancelado',   // só p/ o rótulo do Status atual
         ];
-        // Terminais: quando o projeto está PARADO nelas (coluna atual), o cronômetro NÃO corre.
+        // Terminais: o cronômetro PARA — tempo em Encerrado/Cancelado NUNCA conta (nem coluna).
         $terminal = ['finished', 'cancelled'];
 
         $logsByProject = \App\Models\ProjectKanbanLog::orderBy('project_id')->orderBy('created_at')
@@ -104,17 +104,17 @@ class KanbanLogController extends Controller
 
             // Coluna inicial (from do 1º log): do início do projeto até o 1º log.
             $first = $plogs->first();
-            if ($first->from_status && $proj->created_at) {
+            if ($first->from_status && !in_array($first->from_status, $terminal, true) && $proj->created_at) {
                 $c = $col($first->from_status);
                 $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($proj->created_at, $first->created_at);
             }
             // Cada segmento: to_status[i] até o próximo log (ou agora se for o último = coluna atual).
+            // Encerrado/Cancelado NUNCA contam (o segmento anterior conta até entrar neles).
             $n = $plogs->count();
             for ($i = 0; $i < $n; $i++) {
                 $status = $plogs[$i]->to_status;
+                if (in_array($status, $terminal, true)) continue;
                 $isLast = ($i + 1 >= $n);
-                // Coluna atual em Encerrado/Cancelado: para de contar (não soma o segmento aberto).
-                if ($isLast && in_array($status, $terminal, true)) continue;
                 $end = $isLast ? now() : $plogs[$i + 1]->created_at;
                 $c = $col($status);
                 $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($plogs[$i]->created_at, $end);
@@ -125,6 +125,7 @@ class KanbanLogController extends Controller
                 'code'           => $proj->code,
                 'name'           => $proj->name,
                 'customer'       => $proj->customer?->name ?? '—',
+                'created_at'     => $proj->created_at?->toIso8601String(),
                 'current'        => $proj->status,
                 'current_label'  => $labels[$col($proj->status)] ?? $proj->status,
                 'days_by_column' => array_map(fn ($d) => round($d, 1), $byCol),
