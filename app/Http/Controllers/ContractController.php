@@ -2868,9 +2868,10 @@ class ContractController extends Controller
             // Rotina de reajuste mantém o PROJETO sincronizado com o contrato
             // (projeto e contrato sempre iguais). on_demand: valor_hora → hourly_rate;
             // demais: valor_projeto → project_value. Grava a VIGÊNCIA do novo valor
-            // (project_change_logs.effective_from) para NÃO reescrever meses anteriores
-            // — o novo valor passa a valer a partir do mês SEGUINTE ao período reajustado
-            // (mês após periodo_fim); antes disso as competências mantêm o valor antigo.
+            // (project_change_logs.effective_from) para NÃO reescrever meses anteriores.
+            // Regra (Ricardo): "reajuste é dado no mês e cobrado no próximo fechamento" →
+            // o novo valor vale a partir do mês SEGUINTE ao da APLICAÇÃO (não do período de
+            // cálculo do índice), pois o mês corrente já foi trabalhado sob o valor antigo.
             if ($contract->project_id) {
                 $projField = $field === 'valor_hora' ? 'hourly_rate' : 'project_value';
                 $proj = Project::find($contract->project_id);
@@ -2878,9 +2879,8 @@ class ContractController extends Controller
                     $oldVal = (float) ($proj->{$projField} ?? 0);
                     $proj->update([$projField => $valorNovo]);
                     if (round($oldVal, 2) !== round((float) $valorNovo, 2)) {
-                        $eff = $pFim
-                            ? Carbon::parse($pFim)->startOfMonth()->addMonth()->toDateString()
-                            : Carbon::now()->startOfMonth()->toDateString();
+                        // Vigência = 1º dia do mês seguinte ao da aplicação do reajuste.
+                        $eff = Carbon::now()->startOfMonth()->addMonth()->toDateString();
                         // Dedup por (campo, effective_from): reajuste repetido no mesmo
                         // marco sobrescreve a vigência ao invés de duplicar.
                         $log = \App\Models\ProjectChangeLog::where('project_id', $proj->id)
