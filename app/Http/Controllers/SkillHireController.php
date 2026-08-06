@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\SkillHireCard;
 use App\Models\SkillRespondent;
+use App\Models\Task;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -74,8 +75,23 @@ class SkillHireController extends Controller
         $v = $request->validate([
             'title'      => 'required|string|max:200',   // nome da pessoa / contratação
             'cargo'      => 'nullable|string|max:120',
-            'modalidade' => 'nullable|string|max:80',
+            'modalidade' => ['nullable', Rule::in(array_keys(SkillHireCard::MODALIDADES))],
+            // Script de passagem (opcional no ato da inclusão — pode completar depois no card).
+            'form'                    => 'sometimes|array',
+            'form.contato'            => 'nullable|string|max:120',
+            'form.contratacao_fixa'   => 'nullable|in:sim,nao',
+            'form.consultant_type'    => 'nullable|in:horista,banco_de_horas,fixo',
+            'form.valor'              => 'nullable|string|max:60',
+            'form.recursos'           => 'nullable|array',
+            'form.recursos.*'         => ['string', Rule::in(array_keys(SkillHireCard::RECURSOS))],
+            'form.incluir_whatsapp'   => 'nullable|in:sim,nao',
+            'form.whatsapp_date'      => 'nullable|date',
+            'form.observacao'         => 'nullable|string',
         ]);
+        // Mescla o script informado sobre o formulário padrão (mantém as demais chaves).
+        $form = array_merge(SkillHireCard::defaultForm(null), $v['form'] ?? []);
+        if (($form['incluir_whatsapp'] ?? '') !== 'sim') $form['whatsapp_date'] = '';
+
         $card = SkillHireCard::create([
             'respondent_id' => null,
             'bucket'        => 'aguardando_assinatura',
@@ -84,9 +100,28 @@ class SkillHireController extends Controller
             'modalidade'    => $v['modalidade'] ?? null,
             'priority'      => 'alta',
             'checklist'     => array_map(fn ($l) => ['label' => $l, 'done' => false], SkillHireCard::DEFAULT_CHECKLIST),
-            'form'          => SkillHireCard::defaultForm(null),
+            'form'          => $form,
             'created_by'    => $request->user()?->id,
         ]);
+
+        // Script: "não esquecer de atribuir a tarefa para a Jeniffer" → cria a tarefa automaticamente
+        // (aparece nas Minhas Tarefas dela). Não bloqueia a inclusão se a Jeniffer não existir.
+        $jeniffer = User::where('enabled', true)
+            ->where(fn ($q) => $q->where('name', 'ilike', '%jenif%')->orWhere('name', 'ilike', '%jennif%'))
+            ->orderBy('id')->first();
+        if ($jeniffer) {
+            Task::create([
+                'user_id'     => $request->user()?->id,
+                'created_by'  => $request->user()?->id,
+                'assigned_to' => $jeniffer->id,
+                'title'       => 'Passagem de contratação: ' . trim($v['title']),
+                'description' => 'Nova contratação incluída pela rotina. Providenciar assinatura, recursos e onboarding.',
+                'due_date'    => now()->addDays(2)->toDateString(),
+                'completed'   => false,
+                'priority'    => 'alta',
+            ]);
+        }
+
         return response()->json($this->card($card->load('createdUser')), 201);
     }
 
@@ -108,6 +143,7 @@ class SkillHireController extends Controller
             'checklist.*.label' => 'required|string|max:200',
             'checklist.*.done' => 'boolean',
             'form' => 'sometimes|array',
+            'form.contato' => 'nullable|string|max:120',
             'form.email' => 'nullable|email|max:255',
             'form.perfil' => 'nullable|in:consultor,coordenador',
             'form.coordinator_type' => 'nullable|in:projetos,sustentacao',
@@ -124,6 +160,7 @@ class SkillHireController extends Controller
             'form.recursos' => 'nullable|array',
             'form.recursos.*' => ['string', Rule::in(array_keys(SkillHireCard::RECURSOS))],
             'form.incluir_whatsapp' => 'nullable|in:sim,nao',
+            'form.whatsapp_date' => 'nullable|date',
             'form.cep' => 'nullable|string|max:9',
             'form.logradouro' => 'nullable|string|max:200',
             'form.numero' => 'nullable|string|max:20',
