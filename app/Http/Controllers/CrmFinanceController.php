@@ -16,6 +16,7 @@ use App\Services\PolicyResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
 
 /**
@@ -104,13 +105,34 @@ class CrmFinanceController extends Controller
     // ── METAS ────────────────────────────────────────────────────────────────
     public const META_TIPOS = ['receita', 'margem', 'quantidade', 'novos_clientes', 'receita_recorrente', 'receita_projeto', 'receita_sustentacao'];
 
-    /** Realizado conforme o tipo da meta (receita=R$, margem=R$-custo, quantidade/novos=contagem). */
-    private function realizadoTipo(Collection $won, string $tipo): float
+    /**
+     * Custo EFETIVO por oportunidade: soma do custo dos produtos vinculados (Σ qtd×custo) quando houver;
+     * senão cai no custo manual da rentabilidade (crm_opportunities.detalhes->custo). Um mapa por lote (sem N+1).
+     */
+    private function custoEfetivoMap(iterable $ids): Collection
     {
+        $ids = collect($ids)->filter()->values();
+        if ($ids->isEmpty()) return collect();
+        return DB::table('crm_opportunity_products')->whereIn('opportunity_id', $ids)
+            ->selectRaw('opportunity_id, SUM(quantidade * custo) as custo')
+            ->groupBy('opportunity_id')->pluck('custo', 'opportunity_id');
+    }
+
+    /** Custo de um negócio: custo dos produtos (se > 0) senão o custo manual. */
+    private function custoDe(object $o, Collection $prodCusto): float
+    {
+        $pc = (float) ($prodCusto[$o->id] ?? 0);
+        return $pc > 0 ? $pc : (float) (($o->detalhes['custo'] ?? 0));
+    }
+
+    /** Realizado conforme o tipo da meta (receita=R$, margem=R$-custo, quantidade/novos=contagem). */
+    private function realizadoTipo(Collection $won, string $tipo, ?Collection $prodCusto = null): float
+    {
+        $pc = $prodCusto ?? $this->custoEfetivoMap($won->pluck('id'));
         return match ($tipo) {
             'quantidade' => (float) $won->count(),
             'novos_clientes' => (float) $won->where('tipo', 'novo_cliente')->count(),
-            'margem' => (float) $won->sum(fn ($o) => (float) $o->valor - (float) (($o->detalhes['custo'] ?? 0))),
+            'margem' => (float) $won->sum(fn ($o) => (float) $o->valor - $this->custoDe($o, $pc)),
             default => (float) $won->sum('valor'), // receita e sub-tipos de receita
         };
     }
@@ -129,7 +151,7 @@ class CrmFinanceController extends Controller
         $goals = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
         $won = $ids->isEmpty() ? collect() : CrmOpportunity::where('status', 'ganho')
             ->whereBetween('fechamento_at', [$start, $end])->whereIn('responsavel_id', $ids)
-            ->get(['responsavel_id', 'valor', 'tipo', 'detalhes']);
+            ->get(['id', 'responsavel_id', 'valor', 'tipo', 'detalhes']);
         $wonByResp = $won->groupBy('responsavel_id');
         $ultima = $ids->isEmpty() ? collect() : CrmSalesTargetHistory::where('periodo', $comp)->whereIn('user_id', $ids)
             ->selectRaw('user_id, max(created_at) as last')->groupBy('user_id')->pluck('last', 'user_id');
@@ -210,7 +232,7 @@ class CrmFinanceController extends Controller
         $g = CrmSalesTarget::where('periodo', $v['competencia'])->where('user_id', $v['user_id'])->first();
         $tipo = $g->tipo ?? 'receita';
         $won = CrmOpportunity::where('status', 'ganho')->whereBetween('fechamento_at', [$start, $end])
-            ->where('responsavel_id', $v['user_id'])->get(['valor', 'tipo', 'detalhes']);
+            ->where('responsavel_id', $v['user_id'])->get(['id', 'valor', 'tipo', 'detalhes']);
         $realizado = $this->realizadoTipo($won, $tipo);
         $meta = (float) ($g->valor_meta ?? 0);
         $h = CrmSalesTargetHistory::where('periodo', $v['competencia'])->where('user_id', $v['user_id'])
@@ -626,11 +648,12 @@ class CrmFinanceController extends Controller
         $metas = CrmSalesTarget::where('periodo', $comp)->whereNotNull('user_id')->get()->keyBy('user_id');
         // Base de cálculo da Política Padrão (valor da venda ou margem)
         $baseCalc = CrmCommissionSetting::where('company_id', $this->companyId())->value('base_calculo') ?? 'valor';
+        $prodCusto = $this->custoEfetivoMap($won->pluck('id')); // custo dos produtos por negócio (senão custo manual)
         $n = 0;
         foreach ($won as $o) {
             if ($existing->has($o->id) || !$o->responsavel_id) continue;
             $valorBruto = (float) $o->valor;
-            $custo = (float) (($o->detalhes['custo'] ?? 0));
+            $custo = $this->custoDe($o, $prodCusto);
             $margem = $valorBruto > 0 ? round(($valorBruto - $custo) / $valorBruto * 100, 2) : null;
             $base = $baseCalc === 'margem' ? max(0, $valorBruto - $custo) : $valorBruto;
             $meta = (float) ($metas[$o->responsavel_id]->valor_meta ?? 0);
@@ -715,9 +738,11 @@ class CrmFinanceController extends Controller
             elseif ($os === 'team') $q->whereIn('responsavel_id', CrmSalesTeam::visibleUserIds($u));
             elseif ($os === 'none') $q->whereRaw('1 = 0');
         }
-        $rows = $q->orderByDesc('fechamento_at')->get()->map(function ($o) {
+        $lista = $q->orderByDesc('fechamento_at')->get();
+        $prodCusto = $this->custoEfetivoMap($lista->pluck('id')); // custo dos produtos por negócio (senão custo manual)
+        $rows = $lista->map(function ($o) use ($prodCusto) {
             $receita = (float) $o->valor;
-            $custo = (float) (($o->detalhes['custo'] ?? 0));
+            $custo = $this->custoDe($o, $prodCusto);
             $lucro = $receita - $custo;
             return [
                 'id' => $o->id, 'title' => $o->title,
