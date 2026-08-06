@@ -20,10 +20,13 @@ class TaskController extends Controller
         $base = Task::query()
             ->with(['creator:id,name', 'assignee:id,name', 'completer:id,name'])
             ->where(function ($q) use ($u, $filter) {
+                // "sou responsável" = principal (assigned_to) OU um dos múltiplos (pivot task_assignees).
+                $isMine = fn ($w) => $w->where('assigned_to', $u->id)
+                    ->orWhereHas('assignees', fn ($a) => $a->where('users.id', $u->id));
                 match ($filter) {
                     'by_me' => $q->where('created_by', $u->id)->where('assigned_to', '!=', $u->id),       // delegadas por mim
-                    'to_me' => $q->where('assigned_to', $u->id)->where('created_by', '!=', $u->id),        // delegadas para mim
-                    default => $q->where('assigned_to', $u->id),                                           // minhas (sou responsável)
+                    'to_me' => $q->where('created_by', '!=', $u->id)->where($isMine),                      // delegadas para mim
+                    default => $q->where($isMine),                                                          // minhas (sou responsável)
                 };
             });
 
@@ -73,10 +76,10 @@ class TaskController extends Controller
             abort(403, 'Você não tem permissão para delegar tarefas.');
         }
 
-        // Concluir/reabrir: SOMENTE o responsável (assigned_to) pode mexer no concluído.
+        // Concluir/reabrir: qualquer RESPONSÁVEL (principal ou um dos múltiplos) — conclui p/ todos.
         $togglingComplete = array_key_exists('completed', $v) && (bool) $v['completed'] !== $wasCompleted;
         if ($togglingComplete) {
-            abort_unless($task->assigned_to === $u->id, 403, 'Apenas o responsável pode concluir/reabrir esta tarefa.');
+            abort_unless(in_array($u->id, $task->allAssigneeIds(), true), 403, 'Apenas um responsável pode concluir/reabrir esta tarefa.');
         }
 
         $task->update($v);
@@ -305,7 +308,8 @@ class TaskController extends Controller
     private function authorizeAccess(Request $request, Task $task): void
     {
         $u = $request->user();
-        abort_unless($u && ($task->created_by === $u->id || $task->assigned_to === $u->id), 403);
+        // Criador, responsável principal OU um dos múltiplos responsáveis (pivot).
+        abort_unless($u && ($task->created_by === $u->id || in_array($u->id, $task->allAssigneeIds(), true)), 403);
     }
 
     private function serialize(Task $t, ?\App\Models\User $u = null): array
