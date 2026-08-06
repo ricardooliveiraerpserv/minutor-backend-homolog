@@ -10,8 +10,19 @@ class CustomerContactController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $search = trim((string) $request->query('search', ''));
         $query = CustomerContact::with('customer:id,name')
             ->when($request->query('customer_id'), fn($q) => $q->where('customer_id', $request->query('customer_id')))
+            ->when($search !== '', function ($q) use ($search) {
+                $like = '%' . $search . '%';
+                $q->where(function ($w) use ($like) {
+                    $w->where('name', 'ilike', $like)
+                        ->orWhere('cargo', 'ilike', $like)
+                        ->orWhere('email', 'ilike', $like)
+                        ->orWhere('phone', 'ilike', $like)
+                        ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $like));
+                });
+            })
             ->orderBy('name');
 
         if ($request->query('customer_id')) {
@@ -28,7 +39,7 @@ class CustomerContactController extends Controller
             'customer_id' => 'required|exists:customers,id',
             'name'        => 'required|string|max:255',
             'cargo'       => 'nullable|string|max:255',
-            'email'       => 'nullable|email|max:255',
+            'email'       => 'required|email|max:255',
             'phone'       => 'nullable|string|max:50',
         ]);
 
@@ -42,7 +53,7 @@ class CustomerContactController extends Controller
             'customer_id' => 'sometimes|exists:customers,id',
             'name'        => 'sometimes|required|string|max:255',
             'cargo'       => 'nullable|string|max:255',
-            'email'       => 'nullable|email|max:255',
+            'email'       => 'sometimes|required|email|max:255',
             'phone'       => 'nullable|string|max:50',
         ]);
 
