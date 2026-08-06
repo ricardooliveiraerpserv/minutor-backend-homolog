@@ -40,7 +40,8 @@ class SkillHireCard extends Model
 
     /** Recursos a provisionar no onboarding (checkboxes do script). */
     public const RECURSOS = [
-        'flash' => 'Flash',
+        'flash' => 'Cartão Flash',
+        'artia' => 'Artia',
         'email' => 'E-mail',
         'headset' => 'Headset',
         'notebook' => 'Notebook',
@@ -64,6 +65,7 @@ class SkillHireCard extends Model
         $data = $r && is_array($r->data) ? $r->data : [];
 
         return [
+            'contato' => (string) ($data['contato'] ?? $data['telefone'] ?? $data['phone'] ?? ''),  // contato do contratado (item 1 do script)
             'email' => $r ? Str::slug($r->name, '.') . '@erpserv.com.br' : '',  // e-mail que será cadastrado no usuário
             'perfil' => 'consultor',             // consultor | coordenador
             'coordinator_type' => '',            // projetos | sustentacao (só se coordenador)
@@ -76,6 +78,7 @@ class SkillHireCard extends Model
             'empresa' => 'erpserv',              // erpserv | bizify (base da folha → is_bizify)
             'recursos' => [],                    // chaves de RECURSOS
             'incluir_whatsapp' => '',            // sim | nao
+            'whatsapp_date' => '',               // data em que pode ser incluído no WhatsApp (se sim)
             'cpf' => (string) ($data['cpf'] ?? ''),
             'nascimento' => (string) ($data['nascimento'] ?? $data['data_nascimento'] ?? ''),
             'matricula' => '',
