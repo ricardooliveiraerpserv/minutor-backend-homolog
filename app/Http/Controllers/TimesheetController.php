@@ -2115,6 +2115,14 @@ class TimesheetController extends Controller
             if (!$project) {
                 return response()->json(['message' => 'Projeto não encontrado'], 422);
             }
+            // Não permitir mover apontamentos PARA projeto cancelado/encerrado (espelha store/update).
+            if (!$project->isOpen()) {
+                return response()->json([
+                    'code'          => 'INACTIVE_PROJECT',
+                    'message'       => 'Projeto inativo',
+                    'detailMessage' => 'Não é possível mover apontamentos para projetos cancelados ou encerrados',
+                ], 422);
+            }
             $projectCustomerId = (int) $project->customer_id;
             if (!empty($data['customer_id']) && (int) $data['customer_id'] !== $projectCustomerId) {
                 return response()->json([
