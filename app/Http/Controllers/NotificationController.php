@@ -378,13 +378,17 @@ class NotificationController extends Controller
     }
 
     /**
-     * "Dispara" um aviso de novo: zera as leituras (reaparece p/ todos), estende a validade até o
+     * "Dispara" um aviso de novo: reabre p/ quem NÃO completou, estende a validade até o
      * fim do dia, marca resent_at (o pop-up reaparece) e reenvia o e-mail. Reusado pelo reenvio
      * manual e pela recorrência. Retorna nº de e-mails enviados.
      */
     public function fire(AppNotification $n, array $extraBcc = [], bool $sendEmail = true): int
     {
-        NotificationRead::where('notification_id', $n->id)->delete();
+        // Reabre SÓ para quem ainda não decidiu/leu. Quem já confirmou leitura (ack_at) OU
+        // respondeu um botão de decisão (Confirmo presença / Não poderei ir — respond também
+        // grava ack_at) NÃO é incomodado de novo: a decisão persiste entre recorrências.
+        // Reads apenas "vistos" (viewed_at sem ack_at) são apagados → o usuário é re-perguntado.
+        NotificationRead::where('notification_id', $n->id)->whereNull('ack_at')->delete();
         $n->forceFill([
             'resent_at'     => now(),
             'last_fired_at' => now(),
