@@ -88,7 +88,7 @@ class KanbanLogController extends Controller
         // Só projetos do pipeline Demandas e Projetos (categoria projeto) — exclui SUSTENTAÇÃO/CLOUD.
         $projects = \App\Models\Project::whereIn('id', $logsByProject->keys())
             ->whereDoesntHave('serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
-            ->with(['customer:id,name', 'executivoConta:id,name', 'kanbanCoordinatorOverride:id,name', 'coordinators:id,name'])
+            ->with(['customer:id,name', 'executivoConta:id,name', 'kanbanOverrideCoordinator:id,name', 'coordinators:id,name'])
             ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status', 'service_type_id', 'executivo_conta_id', 'kanban_coordinator_override_id'])->keyBy('id');
 
         $daysBetween = fn ($a, $b) => (int) \Carbon\Carbon::parse($a)->startOfDay()->diffInDays(\Carbon\Carbon::parse($b)->startOfDay());  // dias de calendario (cheios)
@@ -126,7 +126,7 @@ class KanbanLogController extends Controller
                 'name'           => $proj->name,
                 'customer'       => $proj->customer?->name ?? '—',
                 // Coordenador efetivo: override do kanban primeiro, senão o coordenador do projeto (pivot).
-                'coordinator'    => $proj->kanbanCoordinatorOverride?->name ?? $proj->coordinators->first()?->name ?? '—',
+                'coordinator'    => $proj->kanbanOverrideCoordinator?->name ?? $proj->coordinators->first()?->name ?? '—',
                 'executive'      => $proj->executivoConta?->name ?? '—',
                 'created_at'     => $proj->created_at?->toIso8601String(),
                 'current'        => $proj->status,
