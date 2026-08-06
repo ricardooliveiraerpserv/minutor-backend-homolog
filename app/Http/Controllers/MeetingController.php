@@ -68,7 +68,7 @@ class MeetingController extends Controller
         $u = $this->manager($request);
         $v = $request->validate([
             'title'            => 'required|string|max:250',
-            'meeting_date'     => 'nullable|date',
+            'meeting_date'     => 'required|date',
             'location'         => 'nullable|string|max:250',
             'description'      => 'nullable|string',
             'notes'            => 'nullable|string',
@@ -213,7 +213,41 @@ class MeetingController extends Controller
         $done = !$t->completed;
         // Tarefa é ÚNICA: concluir marca a task inteira → conclui p/ TODOS os responsáveis.
         $t->update(['completed' => $done, 'completed_at' => $done ? now() : null, 'completed_by' => $done ? $u->id : null]);
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name']))]);
+        if ($done) self::notifyTaskCompletion($t, $u);   // avisa os envolvidos da reunião
+        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name', 'completer']))]);
+    }
+
+    /**
+     * Pop-up para TODOS os envolvidos da reunião quando uma tarefa dela é concluída
+     * (via Central OU via Meu Dia). Notifica participantes + criador, exceto quem concluiu.
+     * Reusado pelo TaskController (conclusão pelo Meu Dia/Minhas Tarefas).
+     */
+    public static function notifyTaskCompletion(Task $t, User $completer): void
+    {
+        if ($t->entity_type !== 'meeting' || !$t->entity_id) return;
+        $m = Meeting::with('participants:id')->find($t->entity_id);
+        if (!$m) return;
+
+        $targets = $m->participants->pluck('id')
+            ->push($m->created_by_id)
+            ->filter()
+            ->reject(fn ($id) => (int) $id === (int) $completer->id)   // não avisa quem concluiu
+            ->unique()->values()->all();
+        if (empty($targets)) return;
+
+        $quando = $m->meeting_date ? ' (' . $m->meeting_date->format('d/m/Y H:i') . ')' : '';
+        \App\Models\AppNotification::create([
+            'title'        => 'Tarefa de reunião concluída',
+            'message'      => e($completer->name) . ' concluiu a tarefa <b>' . e($t->title) . '</b>'
+                              . ' referente à reunião <b>' . e($m->title) . '</b>' . e($quando) . '.',
+            'type'         => 'info',
+            'priority'     => 'medium',
+            'target_users' => $targets,
+            'send_email'   => false,
+            'visible'      => true,
+            'created_by'   => $completer->id,
+            'expires_at'   => now()->addDays(7),
+        ]);
     }
 
     /**
@@ -228,7 +262,7 @@ class MeetingController extends Controller
 
         $q = Task::where('entity_type', 'meeting')
             ->whereIn('entity_id', $meetingIds)
-            ->with(['assignees:id,name', 'assignee:id,name']);
+            ->with(['assignees:id,name', 'assignee:id,name', 'completer:id,name']);
         if ($request->filled('meeting_id')) {
             $q->where('entity_id', (int) $request->query('meeting_id'));
         }
@@ -257,6 +291,8 @@ class MeetingController extends Controller
                 'title'         => $t->title,
                 'due_date'      => optional($t->due_date)->format('Y-m-d'),
                 'completed'     => (bool) $t->completed,
+                'completed_by_name' => $t->completer?->name,
+                'completed_at'  => optional($t->completed_at)->toIso8601String(),
                 'meeting_id'    => $t->entity_id,
                 'meeting_title' => $m?->title ?? '—',
                 'assignees'     => $this->assigneeList($t),
@@ -299,7 +335,7 @@ class MeetingController extends Controller
     private function serialize(Meeting $m, User $u): array
     {
         $tasks = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)
-            ->with(['assignee:id,name', 'creator:id,name', 'assignees:id,name'])->orderBy('completed')->orderByRaw('due_date is null')->orderBy('due_date')->get();
+            ->with(['assignee:id,name', 'creator:id,name', 'assignees:id,name', 'completer:id,name'])->orderBy('completed')->orderByRaw('due_date is null')->orderBy('due_date')->get();
         return [
             'id' => $m->id,
             'title' => $m->title,
@@ -329,6 +365,8 @@ class MeetingController extends Controller
             'created_by' => $t->created_by,
             'due_date' => optional($t->due_date)->format('Y-m-d'),
             'completed' => (bool) $t->completed,
+            'completed_by_name' => $t->relationLoaded('completer') ? $t->completer?->name : $t->completer()->first()?->name,
+            'completed_at' => optional($t->completed_at)->toIso8601String(),
         ];
     }
 }
