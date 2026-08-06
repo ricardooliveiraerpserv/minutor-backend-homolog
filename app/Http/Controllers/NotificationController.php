@@ -141,6 +141,8 @@ class NotificationController extends Controller
                 ->when($u->customer_id, fn ($w) => $w
                     ->orWhere('target_customer_id', $u->customer_id)
                     ->orWhereJsonContains('target_customer_ids', $u->customer_id)))
+            // Retirado do envio: não vê a notificação mesmo caindo num grupo-alvo.
+            ->where(fn ($q) => $q->whereNull('excluded_user_ids')->orWhereJsonDoesntContain('excluded_user_ids', $u->id))
             ->where('visible', true)        // ocultas não aparecem na Central (mas o e-mail ainda sai)
             ->where('is_template', false);  // modelos nunca aparecem p/ usuários
     }
@@ -318,6 +320,7 @@ class NotificationController extends Controller
                 if ($n->target_bonds)          $w->orWhereIn('work_bond', $n->target_bonds);
                 if ($customerIds)              $w->orWhereIn('customer_id', $customerIds);
             })
+            ->when($n->excluded_user_ids, fn ($q) => $q->whereNotIn('id', $n->excluded_user_ids))
             ->get(['id', 'name', 'email']);
     }
 
@@ -478,6 +481,8 @@ class NotificationController extends Controller
             'target_contract_types' => 'nullable|array',
             'target_bonds'          => 'nullable|array',
             'target_bonds.*'        => 'in:fixo,freelance',
+            'excluded_user_ids'     => 'nullable|array',
+            'excluded_user_ids.*'   => 'integer',
             'target_customer_id'    => 'nullable|exists:customers,id',
             'target_customer_ids'   => 'nullable|array',
             'target_customer_ids.*' => 'integer|exists:customers,id',
@@ -524,6 +529,7 @@ class NotificationController extends Controller
                 if ($n->target_bonds)          $w->orWhereIn('work_bond', $n->target_bonds);
                 if ($customerIds)              $w->orWhereIn('customer_id', $customerIds);
             })
+            ->when($n->excluded_user_ids, fn ($q) => $q->whereNotIn('id', $n->excluded_user_ids))
             ->pluck('email')->map(fn ($e) => mb_strtolower(trim($e)))->filter()->unique()->values()->all();
     }
 
