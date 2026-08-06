@@ -232,6 +232,14 @@ class MeetingController extends Controller
         if ($request->filled('meeting_id')) {
             $q->where('entity_id', (int) $request->query('meeting_id'));
         }
+        // Filtro por MÊS (YYYY-MM) da reunião — meeting_date é wall-clock gravado em UTC.
+        if ($request->filled('month')) {
+            $monthIds = Meeting::visibleTo($u)
+                ->whereNotNull('meeting_date')
+                ->whereRaw("to_char(meeting_date, 'YYYY-MM') = ?", [$request->query('month')])
+                ->pluck('id');
+            $q->whereIn('entity_id', $monthIds);
+        }
         if (!$request->boolean('include_done')) {
             $q->where('completed', false);
         }
@@ -261,9 +269,16 @@ class MeetingController extends Controller
         // Ordena grupos por nome; sem responsável ("—") ao fim.
         $groups = collect($byUser)->sortBy('user_name', SORT_NATURAL | SORT_FLAG_CASE)->values();
 
-        // Reuniões (p/ o filtro do FE).
-        $meetingOptions = Meeting::visibleTo($u)->orderByDesc('id')->get(['id', 'title'])
-            ->map(fn ($m) => ['id' => $m->id, 'title' => $m->title])->values();
+        // Reuniões (p/ o filtro do FE) — com data p/ desambiguar nomes iguais + derivar meses.
+        $meetingOptions = Meeting::visibleTo($u)
+            ->orderByRaw('meeting_date is null')->orderByDesc('meeting_date')->orderByDesc('id')
+            ->get(['id', 'title', 'meeting_date'])
+            ->map(fn ($m) => [
+                'id'           => $m->id,
+                'title'        => $m->title,
+                'meeting_date' => optional($m->meeting_date)->toIso8601String(),
+                'month'        => optional($m->meeting_date)->format('Y-m'),
+            ])->values();
 
         return response()->json(['data' => ['groups' => $groups, 'meetings' => $meetingOptions]]);
     }
