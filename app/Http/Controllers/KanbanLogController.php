@@ -91,7 +91,7 @@ class KanbanLogController extends Controller
             ->with(['customer:id,name', 'executivoConta:id,name', 'kanbanCoordinatorOverride:id,name', 'coordinators:id,name'])
             ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status', 'service_type_id', 'executivo_conta_id', 'kanban_coordinator_override_id'])->keyBy('id');
 
-        $daysBetween = fn ($a, $b) => max(0.0, round(\Carbon\Carbon::parse($a)->floatDiffInDays(\Carbon\Carbon::parse($b)), 1));
+        $daysBetween = fn ($a, $b) => (int) \Carbon\Carbon::parse($a)->startOfDay()->diffInDays(\Carbon\Carbon::parse($b)->startOfDay());  // dias de calendario (cheios)
         $col = fn ($status) => $statusToCol[$status] ?? $status;
 
         $usedCols = [];
@@ -131,8 +131,8 @@ class KanbanLogController extends Controller
                 'created_at'     => $proj->created_at?->toIso8601String(),
                 'current'        => $proj->status,
                 'current_label'  => $labels[$col($proj->status)] ?? $proj->status,
-                'days_by_column' => array_map(fn ($d) => round($d, 1), $byCol),
-                'total'          => round(array_sum($byCol), 1),
+                'days_by_column' => array_map(fn ($d) => (int) round($d), $byCol),
+                'total'          => (int) round(array_sum($byCol)),
             ];
         }
         usort($rows, fn ($a, $b) => $b['total'] <=> $a['total']);
