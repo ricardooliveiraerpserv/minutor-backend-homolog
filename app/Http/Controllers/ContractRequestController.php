@@ -214,17 +214,23 @@ class ContractRequestController extends Controller
 
         $out = collect();
 
-        // 1) Contatos do cliente selecionado.
+        // 1) Contatos do CLIENTE da requisição (só o cliente do card). Usuários de OUTROS
+        //    clientes NÃO entram — não vazar contatos entre organizações.
         if ($customerId) {
             $applyQ(User::where('type', 'cliente')->where('customer_id', $customerId)->whereNotNull('email'))
-                ->orderBy('name')->limit(20)->get(['id', 'name', 'email'])
+                ->orderBy('name')->limit(50)->get(['id', 'name', 'email'])
                 ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'cliente']));
         }
 
-        // 2) Equipe/consultores ERPSERV (internos). Respeita o escopo de empresa ativo.
+        // 2) Equipe/consultores ERPSERV (internos) — todos.
         $applyQ(User::whereIn('type', ['consultor', 'coordenador', 'administrativo', 'admin'])->whereNotNull('email'))
-            ->orderBy('name')->limit(20)->get(['id', 'name', 'email'])
+            ->orderBy('name')->limit(80)->get(['id', 'name', 'email'])
             ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'erpserv']));
+
+        // 3) Parceiros (parceiro_admin) — todos. Trazidos independentemente do cliente.
+        $applyQ(User::where('type', 'parceiro_admin')->whereNotNull('email'))
+            ->orderBy('name')->limit(80)->get(['id', 'name', 'email'])
+            ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'parceiro']));
 
         $data = $out->unique('email')->values();
         return response()->json(['data' => $data]);
