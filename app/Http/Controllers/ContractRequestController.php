@@ -228,9 +228,10 @@ class ContractRequestController extends Controller
             ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'erpserv']));
 
         // 3) Parceiros (parceiro_admin) — todos. Trazidos independentemente do cliente.
+        //    Legenda 'erpserv' (todo usuário que NÃO é cliente é "ERPSERV" na sugestão).
         $applyQ(User::where('type', 'parceiro_admin')->whereNotNull('email'))
             ->orderBy('name')->limit(80)->get(['id', 'name', 'email'])
-            ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'parceiro']));
+            ->each(fn ($u) => $out->push(['name' => $u->name, 'email' => $u->email, 'kind' => 'erpserv']));
 
         $data = $out->unique('email')->values();
         return response()->json(['data' => $data]);
@@ -249,9 +250,8 @@ class ContractRequestController extends Controller
             ? $user->customer_id
             : ($validated['customer_id'] ?? null);
 
-        if (!$customerId) {
-            return response()->json(['message' => 'customer_id é obrigatório.'], 422);
-        }
+        // customer_id é opcional: sem ele, ainda reconhecemos usuários internos/parceiros
+        // (ERPSERV) por e-mail — clientes só entram quando há um cliente selecionado.
 
         $emails = collect($validated['emails'])
             ->map(fn($e) => strtolower(trim($e)))
@@ -259,7 +259,7 @@ class ContractRequestController extends Controller
             ->unique()
             ->values();
 
-        $resolved = $this->resolveUsersByEmail($emails->all(), (int) $customerId);
+        $resolved = $this->resolveUsersByEmail($emails->all(), $customerId ? (int) $customerId : null);
         $byId = User::whereIn('id', array_values($resolved))->get(['id', 'name', 'email'])->keyBy('id');
 
         $results = $emails->map(function ($email) use ($resolved, $byId) {
@@ -280,14 +280,21 @@ class ContractRequestController extends Controller
      * Lookup case-insensitive: retorna [emailLowercase => userId] para usuários cliente
      * do mesmo customer. Não cria nada — só resolve.
      */
-    private function resolveUsersByEmail(array $emails, int $customerId): array
+    private function resolveUsersByEmail(array $emails, ?int $customerId = null): array
     {
         if (empty($emails)) return [];
 
+        $placeholders = implode(',', array_fill(0, count($emails), '?'));
         $users = User::query()
-            ->where('type', 'cliente')
-            ->where('customer_id', $customerId)
-            ->whereRaw('LOWER(email) IN (' . implode(',', array_fill(0, count($emails), '?')) . ')', $emails)
+            ->whereRaw('LOWER(email) IN (' . $placeholders . ')', $emails)
+            ->where(function ($w) use ($customerId) {
+                // Internos/parceiros (qualquer tipo != cliente) são sempre reconhecidos.
+                $w->where('type', '!=', 'cliente');
+                // Clientes: só os do cliente da requisição — não vazar entre organizações.
+                if ($customerId) {
+                    $w->orWhere(fn ($c) => $c->where('type', 'cliente')->where('customer_id', $customerId));
+                }
+            })
             ->get(['id', 'email']);
 
         $map = [];
