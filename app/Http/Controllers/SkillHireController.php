@@ -68,6 +68,28 @@ class SkillHireController extends Controller
         return response()->json($this->card($card->load('respondent', 'createdUser')), 201);
     }
 
+    /** Contratação AVULSA — incluir direto pela rotina (sem candidato do Banco de Competências). */
+    public function store(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'title'      => 'required|string|max:200',   // nome da pessoa / contratação
+            'cargo'      => 'nullable|string|max:120',
+            'modalidade' => 'nullable|string|max:80',
+        ]);
+        $card = SkillHireCard::create([
+            'respondent_id' => null,
+            'bucket'        => 'aguardando_assinatura',
+            'title'         => trim($v['title']),
+            'cargo'         => $v['cargo'] ?? null,
+            'modalidade'    => $v['modalidade'] ?? null,
+            'priority'      => 'alta',
+            'checklist'     => array_map(fn ($l) => ['label' => $l, 'done' => false], SkillHireCard::DEFAULT_CHECKLIST),
+            'form'          => SkillHireCard::defaultForm(null),
+            'created_by'    => $request->user()?->id,
+        ]);
+        return response()->json($this->card($card->load('createdUser')), 201);
+    }
+
     public function show(int $id): JsonResponse
     {
         return response()->json($this->card(SkillHireCard::with('respondent', 'createdUser')->findOrFail($id)));

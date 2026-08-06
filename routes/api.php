@@ -1353,6 +1353,7 @@ Route::prefix('v1')->group(function () {
             // Kanban de Contratação/Onboarding
             Route::get('/competencias/contratacao',                 [SkillHireController::class, 'index']);
             Route::post('/competencias/contratacao/hire',           [SkillHireController::class, 'hire']);
+            Route::post('/competencias/contratacao',                 [SkillHireController::class, 'store']);
             Route::get('/competencias/contratacao/{id}',            [SkillHireController::class, 'show'])->whereNumber('id');
             Route::put('/competencias/contratacao/{id}',            [SkillHireController::class, 'update'])->whereNumber('id');
             Route::post('/competencias/contratacao/{id}/move',      [SkillHireController::class, 'move'])->whereNumber('id');
