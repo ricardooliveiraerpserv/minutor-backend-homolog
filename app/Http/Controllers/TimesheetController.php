@@ -2929,9 +2929,9 @@ class TimesheetController extends Controller
             });
         }
 
-        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
-        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
-
+        // NÃO trava por competência: o HISTÓRICO do projeto é o total desde o 1º apontamento
+        // (ex.: projeto com 118h no total, 36,5h no período selecionado). O período é limitado
+        // apenas pelo range start_date/end_date no CASE WHEN abaixo.
         $useCreatedAt = $request->input('date_field') === 'created_at';
         $periodCol = $useCreatedAt ? "(timesheets.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date" : 'timesheets.date';
 
