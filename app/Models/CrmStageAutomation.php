@@ -14,7 +14,7 @@ class CrmStageAutomation extends Model
 
     /** Tipos suportados (cada um = um handler no StageAutomationRunner). */
     public const TIPOS = [
-        'criar_tarefa', 'alterar_status_empresa', 'enviar_email',
+        'criar_tarefa', 'definir_proxima_acao', 'alterar_status_empresa', 'enviar_email',
         'notificar', 'gerar_proposta', 'gerar_contrato', 'webhook',
     ];
 

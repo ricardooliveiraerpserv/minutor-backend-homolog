@@ -43,6 +43,7 @@ class StageAutomationRunner
         $c = $a->config ?? [];
         match ($a->tipo) {
             'criar_tarefa'           => $this->handleCriarTarefa($o, $c),
+            'definir_proxima_acao'   => $this->handleDefinirProximaAcao($o, $c),
             'alterar_status_empresa' => $this->handleAlterarStatus($o, $c),
             'enviar_email'           => $this->handleEnviarEmail($o, $c),
             'notificar'              => $this->handleNotificar($o, $c),
@@ -64,6 +65,16 @@ class StageAutomationRunner
             'prioridade'     => $c['prioridade'] ?? 'media',
             'created_by_id'  => auth()->id(),
         ]);
+    }
+
+    /** Define a Próxima ação da oportunidade (texto + prazo em dias) ao entrar na etapa. */
+    private function handleDefinirProximaAcao(CrmOpportunity $o, array $c): void
+    {
+        $texto = trim((string) ($c['proxima_acao'] ?? ''));
+        if ($texto === '') return;
+        $o->proxima_acao = mb_substr($texto, 0, 200);
+        $o->proxima_acao_at = now()->addDays((int) ($c['dias_prazo'] ?? 1))->toDateString();
+        $o->saveQuietly();
     }
 
     private function handleAlterarStatus(CrmOpportunity $o, array $c): void
