@@ -182,7 +182,7 @@ class HelpDeskTriggerEngine
         $params = (array) ($action['params'] ?? []);
 
         match ($type) {
-            'send_email'    => self::actSendEmail($params, $ticket, $context),
+            'send_email'    => self::actSendEmail($params, $ticket, $context, $trigger->name),
             'change_status' => self::actChangeStatus($params, $ticket),
             'set_field'     => self::actSetField($params, $ticket),
             'add_tag'       => $ticket->tags()->syncWithoutDetaching([(int) ($params['tag_id'] ?? 0)]),
@@ -225,7 +225,19 @@ class HelpDeskTriggerEngine
         HelpDeskTicketEvent::log($ticket->id, 'assign', ['meta' => ['via' => 'trigger']]);
     }
 
-    private static function actSendEmail(array $params, HelpDeskTicket $ticket, array $context): void
+    /** Registra no histórico do chamado que a notificação foi enviada (p/ quem + ok/erro). */
+    private static function logEmailSent(HelpDeskTicket $ticket, array $to, array $params, bool $ok, ?string $err, ?string $triggerName): void
+    {
+        $toList = (array) ($params['to'] ?? []);
+        $publico = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'cliente'
+            : (in_array('responsavel', $toList, true) ? 'responsavel' : 'equipe');
+        HelpDeskTicketEvent::log($ticket->id, 'email_sent', [
+            'to_value' => implode(', ', $to),
+            'meta' => ['to' => $to, 'ok' => $ok, 'error' => $err, 'publico' => $publico, 'regra' => $triggerName, 'via' => 'trigger'],
+        ]);
+    }
+
+    private static function actSendEmail(array $params, HelpDeskTicket $ticket, array $context, ?string $triggerName = null): void
     {
         if (!GraphMailSender::enabled()) return;
 
@@ -268,12 +280,13 @@ class HelpDeskTriggerEngine
             // Imagens/assinatura do chamado (data:) → cid inline, pra renderizarem no e-mail.
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
-            GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
+            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
         } else {
             $body = nl2br(self::render((string) ($params['body'] ?? ''), $ticket));
             $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . $body . '</div>';
-            GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
+            [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, [], $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
         }
+        self::logEmailSent($ticket, $to, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
     }
 
     /** Resolve um destinatário simbólico em e-mail. Aceita também e-mail fixo (contém @). */
