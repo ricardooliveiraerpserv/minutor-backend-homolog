@@ -2877,6 +2877,101 @@ class TimesheetController extends Controller
         ]);
     }
 
+    /**
+     * Apuração por PROJETO (filho) — para o Relatório de Apontamentos. Espelha a apuração
+     * por ticket, MAS soma o PROJETO INTEIRO (todos os apontamentos do projeto no cliente,
+     * COM e SEM ticket) → total no período + total histórico desde o 1º apontamento.
+     * Fica FORA da apuração por ticket (é uma seção própria).
+     */
+    public function summaryByProject(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $request->validate([
+            'customer_id' => 'required|integer',
+            'start_date'  => 'nullable|date',
+            'end_date'    => 'nullable|date',
+        ]);
+        $customerId  = (int) $request->customer_id;
+        $startDate   = $request->start_date ?: $request->competencia_start;
+        $endDate     = $request->end_date ?: $request->competencia_end;
+        $statusInput = $request->input('status');
+        $statuses    = $statusInput === null ? [] : (is_array($statusInput) ? $statusInput : [$statusInput]);
+        $projectInput = $request->input('project_id');
+        $projectIds   = $projectInput === null ? [] : (is_array($projectInput) ? $projectInput : [$projectInput]);
+
+        // Base: TODOS os apontamentos do cliente (com ou sem ticket — projeto inteiro).
+        $base = Timesheet::query()->where('timesheets.customer_id', $customerId);
+
+        if (!empty($statuses))   $base->whereIn('timesheets.status', $statuses);
+        if (!empty($projectIds)) $base->whereIn('timesheets.project_id', $projectIds);
+        $serviceTypeIds = array_values(array_filter((array) $request->input('service_type_id', [])));
+        if (!empty($serviceTypeIds)) {
+            $base->whereHas('project', fn($q) => $q->whereIn('service_type_id', $serviceTypeIds));
+        }
+
+        // Visibilidade por perfil — replica summaryByTicket/index.
+        if ($user->isCliente()) {
+            $base->where('timesheets.customer_id', $user->customer_id)->whereIn('timesheets.status', ['pending', 'approved']);
+        } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
+            $base->whereIn('timesheets.user_id', \App\Models\User::where('partner_id', $user->partner_id)->pluck('id'));
+        } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {
+            $base->forUser($user->id);
+        } elseif ($user->isCoordenador() && $user->coordinator_type === 'sustentacao') {
+            $inclOnDemandChildren = $request->boolean('include_sust_ondemand_children');
+            $base->where(function ($outer) use ($inclOnDemandChildren) {
+                $outer->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+                      ->orWhereHas('project', fn ($q) => $q->whereRaw("LOWER(TRIM(name)) = 'investimento suporte'"));
+                if ($inclOnDemandChildren) {
+                    $outer->orWhere(fn ($c) => $c
+                        ->whereHas('project.contractType', fn ($ct) => $ct->where('code', 'on_demand'))
+                        ->whereHas('project.parentProject.serviceType', fn ($st) => $st->where('code', 'sustentacao')));
+                }
+            });
+        }
+
+        if ($request->filled('competencia_start')) $base->where('timesheets.date', '>=', $request->competencia_start);
+        if ($request->filled('competencia_end'))   $base->where('timesheets.date', '<=', $request->competencia_end);
+
+        $useCreatedAt = $request->input('date_field') === 'created_at';
+        $periodCol = $useCreatedAt ? "(timesheets.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')::date" : 'timesheets.date';
+
+        // Projetos com apontamento no período
+        $projectsInPeriod = (clone $base)
+            ->whereRaw("$periodCol BETWEEN ? AND ?", [$startDate, $endDate])
+            ->whereNotNull('timesheets.project_id')
+            ->select('timesheets.project_id')->distinct()->pluck('project_id')->toArray();
+        if (empty($projectsInPeriod)) {
+            return response()->json(['projects' => []]);
+        }
+
+        // Agregação: histórico (todos do projeto no cliente) + total no período.
+        $rows = (clone $base)
+            ->whereIn('timesheets.project_id', $projectsInPeriod)
+            ->join('projects', 'projects.id', '=', 'timesheets.project_id')
+            ->selectRaw('timesheets.project_id as project_id')
+            ->selectRaw('MAX(projects.code) as code')
+            ->selectRaw('MAX(projects.name) as name')
+            ->selectRaw('SUM(timesheets.effort_minutes) as lifetime_minutes')
+            ->selectRaw('COUNT(*) as lifetime_count')
+            ->selectRaw("SUM(CASE WHEN $periodCol BETWEEN ? AND ? THEN timesheets.effort_minutes ELSE 0 END) as period_minutes", [$startDate, $endDate])
+            ->selectRaw("SUM(CASE WHEN $periodCol BETWEEN ? AND ? THEN 1 ELSE 0 END) as period_count", [$startDate, $endDate])
+            ->groupBy('timesheets.project_id')
+            ->orderBy('name')
+            ->get();
+
+        return response()->json([
+            'projects' => $rows->map(fn ($r) => [
+                'project_id'       => (int) $r->project_id,
+                'code'             => $r->code,
+                'name'             => $r->name,
+                'period_minutes'   => (int) $r->period_minutes,
+                'period_count'     => (int) $r->period_count,
+                'lifetime_minutes' => (int) $r->lifetime_minutes,
+                'lifetime_count'   => (int) $r->lifetime_count,
+            ])->values(),
+        ]);
+    }
+
     public function export(Request $request)
     {
         $user = Auth::user();

@@ -644,6 +644,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/timesheets/bulk-update-project-customer', [TimesheetController::class, 'bulkUpdateProjectCustomer'])->name('timesheets.bulk-update-project-customer');
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
+        Route::get('/timesheets/summary-by-project', [TimesheetController::class, 'summaryByProject'])->name('timesheets.summary-by-project');
         Route::get('/timesheets/atrasos', [TimesheetController::class, 'atrasos'])->name('timesheets.atrasos');
 
         // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
