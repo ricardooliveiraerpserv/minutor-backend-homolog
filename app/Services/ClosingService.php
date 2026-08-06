@@ -209,24 +209,43 @@ class ClosingService
 
     public function reopenWeek(Carbon $weekStart, ?int $projectId, ?int $userId, User $user): WeekOpenPeriod
     {
+        // Reabrir CANCELA o encerramento manual (antecipação) do mesmo escopo → volta a
+        // valer o PRAZO natural da semana. A reabertura temporária (auto-fecha 23:59) ainda
+        // é gravada p/ cobrir o caso de semana já vencida por prazo.
+        $this->clearClosure('week', $weekStart->toDateString(), $projectId, $userId);
         $period = WeekOpenPeriod::updateOrCreate(
             ['project_id' => $projectId, 'user_id' => $userId, 'week_start' => $weekStart->toDateString()],
             ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null, 'auto_close_at' => $this->autoCloseToday()]
         );
         $this->log('week_reopen', 'week', $weekStart->toDateString(), $projectId, $user->id,
-            'Semana reaberta (' . $this->scopeNote($projectId, $userId) . ') até 23:59');
+            'Semana reaberta (' . $this->scopeNote($projectId, $userId) . ') — volta a valer o prazo');
         return $period;
     }
 
     public function reopenMonth(string $ym, ?int $projectId, ?int $userId, User $user): ProjectOpenPeriod
     {
+        // Reabrir CANCELA o encerramento manual (antecipação) do mesmo escopo → volta o prazo.
+        $this->clearClosure('month', $ym, $projectId, $userId);
         $period = ProjectOpenPeriod::updateOrCreate(
             ['project_id' => $projectId, 'user_id' => $userId, 'year_month' => $ym],
             ['opened_by' => $user->id, 'closed_by' => null, 'closed_at' => null, 'auto_close_at' => $this->autoCloseToday()]
         );
         $this->log('month_reopen', 'month', $ym, $projectId, $user->id,
-            'Competência reaberta (' . $this->scopeNote($projectId, $userId) . ') até 23:59');
+            'Competência reaberta (' . $this->scopeNote($projectId, $userId) . ') — volta a valer o prazo');
         return $period;
+    }
+
+    /**
+     * Remove o encerramento manual (CompetenceClosure) do escopo EXATO reaberto. Match exato
+     * (não o guarda-chuva do scoped): reabrir global tira só o closure global; reabrir um
+     * projeto/usuário tira só o dele — sem apagar encerramentos de outros escopos.
+     */
+    private function clearClosure(string $kind, string $key, ?int $projectId, ?int $userId): void
+    {
+        CompetenceClosure::where('period_kind', $kind)->where('period_key', $key)
+            ->where(fn ($q) => $projectId === null ? $q->whereNull('project_id') : $q->where('project_id', $projectId))
+            ->where(fn ($q) => $userId === null ? $q->whereNull('user_id') : $q->where('user_id', $userId))
+            ->delete();
     }
 
     /** Encerra a SEMANA já (fecha reabertura ativa do escopo + grava closure). */
