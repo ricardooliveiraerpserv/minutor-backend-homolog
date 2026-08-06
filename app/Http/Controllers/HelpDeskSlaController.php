@@ -61,6 +61,7 @@ class HelpDeskSlaController extends Controller
             'holidays'                         => 'nullable|array',
             'holidays.*.date'                  => 'required|date',
             'holidays.*.name'                  => 'nullable|string|max:120',
+            'holidays.*.yearly'                => 'nullable|boolean',
         ];
     }
 
@@ -161,7 +162,7 @@ class HelpDeskSlaController extends Controller
             $date = \Carbon\Carbon::parse($h['date'])->format('Y-m-d');
             if (isset($seen[$date])) continue;
             $seen[$date] = true;
-            $policy->holidays()->create(['date' => $date, 'name' => $h['name'] ?? null]);
+            $policy->holidays()->create(['date' => $date, 'name' => $h['name'] ?? null, 'yearly' => (bool) ($h['yearly'] ?? false)]);
         }
     }
 }

@@ -66,8 +66,18 @@ class HelpDeskSlaPolicy extends Model
             $dates = Holiday::query()->active()
                 ->pluck('date')->map(fn ($d) => \Carbon\Carbon::parse($d)->format('Y-m-d'))->all();
         }
-        $own = ($this->relationLoaded('holidays') ? $this->holidays : $this->holidays()->get())
-            ->map(fn ($h) => \Carbon\Carbon::parse($h->date)->format('Y-m-d'))->all();
+        // Feriados do contrato: data exata; se "yearly" (repete todo ano), expande p/ uma janela
+        // de anos (ano-1 .. ano+3), casando por dia/mês — cobre qualquer cálculo de SLA.
+        $own = [];
+        $curY = (int) now()->year;
+        foreach (($this->relationLoaded('holidays') ? $this->holidays : $this->holidays()->get()) as $h) {
+            $d = \Carbon\Carbon::parse($h->date);
+            if ($h->yearly ?? false) {
+                for ($y = $curY - 1; $y <= $curY + 3; $y++) $own[] = $y . '-' . $d->format('m-d');
+            } else {
+                $own[] = $d->format('Y-m-d');
+            }
+        }
         return array_values(array_unique(array_merge($dates, $own)));
     }
 

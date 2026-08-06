@@ -10,9 +10,9 @@ class HelpDeskSlaHoliday extends Model
 {
     protected $table = 'helpdesk_sla_holidays';
 
-    protected $fillable = ['sla_policy_id', 'date', 'name'];
+    protected $fillable = ['sla_policy_id', 'date', 'name', 'yearly'];
 
-    protected $casts = ['date' => 'date:Y-m-d'];
+    protected $casts = ['date' => 'date:Y-m-d', 'yearly' => 'boolean'];
 
     public function policy(): BelongsTo { return $this->belongsTo(HelpDeskSlaPolicy::class, 'sla_policy_id'); }
 }
