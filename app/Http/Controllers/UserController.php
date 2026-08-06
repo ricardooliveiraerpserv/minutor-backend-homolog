@@ -362,6 +362,50 @@ class UserController extends Controller
         }
     }
 
+    /** Categoriza em massa o VÍNCULO (Fixo/Free Lance) — só consultores. */
+    public function bulkWorkBond(Request $request): JsonResponse
+    {
+        $currentUser = Auth::user();
+        if (!($currentUser->isAdmin() || $currentUser->hasAccess('users.update'))) {
+            return $this->accessDeniedResponse('Você não tem permissão para atualizar usuários.');
+        }
+        $validator = Validator::make($request->all(), [
+            'user_ids'   => 'required|array|min:1',
+            'user_ids.*' => 'integer|exists:users,id',
+            'work_bond'  => 'nullable|in:fixo,freelance',
+        ]);
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+        $bond = $request->input('work_bond');
+        $applied = 0; $skipped = 0;
+        foreach (User::whereIn('id', $request->input('user_ids'))->get() as $u) {
+            if ($u->type !== 'consultor') { $skipped++; continue; }   // vínculo só p/ consultor
+            $u->forceFill(['work_bond' => $bond])->save();
+            $applied++;
+        }
+        return response()->json(['applied' => $applied, 'skipped' => $skipped]);
+    }
+
+    /** Contagem de usuários por perfil (abas da tela de Usuários), respeitando enabled. */
+    public function counts(Request $request): JsonResponse
+    {
+        $base = User::query();
+        if ($request->filled('enabled')) {
+            $base->where('enabled', $request->input('enabled') === '1' || $request->input('enabled') === 1 || $request->input('enabled') === true);
+        }
+        $byType = (clone $base)->selectRaw('type, count(*) as c')->groupBy('type')->pluck('c', 'type');
+        return response()->json(['data' => [
+            ''               => (clone $base)->count(),
+            'cliente'        => (int) ($byType['cliente'] ?? 0),
+            'consultor'      => (int) ($byType['consultor'] ?? 0),
+            'coordenador'    => (int) ($byType['coordenador'] ?? 0),
+            'parceiro_admin' => (int) ($byType['parceiro_admin'] ?? 0),
+            'admin'          => (int) ($byType['admin'] ?? 0),
+            'administrativo' => (int) ($byType['administrativo'] ?? 0),
+        ]]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [

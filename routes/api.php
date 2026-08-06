@@ -815,6 +815,7 @@ Route::prefix('v1')->group(function () {
 
         // Gerenciamento completo de usuários (requer permissões específicas)
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
+        Route::get('/users/counts', [UserController::class, 'counts'])->name('users.counts'); // ANTES de /users/{user}
         Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
 
         Route::middleware(['permission.or.admin:users.create', 'screen.action:/users,create'])->group(function () {
@@ -829,6 +830,7 @@ Route::prefix('v1')->group(function () {
 
         // Atualização em massa do tipo de contrato (cooperado/clt/pj)
         Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
+        Route::post('/users/bulk-work-bond',     [UserController::class, 'bulkWorkBond'])->name('users.bulk-work-bond');
 
         Route::middleware(['permission.or.admin:users.delete', 'screen.action:/users,delete'])->group(function () {
             Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');
