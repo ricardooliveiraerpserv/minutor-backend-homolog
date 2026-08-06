@@ -10,8 +10,21 @@ class CustomerContactController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $search = trim((string) $request->query('search', ''));
         $query = CustomerContact::with('customer:id,name')
-            ->when($request->query('customer_id'), fn($q) => $q->where('customer_id', $request->query('customer_id')))
+            ->when($request->query('customer_id'), fn ($q) => $q->where('customer_id', $request->query('customer_id')))
+            ->when($search !== '', function ($q) use ($search) {
+                $like = '%' . $search . '%';
+                $q->where(function ($w) use ($like) {
+                    $w->where('name', 'ilike', $like)
+                        ->orWhere('cargo', 'ilike', $like)
+                        ->orWhere('departamento', 'ilike', $like)
+                        ->orWhere('email', 'ilike', $like)
+                        ->orWhere('phone', 'ilike', $like)
+                        ->orWhere('whatsapp', 'ilike', $like)
+                        ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $like));
+                });
+            })
             ->orderBy('name');
 
         if ($request->query('customer_id')) {
@@ -19,6 +32,7 @@ class CustomerContactController extends Controller
             return response()->json($query->get());
         }
 
+        // Catálogo global de contatos (todas as empresas). Aceita ?search= e ?per_page=.
         return response()->json($query->paginate($request->query('per_page', 50)));
     }
 
