@@ -526,7 +526,9 @@ Route::prefix('v1')->group(function () {
         // Motor de Políticas de Acesso (genérico; CRM = Política Comercial)
         Route::get('/policies/{module}/catalog', [\App\Http\Controllers\PolicyController::class, 'catalog']);
         Route::get('/policies/{module}/roles', [\App\Http\Controllers\PolicyController::class, 'roles']);
+        Route::post('/policies/{module}/roles', [\App\Http\Controllers\PolicyController::class, 'storeRole']);
         Route::put('/policies/{module}/roles/{role}', [\App\Http\Controllers\PolicyController::class, 'updateRole']);
+        Route::delete('/policies/{module}/roles/{role}', [\App\Http\Controllers\PolicyController::class, 'destroyRole']);
         Route::get('/policies/{module}/users/{user}', [\App\Http\Controllers\PolicyController::class, 'userShow']);
         Route::put('/policies/{module}/users/{user}/assignment', [\App\Http\Controllers\PolicyController::class, 'setAssignment']);
         Route::put('/policies/{module}/users/{user}/overrides', [\App\Http\Controllers\PolicyController::class, 'setOverrides']);
@@ -844,6 +846,7 @@ Route::prefix('v1')->group(function () {
         // 🏆 EXECUTIVES - Gestão de executivos
         Route::get('/executives', [ExecutiveController::class, 'index'])->name('executives.index');
         Route::get('/executives/all', [ExecutiveController::class, 'all'])->name('executives.all');
+        Route::get('/executives/comerciais', [ExecutiveController::class, 'commercial'])->name('executives.commercial');
         Route::middleware('permission.or.admin:users.update')->group(function () {
             Route::patch('/executives/{user}', [ExecutiveController::class, 'toggle'])->name('executives.toggle');
         });

@@ -60,6 +60,23 @@ class ExecutiveController extends Controller
     }
 
     /**
+     * Seletor "Executivo Comercial" do CRM: quem for executivo (is_executive) + os admins,
+     * que aparecem SEMPRE (mesmo sem a flag de executivo). Sem paginação — é um combo simples.
+     */
+    public function commercial(): JsonResponse
+    {
+        $users = User::query()
+            ->whereNull('customer_id')
+            ->where('enabled', true)
+            ->where('type', '!=', 'parceiro_admin')
+            ->where(fn ($q) => $q->where('is_executive', true)->orWhere('type', 'admin'))
+            ->orderBy('name')
+            ->get(['id', 'name', 'type', 'is_executive']);
+
+        return response()->json(['data' => $users]);
+    }
+
+    /**
      * Alterna o status de executivo de um usuário
      */
     public function toggle(User $user): JsonResponse

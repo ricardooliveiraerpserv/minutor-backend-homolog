@@ -81,6 +81,61 @@ class PolicyController extends Controller
         ])]);
     }
 
+    /** Cria um perfil comercial personalizado (não-sistema). Opcionalmente clona os padrões de outro. */
+    public function storeRole(Request $request, string $module): JsonResponse
+    {
+        $this->assertModule($module);
+        $this->assertAdmin();
+        $cid = $this->companyId();
+        $v = $request->validate([
+            'name'       => 'required|string|max:80',
+            'defaults'   => 'nullable|array',
+            'clone_from' => 'nullable|integer|exists:policy_roles,id',
+        ]);
+        $name = trim($v['name']);
+        // Nome único por empresa+módulo (constraint no banco; validamos antes p/ mensagem amigável).
+        $dup = PolicyRole::where('module', $module)->where('company_id', $cid)
+            ->whereRaw('lower(name) = ?', [mb_strtolower($name)])->exists();
+        abort_if($dup, 422, 'Já existe um perfil com esse nome.');
+
+        // Padrões: clona de outro perfil (mesma empresa+módulo) ou usa o mapa enviado; senão vazio.
+        $defaults = [];
+        if (!empty($v['clone_from'])) {
+            $src = PolicyRole::where('id', $v['clone_from'])->where('module', $module)->where('company_id', $cid)->first();
+            if ($src) $defaults = $src->defaults ?? [];
+        }
+        if (array_key_exists('defaults', $v) && is_array($v['defaults'])) {
+            $defaults = $this->sanitizeMap($module, $v['defaults']);
+        }
+
+        $max = (int) PolicyRole::where('module', $module)->where('company_id', $cid)->max('sort_order');
+        $role = PolicyRole::create([
+            'company_id' => $cid, 'module' => $module, 'name' => $name,
+            'is_system' => false, 'archived' => false,
+            'defaults' => $defaults, 'sort_order' => $max + 1,
+        ]);
+        $this->audit($module, 'role', $role->id, 'create', null, $role->defaults);
+        return response()->json(['data' => [
+            'id' => $role->id, 'name' => $role->name, 'is_system' => $role->is_system,
+            'defaults' => $role->defaults ?? new \stdClass, 'sort_order' => $role->sort_order, 'people' => 0,
+        ]], 201);
+    }
+
+    /** Exclui um perfil personalizado. Perfis de sistema são protegidos; só exclui se ninguém estiver vinculado. */
+    public function destroyRole(string $module, PolicyRole $role): JsonResponse
+    {
+        $this->assertModule($module);
+        $this->assertAdmin();
+        // O binding não é escopado por empresa — garante mesmo módulo/empresa.
+        abort_unless($role->module === $module && $role->company_id === $this->companyId(), 404, 'Perfil não encontrado.');
+        abort_if($role->is_system, 403, 'Perfis de sistema não podem ser excluídos.');
+        $people = PolicyAssignment::where('module', $module)->where('role_id', $role->id)->count();
+        abort_if($people > 0, 422, "Este perfil tem {$people} pessoa(s) vinculada(s). Reatribua-as antes de excluir.");
+        $this->audit($module, 'role', $role->id, 'delete', $role->defaults, null);
+        $role->delete();
+        return response()->json(null, 204);
+    }
+
     /** Edita os padrões de um perfil (não-sistema, ou sistema com cuidado). */
     public function updateRole(Request $request, string $module, PolicyRole $role): JsonResponse
     {
