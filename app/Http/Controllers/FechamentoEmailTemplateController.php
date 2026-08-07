@@ -80,8 +80,8 @@ class FechamentoEmailTemplateController extends Controller
         ]);
 
         $categoria = $data['categoria'] ?? $existing?->categoria;
-        // cliente é único (sem tipo de contrato); consultor/parceiro exigem o tipo.
-        if ($categoria === 'cliente') {
+        // cliente e excedente são únicos (sem tipo de contrato); consultor/parceiro exigem o tipo.
+        if (in_array($categoria, ['cliente', 'excedente'], true)) {
             $data['contract_type'] = null;
         } elseif (empty($data['contract_type'])) {
             abort(response()->json([
