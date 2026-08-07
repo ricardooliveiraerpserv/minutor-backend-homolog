@@ -22,11 +22,32 @@ class CrmOpportunityController extends Controller
     }
 
     /** Indicador de cada oportunidade: próxima ação + probabilidade/forecast (Item 2). */
+    /**
+     * Previsibilidade AUTOMÁTICA = média entre a probabilidade da ETAPA (funil) e a QUALIDADE
+     * da pesquisa de qualificação (estrelas + sinais MEDDIC + aceite dos executivos). Sem pesquisa
+     * preenchida, usa só o funil. Atualiza sozinha conforme a oportunidade avança e a pesquisa é preenchida.
+     */
+    private function autoProbabilidade(CrmOpportunity $o, int $stageProb): int
+    {
+        $det = $o->detalhes ?? [];
+        $rep = $det['qualificacao_report'] ?? null;
+        if (!$rep || empty($rep['estrelas'])) return $stageProb;
+        $qualPct = (int) $rep['estrelas'] * 20;                 // pesquisa: 1★=20% … 5★=100%
+        $bonus = 0;
+        if (!empty($det['decisor']))           $bonus += 3;
+        if (!empty($det['champion']))          $bonus += 3;
+        if (!empty($det['budget_confirmado'])) $bonus += 3;
+        if (!empty($rep['necessidade']))       $bonus += 3;
+        if (!empty($rep['aceite_executivos'])) $bonus += 5;
+        $qualPct = min(100, $qualPct + $bonus);
+        return max(0, min(100, (int) round($stageProb * 0.5 + $qualPct * 0.5)));  // média funil × pesquisa
+    }
+
     private function decorate(CrmOpportunity $o): array
     {
-        // Probabilidade EFETIVA = override manual da oportunidade, senão a da etapa.
+        // Probabilidade EFETIVA = override manual (exceção), senão AUTOMÁTICA (funil + qualificação).
         $stageProb = $o->relationLoaded('stage') ? (int) ($o->stage?->probabilidade ?? 0) : 0;
-        $prob = $o->probabilidade !== null ? (int) $o->probabilidade : $stageProb;
+        $prob = $o->probabilidade !== null ? (int) $o->probabilidade : $this->autoProbabilidade($o, $stageProb);
         $aberto = $o->status === 'aberto';
         $diasSemInteracao = $o->ultima_interacao_at ? (int) $o->ultima_interacao_at->diffInDays(now()) : null;
         $ponderado = round((float) $o->valor * $prob / 100, 2);
@@ -699,7 +720,7 @@ class CrmOpportunityController extends Controller
             'at'                => now()->toIso8601String(),
         ];
         $opportunity->detalhes      = $d;
-        $opportunity->probabilidade = (int) $v['estrelas'] * 20;                                   // 1..5 → 20..100%
+        $opportunity->probabilidade = null;                                                        // libera a previsibilidade AUTOMÁTICA (funil + pesquisa)
         $opportunity->qualificacao  = $v['estrelas'] >= 4 ? 'quente' : ($v['estrelas'] >= 3 ? 'morno' : 'frio');
         $opportunity->save();
         CrmOpportunityEvent::log($opportunity->id, 'qualificado', ['to_value' => $v['estrelas'] . '★' . (!empty($v['aceite_executivos']) ? ' · aceito exec.' : '')]);
