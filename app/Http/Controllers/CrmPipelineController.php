@@ -291,6 +291,7 @@ class CrmPipelineController extends Controller
             'sla_dias'      => 'nullable|integer|min:0',
             'is_won'        => 'boolean', 'is_lost' => 'boolean',
             'is_inicial'    => 'boolean', 'ativa' => 'boolean',
+            'requer_qualificacao' => 'boolean',
             'regras'        => 'nullable|array',
             'regras.*'      => 'string|in:' . implode(',', CrmPipelineStage::REGRAS_DISPONIVEIS),
         ]);

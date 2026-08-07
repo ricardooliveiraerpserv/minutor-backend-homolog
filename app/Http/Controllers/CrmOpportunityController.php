@@ -666,6 +666,46 @@ class CrmOpportunityController extends Controller
         return $this->show($opportunity->fresh());
     }
 
+    /**
+     * Relatório de qualificação (disparado ao entrar numa etapa que exige): valida a qualidade do lead,
+     * registra o aceite do time de executivos e define a possibilidade de fechamento em ESTRELAS (1..5).
+     * Estrelas viram probabilidade (×20) e termômetro (frio/morno/quente). Os sinais alimentam a Saúde.
+     */
+    public function qualificar(Request $request, CrmOpportunity $opportunity): JsonResponse
+    {
+        $v = $request->validate([
+            'estrelas'          => 'required|integer|min:1|max:5',
+            'aceite_executivos' => 'nullable|boolean',
+            'aceite_por'        => 'nullable|string|max:120',
+            'necessidade'       => 'nullable|boolean',
+            'decisor'           => 'nullable|boolean',
+            'champion'          => 'nullable|boolean',
+            'budget_confirmado' => 'nullable|boolean',
+            'observacao'        => 'nullable|string|max:1000',
+        ]);
+        $d = $opportunity->detalhes ?? [];
+        // Sinais de qualidade — também lidos pelo OpportunityHealthService.
+        $d['decisor']           = (bool) ($v['decisor'] ?? false);
+        $d['champion']          = (bool) ($v['champion'] ?? false);
+        $d['budget_confirmado'] = (bool) ($v['budget_confirmado'] ?? false);
+        $d['qualificacao_report'] = [
+            'estrelas'          => (int) $v['estrelas'],
+            'aceite_executivos' => (bool) ($v['aceite_executivos'] ?? false),
+            'aceite_por'        => $v['aceite_por'] ?? null,
+            'necessidade'       => (bool) ($v['necessidade'] ?? false),
+            'observacao'        => $v['observacao'] ?? null,
+            'stage_id'          => $opportunity->stage_id,
+            'by'                => auth()->user()?->name,
+            'at'                => now()->toIso8601String(),
+        ];
+        $opportunity->detalhes      = $d;
+        $opportunity->probabilidade = (int) $v['estrelas'] * 20;                                   // 1..5 → 20..100%
+        $opportunity->qualificacao  = $v['estrelas'] >= 4 ? 'quente' : ($v['estrelas'] >= 3 ? 'morno' : 'frio');
+        $opportunity->save();
+        CrmOpportunityEvent::log($opportunity->id, 'qualificado', ['to_value' => $v['estrelas'] . '★' . (!empty($v['aceite_executivos']) ? ' · aceito exec.' : '')]);
+        return $this->show($opportunity->fresh());
+    }
+
     // ===== ANEXOS da oportunidade (camada Attachment, entity CRM_OPPORTUNITY) =====
     public function attachments(Request $request, CrmOpportunity $opportunity, AttachmentService $svc): JsonResponse
     {

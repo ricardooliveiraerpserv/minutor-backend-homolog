@@ -577,6 +577,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/crm/opportunities/{opportunity}/products', [\App\Http\Controllers\CrmOpportunityController::class, 'addProduct']);
         Route::put('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'updateProduct']);
         Route::delete('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'removeProduct']);
+        Route::put('/crm/opportunities/{opportunity}/qualificacao', [\App\Http\Controllers\CrmOpportunityController::class, 'qualificar']);
         // Anexos da oportunidade
         Route::get('/crm/opportunities/{opportunity}/attachments', [\App\Http\Controllers\CrmOpportunityController::class, 'attachments']);
         Route::post('/crm/opportunities/{opportunity}/attachments', [\App\Http\Controllers\CrmOpportunityController::class, 'uploadAttachment']);
@@ -1480,6 +1481,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/crm/opportunities/{opportunity}/products', [\App\Http\Controllers\CrmOpportunityController::class, 'addProduct']);
         Route::put('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'updateProduct']);
         Route::delete('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'removeProduct']);
+        Route::put('/crm/opportunities/{opportunity}/qualificacao', [\App\Http\Controllers\CrmOpportunityController::class, 'qualificar']);
         // Anexos da oportunidade
         Route::get('/crm/opportunities/{opportunity}/attachments', [\App\Http\Controllers\CrmOpportunityController::class, 'attachments']);
         Route::post('/crm/opportunities/{opportunity}/attachments', [\App\Http\Controllers\CrmOpportunityController::class, 'uploadAttachment']);
