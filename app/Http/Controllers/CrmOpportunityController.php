@@ -283,11 +283,55 @@ class CrmOpportunityController extends Controller
             'products', 'tasks.responsavel:id,name', 'events.triggeredBy:id,name', 'contract:id,status,project_code_preview']);
         $health = app(\App\Services\OpportunityHealthService::class);
         $diasNaEtapa = $health->diasNaEtapa($opportunity);
+        // Bloqueio por SLA: pergunta "o que está impedindo" a cada MÚLTIPLO do SLA da etapa (por etapa).
+        $sla = (int) ($opportunity->stage?->sla_dias ?? 0);
+        $hist = $opportunity->detalhes['paradas_historico'] ?? [];
+        $maxMult = 0;
+        foreach ($hist as $h) {
+            if ((int) ($h['stage_id'] ?? 0) === (int) $opportunity->stage_id) $maxMult = max($maxMult, (int) ($h['multiplo'] ?? 0));
+        }
+        $multAtual = $sla > 0 ? intdiv($diasNaEtapa, $sla) : 0;
+        $bloqueioPendente = $opportunity->status === 'aberto' && $sla > 0 && $multAtual >= 1 && $multAtual > $maxMult;
         return response()->json(['data' => array_merge($this->decorate($opportunity), [
-            'derivado'      => $this->derivarDaProposta($opportunity),
-            'dias_na_etapa' => $diasNaEtapa,
-            'saude'         => $health->compute($opportunity, $diasNaEtapa),
+            'derivado'          => $this->derivarDaProposta($opportunity),
+            'dias_na_etapa'     => $diasNaEtapa,
+            'saude'             => $health->compute($opportunity, $diasNaEtapa),
+            'sla_dias'          => $sla,
+            'sla_multiplo'      => $multAtual,
+            'bloqueio_pendente' => $bloqueioPendente,
+            'paradas_historico' => array_values($hist),
         ])]);
+    }
+
+    /**
+     * Registra o bloqueio ("o que está impedindo o avanço?") — exigido a cada múltiplo do SLA da etapa.
+     * Guarda o histórico (motivo/obs/quem/quando/múltiplo/etapa) em detalhes.paradas_historico.
+     */
+    public function registrarBloqueio(Request $request, CrmOpportunity $opportunity): JsonResponse
+    {
+        $v = $request->validate([
+            'motivo'      => 'required|string|max:160',
+            'observacao'  => 'nullable|string|max:1000',
+        ]);
+        $opportunity->load('stage');
+        $dias = app(\App\Services\OpportunityHealthService::class)->diasNaEtapa($opportunity);
+        $sla = (int) ($opportunity->stage?->sla_dias ?? 0);
+        $mult = $sla > 0 ? intdiv($dias, $sla) : 0;
+        $d = $opportunity->detalhes ?? [];
+        $hist = $d['paradas_historico'] ?? [];
+        $hist[] = [
+            'multiplo' => $mult, 'sla_dias' => $sla, 'dias_na_etapa' => $dias, 'stage_id' => $opportunity->stage_id,
+            'motivo' => $v['motivo'], 'observacao' => $v['observacao'] ?? null,
+            'by' => auth()->user()?->name, 'at' => now()->toIso8601String(),
+        ];
+        $d['paradas_historico'] = $hist;
+        $d['motivo_parada_obs'] = $v['observacao'] ?? null;
+        $opportunity->detalhes = $d;
+        $opportunity->motivo_parada = $v['motivo'];
+        $opportunity->parada_em = now();
+        $opportunity->save();
+        CrmOpportunityEvent::log($opportunity->id, 'parada_alterada', ['to_value' => $v['motivo'] . ($sla > 0 ? " (SLA {$mult}×)" : '')]);
+        return $this->show($opportunity->fresh());
     }
 
     /**
