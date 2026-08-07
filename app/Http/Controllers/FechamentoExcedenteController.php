@@ -252,6 +252,17 @@ class FechamentoExcedenteController extends Controller
 
         $total = round($rows->sum('excess_value'), 2);
 
+        // Agregados do resumo (para o modelo de e-mail): somas do cliente na competência.
+        $contratadasTot = round((float) $rows->sum('contracted_hours'), 2);
+        $consumidoTot   = round((float) $rows->sum('consumed_hours'), 2);
+        $excedenteTot   = round((float) $rows->sum('excess_hours'), 2);
+        // Valor da hora excedente: se todos os contratos usam a mesma tarifa, usa-a;
+        // senão, tarifa efetiva ponderada (total ÷ horas excedentes).
+        $rates = $rows->pluck('additional_hourly_rate')->map(fn ($v) => round((float) $v, 2))->unique();
+        $valorHora = $rates->count() === 1
+            ? (float) $rates->first()
+            : ($excedenteTot > 0 ? round($total / $excedenteTot, 2) : 0.0);
+
         $logoFile    = public_path('logo-erpserv.png');
         $logoDataUri = is_file($logoFile)
             ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
@@ -276,7 +287,29 @@ class FechamentoExcedenteController extends Controller
             'qtd'         => count($linhas),
             'totalFmt'    => $this->brl($total),
             'totalValue'  => $total,
+            // Resumo agregado para o modelo de e-mail.
+            'competencia'         => Carbon::parse($yearMonth . '-01')->format('m/Y'),
+            'contratadasHorasFmt' => number_format($contratadasTot, 2, ',', '.') . 'h',
+            'consumidoHorasFmt'   => number_format($consumidoTot, 2, ',', '.') . 'h',
+            'excedenteHorasFmt'   => number_format($excedenteTot, 2, ',', '.') . 'h',
+            'valorHoraFmt'        => $this->brl($valorHora),
         ];
+    }
+
+    /** Modelo padrão do e-mail de horas excedentes (resumo da apuração preenchido). */
+    private function defaultEmailMessage(array $v): string
+    {
+        return "Prezados,\n\n"
+            . "Segue em anexo o relatório de apuração das horas excedentes referente à competência {$v['competencia']}.\n\n"
+            . "Resumo da apuração:\n\n"
+            . "• Horas contratadas (acumuladas): {$v['contratadasHorasFmt']}\n"
+            . "• Horas consumidas: {$v['consumidoHorasFmt']}\n"
+            . "• Horas excedentes: {$v['excedenteHorasFmt']}\n"
+            . "• Valor da hora excedente: {$v['valorHoraFmt']}\n"
+            . "• Valor total a faturar: {$v['totalFmt']}\n\n"
+            . "Essas horas correspondem ao consumo realizado acima da quantidade de horas contratadas e serão faturadas conforme previsto em contrato.\n\n"
+            . "Em caso de dúvidas ou divergências, nossa equipe permanece à disposição.\n\n"
+            . "Atenciosamente,";
     }
 
     /** GET /fechamento-excedente/{customerId}/{yearMonth}/report-html — preview (mesma Blade do PDF). */
@@ -286,8 +319,12 @@ class FechamentoExcedenteController extends Controller
         if (!$customer) {
             return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
         }
-        $html = view('pdf.fechamento-excedente', $this->buildExcedenteViewData($customer, $yearMonth))->render();
-        return response()->json(['html' => $html]);
+        $viewData = $this->buildExcedenteViewData($customer, $yearMonth);
+        $html = view('pdf.fechamento-excedente', $viewData)->render();
+        return response()->json([
+            'html'            => $html,
+            'default_message' => $this->defaultEmailMessage($viewData),
+        ]);
     }
 
     /**
@@ -326,8 +363,7 @@ class FechamentoExcedenteController extends Controller
             return response()->json(['success' => false, 'message' => 'Nenhuma hora excedente a cobrar para este cliente na competência.'], 422);
         }
 
-        $periodo = $viewData['periodo'];
-        $to      = array_values(array_unique(array_filter($validated['emails'])));
+        $to = array_values(array_unique(array_filter($validated['emails'])));
 
         // CC: papéis configurados na Central de Workflows (executivo, financeiro), sem duplicar o To.
         $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('fechamento.cliente', ['customer' => $customer]);
@@ -337,8 +373,7 @@ class FechamentoExcedenteController extends Controller
         ));
 
         $subject = 'Horas Excedentes ' . Carbon::parse($yearMonth . '-01')->format('m/Y') . ' | ' . $customer->name;
-        $mensagem = trim((string) ($validated['mensagem'] ?? '')) ?:
-            "Prezados,\n\nSegue em anexo a apuração das horas excedentes referente ao período de {$periodo} (horas consumidas acima das contratadas).\n\nEm caso de dúvidas ou divergências, por gentileza entrar em contato.";
+        $mensagem = trim((string) ($validated['mensagem'] ?? '')) ?: $this->defaultEmailMessage($viewData);
 
         // PDF
         $dirFull = storage_path('app/fechamentos');
