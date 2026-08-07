@@ -19,7 +19,7 @@ class FechamentoEmailTemplateService
     public function resolve(string $categoria, ?string $contractType, array $vars, ?string $yearMonth = null, ?string $empresa = null): ?array
     {
         $q = FechamentoEmailTemplate::where('categoria', $categoria)->where('active', true);
-        if ($categoria === 'cliente') {
+        if (in_array($categoria, ['cliente', 'excedente'], true)) {
             $q->whereNull('contract_type');
         } else {
             if (!$contractType) {

@@ -22,7 +22,7 @@ class FechamentoEmailTemplate extends Model
         'pay_day' => 'integer',
     ];
 
-    public const CATEGORIAS = ['consultor', 'parceiro', 'cliente'];
+    public const CATEGORIAS = ['consultor', 'parceiro', 'cliente', 'excedente'];
     public const CONTRACT_TYPES = ['cooperado', 'clt', 'pj'];
     // Eixo independente do consultor (User.is_bizify). Parceiro/cliente sempre 'erpserv'.
     public const EMPRESAS = ['erpserv', 'bizify'];

@@ -312,6 +312,36 @@ class FechamentoExcedenteController extends Controller
             . "Atenciosamente,";
     }
 
+    /** Variáveis disponíveis no modelo de e-mail (cadastro "Horas Excedentes"). */
+    private function templateVars(Customer $customer, array $v): array
+    {
+        return [
+            'nome'              => $customer->name,
+            'periodo'           => $v['periodo'],
+            'competencia'       => $v['competencia'],
+            'horas_contratadas' => $v['contratadasHorasFmt'],
+            'horas_consumidas'  => $v['consumidoHorasFmt'],
+            'horas_excedentes'  => $v['excedenteHorasFmt'],
+            'valor_hora'        => $v['valorHoraFmt'],
+            'valor_total'       => $v['totalFmt'],
+            'valor'             => $v['totalFmt'],
+        ];
+    }
+
+    /** Modelo ativo do cadastro (categoria "excedente"), com variáveis substituídas — null se não houver. */
+    private function resolveTemplate(Customer $customer, array $viewData, string $yearMonth): ?array
+    {
+        return app(\App\Services\FechamentoEmailTemplateService::class)
+            ->resolve('excedente', null, $this->templateVars($customer, $viewData), $yearMonth);
+    }
+
+    /** Corpo padrão: modelo ativo do cadastro ou o texto embutido de fallback. */
+    private function mensagemPadrao(Customer $customer, array $viewData, string $yearMonth): string
+    {
+        $tpl = $this->resolveTemplate($customer, $viewData, $yearMonth);
+        return $tpl && trim((string) $tpl['body']) !== '' ? $tpl['body'] : $this->defaultEmailMessage($viewData);
+    }
+
     /** GET /fechamento-excedente/{customerId}/{yearMonth}/report-html — preview (mesma Blade do PDF). */
     public function reportHtml(Request $request, string $customerId, string $yearMonth): JsonResponse
     {
@@ -323,7 +353,7 @@ class FechamentoExcedenteController extends Controller
         $html = view('pdf.fechamento-excedente', $viewData)->render();
         return response()->json([
             'html'            => $html,
-            'default_message' => $this->defaultEmailMessage($viewData),
+            'default_message' => $this->mensagemPadrao($customer, $viewData, $yearMonth),
         ]);
     }
 
@@ -372,8 +402,13 @@ class FechamentoExcedenteController extends Controller
             array_unique(array_merge(array_filter([$financeiroCc]), $wf['to'], $wf['cc'])), $to,
         ));
 
-        $subject = 'Horas Excedentes ' . Carbon::parse($yearMonth . '-01')->format('m/Y') . ' | ' . $customer->name;
-        $mensagem = trim((string) ($validated['mensagem'] ?? '')) ?: $this->defaultEmailMessage($viewData);
+        // Modelo do cadastro ("Horas Excedentes"), se ativo — usa assunto/corpo dele.
+        $tpl      = $this->resolveTemplate($customer, $viewData, $yearMonth);
+        $subject  = ($tpl && trim((string) $tpl['subject']) !== '')
+            ? $tpl['subject']
+            : 'Horas Excedentes ' . Carbon::parse($yearMonth . '-01')->format('m/Y') . ' | ' . $customer->name;
+        $mensagem = trim((string) ($validated['mensagem'] ?? '')) ?:
+            (($tpl && trim((string) $tpl['body']) !== '') ? $tpl['body'] : $this->defaultEmailMessage($viewData));
 
         // PDF
         $dirFull = storage_path('app/fechamentos');
