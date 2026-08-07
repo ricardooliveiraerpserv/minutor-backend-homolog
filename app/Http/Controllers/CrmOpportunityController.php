@@ -18,7 +18,7 @@ class CrmOpportunityController extends Controller
 {
     private function withRels($q)
     {
-        return $q->with(['customer:id,name', 'pipeline:id,name', 'stage:id,name,is_won,is_lost,probabilidade', 'responsavel:id,name']);
+        return $q->with(['customer:id,name', 'pipeline:id,name', 'stage:id,name,is_won,is_lost,probabilidade', 'responsavel:id,name', 'campaign:id,name']);
     }
 
     /** Indicador de cada oportunidade: próxima ação + probabilidade/forecast (Item 2). */
@@ -108,6 +108,7 @@ class CrmOpportunityController extends Controller
             // Origem (cadastro de Origens) e Motivo de perda
             ->when($request->filled('lead_source_id'), fn ($x) => $x->where('lead_source_id', $request->lead_source_id))
             ->when($request->filled('loss_reason_id'), fn ($x) => $x->where('loss_reason_id', $request->loss_reason_id))
+            ->when($request->filled('campaign_id'), fn ($x) => $x->where('campaign_id', $request->campaign_id))
             // Valor total (faixa)
             ->when($request->filled('valor_min'), fn ($x) => $x->where('valor', '>=', (float) $request->valor_min))
             ->when($request->filled('valor_max'), fn ($x) => $x->where('valor', '<=', (float) $request->valor_max))
@@ -592,6 +593,53 @@ class CrmOpportunityController extends Controller
             $opportunity->stage_id = $v['stage_id'];
             $opportunity->save();
             $this->applyStage($opportunity, (int) $v['stage_id'], $old, $v['motivo'] ?? null, $v['loss_reason_id'] ?? null);
+        }
+        return response()->json(['data' => $this->decorate($opportunity->fresh())]);
+    }
+
+    /**
+     * Muda o STATUS direto (aberto/ganho/perdido) — edição rápida na listagem, sem
+     * abrir o card. Reflete no Kanban movendo a oportunidade para a etapa
+     * correspondente (is_won/is_lost/inicial) e reaproveita os efeitos de applyStage.
+     */
+    public function mudarStatus(Request $request, CrmOpportunity $opportunity): JsonResponse
+    {
+        $v = $request->validate([
+            'status'         => 'required|in:aberto,ganho,perdido',
+            'motivo'         => 'nullable|string|max:160',
+            'loss_reason_id' => 'nullable|exists:crm_loss_reasons,id',
+        ]);
+        if ($v['status'] === $opportunity->status) {
+            return response()->json(['data' => $this->decorate($opportunity->fresh())]);
+        }
+        if ($v['status'] === 'perdido' && empty($v['loss_reason_id'])) {
+            return response()->json(['message' => 'Informe o motivo da perda.', 'code' => 'MOTIVO_PERDA_OBRIGATORIO'], 422);
+        }
+
+        $opportunity->loadMissing('pipeline.stages');
+        $stages = optional($opportunity->pipeline)->stages ?? collect();
+        $target = match ($v['status']) {
+            'ganho'   => $stages->firstWhere('is_won', true),
+            'perdido' => $stages->firstWhere('is_lost', true),
+            default   => $stages->firstWhere('is_inicial', true)
+                ?? $stages->reject(fn ($s) => $s->is_won || $s->is_lost)->sortBy('ordem')->first(),
+        };
+
+        if ($target && (int) $target->id !== (int) $opportunity->stage_id) {
+            $old = $opportunity->stage_id;
+            $opportunity->stage_id = $target->id;
+            $opportunity->save();
+            $this->applyStage($opportunity, (int) $target->id, $old, $v['motivo'] ?? null, $v['loss_reason_id'] ?? null);
+        } else {
+            // Sem etapa correspondente no funil → grava o status direto.
+            $opportunity->update([
+                'status'         => $v['status'],
+                'fechamento_at'  => $v['status'] === 'aberto' ? null : now(),
+                'motivo'         => $v['motivo'] ?? $opportunity->motivo,
+                'loss_reason_id' => $v['status'] === 'perdido' ? ($v['loss_reason_id'] ?? null) : $opportunity->loss_reason_id,
+            ]);
+            $evt = $v['status'] === 'ganho' ? 'won' : ($v['status'] === 'perdido' ? 'lost' : 'stage_changed');
+            CrmOpportunityEvent::log($opportunity->id, $evt, ['to_value' => $v['motivo'] ?? $v['status']]);
         }
         return response()->json(['data' => $this->decorate($opportunity->fresh())]);
     }

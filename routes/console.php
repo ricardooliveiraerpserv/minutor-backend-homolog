@@ -55,6 +55,14 @@ Schedule::command('crm:escalonar-leads')
   ->name('crm-escalonar-leads')
   ->withoutOverlapping();
 
+// CRM — repesca leads descartados cujo prazo (dias_repescagem do motivo) venceu:
+// volta ao funil de prospecção + cria atividade de retomada para o responsável.
+Schedule::command('crm:repescar-leads')
+  ->dailyAt('06:15')
+  ->name('crm-repescar-leads')
+  ->description('Devolve ao funil os leads descartados com repescagem agendada')
+  ->withoutOverlapping();
+
 // CRM — gera oportunidades de renovação p/ contratos a 90 dias do vencimento (Item 5).
 Schedule::command('crm:gerar-renovacoes')
   ->dailyAt('05:00')

@@ -573,6 +573,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/opportunities/{opportunity}',  [\App\Http\Controllers\CrmOpportunityController::class, 'show']);
         Route::put('/crm/opportunities/{opportunity}',  [\App\Http\Controllers\CrmOpportunityController::class, 'update']);
         Route::patch('/crm/opportunities/{opportunity}/stage', [\App\Http\Controllers\CrmOpportunityController::class, 'moveStage']);
+        Route::patch('/crm/opportunities/{opportunity}/status', [\App\Http\Controllers\CrmOpportunityController::class, 'mudarStatus']);
         // Produtos vinculados (Item 3)
         Route::post('/crm/opportunities/{opportunity}/products', [\App\Http\Controllers\CrmOpportunityController::class, 'addProduct']);
         Route::put('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'updateProduct']);
@@ -644,6 +645,16 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/loss-reasons',  [\App\Http\Controllers\CrmLossReasonController::class, 'index']);
         Route::post('/crm/loss-reasons', [\App\Http\Controllers\CrmLossReasonController::class, 'store']);
         Route::put('/crm/loss-reasons/{lossReason}', [\App\Http\Controllers\CrmLossReasonController::class, 'update']);
+        // CRM — Campanhas comerciais
+        Route::get('/crm/campaigns',  [\App\Http\Controllers\CrmCampaignController::class, 'index']);
+        Route::post('/crm/campaigns', [\App\Http\Controllers\CrmCampaignController::class, 'store']);
+        Route::put('/crm/campaigns/{campaign}', [\App\Http\Controllers\CrmCampaignController::class, 'update']);
+        Route::delete('/crm/campaigns/{campaign}', [\App\Http\Controllers\CrmCampaignController::class, 'destroy']);
+        // CRM — Motivos de descarte (funil de prospecção) + repescagem
+        Route::get('/crm/discard-reasons',  [\App\Http\Controllers\CrmDiscardReasonController::class, 'index']);
+        Route::post('/crm/discard-reasons', [\App\Http\Controllers\CrmDiscardReasonController::class, 'store']);
+        Route::put('/crm/discard-reasons/{discardReason}', [\App\Http\Controllers\CrmDiscardReasonController::class, 'update']);
+        Route::delete('/crm/discard-reasons/{discardReason}', [\App\Http\Controllers\CrmDiscardReasonController::class, 'destroy']);
         Route::get('/crm/segments',  [\App\Http\Controllers\CrmSegmentController::class, 'index']);
         Route::post('/crm/segments', [\App\Http\Controllers\CrmSegmentController::class, 'store']);
         Route::put('/crm/segments/{segment}', [\App\Http\Controllers\CrmSegmentController::class, 'update']);
@@ -1478,6 +1489,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/opportunities/{opportunity}',  [\App\Http\Controllers\CrmOpportunityController::class, 'show']);
         Route::put('/crm/opportunities/{opportunity}',  [\App\Http\Controllers\CrmOpportunityController::class, 'update']);
         Route::patch('/crm/opportunities/{opportunity}/stage', [\App\Http\Controllers\CrmOpportunityController::class, 'moveStage']);
+        Route::patch('/crm/opportunities/{opportunity}/status', [\App\Http\Controllers\CrmOpportunityController::class, 'mudarStatus']);
         // Produtos vinculados (Item 3)
         Route::post('/crm/opportunities/{opportunity}/products', [\App\Http\Controllers\CrmOpportunityController::class, 'addProduct']);
         Route::put('/crm/opportunities/{opportunity}/products/{product}', [\App\Http\Controllers\CrmOpportunityController::class, 'updateProduct']);
@@ -1619,6 +1631,16 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/loss-reasons',  [\App\Http\Controllers\CrmLossReasonController::class, 'index']);
         Route::post('/crm/loss-reasons', [\App\Http\Controllers\CrmLossReasonController::class, 'store']);
         Route::put('/crm/loss-reasons/{lossReason}', [\App\Http\Controllers\CrmLossReasonController::class, 'update']);
+        // CRM — Campanhas comerciais
+        Route::get('/crm/campaigns',  [\App\Http\Controllers\CrmCampaignController::class, 'index']);
+        Route::post('/crm/campaigns', [\App\Http\Controllers\CrmCampaignController::class, 'store']);
+        Route::put('/crm/campaigns/{campaign}', [\App\Http\Controllers\CrmCampaignController::class, 'update']);
+        Route::delete('/crm/campaigns/{campaign}', [\App\Http\Controllers\CrmCampaignController::class, 'destroy']);
+        // CRM — Motivos de descarte (funil de prospecção) + repescagem
+        Route::get('/crm/discard-reasons',  [\App\Http\Controllers\CrmDiscardReasonController::class, 'index']);
+        Route::post('/crm/discard-reasons', [\App\Http\Controllers\CrmDiscardReasonController::class, 'store']);
+        Route::put('/crm/discard-reasons/{discardReason}', [\App\Http\Controllers\CrmDiscardReasonController::class, 'update']);
+        Route::delete('/crm/discard-reasons/{discardReason}', [\App\Http\Controllers\CrmDiscardReasonController::class, 'destroy']);
         Route::get('/crm/segments',  [\App\Http\Controllers\CrmSegmentController::class, 'index']);
         Route::post('/crm/segments', [\App\Http\Controllers\CrmSegmentController::class, 'store']);
         Route::put('/crm/segments/{segment}', [\App\Http\Controllers\CrmSegmentController::class, 'update']);

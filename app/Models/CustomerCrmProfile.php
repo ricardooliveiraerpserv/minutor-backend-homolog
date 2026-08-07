@@ -19,6 +19,8 @@ class CustomerCrmProfile extends Model
         'previsao_fechamento', 'previsao_competencia',
         'ultima_interacao_at', 'proxima_acao_at', 'proxima_acao',
         'lead_created_at', 'qualified_at', 'lost_at', 'lost_reason',
+        // Descarte estruturado + repescagem automática
+        'discard_reason_id', 'repescar_em',
         // Vínculo com o lead-projeto na árvore de Investimento Comercial (custo de aquisição)
         'investimento_project_id',
     ];
@@ -33,6 +35,7 @@ class CustomerCrmProfile extends Model
         'lead_created_at'      => 'datetime',
         'qualified_at'         => 'datetime',
         'lost_at'              => 'datetime',
+        'repescar_em'          => 'date',
     ];
 
     public function customer(): BelongsTo
@@ -48,5 +51,10 @@ class CustomerCrmProfile extends Model
     public function qualificationStage(): BelongsTo
     {
         return $this->belongsTo(CrmPipelineStage::class, 'qualification_stage_id');
+    }
+
+    public function discardReason(): BelongsTo
+    {
+        return $this->belongsTo(CrmDiscardReason::class, 'discard_reason_id');
     }
 }

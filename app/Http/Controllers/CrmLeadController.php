@@ -95,6 +95,8 @@ class CrmLeadController extends Controller
             'lead_created_at'     => $p?->lead_created_at,
             'lost_at'             => $p?->lost_at,
             'lost_reason'         => $p?->lost_reason,
+            'discard_reason_id'   => $p?->discard_reason_id,
+            'repescar_em'         => $p?->repescar_em?->toDateString(),
             'sem_proxima_acao'    => $semProxima,
             'sem_responsavel'     => $semResponsavel,
             'primeiro_contato_horas' => $horas1c,
@@ -296,8 +298,9 @@ class CrmLeadController extends Controller
     public function moveStage(Request $request, Customer $customer): JsonResponse
     {
         $v = $request->validate([
-            'stage_id'    => 'required|exists:crm_pipeline_stages,id',
-            'lost_reason' => 'nullable|string|max:200',
+            'stage_id'          => 'required|exists:crm_pipeline_stages,id',
+            'lost_reason'       => 'nullable|string|max:200',
+            'discard_reason_id' => 'nullable|exists:crm_discard_reasons,id',
         ]);
         $stage = \App\Models\CrmPipelineStage::findOrFail($v['stage_id']);
 
@@ -309,12 +312,22 @@ class CrmLeadController extends Controller
         $profile = $customer->crmProfile()->firstOrCreate(['customer_id' => $customer->id]);
         $profile->qualification_stage_id = $stage->id;
         if ($stage->is_lost) {
+            // Descarte estruturado: motivo cadastrado (snapshot em lost_reason) + agenda
+            // a repescagem automática se o motivo tiver dias_repescagem configurado.
+            $reason = !empty($v['discard_reason_id']) ? \App\Models\CrmDiscardReason::find($v['discard_reason_id']) : null;
+            $motivoNome = $reason?->name ?? ($v['lost_reason'] ?? null);
             $profile->lost_at = now();
-            $profile->lost_reason = $v['lost_reason'] ?? null;
-            CrmCustomerEvent::log($customer->id, 'lost', 'Lead perdido' . (!empty($v['lost_reason']) ? " — {$v['lost_reason']}" : ''));
+            $profile->lost_reason = $motivoNome;
+            $profile->discard_reason_id = $reason?->id;
+            $profile->repescar_em = $reason?->dias_repescagem ? now()->addDays($reason->dias_repescagem)->toDateString() : null;
+            $extra = $motivoNome ? " — {$motivoNome}" : '';
+            $extra .= $profile->repescar_em ? ' (repescagem em ' . \Illuminate\Support\Carbon::parse($profile->repescar_em)->format('d/m/Y') . ')' : '';
+            CrmCustomerEvent::log($customer->id, 'lost', 'Lead descartado' . $extra);
         } else {
             $profile->lost_at = null;
             $profile->lost_reason = null;
+            $profile->discard_reason_id = null;
+            $profile->repescar_em = null;
             CrmCustomerEvent::log($customer->id, 'stage_changed', $stage->name);
         }
         $profile->save();
