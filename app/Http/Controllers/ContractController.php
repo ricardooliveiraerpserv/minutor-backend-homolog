@@ -2077,8 +2077,15 @@ class ContractController extends Controller
                     ]);
                     // Projeto já existe (gerado antes pelo Kanban de Contratos): apenas
                     // garante o coordenador escolhido, sem recriar nada.
-                    if ($coordinatorId && $contract->project_id) {
-                        \App\Models\Project::find($contract->project_id)?->coordinators()->syncWithoutDetaching([$coordinatorId]);
+                    if ($contract->project_id) {
+                        $existing = \App\Models\Project::find($contract->project_id);
+                        if ($coordinatorId) {
+                            $existing?->coordinators()->syncWithoutDetaching([$coordinatorId]);
+                        }
+                        // Garante o vínculo com a requisição (Comentários = histórico no projeto).
+                        if ($existing && !$existing->contract_request_id) {
+                            $existing->update(['contract_request_id' => $contractRequest->id]);
+                        }
                     }
                 }
 
@@ -2398,6 +2405,13 @@ class ContractController extends Controller
         $codeData      = $codeService->resolveForStore($contract->project_code_preview, $contract->customer, $parentProject);
         $projectName   = $contract->project_name ?: ($contract->customer->name . ' — ' . now()->format('m/Y'));
 
+        // Preserva o vínculo com a requisição de origem (para os Comentários do cliente
+        // continuarem como histórico no projeto). Resolve pela cadeia requisição→contrato.
+        $originRequestId = \App\Models\ContractRequest::query()
+            ->where('linked_contract_id', $contract->id)
+            ->orWhere('contract_id', $contract->id)
+            ->value('id');
+
         $project = Project::create(array_merge($codeData, [
             'name'                   => $projectName,
             'parent_project_id'      => $contract->parent_project_id,
@@ -2414,6 +2428,7 @@ class ContractController extends Controller
             'start_date'             => $contract->expectativa_inicio,
             'status'                 => Project::STATUS_AWAITING_START,
             'contract_id'            => $contract->id,
+            'contract_request_id'    => $originRequestId,
             'tipo_alocacao'          => $contract->tipo_alocacao,
             'architect_id'           => $contract->architect_id,
             'condicao_pagamento'     => $contract->condicao_pagamento,
