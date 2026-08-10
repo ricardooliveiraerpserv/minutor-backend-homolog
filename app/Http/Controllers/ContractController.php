@@ -128,6 +128,19 @@ class ContractController extends Controller
             'contacts.*.cargo'       => 'nullable|string',
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
+            // Itens SaaS/Cloud (Setup/Desenvolvimento) — cada um gera um card de projeto Fechado.
+            'items'                       => 'nullable|array',
+            'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',
+            'items.*.descricao'           => 'nullable|string',
+            'items.*.valor_projeto'       => 'nullable|numeric|min:0',
+            'items.*.valor_hora'          => 'nullable|numeric|min:0',
+            'items.*.horas_contratadas'   => 'nullable|integer|min:0',
+            'items.*.hora_adicional'      => 'nullable|numeric|min:0',
+            'items.*.tipo_faturamento'    => 'nullable|string',
+            'items.*.condicao_pagamento'  => 'nullable|string',
+            'items.*.pct_horas_coordenador' => 'nullable|numeric|min:0|max:100',
+            'items.*.horas_coordenacao'   => 'nullable|numeric|min:0',
+            'items.*.horas_consultor'     => 'nullable|integer|min:0',
         ]);
 
         // Aporte do subprojeto faturado (se houver) — notificado APÓS o commit, igual aos
@@ -140,7 +153,7 @@ class ContractController extends Controller
             // revisão de novo contrato). Demais contratos nascem em rascunho/backlog.
             $isSubproject = !empty($validated['parent_project_id']);
             // 'sera_faturado' não é coluna de Contract — é só o gatilho do aporte do filho.
-            $data = collect($validated)->except(['contacts', 'sera_faturado'])->merge([
+            $data = collect($validated)->except(['contacts', 'sera_faturado', 'items'])->merge([
                 'created_by_id' => auth()->id(),
                 'status'        => $isSubproject ? Contract::STATUS_INICIO_AUTORIZADO : Contract::STATUS_RASCUNHO,
                 'kanban_status' => $isSubproject ? Contract::KANBAN_INICIO_AUTORIZADO : Contract::KANBAN_BACKLOG,
@@ -157,6 +170,10 @@ class ContractController extends Controller
 
             foreach ($validated['contacts'] ?? [] as $c) {
                 ContractContact::create(array_merge($c, ['contract_id' => $contract->id]));
+            }
+
+            foreach ($validated['items'] ?? [] as $it) {
+                \App\Models\ContractItem::create(array_merge($it, ['contract_id' => $contract->id]));
             }
 
             // Contatos do contrato espelham no cadastro da empresa (upsert; nunca deleta).
@@ -595,7 +612,7 @@ class ContractController extends Controller
 
     public function show(Contract $contract): JsonResponse
     {
-        $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name']);
+        $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'items', 'items.project:id,code,name,status', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name']);
 
         // Flag p/ legenda verde "Gerou aporte automático": subprojeto faturado gera um aporte
         // no pai (ContractController@store). Vínculo pelo CÓDIGO do subprojeto na descrição.
@@ -649,10 +666,30 @@ class ContractController extends Controller
             'contacts.*.cargo'       => 'nullable|string',
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
+            'items'                       => 'nullable|array',
+            'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',
+            'items.*.descricao'           => 'nullable|string',
+            'items.*.valor_projeto'       => 'nullable|numeric|min:0',
+            'items.*.valor_hora'          => 'nullable|numeric|min:0',
+            'items.*.horas_contratadas'   => 'nullable|integer|min:0',
+            'items.*.hora_adicional'      => 'nullable|numeric|min:0',
+            'items.*.tipo_faturamento'    => 'nullable|string',
+            'items.*.condicao_pagamento'  => 'nullable|string',
+            'items.*.pct_horas_coordenador' => 'nullable|numeric|min:0|max:100',
+            'items.*.horas_coordenacao'   => 'nullable|numeric|min:0',
+            'items.*.horas_consultor'     => 'nullable|integer|min:0',
         ]);
 
         DB::transaction(function () use ($contract, $validated) {
-            $contract->update(collect($validated)->except('contacts')->toArray());
+            $contract->update(collect($validated)->except(['contacts', 'items'])->toArray());
+
+            if (array_key_exists('items', $validated)) {
+                // Contrato ainda não gerou projeto (guard acima) → itens todos regeneráveis.
+                $contract->items()->delete();
+                foreach ($validated['items'] ?? [] as $it) {
+                    \App\Models\ContractItem::create(array_merge($it, ['contract_id' => $contract->id]));
+                }
+            }
 
             if (array_key_exists('contacts', $validated)) {
                 $contract->contacts()->delete();
@@ -1004,6 +1041,9 @@ class ContractController extends Controller
                 'generated_by_id' => auth()->id(),
                 'status'          => Contract::STATUS_ATIVO,
             ]);
+
+            // Itens SaaS/Cloud → um card Fechado por item (código base-letra).
+            $this->generateContractItemProjects($contract, (string) $project->code);
 
             return $project;
         });
@@ -2070,6 +2110,9 @@ class ContractController extends Controller
                         'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
                         'kanban_coordinator_id' => $coordinatorId,
                     ]);
+
+                    // Itens SaaS/Cloud → um card Fechado por item (código base-letra).
+                    $this->generateContractItemProjects($contract, (string) $project->code);
                 } else {
                     $contract->update([
                         'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
@@ -2449,7 +2492,74 @@ class ContractController extends Controller
             $project->coordinators()->attach($coordinatorId);
         }
 
+        // Itens SaaS/Cloud (Setup/Desenvolvimento): cada um gera um card de projeto Fechado próprio,
+        // mesmo contrato, código = base do card mensal + sufixo de letra (ex.: ATR002-25-08-A).
+        $this->generateContractItemProjects($contract, (string) $project->code);
+
         return $project;
+    }
+
+    /**
+     * Gera um card de projeto Fechado para cada ITEM (Setup/Desenvolvimento) do contrato ainda
+     * não gerado. Código = $baseCode . '-' . <letra> (A, B, C…). Mesmo contrato, sem parent.
+     */
+    private function generateContractItemProjects(Contract $contract, string $baseCode): void
+    {
+        $items = $contract->items()->whereNull('project_id')->orderBy('id')->get();
+        if ($items->isEmpty() || $baseCode === '') {
+            return;
+        }
+        $codeService = new ProjectCodeService();
+        $fechadoId   = \App\Models\ContractType::where('code', 'closed')->value('id') ?? $contract->contract_type_id;
+        $letters     = range('A', 'Z');
+        $used        = $contract->items()->whereNotNull('letter')->pluck('letter')->map(fn ($l) => strtoupper((string) $l))->all();
+        $idx         = 0;
+
+        foreach ($items as $item) {
+            $letter = null; $code = null;
+            while ($idx < count($letters)) {
+                $cand = $letters[$idx]; $idx++;
+                if (in_array($cand, $used, true)) { continue; }
+                $candCode = $baseCode . '-' . $cand;
+                if (Project::withTrashed()->where('code', $candCode)->exists()) { continue; }
+                $letter = $cand; $code = $candCode; break;
+            }
+            if (!$letter) { break; } // esgotou A–Z
+            $used[] = $letter;
+
+            $codeData = $codeService->resolveForStore($code, $contract->customer, null);
+            $proj = Project::create(array_merge($codeData, [
+                'name'                   => ($contract->project_name ?: $contract->customer->name) . ' — ' . (\App\Models\ContractItem::TIPO_LABEL[$item->tipo] ?? $item->tipo),
+                'parent_project_id'      => null,
+                'customer_id'            => $contract->customer_id,
+                'service_type_id'        => $contract->service_type_id,
+                'contract_type_id'       => $fechadoId,
+                'sold_hours'             => $item->horas_contratadas,
+                'project_value'          => $item->valor_projeto,
+                'hourly_rate'            => $item->valor_hora,
+                'additional_hourly_rate' => $item->hora_adicional,
+                'coordinator_hours'      => $item->pct_horas_coordenador !== null ? (int) $item->pct_horas_coordenador : null,
+                'coordination_hours'     => $item->horas_coordenacao,
+                'consultant_hours'       => $item->horas_consultor,
+                'start_date'             => $contract->expectativa_inicio,
+                'status'                 => Project::STATUS_AWAITING_START,
+                'contract_id'            => $contract->id,
+                'tipo_alocacao'          => $contract->tipo_alocacao,
+                'architect_id'           => $contract->architect_id,
+                'condicao_pagamento'     => $item->condicao_pagamento ?: $contract->condicao_pagamento,
+                'description'            => $item->descricao,
+                'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
+                'limite_despesa'         => $contract->limite_despesa,
+                'executivo_conta_id'     => $contract->executivo_conta_id,
+                'vendedor_id'            => $contract->vendedor_id,
+            ]));
+
+            foreach ($contract->contacts as $c) {
+                ProjectContact::create(['project_id' => $proj->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
+            }
+
+            $item->update(['project_id' => $proj->id, 'letter' => $letter]);
+        }
     }
 
     public function events(Contract $contract): JsonResponse

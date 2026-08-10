@@ -187,6 +187,11 @@ class Contract extends Model
         return $this->hasMany(ContractContact::class);
     }
 
+    public function items(): HasMany
+    {
+        return $this->hasMany(\App\Models\ContractItem::class);
+    }
+
     /**
      * Anexos do contrato — FASE 11.7 (PR 7b): polimórficos via tabela `attachments`.
      */
