@@ -420,8 +420,15 @@ class FechamentoExcedenteController extends Controller
             ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfPath, $pdf->output());
 
-        $bodyHtml = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2937;white-space:pre-line">'
-            . e($mensagem) . '</div>';
+        // E-mail no layout branded padrão (mesmo dos demais fechamentos), com a mensagem/resumo no corpo.
+        $bodyHtml = view('emails.fechamento.excedente', [
+            'clienteName'     => $viewData['clienteName'] ?? $customer->name,
+            'senderName'      => $sender->name,
+            'periodo'         => $periodo,
+            'valorTotal'      => $viewData['totalFmt'],
+            'mensagem'        => $mensagem,
+            'withAttachments' => true,
+        ])->render();
 
         try {
             if (\App\Services\GraphMailer::enabled() && filled($sender->email)) {
