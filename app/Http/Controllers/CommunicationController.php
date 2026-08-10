@@ -47,7 +47,7 @@ class CommunicationController extends Controller
     }
 
     /** Validação da estrutura por tipo. CTA é obrigatório em Marketing. */
-    private function validateStructured(Request $request): array
+    private function validateStructured(Request $request, bool $enforce = true): array
     {
         $v = $request->validate([
             'tipo_comunicacao'        => 'required|in:' . implode(',', Communication::TIPOS),
@@ -84,12 +84,16 @@ class CommunicationController extends Controller
         $txt = fn (string $k) => trim(strip_tags((string) ($s[$k] ?? '')));
         $benefits = array_filter((array) ($s['benefits'] ?? []), fn ($b) => trim(strip_tags((string) $b)) !== '');
 
-        if ($v['tipo_comunicacao'] === 'marketing') {
-            if ($txt('intro') === '' && $txt('problema') === '') abort(422, 'Informe a introdução ou o cenário.');
-            if (count($benefits) < 1) abort(422, 'Marketing exige ao menos 1 benefício.');
-            if (empty($s['cta']['label']) || empty($s['cta']['url'])) abort(422, 'O botão (CTA) é obrigatório em comunicações de Marketing.');
-        } elseif ($txt('content') === '') {
-            abort(422, 'Informe o conteúdo da comunicação.');
+        // Regras de completude só valem no ENVIO. Na prévia ($enforce=false) renderiza o que houver
+        // (permite visualizar modelos ainda incompletos, ex.: marketing sem benefícios/CTA).
+        if ($enforce) {
+            if ($v['tipo_comunicacao'] === 'marketing') {
+                if ($txt('intro') === '' && $txt('problema') === '') abort(422, 'Informe a introdução ou o cenário.');
+                if (count($benefits) < 1) abort(422, 'Marketing exige ao menos 1 benefício.');
+                if (empty($s['cta']['label']) || empty($s['cta']['url'])) abort(422, 'O botão (CTA) é obrigatório em comunicações de Marketing.');
+            } elseif ($txt('content') === '') {
+                abort(422, 'Informe o conteúdo da comunicação.');
+            }
         }
         return $v;
     }
@@ -109,7 +113,7 @@ class CommunicationController extends Controller
     public function preview(Request $request): JsonResponse
     {
         $u = $this->authorizeManager($request);
-        $v = $this->validateStructured($request);
+        $v = $this->validateStructured($request, false);
         $structure = $this->resolveSignature($v['structure'], $u);
         $html = CommunicationRenderer::render($v['tipo_comunicacao'], $v['title'], $structure, HelpDeskMailFooter::whiteLogoDataUri());
         $count = count($this->resolveEmails($request));
