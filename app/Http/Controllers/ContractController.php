@@ -1340,6 +1340,8 @@ class ContractController extends Controller
                 'project:id,code,name,status',
                 'aditivoProject:id,code,name,hourly_rate,sold_hours,contract_type_id',
                 'aditivoProject.contractType:id,code',
+                'parentContract:id,project_code_preview',
+                'childContracts:id,parent_contract_id,project_code_preview,kanban_status',
             ])->where(function ($q) {
                 $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, Contract::KANBAN_ADITIVO, 'novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
@@ -1363,6 +1365,8 @@ class ContractController extends Controller
                 'contractType:id,name',
                 'serviceType:id,name',
                 'project:id,code,name,status',
+                'parentContract:id,project_code_preview',
+                'childContracts:id,parent_contract_id,project_code_preview,kanban_status',
             ])->where('status', Contract::STATUS_INICIO_AUTORIZADO)
               ->whereNull('project_id')
               ->orderBy('kanban_order')
@@ -2355,6 +2359,16 @@ class ContractController extends Controller
             'project_id'       => $contract->project_id,
             'project_code'     => $contract->project?->code,
             'project_status'   => $contract->project?->status,
+            // Número/código do contrato (previsto) — mostrado na legenda do card.
+            'contract_code'    => $contract->project_code_preview ?: $contract->project?->code,
+            // Vínculo de item SaaS/Cloud: card-filho aponta pro pai; card-pai lista os filhos.
+            'parent_contract_id'   => $contract->parent_contract_id,
+            'parent_contract_code' => $contract->parentContract?->project_code_preview,
+            'linked_children'  => $contract->relationLoaded('childContracts')
+                ? $contract->childContracts->map(fn ($c) => ['id' => $c->id, 'code' => $c->project_code_preview])->values()
+                : [],
+            'is_linked'        => (bool) ($contract->parent_contract_id
+                || ($contract->relationLoaded('childContracts') && $contract->childContracts->isNotEmpty())),
             // Subprojeto faturado que gerou aporte automático no pai → badge "Gerou aporte" na capa.
             'gerou_aporte'     => ($contract->parent_project_id && $contract->project_code_preview)
                 ? \App\Models\HourContribution::where('project_id', $contract->parent_project_id)
