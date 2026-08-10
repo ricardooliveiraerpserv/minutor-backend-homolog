@@ -70,9 +70,18 @@ class ProjectAuditController extends Controller
         $to       = $request->query('date_to');
         $page     = max(1, (int) $request->query('page', 1));
         $pageSize = min(100, max(10, (int) $request->query('pageSize', 30)));
+        $view      = $request->query('view', 'feed');       // 'projects' = lista de projetos com histórico
+        $projectId = (int) $request->query('project_id', 0); // detalhe de UM projeto
+
+        // Lista mestre: só os projetos que TÊM alteração/aporte (nunca traz quem não mudou).
+        if ($view === 'projects') {
+            return $this->projectsSummary($search);
+        }
 
         $projIdsBySearch = null;
-        if ($search !== '') {
+        if ($projectId > 0) {
+            $projIdsBySearch = [$projectId];
+        } elseif ($search !== '') {
             $projIdsBySearch = Project::where('code', 'ilike', "%{$search}%")
                 ->orWhere('name', 'ilike', "%{$search}%")->pluck('id')->all();
             if (empty($projIdsBySearch)) {
@@ -152,6 +161,41 @@ class ProjectAuditController extends Controller
             'hasNext' => ($page * $pageSize) < $total,
             'fields' => $this->availableFields(),
         ]);
+    }
+
+    /** Lista mestre: projetos que têm histórico (alterações + aportes), com contagem e data da última. */
+    private function projectsSummary(string $search): JsonResponse
+    {
+        $acc = []; // project_id => ['count'=>n, 'last'=>ts]
+        $add = function ($rows) use (&$acc) {
+            foreach ($rows as $r) {
+                $pid = (int) $r->project_id;
+                if (!isset($acc[$pid])) $acc[$pid] = ['count' => 0, 'last' => null];
+                $acc[$pid]['count'] += (int) $r->c;
+                if ($r->last && (!$acc[$pid]['last'] || $r->last > $acc[$pid]['last'])) $acc[$pid]['last'] = $r->last;
+            }
+        };
+        $add(DB::table('project_change_logs')->selectRaw('project_id, count(*) c, max(created_at) last')->groupBy('project_id')->get());
+        $add(DB::table('hour_contribution_change_logs')->selectRaw('project_id, count(*) c, max(created_at) last')->groupBy('project_id')->get());
+        $add(DB::table('hour_contributions')->selectRaw('project_id, count(*) c, max(created_at) last')->groupBy('project_id')->get());
+
+        if (empty($acc)) return response()->json(['items' => []]);
+
+        $projects = Project::whereIn('id', array_keys($acc))
+            ->when($search !== '', fn ($q) => $q->where(fn ($w) => $w->where('code', 'ilike', "%{$search}%")->orWhere('name', 'ilike', "%{$search}%")))
+            ->get(['id', 'code', 'name', 'customer_id']);
+        $custNames = Customer::whereIn('id', $projects->pluck('customer_id')->filter()->unique())->pluck('name', 'id');
+
+        $items = $projects->map(fn ($p) => [
+            'project_id' => $p->id,
+            'code'       => $p->code,
+            'name'       => $p->name,
+            'customer'   => $custNames[$p->customer_id] ?? null,
+            'changes'    => $acc[$p->id]['count'] ?? 0,
+            'last_at'    => $acc[$p->id]['last'] ?? null,
+        ])->sortByDesc('last_at')->values()->all();
+
+        return response()->json(['items' => $items]);
     }
 
     private function fieldLabel(string $field): string
