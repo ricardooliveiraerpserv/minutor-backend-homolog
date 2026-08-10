@@ -87,8 +87,20 @@
               <h1 class="h1" style="margin:10px 0 4px;font-size:24px;font-weight:700;color:#111827;line-height:1.3;">
                 Prezados(a) da {{ $clienteName }},
               </h1>
-              {{-- Mensagem editável (texto livre / resumo da apuração); cai pra default no controller se vazia. --}}
-              <div style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.65;white-space:pre-wrap;">{!! nl2br(e($mensagem ?? '')) !!}</div>
+              {{-- Mensagem editável (texto livre / resumo da apuração); cai pra default no controller se vazia.
+                   Melhora visual: colapsa linhas em branco excessivas, aproxima os bullets e destaca
+                   rótulos (antes do ":"), cabeçalhos de seção e **negrito** manual. --}}
+              @php
+                $msg = trim((string) ($mensagem ?? ''));
+                $msg = preg_replace("/[ \t]+\n/", "\n", $msg);              // remove espaços no fim da linha
+                $msg = preg_replace("/\n[ \t]*\n(?=[ \t]*[•\-])/u", "\n", $msg); // tira linha em branco antes de bullets (lista compacta)
+                $msg = preg_replace("/\n{3,}/", "\n\n", $msg);              // no máximo 1 linha em branco entre blocos
+                $esc = e($msg);
+                $esc = preg_replace('/\*\*(.+?)\*\*/u', '<strong style="color:#111827;">$1</strong>', $esc);           // **negrito**
+                $esc = preg_replace('/^([ \t]*[•\-][ \t]*)([^:\n]{1,80}):/mu', '$1<strong style="color:#111827;">$2:</strong>', $esc); // rótulo do bullet
+                $esc = preg_replace('/^([^:\n•\-][^:\n]{0,80}):[ \t]*$/mu', '<strong style="color:#111827;">$1:</strong>', $esc);       // cabeçalho de seção
+              @endphp
+              <div style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.6;white-space:pre-wrap;">{!! $esc !!}</div>
             </td>
           </tr>
 
