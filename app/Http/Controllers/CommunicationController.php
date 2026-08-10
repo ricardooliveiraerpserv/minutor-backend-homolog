@@ -41,7 +41,7 @@ class CommunicationController extends Controller
         $this->authorizeManager($request);
         $ids = array_filter((array) $request->query('customer_ids', []));
         if (empty($ids)) return response()->json(['data' => []]);
-        $rows = User::where('type', 'cliente')->whereIn('customer_id', $ids)->whereNotNull('email')
+        $rows = User::where('type', 'cliente')->where('enabled', true)->whereIn('customer_id', $ids)->whereNotNull('email')
             ->orderBy('name')->get(['id', 'name', 'email', 'customer_id']);
         return response()->json(['data' => $rows]);
     }
@@ -397,11 +397,12 @@ class CommunicationController extends Controller
 
         // user_ids = contatos escolhidos (o FE carrega os usuários do cliente e deixa selecionar).
         // customer_ids vai só p/ o histórico. all_customers = todos os contatos de cliente.
+        // Usuários inativos (enabled=false) NUNCA recebem comunicado (regra: inativo não é notificado).
         $emails = collect();
         if ($all) {
-            $emails = $emails->merge(User::where('type', 'cliente')->whereNotNull('email')->pluck('email'));
+            $emails = $emails->merge(User::where('type', 'cliente')->where('enabled', true)->whereNotNull('email')->pluck('email'));
         } elseif ($userIds) {
-            $emails = $emails->merge(User::whereIn('id', $userIds)->whereNotNull('email')->pluck('email'));
+            $emails = $emails->merge(User::whereIn('id', $userIds)->where('enabled', true)->whereNotNull('email')->pluck('email'));
         }
         $emails = $emails->merge($external);
 
