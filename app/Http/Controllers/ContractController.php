@@ -2003,7 +2003,7 @@ class ContractController extends Controller
     public function sustentacaoMove(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
-            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud,sust_bizify',
+            'to_column' => 'required|in:sust_bh_fixo,sust_bh_mensal,sust_on_demand,sust_cloud,sust_bizify,sust_saas',
         ]);
 
         $user = auth()->user();
@@ -2279,6 +2279,7 @@ class ContractController extends Controller
         'sust_bh_mensal' => 'monthly_hours',
         'sust_on_demand' => 'on_demand',
         'sust_cloud'     => 'cloud',
+        'sust_saas'      => 'saas',
     ];
 
     private function validateSustentacaoContractType(Contract $contract, string $toColumn): ?\Illuminate\Http\JsonResponse
@@ -2317,6 +2318,7 @@ class ContractController extends Controller
                 'sust_bh_mensal' => 'Banco de Horas Mensal',
                 'sust_on_demand' => 'On Demand',
                 'sust_cloud'     => 'Cloud',
+                'sust_saas'      => 'SaaS',
             ];
             $actual = $contract->contractType?->name ?? 'não definido';
             return response()->json([
