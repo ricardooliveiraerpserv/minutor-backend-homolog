@@ -45,11 +45,9 @@ class ContractRequestMessageController extends Controller
             ->with(['author:id,name', 'attachments'])
             ->orderBy('created_at');
 
-        // Cliente: depois que a requisição virou projeto (req_decided_at preenchido),
-        // mensagens novas da equipe ficam invisíveis. Cliente só vê o histórico até a transição.
-        if ($user->isCliente() && $contractRequest->req_decided_at) {
-            $query->where('created_at', '<=', $contractRequest->req_decided_at);
-        }
+        // O canal de Comentários (client) continua vivo após virar projeto — cliente e equipe
+        // seguem interagindo. Só o Diário interno da requisição congela (continuidade = Diário do
+        // Projeto). Por isso NÃO há mais corte por req_decided_at no canal do cliente.
 
         return response()->json($query->get());
     }
@@ -69,14 +67,12 @@ class ContractRequestMessageController extends Controller
             $visibility = 'client';
         }
 
-        // Depois que a requisição vira projeto (req_decided_at preenchido em
-        // requestPlanDecision), TODO o canal da requisição vira histórico
-        // congelado — ninguém adiciona novas interações, nem a equipe. A
-        // continuidade interna passa a ser o Diário do Projeto; os Comentários
-        // do cliente ficam acessíveis só como histórico (somente leitura).
-        if ($contractRequest->req_decided_at !== null) {
+        // Depois que a requisição vira projeto (req_decided_at preenchido), o DIÁRIO INTERNO da
+        // requisição congela — a continuidade interna passa a ser o Diário do Projeto. Mas os
+        // COMENTÁRIOS (client) seguem vivos: cliente e equipe continuam interagindo no projeto.
+        if ($contractRequest->req_decided_at !== null && $visibility === 'internal') {
             return response()->json([
-                'message' => 'A requisição virou projeto. Os comentários ficaram como histórico (somente leitura).',
+                'message' => 'A requisição virou projeto. O diário interno virou histórico — use o Diário do Projeto.',
             ], 403);
         }
 
