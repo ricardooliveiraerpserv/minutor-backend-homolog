@@ -571,6 +571,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/kanban-column-history', [\App\Http\Controllers\KanbanLogController::class, 'columnHistory'])->name('projects.kanban-column-history'); // ANTES de /projects/{project}
+            Route::get('/projects/audit', [\App\Http\Controllers\ProjectAuditController::class, 'index'])->name('projects.audit'); // ANTES de /projects/{project}
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/sold-hours-history', [ProjectController::class, 'soldHoursHistoryIndex'])->name('projects.sold-hours-history.index');

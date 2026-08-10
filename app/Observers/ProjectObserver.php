@@ -13,18 +13,11 @@ class ProjectObserver
      *
      * @var array<string>
      */
-    private array $trackedFields = [
-        'project_value',
-        'hourly_rate',
-        'sold_hours',
-        'hour_contribution',
-        'exceeded_hour_contribution',
-        'consultant_hours',
-        'coordinator_hours',
-        'additional_hourly_rate',
-        'max_expense_per_consultant',
-        'unlimited_expense',
-        'expense_responsible_party',
+    // Auditoria COMPLETA: loga toda alteração de campo do projeto, exceto derivados/sistema
+    // (recalculados automaticamente ou sem valor de auditoria).
+    private array $auditBlacklist = [
+        'accumulated_sold_hours', // recalculado pelo próprio observer
+        'created_at', 'updated_at', 'deleted_at',
     ];
 
     /**
@@ -62,25 +55,19 @@ class ProjectObserver
             return;
         }
 
-        // Usar isDirty() e getOriginal() para detectar mudanças
-        // O Laravel mantém os valores originais disponíveis mesmo após a atualização
-        foreach ($this->trackedFields as $field) {
-            // Verificar se o campo foi alterado
-            if ($project->wasChanged($field)) {
-                // Obter valores antigo e novo
-                $oldValue = $project->getOriginal($field);
-                $newValue = $project->$field;
-
-                // Registrar no histórico
-                ProjectChangeLog::create([
-                    'project_id' => $project->id,
-                    'changed_by' => $userId,
-                    'field_name' => $field,
-                    'old_value' => $oldValue,
-                    'new_value' => $newValue,
-                    'reason' => null, // Pode ser implementado capturando do request se necessário
-                ]);
+        // Auditoria completa: registra TODOS os campos alterados (menos os da blacklist).
+        foreach (array_keys($project->getChanges()) as $field) {
+            if (in_array($field, $this->auditBlacklist, true)) {
+                continue;
             }
+            ProjectChangeLog::create([
+                'project_id' => $project->id,
+                'changed_by' => $userId,
+                'field_name' => $field,
+                'old_value'  => $this->stringifyValue($project->getOriginal($field)),
+                'new_value'  => $this->stringifyValue($project->$field),
+                'reason'     => null,
+            ]);
         }
 
         // Sempre recalcular accumulated_sold_hours se for Banco de Horas Mensal
@@ -157,5 +144,20 @@ class ProjectObserver
     public function forceDeleted(Project $project): void
     {
         // Não registra histórico na exclusão forçada
+    }
+
+    /** Converte qualquer valor para string armazenável em old_value/new_value. */
+    private function stringifyValue($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (is_bool($value)) {
+            return $value ? '1' : '0';
+        }
+        if (is_array($value)) {
+            return json_encode($value, JSON_UNESCAPED_UNICODE);
+        }
+        return (string) $value;
     }
 }
