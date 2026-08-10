@@ -20,7 +20,7 @@ class ContractItem extends Model
         'valor_projeto', 'valor_hora', 'horas_contratadas', 'hora_adicional',
         'tipo_faturamento', 'condicao_pagamento',
         'pct_horas_coordenador', 'horas_coordenacao', 'horas_consultor',
-        'letter', 'project_id',
+        'letter', 'project_id', 'child_contract_id',
     ];
 
     protected $casts = [
@@ -39,6 +39,12 @@ class ContractItem extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /** Card de contrato (Fechado) que este item gerou no Kanban de Contratos. */
+    public function childContract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class, 'child_contract_id');
     }
 
     public function tipoLabel(): string

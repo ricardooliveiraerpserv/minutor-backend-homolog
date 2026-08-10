@@ -20,7 +20,7 @@ class Contract extends Model
         // Contratos recorrentes (gestão de aniversário / reajuste)
         'data_assinatura', 'data_vencimento', 'valor_inicial', 'taxa_reajuste', 'pct_reajuste', 'data_ultimo_reajuste',
         'executivo_conta_id', 'vendedor_id', 'observacoes', 'project_code_preview',
-        'project_id', 'parent_project_id', 'generated_at', 'generated_by_id',
+        'project_id', 'parent_project_id', 'parent_contract_id', 'generated_at', 'generated_by_id',
         'approved_by_id', 'approved_at', 'created_by_id',
         'kanban_status', 'kanban_coordinator_id', 'kanban_order', 'sustentacao_column',
         // Aditivo: altera um projeto pai/independente (não gera projeto novo)
@@ -190,6 +190,18 @@ class Contract extends Model
     public function items(): HasMany
     {
         return $this->hasMany(\App\Models\ContractItem::class);
+    }
+
+    /** Contrato-pai (mensalidade) do qual este card de item nasceu. */
+    public function parentContract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class, 'parent_contract_id');
+    }
+
+    /** Cards de item (Fechado) gerados por este contrato de mensalidade. */
+    public function childContracts(): HasMany
+    {
+        return $this->hasMany(Contract::class, 'parent_contract_id');
     }
 
     /**
