@@ -90,33 +90,29 @@ class FechamentoEmailTemplateController extends Controller
         $mensagem  = $this->fillVars((string) ($data['body'] ?? ''), $vars);
         $senderName = $request->user()->name ?? 'ERPSERV Consultoria';
 
-        if ($categoria === 'excedente') {
-            // Excedente não usa a Blade rica — o envio manda um <div> simples (pre-line).
-            $html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head>'
-                . '<body style="margin:0;padding:24px;background:#F4F5F7;">'
-                . '<div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:28px;'
-                . 'font-family:Arial,sans-serif;font-size:14px;color:#1f2937;white-space:pre-line;line-height:1.6;">'
-                . e($mensagem) . '</div></body></html>';
-            return response()->json(['html' => $html, 'subject' => $subject]);
-        }
-
-        $view = 'emails.fechamento.' . ($categoria === 'parceiro' ? 'parceiro' : ($categoria === 'cliente' ? 'cliente' : 'consultor'));
+        $view = 'emails.fechamento.' . match ($categoria) {
+            'parceiro'  => 'parceiro',
+            'cliente'   => 'cliente',
+            'excedente' => 'excedente',
+            default     => 'consultor',
+        };
         $common = [
             'periodo'         => $vars['periodo'],
-            'valorTotal'      => $vars['valor'],
+            'valorTotal'      => $categoria === 'excedente' ? $vars['valor_total'] : $vars['valor'],
             'mensagem'        => $mensagem,
             'senderName'      => $senderName,
             'withAttachments' => true,
             'mode'            => $categoria === 'cliente' ? 'servicos' : 'ambos',
         ];
         $viewData = match ($categoria) {
-            'parceiro' => $common + ['parceiroName' => $vars['nome']],
-            'cliente'  => $common + [
+            'parceiro'  => $common + ['parceiroName' => $vars['nome']],
+            'excedente' => $common + ['clienteName' => $vars['nome']],
+            'cliente'   => $common + [
                 'clienteName' => $vars['nome'],
                 'projetos'    => [['codigo' => 'PRJ-001', 'nome' => 'Implantação ERP']],
                 'temDesconto' => false, 'subtotalFmt' => $vars['valor'], 'descontoFmt' => 'R$ 0,00', 'descontoDescricao' => '',
             ],
-            default    => $common + ['consultantName' => $vars['nome'], 'isBizify' => $isBizify, 'isContinuation' => false, 'bodyText' => null],
+            default     => $common + ['consultantName' => $vars['nome'], 'isBizify' => $isBizify, 'isContinuation' => false, 'bodyText' => null],
         };
 
         $html = view($view, $viewData)->render();
