@@ -496,6 +496,7 @@ Route::prefix('v1')->group(function () {
         // Modelos de e-mail dos fechamentos (cadastro)
         Route::get('/fechamento-email-templates', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'index']);
         Route::post('/fechamento-email-templates', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'store']);
+        Route::post('/fechamento-email-templates/preview', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'preview']);
         Route::put('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'update']);
         Route::delete('/fechamento-email-templates/{template}', [\App\Http\Controllers\FechamentoEmailTemplateController::class, 'destroy']);
 
