@@ -317,13 +317,25 @@ class AttachmentService
     }
 
     /**
-     * Stream pra download. AttachmentController seta os headers de Content-Disposition.
+     * Stream pra download. Seta Content-Disposition (nome ORIGINAL com extensão) e Content-Type
+     * AQUI, de forma centralizada, valendo pra TODAS as rotas (help-desk, portal, KB, genérica).
+     * Sem isso o Supabase (homolog) devolvia octet-stream sem filename → o navegador salvava como
+     * "download" sem extensão; e Local/S3 nomeavam pelo UUID de storage.
      */
     public function downloadStream(Attachment $att, User $actor, ?Request $request = null): StreamedResponse
     {
         $this->ensureCanAccess($att, $actor, 'view');
         $stream = $this->storage->downloadStream($att->storage_path);
         $this->logEvent($att, AttachmentEvent::TYPE_DOWNLOADED, $actor, $request);
+
+        $name = $att->original_name ?: ($att->file_name ?: 'arquivo');
+        $fallback = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name) ?: 'arquivo';
+        $stream->headers->set('Content-Type', $att->mime_type ?: 'application/octet-stream');
+        $stream->headers->set('Content-Disposition', \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
+            \Symfony\Component\HttpFoundation\ResponseHeaderBag::DISPOSITION_ATTACHMENT,
+            $name,
+            $fallback,
+        ));
         return $stream;
     }
 
