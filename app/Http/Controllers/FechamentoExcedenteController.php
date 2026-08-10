@@ -357,6 +357,39 @@ class FechamentoExcedenteController extends Controller
         ]);
     }
 
+    /** POST .../email-preview — prévia do E-MAIL (layout branded, mesma Blade do envio), live com a mensagem editada. */
+    public function emailPreview(Request $request, string $customerId, string $yearMonth): JsonResponse
+    {
+        $sender = $request->user();
+        if (!$sender || !($sender->isAdmin() || $sender->isAdministrativo())) {
+            return response()->json(['success' => false, 'message' => 'Sem permissão.'], 403);
+        }
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
+        }
+
+        $viewData       = $this->buildExcedenteViewData($customer, $yearMonth);
+        $mensagemPadrao = $this->mensagemPadrao($customer, $viewData, $yearMonth);
+        $mensagem       = trim((string) $request->input('mensagem'));
+        $mensagem       = $mensagem !== '' ? $mensagem : $mensagemPadrao;
+
+        $html = view('emails.fechamento.excedente', [
+            'clienteName'     => $viewData['clienteName'] ?? $customer->name,
+            'senderName'      => $sender->name,
+            'periodo'         => $viewData['periodo'],
+            'valorTotal'      => $viewData['totalFmt'],
+            'mensagem'        => $mensagem,
+            'withAttachments' => true,
+        ])->render();
+
+        // Prévia: força o logo claro a aparecer no card branco (swap dark-mode mostraria o branco, invisível aqui).
+        $override = '<style>.erp-light{display:inline-block !important}.erp-dark{display:none !important}</style>';
+        $html = str_ireplace('</head>', $override . '</head>', $html);
+
+        return response()->json(['html' => $html, 'default_message' => $mensagemPadrao]);
+    }
+
     /**
      * POST /fechamento-excedente/{customerId}/{yearMonth}/email
      * Envia o relatório de horas excedentes ao cliente (PDF anexo), como o
