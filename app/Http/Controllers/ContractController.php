@@ -173,14 +173,17 @@ class ContractController extends Controller
                 ContractContact::create(array_merge($c, ['contract_id' => $contract->id]));
             }
 
+            // Itens SaaS/Cloud → cada um nasce como um CARD de contrato (Fechado) na coluna
+            // "Novo Contrato", seguindo o fluxo padrão de todos os cards. O card MENSAL é este contrato.
+            $usedLetters = [];
             foreach ($validated['items'] ?? [] as $it) {
-                \App\Models\ContractItem::create(array_merge(collect($it)->except('id')->toArray(), ['contract_id' => $contract->id]));
-            }
-
-            // Itens SaaS/Cloud viram projetos Fechado JÁ na criação do contrato (usa o código
-            // previsto como base). O card MENSAL continua nascendo só na geração/mover pro coordenador.
-            if (!empty($validated['items']) && !empty($contract->project_code_preview)) {
-                $this->generateContractItemProjects($contract, (string) $contract->project_code_preview);
+                $item = \App\Models\ContractItem::create(array_merge(collect($it)->except('id')->toArray(), ['contract_id' => $contract->id]));
+                if (!empty($contract->project_code_preview)) {
+                    $letter = $this->nextItemLetter($usedLetters);
+                    if ($letter) {
+                        $this->createItemContractCard($contract, $item, $letter);
+                    }
+                }
             }
 
             // Contatos do contrato espelham no cadastro da empresa (upsert; nunca deleta).
@@ -619,7 +622,7 @@ class ContractController extends Controller
 
     public function show(Contract $contract): JsonResponse
     {
-        $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'items', 'items.project:id,code,name,status', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name']);
+        $contract->load(['customer:id,name', 'serviceType:id,name', 'contractType:id,name', 'architect:id,name', 'executivoConta:id,name', 'vendedor:id,name', 'contacts', 'items', 'items.project:id,code,name,status', 'items.childContract:id,project_code_preview,kanban_status,project_id', 'attachments', 'project:id,code,name,status', 'aditivoProject:id,code,name']);
 
         // Flag p/ legenda verde "Gerou aporte automático": subprojeto faturado gera um aporte
         // no pai (ContractController@store). Vínculo pelo CÓDIGO do subprojeto na descrição.
@@ -692,20 +695,83 @@ class ContractController extends Controller
             $contract->update(collect($validated)->except(['contacts', 'items'])->toArray());
 
             if (array_key_exists('items', $validated)) {
-                // Itens que já viraram projeto (têm project_id) são INTOCÁVEIS — o card já existe.
-                // Só recriamos os itens ainda NÃO gerados; e geramos projeto pros novos.
-                $generatedIds = $contract->items()->whereNotNull('project_id')->pluck('id')->all();
-                $contract->items()->whereNull('project_id')->delete();
-                foreach ($validated['items'] ?? [] as $it) {
-                    // Item que já é projeto volta no payload com o id gerado → não recria (evita duplicar).
-                    if (!empty($it['id']) && in_array((int) $it['id'], $generatedIds, true)) {
+                // Reconciliação item ↔ card de contrato:
+                //  - card ainda em "Novo Contrato" (backlog, sem projeto) → editável / removível.
+                //  - card que JÁ avançou no fluxo (saiu do backlog ou gerou projeto) → TRAVADO (não mexe).
+                $existing = $contract->items()->get()->keyBy('id');
+                $incoming = $validated['items'] ?? [];
+                $keptIds  = [];
+
+                // Letras já ocupadas por cards deste contrato (pra novos itens continuarem a sequência).
+                $usedLetters = [];
+                foreach ($existing as $it) {
+                    if ($it->child_contract_id) {
+                        $sib = Contract::withTrashed()->find($it->child_contract_id);
+                        if ($sib && preg_match('/-([A-Z])$/', (string) $sib->project_code_preview, $m)) {
+                            $usedLetters[] = $m[1];
+                        }
+                    }
+                }
+
+                $siblingLocked = function (?Contract $sib): bool {
+                    return $sib && ($sib->kanban_status !== Contract::KANBAN_BACKLOG || $sib->project_id);
+                };
+                $syncSibling = function (Contract $sib, \App\Models\ContractItem $it) use ($contract): void {
+                    $sib->update([
+                        'valor_projeto'      => $it->valor_projeto,
+                        'valor_hora'         => $it->valor_hora,
+                        'horas_contratadas'  => $it->horas_contratadas,
+                        'hora_adicional'     => $it->hora_adicional,
+                        'condicao_pagamento' => $it->condicao_pagamento,
+                        'observacoes'        => $it->descricao,
+                        'project_name'       => trim(($contract->project_name ?: optional($contract->customer)->name) . ' — ' . (\App\Models\ContractItem::TIPO_LABEL[$it->tipo] ?? $it->tipo)),
+                    ]);
+                };
+
+                foreach ($incoming as $row) {
+                    $id   = !empty($row['id']) ? (int) $row['id'] : null;
+                    $data = collect($row)->except('id')->toArray();
+
+                    if ($id && $existing->has($id)) {
+                        $it  = $existing[$id];
+                        $sib = $it->child_contract_id ? Contract::find($it->child_contract_id) : null;
+                        $keptIds[] = $id;
+                        if ($siblingLocked($sib)) {
+                            continue; // card já avançou no fluxo — intocável
+                        }
+                        $it->update($data);
+                        if ($sib) {
+                            $syncSibling($sib, $it->refresh());
+                        } elseif (!empty($contract->project_code_preview)) {
+                            if ($letter = $this->nextItemLetter($usedLetters)) {
+                                $this->createItemContractCard($contract, $it, $letter);
+                            }
+                        }
+                    } else {
+                        $new = \App\Models\ContractItem::create(array_merge($data, ['contract_id' => $contract->id]));
+                        $keptIds[] = $new->id;
+                        if (!empty($contract->project_code_preview)) {
+                            if ($letter = $this->nextItemLetter($usedLetters)) {
+                                $this->createItemContractCard($contract, $new, $letter);
+                            }
+                        }
+                    }
+                }
+
+                // Itens removidos do payload: se o card ainda está no backlog, remove item + card;
+                // se já avançou no fluxo, preserva (não pode sumir com um card em andamento).
+                foreach ($existing as $id => $it) {
+                    if (in_array($id, $keptIds, true)) {
                         continue;
                     }
-                    \App\Models\ContractItem::create(array_merge(collect($it)->except('id')->toArray(), ['contract_id' => $contract->id]));
-                }
-                // Gera projeto pros itens novos (ainda sem project_id), se houver código base.
-                if (!empty($contract->project_code_preview)) {
-                    $this->generateContractItemProjects($contract, (string) $contract->project_code_preview);
+                    $sib = $it->child_contract_id ? Contract::find($it->child_contract_id) : null;
+                    if ($siblingLocked($sib)) {
+                        continue;
+                    }
+                    if ($sib) {
+                        $sib->delete();
+                    }
+                    $it->delete();
                 }
             }
 
@@ -1059,9 +1125,6 @@ class ContractController extends Controller
                 'generated_by_id' => auth()->id(),
                 'status'          => Contract::STATUS_ATIVO,
             ]);
-
-            // Itens SaaS/Cloud → um card Fechado por item (código base-letra).
-            $this->generateContractItemProjects($contract, (string) $project->code);
 
             return $project;
         });
@@ -2129,8 +2192,6 @@ class ContractController extends Controller
                         'kanban_coordinator_id' => $coordinatorId,
                     ]);
 
-                    // Itens SaaS/Cloud → um card Fechado por item (código base-letra).
-                    $this->generateContractItemProjects($contract, (string) $project->code);
                 } else {
                     $contract->update([
                         'kanban_status'         => \App\Models\Contract::KANBAN_ALOCADO,
@@ -2510,10 +2571,6 @@ class ContractController extends Controller
             $project->coordinators()->attach($coordinatorId);
         }
 
-        // Itens SaaS/Cloud (Setup/Desenvolvimento): cada um gera um card de projeto Fechado próprio,
-        // mesmo contrato, código = base do card mensal + sufixo de letra (ex.: ATR002-25-08-A).
-        $this->generateContractItemProjects($contract, (string) $project->code);
-
         return $project;
     }
 
@@ -2521,6 +2578,73 @@ class ContractController extends Controller
      * Gera um card de projeto Fechado para cada ITEM (Setup/Desenvolvimento) do contrato ainda
      * não gerado. Código = $baseCode . '-' . <letra> (A, B, C…). Mesmo contrato, sem parent.
      */
+    /**
+     * Cria o card de CONTRATO (Fechado) de um item SaaS/Cloud, na coluna "Novo Contrato".
+     * O card herda cliente/vínculo do contrato de mensalidade, recebe o código base + letra
+     * (ex.: ACC001-26-A) e segue o FLUXO PADRÃO de qualquer card (mover pro coordenador → gera projeto).
+     */
+    private function createItemContractCard(Contract $mensal, \App\Models\ContractItem $item, string $letter): Contract
+    {
+        $base = (string) $mensal->project_code_preview;
+        $code = $base !== '' ? $base . '-' . $letter : null;
+        $closedId = \App\Models\ContractType::where('code', 'closed')->value('id') ?? $mensal->contract_type_id;
+
+        $sibling = Contract::create([
+            'customer_id'           => $mensal->customer_id,
+            'created_by_id'         => auth()->id(),
+            'status'                => Contract::STATUS_RASCUNHO,
+            'kanban_status'         => Contract::KANBAN_BACKLOG,
+            'categoria'             => $mensal->categoria ?: 'projeto',
+            'project_name'          => trim(($mensal->project_name ?: optional($mensal->customer)->name) . ' — ' . (\App\Models\ContractItem::TIPO_LABEL[$item->tipo] ?? $item->tipo)),
+            'project_code_preview'  => $code,
+            'contract_type_id'      => $closedId,
+            'service_type_id'       => $mensal->service_type_id,
+            'tipo_alocacao'         => $mensal->tipo_alocacao,
+            'architect_id'          => $mensal->architect_id,
+            'executivo_conta_id'    => $mensal->executivo_conta_id,
+            'vendedor_id'           => $mensal->vendedor_id,
+            'expectativa_inicio'    => $mensal->expectativa_inicio,
+            'valor_projeto'         => $item->valor_projeto,
+            'valor_hora'            => $item->valor_hora,
+            'horas_contratadas'     => $item->horas_contratadas,
+            'hora_adicional'        => $item->hora_adicional,
+            'pct_horas_coordenador' => $item->pct_horas_coordenador,
+            'horas_coordenacao'     => $item->horas_coordenacao,
+            'horas_consultor'       => $item->horas_consultor,
+            'condicao_pagamento'    => $item->condicao_pagamento ?: $mensal->condicao_pagamento,
+            'observacoes'           => $item->descricao,
+            'cobra_despesa_cliente' => $mensal->cobra_despesa_cliente,
+            'limite_despesa'        => $mensal->limite_despesa,
+            'parent_contract_id'    => $mensal->id,
+        ]);
+
+        // Espelha os contatos do contrato-pai para o card do item seguir o fluxo normal.
+        foreach ($mensal->contacts as $c) {
+            ContractContact::create([
+                'contract_id' => $sibling->id,
+                'name'        => $c->name,
+                'cargo'       => $c->cargo,
+                'email'       => $c->email,
+                'phone'       => $c->phone,
+            ]);
+        }
+
+        $item->update(['child_contract_id' => $sibling->id]);
+        return $sibling;
+    }
+
+    /** Próxima letra A..Z ainda não usada por um card de item deste contrato. */
+    private function nextItemLetter(array &$used): ?string
+    {
+        foreach (range('A', 'Z') as $l) {
+            if (!in_array($l, $used, true)) {
+                $used[] = $l;
+                return $l;
+            }
+        }
+        return null;
+    }
+
     private function generateContractItemProjects(Contract $contract, string $baseCode): void
     {
         $items = $contract->items()->whereNull('project_id')->orderBy('id')->get();
