@@ -51,6 +51,13 @@ Schedule::command('projects:close-stale-periods')
   ->description('Encerra meses abertos de projetos de competências anteriores (mês anterior só após o 2º dia útil)')
   ->withoutOverlapping();
 
+// Inativa consultores/parceiros com 180 dias sem apontamento (reativa os auto-inativados que voltaram a apontar).
+Schedule::command('consultants:deactivate-stale')
+  ->dailyAt('04:00')
+  ->name('consultants-deactivate-stale')
+  ->description('Inativa consultores/parceiros com 180 dias sem apontamento; reativa os auto-inativados que voltaram a apontar')
+  ->withoutOverlapping();
+
 // Rede de segurança pro reset de conflitos órfãos (observer já cobre saves/deletes
 // via Eloquent; este sweep cobre mudanças via SQL bruto e legado pré-observer).
 Schedule::command('timesheets:resolve-stale-conflicts')

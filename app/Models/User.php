@@ -47,6 +47,7 @@ class User extends Authenticatable
         'email',
         'password',
         'enabled',
+        'auto_inactivated_at',
         'current_company_id',
         'home_company_id',
         'can_use_bot',
@@ -143,6 +144,7 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'auto_inactivated_at' => 'datetime',
             'password' => 'hashed',
             'enabled' => 'boolean',
             'can_use_bot' => 'boolean',
