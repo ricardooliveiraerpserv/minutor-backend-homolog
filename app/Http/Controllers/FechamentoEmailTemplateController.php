@@ -66,6 +66,87 @@ class FechamentoEmailTemplateController extends Controller
         return response()->json(['success' => true]);
     }
 
+    /**
+     * Prévia do e-mail com o MESMO layout do envio real (Blade), preenchida com
+     * valores de exemplo. Renderiza o assunto/corpo em edição (não o salvo no banco).
+     * POST /fechamento-email-templates/preview  { categoria, subject, body, empresa? }
+     */
+    public function preview(Request $request): JsonResponse
+    {
+        if ($deny = $this->authorizeAdmin($request)) return $deny;
+
+        $data = $request->validate([
+            'categoria' => ['required', Rule::in(FechamentoEmailTemplate::CATEGORIAS)],
+            'subject'   => ['nullable', 'string'],
+            'body'      => ['nullable', 'string'],
+            'empresa'   => ['nullable', Rule::in(FechamentoEmailTemplate::EMPRESAS)],
+        ]);
+
+        $categoria = $data['categoria'];
+        $isBizify  = $categoria === 'consultor' && ($data['empresa'] ?? null) === 'bizify';
+        $vars      = $this->sampleVars($categoria, $isBizify);
+
+        $subject   = $this->fillVars((string) ($data['subject'] ?? ''), $vars);
+        $mensagem  = $this->fillVars((string) ($data['body'] ?? ''), $vars);
+        $senderName = $request->user()->name ?? 'ERPSERV Consultoria';
+
+        if ($categoria === 'excedente') {
+            // Excedente não usa a Blade rica — o envio manda um <div> simples (pre-line).
+            $html = '<!DOCTYPE html><html><head><meta charset="utf-8"></head>'
+                . '<body style="margin:0;padding:24px;background:#F4F5F7;">'
+                . '<div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #E5E7EB;border-radius:12px;padding:28px;'
+                . 'font-family:Arial,sans-serif;font-size:14px;color:#1f2937;white-space:pre-line;line-height:1.6;">'
+                . e($mensagem) . '</div></body></html>';
+            return response()->json(['html' => $html, 'subject' => $subject]);
+        }
+
+        $view = 'emails.fechamento.' . ($categoria === 'parceiro' ? 'parceiro' : ($categoria === 'cliente' ? 'cliente' : 'consultor'));
+        $common = [
+            'periodo'         => $vars['periodo'],
+            'valorTotal'      => $vars['valor'],
+            'mensagem'        => $mensagem,
+            'senderName'      => $senderName,
+            'withAttachments' => true,
+            'mode'            => $categoria === 'cliente' ? 'servicos' : 'ambos',
+        ];
+        $viewData = match ($categoria) {
+            'parceiro' => $common + ['parceiroName' => $vars['nome']],
+            'cliente'  => $common + [
+                'clienteName' => $vars['nome'],
+                'projetos'    => [['codigo' => 'PRJ-001', 'nome' => 'Implantação ERP']],
+                'temDesconto' => false, 'subtotalFmt' => $vars['valor'], 'descontoFmt' => 'R$ 0,00', 'descontoDescricao' => '',
+            ],
+            default    => $common + ['consultantName' => $vars['nome'], 'isBizify' => $isBizify, 'isContinuation' => false, 'bodyText' => null],
+        };
+
+        $html = view($view, $viewData)->render();
+        // Prévia: força o logo claro a aparecer no card branco (o swap dark-mode mostraria o branco, invisível aqui).
+        $override = '<style>.erp-light{display:inline-block !important}.erp-dark{display:none !important}</style>';
+        $html = str_ireplace('</head>', $override . '</head>', $html);
+
+        return response()->json(['html' => $html, 'subject' => $subject]);
+    }
+
+    /** Valores de exemplo p/ a prévia (espelham os do front). */
+    private function sampleVars(string $categoria, bool $isBizify): array
+    {
+        $nome = in_array($categoria, ['cliente', 'excedente'], true) ? 'ACME Comércio Ltda' : 'João da Silva';
+        return [
+            'nome' => $nome, 'periodo' => 'Julho de 2026', 'valor' => 'R$ 5.000,00', 'data' => '05/08/2026',
+            'empresa' => $isBizify ? 'Bizify' : 'ERPSERV', 'razao_social' => 'ACME Comércio Ltda',
+            'competencia' => '07/2026', 'horas_contratadas' => '160,00h', 'horas_consumidas' => '180,00h',
+            'horas_excedentes' => '20,00h', 'valor_hora' => 'R$ 150,00', 'valor_total' => 'R$ 3.000,00',
+        ];
+    }
+
+    private function fillVars(string $text, array $vars): string
+    {
+        foreach ($vars as $k => $v) {
+            $text = str_replace('{' . $k . '}', (string) $v, $text);
+        }
+        return $text;
+    }
+
     private function validateData(Request $request, ?FechamentoEmailTemplate $existing = null): array
     {
         $data = $request->validate([
