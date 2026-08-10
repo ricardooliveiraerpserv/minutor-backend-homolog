@@ -130,6 +130,7 @@ class ContractController extends Controller
             'contacts.*.phone'       => 'nullable|string',
             // Itens SaaS/Cloud (Setup/Desenvolvimento) — cada um gera um card de projeto Fechado.
             'items'                       => 'nullable|array',
+            'items.*.id'                  => 'nullable|integer',
             'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',
             'items.*.descricao'           => 'required|string',
             'items.*.valor_projeto'       => 'required|numeric|min:0',
@@ -173,7 +174,13 @@ class ContractController extends Controller
             }
 
             foreach ($validated['items'] ?? [] as $it) {
-                \App\Models\ContractItem::create(array_merge($it, ['contract_id' => $contract->id]));
+                \App\Models\ContractItem::create(array_merge(collect($it)->except('id')->toArray(), ['contract_id' => $contract->id]));
+            }
+
+            // Itens SaaS/Cloud viram projetos Fechado JÁ na criação do contrato (usa o código
+            // previsto como base). O card MENSAL continua nascendo só na geração/mover pro coordenador.
+            if (!empty($validated['items']) && !empty($contract->project_code_preview)) {
+                $this->generateContractItemProjects($contract, (string) $contract->project_code_preview);
             }
 
             // Contatos do contrato espelham no cadastro da empresa (upsert; nunca deleta).
@@ -667,6 +674,7 @@ class ContractController extends Controller
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
             'items'                       => 'nullable|array',
+            'items.*.id'                  => 'nullable|integer',
             'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',
             'items.*.descricao'           => 'required|string',
             'items.*.valor_projeto'       => 'required|numeric|min:0',
@@ -684,10 +692,20 @@ class ContractController extends Controller
             $contract->update(collect($validated)->except(['contacts', 'items'])->toArray());
 
             if (array_key_exists('items', $validated)) {
-                // Contrato ainda não gerou projeto (guard acima) → itens todos regeneráveis.
-                $contract->items()->delete();
+                // Itens que já viraram projeto (têm project_id) são INTOCÁVEIS — o card já existe.
+                // Só recriamos os itens ainda NÃO gerados; e geramos projeto pros novos.
+                $generatedIds = $contract->items()->whereNotNull('project_id')->pluck('id')->all();
+                $contract->items()->whereNull('project_id')->delete();
                 foreach ($validated['items'] ?? [] as $it) {
-                    \App\Models\ContractItem::create(array_merge($it, ['contract_id' => $contract->id]));
+                    // Item que já é projeto volta no payload com o id gerado → não recria (evita duplicar).
+                    if (!empty($it['id']) && in_array((int) $it['id'], $generatedIds, true)) {
+                        continue;
+                    }
+                    \App\Models\ContractItem::create(array_merge(collect($it)->except('id')->toArray(), ['contract_id' => $contract->id]));
+                }
+                // Gera projeto pros itens novos (ainda sem project_id), se houver código base.
+                if (!empty($contract->project_code_preview)) {
+                    $this->generateContractItemProjects($contract, (string) $contract->project_code_preview);
                 }
             }
 
