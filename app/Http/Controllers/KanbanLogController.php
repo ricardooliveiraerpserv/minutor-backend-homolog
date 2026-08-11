@@ -86,8 +86,11 @@ class KanbanLogController extends Controller
             ->groupBy('project_id');
 
         // Só projetos do pipeline Demandas e Projetos (categoria projeto) — exclui SUSTENTAÇÃO/CLOUD.
-        $projects = \App\Models\Project::whereIn('id', $logsByProject->keys())
-            ->whereDoesntHave('serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+        // Inclui TODOS os projetos do pipeline (categoria projeto): ativos (mesmo SEM log de kanban —
+        // criados direto em execução) + terminais que têm log. Antes só entravam os que tinham log,
+        // então projetos ativos sem transição registrada (ex.: criado já "Em Andamento") sumiam da tela.
+        $projects = \App\Models\Project::whereDoesntHave('serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+            ->where(fn ($q) => $q->whereNotIn('status', $terminal)->orWhereIn('id', $logsByProject->keys()->all()))
             ->with(['customer:id,name,executive_id,executive_bizify_id', 'customer.executive:id,name', 'customer.executiveBizify:id,name', 'executivoConta:id,name', 'kanbanOverrideCoordinator:id,name', 'coordinators:id,name'])
             ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status', 'service_type_id', 'executivo_conta_id', 'kanban_coordinator_override_id'])->keyBy('id');
 
@@ -106,28 +109,34 @@ class KanbanLogController extends Controller
 
         $usedCols = [];
         $rows = [];
-        foreach ($logsByProject as $pid => $plogs) {
-            $proj = $projects->get($pid);
-            if (!$proj) continue;   // filtrado (sustentação) → fora
-            $plogs = $plogs->values();
+        foreach ($projects as $pid => $proj) {
+            $plogs = ($logsByProject->get($pid) ?? collect())->values();
             $byCol = [];
 
-            // Coluna inicial (from do 1º log): do início do projeto até o 1º log.
-            $first = $plogs->first();
-            if ($first->from_status && !in_array($first->from_status, $terminal, true) && $proj->created_at) {
-                $c = $col($first->from_status);
-                $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($proj->created_at, $first->created_at);
-            }
-            // Cada segmento: to_status[i] até o próximo log (ou agora se for o último = coluna atual).
-            // Encerrado/Cancelado NUNCA contam (o segmento anterior conta até entrar neles).
-            $n = $plogs->count();
-            for ($i = 0; $i < $n; $i++) {
-                $status = $plogs[$i]->to_status;
-                if (in_array($status, $terminal, true)) continue;
-                $isLast = ($i + 1 >= $n);
-                $end = $isLast ? now() : $plogs[$i + 1]->created_at;
-                $c = $col($status);
-                $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($plogs[$i]->created_at, $end);
+            if ($plogs->isNotEmpty()) {
+                // Coluna inicial (from do 1º log): do início do projeto até o 1º log.
+                $first = $plogs->first();
+                if ($first->from_status && !in_array($first->from_status, $terminal, true) && $proj->created_at) {
+                    $c = $col($first->from_status);
+                    $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($proj->created_at, $first->created_at);
+                }
+                // Cada segmento: to_status[i] até o próximo log (ou agora se for o último = coluna atual).
+                // Encerrado/Cancelado NUNCA contam (o segmento anterior conta até entrar neles).
+                $n = $plogs->count();
+                for ($i = 0; $i < $n; $i++) {
+                    $status = $plogs[$i]->to_status;
+                    if (in_array($status, $terminal, true)) continue;
+                    $isLast = ($i + 1 >= $n);
+                    $end = $isLast ? now() : $plogs[$i + 1]->created_at;
+                    $c = $col($status);
+                    $byCol[$c] = ($byCol[$c] ?? 0) + $daysBetween($plogs[$i]->created_at, $end);
+                }
+            } else {
+                // SEM log de kanban: projeto ativo (não terminal) → todo o tempo (criação → hoje)
+                // conta na COLUNA ATUAL. É o que resgata os projetos criados direto "Em Andamento".
+                if (in_array($proj->status, $terminal, true) || !$proj->created_at) continue;
+                $c = $col($proj->status);
+                $byCol[$c] = $daysBetween($proj->created_at, now());
             }
             foreach (array_keys($byCol) as $c) $usedCols[$c] = true;
             $rows[] = [
