@@ -58,6 +58,7 @@ class Project extends Model
         'architect_id',
         'condicao_pagamento',
         'observacoes_contrato',
+        'observacoes_coordenador',
         'cobra_despesa_cliente',
         'limite_despesa',
         'permissoes_despesa',
