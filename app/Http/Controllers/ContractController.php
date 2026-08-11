@@ -2517,6 +2517,12 @@ class ContractController extends Controller
         $ctCode  = strtolower($project->contractType?->code ?? '');
         $ctName  = strtolower($project->contractType?->name ?? '');
 
+        // Fechado (closed) é sempre projeto pontual (fluxo de coordenador), NUNCA fila de
+        // sustentação — mesmo herdando serviço "Bizify" do contrato de mensalidade (item SaaS).
+        if ($ctCode === 'closed' || str_contains($ctName, 'fechado')) {
+            return null;
+        }
+
         $isSust = $svcCode === 'sustentacao'
             || str_contains($svcName, 'sustent')
             || $svcCode === 'bizify' || str_contains($svcName, 'bizify')
