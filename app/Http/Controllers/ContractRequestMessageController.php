@@ -80,8 +80,30 @@ class ContractRequestMessageController extends Controller
             'message'    => 'nullable|string|max:2000',
             'visibility' => 'nullable|in:client,internal',
             'files'      => 'nullable|array|max:10',
-            'files.*'    => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z',
+            'files.*'    => 'file|max:20480',
         ]);
+
+        // Comentários do cliente: aceita QUALQUER tipo de arquivo (foto de celular
+        // HEIC/HEIF, vídeos, etc.) — a whitelist `mimes:` antiga barrava a foto do
+        // iPhone e o cliente "não conseguia anexar nada". Mantém a proteção anti-RCE/XSS
+        // por DENYLIST de extensões executáveis/scripts (inclui svg por XSS).
+        $blockedExt = [
+            'php','phtml','phar','php3','php4','php5','php7','pht','pgif',
+            'exe','com','bat','cmd','sh','bash','csh','ksh','run',
+            'js','mjs','cjs','jar','msi','dll','scr','vbs','vbe','ps1','psm1',
+            'html','htm','xhtml','shtml','svg','svgz','hta','wsf','wsh',
+            'reg','cpl','asp','aspx','jsp','cgi','app','deb','apk',
+        ];
+        if ($request->hasFile('files')) {
+            foreach ($request->file('files') as $file) {
+                $ext = strtolower($file->getClientOriginalExtension());
+                if (in_array($ext, $blockedExt, true)) {
+                    return response()->json([
+                        'message' => 'Tipo de arquivo não permitido por segurança: .' . $ext,
+                    ], 422);
+                }
+            }
+        }
 
         // ConvertEmptyStringsToNull transforma "" em null; o cast garante string
         // (anexo sem texto não pode inserir null na coluna NOT NULL message).
