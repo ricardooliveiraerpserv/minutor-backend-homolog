@@ -377,6 +377,14 @@ class ExpenseController extends Controller
             $query->whereBetween('expense_date', [$request->start_date, $request->end_date]);
         }
 
+        // Filtro por DATA DE PAGAMENTO (paid_at) — independente do período da despesa.
+        if ($request->filled('paid_start')) {
+            $query->whereNotNull('paid_at')->whereDate('paid_at', '>=', $request->input('paid_start'));
+        }
+        if ($request->filled('paid_end')) {
+            $query->whereNotNull('paid_at')->whereDate('paid_at', '<=', $request->input('paid_end'));
+        }
+
         // Ordenação padrão PO-UI
         $orderFields = $request->get('order', '-expense_date');
         if ($orderFields) {
