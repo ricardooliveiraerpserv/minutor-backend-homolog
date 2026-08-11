@@ -49,8 +49,8 @@ class MeetingController extends Controller
                 'creator' => $m->creator?->name,
                 'participants' => $m->participants->map(fn ($p) => ['id' => $p->id, 'name' => $p->name])->values(),
                 'participants_count' => $m->participants->count(),
-                'tasks_count' => Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->count(),
-                'open_tasks_count' => Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->where('completed', false)->count(),
+                'tasks_count' => Task::withoutCompanyScope()->where('entity_type', 'meeting')->where('entity_id', $m->id)->count(),
+                'open_tasks_count' => Task::withoutCompanyScope()->where('entity_type', 'meeting')->where('entity_id', $m->id)->where('completed', false)->count(),
             ]);
         return response()->json(['data' => $rows]);
     }
@@ -153,7 +153,7 @@ class MeetingController extends Controller
             'entity_id'   => $m->id,
         ]);
         $t->assignees()->sync($assignees);                  // todos (inclui o principal)
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name']))], 201);
+        return response()->json(['data' => $this->serializeTask(Task::withoutCompanyScope()->with(['assignee', 'creator', 'assignees:id,name'])->find($t->id))], 201);
     }
 
     /** Editar tarefa da reunião (título/responsáveis/prazo) — criador ou admin. */
@@ -161,7 +161,7 @@ class MeetingController extends Controller
     {
         $u = $this->manager($request);
         $m = $this->findVisible($u, $meeting);
-        $t = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->findOrFail($task);
+        $t = Task::withoutCompanyScope()->where('entity_type', 'meeting')->where('entity_id', $m->id)->findOrFail($task);
         abort_unless($u->isAdmin() || $t->created_by === $u->id, 403, 'Apenas quem criou a tarefa (ou admin) pode editá-la.');
 
         $v = $request->validate([
@@ -178,7 +178,7 @@ class MeetingController extends Controller
             'due_date'    => $v['due_date'],
         ]);
         $t->assignees()->sync($assignees);
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name']))]);
+        return response()->json(['data' => $this->serializeTask(Task::withoutCompanyScope()->with(['assignee', 'creator', 'assignees:id,name'])->find($t->id))]);
     }
 
     /** Normaliza + valida que TODOS os responsáveis são participantes da reunião. Retorna ids únicos. */
@@ -197,7 +197,7 @@ class MeetingController extends Controller
     {
         $u = $this->manager($request);
         $m = $this->findVisible($u, $meeting);
-        $t = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->findOrFail($task);
+        $t = Task::withoutCompanyScope()->where('entity_type', 'meeting')->where('entity_id', $m->id)->findOrFail($task);
         abort_unless($u->isAdmin() || $t->created_by === $u->id, 403, 'Apenas quem criou a tarefa (ou admin) pode removê-la.');
         $t->delete();
         return response()->json(['ok' => true]);
@@ -208,13 +208,13 @@ class MeetingController extends Controller
     {
         $u = $this->manager($request);
         $m = $this->findVisible($u, $meeting);
-        $t = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)->with('assignees:id')->findOrFail($task);
+        $t = Task::withoutCompanyScope()->where('entity_type', 'meeting')->where('entity_id', $m->id)->with('assignees:id')->findOrFail($task);
         abort_unless($u->isAdmin() || in_array($u->id, $t->allAssigneeIds(), true), 403, 'Apenas um responsável pode concluir/reabrir.');
         $done = !$t->completed;
         // Tarefa é ÚNICA: concluir marca a task inteira → conclui p/ TODOS os responsáveis.
         $t->update(['completed' => $done, 'completed_at' => $done ? now() : null, 'completed_by' => $done ? $u->id : null]);
         if ($done) self::notifyTaskCompletion($t, $u);   // avisa os envolvidos da reunião
-        return response()->json(['data' => $this->serializeTask($t->fresh(['assignee', 'creator', 'assignees:id,name', 'completer']))]);
+        return response()->json(['data' => $this->serializeTask(Task::withoutCompanyScope()->with(['assignee', 'creator', 'assignees:id,name', 'completer'])->find($t->id))]);
     }
 
     /**
@@ -260,7 +260,7 @@ class MeetingController extends Controller
         $u = $this->manager($request);
         $meetingIds = Meeting::visibleTo($u)->pluck('id');       // respeita visibilidade (admin vê tudo)
 
-        $q = Task::where('entity_type', 'meeting')
+        $q = Task::withoutCompanyScope()->where('entity_type', 'meeting')
             ->whereIn('entity_id', $meetingIds)
             ->with(['assignees:id,name', 'assignee:id,name', 'completer:id,name']);
         if ($request->filled('meeting_id')) {
@@ -334,7 +334,7 @@ class MeetingController extends Controller
 
     private function serialize(Meeting $m, User $u): array
     {
-        $tasks = Task::where('entity_type', 'meeting')->where('entity_id', $m->id)
+        $tasks = Task::withoutCompanyScope()->where('entity_type', 'meeting')->where('entity_id', $m->id)
             ->with(['assignee:id,name', 'creator:id,name', 'assignees:id,name', 'completer:id,name'])->orderBy('completed')->orderByRaw('due_date is null')->orderBy('due_date')->get();
         return [
             'id' => $m->id,
