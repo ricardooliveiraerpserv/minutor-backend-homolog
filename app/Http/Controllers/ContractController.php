@@ -1652,8 +1652,12 @@ class ContractController extends Controller
         $isBizifyActive = $activeCompanyId
             ? \App\Models\Company::where('id', $activeCompanyId)->where('slug', 'bizify')->exists()
             : false;
+        // Board Bizify: admins SEMPRE aparecem como coluna; coordenadores só se marcados
+        // como coordenador Bizify (is_bizify_coordinator = coordena projeto+sustentação Bizify).
         $bizifyCoordinators = \App\Models\User::where('enabled', true)
-            ->where('is_bizify_coordinator', true)
+            ->where(function ($q) {
+                $q->where('type', 'admin')->orWhere('is_bizify_coordinator', true);
+            })
             ->select('id', 'name')
             ->orderBy('name')
             ->get();
