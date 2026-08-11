@@ -137,7 +137,9 @@ class CalendarController extends Controller
         //  falsos "eventos hoje" a partir de avisos/decisões que apenas vencem hoje.)
 
         // 5) 📝 Tarefas com data de que o usuário é RESPONSÁVEL no mês de referência.
+        //    Concluídas NÃO entram na agenda (não devem aparecer em "Eventos de hoje" do Meu Dia).
         \App\Models\Task::where('assigned_to', $u->id)
+            ->where('completed', false)
             ->whereNotNull('due_date')
             ->whereMonth('due_date', $month)->whereYear('due_date', $year)
             ->get(['id', 'title', 'due_date', 'due_time'])
