@@ -989,6 +989,7 @@ class ProjectController extends Controller
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
             // Contract-origin fields
             'observacoes_contrato'  => 'nullable|string',
+            'observacoes_coordenador' => 'nullable|string',
             'condicao_pagamento'    => 'nullable|string',
             'cobra_despesa_cliente' => 'nullable|boolean',
             'tipo_faturamento'      => 'nullable|string',
@@ -1498,6 +1499,7 @@ class ProjectController extends Controller
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
             // Contract-origin fields
             'observacoes_contrato'  => 'nullable|string',
+            'observacoes_coordenador' => 'nullable|string',
             'condicao_pagamento'    => 'nullable|string',
             'cobra_despesa_cliente' => 'nullable|boolean',
             'tipo_faturamento'      => 'nullable|string',
