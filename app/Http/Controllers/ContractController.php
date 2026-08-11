@@ -1381,7 +1381,9 @@ class ContractController extends Controller
         $projectQuery = \App\Models\Project::with([
             'customer:id,name,executive_id,executive_bizify_id',
             'customer.executive:id,name', 'customer.executiveBizify:id,name',
-            'contract:id,project_name',
+            'contract:id,project_name,project_code_preview,parent_contract_id',
+            'contract.parentContract:id,project_code_preview',
+            'contract.childContracts:id,parent_contract_id,project_code_preview',
             'coordinators:id,name',
             'kanbanOverrideCoordinator:id,name',
             'consultants:id,name',
@@ -1501,6 +1503,9 @@ class ContractController extends Controller
                 'project.coordinators',
                 'project.consultants',
                 'project.contractType:id,name',
+                'project.contract:id,project_name,project_code_preview,parent_contract_id',
+                'project.contract.parentContract:id,project_code_preview',
+                'project.contract.childContracts:id,parent_contract_id,project_code_preview',
                 'project.serviceType:id,name',
             ])
             ->whereNotNull('sustentacao_column')
@@ -2464,10 +2469,25 @@ class ContractController extends Controller
         $consumed = round($b['consumed'], 1);
         $saldo    = round($b['balance'], 1);
 
+        // Vínculo (item SaaS/Cloud): o card de projeto herda do CONTRATO que o gerou.
+        // Item (child) → aponta pro pai; mensalidade (pai) → lista os filhos.
+        $lc = $project->contract;
+        if ($lc && !$lc->relationLoaded('childContracts')) {
+            $lc->load(['parentContract:id,project_code_preview', 'childContracts:id,parent_contract_id,project_code_preview']);
+        }
+        $linkedChildren = $lc && $lc->relationLoaded('childContracts')
+            ? $lc->childContracts->map(fn ($c) => ['id' => $c->id, 'code' => $c->project_code_preview])->values()
+            : collect();
+
         return [
             'card_type'             => 'project',
             'id'                    => $project->id,
             'contract_id'           => $project->contract_id,
+            'contract_code'         => $lc?->project_code_preview ?: $project->code,
+            'parent_contract_id'    => $lc?->parent_contract_id,
+            'parent_contract_code'  => $lc?->parentContract?->project_code_preview,
+            'linked_children'       => $linkedChildren,
+            'is_linked'             => (bool) ($lc?->parent_contract_id || $linkedChildren->isNotEmpty()),
             'contract_request_id'   => $project->contract_request_id,
             'nivel_urgencia'        => $project->originRequest?->nivel_urgencia ?? $project->contractRequest?->nivel_urgencia, // herdada da requisição de origem (null se criado direto)
             'customer_name'         => $project->customer?->name,
