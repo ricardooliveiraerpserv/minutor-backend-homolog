@@ -119,6 +119,7 @@ class ContractController extends Controller
             'executivo_conta_id'     => 'nullable|exists:users,id',
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
+            'observacoes_coordenador' => 'nullable|string',
             'project_code_preview'   => 'nullable|string|max:20',
             // Subprojeto faturado: além do card do filho (Início Autorizado), gera um card de
             // aporte (Novo Contrato) no projeto pai, valorado pelas horas/valor-hora do filho.
@@ -365,6 +366,7 @@ class ContractController extends Controller
             'aditivo_effective_from' => 'nullable|date',
             'condicao_pagamento'     => 'nullable|string',
             'observacoes'            => 'required|string',
+            'observacoes_coordenador' => 'nullable|string',
         ]);
 
         $project = Project::with('contractType')->find($validated['aditivo_project_id']);
@@ -433,6 +435,7 @@ class ContractController extends Controller
                     'aditivo_effective_from' => $effMulti ? \Carbon\Carbon::parse($effMulti)->startOfMonth()->toDateString() : null,
                     'condicao_pagamento'     => $validated['condicao_pagamento'] ?? null,
                     'observacoes'            => $validated['observacoes'] ?? null,
+                    'observacoes_coordenador' => $validated['observacoes_coordenador'] ?? null,
                     'created_by_id'          => auth()->id(),
                     'status'                 => Contract::STATUS_ATIVO,
                     'kanban_status'          => Contract::KANBAN_NOVO_PROJETO,
@@ -482,6 +485,7 @@ class ContractController extends Controller
                 'aditivo_effective_from' => $eff ? \Carbon\Carbon::parse($eff)->startOfMonth()->toDateString() : null,
                 'condicao_pagamento'     => $validated['condicao_pagamento'] ?? null,
                 'observacoes'            => $validated['observacoes'] ?? null,
+                'observacoes_coordenador' => $validated['observacoes_coordenador'] ?? null,
                 'created_by_id'          => auth()->id(),
                 'status'                 => Contract::STATUS_ATIVO,
                 'kanban_status'          => Contract::KANBAN_NOVO_PROJETO,
@@ -669,6 +673,7 @@ class ContractController extends Controller
             'executivo_conta_id'     => 'nullable|exists:users,id',
             'vendedor_id'            => 'nullable|exists:users,id',
             'observacoes'            => 'nullable|string',
+            'observacoes_coordenador' => 'nullable|string',
             'project_code_preview'   => 'nullable|string|max:20',
             'contacts'               => 'nullable|array',
             'contacts.*.id'          => 'nullable|exists:contract_contacts,id',
@@ -809,6 +814,7 @@ class ContractController extends Controller
             'aditivo_changes.*.value' => 'required_with:aditivo_changes|numeric|min:0',
             'condicao_pagamento'      => 'nullable|string',
             'observacoes'             => 'nullable|string',
+            'observacoes_coordenador' => 'nullable|string',
         ]);
 
         $reapply = !empty($validated['aditivo_changes']) && $contract->aditivo_field === 'multiplo';
@@ -867,12 +873,14 @@ class ContractController extends Controller
                     'aditivo_changes'    => $changes,
                     'condicao_pagamento' => $validated['condicao_pagamento'] ?? $contract->condicao_pagamento,
                     'observacoes'        => $validated['observacoes'] ?? $contract->observacoes,
+                    'observacoes_coordenador' => $validated['observacoes_coordenador'] ?? $contract->observacoes_coordenador,
                 ]);
             });
         } else {
             $contract->update([
                 'condicao_pagamento' => $validated['condicao_pagamento'] ?? $contract->condicao_pagamento,
                 'observacoes'        => $validated['observacoes'] ?? $contract->observacoes,
+                'observacoes_coordenador' => $validated['observacoes_coordenador'] ?? $contract->observacoes_coordenador,
             ]);
         }
 
@@ -1069,6 +1077,7 @@ class ContractController extends Controller
                 'architect_id'          => $contract->architect_id,
                 'condicao_pagamento'    => $contract->condicao_pagamento,
                 'observacoes_contrato'  => $contract->observacoes,
+                'observacoes_coordenador' => $contract->observacoes_coordenador,
                 'cobra_despesa_cliente' => $contract->cobra_despesa_cliente,
                 'limite_despesa'        => $contract->limite_despesa,
                 'executivo_conta_id'    => $contract->executivo_conta_id,
@@ -2181,6 +2190,7 @@ class ContractController extends Controller
                         'architect_id'           => $contract->architect_id,
                         'condicao_pagamento'     => $contract->condicao_pagamento,
                         'observacoes_contrato'   => $contract->observacoes,
+                        'observacoes_coordenador' => $contract->observacoes_coordenador,
                         'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
                         'limite_despesa'         => $contract->limite_despesa,
                         'executivo_conta_id'     => $contract->executivo_conta_id,
@@ -2601,6 +2611,7 @@ class ContractController extends Controller
             'architect_id'           => $contract->architect_id,
             'condicao_pagamento'     => $contract->condicao_pagamento,
             'observacoes_contrato'   => $contract->observacoes,
+            'observacoes_coordenador' => $contract->observacoes_coordenador,
             'cobra_despesa_cliente'  => $contract->cobra_despesa_cliente,
             'limite_despesa'         => $contract->limite_despesa,
             'executivo_conta_id'     => $contract->executivo_conta_id,
