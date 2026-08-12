@@ -338,6 +338,109 @@ class ProjectEvmController extends Controller
         ]);
     }
 
+    /**
+     * PORTFÓLIO: resumo de indicadores (EVM em horas + operacional) de TODOS os projetos (filtráveis),
+     * numa tela só. Cálculo em LOTE (poucas queries) — não roda o /evm por projeto.
+     */
+    public function portfolio(Request $request): JsonResponse
+    {
+        $today   = now()->endOfDay();
+        $todayStart = now()->startOfDay();
+
+        $q = Project::query()->with(['customer:id,name', 'coordinators:id,name']);
+        if ($s = trim((string) $request->get('search'))) {
+            $q->where(fn ($x) => $x->where('name', 'ilike', "%{$s}%")->orWhere('code', 'ilike', "%{$s}%"));
+        }
+        if ($cid = $request->get('customer_id')) $q->where('customer_id', $cid);
+        if ($coordId = $request->get('coordinator_id')) $q->whereHas('coordinators', fn ($c) => $c->where('users.id', $coordId));
+        $status = $request->get('status');
+        if ($status === 'active') $q->active();
+        elseif ($status === 'open') $q->open();
+        elseif ($status) $q->where('status', $status);
+        else $q->open(); // padrão: projetos em aberto (não cancelados/finalizados)
+
+        $projects = $q->orderBy('name')->get(['id', 'name', 'code', 'status', 'customer_id']);
+        $ids = $projects->pluck('id')->all();
+        if (empty($ids)) return response()->json(['projects' => []]);
+
+        // Baselines current + itens (2 queries).
+        $baselines = ProjectBaseline::whereIn('project_id', $ids)->where('is_current', true)->get()->keyBy('project_id');
+        $blIds = $baselines->pluck('id')->all();
+        $itemsByBl = $blIds
+            ? StageBaselineItem::whereIn('project_baseline_id', $blIds)->get()->groupBy('project_baseline_id')
+            : collect();
+
+        // Atividades por projeto (via etapas) — done/total/overdue + EV.
+        $delivRows = DB::table('stage_deliveries as d')
+            ->join('project_stages as s', 's.id', '=', 'd.stage_id')
+            ->whereIn('s.project_id', $ids)->whereNull('d.deleted_at')->whereNull('s.deleted_at')
+            ->select('s.project_id', 'd.id', 'd.status', 'd.due_date', 'd.completed_at')->get();
+        $doneAt   = $delivRows->where('status', 'done')->whereNotNull('completed_at')->pluck('completed_at', 'id');
+        $stageEndAt = DB::table('project_stages')->whereIn('project_id', $ids)
+            ->where('status', 'done')->whereNotNull('actual_end_at')->pluck('actual_end_at', 'id');
+        $byProj = $delivRows->groupBy('project_id');
+
+        // AC (horas apontadas approved+released) por projeto.
+        $acByProj = DB::table('timesheets')->whereIn('project_id', $ids)->whereNull('deleted_at')
+            ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED])
+            ->groupBy('project_id')->selectRaw('project_id, COALESCE(SUM(effort_minutes),0)/60.0 AS h')->pluck('h', 'project_id');
+
+        $rows = $projects->map(function ($p) use ($baselines, $itemsByBl, $doneAt, $stageEndAt, $byProj, $acByProj, $today, $todayStart) {
+            $delivs  = $byProj->get($p->id, collect());
+            $total   = $delivs->count();
+            $done    = $delivs->where('status', 'done')->whereNotNull('completed_at')->count();
+            $overdue = $delivs->filter(fn ($d) => $d->status !== 'done' && $d->due_date && Carbon::parse($d->due_date)->lt($todayStart))->count();
+            $ac      = round((float) ($acByProj[$p->id] ?? 0), 2);
+
+            $bl = $baselines->get($p->id);
+            $pv = 0.0; $ev = 0.0; $bac = 0.0; $spi = null; $cpi = null; $pctP = null; $pctR = null;
+            if ($bl) {
+                $bac = (float) $bl->planned_hours_total;
+                foreach ($itemsByBl->get($bl->id, collect()) as $it) {
+                    $h = (float) $it->planned_hours;
+                    if ($h <= 0) continue;
+                    if ($e = $it->planned_end_at) {                       // PV distribuído no tempo
+                        $end = Carbon::parse($e)->endOfDay();
+                        if (! $it->planned_start_at) { $pv += $today->gte($end) ? $h : 0.0; }
+                        else {
+                            $st = Carbon::parse($it->planned_start_at)->startOfDay();
+                            if ($today->gt($st)) {
+                                if ($today->gte($end)) $pv += $h;
+                                else { $span = max(1, $st->diffInDays($end)); $pv += $h * min(1.0, max(0.0, $st->diffInDays($today) / $span)); }
+                            }
+                        }
+                    }
+                    $dd = null;                                          // EV = concluídas
+                    if ($it->stage_delivery_id && isset($doneAt[$it->stage_delivery_id])) $dd = Carbon::parse($doneAt[$it->stage_delivery_id]);
+                    elseif (! $it->stage_delivery_id && $it->stage_id && isset($stageEndAt[$it->stage_id])) $dd = Carbon::parse($stageEndAt[$it->stage_id]);
+                    if ($dd && $dd->lte($today)) $ev += $h;
+                }
+                $pv = round($pv, 2); $ev = round($ev, 2);
+                $spi  = $pv > 0 ? round($ev / $pv, 3) : null;
+                $cpi  = $ac > 0 ? round($ev / $ac, 3) : null;
+                $pctP = $bac > 0 ? round($pv / $bac * 100, 1) : null;
+                $pctR = $bac > 0 ? round($ev / $bac * 100, 1) : null;
+            }
+            $overduePct = $total > 0 ? round($overdue / $total * 100, 1) : 0;
+            $health = 'ok';
+            if (($spi !== null && $spi < 0.9) || $overduePct >= 20) $health = 'late';
+            elseif (($spi !== null && $spi < 1) || $overduePct > 0)  $health = 'risk';
+
+            return [
+                'id' => $p->id, 'name' => $p->name, 'code' => $p->code, 'status' => $p->status,
+                'customer'     => $p->customer?->name,
+                'coordinators' => $p->coordinators->pluck('name')->all(),
+                'has_baseline' => (bool) $bl,
+                'pct_planned'  => $pctP, 'pct_real' => $pctR, 'spi' => $spi, 'cpi' => $cpi,
+                'hours_planned' => round($bac, 2), 'hours_ev' => $ev, 'hours_actual' => $ac,
+                'deliveries' => $total, 'done' => $done, 'overdue' => $overdue, 'overdue_pct' => $overduePct,
+                'health' => $health,
+            ];
+        })->values();
+
+        return response()->json(['projects' => $rows]);
+    }
+
     private function baselineMeta(ProjectBaseline $b): array
     {
         return [
