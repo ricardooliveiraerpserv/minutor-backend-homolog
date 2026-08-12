@@ -1238,6 +1238,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-requests/{contractRequest}/mentionable-users', [\App\Http\Controllers\ContractRequestMessageController::class, 'mentionableUsers'])->name('contract-request-messages.mentionable-users');
         Route::get('/req-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractRequestMessageController::class, 'downloadAttachment'])->name('contract-request-messages.attachment-download');
 
+        // Comentários NATIVOS do projeto (projetos sem Demanda/requisição) — canal cliente+equipe.
+        Route::get('/projects/{project}/comments',                   [\App\Http\Controllers\ProjectCommentController::class, 'index'])->name('project-comments.index');
+        Route::post('/projects/{project}/comments',                  [\App\Http\Controllers\ProjectCommentController::class, 'store'])->name('project-comments.store');
+        Route::get('/projects/{project}/comments/mentionable-users', [\App\Http\Controllers\ProjectCommentController::class, 'mentionableUsers'])->name('project-comments.mentionable-users');
+        Route::get('/project-comments/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ProjectCommentController::class, 'downloadAttachment'])->name('project-comments.attachment-download');
+
         // 💬 CHAT DE CONTRATOS
         Route::get('/contracts/{contract}/messages',              [\App\Http\Controllers\ContractMessageController::class, 'index'])->name('contract-messages.index');
         Route::post('/contracts/{contract}/messages',             [\App\Http\Controllers\ContractMessageController::class, 'store'])->name('contract-messages.store');
