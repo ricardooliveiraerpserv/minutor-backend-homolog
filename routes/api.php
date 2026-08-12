@@ -1049,6 +1049,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
             Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
             Route::get('/projects/{project}/evm', [\App\Http\Controllers\ProjectEvmController::class, 'evm'])->name('projects.evm');
+            Route::get('/projects/{project}/operational-metrics', [\App\Http\Controllers\ProjectEvmController::class, 'operational'])->name('projects.operational-metrics');
             Route::post('/projects/{project}/cronograma/recalc-preview', [ProjectController::class, 'recalcPreview'])->name('projects.cronograma.recalc-preview');
 
             // Modelos de cronograma (salvar/aplicar) + copiar de outro projeto

@@ -213,6 +213,75 @@ class ProjectEvmController extends Controller
         ]);
     }
 
+    /** Indicadores OPERACIONAIS (independem de baseline): produtividade por consultor + lead/cycle time + atrasadas. */
+    public function operational(Project $project): JsonResponse
+    {
+        $stageIds = $project->stages()->pluck('id')->all();
+
+        $deliveries = DB::table('stage_deliveries')
+            ->whereIn('stage_id', $stageIds ?: [0])->whereNull('deleted_at')
+            ->select('id', 'title', 'responsible_user_id', 'hours_planned', 'status', 'due_date', 'created_at', 'actual_start_at', 'completed_at')
+            ->get();
+
+        $total  = $deliveries->count();
+        $done   = $deliveries->filter(fn ($d) => $d->status === 'done' && $d->completed_at);
+        $today  = now()->startOfDay();
+        $overdue = $deliveries->filter(fn ($d) => $d->status !== 'done' && $d->due_date && Carbon::parse($d->due_date)->lt($today))->count();
+
+        // Lead (criação→conclusão) e Cycle (início→conclusão) por atividade concluída, em dias.
+        $flowItems = $done->map(function ($d) {
+            $completed = Carbon::parse($d->completed_at);
+            $lead  = abs(Carbon::parse($d->created_at)->diffInDays($completed));
+            $cycle = $d->actual_start_at ? abs(Carbon::parse($d->actual_start_at)->diffInDays($completed)) : null;
+            return ['title' => $d->title, 'completed_at' => $completed->toDateString(), 'lead_days' => $lead, 'cycle_days' => $cycle];
+        })->sortByDesc('completed_at')->values();
+
+        $cycleVals = $flowItems->pluck('cycle_days')->filter(fn ($v) => $v !== null);
+        $flow = [
+            'count'          => $flowItems->count(),
+            'lead_avg_days'  => $flowItems->count() ? round($flowItems->avg('lead_days'), 1) : null,
+            'cycle_avg_days' => $cycleVals->count() ? round($cycleVals->avg(), 1) : null,
+            'items'          => $flowItems->take(30)->all(),
+        ];
+
+        // Horas apontadas por consultor (approved + released) no projeto.
+        $hoursByUser = DB::table('timesheets')
+            ->where('project_id', $project->id)->whereNull('deleted_at')
+            ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED])
+            ->groupBy('user_id')->selectRaw('user_id, COALESCE(SUM(effort_minutes),0)/60.0 AS h')
+            ->pluck('h', 'user_id');
+
+        // Produtividade por consultor: atividades concluídas + horas planejadas dessas + horas apontadas + eficiência.
+        $doneByUser = $done->groupBy('responsible_user_id');
+        $userIds = collect($doneByUser->keys())->merge($hoursByUser->keys())->filter()->unique()->values();
+        $names   = DB::table('users')->whereIn('id', $userIds->all() ?: [0])->pluck('name', 'id');
+
+        $productivity = $userIds->map(function ($uid) use ($doneByUser, $hoursByUser, $names) {
+            $dset        = $doneByUser->get($uid, collect());
+            $plannedDone = round((float) $dset->sum('hours_planned'), 2);
+            $actual      = round((float) ($hoursByUser[$uid] ?? 0), 2);
+            return [
+                'user_id'      => (int) $uid,
+                'name'         => $names[$uid] ?? 'Consultor',
+                'done_count'   => $dset->count(),
+                'hours_done'   => $plannedDone,
+                'hours_actual' => $actual,
+                'efficiency'   => $actual > 0 ? round($plannedDone / $actual, 2) : null,
+            ];
+        })->sortByDesc('done_count')->values();
+
+        return response()->json([
+            'totals'       => [
+                'deliveries'  => $total,
+                'done'        => $done->count(),
+                'overdue'     => $overdue,
+                'overdue_pct' => $total > 0 ? round($overdue / $total * 100, 1) : 0,
+            ],
+            'productivity' => $productivity->all(),
+            'flow'         => $flow,
+        ]);
+    }
+
     private function baselineMeta(ProjectBaseline $b): array
     {
         return [
