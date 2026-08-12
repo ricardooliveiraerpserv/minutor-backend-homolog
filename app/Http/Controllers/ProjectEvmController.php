@@ -31,22 +31,46 @@ class ProjectEvmController extends Controller
     /** Congela a linha de base atual do cronograma (snapshot imutável de datas + horas + custo planejado). */
     public function freeze(Project $project, Request $request): JsonResponse
     {
-        $label = trim((string) $request->input('label', '')) ?: 'Linha de base '.now()->format('d/m/Y');
-        $notes = $request->input('notes');
+        $baseline = $this->snapshotBaseline($project, trim((string) $request->input('label', '')) ?: null, $request->input('notes'));
+
+        return response()->json([
+            'message'  => 'Linha de base congelada.',
+            'baseline' => $this->baselineMeta($baseline->fresh()),
+        ], 201);
+    }
+
+    /** Congela a linha de base de TODOS os projetos do filtro que ainda NÃO têm baseline (só os que têm cronograma). */
+    public function freezeMissing(Request $request): JsonResponse
+    {
+        $ids = $this->portfolioBaseQuery($request)->pluck('id')->all();
+        if (empty($ids)) return response()->json(['frozen' => 0]);
+
+        $withBase = ProjectBaseline::whereIn('project_id', $ids)->where('is_current', true)->pluck('project_id')->all();
+        $missing  = array_values(array_diff($ids, $withBase));
+
+        $count = 0;
+        Project::whereIn('id', $missing)->whereHas('stages')->chunkById(50, function ($chunk) use (&$count) {
+            foreach ($chunk as $p) { $this->snapshotBaseline($p); $count++; }
+        });
+
+        return response()->json(['frozen' => $count]);
+    }
+
+    /** Núcleo do congelamento: monta a baseline (datas + horas + custo planejado) de um projeto. */
+    private function snapshotBaseline(Project $project, ?string $label = null, ?string $notes = null): ProjectBaseline
+    {
+        $label = $label ?: 'Linha de base '.now()->format('d/m/Y');
         $comp  = now()->format('Y-m');                 // competência do congelamento (custo/hora vigente)
         $costSvc = app(ConsultorCostService::class);
 
         $stages = $project->stages()->with('deliveries')->get();
-
-        // Custo/hora dos responsáveis, congelado na competência atual (mesma regra da Rentabilidade).
         $userIds = $stages->pluck('responsible_user_id')
             ->merge($stages->flatMap(fn ($s) => $s->deliveries->pluck('responsible_user_id')))
             ->filter()->unique()->values();
         $users = User::with('partner')->whereIn('id', $userIds->all() ?: [0])->get()->keyBy('id');
         $rateFor = fn ($uid) => ($uid && $users->has($uid)) ? $costSvc->hourlyCost($users->get($uid), $comp) : 0.0;
 
-        $baseline = DB::transaction(function () use ($project, $label, $notes, $stages, $rateFor) {
-            // Só uma baseline "current" por projeto.
+        return DB::transaction(function () use ($project, $label, $notes, $stages, $rateFor) {
             ProjectBaseline::where('project_id', $project->id)->where('is_current', true)->update(['is_current' => false]);
 
             $baseline = ProjectBaseline::create([
@@ -70,7 +94,6 @@ class ProjectEvmController extends Controller
             foreach ($stages as $stage) {
                 $deliveries = $stage->deliveries;
                 if ($deliveries->isEmpty()) {
-                    // Etapa sem atividades: congela a etapa como item (PV/EV no nível de etapa).
                     $mk([
                         'stage_id'          => $stage->id,
                         'stage_delivery_id' => null,
@@ -94,11 +117,6 @@ class ProjectEvmController extends Controller
             $baseline->update(['planned_hours_total' => round($totalH, 2), 'planned_cost_total' => round($totalC, 2)]);
             return $baseline;
         });
-
-        return response()->json([
-            'message'  => 'Linha de base congelada.',
-            'baseline' => $this->baselineMeta($baseline->fresh()),
-        ], 201);
     }
 
     /** Descongela: remove a linha de base current (desfaz o congelamento). Itens caem por cascade. */

@@ -1105,6 +1105,7 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
             Route::post('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'freeze'])->name('projects.baseline.freeze');
+            Route::post('/projects-portfolio/freeze-missing', [\App\Http\Controllers\ProjectEvmController::class, 'freezeMissing'])->name('projects.portfolio.freeze-missing');
             Route::delete('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'unfreeze'])->name('projects.baseline.unfreeze');
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
             Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
