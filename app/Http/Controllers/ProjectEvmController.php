@@ -356,18 +356,7 @@ class ProjectEvmController extends Controller
         $today   = now()->endOfDay();
         $todayStart = now()->startOfDay();
 
-        $q = Project::query()->with(['customer:id,name', 'coordinators:id,name']);
-        if ($s = trim((string) $request->get('search'))) {
-            $q->where(fn ($x) => $x->where('name', 'ilike', "%{$s}%")->orWhere('code', 'ilike', "%{$s}%"));
-        }
-        if ($cid = $request->get('customer_id')) $q->where('customer_id', $cid);
-        if ($coordId = $request->get('coordinator_id')) $q->whereHas('coordinators', fn ($c) => $c->where('users.id', $coordId));
-        $status = $request->get('status');
-        if ($status === 'active') $q->active();
-        elseif ($status === 'open') $q->open();
-        elseif ($status) $q->where('status', $status);
-        else $q->open(); // padrão: projetos em aberto (não cancelados/finalizados)
-
+        $q = $this->portfolioBaseQuery($request)->with(['customer:id,name', 'coordinators:id,name']);
         $projects = $q->orderBy('name')->get(['id', 'name', 'code', 'status', 'customer_id']);
         $ids = $projects->pluck('id')->all();
         if (empty($ids)) return response()->json(['projects' => []]);
@@ -448,6 +437,90 @@ class ProjectEvmController extends Controller
         })->values();
 
         return response()->json(['projects' => $rows]);
+    }
+
+    /** Query de projetos do portfólio com os filtros aplicados (compartilhada entre portfolio e a curva). */
+    private function portfolioBaseQuery(Request $request)
+    {
+        $q = Project::query();
+        if ($s = trim((string) $request->get('search'))) {
+            $q->where(fn ($x) => $x->where('name', 'ilike', "%{$s}%")->orWhere('code', 'ilike', "%{$s}%"));
+        }
+        if ($cid = $request->get('customer_id')) $q->where('customer_id', $cid);
+        if ($coordId = $request->get('coordinator_id')) $q->whereHas('coordinators', fn ($c) => $c->where('users.id', $coordId));
+        $status = $request->get('status');
+        if ($status === 'active') $q->active();
+        elseif ($status === 'open') $q->open();
+        elseif ($status) $q->where('status', $status);
+        else $q->open();
+        return $q;
+    }
+
+    /**
+     * CURVA-S CONSOLIDADA da carteira: PV/EV/AC (horas) somados por semana entre TODOS os projetos
+     * filtrados que têm baseline. PV/EV/AC são aditivos → basta juntar os itens e os apontamentos.
+     */
+    public function portfolioCurve(Request $request): JsonResponse
+    {
+        $asOf = now()->endOfDay();
+        $ids  = $this->portfolioBaseQuery($request)->pluck('id')->all();
+        if (empty($ids)) return response()->json(['curve' => [], 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => 0]);
+
+        $blIds = ProjectBaseline::whereIn('project_id', $ids)->where('is_current', true)->pluck('id')->all();
+        $items = $blIds ? StageBaselineItem::whereIn('project_baseline_id', $blIds)->get() : collect();
+        if ($items->isEmpty()) return response()->json(['curve' => [], 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => 0]);
+
+        $doneAt = DB::table('stage_deliveries')
+            ->whereIn('id', $items->pluck('stage_delivery_id')->filter()->all() ?: [0])
+            ->where('status', 'done')->whereNotNull('completed_at')->pluck('completed_at', 'id');
+        $stageEndAt = DB::table('project_stages')
+            ->whereIn('id', $items->whereNull('stage_delivery_id')->pluck('stage_id')->filter()->all() ?: [0])
+            ->where('status', 'done')->whereNotNull('actual_end_at')->pluck('actual_end_at', 'id');
+
+        $acRows = DB::table('timesheets')->whereIn('project_id', $ids)->whereNull('deleted_at')
+            ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED])
+            ->groupBy('date')->selectRaw('date, COALESCE(SUM(effort_minutes),0)/60.0 AS h')
+            ->get()->map(fn ($r) => ['date' => Carbon::parse($r->date)->endOfDay(), 'h' => (float) $r->h]);
+
+        $itemDoneAt = function (StageBaselineItem $it) use ($doneAt, $stageEndAt): ?Carbon {
+            if ($it->stage_delivery_id && isset($doneAt[$it->stage_delivery_id])) return Carbon::parse($doneAt[$it->stage_delivery_id]);
+            if (! $it->stage_delivery_id && $it->stage_id && isset($stageEndAt[$it->stage_id])) return Carbon::parse($stageEndAt[$it->stage_id]);
+            return null;
+        };
+        $pvAt = function (Carbon $date) use ($items): float {
+            $sum = 0.0;
+            foreach ($items as $it) {
+                $h = (float) $it->planned_hours; if ($h <= 0) continue;
+                if (! $it->planned_end_at) continue;
+                $end = Carbon::parse($it->planned_end_at)->endOfDay();
+                if (! $it->planned_start_at) { $sum += $date->gte($end) ? $h : 0.0; continue; }
+                $st = Carbon::parse($it->planned_start_at)->startOfDay();
+                if ($date->lte($st)) continue;
+                if ($date->gte($end)) { $sum += $h; continue; }
+                $span = max(1, $st->diffInDays($end)); $sum += $h * min(1.0, max(0.0, $st->diffInDays($date) / $span));
+            }
+            return round($sum, 2);
+        };
+        $evAt = function (Carbon $date) use ($items, $itemDoneAt): float {
+            $sum = 0.0;
+            foreach ($items as $it) { $d = $itemDoneAt($it); if ($d && $d->lte($date)) $sum += (float) $it->planned_hours; }
+            return round($sum, 2);
+        };
+        $acAt = fn (Carbon $date) => round($acRows->filter(fn ($r) => $r['date']->lte($date))->sum('h'), 2);
+
+        $starts = $items->pluck('planned_start_at')->filter()->map(fn ($d) => Carbon::parse($d));
+        $ends   = $items->pluck('planned_end_at')->filter()->map(fn ($d) => Carbon::parse($d));
+        $curveStart = ($starts->min() ?: $asOf)->copy()->startOfWeek();
+        $curveEnd   = ($ends->max() && $ends->max()->gt($asOf) ? $ends->max() : $asOf)->copy()->endOfWeek();
+
+        $series = []; $cursor = $curveStart->copy(); $guard = 0;
+        while ($cursor->lte($curveEnd) && $guard++ < 400) {
+            $w = $cursor->copy()->endOfWeek(); $future = $w->gt($asOf);
+            $series[] = ['date' => $cursor->toDateString(), 'pv' => $pvAt($w), 'ev' => $future ? null : $evAt($w), 'ac' => $future ? null : $acAt($w)];
+            $cursor->addWeek();
+        }
+
+        return response()->json(['curve' => $series, 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => count($blIds)]);
     }
 
     private function baselineMeta(ProjectBaseline $b): array
