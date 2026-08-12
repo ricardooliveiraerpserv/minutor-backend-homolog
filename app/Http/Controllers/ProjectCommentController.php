@@ -107,8 +107,71 @@ class ProjectCommentController extends Controller
             }
         }
 
+        // Menções @[id:Nome] (canônicas do picker) → persiste + inclui nos destinatários.
+        $mentionedIds = \App\Services\MentionParser::extract($text, collect());
+        foreach ($mentionedIds as $mid) {
+            \App\Models\ContractRequestMessageMention::firstOrCreate([
+                'message_id'        => $msg->id,
+                'mentioned_user_id' => $mid,
+            ]);
+        }
+
+        // Notifica a "outra ponta" (cliente↔equipe) + @-mencionados. Best-effort.
+        try {
+            $this->notifyComment($project, $msg, $user, $mentionedIds);
+        } catch (\Throwable $e) {
+            \Log::warning('project comment notif falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
+        }
+
         $msg->load(['author:id,name', 'attachments']);
         return response()->json($msg, 201);
+    }
+
+    /** IDs a notificar: se autor é cliente → equipe do projeto; se é equipe → clientes do customer. */
+    private function notifyComment(Project $project, ContractRequestMessage $msg, User $author, array $mentionedIds): void
+    {
+        if ($author->isCliente()) {
+            $ids = User::where('type', 'admin')->where('enabled', true)->pluck('id')
+                ->merge($project->coordinators()->pluck('users.id'))
+                ->merge($project->consultants()->pluck('users.id'));
+            if ($project->customer?->executive_id) {
+                $ids->push($project->customer->executive_id);
+            }
+        } else {
+            $ids = User::where('type', 'cliente')
+                ->where('customer_id', $project->customer_id)
+                ->where('enabled', true)->pluck('id');
+        }
+
+        $recipients = $ids->merge($mentionedIds)->filter()
+            ->reject(fn ($id) => (int) $id === (int) $author->id)
+            ->unique()->values()->all();
+        if (empty($recipients)) return;
+
+        $base    = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+        $url     = $base . '/contratos/pipeline?project=' . $project->id . '&tab=comments';
+        $excerpt = \Illuminate\Support\Str::limit((string) ($msg->message ?: '(anexo)'), 500);
+        $nome    = $project->name ?: $project->code ?: ('Projeto #' . $project->id);
+
+        $n = \App\Models\AppNotification::create([
+            'title'        => 'Novo comentário no projeto',
+            'message'      => e($author->name) . ' comentou no projeto <b>' . e($nome) . '</b>: ' . e($excerpt),
+            'type'         => 'info',
+            'priority'     => 'medium',
+            'target_users' => $recipients,
+            'send_email'   => true,
+            'visible'      => true,
+            'cta_label'    => 'Abrir comentários',
+            'cta_url'      => $url,
+            'created_by'   => $author->id,
+            'expires_at'   => now()->addDays(14),
+        ]);
+
+        try {
+            app(\App\Http\Controllers\NotificationController::class)->emailNotification($n);
+        } catch (\Throwable $e) {
+            \Log::warning('project comment email falhou', ['project_id' => $project->id, 'err' => $e->getMessage()]);
+        }
     }
 
     public function mentionableUsers(Request $request, Project $project): JsonResponse
