@@ -205,6 +205,36 @@ class CrmPipelineController extends Controller
         return response()->json(['data' => $this->decoratePipeline($novo->load('stages'))], 201);
     }
 
+    /** Excluir funil — só sem oportunidades (senão Arquivar); nunca o de qualificação nem bloqueado. */
+    public function destroyPipeline(CrmPipeline $pipeline): JsonResponse
+    {
+        $this->authorizeConfig();
+        if ($pipeline->tipo === 'qualificacao') {
+            return response()->json(['message' => 'O funil de qualificação (Leads) não pode ser excluído.', 'code' => 'PIPELINE_QUALIFICACAO'], 422);
+        }
+        if ($pipeline->bloqueado) {
+            return response()->json(['message' => 'Pipeline bloqueado não pode ser excluído.', 'code' => 'PIPELINE_BLOQUEADO'], 422);
+        }
+        $qtd = CrmOpportunity::whereIn('stage_id', $pipeline->stages()->pluck('id'))->count();
+        if ($qtd > 0) {
+            return response()->json([
+                'message' => "Este funil possui {$qtd} oportunidade(s) vinculada(s). Utilize Arquivar em vez de excluir.",
+                'code'    => 'PIPELINE_COM_OPORTUNIDADES',
+            ], 422);
+        }
+        // Loga ANTES de excluir (pipeline_id vira NULL via nullOnDelete, mas a descrição fica no histórico).
+        CrmPipelineEvent::log('pipeline_excluido', $pipeline->id, null, "Pipeline \"{$pipeline->name}\" excluído", $pipeline->only(['name', 'descricao', 'cor']), null);
+        DB::transaction(function () use ($pipeline) {
+            foreach ($pipeline->stages()->get() as $s) {
+                CrmStageAutomation::where('stage_id', $s->id)->delete();
+                $s->delete();
+            }
+            $pipeline->visibleUsers()->detach();
+            $pipeline->delete();
+        });
+        return response()->json(['ok' => true]);
+    }
+
     public function storeStage(Request $request, CrmPipeline $pipeline): JsonResponse
     {
         $this->authorizeConfig();

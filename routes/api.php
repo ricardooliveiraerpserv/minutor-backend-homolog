@@ -511,6 +511,7 @@ Route::prefix('v1')->group(function () {
         Route::patch('/crm/pipelines/reorder', [\App\Http\Controllers\CrmPipelineController::class, 'reorderPipelines']);
         Route::put('/crm/pipelines/{pipeline}', [\App\Http\Controllers\CrmPipelineController::class, 'updatePipeline']);
         Route::post('/crm/pipelines/{pipeline}/duplicate', [\App\Http\Controllers\CrmPipelineController::class, 'duplicatePipeline']);
+        Route::delete('/crm/pipelines/{pipeline}', [\App\Http\Controllers\CrmPipelineController::class, 'destroyPipeline']);
         Route::get('/crm/pipeline-events', [\App\Http\Controllers\CrmPipelineController::class, 'events']);
         Route::post('/crm/pipelines/{pipeline}/stages', [\App\Http\Controllers\CrmPipelineController::class, 'storeStage']);
         Route::patch('/crm/pipelines/{pipeline}/stages/reorder', [\App\Http\Controllers\CrmPipelineController::class, 'reorderStages']);
@@ -1469,6 +1470,7 @@ Route::prefix('v1')->group(function () {
         Route::patch('/crm/pipelines/reorder', [\App\Http\Controllers\CrmPipelineController::class, 'reorderPipelines']);
         Route::put('/crm/pipelines/{pipeline}', [\App\Http\Controllers\CrmPipelineController::class, 'updatePipeline']);
         Route::post('/crm/pipelines/{pipeline}/duplicate', [\App\Http\Controllers\CrmPipelineController::class, 'duplicatePipeline']);
+        Route::delete('/crm/pipelines/{pipeline}', [\App\Http\Controllers\CrmPipelineController::class, 'destroyPipeline']);
         Route::get('/crm/pipeline-events', [\App\Http\Controllers\CrmPipelineController::class, 'events']);
         Route::post('/crm/pipelines/{pipeline}/stages', [\App\Http\Controllers\CrmPipelineController::class, 'storeStage']);
         Route::patch('/crm/pipelines/{pipeline}/stages/reorder', [\App\Http\Controllers\CrmPipelineController::class, 'reorderStages']);

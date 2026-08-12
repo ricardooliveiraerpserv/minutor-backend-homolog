@@ -136,6 +136,9 @@ class CrmOpportunityController extends Controller
         $opps = $this->applyOppScope($this->withRels(CrmOpportunity::where('pipeline_id', $pipelineId)))
             ->when($request->filled('responsavel_id'), fn ($q) => $q->where('responsavel_id', $request->responsavel_id))
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->status))
+            ->when($request->filled('de'), fn ($q) => $q->whereDate('data_abertura', '>=', $request->de))
+            ->when($request->filled('ate'), fn ($q) => $q->whereDate('data_abertura', '<=', $request->ate))
             ->orderByDesc('updated_at')->get();
 
         // Fase 4 — "entrou na etapa em": último stage_changed p/ a etapa atual (1 query, sem N+1).
