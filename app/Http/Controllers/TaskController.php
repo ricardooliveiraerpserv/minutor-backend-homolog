@@ -330,6 +330,7 @@ class TaskController extends Controller
             'entity_type'         => $t->entity_type,
             'entity_id'           => $t->entity_id,
             'entity_label'        => $this->entityLabel($t),
+            'entity_date'         => $this->entityDate($t),
             'recurrence_type'     => $t->recurrence_type,
             'recurrence_interval' => $t->recurrence_interval,
             'recurrence_weekdays' => $t->recurrence_weekdays ?? [],
@@ -358,5 +359,14 @@ class TaskController extends Controller
             'meeting'  => \App\Models\Meeting::find($t->entity_id)?->title,
             default    => null,
         };
+    }
+
+    /** Data de origem da tarefa (hoje só reunião) — wall-clock UTC, como gravado. */
+    private function entityDate(Task $t): ?string
+    {
+        if ($t->entity_type === 'meeting' && $t->entity_id) {
+            return \App\Models\Meeting::find($t->entity_id)?->meeting_date?->format('Y-m-d H:i');
+        }
+        return null;
     }
 }
