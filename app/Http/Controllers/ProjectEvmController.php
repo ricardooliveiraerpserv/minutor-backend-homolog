@@ -6,6 +6,8 @@ use App\Models\Project;
 use App\Models\ProjectBaseline;
 use App\Models\StageBaselineItem;
 use App\Models\Timesheet;
+use App\Models\User;
+use App\Services\ConsultorCostService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -26,15 +28,24 @@ use Illuminate\Support\Facades\DB;
  */
 class ProjectEvmController extends Controller
 {
-    /** Congela a linha de base atual do cronograma (snapshot imutável de datas + horas). */
+    /** Congela a linha de base atual do cronograma (snapshot imutável de datas + horas + custo planejado). */
     public function freeze(Project $project, Request $request): JsonResponse
     {
         $label = trim((string) $request->input('label', '')) ?: 'Linha de base '.now()->format('d/m/Y');
         $notes = $request->input('notes');
+        $comp  = now()->format('Y-m');                 // competência do congelamento (custo/hora vigente)
+        $costSvc = app(ConsultorCostService::class);
 
         $stages = $project->stages()->with('deliveries')->get();
 
-        $baseline = DB::transaction(function () use ($project, $label, $notes, $stages) {
+        // Custo/hora dos responsáveis, congelado na competência atual (mesma regra da Rentabilidade).
+        $userIds = $stages->pluck('responsible_user_id')
+            ->merge($stages->flatMap(fn ($s) => $s->deliveries->pluck('responsible_user_id')))
+            ->filter()->unique()->values();
+        $users = User::with('partner')->whereIn('id', $userIds->all() ?: [0])->get()->keyBy('id');
+        $rateFor = fn ($uid) => ($uid && $users->has($uid)) ? $costSvc->hourlyCost($users->get($uid), $comp) : 0.0;
+
+        $baseline = DB::transaction(function () use ($project, $label, $notes, $stages, $rateFor) {
             // Só uma baseline "current" por projeto.
             ProjectBaseline::where('project_id', $project->id)->where('is_current', true)->update(['is_current' => false]);
 
@@ -44,44 +55,43 @@ class ProjectEvmController extends Controller
                 'frozen_at'           => now(),
                 'frozen_by'           => auth()->id(),
                 'planned_hours_total' => 0,
+                'planned_cost_total'  => 0,
                 'notes'               => $notes,
                 'is_current'          => true,
             ]);
 
-            $total = 0.0;
+            $totalH = 0.0; $totalC = 0.0;
+            $mk = function (array $attrs, float $hours, float $rate) use ($baseline, &$totalH, &$totalC) {
+                $cost = round($hours * $rate, 2);
+                StageBaselineItem::create($attrs + ['project_baseline_id' => $baseline->id, 'planned_hours' => $hours, 'planned_cost' => $cost]);
+                $totalH += $hours; $totalC += $cost;
+            };
+
             foreach ($stages as $stage) {
                 $deliveries = $stage->deliveries;
                 if ($deliveries->isEmpty()) {
                     // Etapa sem atividades: congela a etapa como item (PV/EV no nível de etapa).
-                    $hours = (float) $stage->hours_planned;
-                    StageBaselineItem::create([
-                        'project_baseline_id' => $baseline->id,
-                        'stage_id'            => $stage->id,
-                        'stage_delivery_id'   => null,
-                        'title'               => $stage->name,
-                        'planned_start_at'    => $stage->stage_start_at,
-                        'planned_end_at'      => $stage->expected_end_date,
-                        'planned_hours'       => $hours,
-                    ]);
-                    $total += $hours;
+                    $mk([
+                        'stage_id'          => $stage->id,
+                        'stage_delivery_id' => null,
+                        'title'             => $stage->name,
+                        'planned_start_at'  => $stage->stage_start_at,
+                        'planned_end_at'    => $stage->expected_end_date,
+                    ], (float) $stage->hours_planned, $rateFor($stage->responsible_user_id));
                     continue;
                 }
                 foreach ($deliveries as $d) {
-                    $hours = (float) $d->hours_planned;
-                    StageBaselineItem::create([
-                        'project_baseline_id' => $baseline->id,
-                        'stage_id'            => $stage->id,
-                        'stage_delivery_id'   => $d->id,
-                        'title'               => $d->title,
-                        'planned_start_at'    => $d->planned_start_at,
-                        'planned_end_at'      => optional($d->plannedEndDate())->toDateString(),
-                        'planned_hours'       => $hours,
-                    ]);
-                    $total += $hours;
+                    $mk([
+                        'stage_id'          => $stage->id,
+                        'stage_delivery_id' => $d->id,
+                        'title'             => $d->title,
+                        'planned_start_at'  => $d->planned_start_at,
+                        'planned_end_at'    => optional($d->plannedEndDate())->toDateString(),
+                    ], (float) $d->hours_planned, $rateFor($d->responsible_user_id));
                 }
             }
 
-            $baseline->update(['planned_hours_total' => round($total, 2)]);
+            $baseline->update(['planned_hours_total' => round($totalH, 2), 'planned_cost_total' => round($totalC, 2)]);
             return $baseline;
         });
 
@@ -135,45 +145,83 @@ class ProjectEvmController extends Controller
             ->groupBy('date')->selectRaw('date, COALESCE(SUM(effort_minutes),0)/60.0 AS h')
             ->get()->map(fn ($r) => ['date' => Carbon::parse($r->date)->endOfDay(), 'h' => (float) $r->h]);
 
-        $bac = (float) $baseline->planned_hours_total;
+        $hasCost = (float) $baseline->planned_cost_total > 0;
+        $bac  = (float) $baseline->planned_hours_total;
+        $bacC = (float) $baseline->planned_cost_total;
 
-        // PV acumulado até $date: horas de cada item distribuídas linearmente em [start, end].
-        $pvAt = function (Carbon $date) use ($items): float {
+        // PV acumulado até $date: valor de cada item (horas OU custo) distribuído linearmente em [start, end].
+        $pvGen = function (Carbon $date, callable $val) use ($items): float {
             $sum = 0.0;
             foreach ($items as $it) {
-                $h = (float) $it->planned_hours;
-                if ($h <= 0) continue;
+                $v = (float) $val($it);
+                if ($v <= 0) continue;
                 $s = $it->planned_start_at; $e = $it->planned_end_at;
-                if (! $e) { continue; } // sem fim planejado não entra no PV
+                if (! $e) continue;                 // sem fim planejado não entra no PV
                 $end = Carbon::parse($e)->endOfDay();
-                if (! $s) { $sum += $date->gte($end) ? $h : 0.0; continue; } // sem início: degrau no fim
+                if (! $s) { $sum += $date->gte($end) ? $v : 0.0; continue; } // sem início: degrau no fim
                 $start = Carbon::parse($s)->startOfDay();
                 if ($date->lte($start)) continue;
-                if ($date->gte($end)) { $sum += $h; continue; }
+                if ($date->gte($end)) { $sum += $v; continue; }
                 $span = max(1, $start->diffInDays($end));
-                $sum += $h * min(1.0, max(0.0, $start->diffInDays($date) / $span));
+                $sum += $v * min(1.0, max(0.0, $start->diffInDays($date) / $span));
             }
             return round($sum, 2);
         };
 
-        // EV acumulado até $date: horas dos itens concluídos até a data.
-        $evAt = function (Carbon $date) use ($items, $itemDoneAt): float {
+        // EV acumulado até $date: valor dos itens concluídos até a data.
+        $evGen = function (Carbon $date, callable $val) use ($items, $itemDoneAt): float {
             $sum = 0.0;
             foreach ($items as $it) {
                 $done = $itemDoneAt($it);
-                if ($done && $done->lte($date)) $sum += (float) $it->planned_hours;
+                if ($done && $done->lte($date)) $sum += (float) $val($it);
             }
             return round($sum, 2);
         };
+
+        $hoursVal = fn (StageBaselineItem $it) => (float) $it->planned_hours;
+        $costValF = fn (StageBaselineItem $it) => (float) $it->planned_cost;
 
         $acAt = function (Carbon $date) use ($acRows): float {
             return round($acRows->filter(fn ($r) => $r['date']->lte($date))->sum('h'), 2);
         };
 
-        $pv = $pvAt($asOf); $ev = $evAt($asOf); $ac = $acAt($asOf);
+        // AC em R$ por dia: horas apontadas × custo/hora do consultor NA competência do apontamento (motor Rentabilidade).
+        $acCostRows = collect();
+        if ($hasCost) {
+            $costSvc = app(ConsultorCostService::class);
+            $raw = DB::table('timesheets')
+                ->where('project_id', $project->id)->whereNull('deleted_at')
+                ->whereIn('status', [Timesheet::STATUS_APPROVED, Timesheet::STATUS_RELEASED])
+                ->groupBy('user_id', 'date')
+                ->selectRaw('user_id, date, COALESCE(SUM(effort_minutes),0)/60.0 AS h')->get();
+            $tsUsers = User::with('partner')->whereIn('id', $raw->pluck('user_id')->filter()->unique()->all() ?: [0])->get()->keyBy('id');
+            $acCostRows = $raw->map(function ($r) use ($tsUsers, $costSvc) {
+                $d = Carbon::parse($r->date);
+                $rate = ($r->user_id && $tsUsers->has($r->user_id)) ? $costSvc->hourlyCost($tsUsers->get($r->user_id), $d->format('Y-m')) : 0.0;
+                return ['date' => $d->endOfDay(), 'c' => round(((float) $r->h) * $rate, 2)];
+            });
+        }
+        $acCostAt = fn (Carbon $date) => round($acCostRows->filter(fn ($r) => $r['date']->lte($date))->sum('c'), 2);
+
+        $pv = $pvGen($asOf, $hoursVal); $ev = $evGen($asOf, $hoursVal); $ac = $acAt($asOf);
         $spi = $pv > 0 ? round($ev / $pv, 3) : null;
         $cpi = $ac > 0 ? round($ev / $ac, 3) : null;
         $eac = ($cpi && $cpi > 0) ? round($bac / $cpi, 2) : null;
+
+        // EVM em R$ (Fase 3) — só quando a baseline tem custo planejado congelado.
+        $cost = null;
+        if ($hasCost) {
+            $pvC = $pvGen($asOf, $costValF); $evC = $evGen($asOf, $costValF); $acC = $acCostAt($asOf);
+            $cpiC = $acC > 0 ? round($evC / $acC, 3) : null;
+            $eacC = ($cpiC && $cpiC > 0) ? round($bacC / $cpiC, 2) : null;
+            $cost = [
+                'bac' => round($bacC, 2), 'pv' => $pvC, 'ev' => $evC, 'ac' => $acC,
+                'sv' => round($evC - $pvC, 2), 'cv' => round($evC - $acC, 2),
+                'spi' => $pvC > 0 ? round($evC / $pvC, 3) : null, 'cpi' => $cpiC,
+                'eac' => $eacC, 'etc' => $eacC !== null ? round($eacC - $acC, 2) : null,
+                'vac' => $eacC !== null ? round($bacC - $eacC, 2) : null,
+            ];
+        }
 
         // Curva-S semanal: do início do plano até o maior entre fim do plano e hoje.
         $starts = $items->pluck('planned_start_at')->filter()->map(fn ($d) => Carbon::parse($d));
@@ -186,17 +234,24 @@ class ProjectEvmController extends Controller
         while ($cursor->lte($curveEnd) && $guard++ < 260) {
             $w = $cursor->copy()->endOfWeek();
             $future = $w->gt($asOf);
-            $series[] = [
+            $pt = [
                 'date' => $cursor->toDateString(),
-                'pv'   => $pvAt($w),                    // PV projeta até o fim do plano
-                'ev'   => $future ? null : $evAt($w),   // EV/AC só até hoje
+                'pv'   => $pvGen($w, $hoursVal),                     // PV projeta até o fim do plano
+                'ev'   => $future ? null : $evGen($w, $hoursVal),    // EV/AC só até hoje
                 'ac'   => $future ? null : $acAt($w),
             ];
+            if ($hasCost) {
+                $pt['pv_cost'] = $pvGen($w, $costValF);
+                $pt['ev_cost'] = $future ? null : $evGen($w, $costValF);
+                $pt['ac_cost'] = $future ? null : $acCostAt($w);
+            }
+            $series[] = $pt;
             $cursor->addWeek();
         }
 
         return response()->json([
             'has_baseline' => true,
+            'has_cost'     => $hasCost,
             'baseline'     => $this->baselineMeta($baseline),
             'as_of'        => $asOf->toDateString(),
             'metrics'      => [
@@ -209,6 +264,7 @@ class ProjectEvmController extends Controller
                 'pct_planned' => $bac > 0 ? round($pv / $bac * 100, 1) : null,
                 'pct_real'    => $bac > 0 ? round($ev / $bac * 100, 1) : null,
             ],
+            'cost'  => $cost,
             'curve' => $series,
         ]);
     }
@@ -290,6 +346,7 @@ class ProjectEvmController extends Controller
             'frozen_at'           => optional($b->frozen_at)->toIso8601String(),
             'frozen_by'           => $b->frozenBy?->name,
             'planned_hours_total' => (float) $b->planned_hours_total,
+            'planned_cost_total'  => (float) $b->planned_cost_total,
             'notes'               => $b->notes,
         ];
     }

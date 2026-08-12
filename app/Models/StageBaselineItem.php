@@ -19,12 +19,14 @@ class StageBaselineItem extends Model
         'planned_start_at',
         'planned_end_at',
         'planned_hours',
+        'planned_cost',
     ];
 
     protected $casts = [
         'planned_start_at' => 'date:Y-m-d',
         'planned_end_at'   => 'date:Y-m-d',
         'planned_hours'    => 'decimal:2',
+        'planned_cost'     => 'decimal:2',
     ];
 
     public function baseline(): BelongsTo

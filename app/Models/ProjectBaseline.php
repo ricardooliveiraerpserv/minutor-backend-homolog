@@ -19,6 +19,7 @@ class ProjectBaseline extends Model
         'frozen_at',
         'frozen_by',
         'planned_hours_total',
+        'planned_cost_total',
         'notes',
         'is_current',
     ];
@@ -26,6 +27,7 @@ class ProjectBaseline extends Model
     protected $casts = [
         'frozen_at'           => 'datetime',
         'planned_hours_total' => 'decimal:2',
+        'planned_cost_total'  => 'decimal:2',
         'is_current'          => 'boolean',
     ];
 
