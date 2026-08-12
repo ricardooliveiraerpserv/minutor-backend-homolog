@@ -101,6 +101,15 @@ class ProjectEvmController extends Controller
         ], 201);
     }
 
+    /** Descongela: remove a linha de base current (desfaz o congelamento). Itens caem por cascade. */
+    public function unfreeze(Project $project): JsonResponse
+    {
+        ProjectBaseline::where('project_id', $project->id)->where('is_current', true)
+            ->get()->each(fn (ProjectBaseline $b) => $b->delete());
+
+        return response()->json(['message' => 'Linha de base removida.']);
+    }
+
     /** Indicadores EVM (em horas) + curva-S do projeto, a partir da baseline current. */
     public function evm(Project $project, Request $request): JsonResponse
     {
