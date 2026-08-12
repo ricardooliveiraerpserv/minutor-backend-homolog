@@ -1048,6 +1048,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/delay-risk', [ProjectStageController::class, 'delayRisk'])->name('projects.delay-risk');
             Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
             Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
+            Route::get('/projects/{project}/evm', [\App\Http\Controllers\ProjectEvmController::class, 'evm'])->name('projects.evm');
             Route::post('/projects/{project}/cronograma/recalc-preview', [ProjectController::class, 'recalcPreview'])->name('projects.cronograma.recalc-preview');
 
             // Modelos de cronograma (salvar/aplicar) + copiar de outro projeto
@@ -1100,6 +1101,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/deliveries/{delivery}/request-approval', [StageDeliveryController::class, 'requestApproval'])->name('deliveries.request-approval');
         });
         Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
+            Route::post('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'freeze'])->name('projects.baseline.freeze');
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
             Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
             Route::delete('/stages/{stage}', [ProjectStageController::class, 'destroy'])->name('stages.destroy');
