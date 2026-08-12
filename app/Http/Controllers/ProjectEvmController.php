@@ -138,14 +138,11 @@ class ProjectEvmController extends Controller
         $baseline = ProjectBaseline::where('project_id', $project->id)
             ->where('is_current', true)->latest('frozen_at')->first();
 
-        if (! $baseline) {
-            return response()->json([
-                'has_baseline' => false,
-                'message'      => 'Congele a linha de base para habilitar os indicadores de EVM.',
-            ]);
-        }
-
-        $items = StageBaselineItem::where('project_baseline_id', $baseline->id)->get();
+        // Sem baseline congelada → usa o PLANO ATUAL (live) como referência (modo estimado).
+        $usingLive = ! $baseline;
+        $items = $baseline
+            ? StageBaselineItem::where('project_baseline_id', $baseline->id)->get()
+            : $this->liveItemsForProjects([$project->id]);
 
         // Datas reais de conclusão das atividades congeladas (para o EV no tempo).
         $deliveryIds = $items->pluck('stage_delivery_id')->filter()->all();
@@ -159,7 +156,7 @@ class ProjectEvmController extends Controller
             ->pluck('actual_end_at', 'id');
 
         // Data de conclusão real de cada item (null = não concluído).
-        $itemDoneAt = function (StageBaselineItem $it) use ($doneAt, $stageEndAt): ?Carbon {
+        $itemDoneAt = function ($it) use ($doneAt, $stageEndAt): ?Carbon {
             if ($it->stage_delivery_id && isset($doneAt[$it->stage_delivery_id])) return Carbon::parse($doneAt[$it->stage_delivery_id]);
             if (! $it->stage_delivery_id && $it->stage_id && isset($stageEndAt[$it->stage_id])) return Carbon::parse($stageEndAt[$it->stage_id]);
             return null;
@@ -172,9 +169,9 @@ class ProjectEvmController extends Controller
             ->groupBy('date')->selectRaw('date, COALESCE(SUM(effort_minutes),0)/60.0 AS h')
             ->get()->map(fn ($r) => ['date' => Carbon::parse($r->date)->endOfDay(), 'h' => (float) $r->h]);
 
-        $hasCost = (float) $baseline->planned_cost_total > 0;
-        $bac  = (float) $baseline->planned_hours_total;
-        $bacC = (float) $baseline->planned_cost_total;
+        $hasCost = $baseline ? ((float) $baseline->planned_cost_total > 0) : false;
+        $bac  = $baseline ? (float) $baseline->planned_hours_total : round($items->sum(fn ($it) => (float) $it->planned_hours), 2);
+        $bacC = $baseline ? (float) $baseline->planned_cost_total : 0.0;
 
         // PV acumulado até $date: valor de cada item (horas OU custo) distribuído linearmente em [start, end].
         $pvGen = function (Carbon $date, callable $val) use ($items): float {
@@ -205,8 +202,8 @@ class ProjectEvmController extends Controller
             return round($sum, 2);
         };
 
-        $hoursVal = fn (StageBaselineItem $it) => (float) $it->planned_hours;
-        $costValF = fn (StageBaselineItem $it) => (float) $it->planned_cost;
+        $hoursVal = fn ($it) => (float) $it->planned_hours;
+        $costValF = fn ($it) => (float) $it->planned_cost;
 
         $acAt = function (Carbon $date) use ($acRows): float {
             return round($acRows->filter(fn ($r) => $r['date']->lte($date))->sum('h'), 2);
@@ -253,7 +250,7 @@ class ProjectEvmController extends Controller
         // Curva-S semanal: do início do plano até o maior entre fim do plano e hoje.
         $starts = $items->pluck('planned_start_at')->filter()->map(fn ($d) => Carbon::parse($d));
         $ends   = $items->pluck('planned_end_at')->filter()->map(fn ($d) => Carbon::parse($d));
-        $curveStart = ($starts->min() ?: Carbon::parse($project->start_date ?: $baseline->frozen_at))->copy()->startOfWeek();
+        $curveStart = ($starts->min() ?: Carbon::parse($project->start_date ?: ($baseline?->frozen_at ?: now())))->copy()->startOfWeek();
         $curveEnd   = ($ends->max() && $ends->max()->gt($asOf) ? $ends->max() : $asOf)->copy()->endOfWeek();
 
         $series = [];
@@ -277,10 +274,11 @@ class ProjectEvmController extends Controller
         }
 
         return response()->json([
-            'has_baseline' => true,
-            'has_cost'     => $hasCost,
-            'baseline'     => $this->baselineMeta($baseline),
-            'as_of'        => $asOf->toDateString(),
+            'has_baseline'    => (bool) $baseline,
+            'using_live_plan' => $usingLive,
+            'has_cost'        => $hasCost,
+            'baseline'        => $baseline ? $this->baselineMeta($baseline) : null,
+            'as_of'           => $asOf->toDateString(),
             'metrics'      => [
                 'bac' => round($bac, 2),
                 'pv'  => $pv, 'ev' => $ev, 'ac' => $ac,
@@ -390,7 +388,7 @@ class ProjectEvmController extends Controller
         $delivRows = DB::table('stage_deliveries as d')
             ->join('project_stages as s', 's.id', '=', 'd.stage_id')
             ->whereIn('s.project_id', $ids)->whereNull('d.deleted_at')->whereNull('s.deleted_at')
-            ->select('s.project_id', 'd.id', 'd.status', 'd.due_date', 'd.completed_at')->get();
+            ->select('s.project_id', 'd.id', 'd.status', 'd.due_date', 'd.completed_at', 'd.hours_planned', 'd.planned_start_at')->get();
         $doneAt   = $delivRows->where('status', 'done')->whereNotNull('completed_at')->pluck('completed_at', 'id');
         $stageEndAt = DB::table('project_stages')->whereIn('project_id', $ids)
             ->where('status', 'done')->whereNotNull('actual_end_at')->pluck('actual_end_at', 'id');
@@ -409,34 +407,46 @@ class ProjectEvmController extends Controller
             $ac      = round((float) ($acByProj[$p->id] ?? 0), 2);
 
             $bl = $baselines->get($p->id);
-            $pv = 0.0; $ev = 0.0; $bac = 0.0; $spi = null; $cpi = null; $pctP = null; $pctR = null;
-            if ($bl) {
-                $bac = (float) $bl->planned_hours_total;
-                foreach ($itemsByBl->get($bl->id, collect()) as $it) {
-                    $h = (float) $it->planned_hours;
-                    if ($h <= 0) continue;
-                    if ($e = $it->planned_end_at) {                       // PV distribuído no tempo
-                        $end = Carbon::parse($e)->endOfDay();
-                        if (! $it->planned_start_at) { $pv += $today->gte($end) ? $h : 0.0; }
-                        else {
-                            $st = Carbon::parse($it->planned_start_at)->startOfDay();
-                            if ($today->gt($st)) {
-                                if ($today->gte($end)) $pv += $h;
-                                else { $span = max(1, $st->diffInDays($end)); $pv += $h * min(1.0, max(0.0, $st->diffInDays($today) / $span)); }
-                            }
+            // Referência = baseline congelada, OU o PLANO ATUAL (live) quando não há baseline.
+            $refItems = $bl
+                ? $itemsByBl->get($bl->id, collect())
+                : $delivs->map(function ($d) {
+                    $start = $d->planned_start_at ? Carbon::parse($d->planned_start_at) : null;
+                    $end   = $d->due_date ? Carbon::parse($d->due_date)
+                           : ($start ? $start->copy()->addDays((int) max(1, ceil(((float) $d->hours_planned) / 8))) : null);
+                    return (object) [
+                        'stage_delivery_id' => $d->id, 'stage_id' => null,
+                        'planned_start_at'  => optional($start)->toDateString(),
+                        'planned_end_at'    => optional($end)->toDateString(),
+                        'planned_hours'     => (float) $d->hours_planned,
+                    ];
+                });
+
+            $pv = 0.0; $ev = 0.0; $bac = 0.0;
+            foreach ($refItems as $it) {
+                $h = (float) $it->planned_hours; if ($h <= 0) continue;
+                $bac += $h;
+                if ($e = $it->planned_end_at) {                          // PV distribuído no tempo
+                    $end = Carbon::parse($e)->endOfDay();
+                    if (! $it->planned_start_at) { $pv += $today->gte($end) ? $h : 0.0; }
+                    else {
+                        $st = Carbon::parse($it->planned_start_at)->startOfDay();
+                        if ($today->gt($st)) {
+                            if ($today->gte($end)) $pv += $h;
+                            else { $span = max(1, $st->diffInDays($end)); $pv += $h * min(1.0, max(0.0, $st->diffInDays($today) / $span)); }
                         }
                     }
-                    $dd = null;                                          // EV = concluídas
-                    if ($it->stage_delivery_id && isset($doneAt[$it->stage_delivery_id])) $dd = Carbon::parse($doneAt[$it->stage_delivery_id]);
-                    elseif (! $it->stage_delivery_id && $it->stage_id && isset($stageEndAt[$it->stage_id])) $dd = Carbon::parse($stageEndAt[$it->stage_id]);
-                    if ($dd && $dd->lte($today)) $ev += $h;
                 }
-                $pv = round($pv, 2); $ev = round($ev, 2);
-                $spi  = $pv > 0 ? round($ev / $pv, 3) : null;
-                $cpi  = $ac > 0 ? round($ev / $ac, 3) : null;
-                $pctP = $bac > 0 ? round($pv / $bac * 100, 1) : null;
-                $pctR = $bac > 0 ? round($ev / $bac * 100, 1) : null;
+                $dd = null;                                             // EV = concluídas
+                if ($it->stage_delivery_id && isset($doneAt[$it->stage_delivery_id])) $dd = Carbon::parse($doneAt[$it->stage_delivery_id]);
+                elseif (! $it->stage_delivery_id && $it->stage_id && isset($stageEndAt[$it->stage_id])) $dd = Carbon::parse($stageEndAt[$it->stage_id]);
+                if ($dd && $dd->lte($today)) $ev += $h;
             }
+            $pv = round($pv, 2); $ev = round($ev, 2); $bac = round($bac, 2);
+            $spi  = $pv > 0 ? round($ev / $pv, 3) : null;
+            $cpi  = $ac > 0 ? round($ev / $ac, 3) : null;
+            $pctP = $bac > 0 ? round($pv / $bac * 100, 1) : null;
+            $pctR = $bac > 0 ? round($ev / $bac * 100, 1) : null;
             $overduePct = $total > 0 ? round($overdue / $total * 100, 1) : 0;
             $health = 'ok';
             if (($spi !== null && $spi < 0.9) || $overduePct >= 20) $health = 'late';
@@ -446,7 +456,7 @@ class ProjectEvmController extends Controller
                 'id' => $p->id, 'name' => $p->name, 'code' => $p->code, 'status' => $p->status,
                 'customer'     => $p->customer?->name,
                 'coordinators' => $p->coordinators->pluck('name')->all(),
-                'has_baseline' => (bool) $bl,
+                'has_baseline' => (bool) $bl, 'using_live_plan' => ! $bl,
                 'pct_planned'  => $pctP, 'pct_real' => $pctR, 'spi' => $spi, 'cpi' => $cpi,
                 'hours_planned' => round($bac, 2), 'hours_ev' => $ev, 'hours_actual' => $ac,
                 'deliveries' => $total, 'done' => $done, 'overdue' => $overdue, 'overdue_pct' => $overduePct,
@@ -455,6 +465,33 @@ class ProjectEvmController extends Controller
         })->values();
 
         return response()->json(['projects' => $rows]);
+    }
+
+    /**
+     * Itens de referência do PLANO ATUAL (live) — quando o projeto não tem baseline congelada.
+     * Mesmo shape do StageBaselineItem (planned_start_at/planned_end_at/planned_hours/stage_delivery_id),
+     * então a mesma lógica de PV/EV funciona. Fim = due_date OU início + ~horas/8 dias corridos (aproximação).
+     */
+    private function liveItemsForProjects(array $projectIds): \Illuminate\Support\Collection
+    {
+        if (empty($projectIds)) return collect();
+        $rows = DB::table('stage_deliveries as d')
+            ->join('project_stages as s', 's.id', '=', 'd.stage_id')
+            ->whereIn('s.project_id', $projectIds)->whereNull('d.deleted_at')->whereNull('s.deleted_at')
+            ->select('d.id', 'd.hours_planned', 'd.planned_start_at', 'd.due_date')->get();
+
+        return $rows->map(function ($d) {
+            $start = $d->planned_start_at ? Carbon::parse($d->planned_start_at) : null;
+            $end   = $d->due_date ? Carbon::parse($d->due_date)
+                   : ($start ? $start->copy()->addDays((int) max(1, ceil(((float) $d->hours_planned) / 8))) : null);
+            return (object) [
+                'stage_delivery_id' => $d->id, 'stage_id' => null,
+                'planned_start_at'  => optional($start)->toDateString(),
+                'planned_end_at'    => optional($end)->toDateString(),
+                'planned_hours'     => (float) $d->hours_planned,
+                'planned_cost'      => 0.0,
+            ];
+        });
     }
 
     /** Query de projetos do portfólio com os filtros aplicados (compartilhada entre portfolio e a curva). */
@@ -489,9 +526,13 @@ class ProjectEvmController extends Controller
         $ids  = $this->portfolioBaseQuery($request)->pluck('id')->all();
         if (empty($ids)) return response()->json(['curve' => [], 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => 0]);
 
-        $blIds = ProjectBaseline::whereIn('project_id', $ids)->where('is_current', true)->pluck('id')->all();
-        $items = $blIds ? StageBaselineItem::whereIn('project_baseline_id', $blIds)->get() : collect();
-        if ($items->isEmpty()) return response()->json(['curve' => [], 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => 0]);
+        $baselines = ProjectBaseline::whereIn('project_id', $ids)->where('is_current', true)->get(['id', 'project_id']);
+        $baseItems = $baselines->isNotEmpty()
+            ? StageBaselineItem::whereIn('project_baseline_id', $baselines->pluck('id')->all())->get()
+            : collect();
+        $liveProjectIds = array_values(array_diff($ids, $baselines->pluck('project_id')->all()));
+        $items = $baseItems->concat($this->liveItemsForProjects($liveProjectIds));
+        if ($items->isEmpty()) return response()->json(['curve' => [], 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => 0, 'projects_estimated' => 0]);
 
         $doneAt = DB::table('stage_deliveries')
             ->whereIn('id', $items->pluck('stage_delivery_id')->filter()->all() ?: [0])
@@ -505,7 +546,7 @@ class ProjectEvmController extends Controller
             ->groupBy('date')->selectRaw('date, COALESCE(SUM(effort_minutes),0)/60.0 AS h')
             ->get()->map(fn ($r) => ['date' => Carbon::parse($r->date)->endOfDay(), 'h' => (float) $r->h]);
 
-        $itemDoneAt = function (StageBaselineItem $it) use ($doneAt, $stageEndAt): ?Carbon {
+        $itemDoneAt = function ($it) use ($doneAt, $stageEndAt): ?Carbon {
             if ($it->stage_delivery_id && isset($doneAt[$it->stage_delivery_id])) return Carbon::parse($doneAt[$it->stage_delivery_id]);
             if (! $it->stage_delivery_id && $it->stage_id && isset($stageEndAt[$it->stage_id])) return Carbon::parse($stageEndAt[$it->stage_id]);
             return null;
@@ -543,7 +584,7 @@ class ProjectEvmController extends Controller
             $cursor->addWeek();
         }
 
-        return response()->json(['curve' => $series, 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => count($blIds)]);
+        return response()->json(['curve' => $series, 'as_of' => $asOf->toDateString(), 'projects_with_baseline' => $baselines->count(), 'projects_estimated' => count($liveProjectIds)]);
     }
 
     private function baselineMeta(ProjectBaseline $b): array
