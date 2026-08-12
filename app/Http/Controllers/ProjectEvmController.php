@@ -472,15 +472,10 @@ class ProjectEvmController extends Controller
         elseif ($status) $q->where('status', $status);
         else $q->open();
 
-        // Só projetos OPERACIONAIS (com cronograma) — exclui sustentação/cloud/bizify/investimento
-        // (ADR 0004, mesma regra do Project::isOperational). Esses contratos não têm cronograma → fora do EVM.
+        // SOMENTE tipo "Projeto" (allowlist) — exclui Sustentação, Arquitetura, sem-tipo e Investimento
+        // Interno (is_investimento_comercial); só o tipo Projeto tem cronograma → é o que entra no EVM.
+        $q->whereHas('serviceType', fn ($s) => $s->whereRaw('LOWER(name) = ?', ['projeto']));
         $q->where(fn ($x) => $x->whereNull('is_investimento_comercial')->orWhere('is_investimento_comercial', false));
-        $q->whereDoesntHave('serviceType', function ($s) {
-            $s->whereRaw('LOWER(name) LIKE ?', ['%sustenta%'])
-              ->orWhereRaw('LOWER(name) LIKE ?', ['%cloud%'])
-              ->orWhereRaw('LOWER(name) LIKE ?', ['%bizify%'])
-              ->orWhereRaw('LOWER(name) LIKE ?', ['%investimento%']);
-        });
         return $q;
     }
 
