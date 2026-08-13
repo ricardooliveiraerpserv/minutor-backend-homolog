@@ -504,6 +504,7 @@ Route::prefix('v1')->group(function () {
         // Solicitação de código-fonte (Fase 0) — fontes Git autorizadas do cliente (READ-ONLY)
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
+        Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
@@ -1476,6 +1477,7 @@ Route::prefix('v1')->group(function () {
         // Solicitação de código-fonte (Fase 0) — fontes Git autorizadas do cliente (READ-ONLY)
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
+        Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);

@@ -90,6 +90,33 @@ class GithubAppAuth
         });
     }
 
+    /** Repos que a instalação do owner enxerga (p/ o seletor). [{name, default_branch, private}]. */
+    public function listRepos(string $owner): array
+    {
+        $token = $this->installationToken($owner);   // pode lançar APP_NOT_INSTALLED/NOT_CONFIGURED
+        $out = [];
+        for ($page = 1; $page <= 5; $page++) {   // teto 500 repos — suficiente p/ um cliente
+            $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/installation/repositories", ['per_page' => 100, 'page' => $page]);
+            if (!$res->successful()) {
+                break;
+            }
+            $repos = $res->json('repositories', []);
+            foreach ($repos as $r) {
+                $out[] = [
+                    'name'           => $r['name'] ?? null,
+                    'default_branch' => $r['default_branch'] ?? null,
+                    'private'        => (bool) ($r['private'] ?? true),
+                ];
+            }
+            if (count($repos) < 100) {
+                break;
+            }
+        }
+        usort($out, fn ($a, $b) => strcasecmp((string) $a['name'], (string) $b['name']));
+        return $out;
+    }
+
     /** Classificação (item 14): a instalação do owner tem acesso a ESTE repo? (best-effort) */
     public function installationHasRepo(string $owner, string $repo): bool
     {

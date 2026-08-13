@@ -98,6 +98,21 @@ class ClientSourceRepoController extends Controller
         ]);
     }
 
+    /** Lista os repositórios que a App enxerga num owner (alimenta o seletor). Degrada p/ vazio. */
+    public function available(Request $request, GitHubSourceService $svc): JsonResponse
+    {
+        $this->authorizeManage($request);
+        $owner = trim((string) $request->query('owner', ''));
+        if ($owner === '') {
+            return response()->json(['ok' => false, 'repos' => []]);
+        }
+        try {
+            return response()->json(['ok' => true, 'repos' => $svc->availableRepos($owner)]);
+        } catch (SourceIntegrationException $e) {
+            return response()->json(['ok' => false, 'code' => $e->errorCode, 'message' => $e->getMessage(), 'repos' => []]);
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     private function validated(Request $request, bool $creating = true): array

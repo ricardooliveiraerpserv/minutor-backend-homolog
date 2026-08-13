@@ -28,6 +28,9 @@ abstract class AbstractGithubReadProvider implements SourceProvider
     /** Cliente HTTP já autenticado para o `owner` (headers-base + credencial). Lança se não configurado. */
     abstract protected function authorizedRequest(string $owner): PendingRequest;
 
+    /** Repos que a credencial enxerga no owner (p/ o seletor). */
+    abstract public function availableRepositories(string $owner): array;
+
     /** Hook: como classificar um 404 no repo (App distingue "sem acesso" de "inexistente"). */
     protected function onRepoNotFound(string $owner, string $repo): void
     {

@@ -31,4 +31,7 @@ interface SourceProvider
      * Metadados p/ "Testar acesso": ['default_branch','private','branch_found','file_count','base_path_found'].
      */
     public function inspect(string $owner, string $repo, string $branch, string $basePath = ''): array;
+
+    /** Repositórios que a credencial enxerga no owner (p/ o seletor). [{name, default_branch, private}]. */
+    public function availableRepositories(string $owner): array;
 }

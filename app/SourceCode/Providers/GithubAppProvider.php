@@ -41,6 +41,11 @@ class GithubAppProvider extends AbstractGithubReadProvider
             ]);
     }
 
+    public function availableRepositories(string $owner): array
+    {
+        return $this->auth->listRepos($owner);
+    }
+
     /** 404 no repo com a App instalada = distinguir "sem acesso" de "inexistente" (item 14). */
     protected function onRepoNotFound(string $owner, string $repo): void
     {

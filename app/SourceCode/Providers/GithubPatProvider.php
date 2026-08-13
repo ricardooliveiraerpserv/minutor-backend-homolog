@@ -40,4 +40,10 @@ class GithubPatProvider extends AbstractGithubReadProvider
                 'User-Agent'           => 'Minutor-SourceCode',
             ]);
     }
+
+    /** Legado — não usado pela feature (provider oficial é o App). */
+    public function availableRepositories(string $owner): array
+    {
+        return [];
+    }
 }

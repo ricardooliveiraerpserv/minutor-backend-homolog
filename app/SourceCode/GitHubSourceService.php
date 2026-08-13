@@ -125,6 +125,13 @@ class GitHubSourceService
         return ['commit' => $commit, 'content' => $content];
     }
 
+    /** Repos que a credencial (App) enxerga no owner — alimenta o seletor de repositório. */
+    public function availableRepos(string $owner): array
+    {
+        $this->assertConfigured();
+        return $this->provider->availableRepositories($owner);
+    }
+
     /** "Testar acesso" — metadados operacionais do repo/branch/base_path. */
     public function testAccess(ClientSourceRepo $repo): array
     {
