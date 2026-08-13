@@ -73,7 +73,15 @@ class ClientProjectController extends Controller
     public function schedule(Project $project, Request $request): JsonResponse
     {
         $user = $request->user();
-        if (($err = $this->ensureProjectAccess($project, $user)) !== null) return $err;
+        // Cronograma (só status, sem horas/valores): cliente PARTICIPANTE do projeto OU cliente do MESMO
+        // customer do projeto — mesma visibilidade do resumo operacional do portal (ClientPortalController).
+        if (!$user || !$user->isCliente()) {
+            return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
+        }
+        if ((int) $user->customer_id !== (int) $project->customer_id
+            && ! self::participatesInProject($project, (int) $user->id)) {
+            return response()->json(['message' => 'Você não participa deste projeto.'], 403);
+        }
 
         if (!$project->isOperational()) {
             return response()->json(['is_operational' => false, 'stages' => []]);
