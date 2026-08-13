@@ -522,7 +522,7 @@ class NotificationController extends Controller
      * Envia a notificação por e-mail com layout institucional. Recorrência reusa isto (reenvia a cada disparo).
      * $extraBcc = destinatários extras vindos da Central de Workflows (cópias configuradas pelo admin).
      */
-    private function emailNotification(AppNotification $n, array $extraBcc = []): int
+    public function emailNotification(AppNotification $n, array $extraBcc = []): int
     {
         if ($n->is_template) return 0;  // modelo não dispara nada
         if (!$n->send_email || !\App\Services\GraphMailSender::enabled()) return 0;

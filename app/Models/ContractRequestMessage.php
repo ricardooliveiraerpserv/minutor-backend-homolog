@@ -8,11 +8,16 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ContractRequestMessage extends Model
 {
-    protected $fillable = ['contract_request_id', 'user_id', 'message', 'visibility'];
+    protected $fillable = ['contract_request_id', 'project_id', 'user_id', 'message', 'visibility'];
 
     public function request(): BelongsTo
     {
         return $this->belongsTo(ContractRequest::class, 'contract_request_id');
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'project_id');
     }
 
     public function author(): BelongsTo
