@@ -49,7 +49,7 @@ class ClientActivityController extends Controller
     {
         if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
 
-        $delivery->load(['responsible:id,name,email', 'stage:id,project_id,name', 'stage.project:id,name', 'approvalDecider:id,name']);
+        $delivery->load(['responsible:id,name,email', 'stage:id,project_id,name', 'stage.project:id,name,customer_id', 'approvalDecider:id,name']);
 
         return response()->json($this->summarize($delivery, full: true));
     }
@@ -130,7 +130,7 @@ class ClientActivityController extends Controller
      */
     public function approve(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
     {
-        if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
+        if (($err = $this->ensureApprovalAccess($delivery, $request)) !== null) return $err;
         if (($err = $this->ensurePending($delivery)) !== null) return $err;
 
         $data = $request->validate(['note' => 'nullable|string|max:5000']);
@@ -144,7 +144,7 @@ class ClientActivityController extends Controller
      */
     public function reject(StageDelivery $delivery, Request $request, DeliveryApprovalService $service): JsonResponse
     {
-        if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;
+        if (($err = $this->ensureApprovalAccess($delivery, $request)) !== null) return $err;
         if (($err = $this->ensurePending($delivery)) !== null) return $err;
 
         $data = $request->validate(['note' => 'nullable|string|max:5000']);
@@ -185,14 +185,23 @@ class ClientActivityController extends Controller
         ];
 
         if ($full) {
+            $u = request()->user();
+            $uid = (int) $u?->id;
+            $project = $d->stage?->project;
+            $sameCustomer = $project && (int) $u?->customer_id === (int) $project->customer_id;
             $base['client_involved'] = (bool) $d->client_involved;
-            // Conversa/anexos só pro responsável — o FE usa isto pra mostrar ou esconder.
-            $base['is_responsible'] = (int) $d->responsible_user_id === (int) request()->user()?->id;
+            $base['is_responsible'] = (int) $d->responsible_user_id === $uid;
+            // Cliente do MESMO customer do projeto pode comentar em qualquer atividade (conversa por projeto, sem horas).
+            $base['can_comment'] = (bool) $sameCustomer;
+            // Aprovar continua restrito ao aprovador designado (envolvido/waiting_client sem cliente específico).
+            $base['can_approve'] = $d->approval_status === StageDelivery::APPROVAL_PENDING
+                && $project && ClientProjectController::canApprove($d, $uid, $project);
         }
 
         return $base;
     }
 
+    /** Ver/conversar: cliente do MESMO customer do projeto pode abrir qualquer atividade (conversa por projeto). */
     private function ensureAccess(StageDelivery $delivery, Request $request): ?JsonResponse
     {
         $user = $request->user();
@@ -202,14 +211,32 @@ class ClientActivityController extends Controller
         if (!$user->isCliente()) {
             return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
         }
+        $delivery->loadMissing('stage.project');
+        $project = $delivery->stage?->project;
+        if ($project && (int) $user->customer_id === (int) $project->customer_id) return null;
+        // Fallback (compat): envolvido/responsável OU aprovador designado.
         $uid = (int) $user->id;
-        // Pode abrir: envolvido (aprovação) OU responsável pela atividade.
         if (ClientProjectController::canOpen($delivery, $uid)) return null;
-        // OU é uma aprovação "aguardando cliente" que ele, como cliente do projeto, pode dar.
+        if ($project && ClientProjectController::canApprove($delivery, $uid, $project)) return null;
+        return response()->json(['message' => 'Você não participa deste projeto.'], 403);
+    }
+
+    /** Aprovar/reprovar: restrito ao aprovador designado (NÃO basta ser do mesmo customer). */
+    private function ensureApprovalAccess(StageDelivery $delivery, Request $request): ?JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['message' => 'Não autenticado.'], 401);
+        }
+        if (!$user->isCliente()) {
+            return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
+        }
+        $uid = (int) $user->id;
+        if (ClientProjectController::canOpen($delivery, $uid)) return null;
         $delivery->loadMissing('stage.project');
         $project = $delivery->stage?->project;
         if ($project && ClientProjectController::canApprove($delivery, $uid, $project)) return null;
-        return response()->json(['message' => 'Você não está envolvido nesta atividade.'], 403);
+        return response()->json(['message' => 'Você não pode aprovar esta atividade.'], 403);
     }
 
     /** Conversa e anexos: SÓ se o cliente for o responsável da atividade. */
