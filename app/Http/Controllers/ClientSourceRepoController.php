@@ -102,7 +102,7 @@ class ClientSourceRepoController extends Controller
 
     private function validated(Request $request, bool $creating = true): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'owner'      => ($creating ? 'required' : 'sometimes') . '|string|max:120',
             'repository' => ($creating ? 'required' : 'sometimes') . '|string|max:140',
             'branch'     => ($creating ? 'required' : 'sometimes') . '|string|max:140',
@@ -111,6 +111,13 @@ class ClientSourceRepoController extends Controller
             'descricao'  => 'nullable|string|max:200',
             'active'     => 'boolean',
         ]);
+        // base_path é NOT NULL default '' — o middleware ConvertEmptyStringsToNull transforma
+        // '' em null; sem este coalesce, o INSERT manda null explícito e viola a constraint.
+        // Normaliza sem barras nas pontas ('' = raiz do repo).
+        if (array_key_exists('base_path', $data)) {
+            $data['base_path'] = trim((string) $data['base_path'], '/');
+        }
+        return $data;
     }
 
     private function serialize(ClientSourceRepo $r): array
