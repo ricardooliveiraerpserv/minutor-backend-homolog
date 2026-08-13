@@ -505,6 +505,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
         Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
+        // Solicitação de código-fonte (Fase 1A) — buscas
+        Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
+        Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
@@ -1478,6 +1481,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
         Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
+        // Solicitação de código-fonte (Fase 1A) — buscas
+        Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
+        Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
