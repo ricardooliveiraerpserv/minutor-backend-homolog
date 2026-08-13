@@ -22,7 +22,25 @@ class SourceIntegrationException extends RuntimeException
 
     public static function notConfigured(): self
     {
-        return new self('NOT_CONFIGURED', 'Integração de código-fonte não configurada (GITHUB_SOURCE_TOKEN ausente no servidor).', 503);
+        return new self('NOT_CONFIGURED', 'Integração de código-fonte não configurada.', 503);
+    }
+
+    /** GitHub App sem GITHUB_APP_ID / private key no servidor. */
+    public static function appNotConfigured(): self
+    {
+        return new self('APP_NOT_CONFIGURED', 'Integração de código-fonte (GitHub App) não configurada no servidor.', 503);
+    }
+
+    /** A GitHub App não está instalada na organização/owner. */
+    public static function appNotInstalled(string $owner): self
+    {
+        return new self('APP_NOT_INSTALLED', "GitHub App não instalada na organização \"{$owner}\".", 404);
+    }
+
+    /** A App está instalada no owner, mas sem acesso a ESTE repositório. */
+    public static function repoNotAuthorized(string $full): self
+    {
+        return new self('REPO_NOT_AUTHORIZED', "GitHub App instalada, mas sem acesso ao repositório {$full}. Libere-o na instalação.", 403);
     }
 
     public static function repoNotFound(string $full): self

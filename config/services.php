@@ -144,13 +144,20 @@ return [
     ],
 
     // Integração de código-fonte (GitHub) — "Solicitação de código-fonte" no Help Desk.
-    // Fase 1 é ESTRITAMENTE READ-ONLY. Usar um token dedicado SOMENTE-LEITURA (jamais o
-    // token de deploy). Se GITHUB_SOURCE_TOKEN estiver ausente, a integração reporta
-    // "não configurada" (fail-safe) e NUNCA cai em outro token.
+    // READ-ONLY. Provider OFICIAL = GitHub App (Contents: Read-only), autenticação por
+    // installation token resolvido/renovado no backend. Fail-safe: sem App configurada,
+    // a integração reporta "não configurada" (503) e NUNCA usa outro token.
     'github_source' => [
-        'token'   => env('GITHUB_SOURCE_TOKEN'),
         'api'     => env('GITHUB_SOURCE_API', 'https://api.github.com'),
         'timeout' => (int) env('GITHUB_SOURCE_TIMEOUT', 20),
+        // GitHub App (oficial):
+        'app_id'                 => env('GITHUB_APP_ID'),
+        // Private key da App — informe UMA das duas. Base64 (linha única) é o recomendado no Render;
+        // o PEM cru multilinha também é aceito. Só server-side; nunca em banco/log/frontend.
+        'app_private_key_base64' => env('GITHUB_APP_PRIVATE_KEY_BASE64'),
+        'app_private_key'        => env('GITHUB_APP_PRIVATE_KEY'),
+        // LEGADO (provider PAT NÃO-oficial, não bindado, sem fallback):
+        'token'   => env('GITHUB_SOURCE_TOKEN'),
     ],
 
 ];

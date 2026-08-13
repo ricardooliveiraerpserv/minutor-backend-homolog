@@ -38,11 +38,12 @@ class AppServiceProvider extends ServiceProvider
         // compartilhada entre o middleware e o global scope BelongsToCompany.
         $this->app->scoped(\App\Services\CompanyContext::class);
 
-        // Solicitação de código-fonte: provedor SOMENTE-LEITURA (hoje GitHub PAT;
-        // futuro GitHub App) resolvido por este binding — trocar não afeta o fluxo.
+        // Solicitação de código-fonte: provedor SOMENTE-LEITURA. Provider OFICIAL = GitHub App.
+        // Trocar a implementação (ex.: rotação futura) não afeta GitHubSourceService/Resolver/UI.
+        // (GithubPatProvider segue no código como LEGADO, mas NÃO é bindado e não tem fallback.)
         $this->app->bind(
             \App\SourceCode\Contracts\SourceProvider::class,
-            \App\SourceCode\Providers\GithubPatProvider::class,
+            \App\SourceCode\Providers\GithubAppProvider::class,
         );
     }
 

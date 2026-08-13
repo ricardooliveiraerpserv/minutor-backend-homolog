@@ -69,10 +69,11 @@ class ClientSourceRepoController extends Controller
             return response()->json(['ok' => false, 'code' => $e->errorCode, 'message' => $e->getMessage()]);
         }
 
-        $msgs = ["Conectado a {$sourceRepo->fullName()}"];
+        $msgs = ['✓ Conectado', 'GitHub App: instalada', "Org: {$sourceRepo->owner}", "Repo: {$sourceRepo->repository}"];
         if ($info['branch_found']) {
-            $msgs[] = "branch \"{$sourceRepo->branch}\" encontrada";
-            $msgs[] = number_format($info['file_count'], 0, ',', '.') . ' arquivo(s) acessível(is)';
+            $msgs[] = "Branch: {$sourceRepo->branch}";
+            $msgs[] = 'Base: ' . ($sourceRepo->base_path ?: '/');
+            $msgs[] = 'Arquivos: ' . number_format($info['file_count'], 0, ',', '.');
             if (!$info['base_path_found'] && $sourceRepo->normalizedBasePath() !== '') {
                 $msgs[] = "⚠ base_path \"{$sourceRepo->base_path}\" não encontrado (0 arquivos)";
             }
@@ -80,12 +81,20 @@ class ClientSourceRepoController extends Controller
             $suggest = $info['default_branch'] ? " (padrão do repo: \"{$info['default_branch']}\")" : '';
             $msgs[] = "⚠ branch \"{$sourceRepo->branch}\" NÃO existe{$suggest}";
         }
+        $msgs[] = 'Verificado em ' . now()->format('d/m/Y H:i');
 
         $ok = $info['branch_found'] && ($info['base_path_found'] || $sourceRepo->normalizedBasePath() === '');
         return response()->json([
-            'ok'      => $ok,
-            'info'    => $info,
-            'message' => implode(' · ', $msgs),
+            'ok'         => $ok,
+            'app'        => 'instalada',
+            'owner'      => $sourceRepo->owner,
+            'repository' => $sourceRepo->repository,
+            'branch'     => $sourceRepo->branch,
+            'base_path'  => $sourceRepo->base_path,
+            'file_count' => $info['file_count'],
+            'checked_at' => now()->toIso8601String(),
+            'info'       => $info,
+            'message'    => implode(' · ', $msgs),
         ]);
     }
 
