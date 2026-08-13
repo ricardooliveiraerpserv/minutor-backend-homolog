@@ -302,7 +302,8 @@ class AttachableEntitiesRegistry
             // ── HELPDESK_TICKET_COMMENT (anexos por interação, estilo e-mail) ──
             'HELPDESK_TICKET_COMMENT' => [
                 'model' => HelpDeskTicketComment::class,
-                'categories' => ['attachment', 'image'],
+                // 'source_code' = fonte trazido do GitHub pela Solicitação de Código-Fonte.
+                'categories' => ['attachment', 'image', 'source_code'],
                 'default_visibility' => 'internal',
                 'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
                     if ($internalStaff($user)) return true;
@@ -313,9 +314,13 @@ class AttachableEntitiesRegistry
                     }
                     return false;
                 },
-                // Comprimidos liberados: o campo "Código Fonte (RDMAKE/Patch)" exige .zip/.rar/.7z etc.
-                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES],
-                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz'],
+                // Comprimidos liberados (.zip/.rar…) + FONTES do GitHub (texto): ADVPL/Protheus e afins.
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'application/octet-stream', 'application/xml', 'application/json'],
+                'allowed_extensions' => [
+                    'pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz',
+                    // Fontes (Solicitação de Código-Fonte):
+                    'prw','prx','prg','ppr','ppx','ppp','tlpp','tlp','ch','apl','apo','apw','aph','apu','sql','xml','json','md',
+                ],
                 'max_size_mb' => 50,
             ],
 

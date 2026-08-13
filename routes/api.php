@@ -509,6 +509,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/source-code/clients', [\App\Http\Controllers\SourceCodeController::class, 'clients']);
         Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
         Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
+        // Fase 1C — criar solicitação + anexar por item + finalizar
+        Route::post('/source-code/requests', [\App\Http\Controllers\SourceCodeRequestController::class, 'store']);
+        Route::post('/source-code/request-items/{sourceCodeRequestItem}/attach', [\App\Http\Controllers\SourceCodeRequestController::class, 'attachItem']);
+        Route::post('/source-code/requests/{sourceCodeRequest}/finalize', [\App\Http\Controllers\SourceCodeRequestController::class, 'finalize']);
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
@@ -1486,6 +1490,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/source-code/clients', [\App\Http\Controllers\SourceCodeController::class, 'clients']);
         Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
         Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
+        // Fase 1C — criar solicitação + anexar por item + finalizar
+        Route::post('/source-code/requests', [\App\Http\Controllers\SourceCodeRequestController::class, 'store']);
+        Route::post('/source-code/request-items/{sourceCodeRequestItem}/attach', [\App\Http\Controllers\SourceCodeRequestController::class, 'attachItem']);
+        Route::post('/source-code/requests/{sourceCodeRequest}/finalize', [\App\Http\Controllers\SourceCodeRequestController::class, 'finalize']);
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
