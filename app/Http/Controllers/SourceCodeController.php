@@ -31,6 +31,15 @@ class SourceCodeController extends Controller
     }
 
     /** Chamados do cliente selecionado (server-side, sem carregar tudo). */
+    /** Só os clientes com PELO MENOS UM repositório de código-fonte ATIVO (git amarrado). */
+    public function clients(Request $request): JsonResponse
+    {
+        $this->authorize($request);
+        $rows = Customer::whereHas('sourceRepos', fn ($q) => $q->where('active', true))
+            ->orderBy('name')->get(['id', 'name']);
+        return response()->json(['data' => $rows]);
+    }
+
     public function tickets(Request $request): JsonResponse
     {
         $this->authorize($request);
