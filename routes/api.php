@@ -40,6 +40,7 @@ use App\Http\Controllers\ConsultantHourBankController;
 use App\Http\Controllers\HolidayController;
 use App\Http\Controllers\ClientActivityController;
 use App\Http\Controllers\ClientProjectController;
+use App\Http\Controllers\ProjectClientCommentController;
 use App\Http\Controllers\ClientFollowUpController;
 use App\Http\Controllers\ProjectClientViewerController;
 use App\Http\Controllers\ClientPortalController;
@@ -888,6 +889,9 @@ Route::prefix('v1')->group(function () {
         // Visão do cliente sobre o projeto (em dias, sem horas/valores)
         Route::get('/client/projects/{project}/schedule', [ClientProjectController::class, 'schedule'])->name('client.projects.schedule');
         Route::get('/client/projects/{project}/follow-ups', [ClientProjectController::class, 'followUps'])->name('client.projects.followups');
+        // Conversa GLOBAL do projeto (cliente ↔ equipe)
+        Route::get('/client/projects/{project}/comments', [ProjectClientCommentController::class, 'clientIndex'])->name('client.projects.comments.index');
+        Route::post('/client/projects/{project}/comments', [ProjectClientCommentController::class, 'clientStore'])->name('client.projects.comments.store');
         // Follow Up como unidade de comunicação do cliente (envolvido)
         Route::get('/client/follow-ups', [ClientFollowUpController::class, 'index'])->name('client.followups.index');
         Route::get('/client/follow-ups/{followUp}', [ClientFollowUpController::class, 'show'])->name('client.followups.show');
@@ -997,6 +1001,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
+            // Conversa GLOBAL do projeto com o cliente (lado equipe)
+            Route::get('/projects/{project}/client-comments', [ProjectClientCommentController::class, 'teamIndex'])->name('projects.client-comments.index');
+            Route::post('/projects/{project}/client-comments', [ProjectClientCommentController::class, 'teamStore'])->name('projects.client-comments.store');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/sold-hours-history', [ProjectController::class, 'soldHoursHistoryIndex'])->name('projects.sold-hours-history.index');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
