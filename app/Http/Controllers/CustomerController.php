@@ -103,6 +103,19 @@ class CustomerController extends Controller
 
         $query = Customer::with(['executive', 'executiveBizify']);
 
+        // Cadastro de Clientes (Administrativo) NÃO lista leads/prospects do CRM — esses vivem
+        // exclusivamente em /crm/empresas. Prod-safe: só aplica se a coluna crm_status existir
+        // (prod não tem o CRM). Memoizado por worker p/ não consultar o schema a cada request.
+        static $hasCrmStatus = null;
+        if ($hasCrmStatus === null) {
+            $hasCrmStatus = \Illuminate\Support\Facades\Schema::hasColumn('customers', 'crm_status');
+        }
+        if ($hasCrmStatus) {
+            $query->where(function ($q) {
+                $q->whereNull('crm_status')->orWhereNotIn('crm_status', ['lead', 'prospect']);
+            });
+        }
+
         // Filtros PO-UI (ilike = case-insensitive no PostgreSQL)
         if ($search) {
             $query->where(function ($q) use ($search) {
@@ -271,6 +284,12 @@ class CustomerController extends Controller
         // Normaliza o prefixo para maiúsculas
         if (!empty($validated['code_prefix'])) {
             $validated['code_prefix'] = strtoupper($validated['code_prefix']);
+        }
+
+        // Cliente criado no Administrativo nasce como 'cliente' (NÃO o default 'lead' da coluna),
+        // senão ele sumiria da própria listagem pelo filtro acima. Prod-safe (só grava se existir).
+        if (\Illuminate\Support\Facades\Schema::hasColumn('customers', 'crm_status')) {
+            $validated['crm_status'] = $status;   // $status = input('crm_status', 'cliente')
         }
 
         // Só agora cria no banco, pois sabemos que é válido
