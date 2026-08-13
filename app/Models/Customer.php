@@ -281,6 +281,12 @@ class Customer extends Model
         return $this->hasMany(CustomerContact::class);
     }
 
+    /** Fontes Git autorizadas do cliente (Solicitação de código-fonte). */
+    public function sourceRepos(): HasMany
+    {
+        return $this->hasMany(ClientSourceRepo::class);
+    }
+
     /** CRM — perfil empresarial 1:1 (firmográficos). */
     public function crmProfile(): \Illuminate\Database\Eloquent\Relations\HasOne
     {

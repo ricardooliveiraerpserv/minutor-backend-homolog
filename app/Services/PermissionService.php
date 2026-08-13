@@ -135,6 +135,9 @@ class PermissionService
         'vault.use', 'vault.audit.view',
         // Cofre de Ambientes (infra Protheus; só equipe interna)
         'environments.use', 'environments.admin', 'environments.audit.view',
+        // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
+        // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
+        'source_code.manage', 'source_code.request', 'source_code.reindex',
     ];
 
     /**

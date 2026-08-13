@@ -501,6 +501,12 @@ Route::prefix('v1')->group(function () {
         Route::put('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsUpdate']);
         Route::delete('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsDestroy']);
         Route::get('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'show']);
+        // Solicitação de código-fonte (Fase 0) — fontes Git autorizadas do cliente (READ-ONLY)
+        Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
+        Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
+        Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
+        Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
+        Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1467,6 +1473,12 @@ Route::prefix('v1')->group(function () {
         Route::put('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsUpdate']);
         Route::delete('/crm/tags/{tag}', [\App\Http\Controllers\CustomerCrmController::class, 'tagsDestroy']);
         Route::get('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'show']);
+        // Solicitação de código-fonte (Fase 0) — fontes Git autorizadas do cliente (READ-ONLY)
+        Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
+        Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
+        Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
+        Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
+        Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)

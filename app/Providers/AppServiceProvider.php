@@ -37,6 +37,13 @@ class AppServiceProvider extends ServiceProvider
         // Empresa ativa do request (multi-empresa) — 1 instância por request,
         // compartilhada entre o middleware e o global scope BelongsToCompany.
         $this->app->scoped(\App\Services\CompanyContext::class);
+
+        // Solicitação de código-fonte: provedor SOMENTE-LEITURA (hoje GitHub PAT;
+        // futuro GitHub App) resolvido por este binding — trocar não afeta o fluxo.
+        $this->app->bind(
+            \App\SourceCode\Contracts\SourceProvider::class,
+            \App\SourceCode\Providers\GithubPatProvider::class,
+        );
     }
 
     /**
