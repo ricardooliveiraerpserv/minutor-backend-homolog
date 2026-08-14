@@ -47,7 +47,16 @@ class ClientSourceRepoController extends Controller
         $this->authorizeManage($request);
         $v = $this->validated($request, false);
         $v['updated_by'] = $request->user()->id;
+        $v['needs_review'] = false; // admin editou/confirmou o repo → deixa de estar pendente
         $sourceRepo->update($v);
+        return response()->json(['data' => $this->serialize($sourceRepo->fresh(['creator:id,name', 'updater:id,name']))]);
+    }
+
+    /** Confirma um vínculo pendente de verificação (auto-provisionado sobre repo pré-existente). */
+    public function verify(Request $request, ClientSourceRepo $sourceRepo): JsonResponse
+    {
+        $this->authorizeManage($request);
+        $sourceRepo->update(['needs_review' => false, 'updated_by' => $request->user()->id]);
         return response()->json(['data' => $this->serialize($sourceRepo->fresh(['creator:id,name', 'updater:id,name']))]);
     }
 
@@ -147,6 +156,7 @@ class ClientSourceRepoController extends Controller
             'tipo'         => $r->tipo,
             'descricao'    => $r->descricao,
             'active'       => $r->active,
+            'needs_review' => (bool) $r->needs_review,
             'created_by'   => $r->creator?->name,
             'updated_by'   => $r->updater?->name,
             'updated_at'   => $r->updated_at?->toIso8601String(),

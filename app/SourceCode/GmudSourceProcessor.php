@@ -56,6 +56,9 @@ class GmudSourceProcessor
         if (!empty($sources)) {
             if (!$repo) {
                 $status = 'sem_repo';
+            } elseif ($repo->needs_review) {
+                // Vínculo pendente de verificação (repo pré-existente) → NÃO commita até o admin confirmar.
+                $status = 'repo_pendente_verificacao';
             } elseif (!$this->auth->isConfigured()) {
                 $status = 'erro';
                 $error = 'GitHub App não configurada.';
@@ -170,6 +173,9 @@ class GmudSourceProcessor
                 break;
             case 'sem_repo':
                 $lines[] = "⚠️ {$n} fonte(s) detectado(s), mas o cliente NÃO tem repositório de destino configurado — nada gravado.";
+                break;
+            case 'repo_pendente_verificacao':
+                $lines[] = "⚠️ {$n} fonte(s) detectado(s), mas o repositório do cliente está PENDENTE DE VERIFICAÇÃO (vínculo automático sobre repo pré-existente). Confirme o repositório no cadastro do cliente antes do commit — nada gravado.";
                 break;
             case 'pendente_permissao':
                 $lines[] = "⚠️ {$n} fonte(s) detectado(s), mas o commit está PENDENTE: a GitHub App precisa de \"Contents: Read and write\". Nada gravado ainda.";

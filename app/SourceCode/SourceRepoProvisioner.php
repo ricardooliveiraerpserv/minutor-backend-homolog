@@ -79,15 +79,22 @@ class SourceRepoProvisioner
             "Código-fonte do cliente {$customer->name} (Minutor)."
         );
 
+        // Reaproveitou um repo que JÁ EXISTIA (não foi criado por nós) → pendente de verificação:
+        // pode ser coincidência de nome. O admin confirma no cadastro antes de a GMUD commitar.
+        $reused = !($repo['created'] ?? true);
+
         return ClientSourceRepo::create([
-            'customer_id' => $customer->id,
-            'owner'       => $owner,
-            'repository'  => $repo['name'],
-            'branch'      => $repo['default_branch'] ?: 'main',
-            'base_path'   => '',
-            'tipo'        => 'outros',
-            'descricao'   => 'Repositório provisionado automaticamente.',
-            'active'      => true,
+            'customer_id'  => $customer->id,
+            'owner'        => $owner,
+            'repository'   => $repo['name'],
+            'branch'       => $repo['default_branch'] ?: 'main',
+            'base_path'    => '',
+            'tipo'         => 'outros',
+            'descricao'    => $reused
+                ? 'Vinculado automaticamente a um repositório PRÉ-EXISTENTE — confirme se é o repositório correto do cliente.'
+                : 'Repositório provisionado automaticamente.',
+            'active'       => true,
+            'needs_review' => $reused,
         ]);
     }
 }

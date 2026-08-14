@@ -518,6 +518,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
+        Route::post('/source-repos/{sourceRepo}/verify', [\App\Http\Controllers\ClientSourceRepoController::class, 'verify']);
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1501,6 +1502,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
+        Route::post('/source-repos/{sourceRepo}/verify', [\App\Http\Controllers\ClientSourceRepoController::class, 'verify']);
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)

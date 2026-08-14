@@ -18,10 +18,10 @@ class ClientSourceRepo extends Model
 
     protected $fillable = [
         'customer_id', 'owner', 'repository', 'branch', 'base_path',
-        'tipo', 'descricao', 'active', 'created_by', 'updated_by',
+        'tipo', 'descricao', 'active', 'needs_review', 'created_by', 'updated_by',
     ];
 
-    protected $casts = ['active' => 'boolean'];
+    protected $casts = ['active' => 'boolean', 'needs_review' => 'boolean'];
 
     public function customer(): BelongsTo
     {
