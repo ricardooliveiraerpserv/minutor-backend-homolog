@@ -345,6 +345,14 @@ class TimesheetController extends Controller
             $query->where('ticket', 'ilike', "%{$request->ticket}%");
         }
 
+        // Cronograma: filtra por atividade/etapa (aba de apontamentos dentro da atividade).
+        if ($request->filled('stage_delivery_id')) {
+            $query->where('timesheets.stage_delivery_id', (int) $request->input('stage_delivery_id'));
+        }
+        if ($request->filled('stage_id')) {
+            $query->where('timesheets.stage_id', (int) $request->input('stage_id'));
+        }
+
         if ($request->filled('requester')) {
             $query->whereRaw("movidesk_tickets.solicitante::jsonb->>'name' = ?", [$request->requester]);
         }
