@@ -54,6 +54,16 @@ return [
         'meetings_model' => env('ANTHROPIC_MEETINGS_MODEL', 'claude-sonnet-5'),
     ],
 
+    // Documentação de fonte (v2) — camada semântica. Provider trocável (governança: API comercial
+    // server-side, sem Files/Batch/caching persistente; sanitização e payload mínimo no chamador).
+    'source_doc_ai' => [
+        'provider'   => env('SOURCE_DOC_AI_PROVIDER', 'anthropic'),
+        'model'      => env('SOURCE_DOC_AI_MODEL', env('ANTHROPIC_MODEL', 'claude-sonnet-5')),
+        'max_tokens' => (int) env('SOURCE_DOC_AI_MAX_TOKENS', 4096),
+        'max_chars'  => (int) env('SOURCE_DOC_AI_MAX_CHARS', 40000),
+        'timeout'    => (int) env('SOURCE_DOC_AI_TIMEOUT', 120),
+    ],
+
     'openai' => [
         'api_key'  => env('OPENAI_API_KEY'),
         'model'    => env('OPENAI_MODEL', 'gpt-4o-mini'),

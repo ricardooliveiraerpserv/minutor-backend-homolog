@@ -45,6 +45,13 @@ class AppServiceProvider extends ServiceProvider
             \App\SourceCode\Contracts\SourceProvider::class,
             \App\SourceCode\Providers\GithubAppProvider::class,
         );
+
+        // Documentação de fonte v2 — provider de IA (camada semântica) trocável por config.
+        $this->app->bind(\App\SourceCode\Analyzer\SourceDocAiProvider::class, function () {
+            return match ((string) config('services.source_doc_ai.provider', 'anthropic')) {
+                default => new \App\SourceCode\Analyzer\AnthropicProvider(),
+            };
+        });
     }
 
     /**

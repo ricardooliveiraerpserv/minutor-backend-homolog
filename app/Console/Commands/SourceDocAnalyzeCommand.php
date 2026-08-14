@@ -6,6 +6,7 @@ use App\Models\SystemSetting;
 use App\SourceCode\Analyzer\AdvplAnalyzer;
 use App\SourceCode\Analyzer\SecretSanitizer;
 use App\SourceCode\Analyzer\SourceDiff;
+use App\SourceCode\Analyzer\SourceDocSemanticAnalyzer;
 use App\SourceCode\GithubAppAuth;
 use Illuminate\Console\Command;
 
@@ -19,10 +20,10 @@ use Illuminate\Console\Command;
  */
 class SourceDocAnalyzeCommand extends Command
 {
-    protected $signature = 'source-doc:analyze {owner} {repo} {path} {--branch=main} {--parent=}';
-    protected $description = 'Fase 1: extração determinística (parser + sanitizador + diff) de um fonte real.';
+    protected $signature = 'source-doc:analyze {owner} {repo} {path} {--branch=main} {--parent=} {--semantic}';
+    protected $description = 'Fase 1/2: extração determinística (+ semântica com --semantic) de um fonte real.';
 
-    public function handle(GithubAppAuth $auth, AdvplAnalyzer $analyzer, SecretSanitizer $sanitizer, SourceDiff $differ): int
+    public function handle(GithubAppAuth $auth, AdvplAnalyzer $analyzer, SecretSanitizer $sanitizer, SourceDiff $differ, SourceDocSemanticAnalyzer $semantic): int
     {
         $owner = $this->argument('owner');
         $repo = $this->argument('repo');
@@ -49,6 +50,12 @@ class SourceDocAnalyzeCommand extends Command
         }
 
         $payload = ['deterministic' => $det, 'diff' => $diff];
+
+        // Camada 2 (opcional) — usa o CÓDIGO MASCARADO (nunca o cru) + fatos + diff.
+        if ($this->option('semantic')) {
+            $payload['semantic'] = $semantic->analyze($det, $sec['masked'], $diff);
+        }
+
         SystemSetting::set('diag_analyze', json_encode($payload, JSON_UNESCAPED_UNICODE), 'string', 'diag');
         $this->line(json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         return self::SUCCESS;
