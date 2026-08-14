@@ -82,6 +82,7 @@ class Project extends Model
         'start_date',
         'expected_end_date',
         'delivery_percentage',
+        'kanban_stage',
         'encerramento_date',
         'save_erpserv',
         'max_expense_per_consultant',
@@ -254,6 +255,31 @@ class Project extends Model
     {
         return $this->belongsToMany(User::class, 'project_coordinators')
                     ->withTimestamps();
+    }
+
+    // ─── Cronograma ───────────────────────────────────────────────
+    public function stages(): HasMany
+    {
+        return $this->hasMany(ProjectStage::class)->orderBy('order_index');
+    }
+
+    /** Espelha isOperational() pro JSON — frontend usa pra decidir UI dual. */
+    public function getIsOperationalAttribute(): bool
+    {
+        return $this->isOperational();
+    }
+
+    /** Projeto operacional = tem cronograma (tipo Projeto, não investimento/sustentação/cloud/bizify). */
+    public function isOperational(): bool
+    {
+        if ($this->is_investimento_comercial) return false;
+        $name = strtolower((string) ($this->serviceType?->name ?? ''));
+        if ($name === '') return true;
+        if (str_contains($name, 'sustenta'))    return false;
+        if (str_contains($name, 'cloud'))       return false;
+        if (str_contains($name, 'bizify'))      return false;
+        if (str_contains($name, 'investimento')) return false;
+        return true;
     }
 
     /**

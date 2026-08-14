@@ -54,6 +54,8 @@ class Timesheet extends Model
         'customer_id',
         'project_id',
         'real_project_id',
+        'stage_id',
+        'stage_delivery_id',
         'date',
         'start_time',
         'end_time',
@@ -306,6 +308,29 @@ class Timesheet extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    // ─── Cronograma ───────────────────────────────────────────────
+    public function stage(): BelongsTo
+    {
+        return $this->belongsTo(ProjectStage::class, 'stage_id');
+    }
+
+    public function delivery(): BelongsTo
+    {
+        return $this->belongsTo(StageDelivery::class, 'stage_delivery_id');
+    }
+
+    /** stage_delivery_id sempre implica no stage_id correto (sem divergência). */
+    public function setStageDeliveryIdAttribute($value): void
+    {
+        $this->attributes['stage_delivery_id'] = $value;
+        if ($value) {
+            $delivery = StageDelivery::find($value);
+            if ($delivery) {
+                $this->attributes['stage_id'] = $delivery->stage_id;
+            }
+        }
     }
 
     /**
