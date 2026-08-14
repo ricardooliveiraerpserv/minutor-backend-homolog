@@ -71,8 +71,18 @@ class AnthropicProvider implements SourceDocAiProvider
             'output_tokens' => $res->json('usage.output_tokens'),
         ]);
 
+        // Sonnet-5 pode devolver um bloco "thinking" ANTES do "text" — pega o 1º bloco type=text
+        // (não content[0], que pode ser thinking).
+        $text = '';
+        foreach ((array) $res->json('content', []) as $block) {
+            if (($block['type'] ?? '') === 'text') {
+                $text = (string) ($block['text'] ?? '');
+                break;
+            }
+        }
+
         return [
-            'text'  => (string) ($res->json('content.0.text') ?? ''),
+            'text'  => $text,
             'usage' => (array) ($res->json('usage') ?? []),
             'stop'  => $res->json('stop_reason'),
         ];
