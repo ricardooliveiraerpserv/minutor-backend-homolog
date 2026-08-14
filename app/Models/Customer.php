@@ -22,6 +22,7 @@ class Customer extends Model
         'company_name',
         'cgc',
         'active',
+        'has_contract',
         'crm_status',
         'executive_id',
         'executive_bizify_id',
@@ -54,6 +55,7 @@ class Customer extends Model
      */
     protected $casts = [
         'active' => 'boolean',
+        'has_contract' => 'boolean',
         'is_bizify_customer' => 'boolean',
         'emails_administrativos' => 'array',
         'secondary_cgcs' => 'array',

@@ -36,7 +36,7 @@ class SourceCodeController extends Controller
     {
         $this->authorize($request);
         $rows = Customer::whereHas('sourceRepos', fn ($q) => $q->where('active', true))
-            ->orderBy('name')->get(['id', 'name']);
+            ->orderBy('name')->get(['id', 'name', 'has_contract']);
         return response()->json(['data' => $rows]);
     }
 

@@ -26,6 +26,11 @@ use Illuminate\Support\Facades\DB;
  */
 class SourceCodeRequestController extends Controller
 {
+    /** Aviso gravado no chamado quando o cliente NÃO tem contrato (fonte = só exemplo). */
+    public const NO_CONTRACT_DISCLAIMER = "⚠️  ATENÇÃO — Cliente SEM contrato\n"
+        . "Os códigos-fonte abaixo servem apenas como EXEMPLO/referência. O fonte original deve ser "
+        . "solicitado diretamente ao cliente, e é possível que existam fontes que não estejam em nossa posse.";
+
     private function authorize(Request $request): void
     {
         $perms = PermissionService::for($request->user());
@@ -184,7 +189,7 @@ class SourceCodeRequestController extends Controller
     public function finalize(Request $request, SourceCodeRequest $sourceCodeRequest): JsonResponse
     {
         $this->authorize($request);
-        $req = $sourceCodeRequest->load('items', 'requester');
+        $req = $sourceCodeRequest->load('items', 'requester', 'client');
         $items = $req->items;
         $attached = $items->where('status', 'attached')->count();
         $status = ($items->count() > 0 && $attached === $items->count()) ? 'done' : ($attached > 0 ? 'partial' : 'processing');
@@ -198,7 +203,9 @@ class SourceCodeRequestController extends Controller
             })->implode("\n\n");
             $failLines = $items->where('status', 'failed')->map(fn ($i) => "⚠️  {$i->filename} — falha ao obter o fonte")->implode("\n");
             $head = "📦  {$attached} código-fonte(s) anexado(s)";
-            $body = trim($head . "\n\n" . $lines . ($failLines !== '' ? "\n\n" . $failLines : '') . "\n\n👤  Solicitado por: " . (optional($req->requester)->name ?? '—'));
+            // Cliente sem contrato → grava o aviso junto ao chamado quando há fonte anexado.
+            $disclaimer = ($attached > 0 && $req->client && !$req->client->has_contract) ? self::NO_CONTRACT_DISCLAIMER . "\n\n" : '';
+            $body = trim($disclaimer . $head . "\n\n" . $lines . ($failLines !== '' ? "\n\n" . $failLines : '') . "\n\n👤  Solicitado por: " . (optional($req->requester)->name ?? '—'));
             HelpDeskTicketComment::where('id', $req->comment_id)->update(['body' => $body]);
         }
 
