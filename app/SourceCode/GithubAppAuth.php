@@ -208,6 +208,41 @@ class GithubAppAuth
         }
     }
 
+    /** Metadados do repo (size em KB, default_branch) ou null se não existir. */
+    public function repoMeta(string $owner, string $name): ?array
+    {
+        try {
+            $token = $this->installationToken($owner);
+            $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/repos/{$owner}/{$name}");
+            if (!$res->successful()) {
+                return null;
+            }
+            return [
+                'size'           => (int) $res->json('size', 0),
+                'default_branch' => (string) ($res->json('default_branch') ?: 'main'),
+            ];
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Apaga um repositório (ESCRITA — Administration:RW). 204=ok, 404=já não existe. IRREVERSÍVEL. */
+    public function deleteRepo(string $owner, string $name): void
+    {
+        $token = $this->installationToken($owner);
+        $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+            ->delete("{$this->api}/repos/{$owner}/{$name}");
+        if ($res->successful() || $res->status() === 404) {
+            return;
+        }
+        if ($res->status() === 403 && (string) $res->header('X-RateLimit-Remaining') !== '0') {
+            throw SourceIntegrationException::writeNotPermitted($owner);
+        }
+        $this->assertUpstream($res);
+        throw SourceIntegrationException::upstream($res->status());
+    }
+
     private function nameAlreadyExists(Response $res): bool
     {
         foreach ((array) $res->json('errors', []) as $e) {
