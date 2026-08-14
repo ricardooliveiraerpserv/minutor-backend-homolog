@@ -279,6 +279,19 @@ class GithubAppAuth
         }
     }
 
+    /** SHA do HEAD da branch (read-only), ou null. Usado como parent do diff antes de commitar. */
+    public function getBranchHeadSha(string $owner, string $repo, string $branch): ?string
+    {
+        try {
+            $token = $this->installationToken($owner);
+            $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/repos/{$owner}/{$repo}/git/ref/heads/{$branch}");
+            return $res->successful() ? ($res->json('object.sha') ?: null) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     /** Conteúdo de UM arquivo na branch (read-only), ou null se não existir (fonte novo). */
     public function getFileContent(string $owner, string $repo, string $branch, string $path): ?string
     {

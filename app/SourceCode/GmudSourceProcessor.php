@@ -73,8 +73,16 @@ class GmudSourceProcessor
                     $files[($basePath !== '' ? $basePath . '/' : '') . $path] = $content;
                 }
                 try {
+                    // Antes do commit: captura o HEAD (parent do diff) e a versão anterior de cada fonte.
+                    $parentSha = $this->auth->getBranchHeadSha($repo->owner, $repo->repository, $branch);
+                    $oldCode = [];
+                    foreach ($sources as $path => $content) {
+                        $oldCode[$path] = $this->auth->getFileContent($repo->owner, $repo->repository, $branch, ($basePath !== '' ? $basePath . '/' : '') . $path);
+                    }
                     $commitSha = $this->auth->commitFiles($repo->owner, $repo->repository, $branch, $files, $this->commitMessage($ticket, $comment));
                     $status = 'atualizado';
+                    // Pipeline de documentação por fonte (best-effort — nunca afeta a GMUD).
+                    $this->runDocPipeline($ticket, $comment, $repo, $basePath, $branch, $sources, $oldCode, $commitSha, $parentSha);
                 } catch (SourceIntegrationException $e) {
                     $status = $e->errorCode === 'CONTENTS_WRITE_NOT_PERMITTED' ? 'pendente_permissao' : 'erro';
                     $error = $e->getMessage();
@@ -144,6 +152,33 @@ class GmudSourceProcessor
         }
         @unlink($tmp);
         return [$inventory, $sources];
+    }
+
+    /** Documenta cada fonte commitado. Semântica inline só nos primeiros N (teto de latência); o
+     *  resto fica 'analyzing' (determinística pronta) e conclui via `source-doc:reprocess`. */
+    private function runDocPipeline(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ClientSourceRepo $repo, string $basePath, string $branch, array $sources, array $oldCode, string $commitSha, ?string $parentSha): void
+    {
+        $pipeline = app(\App\SourceCode\SourceDocPipeline::class);
+        $max = (int) config('services.source_doc.inline_semantic_max', 3);
+        $responsibleId = $ticket->assignee_id ?: $comment->author_user_id;
+        $responsavel = optional($ticket->assignee)->name ?: optional($comment->author)->name ?: '—';
+        $i = 0;
+        foreach ($sources as $path => $content) {
+            $repoPath = ($basePath !== '' ? $basePath . '/' : '') . $path;
+            try {
+                $pipeline->processFile([
+                    'customer_id' => $ticket->customer_id, 'source_repo_id' => $repo->id,
+                    'owner' => $repo->owner, 'repository' => $repo->repository, 'branch' => $branch, 'path' => $repoPath,
+                    'tipo' => $repo->tipo, 'new_code' => $content, 'old_code' => $oldCode[$path] ?? null,
+                    'source_commit_sha' => $commitSha, 'parent_source_commit_sha' => $parentSha,
+                    'gmud_id' => $ticket->id, 'ticket_number' => $ticket->ticket_number,
+                    'responsible_user_id' => $responsibleId, 'responsavel' => $responsavel,
+                ], $i < $max);
+            } catch (\Throwable $e) {
+                Log::warning('gmud_source.doc_pipeline_failed', ['path' => $repoPath, 'error' => $e->getMessage()]);
+            }
+            $i++;
+        }
     }
 
     private function commitMessage(HelpDeskTicket $ticket, HelpDeskTicketComment $comment): string

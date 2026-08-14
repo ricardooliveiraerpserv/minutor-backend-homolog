@@ -56,6 +56,12 @@ return [
 
     // Documentação de fonte (v2) — camada semântica. Provider trocável (governança: API comercial
     // server-side, sem Files/Batch/caching persistente; sanitização e payload mínimo no chamador).
+    'source_doc' => [
+        // Nº máx. de fontes cuja análise SEMÂNTICA roda inline na GMUD (teto de latência).
+        // Os demais ficam 'analyzing' (determinística pronta) e concluem via source-doc:reprocess.
+        'inline_semantic_max' => (int) env('SOURCE_DOC_INLINE_SEMANTIC_MAX', 3),
+    ],
+
     'source_doc_ai' => [
         'provider'   => env('SOURCE_DOC_AI_PROVIDER', 'anthropic'),
         'model'      => env('SOURCE_DOC_AI_MODEL', env('ANTHROPIC_MODEL', 'claude-sonnet-5')),
