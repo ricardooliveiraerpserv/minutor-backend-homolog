@@ -4,16 +4,21 @@ namespace App\SourceCode\Analyzer;
 
 /**
  * Extração DETERMINÍSTICA de AdvPL/TL++ (sem IA). Usa o AdvplLexer para não confundir código
- * com comentário/string, e um conjunto de extratores por padrão. Produz um deterministic_json
- * estruturado e versionado (schema_version). É a "descoberta" do código — a Fase 2 (IA) só
- * explica o que já foi extraído aqui.
+ * com comentário/string, e extratores por padrão com atribuição por função (faixas de linha) e
+ * EVIDÊNCIA (linhas). Produz um deterministic_json versionado. É a "descoberta" do código — a
+ * camada semântica só EXPLICA o que já foi extraído aqui; o analyzer NÃO interpreta negócio.
+ *
+ * Regra anti-alucinação: só fatos técnicos. Sem evidência ⇒ null/[]/unknown. Nunca inventar.
+ * Bloco 1 (v1.1): saída ADITIVA — mantém as chaves antigas (functions/tables/queries/integrations…)
+ * e adiciona classificação de fonte, per-função (called_by/tables/effects), campos read/write/where,
+ * SQL detalhado (executor/construção/risco), data_access, external_integrations, dependencies,
+ * effects e technical_flow — todos com evidência quando viável.
  */
 class AdvplAnalyzer
 {
     public const SCHEMA_VERSION = 1;
-    public const ANALYZER_VERSION = '1.0';
+    public const ANALYZER_VERSION = '1.1';
 
-    /** Palavras estruturais que aparecem como "NOME(" mas NÃO são chamada de função. */
     private const NON_CALLS = [
         'if', 'iif', 'elseif', 'else', 'endif', 'while', 'enddo', 'for', 'next', 'do', 'case', 'endcase',
         'otherwise', 'return', 'local', 'private', 'public', 'static', 'default', 'begin', 'end', 'sequence',
@@ -21,14 +26,25 @@ class AdvplAnalyzer
         'and', 'or', 'not',
     ];
 
-    /** Funções TOTVS/AdvPL relevantes para documentação (detecção estrutural). */
+    /** Funções TOTVS/AdvPL relevantes (framework). */
     private const TOTVS = [
         'MsExecAuto', 'ExecAuto', 'FWRest', 'TRest', 'HttpGet', 'HttpPost', 'HttpQuote', 'WsMethod', 'WsService',
         'TWsdlManager', 'ApMsgYesNo', 'MsgBox', 'MsgInfo', 'MsgStop', 'MsgAlert', 'ConOut', 'MemoWrite', 'FCreate',
-        'FWrite', 'MsFCreate', 'TCSQLExec', 'TCQuery', 'SqlToTrb', 'GetMv', 'SuperGetMv', 'GetNewPar', 'Pergunte',
-        'ParamBox', 'RecLock', 'MsUnlock', 'MsUnLock', 'DbSelectArea', 'DbSetOrder', 'DbSeek', 'DbSetFilter',
-        'DbGoTop', 'DbSkip', 'GetArea', 'RestArea', 'FieldGet', 'FieldPut', 'MSDIALOG', 'FWFormFunction', 'JsonObject',
-        'FwJsonSerialize', 'FwJsonDeserialize', 'OemToAnsi', 'AnsiToOem', 'Alert',
+        'FWrite', 'MsFCreate', 'TCSQLExec', 'TCSqlExec', 'TCQuery', 'SqlToTrb', 'GetMv', 'SuperGetMv', 'GetNewPar',
+        'Pergunte', 'ParamBox', 'RecLock', 'MsUnlock', 'MsUnLock', 'DbSelectArea', 'DbSetOrder', 'DbSeek',
+        'DbSetFilter', 'DbGoTop', 'DbSkip', 'GetArea', 'RestArea', 'FieldGet', 'FieldPut', 'MSDIALOG',
+        'FWFormFunction', 'JsonObject', 'FwJsonSerialize', 'FwJsonDeserialize', 'OemToAnsi', 'AnsiToOem', 'Alert',
+        'FWMakeGet', 'FWMakePost', 'aAdd', 'SoapConnect', 'SoapRequest',
+    ];
+
+    /** Sinais de integração EXTERNA (não é acesso a banco). */
+    private const INTEGRATION_SIGNS = [
+        'REST'      => '/\b(FWRest|TRest|FWMakeGet|FWMakePost)\s*\(/i',
+        'HTTP'      => '/\b(HttpGet|HttpPost|HttpQuote|HttpSoapXml)\s*\(/i',
+        'SOAP/WS'   => '/\b(TWsdlManager|WSMethod|WSService|WsRestful|SoapConnect|SoapRequest)\b/i',
+        'Arquivo'   => '/\b(FCreate|FWrite|MsFCreate|CpyT2S|CpyS2T|FT_F|MemoWrite|MemoRead)\s*\(/i',
+        'FTP/SFTP'  => '/\b(FtpConnect|FtpUpLoad|FtpDownLoad|FtpSend)\s*\(/i',
+        'Mensageria' => '/\b(RabbitMQ|Kafka|MQSeries|TMSQueue)\b/i',
     ];
 
     public function analyze(string $code, array $meta = []): array
@@ -37,89 +53,144 @@ class AdvplAnalyzer
         $mc = $lex->maskCode;         // sem comentários e sem strings
         $mn = $lex->maskNoComments;   // sem comentários, com strings
 
-        $functions = $this->extractFunctions($lex, $mc);
-        $tables = $this->extractTables($lex, $mc, $mn);
-        $queries = $this->extractQueries($lex);
+        [$sourceType, $language] = $this->classify($meta['path'] ?? ($meta['filename'] ?? ''), $code);
+
+        $functions = $this->extractFunctions($lex, $mc);           // base: nome/tipo/params/retorno/linhas/calls
+        $fnRanges = $this->functionRanges($functions);
+
+        // Eventos de acesso a dados (nativo + SQL), com linha → função e papel de campo.
+        $access = $this->collectAccessEvents($lex, $mc, $mn, $fnRanges);
+        $queries = $this->buildQueries($access['queries'], $fnRanges, $mc);
+        $tables = $this->buildTables(array_merge($access['events'], $this->sqlEventsFromQueries($queries)));
+
         $sx6 = $this->extractSx6($mn);
         $endpoints = $this->extractEndpoints($lex);
         $paths = $this->extractPaths($lex);
         $includes = $this->extractIncludes($mn);
         $totvs = $this->extractTotvsCalls($mc);
         $userCalls = $this->extractUserCalls($mc);
-        $integrations = $this->detectIntegrations($mc, $queries);
+        $externalIntegrations = $this->detectExternalIntegrations($mc, $endpoints);
+        $dataAccess = $this->buildDataAccess($queries, $access['events']);
+        $dependencies = $this->buildDependencies($includes, $functions, $userCalls, $totvs, $mc);
         $errorHandling = $this->detectErrorHandling($mc);
-        $writeEffects = $this->detectWriteEffects($mc, $queries, $tables);
+        $effects = $this->buildEffects($lex, $mc, $mn, $fnRanges, $queries);
         $callGraph = $this->buildCallGraph($functions);
+        $functions = $this->enrichFunctions($functions, $callGraph, $tables, $queries, $effects);
+        $technicalFlow = $this->buildTechnicalFlow($functions, $queries);
 
         return [
-            'schema_version'  => self::SCHEMA_VERSION,
+            'schema_version'   => self::SCHEMA_VERSION,
             'analyzer_version' => self::ANALYZER_VERSION,
-            'language'        => $this->guessLang($meta['path'] ?? ($meta['filename'] ?? ''), $code),
-            'file'            => [
+            'language'         => $language,                 // "AdvPL" / "TLPP"
+            'source_type'      => $sourceType,               // "Fonte Protheus" quando aplicável
+            'file'             => [
                 'path'       => $meta['path'] ?? null,
                 'filename'   => $meta['filename'] ?? ($meta['path'] ? basename($meta['path']) : null),
                 'lines'      => substr_count($lex->code, "\n") + 1,
                 'size_bytes' => strlen($code),
             ],
-            'includes'        => $includes,
-            'functions'       => $functions,
-            'call_graph'      => $callGraph,
-            'tables'          => array_values($tables),
-            'queries'         => $queries,
-            'sx6_params'      => $sx6,
-            'endpoints'       => $endpoints,
-            'paths'           => $paths,
-            'totvs_calls'     => $totvs,
-            'user_calls'      => $userCalls,
-            'integrations'    => $integrations,
-            'error_handling'  => $errorHandling,
-            'write_effects'   => $writeEffects,
-            'stats'           => [
+            'includes'         => $includes,
+            'functions'        => $functions,
+            'call_graph'       => $callGraph,
+            'tables'           => $tables,
+            'queries'          => $queries,
+            'data_access'      => $dataAccess,
+            'external_integrations' => $externalIntegrations,
+            'dependencies'     => $dependencies,
+            'effects'          => $effects,
+            'technical_flow'   => $technicalFlow,
+            'sx6_params'       => $sx6,
+            'endpoints'        => $endpoints,
+            'paths'            => $paths,
+            'totvs_calls'      => $totvs,
+            'user_calls'       => $userCalls,
+            // ── compat (chaves antigas mantidas p/ o renderer atual não quebrar) ──
+            'integrations'     => $this->legacyIntegrations($externalIntegrations, $dataAccess),
+            'error_handling'   => $errorHandling,
+            'write_effects'    => $this->legacyWriteEffects($effects),
+            'stats'            => [
                 'functions' => count($functions),
                 'tables'    => count($tables),
                 'queries'   => count($queries),
                 'lines'     => substr_count($lex->code, "\n") + 1,
                 'includes'  => count($includes),
                 'endpoints' => count($endpoints),
+                'external_integrations' => count($externalIntegrations),
             ],
         ];
     }
 
-    // ── funções + corpo + chamadas ────────────────────────────────────────────
+    // ── classificação do fonte ────────────────────────────────────────────────
+    private function classify(string $path, string $code): array
+    {
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $advpl = ['prw', 'prx', 'prg', 'apl', 'apo', 'apw', 'aph', 'apu', 'ppr', 'ppx', 'ppp', 'ch', 'th'];
+        $tlpp = ['tlpp', 'tlp'];
+        if (in_array($ext, $tlpp, true)) {
+            return ['Fonte Protheus', 'TLPP'];
+        }
+        if (in_array($ext, $advpl, true)) {
+            return ['Fonte Protheus', 'AdvPL'];
+        }
+        // heurística por conteúdo (arquivo sem extensão reconhecida)
+        if (preg_match('/\b(User|Static)\s+Function\b/i', $code)) {
+            return ['Fonte Protheus', 'AdvPL'];
+        }
+        return ['unknown', 'unknown'];
+    }
+
+    // ── funções (base) + faixas ───────────────────────────────────────────────
     private function extractFunctions(AdvplLexer $lex, string $mc): array
     {
         $re = '/\b(user\s+function|static\s+function|wsmethod|wsrestful|wsservice|function|method|class)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?/i';
         preg_match_all($re, $mc, $m, PREG_OFFSET_CAPTURE | PREG_SET_ORDER);
         $decls = [];
         foreach ($m as $x) {
-            $decls[] = [
-                'type'   => $this->normFnType($x[1][0]),
-                'name'   => $x[2][0],
-                'params' => $this->splitParams($x[3][0] ?? ''),
-                'offset' => $x[0][1],
-            ];
+            $decls[] = ['type' => $this->normFnType($x[1][0]), 'name' => $x[2][0], 'params' => $this->splitParams($x[3][0] ?? ''), 'offset' => $x[0][1]];
         }
         $names = array_map(fn ($d) => strtolower($d['name']), $decls);
         $out = [];
-        $count = count($decls);
-        for ($i = 0; $i < $count; $i++) {
+        $n = count($decls);
+        for ($i = 0; $i < $n; $i++) {
             $d = $decls[$i];
             $from = $d['offset'];
-            $to = $i + 1 < $count ? $decls[$i + 1]['offset'] : strlen($mc);
+            $to = $i + 1 < $n ? $decls[$i + 1]['offset'] : strlen($mc);
             $body = substr($mc, $from, $to - $from);
+            $startLine = $lex->lineAt($from);
+            $endLine = max($startLine, $lex->lineAt($to) - 1);
             $out[] = [
                 'name'           => $d['name'],
                 'type'           => $d['type'],
                 'params'         => $d['params'],
                 'returns'        => $this->extractReturns($body),
-                'start_line'     => $lex->lineAt($from),
-                'end_line'       => max($lex->lineAt($from), $lex->lineAt($to) - 1),
+                'start_line'     => $startLine,
+                'end_line'       => $endLine,
                 'calls_internal' => $this->callsInternal($body, $names, $d['name']),
                 'calls_user'     => $this->userCallsIn($body),
-                'writes'         => (bool) preg_match('/\b(RecLock|FieldPut|MsUnlock|MsExecAuto|FCreate|FWrite|TCSQLExec)\b/i', $body),
+                'writes'         => (bool) preg_match('/\b(RecLock|FieldPut|MsUnlock|MsExecAuto|FCreate|FWrite|TCSQLExec|TCSqlExec)\b/i', $body),
+                'evidence'       => ['line_start' => $startLine, 'line_end' => $endLine],
             ];
         }
         return $out;
+    }
+
+    private function functionRanges(array $functions): array
+    {
+        $r = [];
+        foreach ($functions as $f) {
+            $r[] = ['name' => $f['name'], 'start' => $f['start_line'], 'end' => $f['end_line']];
+        }
+        return $r;
+    }
+
+    private function functionAt(array $ranges, int $line): ?string
+    {
+        foreach ($ranges as $r) {
+            if ($line >= $r['start'] && $line <= $r['end']) {
+                return $r['name'];
+            }
+        }
+        return null;
     }
 
     private function normFnType(string $t): string
@@ -145,9 +216,7 @@ class AdvplAnalyzer
             return [];
         }
         return array_values(array_filter(array_map(function ($p) {
-            $p = trim($p);
-            // remove tipagem TL++ "cVar as character" / valores default "x := y"
-            $p = preg_replace('/\s+as\s+\w+/i', '', $p);
+            $p = preg_replace('/\s+as\s+\w+/i', '', trim($p));
             $p = preg_replace('/\s*:?=.*/', '', $p);
             return trim($p);
         }, explode(',', $raw)), fn ($p) => $p !== ''));
@@ -158,9 +227,8 @@ class AdvplAnalyzer
         preg_match_all('/\breturn\b[ \t]*([^\n]*)/i', $body, $m);
         $out = [];
         foreach ($m[1] as $r) {
-            $r = trim($r);
-            $r = rtrim($r, '; ');
-            if ($r !== '' && !in_array(strtolower($r), $out, true)) {
+            $r = rtrim(trim($r), '; ');
+            if ($r !== '' && !in_array($r, $out, true)) {
                 $out[] = $r;
             }
         }
@@ -189,134 +257,129 @@ class AdvplAnalyzer
         return array_values(array_unique(array_map(fn ($x) => 'U_' . $x, $m[1])));
     }
 
-    private function buildCallGraph(array $functions): array
+    /** called_by + tabelas/acessos/efeitos por função. */
+    private function enrichFunctions(array $functions, array $callGraph, array $tables, array $queries, array $effects): array
     {
-        $edges = [];
-        foreach ($functions as $f) {
-            foreach ($f['calls_internal'] as $c) {
-                $edges[] = ['from' => $f['name'], 'to' => $c, 'kind' => 'internal'];
-            }
-            foreach ($f['calls_user'] as $c) {
-                $edges[] = ['from' => $f['name'], 'to' => $c, 'kind' => 'user'];
-            }
+        $calledBy = [];
+        foreach ($callGraph as $e) {
+            $to = strtolower(preg_replace('/^U_/i', '', $e['to'])); // U_FTENVNFU → ftenvnfu (função definida no fonte)
+            $calledBy[$to][] = $e['from'];
         }
-        return $edges;
-    }
-
-    // ── tabelas / aliases / campos ────────────────────────────────────────────
-    private function extractTables(AdvplLexer $lex, string $mc, string $mn): array
-    {
-        $tables = [];
-        $ensure = function (string $alias) use (&$tables): void {
-            $a = strtoupper($alias);
-            $tables[$a] ??= ['alias' => $a, 'access' => [], 'fields' => [], 'orders' => [], 'via' => [], 'dynamic' => false];
-        };
-        $addAccess = function (string $alias, string $acc) use (&$tables): void {
-            $a = strtoupper($alias);
-            if (!in_array($acc, $tables[$a]['access'], true)) {
-                $tables[$a]['access'][] = $acc;
-            }
-        };
-        $addVia = function (string $alias, string $via) use (&$tables): void {
-            $a = strtoupper($alias);
-            if (!in_array($via, $tables[$a]['via'], true)) {
-                $tables[$a]['via'][] = $via;
-            }
-        };
-
-        // DbSelectArea("SXX") — precisa da string → maskNoComments
-        if (preg_match_all('/\bDbSelectArea\s*\(\s*["\']([A-Za-z0-9]{2,10})["\']/i', $mn, $m)) {
-            foreach ($m[1] as $t) {
-                $ensure($t);
-                $addAccess($t, 'read');
-                $addVia($t, 'native');
-            }
-        }
-        // RecLock("SXX", .T./.F.) → inclusão (.T.) / alteração (.F.)
-        if (preg_match_all('/\bRecLock\s*\(\s*["\']([A-Za-z0-9]{2,10})["\']\s*,\s*(\.[TtFf]\.)/i', $mn, $m, PREG_SET_ORDER)) {
-            foreach ($m as $x) {
-                $ensure($x[1]);
-                $addAccess($x[1], strtoupper($x[2]) === '.T.' ? 'insert' : 'update');
-                $addVia($x[1], 'native');
-            }
-        }
-        // alias->CAMPO (não seguido de '(' = não é método de objeto) — maskCode (fora de string/coment)
-        if (preg_match_all('/\b([A-Za-z][A-Za-z0-9_]{1,9})->([A-Za-z][A-Za-z0-9_]*)\s*(\(?)/', $mc, $m, PREG_SET_ORDER)) {
-            foreach ($m as $x) {
-                if ($x[3] === '(') {
-                    continue; // obj->Metodo() → não é campo de tabela
-                }
-                $alias = strtoupper($x[1]);
-                $field = strtoupper($x[2]);
-                // heurística: campo Protheus costuma ser XN_... ; ainda assim registramos o par
-                $ensure($alias);
-                $addVia($alias, 'native');
-                if (!in_array($field, $tables[$alias]['fields'], true)) {
-                    $tables[$alias]['fields'][] = $field;
-                }
-            }
-        }
-        // (cAlias)->CAMPO dinâmico
-        if (preg_match_all('/\)\s*->([A-Za-z][A-Za-z0-9_]*)/', $mc, $m)) {
-            // marca que há acesso por alias dinâmico (não sabemos a tabela)
-            if (!empty($m[1])) {
-                $tables['(dinâmico)'] ??= ['alias' => '(alias dinâmico)', 'access' => ['read'], 'fields' => [], 'orders' => [], 'via' => ['native'], 'dynamic' => true];
-                foreach ($m[1] as $f) {
-                    $f = strtoupper($f);
-                    if (!in_array($f, $tables['(dinâmico)']['fields'], true)) {
-                        $tables['(dinâmico)']['fields'][] = $f;
+        foreach ($functions as &$f) {
+            $lc = strtolower($f['name']);
+            $f['called_by'] = array_values(array_unique($calledBy[$lc] ?? []));
+            // tabelas acessadas nesta função (via queries + eventos)
+            $tb = [];
+            $acc = [];
+            foreach ($queries as $q) {
+                if (strcasecmp((string) ($q['function'] ?? ''), $f['name']) === 0) {
+                    foreach ($q['tables'] as $t) {
+                        $tb[$t] = true;
+                        $acc[$q['operation']] = true;
                     }
                 }
             }
-        }
-        // DbSetOrder(n) associado ao último alias — registramos globalmente as ordens vistas
-        if (preg_match_all('/\bDbSetOrder\s*\(\s*(\d+)\s*\)/i', $mc, $m)) {
-            $orders = array_values(array_unique(array_map('intval', $m[1])));
-            foreach ($tables as $a => &$t) {
-                // não temos o alias exato do DbSetOrder sem análise de fluxo; registramos as ordens no nível do arquivo
-            }
-            unset($t);
-        }
-        // Tabelas + campos citados em SQL (FROM/UPDATE/INTO/JOIN + SET/WHERE) — via query
-        foreach ($this->extractQueries($lex) as $q) {
-            foreach ($q['tables'] as $t) {
-                $ensure($t);
-                $addAccess($t, $this->sqlOpToAccess($q['operation']));
-                $addVia($t, 'sql');
-                $tu = strtoupper($t);
-                foreach ($q['fields'] ?? [] as $f) {
-                    if (!in_array($f, $tables[$tu]['fields'], true)) {
-                        $tables[$tu]['fields'][] = $f;
+            foreach ($tables as $t) {
+                if (in_array($f['name'], $t['functions'] ?? [], true)) {
+                    $tb[$t['table']] = true;
+                    foreach ($t['access'] as $a) {
+                        $acc[$a] = true;
                     }
                 }
             }
+            $f['tables'] = array_keys($tb);
+            $f['accesses'] = array_keys($acc);
+            $f['effects'] = array_values(array_unique(array_map(fn ($e) => $e['type'], array_filter($effects, fn ($e) => strcasecmp((string) ($e['function'] ?? ''), $f['name']) === 0))));
         }
-        return $tables;
+        unset($f);
+        return $functions;
     }
 
-    private function sqlOpToAccess(string $op): string
+    // ── eventos de acesso a dados (nativo + SQL) ──────────────────────────────
+    private function collectAccessEvents(AdvplLexer $lex, string $mc, string $mn, array $fnRanges): array
     {
-        return match (strtoupper($op)) {
-            'UPDATE' => 'update',
-            'INSERT' => 'insert',
-            'DELETE' => 'delete',
-            default  => 'read',
+        $events = [];   // {table, access, field?, field_role?, source, line, function, evidence}
+        $emit = function (array $ev) use (&$events, $lex, $fnRanges): void {
+            $ev['function'] = $this->functionAt($fnRanges, $ev['line']);
+            $ev['evidence'] = ['line' => $ev['line']];
+            $events[] = $ev;
         };
+
+        // DbSelectArea("SXX") — leitura (abre tabela)
+        foreach ($this->matchAll('/\bDbSelectArea\s*\(\s*["\']([A-Za-z0-9]{2,10})["\']/i', $mn) as $x) {
+            $emit(['table' => strtoupper($x['g'][1]), 'access' => 'READ', 'source' => 'native', 'line' => $lex->lineAt($x['offset'])]);
+        }
+        // RecLock("SXX", .T./.F.) — INSERT(.T.) / UPDATE(.F.)
+        foreach ($this->matchAll('/\bRecLock\s*\(\s*["\']([A-Za-z0-9]{2,10})["\']\s*,\s*(\.[TtFf]\.)/i', $mn) as $x) {
+            $emit(['table' => strtoupper($x['g'][1]), 'access' => strtoupper($x['g'][2]) === '.T.' ? 'INSERT' : 'UPDATE', 'source' => 'native', 'line' => $lex->lineAt($x['offset'])]);
+        }
+        // alias->CAMPO — leitura ou escrita (se seguido de :=)
+        foreach ($this->matchAll('/\b([A-Za-z][A-Za-z0-9_]{1,9})->([A-Za-z][A-Za-z0-9_]*)\s*(:=|\()?/', $mc) as $x) {
+            if (($x['g'][3] ?? '') === '(') {
+                continue; // obj->Metodo()
+            }
+            $role = ($x['g'][3] ?? '') === ':=' ? 'write' : 'read';
+            $emit(['table' => strtoupper($x['g'][1]), 'access' => $role === 'write' ? 'UPDATE' : 'READ', 'field' => strtoupper($x['g'][2]), 'field_role' => $role, 'source' => 'native', 'line' => $lex->lineAt($x['offset'])]);
+        }
+
+        $queries = $this->assembleSql($lex);
+        return ['events' => $events, 'queries' => $queries];
     }
 
-    // ── queries / SQL ─────────────────────────────────────────────────────────
-    private function extractQueries(AdvplLexer $lex): array
+    /** matchAll com offset → [{g:groups, offset}] */
+    private function matchAll(string $re, string $subject): array
     {
-        // Monta a SQL concatenada: começa num literal com verbo SQL (SELECT/UPDATE/INSERT/DELETE)
-        // e acumula os literais SEGUINTES próximos (≤3 linhas) — mesmo sem keyword — porque os
-        // fragmentos de campo/valor ("EMAIL = '", "'1'"...) não têm keyword mas fazem parte da query.
+        preg_match_all($re, $subject, $m, PREG_OFFSET_CAPTURE | PREG_SET_ORDER);
+        return array_map(fn ($x) => ['g' => array_map(fn ($c) => $c[0], $x), 'offset' => $x[0][1]], $m);
+    }
+
+    private function buildTables(array $events): array
+    {
+        $t = [];
+        foreach ($events as $e) {
+            $a = $e['table'];
+            $t[$a] ??= ['table' => $a, 'alias' => $a, 'access' => [], 'functions' => [], 'fields' => [], 'read_fields' => [], 'write_fields' => [], 'where_fields' => [], 'source' => [], 'evidence' => ['lines' => []], 'dynamic' => str_starts_with($a, '(')];
+            if (!in_array($e['access'], $t[$a]['access'], true)) {
+                $t[$a]['access'][] = $e['access'];
+            }
+            if ($e['function'] && !in_array($e['function'], $t[$a]['functions'], true)) {
+                $t[$a]['functions'][] = $e['function'];
+            }
+            if (!in_array($e['source'], $t[$a]['source'], true)) {
+                $t[$a]['source'][] = $e['source'];
+            }
+            if (!empty($e['field'])) {
+                $f = $e['field'];
+                $bucket = ($e['field_role'] ?? 'read') === 'write' ? 'write_fields' : (($e['field_role'] ?? '') === 'where' ? 'where_fields' : 'read_fields');
+                foreach ([$bucket, 'fields'] as $k) {
+                    if (!in_array($f, $t[$a][$k], true)) {
+                        $t[$a][$k][] = $f;
+                    }
+                }
+            }
+            $t[$a]['evidence']['lines'][] = $e['line'];
+        }
+        // normaliza evidence (min/max)
+        foreach ($t as &$tb) {
+            $ls = $tb['evidence']['lines'];
+            $tb['evidence'] = $ls ? ['line_start' => min($ls), 'line_end' => max($ls)] : null;
+        }
+        unset($tb);
+        return array_values($t);
+    }
+
+    // ── SQL ───────────────────────────────────────────────────────────────────
+    private function assembleSql(AdvplLexer $lex): array
+    {
         $startKw = '/\b(SELECT|UPDATE|INSERT\s+INTO|DELETE\s+FROM)\b/i';
         $out = [];
-        $buf = null; // ['text','start','last']
-        $flush = function () use (&$buf, &$out): void {
+        $buf = null;
+        $frags = 0;
+        $flush = function () use (&$buf, &$frags, &$out): void {
             if ($buf !== null) {
-                $out[] = $this->parseSql(trim(preg_replace('/\s+/', ' ', $buf['text'])), $buf['start']);
+                $out[] = ['text' => trim(preg_replace('/\s+/', ' ', $buf['text'])), 'line' => $buf['start'], 'fragments' => $frags];
                 $buf = null;
+                $frags = 0;
             }
         };
         foreach ($lex->strings as $s) {
@@ -324,16 +387,19 @@ class AdvplAnalyzer
             if ($buf === null) {
                 if (preg_match($startKw, $v)) {
                     $buf = ['text' => $v, 'start' => $s['line'], 'last' => $s['line']];
+                    $frags = 1;
                 }
                 continue;
             }
             if ($s['line'] - $buf['last'] <= 3) {
                 $buf['text'] .= ' ' . $v;
                 $buf['last'] = $s['line'];
+                $frags++;
             } else {
                 $flush();
                 if (preg_match($startKw, $v)) {
                     $buf = ['text' => $v, 'start' => $s['line'], 'last' => $s['line']];
+                    $frags = 1;
                 }
             }
         }
@@ -341,55 +407,280 @@ class AdvplAnalyzer
         return $out;
     }
 
-    private function parseSql(string $sql, ?int $line): array
+    private function buildQueries(array $rawQueries, array $fnRanges, string $mc): array
     {
-        $op = 'SELECT';
-        if (preg_match('/^\s*UPDATE/i', $sql)) {
-            $op = 'UPDATE';
-        } elseif (preg_match('/INSERT\s+INTO/i', $sql)) {
-            $op = 'INSERT';
-        } elseif (preg_match('/DELETE\s+FROM/i', $sql)) {
-            $op = 'DELETE';
+        $executor = preg_match('/\bTCSQLExec\s*\(/i', $mc) ? 'TCSQLExec'
+            : (preg_match('/\bTCQuery\b/i', $mc) ? 'TCQuery'
+            : (preg_match('/\bBeginSql\b/i', $mc) ? 'BeginSql' : 'SQL'));
+        $out = [];
+        foreach ($rawQueries as $q) {
+            $sql = $q['text'];
+            $op = preg_match('/^\s*UPDATE/i', $sql) ? 'UPDATE'
+                : (preg_match('/INSERT\s+INTO/i', $sql) ? 'INSERT'
+                : (preg_match('/DELETE\s+FROM/i', $sql) ? 'DELETE' : 'SELECT'));
+            $tables = [];
+            if (preg_match_all('/\b(?:FROM|JOIN|UPDATE|INTO)\s+([A-Za-z0-9_%]+)/i', $sql, $mt)) {
+                foreach ($mt[1] as $t) {
+                    $t = strtoupper(trim($t, '%'));
+                    if ($t !== '' && !in_array($t, $tables, true)) {
+                        $tables[] = $t;
+                    }
+                }
+            }
+            [$readF, $writeF, $whereF] = $this->classifySqlFields($sql, $op);
+            $construction = $q['fragments'] > 1 ? 'concatenation' : (preg_match('/%\w/', $sql) ? 'embedded_macro' : 'static');
+            $hasWhere = (bool) preg_match('/\bWHERE\b/i', $sql);
+            $fn = $this->functionAt($fnRanges, $q['line']);
+            $risk = [];
+            if ($construction === 'concatenation' && $fn) {
+                $risk[] = 'dynamic_sql_by_concatenation';
+            }
+            if (in_array($op, ['UPDATE', 'DELETE'], true) && !$hasWhere) {
+                $risk[] = 'write_without_where';
+            }
+            $out[] = [
+                'operation'    => $op,
+                'table'        => $tables[0] ?? null,
+                'tables'       => $tables,
+                'function'     => $fn,
+                'executor'     => $executor,
+                'construction' => $construction,
+                'read_fields'  => $readF,
+                'write_fields' => $writeF,
+                'where_fields' => $whereF,
+                'fields'       => array_values(array_unique(array_merge($readF, $writeF, $whereF))),
+                'has_where'    => $hasWhere,
+                'risk_flags'   => $risk,
+                'evidence'     => ['line' => $q['line']],
+            ];
         }
-        $tables = [];
-        if (preg_match_all('/\b(?:FROM|JOIN|UPDATE|INTO)\s+([A-Za-z0-9_%]+)/i', $sql, $m)) {
-            foreach ($m[1] as $t) {
-                $t = strtoupper(trim($t, '%'));
-                if ($t !== '' && !in_array($t, $tables, true)) {
-                    $tables[] = $t;
+        return $out;
+    }
+
+    private function classifySqlFields(string $sql, string $op): array
+    {
+        $kw = ['SELECT', 'UPDATE', 'INSERT', 'DELETE', 'FROM', 'WHERE', 'SET', 'INTO', 'VALUES', 'JOIN', 'AND', 'OR', 'ON', 'AS'];
+        $read = $write = $where = [];
+        $ident = fn ($s) => array_values(array_filter(array_map('strtoupper', preg_match_all('/\b([A-Z][A-Z0-9_]{2,})\s*(?:=|<>|>=|<=|>|<|\bLIKE\b|\bIN\b)/i', $s, $mm) ? $mm[1] : []), fn ($f) => !in_array($f, $kw, true)));
+        // SET ... WHERE ...
+        if (preg_match('/\bSET\b(.*?)(?:\bWHERE\b(.*))?$/is', $sql, $mm)) {
+            $write = $ident($mm[1] ?? '');
+            $where = $ident($mm[2] ?? '');
+        }
+        if ($op === 'DELETE' && preg_match('/\bWHERE\b(.*)$/is', $sql, $mm)) {
+            $where = $ident($mm[1]);
+        }
+        if ($op === 'INSERT' && preg_match('/INTO\s+[A-Za-z0-9_%]+\s*\(([^)]*)\)/i', $sql, $mm)) {
+            foreach (preg_split('/\s*,\s*/', trim($mm[1])) as $c) {
+                $c = strtoupper(trim($c));
+                if ($c !== '') {
+                    $write[] = $c;
                 }
             }
         }
-        // Campos candidatos: identificadores antes de '=' (SET/WHERE) + colunas de INSERT INTO (...).
-        $fields = [];
-        $sqlKw = ['SELECT', 'UPDATE', 'INSERT', 'DELETE', 'FROM', 'WHERE', 'SET', 'INTO', 'VALUES', 'JOIN', 'AND', 'OR', 'ON', 'AS'];
-        if (preg_match_all('/\b([A-Z][A-Z0-9_]{2,})\s*(?:=|<>|>=|<=|>|<|\bLIKE\b|\bIN\b)/i', $sql, $fm)) {
-            foreach ($fm[1] as $f) {
-                $f = strtoupper($f);
-                if (!in_array($f, $sqlKw, true) && !in_array($f, $tables, true) && !in_array($f, $fields, true)) {
-                    $fields[] = $f;
+        if ($op === 'SELECT') {
+            if (preg_match('/SELECT\s+(.*?)\s+FROM/is', $sql, $mm) && !str_contains($mm[1], '*')) {
+                foreach (preg_split('/\s*,\s*/', trim($mm[1])) as $c) {
+                    $c = strtoupper(trim(preg_replace('/\s+AS\s+.*/i', '', $c)));
+                    if ($c !== '' && preg_match('/^[A-Z][A-Z0-9_]{2,}$/', $c)) {
+                        $read[] = $c;
+                    }
+                }
+            }
+            if (preg_match('/\bWHERE\b(.*)$/is', $sql, $mm)) {
+                $where = $ident($mm[1]);
+            }
+        }
+        $u = fn ($a) => array_values(array_unique($a));
+        return [$u($read), $u($write), $u($where)];
+    }
+
+    /** Converte as queries em eventos de acesso (tabela + campos por papel) p/ alimentar buildTables. */
+    private function sqlEventsFromQueries(array $queries): array
+    {
+        $events = [];
+        foreach ($queries as $q) {
+            $line = $q['evidence']['line'] ?? 1;
+            foreach ($q['tables'] as $t) {
+                $events[] = ['table' => $t, 'access' => $q['operation'], 'source' => 'sql', 'line' => $line, 'function' => $q['function'], 'evidence' => ['line' => $line]];
+                foreach ([['write_fields', 'write'], ['where_fields', 'where'], ['read_fields', 'read']] as [$key, $role]) {
+                    foreach ($q[$key] as $f) {
+                        $events[] = ['table' => $t, 'access' => $q['operation'], 'field' => $f, 'field_role' => $role, 'source' => 'sql', 'line' => $line, 'function' => $q['function'], 'evidence' => ['line' => $line]];
+                    }
                 }
             }
         }
-        if (preg_match('/INSERT\s+INTO\s+[A-Za-z0-9_%]+\s*\(([^)]*)\)/i', $sql, $cm)) {
-            foreach (preg_split('/\s*,\s*/', trim($cm[1])) as $col) {
-                $col = strtoupper(trim($col));
-                if ($col !== '' && !in_array($col, $fields, true)) {
-                    $fields[] = $col;
-                }
+        return $events;
+    }
+
+    // ── data_access vs external_integrations ──────────────────────────────────
+    private function buildDataAccess(array $queries, array $events): array
+    {
+        $out = [];
+        foreach ($queries as $q) {
+            $out[] = ['type' => 'sql', 'operation' => $q['operation'], 'table' => $q['table'], 'function' => $q['function'], 'executor' => $q['executor'], 'construction' => $q['construction'], 'evidence' => $q['evidence']];
+        }
+        // Acessos nativos (DbSelectArea/RecLock) como acesso a dados
+        foreach ($events as $e) {
+            if (($e['source'] ?? '') === 'native' && in_array($e['access'], ['READ', 'INSERT', 'UPDATE', 'DELETE'], true)) {
+                $out[] = ['type' => 'native', 'operation' => $e['access'], 'table' => $e['table'], 'function' => $e['function'], 'executor' => 'DBAccess (alias)', 'evidence' => $e['evidence']];
             }
         }
+        return $out;
+    }
+
+    private function detectExternalIntegrations(string $mc, array $endpoints): array
+    {
+        $out = [];
+        foreach (self::INTEGRATION_SIGNS as $type => $re) {
+            if (preg_match($re, $mc)) {
+                $out[] = ['type' => $type, 'evidence' => 'padrão detectado no código'];
+            }
+        }
+        if (!empty($endpoints) && !in_array('HTTP', array_column($out, 'type'), true) && !in_array('REST', array_column($out, 'type'), true)) {
+            $out[] = ['type' => 'HTTP/URL', 'evidence' => 'endpoint http detectado em string'];
+        }
+        return $out;
+    }
+
+    // ── dependências ──────────────────────────────────────────────────────────
+    private function buildDependencies(array $includes, array $functions, array $userCalls, array $totvs, string $mc): array
+    {
+        $defined = array_map('strtolower', array_column($functions, 'name'));
+        $custom = [];
+        foreach ($userCalls as $uc) {
+            $bare = strtolower(preg_replace('/^U_/i', '', $uc));
+            $custom[] = ['name' => $uc, 'defined_here' => in_array($bare, $defined, true)];
+        }
+        // chamadas a funções do próprio arquivo que não são U_ nem TOTVS
+        preg_match_all('/\bClass\s+([A-Za-z_][A-Za-z0-9_]*)/i', $mc, $cm);
         return [
-            'operation'   => $op,
-            'tables'      => $tables,
-            'fields'      => $fields,
-            'line'        => $line,
-            'has_where'   => (bool) preg_match('/\bWHERE\b/i', $sql),
-            'preview'     => mb_substr($sql, 0, 160),
+            'includes'                   => $includes,
+            'internal_functions'         => array_values(array_column($functions, 'name')),
+            'custom_external_functions'  => array_values(array_filter($custom, fn ($c) => !$c['defined_here'])),
+            'totvs_framework_functions'  => $totvs,
+            'classes'                    => array_values(array_unique($cm[1])),
+            'apis'                       => [], // preenchido pela detecção de integração externa quando houver endpoint nomeado
         ];
     }
 
-    // ── demais extratores ─────────────────────────────────────────────────────
+    // ── efeitos (comprovados deterministicamente) ─────────────────────────────
+    private function buildEffects(AdvplLexer $lex, string $mc, string $mn, array $fnRanges, array $queries): array
+    {
+        $out = [];
+        $emit = function (string $type, ?string $target, int $line) use (&$out, $fnRanges): void {
+            $out[] = ['type' => $type, 'target' => $target, 'function' => $this->functionAt($fnRanges, $line), 'evidence' => ['line' => $line]];
+        };
+        foreach ($queries as $q) {
+            if ($q['operation'] === 'UPDATE' || $q['operation'] === 'INSERT') {
+                $emit('database_write', $q['table'], $q['evidence']['line'] ?? 1);
+            } elseif ($q['operation'] === 'DELETE') {
+                $emit('database_delete', $q['table'], $q['evidence']['line'] ?? 1);
+            }
+        }
+        foreach ($this->matchAll('/\bRecLock\s*\(\s*["\']([A-Za-z0-9]{2,10})["\']/i', $mn) as $x) {
+            $emit('database_write', strtoupper($x['g'][1]), $lex->lineAt($x['offset']));
+        }
+        foreach ($this->matchAll('/\b(FCreate|FWrite|MsFCreate|MemoWrite)\s*\(/i', $mc) as $x) {
+            $emit('file_write', null, $lex->lineAt($x['offset']));
+        }
+        foreach ($this->matchAll('/\b(FWRest|HttpGet|HttpPost|HttpQuote|SoapRequest)\s*\(/i', $mc) as $x) {
+            $emit('external_call', null, $lex->lineAt($x['offset']));
+        }
+        foreach ($this->matchAll('/\bMsExecAuto\s*\(/i', $mc) as $x) {
+            $emit('routine_execution', null, $lex->lineAt($x['offset']));
+        }
+        // variáveis PRIVATE/PUBLIC (efeito de escopo)
+        foreach ($this->matchAll('/\b(Private|Public)\s+([A-Za-z_][A-Za-z0-9_]*)/i', $mc) as $x) {
+            $emit('scoped_variable', strtoupper($x['g'][1]) . ' ' . $x['g'][2], $lex->lineAt($x['offset']));
+        }
+        return $out;
+    }
+
+    // ── call graph categorizado ───────────────────────────────────────────────
+    private function buildCallGraph(array $functions): array
+    {
+        $defined = array_map('strtolower', array_column($functions, 'name'));
+        $totvsLc = array_map('strtolower', self::TOTVS);
+        $edges = [];
+        foreach ($functions as $f) {
+            foreach ($f['calls_internal'] as $c) {
+                $edges[] = ['from' => $f['name'], 'to' => $c, 'kind' => 'internal'];
+            }
+            foreach ($f['calls_user'] as $c) {
+                $bare = strtolower(preg_replace('/^U_/i', '', $c));
+                $edges[] = ['from' => $f['name'], 'to' => $c, 'kind' => in_array($bare, $defined, true) ? 'internal' : 'custom_external'];
+            }
+        }
+        return $edges;
+    }
+
+    // ── mapa técnico estruturado ──────────────────────────────────────────────
+    private function buildTechnicalFlow(array $functions, array $queries): array
+    {
+        $flow = [];
+        // ponto de entrada = função não chamada por ninguém (ou 1ª User Function)
+        $calledNames = [];
+        foreach ($functions as $f) {
+            foreach (array_merge($f['calls_internal'], $f['calls_user']) as $c) {
+                $calledNames[strtolower(preg_replace('/^U_/i', '', $c))] = true;
+            }
+        }
+        $entries = array_values(array_filter($functions, fn ($f) => !isset($calledNames[strtolower($f['name'])])));
+        if (empty($entries)) {
+            $entries = array_slice($functions, 0, 1);
+        }
+        $byName = [];
+        foreach ($functions as $f) {
+            $byName[strtolower($f['name'])] = $f;
+        }
+        $qByFn = [];
+        foreach ($queries as $q) {
+            if ($q['function']) {
+                $qByFn[strtolower($q['function'])][] = $q;
+            }
+        }
+        $seen = [];
+        $walk = function (string $name, int $depth) use (&$walk, &$flow, &$seen, $byName, $qByFn): void {
+            $lc = strtolower(preg_replace('/^U_/i', '', $name));
+            if (isset($seen[$lc]) || $depth > 8) {
+                return;
+            }
+            $seen[$lc] = true;
+            $f = $byName[$lc] ?? null;
+            if (!$f) {
+                return;
+            }
+            $flow[] = ['type' => 'function', 'name' => $f['name']];
+            // entrada de usuário (GETs de tela) dentro da função — heurística determinística
+            $inputs = $this->userInputsIn($f);
+            if (!empty($inputs)) {
+                $flow[] = ['type' => 'user_input', 'function' => $f['name'], 'fields' => $inputs];
+            }
+            foreach (array_merge($f['calls_internal'], $f['calls_user']) as $c) {
+                $flow[] = ['type' => 'function_call', 'from' => $f['name'], 'to' => $c];
+            }
+            foreach ($qByFn[$lc] ?? [] as $q) {
+                $flow[] = ['type' => 'database_operation', 'operation' => $q['operation'], 'table' => $q['table'], 'function' => $f['name']];
+            }
+            foreach (array_merge($f['calls_internal'], $f['calls_user']) as $c) {
+                $walk($c, $depth + 1);
+            }
+        };
+        foreach ($entries as $e) {
+            $walk($e['name'], 0);
+        }
+        return $flow;
+    }
+
+    /** GETs de tela dentro do corpo da função (entrada de usuário determinística). Best-effort. */
+    private function userInputsIn(array $f): array
+    {
+        // não temos o corpo aqui de forma limpa; deixamos vazio quando não determinável.
+        return $f['_inputs'] ?? [];
+    }
+
+    // ── extratores auxiliares (mantidos) ──────────────────────────────────────
     private function extractSx6(string $mn): array
     {
         preg_match_all('/\b(?:GetMv|SuperGetMv|GetNewPar)\s*\(\s*["\'](MV_[A-Za-z0-9_]+)["\']/i', $mn, $m);
@@ -419,10 +710,8 @@ class AdvplAnalyzer
             if ($v === '') {
                 continue;
             }
-            $isPath = preg_match('#^[A-Za-z]:\\\\#', $v)            // C:\...
-                || preg_match('#^\\\\\\\\#', $v)                     // \\server
-                || (str_contains($v, '/') && preg_match('/\.(xml|txt|pdf|log|dbf|csv|json|zip|xls|xlsx)$/i', $v))
-                || preg_match('/\.(xml|txt|pdf|log|dbf|csv|json|zip|xls|xlsx)$/i', $v) && (str_contains($v, '\\') || str_contains($v, '/'));
+            $isPath = preg_match('#^[A-Za-z]:\\\\#', $v) || preg_match('#^\\\\\\\\#', $v)
+                || (preg_match('/\.(xml|txt|pdf|log|dbf|csv|json|zip|xls|xlsx)$/i', $v) && (str_contains($v, '\\') || str_contains($v, '/')));
             if ($isPath && !in_array($v, $out, true)) {
                 $out[] = $v;
             }
@@ -453,67 +742,35 @@ class AdvplAnalyzer
         return array_values(array_unique(array_map(fn ($x) => 'U_' . $x, $m[1])));
     }
 
-    private function detectIntegrations(string $mc, array $queries): array
-    {
-        $out = [];
-        $add = function (string $type, string $tech) use (&$out): void {
-            $out[] = ['type' => $type, 'tech' => $tech];
-        };
-        if (preg_match('/\b(FWRest|TRest|HttpGet|HttpPost|HttpQuote|FWMakeGet|FWMakePost)\s*\(/i', $mc)) {
-            $add('REST/HTTP', 'FWRest/HttpGet/HttpPost');
-        }
-        if (preg_match('/\b(TWsdlManager|WsMethod|WsService|WsRestful|SOAP)\b/i', $mc)) {
-            $add('WebService/SOAP', 'WSDL/WSMethod');
-        }
-        if (preg_match('/\b(MsExecAuto|ExecAuto)\s*\(/i', $mc)) {
-            $add('Automação de rotina Protheus', 'MsExecAuto');
-        }
-        if (!empty($queries)) {
-            $add('Banco de dados (SQL direto)', 'TCSQLExec/TCQuery');
-        }
-        return $out;
-    }
-
     private function detectErrorHandling(string $mc): array
     {
         return [
-            'try_catch'       => (bool) preg_match('/\btry\b[\s\S]{0,4000}?\bcatch\b/i', $mc),
-            'begin_sequence'  => (bool) preg_match('/\bbegin\s+sequence\b/i', $mc),
-            'error_block'     => (bool) preg_match('/\b(ErrorBlock|SetErrorBlock)\s*\(/i', $mc),
-            'validations'     => preg_match_all('/\bif\b[^\n]*\n[^\n]*\breturn\b/i', $mc),
-            'logs'            => preg_match_all('/\b(ConOut|MemoWrite)\s*\(/i', $mc),
+            'try_catch'      => (bool) preg_match('/\btry\b[\s\S]{0,4000}?\bcatch\b/i', $mc),
+            'begin_sequence' => (bool) preg_match('/\bbegin\s+sequence\b/i', $mc),
+            'error_block'    => (bool) preg_match('/\b(ErrorBlock|SetErrorBlock)\s*\(/i', $mc),
+            'validations'    => preg_match_all('/\bif\b[^\n]*\n[^\n]*\breturn\b/i', $mc),
+            'logs'           => preg_match_all('/\b(ConOut|MemoWrite)\s*\(/i', $mc),
         ];
     }
 
-    private function detectWriteEffects(string $mc, array $queries, array $tables): array
+    // ── compat (chaves antigas p/ o renderer atual) ───────────────────────────
+    private function legacyIntegrations(array $external, array $dataAccess): array
     {
-        $out = [];
-        foreach ($queries as $q) {
-            if (in_array($q['operation'], ['UPDATE', 'INSERT', 'DELETE'], true)) {
-                $out[] = ['type' => 'sql_' . strtolower($q['operation']), 'target' => implode(',', $q['tables']) ?: '(sql)'];
-            }
-        }
-        if (preg_match('/\bRecLock\s*\(/i', $mc) && preg_match('/\b(FieldPut|MsUnlock|MsUnLock)\s*\(/i', $mc)) {
-            $out[] = ['type' => 'native_write', 'target' => 'RecLock/FieldPut'];
-        }
-        if (preg_match('/\bMsExecAuto\s*\(/i', $mc)) {
-            $out[] = ['type' => 'routine_write', 'target' => 'MsExecAuto'];
-        }
-        if (preg_match('/\b(FCreate|FWrite|MsFCreate|MemoWrite)\s*\(/i', $mc)) {
-            $out[] = ['type' => 'file_write', 'target' => 'arquivo'];
+        $out = array_map(fn ($x) => ['type' => $x['type'], 'tech' => $x['type']], $external);
+        if (!empty($dataAccess)) {
+            $out[] = ['type' => 'Banco de dados (SQL direto)', 'tech' => 'TCSQLExec/TCQuery'];
         }
         return $out;
     }
 
-    private function guessLang(string $path, string $code): string
+    private function legacyWriteEffects(array $effects): array
     {
-        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-        if (in_array($ext, ['tlpp', 'tlp'], true)) {
-            return 'tlpp';
+        $out = [];
+        foreach ($effects as $e) {
+            if (in_array($e['type'], ['database_write', 'database_delete', 'file_write', 'routine_execution'], true)) {
+                $out[] = ['type' => str_replace('database_', 'sql_', $e['type']), 'target' => $e['target'] ?? '(sql)'];
+            }
         }
-        if (preg_match('/\b(namespace|using|class\s+\w+\s*(?:from|-)\s*)/i', $code) && $ext === '') {
-            return 'tlpp';
-        }
-        return 'advpl';
+        return $out;
     }
 }
