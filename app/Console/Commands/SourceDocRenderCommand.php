@@ -15,29 +15,20 @@ use Illuminate\Console\Command;
  * (que NUNCA substitui o source_commit_sha). Detecta doc desatualizada (HEAD ≠ current sha).
  *
  *   php artisan source-doc:render --doc=1 --format=md
- *   php artisan source-doc:render --version=6 --format=docx
+ *   php artisan source-doc:render --ver=6 --format=docx
  *   php artisan source-doc:render --doc=1 --export-git --git-dir=docs
+ *
+ * Obs.: a opção é --ver (não --version, reservada pelo Symfony Console).
  */
 class SourceDocRenderCommand extends Command
 {
-    protected $signature = 'source-doc:render {--doc=} {--version=} {--format=md} {--export-git} {--git-dir=docs}';
+    protected $signature = 'source-doc:render {--doc=} {--ver=} {--format=md} {--export-git} {--git-dir=docs}';
     protected $description = 'Fase 4: renderiza (md/html/docx/pdf) e opcionalmente exporta a doc ao Git.';
 
     public function handle(SourceDocRenderer $renderer, GithubAppAuth $auth): int
     {
-        try {
-            return $this->doRender($renderer, $auth);
-        } catch (\Throwable $e) {
-            \App\Models\SystemSetting::set('diag_render', json_encode(['error' => $e->getMessage(), 'file' => basename($e->getFile()), 'line' => $e->getLine()]), 'string', 'diag');
-            $this->error($e->getMessage());
-            return self::FAILURE;
-        }
-    }
-
-    private function doRender(SourceDocRenderer $renderer, GithubAppAuth $auth): int
-    {
-        $ver = $this->option('version')
-            ? SourceDocVersion::find((int) $this->option('version'))
+        $ver = $this->option('ver')
+            ? SourceDocVersion::find((int) $this->option('ver'))
             : optional(SourceDoc::find((int) $this->option('doc')))->currentVersion;
         if (!$ver) {
             $this->error('Doc/versão não encontrada.');
