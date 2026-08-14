@@ -88,13 +88,15 @@ class GmudSourceProcessor
             }
         }
 
-        // Interação interna (relatório completo) + flag no chamado.
+        // Interação interna (relatório completo) + flag no chamado. NÃO é is_system: precisa renderizar
+        // os anexos (.docx da documentação) — comentário de sistema mostra só ícone+texto. Autor = quem
+        // submeteu a GMUD (gerado na submissão dele); o texto deixa claro que é automático.
         $reportComment = $ticket->comments()->create([
-            'author_user_id' => null,
+            'author_user_id' => $comment->author_user_id,
             'body'           => $this->report($ticket, $comment, $inventory, array_keys($sources), $repo, $status, $commitSha, $error, $attachDocs ?? []),
             'visibility'     => 'internal',
             'channel'        => 'interno',
-            'is_system'      => true,
+            'is_system'      => false,
         ]);
 
         // Anexa os .docx gerados na interação (best-effort — não derruba o fluxo).
