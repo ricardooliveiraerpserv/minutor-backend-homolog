@@ -159,14 +159,17 @@ class GmudSourceProcessor
     private function runDocPipeline(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ClientSourceRepo $repo, string $basePath, string $branch, array $sources, array $oldCode, string $commitSha, ?string $parentSha): void
     {
         $pipeline = app(\App\SourceCode\SourceDocPipeline::class);
+        $renderer = app(\App\SourceCode\SourceDocRenderer::class);
         $max = (int) config('services.source_doc.inline_semantic_max', 3);
         $responsibleId = $ticket->assignee_id ?: $comment->author_user_id;
         $responsavel = optional($ticket->assignee)->name ?: optional($comment->author)->name ?: '—';
+        $customerName = optional($ticket->customer)->name;
         $i = 0;
+        $docs = [];
         foreach ($sources as $path => $content) {
             $repoPath = ($basePath !== '' ? $basePath . '/' : '') . $path;
             try {
-                $pipeline->processFile([
+                $ver = $pipeline->processFile([
                     'customer_id' => $ticket->customer_id, 'source_repo_id' => $repo->id,
                     'owner' => $repo->owner, 'repository' => $repo->repository, 'branch' => $branch, 'path' => $repoPath,
                     'tipo' => $repo->tipo, 'new_code' => $content, 'old_code' => $oldCode[$path] ?? null,
@@ -174,10 +177,38 @@ class GmudSourceProcessor
                     'gmud_id' => $ticket->id, 'ticket_number' => $ticket->ticket_number,
                     'responsible_user_id' => $responsibleId, 'responsavel' => $responsavel,
                 ], $i < $max);
+                if (!empty($ver->documentation_json)) {
+                    $docs[] = ['name' => basename($path) . '.docx', 'bytes' => $renderer->docx($ver->documentation_json, false, $customerName ? ['name' => $customerName] : [])];
+                }
             } catch (\Throwable $e) {
                 Log::warning('gmud_source.doc_pipeline_failed', ['path' => $repoPath, 'error' => $e->getMessage()]);
             }
             $i++;
+        }
+
+        // Anexa a documentação renderizada (.docx timbrado) numa interação interna do chamado.
+        if (!empty($docs)) {
+            try {
+                $note = $ticket->comments()->create([
+                    'author_user_id' => $comment->author_user_id,
+                    'body'           => '📄 Documentação técnica dos fontes gerada (' . count($docs) . ') — timbrado ERPSERV. Fonte da verdade estruturada no Minutor.',
+                    'visibility'     => 'internal', 'channel' => 'interno', 'is_system' => false,
+                ]);
+                $attachments = app(\App\Attachments\AttachmentService::class);
+                $actor = $comment->author ?: \App\Models\User::find($comment->author_user_id);
+                foreach ($docs as $d) {
+                    if (!$actor) {
+                        break;
+                    }
+                    $tmp = tempnam(sys_get_temp_dir(), 'docx') . '.docx';
+                    file_put_contents($tmp, $d['bytes']);
+                    $up = new \Illuminate\Http\UploadedFile($tmp, $d['name'], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', null, true);
+                    $attachments->store($actor, ['entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $note->id, 'category' => 'attachment', 'visibility' => 'internal', 'file' => $up]);
+                    @unlink($tmp);
+                }
+            } catch (\Throwable $e) {
+                Log::warning('gmud_source.doc_attach_failed', ['error' => $e->getMessage()]);
+            }
         }
     }
 

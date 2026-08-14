@@ -31,10 +31,14 @@ class SourceDocVersion extends Model
 
     protected static function booted(): void
     {
-        // Imutabilidade: concluída não muda; nenhuma versão é excluída (histórico técnico).
+        // Imutabilidade: a ANÁLISE de uma versão concluída não muda. Exceção: gravar o
+        // documentation_commit_sha (metadado do export ao Git, posterior à análise) é permitido.
         static::updating(function (SourceDocVersion $v) {
             if ($v->getOriginal('analysis_status') === 'completed') {
-                throw new \RuntimeException("source_doc_version #{$v->id} está concluída e é imutável.");
+                $changed = array_diff(array_keys($v->getDirty()), ['documentation_commit_sha', 'updated_at']);
+                if (!empty($changed)) {
+                    throw new \RuntimeException("source_doc_version #{$v->id} está concluída e é imutável.");
+                }
             }
         });
         static::deleting(function (SourceDocVersion $v) {
