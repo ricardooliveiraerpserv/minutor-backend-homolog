@@ -99,6 +99,16 @@ class GmudSourceProcessor
         $ticket->saveQuietly();
     }
 
+    /** Lixo de SO que vem dentro de zips (não é fonte nem conteúdo real do pacote). */
+    private function isJunk(string $path): bool
+    {
+        if (str_starts_with($path, '__MACOSX/') || str_contains($path, '/__MACOSX/')) {
+            return true;
+        }
+        $baseName = basename($path);
+        return str_starts_with($baseName, '._') || $baseName === '.DS_Store' || strcasecmp($baseName, 'Thumbs.db') === 0;
+    }
+
     private function isZip(Attachment $a): bool
     {
         $ext = strtolower((string) ($a->extension ?: pathinfo((string) $a->original_name, PATHINFO_EXTENSION)));
@@ -119,6 +129,9 @@ class GmudSourceProcessor
                 $name = (string) ($stat['name'] ?? '');
                 if ($name === '' || str_ends_with($name, '/')) {
                     continue; // diretório
+                }
+                if ($this->isJunk($name)) {
+                    continue; // lixo do SO (macOS __MACOSX/._*, .DS_Store; Windows Thumbs.db) — não é conteúdo
                 }
                 $inventory[$name] = (int) ($stat['size'] ?? 0);
                 $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
