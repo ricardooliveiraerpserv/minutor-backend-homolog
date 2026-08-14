@@ -35,6 +35,9 @@ class Project extends Model
     public const STATUS_CANCELLED            = 'cancelled';
     public const STATUS_FINISHED             = 'finished';
 
+    /** Status definidos MANUALMENTE — recomputeStatusFromStages() nunca os sobrescreve. */
+    public const MANUAL_STATUSES = [self::STATUS_PAUSED, self::STATUS_CANCELLED, self::STATUS_FINISHED];
+
     /**
      * Expense responsible party constants
      */
@@ -83,6 +86,8 @@ class Project extends Model
         'expected_end_date',
         'delivery_percentage',
         'kanban_stage',
+        'allow_weekend_work',
+        'allow_holiday_work',
         'encerramento_date',
         'save_erpserv',
         'max_expense_per_consultant',
@@ -127,6 +132,8 @@ class Project extends Model
         'hourly_rate' => 'decimal:2',
         'additional_hourly_rate' => 'decimal:2',
         'charge_excess_hours' => 'boolean',
+        'allow_weekend_work' => 'boolean',
+        'allow_holiday_work' => 'boolean',
         'max_expense_per_consultant' => 'decimal:2',
         'unlimited_expense' => 'boolean',
         'sold_hours' => 'integer',
@@ -280,6 +287,145 @@ class Project extends Model
         if (str_contains($name, 'bizify'))      return false;
         if (str_contains($name, 'investimento')) return false;
         return true;
+    }
+
+    /**
+     * Clientes com VISÃO GLOBAL do projeto (nível projeto). Enxergam o projeto
+     * inteiro em dias; restrições de card continuam por atividade.
+     */
+    public function clientViewers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'project_client_viewers')
+                    ->withTimestamps();
+    }
+
+    /**
+     * Projetos EM EXECUÇÃO (exclui backlog e awaiting_start). Ver ProjectWorkflowService::IN_EXECUTION.
+     */
+    public function scopeInExecution($query)
+    {
+        return $query->whereIn('status', \App\Services\ProjectWorkflowService::IN_EXECUTION);
+    }
+
+    /**
+     * Pool de horas do cronograma = "Liberado à gestão" (coordination_hours);
+     * se zerado, cai em sold_hours.
+     */
+    public function cronogramaPoolHours(): float
+    {
+        $coord = (float) ($this->coordination_hours ?? 0);
+        return $coord > 0 ? $coord : (float) ($this->sold_hours ?? 0);
+    }
+
+    /**
+     * Horas PLANEJADAS que ocupam o pool do cronograma. Por etapa: hours_planned
+     * próprio se > 0; senão soma das atividades NÃO-cliente. Etapas não contam em dobro.
+     *
+     * @param int|null $excludeStageId etapa em edição (some do total).
+     */
+    public function plannedPoolUsage(?int $excludeStageId = null): float
+    {
+        $stages = $this->stages()
+            ->when($excludeStageId, fn ($q) => $q->where('id', '!=', $excludeStageId))
+            ->get(['id', 'hours_planned']);
+
+        $total = 0.0;
+        foreach ($stages as $st) {
+            $own = (float) ($st->hours_planned ?? 0);
+            $total += $own > 0
+                ? $own
+                : (float) \App\Models\StageDelivery::where('stage_id', $st->id)
+                    ->where('client_involved', false)
+                    ->sum('hours_planned');
+        }
+        return $total;
+    }
+
+    /**
+     * Deriva o "Prazo de entrega" (expected_end_date) da última data do cronograma
+     * (fim das etapas e das atividades). Persiste; só sincroniza se houver data.
+     *
+     * @return string|null Nova data (Y-m-d) ou null se o cronograma não tem datas.
+     */
+    public function recalcExpectedEndFromSchedule(): ?string
+    {
+        $cal = app(\App\Services\BusinessCalendarService::class);
+        $calOpts = [
+            'allow_weekend' => (bool) $this->allow_weekend_work,
+            'allow_holiday' => (bool) $this->allow_holiday_work,
+        ];
+
+        $latestStage = $this->stages()
+            ->whereNotNull('expected_end_date')
+            ->max('expected_end_date');
+
+        $latest = $latestStage ? \Carbon\Carbon::parse($latestStage)->startOfDay() : null;
+
+        $deliveries = \App\Models\StageDelivery::whereHas('stage', fn ($q) =>
+                $q->where('project_id', $this->id))
+            ->get(['stage_id', 'due_date', 'planned_start_at', 'hours_planned']);
+        foreach ($deliveries as $del) {
+            $end = $del->plannedEndDate($cal, $calOpts);
+            if ($end && (!$latest || $end->gt($latest))) $latest = $end;
+        }
+
+        if (!$latest) {
+            if ($this->expected_end_date !== null) {
+                $this->expected_end_date = null;
+                $this->saveQuietly();
+            }
+            return null;
+        }
+
+        $new = $latest->toDateString();
+        if ($this->expected_end_date?->toDateString() !== $new) {
+            $this->expected_end_date = $new;
+            $this->saveQuietly();
+        }
+        return $new;
+    }
+
+    /**
+     * Status do projeto derivado do cronograma (board Demandas e Projetos): coluna da
+     * etapa MENOS avançada. NÃO sobrescreve status MANUAL (paused/cancelled/finished).
+     */
+    public function recomputeStatusFromStages(): void
+    {
+        if (in_array($this->status, self::MANUAL_STATUSES, true)) return;
+
+        $stages = $this->stages()->withCount([
+            'deliveries',
+            'deliveries as deliveries_done_count'    => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_DONE),
+            'deliveries as deliveries_review_count'  => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_REVIEW),
+            'deliveries as deliveries_waiting_count' => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_WAITING_CLIENT),
+            'deliveries as deliveries_backlog_count' => fn ($q) => $q->where('status', \App\Models\StageDelivery::STATUS_BACKLOG),
+        ])->get();
+
+        $rankOf = function ($s): int {
+            $total   = (int) ($s->deliveries_count ?? 0);
+            $done    = (int) ($s->deliveries_done_count ?? 0);
+            $review  = (int) ($s->deliveries_review_count ?? 0);
+            $waiting = (int) ($s->deliveries_waiting_count ?? 0);
+            $backlog = (int) ($s->deliveries_backlog_count ?? 0);
+            if ($total === 0)            return 0;
+            if ($waiting > 0)            return 1;
+            if ($done === $total)        return 3;
+            if (($review + $done) === $total) return 2;
+            if ($backlog === 0)          return 1;
+            return 0;
+        };
+
+        if ($stages->isEmpty()) {
+            $target = self::STATUS_AWAITING_START;
+        } else {
+            $min = min($stages->map($rankOf)->all());
+            $target = [0 => self::STATUS_PLANNING, 1 => self::STATUS_STARTED, 2 => self::STATUS_LIBERADO_PARA_TESTES, 3 => self::STATUS_EM_PRODUCAO][$min];
+        }
+
+        if ($this->status !== $target) {
+            $this->status = $target;
+            $this->saveQuietly();
+        }
     }
 
     /**
