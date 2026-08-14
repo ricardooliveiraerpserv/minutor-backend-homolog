@@ -897,6 +897,10 @@ class TimesheetController extends Controller
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
+            // Cronograma: atividade (stage_delivery) do apontamento quando o projeto é
+            // tipo Projeto e o consultor está alocado. stage_id é derivado no mutator.
+            'stage_id' => 'nullable|integer|exists:project_stages,id',
+            'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ];
 
         // Se é administrador ou coordenador, pode especificar user_id
@@ -1466,6 +1470,9 @@ class TimesheetController extends Controller
             'customer_id' => 'sometimes|exists:customers,id',
             'project_id' => 'sometimes|exists:projects,id',
             'real_project_id' => 'nullable|integer|exists:projects,id',
+            // Cronograma: atividade (stage_delivery). stage_id é derivado no mutator.
+            'stage_id' => 'nullable|integer|exists:project_stages,id',
+            'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
