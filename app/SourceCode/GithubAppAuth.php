@@ -195,6 +195,77 @@ class GithubAppAuth
         throw SourceIntegrationException::upstream($res->status());
     }
 
+    /**
+     * Commit ATÔMICO de vários arquivos numa branch (Git Data API — exige Contents:RW).
+     * $files: [caminho_relativo => conteúdo_em_bytes]. base64 preserva bytes exatos (encoding
+     * legado dos fontes AdvPL). Retorna o SHA do commit criado.
+     * @param array<string,string> $files
+     */
+    public function commitFiles(string $owner, string $repo, string $branch, array $files, string $message): string
+    {
+        if (empty($files)) {
+            throw SourceIntegrationException::upstream(400);
+        }
+        $token = $this->installationToken($owner);
+        $base = "{$this->api}/repos/{$owner}/{$repo}";
+        $http = fn () => Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders());
+
+        // 1) HEAD da branch → commit atual
+        $refRes = $http()->get("{$base}/git/ref/heads/{$branch}");
+        if ($refRes->status() === 404) {
+            throw SourceIntegrationException::branchNotFound($branch);
+        }
+        if (!$refRes->successful()) {
+            $this->assertUpstream($refRes);
+            throw SourceIntegrationException::upstream($refRes->status());
+        }
+        $headSha = (string) $refRes->json('object.sha');
+
+        // 2) commit atual → tree base
+        $commitRes = $http()->get("{$base}/git/commits/{$headSha}");
+        if (!$commitRes->successful()) {
+            throw SourceIntegrationException::upstream($commitRes->status());
+        }
+        $baseTree = (string) $commitRes->json('tree.sha');
+
+        // 3) blobs (base64) → entradas da tree
+        $tree = [];
+        foreach ($files as $path => $content) {
+            $blobRes = $http()->post("{$base}/git/blobs", ['content' => base64_encode($content), 'encoding' => 'base64']);
+            $this->assertWrite($blobRes, $owner);
+            $tree[] = ['path' => ltrim(str_replace('\\', '/', $path), '/'), 'mode' => '100644', 'type' => 'blob', 'sha' => (string) $blobRes->json('sha')];
+        }
+
+        // 4) nova tree (sobre a base → preserva o resto do repo)
+        $treeRes = $http()->post("{$base}/git/trees", ['base_tree' => $baseTree, 'tree' => $tree]);
+        $this->assertWrite($treeRes, $owner);
+        $newTree = (string) $treeRes->json('sha');
+
+        // 5) commit
+        $cRes = $http()->post("{$base}/git/commits", ['message' => $message, 'tree' => $newTree, 'parents' => [$headSha]]);
+        $this->assertWrite($cRes, $owner);
+        $newCommit = (string) $cRes->json('sha');
+
+        // 6) atualiza a ref da branch
+        $upRes = $http()->patch("{$base}/git/refs/heads/{$branch}", ['sha' => $newCommit, 'force' => false]);
+        $this->assertWrite($upRes, $owner);
+
+        return $newCommit;
+    }
+
+    /** Erros de chamada de ESCRITA: 403 sem rate-limit = App sem Contents:RW. */
+    private function assertWrite(Response $res, string $owner): void
+    {
+        if ($res->successful()) {
+            return;
+        }
+        if ($res->status() === 403 && (string) $res->header('X-RateLimit-Remaining') !== '0') {
+            throw SourceIntegrationException::contentsWriteNotPermitted($owner);
+        }
+        $this->assertUpstream($res);
+        throw SourceIntegrationException::upstream($res->status());
+    }
+
     /** Existe repo com esse nome no owner? (GET read-only; 200=sim, 404=não). */
     public function repoExists(string $owner, string $name): bool
     {

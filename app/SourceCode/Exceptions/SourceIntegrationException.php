@@ -64,6 +64,12 @@ class SourceIntegrationException extends RuntimeException
         return new self('WRITE_NOT_PERMITTED', "GitHub App sem permissão de escrita em \"{$owner}\". Ative \"Administration: Read and write\" nas permissões da App e aprove a atualização na instalação.", 403);
     }
 
+    /** Tentativa de gravar CONTEÚDO (commit) sem "Contents: Read and write" na App. */
+    public static function contentsWriteNotPermitted(string $owner): self
+    {
+        return new self('CONTENTS_WRITE_NOT_PERMITTED', "GitHub App sem permissão de escrita de conteúdo em \"{$owner}\". Ative \"Contents: Read and write\" nas permissões da App e aprove a atualização na instalação.", 403);
+    }
+
     /** Nome de repositório já em uso no owner e inacessível pela instalação. */
     public static function repoNameTaken(string $owner, string $name): self
     {

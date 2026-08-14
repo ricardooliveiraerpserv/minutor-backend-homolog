@@ -53,6 +53,8 @@ class HelpDeskTicketController extends Controller
         $data['can_close']      = $this->access->canClose($user);
         // Marca (badge + filtro futuro): o chamado tem alguma Solicitação de Código-Fonte?
         $data['has_source_code'] = \App\Models\SourceCodeRequest::where('ticket_id', $ticket->id)->exists();
+        // Resultado da varredura de fonte da GMUD (null se ainda não é/foi GMUD).
+        $data['gmud_source_status'] = $ticket->gmud_source_status ?? null;
         $data['solicitante']    = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail()];
         $data['continuation_ticket'] = optional($ticket->relationLoaded('continuations')
             ? $ticket->continuations->sortByDesc('id')->first()
@@ -1879,6 +1881,21 @@ class HelpDeskTicketController extends Controller
                 }
                 HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $newStatus->key, 'meta' => ['via' => 'solution_auto']]);
                 $ticket->refresh();
+            }
+        }
+
+        // Varredura de fonte da GMUD: ao resolver com GMUD, escaneia o(s) .zip da solução,
+        // commita os fontes no repo do cliente e grava o relatório de auditoria + a flag.
+        // Best-effort: NUNCA derruba a gravação da solução.
+        if ($comment->form_kind === 'gmud' || optional($ticket->status)->key === 'solucao_gmud') {
+            try {
+                app(\App\SourceCode\GmudSourceProcessor::class)->process($ticket, $comment);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('gmud_source.process_failed', [
+                    'ticket'  => $ticket->id,
+                    'comment' => $comment->id,
+                    'error'   => $e->getMessage(),
+                ]);
             }
         }
 
