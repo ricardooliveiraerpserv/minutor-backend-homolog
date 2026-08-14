@@ -64,19 +64,20 @@ class GmudSourceProcessor
                 $error = 'GitHub App não configurada.';
             } else {
                 $basePath = $repo->normalizedBasePath();
+                $branch = $repo->branch ?: 'main';
                 $files = [];
                 foreach ($sources as $path => $content) {
                     $files[($basePath !== '' ? $basePath . '/' : '') . $path] = $content;
                 }
+                // Documentação automática por fonte (IA + timbrado) — vai no MESMO commit e é anexada.
+                $docs = $this->buildDocs($ticket, $comment, $repo, $basePath, $branch, $sources);
+                foreach ($docs as $d) {
+                    $files[$d['commit_path']] = $d['bytes'];
+                }
                 try {
-                    $commitSha = $this->auth->commitFiles(
-                        $repo->owner,
-                        $repo->repository,
-                        $repo->branch ?: 'main',
-                        $files,
-                        $this->commitMessage($ticket, $comment)
-                    );
+                    $commitSha = $this->auth->commitFiles($repo->owner, $repo->repository, $branch, $files, $this->commitMessage($ticket, $comment));
                     $status = 'atualizado';
+                    $attachDocs = $docs; // anexa ao chamado após criar a interação
                 } catch (SourceIntegrationException $e) {
                     $status = $e->errorCode === 'CONTENTS_WRITE_NOT_PERMITTED' ? 'pendente_permissao' : 'erro';
                     $error = $e->getMessage();
@@ -88,13 +89,18 @@ class GmudSourceProcessor
         }
 
         // Interação interna (relatório completo) + flag no chamado.
-        $ticket->comments()->create([
+        $reportComment = $ticket->comments()->create([
             'author_user_id' => null,
-            'body'           => $this->report($ticket, $comment, $inventory, array_keys($sources), $repo, $status, $commitSha, $error),
+            'body'           => $this->report($ticket, $comment, $inventory, array_keys($sources), $repo, $status, $commitSha, $error, $attachDocs ?? []),
             'visibility'     => 'internal',
             'channel'        => 'interno',
             'is_system'      => true,
         ]);
+
+        // Anexa os .docx gerados na interação (best-effort — não derruba o fluxo).
+        if (!empty($attachDocs ?? [])) {
+            $this->attachDocs($reportComment, $comment, $attachDocs);
+        }
         $ticket->gmud_source_status = $status;
         $ticket->saveQuietly();
     }
@@ -155,7 +161,54 @@ class GmudSourceProcessor
         return "GMUD chamado {$num} — responsável: {$resp}";
     }
 
-    private function report(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, array $inventory, array $committed, ?ClientSourceRepo $repo, string $status, ?string $sha, ?string $error): string
+    /** Gera o .docx de cada fonte. Retorna [{name, commit_path, bytes}]. Best-effort por arquivo. */
+    private function buildDocs(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ClientSourceRepo $repo, string $basePath, string $branch, array $sources): array
+    {
+        $svc = app(SourceDocService::class);
+        $responsavel = optional($ticket->assignee)->name ?: optional($comment->author)->name ?: '—';
+        $out = [];
+        foreach ($sources as $path => $content) {
+            $repoPath = ($basePath !== '' ? $basePath . '/' : '') . $path;
+            try {
+                $old = $this->auth->getFileContent($repo->owner, $repo->repository, $branch, $repoPath);
+                $bytes = $svc->generate($ticket, $repo->owner, $repo->repository, $repoPath, $ticket->customer_id, $content, $old, $responsavel);
+                $out[] = [
+                    'name'        => basename($path) . '.docx',
+                    'commit_path' => ($basePath !== '' ? $basePath . '/' : '') . 'docs/' . $path . '.docx',
+                    'bytes'       => $bytes,
+                ];
+            } catch (\Throwable $e) {
+                Log::warning('gmud_source.doc_failed', ['path' => $path, 'error' => $e->getMessage()]);
+            }
+        }
+        return $out;
+    }
+
+    /** Anexa os .docx à interação de relatório. */
+    private function attachDocs(HelpDeskTicketComment $reportComment, HelpDeskTicketComment $srcComment, array $docs): void
+    {
+        $attachments = app(\App\Attachments\AttachmentService::class);
+        $actor = $srcComment->author ?: \App\Models\User::find($srcComment->author_user_id);
+        if (!$actor) {
+            return;
+        }
+        foreach ($docs as $d) {
+            try {
+                $tmp = tempnam(sys_get_temp_dir(), 'gmuddoc') . '.docx';
+                file_put_contents($tmp, $d['bytes']);
+                $upload = new \Illuminate\Http\UploadedFile($tmp, $d['name'], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', null, true);
+                $attachments->store($actor, [
+                    'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $reportComment->id,
+                    'category'    => 'attachment', 'visibility' => 'internal', 'file' => $upload,
+                ]);
+                @unlink($tmp);
+            } catch (\Throwable $e) {
+                Log::warning('gmud_source.attach_doc_failed', ['name' => $d['name'], 'error' => $e->getMessage()]);
+            }
+        }
+    }
+
+    private function report(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, array $inventory, array $committed, ?ClientSourceRepo $repo, string $status, ?string $sha, ?string $error, array $docs = []): string
     {
         $num = $ticket->ticket_number ?: ('#' . $ticket->id);
         $resp = optional($ticket->assignee)->name ?: optional($comment->author)->name ?: '—';
@@ -195,6 +248,11 @@ class GmudSourceProcessor
                 break;
             default:
                 $lines[] = "⚠️ Falha ao gravar no Git ({$n} fonte(s) detectado(s), não gravados): " . ($error ?: 'erro desconhecido');
+        }
+
+        if (!empty($docs)) {
+            $lines[] = '';
+            $lines[] = '📄 Documentação gerada (' . count($docs) . '): anexada abaixo + commitada em docs/.';
         }
 
         $lines[] = '';

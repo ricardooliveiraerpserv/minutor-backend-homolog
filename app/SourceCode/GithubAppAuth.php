@@ -279,6 +279,28 @@ class GithubAppAuth
         }
     }
 
+    /** Conteúdo de UM arquivo na branch (read-only), ou null se não existir (fonte novo). */
+    public function getFileContent(string $owner, string $repo, string $branch, string $path): ?string
+    {
+        try {
+            $token = $this->installationToken($owner);
+            $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/repos/{$owner}/{$repo}/contents/" . implode('/', array_map('rawurlencode', explode('/', ltrim($path, '/')))), ['ref' => $branch]);
+            if (!$res->successful()) {
+                return null;
+            }
+            $content = (string) $res->json('content', '');
+            $encoding = (string) $res->json('encoding', 'base64');
+            if ($encoding === 'base64') {
+                $decoded = base64_decode(str_replace(["\n", "\r"], '', $content), true);
+                return $decoded === false ? null : $decoded;
+            }
+            return $content;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     /** Metadados do repo (size em KB, default_branch) ou null se não existir. */
     public function repoMeta(string $owner, string $name): ?array
     {
