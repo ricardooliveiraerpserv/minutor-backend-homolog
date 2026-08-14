@@ -64,7 +64,7 @@ class AnthropicProvider implements SourceDocAiProvider
             // Log SEM payload (só status). A mensagem de erro do Anthropic pode conter texto de billing,
             // mas nunca o nosso código — ainda assim não a propagamos para o usuário final.
             Log::warning('source_doc_ai.http_error', ['provider' => 'anthropic', 'model' => $model, 'status' => $res->status(), 'ms' => $ms]);
-            throw new RuntimeException('Falha ao consultar a IA (HTTP ' . $res->status() . ').');
+            throw new RuntimeException('HTTP ' . $res->status() . ' BODY[' . mb_substr($res->body(), 0, 500) . ']');
         }
 
         Log::info('source_doc_ai.ok', [

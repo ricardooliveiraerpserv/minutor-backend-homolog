@@ -36,7 +36,9 @@ class SourceDocSemanticAnalyzer
             }
         } catch (\Throwable $e) {
             Log::warning('source_doc_ai.analyze_failed', ['error' => $e->getMessage()]);
-            return $this->failed($e->getMessage(), $deterministic);
+            $f = $this->failed($e->getMessage(), $deterministic);
+            $f['error_detail'] = $e->getMessage();
+            return $f;
         }
 
         return $this->finalize($sem, $deterministic);
