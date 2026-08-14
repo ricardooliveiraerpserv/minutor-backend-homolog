@@ -25,6 +25,17 @@ class SourceDocRenderCommand extends Command
 
     public function handle(SourceDocRenderer $renderer, GithubAppAuth $auth): int
     {
+        try {
+            return $this->run($renderer, $auth);
+        } catch (\Throwable $e) {
+            \App\Models\SystemSetting::set('diag_render', json_encode(['error' => $e->getMessage(), 'file' => basename($e->getFile()), 'line' => $e->getLine()]), 'string', 'diag');
+            $this->error($e->getMessage());
+            return self::FAILURE;
+        }
+    }
+
+    private function run(SourceDocRenderer $renderer, GithubAppAuth $auth): int
+    {
         $ver = $this->option('version')
             ? SourceDocVersion::find((int) $this->option('version'))
             : optional(SourceDoc::find((int) $this->option('doc')))->currentVersion;
