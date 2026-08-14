@@ -4,6 +4,8 @@ namespace App\Http\Controllers;
 
 use App\Attachments\AttachmentService;
 use App\Models\Customer;
+use App\Models\HelpDeskCategory;
+use App\Models\HelpDeskService;
 use App\Models\HelpDeskStatus;
 use App\Models\HelpDeskTicket;
 use App\Models\HelpDeskTicketComment;
@@ -58,7 +60,11 @@ class SourceCodeRequestController extends Controller
                     'customer_id'       => $customer->id,
                     'created_by_id'     => $user->id,
                     'requester_user_id' => $user->id,
-                    'status_id'         => optional(HelpDeskStatus::default())->id,
+                    'assignee_id'       => $user->id,               // responsável = quem solicita
+                    'status_id'         => $this->closedStatusId(), // nasce ENCERRADO (Fechado)
+                    'category_id'       => $this->categoryId(),     // Solicitação de serviço
+                    'service_id'        => $this->serviceId(),      // Solicitação de Fontes (cria se faltar)
+                    'level'             => '1',                     // Nível 1
                     'priority'          => 'normal',
                     'channel'           => 'interno',
                     'source_system'     => 'source_code',
@@ -178,24 +184,45 @@ class SourceCodeRequestController extends Controller
     public function finalize(Request $request, SourceCodeRequest $sourceCodeRequest): JsonResponse
     {
         $this->authorize($request);
-        $req = $sourceCodeRequest->load('items');
+        $req = $sourceCodeRequest->load('items', 'requester');
         $items = $req->items;
         $attached = $items->where('status', 'attached')->count();
-        $failed = $items->where('status', 'failed')->count();
         $status = ($items->count() > 0 && $attached === $items->count()) ? 'done' : ($attached > 0 ? 'partial' : 'processing');
         $req->update(['status' => $status]);
 
         if ($req->comment_id) {
             $lines = $items->where('status', 'attached')->map(function ($i) {
-                $when = optional($i->original_commit_at)->format('d/m/Y H:i') ?? '—';
-                return "• {$i->filename} — Última alteração: {$when} · Commit: " . substr((string) $i->original_commit_sha, 0, 7);
-            })->implode("\n");
-            $failLines = $items->where('status', 'failed')->map(fn ($i) => "• {$i->filename} — FALHA")->implode("\n");
-            $body = trim("{$attached} código(s)-fonte anexado(s)\n{$lines}\n{$failLines}\nSolicitado por: " . ($req->requested_by ? optional($req->requester)->name : '—'));
+                $when = optional($i->original_commit_at)->format('d/m/Y \à\s H:i') ?? '—';
+                $sha = substr((string) $i->original_commit_sha, 0, 7);
+                return "📄  {$i->filename}\n       🕒 {$when}    ·    🔖 {$sha}    ·    ⬇️ .zip (data preservada)";
+            })->implode("\n\n");
+            $failLines = $items->where('status', 'failed')->map(fn ($i) => "⚠️  {$i->filename} — falha ao obter o fonte")->implode("\n");
+            $head = "📦  {$attached} código-fonte(s) anexado(s)";
+            $body = trim($head . "\n\n" . $lines . ($failLines !== '' ? "\n\n" . $failLines : '') . "\n\n👤  Solicitado por: " . (optional($req->requester)->name ?? '—'));
             HelpDeskTicketComment::where('id', $req->comment_id)->update(['body' => $body]);
         }
 
         return response()->json(['data' => $this->serialize($req->fresh('items'))]);
+    }
+
+    /** Status "Fechado" (encerrado) da empresa ativa; fallback p/ o default. */
+    private function closedStatusId(): ?int
+    {
+        return HelpDeskStatus::where('is_terminal', true)->where('is_resolved', true)->value('id')
+            ?? HelpDeskStatus::where('key', 'fechado')->value('id')
+            ?? optional(HelpDeskStatus::default())->id;
+    }
+
+    /** Categoria "Solicitação de serviço". */
+    private function categoryId(): ?int
+    {
+        return HelpDeskCategory::whereRaw('lower(name) = ?', ['solicitação de serviço'])->value('id');
+    }
+
+    /** Serviço "Solicitação de Fontes" (cria uma vez se não existir). */
+    private function serviceId(): ?int
+    {
+        return HelpDeskService::firstOrCreate(['name' => 'Solicitação de Fontes'], ['active' => true])->id;
     }
 
     // ── serialização ─────────────────────────────────────────────────────
