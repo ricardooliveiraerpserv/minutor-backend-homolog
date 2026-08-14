@@ -51,6 +51,8 @@ class HelpDeskTicketController extends Controller
         $data['can_send_email'] = $this->access->canSendEmail($user);
         $data['can_reopen']     = $this->access->canReopen($user);
         $data['can_close']      = $this->access->canClose($user);
+        // Marca (badge + filtro futuro): o chamado tem alguma Solicitação de Código-Fonte?
+        $data['has_source_code'] = \App\Models\SourceCodeRequest::where('ticket_id', $ticket->id)->exists();
         $data['solicitante']    = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail()];
         $data['continuation_ticket'] = optional($ticket->relationLoaded('continuations')
             ? $ticket->continuations->sortByDesc('id')->first()
