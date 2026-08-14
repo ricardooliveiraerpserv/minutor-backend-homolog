@@ -41,8 +41,8 @@ class SourceRepoProvisioner
     }
 
     /**
-     * Nome do repositório: cliente-<slug-do-nome>. Se OUTRO cliente já reservou esse nome,
-     * desambigua com o id (cliente-<slug>-<id>).
+     * Nome do repositório = slug do nome da empresa (sem prefixo). Se OUTRO cliente já reservou
+     * esse nome (vínculo existente), desambigua com o id (<slug>-<id>).
      */
     public function repoName(Customer $customer): string
     {
@@ -50,12 +50,11 @@ class SourceRepoProvisioner
         if ($slug === '') {
             $slug = (string) $customer->id;
         }
-        $base = 'cliente-' . $slug;
         $taken = ClientSourceRepo::where('owner', $this->owner())
-            ->where('repository', $base)
+            ->where('repository', $slug)
             ->where('customer_id', '!=', $customer->id)
             ->exists();
-        return $taken ? "{$base}-{$customer->id}" : $base;
+        return $taken ? "{$slug}-{$customer->id}" : $slug;
     }
 
     /**

@@ -166,6 +166,48 @@ class GithubAppAuth
         throw SourceIntegrationException::upstream($res->status());
     }
 
+    /**
+     * Renomeia um repositório (ESCRITA — Administration:RW). O GitHub mantém redirect do nome antigo.
+     * @return array{name:string, default_branch:string, full_name:string}
+     */
+    public function renameRepo(string $owner, string $from, string $to): array
+    {
+        $token = $this->installationToken($owner);
+        $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+            ->patch("{$this->api}/repos/{$owner}/{$from}", ['name' => $to]);
+        if ($res->successful()) {
+            return [
+                'name'           => (string) $res->json('name'),
+                'default_branch' => (string) ($res->json('default_branch') ?: 'main'),
+                'full_name'      => (string) $res->json('full_name'),
+            ];
+        }
+        if ($res->status() === 422 && $this->nameAlreadyExists($res)) {
+            throw SourceIntegrationException::repoNameTaken($owner, $to);
+        }
+        if ($res->status() === 403 && (string) $res->header('X-RateLimit-Remaining') !== '0') {
+            throw SourceIntegrationException::writeNotPermitted($owner);
+        }
+        if ($res->status() === 404) {
+            throw SourceIntegrationException::repoNotFound("{$owner}/{$from}");
+        }
+        $this->assertUpstream($res);
+        throw SourceIntegrationException::upstream($res->status());
+    }
+
+    /** Existe repo com esse nome no owner? (GET read-only; 200=sim, 404=não). */
+    public function repoExists(string $owner, string $name): bool
+    {
+        try {
+            $token = $this->installationToken($owner);
+            $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/repos/{$owner}/{$name}");
+            return $res->successful();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
     private function nameAlreadyExists(Response $res): bool
     {
         foreach ((array) $res->json('errors', []) as $e) {
