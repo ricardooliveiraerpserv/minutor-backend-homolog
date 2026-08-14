@@ -302,6 +302,21 @@ class CustomerController extends Controller
 
         $this->createInvestimentoProjects($customer);
 
+        // Provisiona o repositório de código-fonte do cliente (best-effort — NUNCA quebra o cadastro).
+        // Cliente ativo "real" ganha um repo privado + vínculo automático. Falhas (ex.: App sem
+        // permissão de escrita) só logam; o comando source-repos:backfill recupera depois.
+        try {
+            $prov = app(\App\SourceCode\SourceRepoProvisioner::class);
+            if ($prov->shouldProvision($customer)) {
+                $prov->provisionFor($customer);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('source_repo.provision_failed', [
+                'customer_id' => $customer->id,
+                'error'       => $e->getMessage(),
+            ]);
+        }
+
         // Resposta PO-UI
         return response()->json($customer->load(['executive', 'executiveBizify']), 201);
     }

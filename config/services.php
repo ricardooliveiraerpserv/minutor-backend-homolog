@@ -156,6 +156,10 @@ return [
         // o PEM cru multilinha também é aceito. Só server-side; nunca em banco/log/frontend.
         'app_private_key_base64' => env('GITHUB_APP_PRIVATE_KEY_BASE64'),
         'app_private_key'        => env('GITHUB_APP_PRIVATE_KEY'),
+        // Provisionamento automático de repositório por cliente (ESCRITA — exige a App com
+        // "Administration: Read and write"). Owner padrão = organização dos repositórios de cliente.
+        'default_owner'   => env('GITHUB_SOURCE_DEFAULT_OWNER', 'erpserv-clientes'),
+        'auto_provision'  => filter_var(env('GITHUB_SOURCE_AUTO_PROVISION', true), FILTER_VALIDATE_BOOLEAN),
         // LEGADO (provider PAT NÃO-oficial, não bindado, sem fallback):
         'token'   => env('GITHUB_SOURCE_TOKEN'),
     ],

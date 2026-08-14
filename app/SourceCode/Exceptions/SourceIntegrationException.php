@@ -58,6 +58,18 @@ class SourceIntegrationException extends RuntimeException
         return new self('PATH_NOT_FOUND', "Caminho não encontrado na branch: \"{$path}\".", 404);
     }
 
+    /** Tentativa de escrita (criar repo) sem a permissão "Administration: Read and write" na App. */
+    public static function writeNotPermitted(string $owner): self
+    {
+        return new self('WRITE_NOT_PERMITTED', "GitHub App sem permissão de escrita em \"{$owner}\". Ative \"Administration: Read and write\" nas permissões da App e aprove a atualização na instalação.", 403);
+    }
+
+    /** Nome de repositório já em uso no owner e inacessível pela instalação. */
+    public static function repoNameTaken(string $owner, string $name): self
+    {
+        return new self('REPO_NAME_TAKEN', "Já existe um repositório \"{$name}\" em \"{$owner}\" e não foi possível acessá-lo.", 409);
+    }
+
     public static function rateLimited(): self
     {
         return new self('RATE_LIMITED', 'Limite de requisições do GitHub atingido. Tente novamente em instantes.', 429);

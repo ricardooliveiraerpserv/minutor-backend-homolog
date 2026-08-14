@@ -117,6 +117,65 @@ class GithubAppAuth
         return $out;
     }
 
+    /**
+     * Cria um repositório PRIVADO na organização (ESCRITA — exige a App com
+     * "Administration: Read and write"). auto_init=true → já nasce com branch default.
+     * Idempotente: se o nome já existir e a instalação enxergar, devolve o existente.
+     * @return array{name:string, default_branch:string, full_name:string, created:bool}
+     */
+    public function createOrgRepo(string $owner, string $name, string $description = ''): array
+    {
+        $token = $this->installationToken($owner);   // App instalada no owner?
+        $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+            ->post("{$this->api}/orgs/{$owner}/repos", [
+                'name'         => $name,
+                'private'      => true,
+                'auto_init'    => true,
+                'description'  => $description !== '' ? mb_substr($description, 0, 300) : null,
+                'has_issues'   => false,
+                'has_wiki'     => false,
+                'has_projects' => false,
+            ]);
+        if ($res->successful()) {
+            return [
+                'name'           => (string) $res->json('name'),
+                'default_branch' => (string) ($res->json('default_branch') ?: 'main'),
+                'full_name'      => (string) $res->json('full_name'),
+                'created'        => true,
+            ];
+        }
+        // Nome já existe → reaproveita o repo (idempotência).
+        if ($res->status() === 422 && $this->nameAlreadyExists($res)) {
+            $existing = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/repos/{$owner}/{$name}");
+            if ($existing->successful()) {
+                return [
+                    'name'           => (string) $existing->json('name'),
+                    'default_branch' => (string) ($existing->json('default_branch') ?: 'main'),
+                    'full_name'      => (string) $existing->json('full_name'),
+                    'created'        => false,
+                ];
+            }
+            throw SourceIntegrationException::repoNameTaken($owner, $name);
+        }
+        // 403 sem rate-limit = App sem permissão de escrita (Administration).
+        if ($res->status() === 403 && (string) $res->header('X-RateLimit-Remaining') !== '0') {
+            throw SourceIntegrationException::writeNotPermitted($owner);
+        }
+        $this->assertUpstream($res);   // 429/rate-limit
+        throw SourceIntegrationException::upstream($res->status());
+    }
+
+    private function nameAlreadyExists(Response $res): bool
+    {
+        foreach ((array) $res->json('errors', []) as $e) {
+            if (str_contains((string) ($e['message'] ?? ''), 'already exists')) {
+                return true;
+            }
+        }
+        return str_contains((string) $res->json('message', ''), 'already exists');
+    }
+
     /** Classificação (item 14): a instalação do owner tem acesso a ESTE repo? (best-effort) */
     public function installationHasRepo(string $owner, string $repo): bool
     {
