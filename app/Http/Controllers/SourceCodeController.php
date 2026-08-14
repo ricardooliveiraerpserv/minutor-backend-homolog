@@ -21,6 +21,35 @@ class SourceCodeController extends Controller
         abort_unless(in_array('*', $perms, true) || in_array('source_code.request', $perms, true), 403, 'Sem permissão para solicitar código-fonte.');
     }
 
+    /** Gate de gestão (configurar textos/repos) — mais restrito que solicitar. */
+    private function authorizeManage(Request $request): void
+    {
+        $perms = PermissionService::for($request->user());
+        abort_unless(in_array('*', $perms, true) || in_array('source_code.manage', $perms, true), 403, 'Sem permissão para configurar código-fonte.');
+    }
+
+    /** Chave do aviso "cliente sem contrato" no SystemSetting. */
+    private const DISCLAIMER_KEY = 'source_code.no_contract_disclaimer';
+
+    /** Config lida pelo wizard (texto do aviso). Gate = solicitar (todo consultor lê). */
+    public function config(Request $request): JsonResponse
+    {
+        $this->authorize($request);
+        return response()->json(['data' => [
+            'no_contract_disclaimer' => \App\Models\SystemSetting::get(self::DISCLAIMER_KEY, SourceCodeRequestController::NO_CONTRACT_DISCLAIMER),
+        ]]);
+    }
+
+    /** Salva o texto do aviso. Gate = gerenciar (admin/coord). */
+    public function saveConfig(Request $request): JsonResponse
+    {
+        $this->authorizeManage($request);
+        $v = $request->validate(['no_contract_disclaimer' => 'required|string|max:2000']);
+        $text = trim($v['no_contract_disclaimer']);
+        \App\Models\SystemSetting::set(self::DISCLAIMER_KEY, $text, 'string', 'source_code', 'Aviso exibido no wizard e gravado no chamado quando o cliente não tem contrato.');
+        return response()->json(['data' => ['no_contract_disclaimer' => $text]]);
+    }
+
     /** Busca fuzzy de fontes nos repositórios ATIVOS do cliente (fan-out, top 8). */
     public function search(Request $request, GitHubSourceService $svc): JsonResponse
     {

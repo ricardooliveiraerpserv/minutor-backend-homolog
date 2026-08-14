@@ -507,6 +507,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
         // Solicitação de código-fonte (Fase 1A) — buscas
         Route::get('/source-code/clients', [\App\Http\Controllers\SourceCodeController::class, 'clients']);
+        Route::get('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'config']);
+        Route::put('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'saveConfig']);
         Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
         Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
         // Fase 1C — criar solicitação + anexar por item + finalizar
@@ -1488,6 +1490,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
         // Solicitação de código-fonte (Fase 1A) — buscas
         Route::get('/source-code/clients', [\App\Http\Controllers\SourceCodeController::class, 'clients']);
+        Route::get('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'config']);
+        Route::put('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'saveConfig']);
         Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
         Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
         // Fase 1C — criar solicitação + anexar por item + finalizar

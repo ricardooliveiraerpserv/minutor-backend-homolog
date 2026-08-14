@@ -203,8 +203,10 @@ class SourceCodeRequestController extends Controller
             })->implode("\n\n");
             $failLines = $items->where('status', 'failed')->map(fn ($i) => "⚠️  {$i->filename} — falha ao obter o fonte")->implode("\n");
             $head = "📦  {$attached} código-fonte(s) anexado(s)";
-            // Cliente sem contrato → grava o aviso junto ao chamado quando há fonte anexado.
-            $disclaimer = ($attached > 0 && $req->client && !$req->client->has_contract) ? self::NO_CONTRACT_DISCLAIMER . "\n\n" : '';
+            // Cliente sem contrato → grava o aviso (texto configurável) quando há fonte anexado.
+            $noContract = ($attached > 0 && $req->client && !$req->client->has_contract);
+            $text = \App\Models\SystemSetting::get('source_code.no_contract_disclaimer', self::NO_CONTRACT_DISCLAIMER);
+            $disclaimer = $noContract ? trim((string) $text) . "\n\n" : '';
             $body = trim($disclaimer . $head . "\n\n" . $lines . ($failLines !== '' ? "\n\n" . $failLines : '') . "\n\n👤  Solicitado por: " . (optional($req->requester)->name ?? '—'));
             HelpDeskTicketComment::where('id', $req->comment_id)->update(['body' => $body]);
         }
