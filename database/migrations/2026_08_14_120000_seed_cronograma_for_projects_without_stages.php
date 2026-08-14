@@ -48,7 +48,7 @@ return new class extends Migration
 
                     $delivery = StageDelivery::create([
                         'stage_id'            => $stage->id,
-                        'title'               => 'Cronograma a detalhar',
+                        'title'               => 'Atividade do projeto',
                         'description'         => 'Card criado na migração para refletir o estágio atual do projeto. Detalhar as etapas/atividades reais.',
                         'status'              => $deliv[$p->status] ?? 'backlog',
                         'responsible_user_id' => $primary?->id,
