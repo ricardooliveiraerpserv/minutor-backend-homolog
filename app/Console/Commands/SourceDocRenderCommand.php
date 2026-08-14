@@ -22,7 +22,7 @@ use Illuminate\Console\Command;
  */
 class SourceDocRenderCommand extends Command
 {
-    protected $signature = 'source-doc:render {--doc=} {--ver=} {--format=md} {--export-git} {--git-dir=docs}';
+    protected $signature = 'source-doc:render {--doc=} {--ver=} {--format=md} {--export-git} {--git-dir=docs} {--dump}';
     protected $description = 'Fase 4: renderiza (md/html/docx/pdf) e opcionalmente exporta a doc ao Git.';
 
     public function handle(SourceDocRenderer $renderer, GithubAppAuth $auth): int
@@ -57,6 +57,13 @@ class SourceDocRenderCommand extends Command
         }
 
         $fmt = (string) $this->option('format');
+        // --dump: devolve os bytes (base64) do binário em system_settings 'diag_render_bytes'.
+        if ($this->option('dump') && in_array($fmt, ['docx', 'pdf'], true)) {
+            $bytes = $fmt === 'docx' ? $renderer->docx($json, $outdated, $customer) : $renderer->pdf($json, $outdated, $customer);
+            SystemSetting::set('diag_render_bytes', json_encode(['format' => $fmt, 'b64' => base64_encode($bytes)], JSON_UNESCAPED_UNICODE), 'string', 'diag');
+            $this->info("dump {$fmt}: " . strlen($bytes) . ' bytes → diag_render_bytes');
+            return self::SUCCESS;
+        }
         $out = match ($fmt) {
             'html'  => $renderer->html($json, $outdated, $customer),
             'docx'  => 'docx=' . strlen($renderer->docx($json, $outdated, $customer)) . ' bytes',
