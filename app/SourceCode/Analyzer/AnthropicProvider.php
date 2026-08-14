@@ -38,6 +38,10 @@ class AnthropicProvider implements SourceDocAiProvider
         }
         $base = rtrim((string) config('services.anthropic.base_url', 'https://api.anthropic.com/v1'), '/');
         $model = $opts['model'] ?? $this->model();
+        // Fontes Protheus costumam ser Windows-1252/latin-1 → bytes inválidos como UTF-8 quebram
+        // o JSON da API (HTTP 400). Normaliza para UTF-8 válido preservando acentos.
+        $system = $this->toUtf8($system);
+        $user = $this->toUtf8($user);
         $t0 = microtime(true);
 
         $res = Http::timeout((int) config('services.source_doc_ai.timeout', 120))
@@ -86,5 +90,14 @@ class AnthropicProvider implements SourceDocAiProvider
             'usage' => (array) ($res->json('usage') ?? []),
             'stop'  => $res->json('stop_reason'),
         ];
+    }
+
+    /** Garante UTF-8 válido (fontes Protheus em Windows-1252 têm bytes inválidos como UTF-8). */
+    private function toUtf8(string $s): string
+    {
+        if (mb_check_encoding($s, 'UTF-8')) {
+            return $s;
+        }
+        return mb_convert_encoding($s, 'UTF-8', 'Windows-1252');
     }
 }
