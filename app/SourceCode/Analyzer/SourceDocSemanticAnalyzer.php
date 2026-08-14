@@ -36,7 +36,9 @@ class SourceDocSemanticAnalyzer
             }
         } catch (\Throwable $e) {
             Log::warning('source_doc_ai.analyze_failed', ['error' => $e->getMessage()]);
-            return $this->failed($e->getMessage(), $deterministic);
+            $f = $this->failed($e->getMessage(), $deterministic);
+            $f['error_detail'] = $e->getMessage(); // TEMP debug
+            return $f;
         }
 
         return $this->finalize($sem, $deterministic);
@@ -49,7 +51,7 @@ class SourceDocSemanticAnalyzer
         $out = $this->ai->complete($this->systemPrompt(), $user, []);
         $json = $this->parseJson($out['text']);
         if ($json === null) {
-            throw new \RuntimeException('Resposta da IA não é JSON válido.');
+            throw new \RuntimeException('Resposta da IA não é JSON válido. RAW[' . mb_substr((string) ($out['text'] ?? ''), 0, 400) . '] stop=' . ($out['stop'] ?? '?'));
         }
         $json['status'] = 'completed';
         return $json;
