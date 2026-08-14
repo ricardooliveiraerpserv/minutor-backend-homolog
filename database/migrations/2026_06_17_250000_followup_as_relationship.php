@@ -15,6 +15,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Guard (merge cirúrgico do cronograma sobre baseline prod SEM CRM): sem a tabela
+        // crm_tasks esta migration falhava e ABORTAVA o batch, bloqueando baselines/seed.
+        if (!Schema::hasTable('crm_tasks')) return;
+
         Schema::table('crm_tasks', function (Blueprint $table) {
             if (!Schema::hasColumn('crm_tasks', 'customer_id'))  $table->foreignId('customer_id')->nullable()->after('id')->constrained('customers')->cascadeOnDelete();
             if (!Schema::hasColumn('crm_tasks', 'contract_id'))  $table->foreignId('contract_id')->nullable()->after('opportunity_id')->constrained('contracts')->nullOnDelete();
