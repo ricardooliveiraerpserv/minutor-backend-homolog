@@ -49,6 +49,15 @@ use App\Http\Controllers\SkillMatrixVersionController;
 use App\Http\Controllers\SkillFormConfigController;
 use App\Http\Controllers\SkillHireController;
 use App\Http\Controllers\CandidateController;
+use App\Http\Controllers\ProjectStageController;
+use App\Http\Controllers\StageDeliveryController;
+use App\Http\Controllers\DeliveryEventController;
+use App\Http\Controllers\StageAllocationController;
+use App\Http\Controllers\StageHourAporteController;
+use App\Http\Controllers\ClientActivityController;
+use App\Http\Controllers\ClientProjectController;
+use App\Http\Controllers\ProjectClientViewerController;
+use App\Http\Controllers\ProjectTeamController;
 
 /*
 |--------------------------------------------------------------------------
@@ -468,6 +477,125 @@ Route::prefix('v1')->group(function () {
         Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
+
+        // ── Cronograma: visão do cliente (mesclado de homolog) ──
+
+        // 🤝 Cliente envolvido em atividade pontual (acesso contextual, ADR 0009 appendix)
+        Route::get('/client/activities', [ClientActivityController::class, 'index'])->name('client.activities.index');
+        Route::get('/client/activities/{delivery}', [ClientActivityController::class, 'show'])->name('client.activities.show');
+        Route::get('/client/activities/{delivery}/timeline', [ClientActivityController::class, 'timeline'])->name('client.activities.timeline');
+        Route::post('/client/activities/{delivery}/comments', [ClientActivityController::class, 'storeComment'])->name('client.activities.comments.store');
+        Route::post('/client/activities/{delivery}/approve', [ClientActivityController::class, 'approve'])->name('client.activities.approve');
+        Route::post('/client/activities/{delivery}/reject', [ClientActivityController::class, 'reject'])->name('client.activities.reject');
+        // Visão do cliente sobre o projeto (em dias, sem horas/valores)
+        Route::get('/client/projects/{project}/schedule', [ClientProjectController::class, 'schedule'])->name('client.projects.schedule');
+        Route::get('/client/projects/{project}/follow-ups', [ClientProjectController::class, 'followUps'])->name('client.projects.followups');
+        // Follow Up como unidade de comunicação do cliente (envolvido)
+        Route::get('/client/follow-ups', [ClientFollowUpController::class, 'index'])->name('client.followups.index');
+        Route::get('/client/follow-ups/{followUp}', [ClientFollowUpController::class, 'show'])->name('client.followups.show');
+        Route::get('/client/follow-ups/{followUp}/timeline', [ClientFollowUpController::class, 'timeline'])->name('client.followups.timeline');
+        Route::post('/client/follow-ups/{followUp}/comments', [ClientFollowUpController::class, 'storeComment'])->name('client.followups.comments');
+        Route::post('/client/follow-ups/{followUp}/complete', [ClientFollowUpController::class, 'complete'])->name('client.followups.complete');
+        Route::get('/client/follow-ups/{followUp}/activity-summary', [ClientFollowUpController::class, 'activitySummary'])->name('client.followups.activity-summary');
+
+        // ── Cronograma: rotas internas (mescladas de homolog) ──
+        Route::middleware(['permission.or.admin:projects.view', 'block.cliente'])->group(function () {
+            Route::get('/projects/{project}/stages', [ProjectStageController::class, 'index'])->name('stages.index');
+            Route::get('/projects/{project}/deliveries', [ProjectStageController::class, 'projectDeliveries'])->name('projects.deliveries.flat');
+            Route::get('/projects/{project}/delay-risk', [ProjectStageController::class, 'delayRisk'])->name('projects.delay-risk');
+            Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
+            Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
+            Route::get('/projects-portfolio', [\App\Http\Controllers\ProjectEvmController::class, 'portfolio'])->name('projects.portfolio');
+            Route::get('/projects-portfolio/curve', [\App\Http\Controllers\ProjectEvmController::class, 'portfolioCurve'])->name('projects.portfolio.curve');
+            Route::get('/projects/{project}/evm', [\App\Http\Controllers\ProjectEvmController::class, 'evm'])->name('projects.evm');
+            Route::get('/projects/{project}/operational-metrics', [\App\Http\Controllers\ProjectEvmController::class, 'operational'])->name('projects.operational-metrics');
+            Route::post('/projects/{project}/cronograma/recalc-preview', [ProjectController::class, 'recalcPreview'])->name('projects.cronograma.recalc-preview');
+
+            // Modelos de cronograma (salvar/aplicar) + copiar de outro projeto
+            Route::get('/cronograma-templates', [\App\Http\Controllers\CronogramaTemplateController::class, 'index'])->name('cronograma-templates.index');
+            Route::post('/cronograma-templates', [\App\Http\Controllers\CronogramaTemplateController::class, 'storeFromProject'])->name('cronograma-templates.store');
+            Route::delete('/cronograma-templates/{template}', [\App\Http\Controllers\CronogramaTemplateController::class, 'destroy'])->name('cronograma-templates.destroy');
+            Route::post('/projects/{project}/cronograma/apply-template', [\App\Http\Controllers\CronogramaTemplateController::class, 'apply'])->name('projects.cronograma.apply-template');
+            Route::post('/projects/{project}/cronograma/copy-from', [\App\Http\Controllers\CronogramaTemplateController::class, 'copyFromProject'])->name('projects.cronograma.copy-from');
+
+            // ✅ FOLLOW UP (gestão de pendências e compromissos)
+            Route::get('/follow-ups/summary', [\App\Http\Controllers\FollowUpController::class, 'summary'])->name('followups.summary');
+            Route::get('/follow-ups', [\App\Http\Controllers\FollowUpController::class, 'index'])->name('followups.index');
+            Route::post('/follow-ups', [\App\Http\Controllers\FollowUpController::class, 'store'])->name('followups.store');
+            Route::get('/follow-ups/{followUp}', [\App\Http\Controllers\FollowUpController::class, 'show'])->name('followups.show');
+            Route::put('/follow-ups/{followUp}', [\App\Http\Controllers\FollowUpController::class, 'update'])->name('followups.update');
+            Route::patch('/follow-ups/{followUp}', [\App\Http\Controllers\FollowUpController::class, 'update'])->name('followups.patch');
+            Route::delete('/follow-ups/{followUp}', [\App\Http\Controllers\FollowUpController::class, 'destroy'])->name('followups.destroy');
+            Route::patch('/follow-ups/{followUp}/kanban-move', [\App\Http\Controllers\FollowUpController::class, 'kanbanMove'])->name('followups.kanban-move');
+            Route::get('/follow-ups/{followUp}/activity', [\App\Http\Controllers\FollowUpController::class, 'timeline'])->name('followups.activity');
+            Route::post('/follow-ups/{followUp}/comments', [\App\Http\Controllers\FollowUpController::class, 'storeComment'])->name('followups.comments.store');
+
+            // Cadastro de categorias de Follow Up (gerenciável pelo coordenador via followups.manage)
+            Route::get('/follow-up-categories', [\App\Http\Controllers\FollowUpCategoryController::class, 'index'])->name('follow-up-categories.index');
+            Route::middleware('permission.or.admin:followups.manage')->group(function () {
+                Route::post('/follow-up-categories', [\App\Http\Controllers\FollowUpCategoryController::class, 'store'])->name('follow-up-categories.store');
+                Route::put('/follow-up-categories/{followUpCategory}', [\App\Http\Controllers\FollowUpCategoryController::class, 'update'])->name('follow-up-categories.update');
+                Route::delete('/follow-up-categories/{followUpCategory}', [\App\Http\Controllers\FollowUpCategoryController::class, 'destroy'])->name('follow-up-categories.destroy');
+            });
+            Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
+            Route::get('/stages/{stage}/activity', [ProjectStageController::class, 'activity'])->name('stages.activity');
+            Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');
+            Route::get('/deliveries/{delivery}', [StageDeliveryController::class, 'show'])->name('deliveries.show');
+            Route::get('/deliveries/{delivery}/events', [DeliveryEventController::class, 'index'])->name('deliveries.events');
+            Route::get('/stages/{stage}/allocations', [StageAllocationController::class, 'index'])->name('stages.allocations.index');
+            Route::get('/stages/{stage}/aportes', [StageHourAporteController::class, 'index'])->name('stages.aportes.index');
+            // Comentário operacional (Pilar 3) — write permitido para qualquer um que possa ver (consultor alocado, coord, admin)
+            Route::post('/stages/{stage}/comments', [ProjectStageController::class, 'storeComment'])->name('stages.comments.store');
+
+            // Atividade como unidade de execução (Pilar A do refactor 2026-05-15)
+            Route::get('/activities/{delivery}/activity', [StageDeliveryController::class, 'activity'])->name('activities.activity');
+            Route::post('/activities/{delivery}/comments', [StageDeliveryController::class, 'storeComment'])->name('activities.comments.store');
+            Route::get('/activities/{delivery}/aportes', [StageHourAporteController::class, 'indexForActivity'])->name('activities.aportes.index');
+            Route::get('/activities/{delivery}/allocations', [StageAllocationController::class, 'indexForActivity'])->name('activities.allocations.index');
+
+            // Arrastar/mover atividade no kanban: permitido a QUALQUER perfil interno
+            // (consultor/coord/admin) que possa ver o projeto. Cliente bloqueado pelo grupo.
+            Route::post('/deliveries/{delivery}/move', [StageDeliveryController::class, 'move'])->name('deliveries.move');
+            // Solicitar aprovação do cliente (mover p/ "Aguardando cliente" + mensagem):
+            // também liberado a qualquer interno (o coordenador/admin é quem aprova/reprova).
+            Route::post('/deliveries/{delivery}/request-approval', [StageDeliveryController::class, 'requestApproval'])->name('deliveries.request-approval');
+        });
+        Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
+            Route::post('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'freeze'])->name('projects.baseline.freeze');
+            Route::post('/projects-portfolio/freeze-missing', [\App\Http\Controllers\ProjectEvmController::class, 'freezeMissing'])->name('projects.portfolio.freeze-missing');
+            Route::delete('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'unfreeze'])->name('projects.baseline.unfreeze');
+            Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
+            Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
+            Route::delete('/stages/{stage}', [ProjectStageController::class, 'destroy'])->name('stages.destroy');
+            Route::post('/projects/{project}/stages/reorder', [ProjectStageController::class, 'reorder'])->name('stages.reorder');
+
+            Route::post('/stages/{stage}/deliveries', [StageDeliveryController::class, 'store'])->name('deliveries.store');
+            Route::patch('/deliveries/{delivery}', [StageDeliveryController::class, 'update'])->name('deliveries.update');
+            Route::delete('/deliveries/{delivery}', [StageDeliveryController::class, 'destroy'])->name('deliveries.destroy');
+            Route::post('/deliveries/{delivery}/recalc-dependents', [StageDeliveryController::class, 'recalcDependents'])->name('deliveries.recalc-dependents');
+            // Workflow de aprovação do cliente (interno — coordenador/admin)
+            // Clientes com visão global do projeto (nível projeto)
+            // Equipe do projeto (Visão Geral) — alimenta os seletores das atividades
+            Route::get('/projects/{project}/team', [\App\Http\Controllers\ProjectTeamController::class, 'team'])->name('projects.team');
+            Route::get('/projects/{project}/consultants', [\App\Http\Controllers\ProjectTeamController::class, 'consultants'])->name('projects.consultants.index');
+            Route::get('/projects/{project}/consultants/available', [\App\Http\Controllers\ProjectTeamController::class, 'availableConsultants'])->name('projects.consultants.available');
+            Route::post('/projects/{project}/consultants', [\App\Http\Controllers\ProjectTeamController::class, 'addConsultant'])->name('projects.consultants.add');
+            Route::delete('/projects/{project}/consultants/{user}', [\App\Http\Controllers\ProjectTeamController::class, 'removeConsultant'])->name('projects.consultants.remove');
+            Route::get('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'index'])->name('projects.client-viewers.index');
+            Route::get('/projects/{project}/client-viewers/available', [ProjectClientViewerController::class, 'available'])->name('projects.client-viewers.available');
+            Route::post('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'store'])->name('projects.client-viewers.store');
+            Route::delete('/projects/{project}/client-viewers/{user}', [ProjectClientViewerController::class, 'destroy'])->name('projects.client-viewers.destroy');
+            Route::post('/deliveries/{delivery}/approve', [StageDeliveryController::class, 'approve'])->name('deliveries.approve');
+            Route::post('/deliveries/{delivery}/reject', [StageDeliveryController::class, 'reject'])->name('deliveries.reject');
+            // Removido (Fase 4 — ADR 0007): POST /stages/{stage}/allocations.
+            // Alocação é exclusivamente activity-level via POST /activities/{delivery}/allocations.
+            Route::post('/stages/{stage}/aportes', [StageHourAporteController::class, 'store'])->name('stages.aportes.store');
+            // Aporte no nível da atividade (Pilar C do refactor 2026-05-15)
+            Route::post('/activities/{delivery}/aportes', [StageHourAporteController::class, 'storeForActivity'])->name('activities.aportes.store');
+            Route::post('/activities/{delivery}/allocations', [StageAllocationController::class, 'storeForActivity'])->name('activities.allocations.store');
+            Route::patch('/allocations/{allocation}', [StageAllocationController::class, 'update'])->name('allocations.update');
+            Route::delete('/allocations/{allocation}', [StageAllocationController::class, 'destroy'])->name('allocations.destroy');
+        });
 
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
