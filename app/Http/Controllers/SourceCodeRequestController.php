@@ -68,7 +68,7 @@ class SourceCodeRequestController extends Controller
                 'author_user_id' => $user->id,
                 'body'           => 'Códigos-fonte anexados (processando…)',
                 'visibility'     => 'internal',
-                'is_system'      => true,
+                'is_system'      => false, // comentario normal p/ a UI renderizar os anexos (fonte) — sys-card nao mostra anexos
                 'channel'        => 'interno',
             ]);
 
