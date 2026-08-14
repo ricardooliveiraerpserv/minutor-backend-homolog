@@ -64,7 +64,7 @@ class SourceCodeRequestController extends Controller
                     'status_id'         => $this->closedStatusId(), // nasce ENCERRADO (Fechado)
                     'category_id'       => $this->categoryId(),     // Solicitação de serviço
                     'service_id'        => $this->serviceId(),      // Solicitação de Fontes (cria se faltar)
-                    'level'             => '1',                     // Nível 1
+                    'level'             => 'N1',                    // Nível 1 (formato N1/N2/N3)
                     'priority'          => 'normal',
                     'channel'           => 'interno',
                     'source_system'     => 'source_code',
