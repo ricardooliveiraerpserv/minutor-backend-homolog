@@ -51,12 +51,11 @@ class AnthropicProvider implements SourceDocAiProvider
                 'content-type'      => 'application/json',
             ])
             ->post("{$base}/messages", [
-                'model'       => $model,
-                'max_tokens'  => (int) ($opts['max_tokens'] ?? config('services.source_doc_ai.max_tokens', 4096)),
-                'temperature' => (float) ($opts['temperature'] ?? 0.1),
-                'system'      => $system,
-                'messages'    => [['role' => 'user', 'content' => $user]],
-                // sem cache_control / sem batch / sem files — governança de retenção.
+                'model'      => $model,
+                'max_tokens' => (int) ($opts['max_tokens'] ?? config('services.source_doc_ai.max_tokens', 4096)),
+                'system'     => $system,
+                'messages'   => [['role' => 'user', 'content' => $user]],
+                // sem 'temperature' (deprecado no Sonnet-5) · sem cache_control/batch/files — governança.
             ]);
 
         $ms = (int) ((microtime(true) - $t0) * 1000);
@@ -64,7 +63,7 @@ class AnthropicProvider implements SourceDocAiProvider
             // Log SEM payload (só status). A mensagem de erro do Anthropic pode conter texto de billing,
             // mas nunca o nosso código — ainda assim não a propagamos para o usuário final.
             Log::warning('source_doc_ai.http_error', ['provider' => 'anthropic', 'model' => $model, 'status' => $res->status(), 'ms' => $ms]);
-            throw new RuntimeException('HTTP ' . $res->status() . ' BODY[' . mb_substr($res->body(), 0, 500) . ']');
+            throw new RuntimeException('Falha ao consultar a IA (HTTP ' . $res->status() . ').');
         }
 
         Log::info('source_doc_ai.ok', [
