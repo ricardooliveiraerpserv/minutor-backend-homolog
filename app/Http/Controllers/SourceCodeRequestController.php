@@ -107,16 +107,30 @@ class SourceCodeRequestController extends Controller
         $req  = $item->request()->with('client')->firstOrFail();
         $customer = $req->client;
 
-        $tmp = null;
+        $srcTmp = null;
+        $zipPath = null;
         try {
             $repo = $resolver->assertAuthorized($customer, $item->owner, $item->repository, $item->path);
             $resolved = $git->resolveLatest($repo, $item->path);   // {commit, content}
             $commit = $resolved['commit'];
-
-            $tmp = tempnam(sys_get_temp_dir(), 'scf_');
-            file_put_contents($tmp, $resolved['content']);
             $filename = basename($item->path);
-            $upload = new UploadedFile($tmp, $filename, null, null, true); // test=true (bytes do GitHub, não upload HTTP)
+
+            // Grava o fonte com a DATA DO COMMIT e compacta em .zip — assim, ao baixar/extrair,
+            // o arquivo mantém a data original (download cru pegaria a data de hoje).
+            $srcTmp = tempnam(sys_get_temp_dir(), 'scf_');
+            file_put_contents($srcTmp, $resolved['content']);
+            if (!empty($commit['date'])) {
+                @touch($srcTmp, strtotime((string) $commit['date']) ?: time());
+            }
+            $zipPath = tempnam(sys_get_temp_dir(), 'scfz_');
+            $zip = new \ZipArchive();
+            if ($zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE) !== true) {
+                throw new \RuntimeException('Falha ao criar o .zip do fonte.');
+            }
+            $zip->addFile($srcTmp, $filename);   // a entrada do zip herda a mtime = data do commit
+            $zip->close();
+
+            $upload = new UploadedFile($zipPath, $filename . '.zip', null, null, true); // .zip com a data preservada
 
             $att = $attachments->store($request->user(), [
                 'entity_type' => 'HELPDESK_TICKET_COMMENT',
@@ -153,9 +167,8 @@ class SourceCodeRequestController extends Controller
         } catch (\Throwable $e) {
             $item->update(['status' => 'failed', 'error' => mb_substr($e->getMessage(), 0, 500)]);
         } finally {
-            if ($tmp && is_file($tmp)) {
-                @unlink($tmp);
-            }
+            if ($srcTmp && is_file($srcTmp)) { @unlink($srcTmp); }
+            if ($zipPath && is_file($zipPath)) { @unlink($zipPath); }
         }
 
         return response()->json(['data' => $this->serializeItem($item->fresh())]);
