@@ -53,6 +53,20 @@ class SourceDocPipeline
 
         // Versão por (fonte × commit do código). Reprocessamento reusa a mesma versão.
         $ver = $doc->versions()->firstOrNew(['source_commit_sha' => $ctx['source_commit_sha']]);
+        // Já concluída (imutável) → no-op; só garante o ponteiro/estado do documento vivo.
+        if ($ver->exists && $ver->analysis_status === 'completed') {
+            if ((int) $doc->current_version_id !== (int) $ver->id) {
+                $doc->current_version_id = $ver->id;
+                $doc->current_source_sha = $ver->source_commit_sha;
+                $doc->documentation_json = $ver->documentation_json;
+                $doc->analysis_status = 'completed';
+                $doc->save();
+            } elseif ($doc->analysis_status !== 'completed') {
+                $doc->analysis_status = 'completed';
+                $doc->save();
+            }
+            return $ver;
+        }
         $ver->fill([
             'parent_source_commit_sha' => $ctx['parent_source_commit_sha'] ?? null,
             'gmud_id'             => $ctx['gmud_id'] ?? $ver->gmud_id,
