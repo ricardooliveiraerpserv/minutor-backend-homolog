@@ -106,8 +106,9 @@ class SourceDocSemanticAnalyzer
                 return;
             }
             $chunks++;
-            // Contexto preservado no chunk: cada bloco carrega função + linhas + chamadas + tabelas + efeitos.
-            $user = "FATOS (Camada 1) das funções deste trecho:\n" . json_encode($this->factsForAi($det, array_column($group, 'name')), JSON_UNESCAPED_UNICODE)
+            // Contexto preservado no chunk: SÓ os fatos das funções do trecho (evita reenviar o
+            // deterministic inteiro a cada chamada — custo/tokens).
+            $user = "FATOS (Camada 1) das funções deste trecho:\n" . json_encode($this->chunkFacts($det, array_column($group, 'name')), JSON_UNESCAPED_UNICODE)
                 . "\n\nCÓDIGO (segredos mascarados) das funções deste trecho:\n" . implode("\n", array_column($group, 'code'))
                 . "\n\nAnalise APENAS a finalidade das funções presentes neste trecho. Devolva JSON {funcoes:[{name,finalidade}]}.";
             try {
@@ -169,14 +170,24 @@ class SourceDocSemanticAnalyzer
         [$fieldQ, $fieldBare] = $this->fieldSets($det);
         $userCalls = array_flip(array_map('strtolower', $det['user_calls'] ?? []));
 
-        // funcoes: só nomes existentes na C1
-        $funcoes = array_values(array_filter($sem['funcoes'] ?? [], function ($f) use ($fnSet) {
-            $ok = ! empty($f['name']) && isset($fnSet[strtolower($f['name'])]);
-            if (! $ok && ! empty($f['name'])) {
-                $this->rejected[] = ['item' => 'funcao:' . $f['name'], 'reason' => 'função inexistente no determinístico'];
+        // funcoes: só nomes existentes na C1 (+ dedupe — chunks sobrepostos podem repetir a função)
+        $funcoes = [];
+        $seenFn = [];
+        foreach ($sem['funcoes'] ?? [] as $f) {
+            $name = $f['name'] ?? '';
+            if ($name === '') {
+                continue;
             }
-            return $ok;
-        }));
+            if (! isset($fnSet[strtolower($name)])) {
+                $this->rejected[] = ['item' => 'funcao:' . $name, 'reason' => 'função inexistente no determinístico'];
+                continue;
+            }
+            if (isset($seenFn[strtolower($name)])) {
+                continue;
+            }
+            $seenFn[strtolower($name)] = true;
+            $funcoes[] = ['name' => $name, 'finalidade' => $this->str($f['finalidade'] ?? '')];
+        }
 
         // table_purposes: só aliases existentes
         $tablePurposes = array_values(array_filter($sem['table_purposes'] ?? $sem['tabelas'] ?? [], function ($t) use ($tbSet) {
@@ -456,26 +467,57 @@ class SourceDocSemanticAnalyzer
                 'tables' => $f['tables'] ?? [], 'accesses' => $f['accesses'] ?? [], 'effects' => $f['effects'] ?? [],
                 'evidence' => $f['evidence'] ?? null,
             ], $fns),
-            'call_graph'   => $det['call_graph'] ?? [],
-            'tables'       => array_map(fn ($t) => [
-                'table' => $t['table'] ?? $t['alias'] ?? null, 'access' => $t['access'] ?? [],
-                'read_fields' => $t['read_fields'] ?? [], 'write_fields' => $t['write_fields'] ?? [],
-                'where_fields' => $t['where_fields'] ?? [], 'functions' => $t['functions'] ?? [], 'evidence' => $t['evidence'] ?? null,
-            ], $det['tables'] ?? []),
-            'queries'      => array_map(fn ($q) => [
-                'operation' => $q['operation'] ?? null, 'table' => $q['table'] ?? null, 'executor' => $q['executor'] ?? null,
-                'construction' => $q['construction'] ?? null, 'function' => $q['function'] ?? null,
-                'read_fields' => $q['read_fields'] ?? [], 'write_fields' => $q['write_fields'] ?? [], 'where_fields' => $q['where_fields'] ?? [],
-                'has_where' => $q['has_where'] ?? null, 'risk_flags' => $q['risk_flags'] ?? [], 'evidence' => $q['evidence'] ?? null,
-            ], $det['queries'] ?? []),
-            'data_access'  => $det['data_access'] ?? [],
+            // call_graph/technical_flow capados (fonte grande pode ter centenas) — evita inflar tokens.
+            'call_graph'   => array_slice($det['call_graph'] ?? [], 0, 120),
+            'tables'       => array_map(fn ($t) => $this->tableFact($t), $det['tables'] ?? []),
+            'queries'      => array_map(fn ($q) => $this->queryFact($q), $det['queries'] ?? []),
+            // data_access OMITIDO de propósito: é redundante com tables+queries e, em fontes grandes,
+            // tem milhares de eventos nativos (era o driver do custo de ~$9/fonte). tables/queries bastam.
             'external_integrations' => $det['external_integrations'] ?? [],
             'dependencies' => $det['dependencies'] ?? [],
-            'effects'      => $det['effects'] ?? [],
-            'technical_flow' => $det['technical_flow'] ?? [],
+            'effects'      => array_slice($det['effects'] ?? [], 0, 120),
+            'technical_flow' => array_slice($det['technical_flow'] ?? [], 0, 60),
             'sx6_params'   => $det['sx6_params'] ?? [],
             'endpoints'    => $det['endpoints'] ?? [],
             'security_findings_count' => count($det['security_findings'] ?? []),
+        ];
+    }
+
+    private function tableFact(array $t): array
+    {
+        return [
+            'table' => $t['table'] ?? $t['alias'] ?? null, 'access' => $t['access'] ?? [],
+            'read_fields' => $t['read_fields'] ?? [], 'write_fields' => $t['write_fields'] ?? [],
+            'where_fields' => $t['where_fields'] ?? [], 'functions' => $t['functions'] ?? [],
+        ];
+    }
+
+    private function queryFact(array $q): array
+    {
+        return [
+            'operation' => $q['operation'] ?? null, 'table' => $q['table'] ?? null, 'executor' => $q['executor'] ?? null,
+            'construction' => $q['construction'] ?? null, 'function' => $q['function'] ?? null,
+            'read_fields' => $q['read_fields'] ?? [], 'write_fields' => $q['write_fields'] ?? [], 'where_fields' => $q['where_fields'] ?? [],
+            'has_where' => $q['has_where'] ?? null, 'risk_flags' => $q['risk_flags'] ?? [], 'evidence' => $q['evidence'] ?? null,
+        ];
+    }
+
+    /** Fatos ESCOPADOS para um chunk: só as funções do trecho + suas tabelas/queries (compacto). */
+    private function chunkFacts(array $det, array $fnNames): array
+    {
+        $set = array_flip(array_map('strtolower', $fnNames));
+        $fns = array_values(array_filter($det['functions'] ?? [], fn ($f) => isset($set[strtolower($f['name'] ?? '')])));
+        $tables = array_values(array_filter($det['tables'] ?? [], fn ($t) => array_intersect($fnNames, $t['functions'] ?? [])));
+        $queries = array_values(array_filter($det['queries'] ?? [], fn ($q) => isset($set[strtolower((string) ($q['function'] ?? ''))])));
+        return [
+            'functions' => array_map(fn ($f) => [
+                'name' => $f['name'] ?? null, 'type' => $f['type'] ?? null, 'params' => $f['params'] ?? [],
+                'returns' => $f['returns'] ?? [], 'called_by' => $f['called_by'] ?? [],
+                'calls_internal' => $f['calls_internal'] ?? [], 'calls_user' => $f['calls_user'] ?? [],
+                'tables' => $f['tables'] ?? [], 'accesses' => $f['accesses'] ?? [], 'effects' => $f['effects'] ?? [],
+            ], $fns),
+            'tables'  => array_map(fn ($t) => $this->tableFact($t), $tables),
+            'queries' => array_map(fn ($q) => $this->queryFact($q), $queries),
         ];
     }
 
