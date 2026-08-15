@@ -2,11 +2,13 @@
 
 namespace App\Console\Commands;
 
+use App\Models\SourceDocVersion;
 use App\Models\SystemSetting;
 use App\SourceCode\Analyzer\AdvplAnalyzer;
 use App\SourceCode\Analyzer\SecretSanitizer;
 use App\SourceCode\Analyzer\SourceDiff;
 use App\SourceCode\Analyzer\SourceDocSemanticAnalyzer;
+use App\SourceCode\Exceptions\SourceIntegrationException;
 use App\SourceCode\GithubAppAuth;
 use Illuminate\Console\Command;
 
@@ -34,9 +36,14 @@ class SourceDocAnalyzeCommand extends Command
         $path = $this->argument('path');
         $branch = (string) $this->option('branch');
 
+        // Deixa explícito que ESTE modo (sem --persist) NÃO grava documentação — evita
+        // interpretar a ausência de source_docs como falha.
+        $this->warn(self::DIAG_NOTICE);
+
         $code = $auth->getFileContent($owner, $repo, $branch, $path);
         if ($code === null) {
-            $this->error("Não consegui ler {$owner}/{$repo}@{$branch}:{$path}");
+            $reason = $this->classifyReadFailure($auth, $owner, $repo, $branch, $path);
+            $this->error('[' . $reason . '] ' . $this->readFailureMessage($reason, $path));
             return self::FAILURE;
         }
 
@@ -83,7 +90,8 @@ class SourceDocAnalyzeCommand extends Command
         $ref = (string) ($this->option('ref') ?: $branch);
         $fetched = $auth->getFileWithSha($owner, $repoName, $ref, $path);
         if ($fetched === null) {
-            $this->error('Não consegui ler o fonte.');
+            $reason = $this->classifyReadFailure($auth, $owner, $repoName, $ref, $path);
+            $this->error('[' . $reason . '] ' . $this->readFailureMessage($reason, $path));
             return self::FAILURE;
         }
         $newCode = $fetched['content'];
@@ -99,6 +107,14 @@ class SourceDocAnalyzeCommand extends Command
         ], $this->option('semantic'));
 
         $doc = $ver->doc;
+
+        // Robustez: o pipeline captura exceções e grava status=failed (+ analysis_error + Log::warning).
+        // O command NÃO pode terminar com aparência de sucesso nesse caso.
+        if (($err = $this->pipelineFailed($ver)) !== null) {
+            $this->error("Falha ao documentar {$path} (doc #{$doc->id}, versão #{$ver->id}): {$err}");
+            return self::FAILURE;
+        }
+
         $this->info(json_encode([
             'source_doc_id' => $doc->id, 'version_id' => $ver->id,
             'doc_status' => $doc->analysis_status, 'version_status' => $ver->analysis_status,
@@ -107,5 +123,68 @@ class SourceDocAnalyzeCommand extends Command
             'has_documentation_json' => !empty($doc->documentation_json),
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
         return self::SUCCESS;
+    }
+
+    /** Aviso do modo diagnóstico (sem --persist). */
+    public const DIAG_NOTICE = 'MODO DIAGNÓSTICO — nenhuma documentação será persistida (use --persist para gravar).';
+
+    /**
+     * Classifica a razão de uma falha de LEITURA do fonte em um reason machine-readable
+     * (mesmo vocabulário do SourceDocStatusResolver). Não altera o GithubAppAuth: usa a árvore
+     * (que lança exceção classificada) só no caminho de erro. NÃO adivinha/corrige o path.
+     */
+    public function classifyReadFailure(GithubAppAuth $auth, string $owner, string $repo, string $ref, string $path): string
+    {
+        if (! $auth->isConfigured()) {
+            return 'github_unavailable';
+        }
+        try {
+            $tree = $auth->treeBlobShas($owner, $repo, $ref);
+        } catch (SourceIntegrationException $e) {
+            return match ($e->errorCode) {
+                'TIMEOUT'                                                     => 'timeout',
+                'AUTHENTICATION_ERROR'                                        => 'authentication_error',
+                'REPO_NOT_FOUND', 'REPO_NOT_AUTHORIZED', 'BRANCH_NOT_FOUND',
+                'GITHUB_UNAVAILABLE', 'NOT_CONFIGURED',
+                'APP_NOT_CONFIGURED', 'APP_NOT_INSTALLED'                     => 'github_unavailable',
+                default                                                       => 'resolution_error',
+            };
+        } catch (\Throwable) {
+            return 'resolution_error';
+        }
+        // Árvore OK (repo/branch/auth resolvem) → o problema é o PATH (inexistente ou case).
+        return isset($tree[ltrim($path, '/')]) ? 'resolution_error' : 'source_not_found';
+    }
+
+    /** Mensagem operacional sanitizada por reason. Nunca afirma que É case; sugere verificar. */
+    public function readFailureMessage(string $reason, string $path): string
+    {
+        return match ($reason) {
+            'source_not_found'     => "Fonte não encontrado no caminho informado ({$path}). Verifique nome, caminho e uso de maiúsculas/minúsculas (o path no GitHub é case-sensitive).",
+            'authentication_error' => 'Falha de autenticação ao acessar o repositório no GitHub.',
+            'timeout'              => 'Tempo excedido ao acessar o GitHub. Tente novamente.',
+            'github_unavailable'   => 'GitHub indisponível ou repositório/branch inacessível.',
+            default                => 'Não foi possível resolver o fonte no GitHub (erro técnico).',
+        };
+    }
+
+    /** Retorna a mensagem de erro SANITIZADA quando a versão terminou 'failed'; null caso contrário. */
+    public function pipelineFailed(SourceDocVersion $ver): ?string
+    {
+        if ($ver->analysis_status !== 'failed') {
+            return null;
+        }
+        $doc = $ver->doc;
+        return $this->sanitizeError((string) ($doc?->analysis_error ?: 'falha desconhecida no pipeline'));
+    }
+
+    /** Remove credenciais/segredos antes de imprimir mensagens técnicas (token/Bearer/Authorization/chave). */
+    public function sanitizeError(string $msg): string
+    {
+        $msg = (string) preg_replace('/\b(gh[posru]|github_pat)_[A-Za-z0-9_]+/', '[REDACTED_TOKEN]', $msg);
+        $msg = (string) preg_replace('/Bearer\s+[A-Za-z0-9._\-]+/i', 'Bearer [REDACTED]', $msg);
+        $msg = (string) preg_replace('/Authorization\s*:\s*\S+/i', 'Authorization: [REDACTED]', $msg);
+        $msg = (string) preg_replace('/-----BEGIN[^-]*PRIVATE KEY-----.*?-----END[^-]*PRIVATE KEY-----/s', '[REDACTED_KEY]', $msg);
+        return mb_substr($msg, 0, 500);
     }
 }
