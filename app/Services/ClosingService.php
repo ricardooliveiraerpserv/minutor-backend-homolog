@@ -49,6 +49,24 @@ class ClosingService
         return $cursor->setTime(23, 59, 59);
     }
 
+    /** 2o dia util a partir de $from, as 23:59:59. Prazo de digitacao da competencia
+     *  = 2o dia util da semana/mes seguinte (regra do fechamento). */
+    private function secondBusinessDayDeadline(Carbon $from): Carbon
+    {
+        $cursor   = $from->copy()->startOfDay();
+        $feriados = $this->holidaysAround($cursor);
+        $uteis    = 0;
+        while (true) {
+            if (!$cursor->isWeekend() && !in_array($cursor->toDateString(), $feriados, true)) {
+                if (++$uteis === 2) {
+                    break;
+                }
+            }
+            $cursor->addDay();
+        }
+        return $cursor->setTime(23, 59, 59);
+    }
+
     private function holidaysAround(Carbon $from): array
     {
         return Holiday::whereBetween('date', [$from->copy()->subDays(5)->toDateString(), $from->copy()->addDays(15)->toDateString()])
@@ -60,12 +78,12 @@ class ClosingService
     {
         [$y, $m] = array_map('intval', explode('-', $ym));
         $next = Carbon::create($y, $m, 1, 0, 0, 0, self::TZ)->addMonthNoOverflow();
-        return $this->firstBusinessDayDeadline($next);
+        return $this->secondBusinessDayDeadline($next);
     }
 
     public function weekDeadline(Carbon $weekStart): Carbon
     {
-        return $this->firstBusinessDayDeadline($weekStart->copy()->addWeek());
+        return $this->secondBusinessDayDeadline($weekStart->copy()->addWeek());
     }
 
     /** Marco "daqui pra frente": semanas com prazo < isso nunca fecham pela regra semanal. */
