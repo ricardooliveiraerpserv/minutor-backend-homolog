@@ -96,6 +96,11 @@ class SourceDocSemanticAnalyzer
             return $this->skeleton('failed') + ['error' => 'Falha na análise semântica — reprocessável.', 'usage' => $this->usageBlock()];
         }
 
+        // Estados "skip" já vêm prontos (esqueleto) — não passam pelo finalize (que reformata e perde note/strategy).
+        if (in_array($result['status'] ?? '', ['skipped_cost_limit', 'skipped_no_structural_change'], true)) {
+            $result['usage'] = $this->usageBlock();
+            return $result;
+        }
         $final = $this->finalize($result, $deterministic, $diff);
         if ($this->cacheEnabled() && in_array($final['status'], ['completed', 'partial'], true)) {
             Cache::put($reuseKey, $final, (int) config('services.source_doc_ai.cache_ttl', 2592000));
@@ -405,10 +410,11 @@ class SourceDocSemanticAnalyzer
     private function costSkipped(float $est, int $relTotal): array
     {
         $this->coverage = ['relevant_functions_total' => $relTotal, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => $relTotal];
-        return $this->skeleton('skipped_cost_limit') + [
-            'strategy' => 'skipped_cost_limit',
-            'note' => 'Análise semântica não executada: estimativa de custo (US$ ' . round($est, 4) . ') acima do limite de US$ ' . config('services.source_doc_ai.hard_limit_usd', 0.30) . '. A documentação determinística permanece válida.',
-        ];
+        $sk = $this->skeleton('skipped_cost_limit');
+        $sk['strategy'] = 'skipped_cost_limit';
+        $sk['semantic_coverage'] = $this->coverage;
+        $sk['note'] = 'Análise semântica não executada: estimativa de custo (US$ ' . round($est, 4) . ') acima do limite de US$ ' . config('services.source_doc_ai.hard_limit_usd', 0.30) . '. A documentação determinística permanece válida.';
+        return $sk;
     }
 
     // ── merge incremental (ADD/UPDATE/REMOVE/KEEP) ──────────────────────────────
