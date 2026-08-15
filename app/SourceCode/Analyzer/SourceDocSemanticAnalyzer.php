@@ -114,14 +114,15 @@ class SourceDocSemanticAnalyzer
         $inlineCode = mb_strlen($maskedCode) <= $inlineCodeMax ? $maskedCode : '';
 
         // ── plano de chamadas + estimativa ANTES de executar ──
-        $outBudget = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000);
+        $globalOut = (int) config('services.source_doc_ai.max_output_tokens_global', 3500);
+        $deepenOut = (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800);
         $globalUser = $this->globalUserPrompt($compact, $diff, $inlineCode);
-        $plan = [['system' => $this->systemPrompt(), 'user' => $globalUser, 'out' => $outBudget, 'code' => $inlineCode !== '']];
+        $plan = [['system' => $this->systemPrompt(), 'user' => $globalUser, 'out' => $globalOut, 'code' => $inlineCode !== '']];
 
         // aprofundamento: código das funções CRÍTICAS (só se o fonte é grande = sem inline)
         $critical = $inlineCode === '' ? $this->criticalWithCode($relevant, $det, $maskedCode) : [];
         if (! empty($critical)) {
-            $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenUserPrompt($critical), 'out' => $outBudget, 'code' => true];
+            $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenUserPrompt($critical), 'out' => $deepenOut, 'code' => true];
         }
         $plan = array_slice($plan, 0, (int) config('services.source_doc_ai.max_calls', 3));
 
@@ -257,11 +258,15 @@ class SourceDocSemanticAnalyzer
             }
         }
         $lines = explode("\n", $maskedCode);
-        $budgetTokens = (int) config('services.source_doc_ai.max_input_tokens_per_call', 60000);
+        $budgetTokens = (int) config('services.source_doc_ai.deepen_code_budget_tokens', 20000);
+        $maxFns = (int) config('services.source_doc_ai.max_deepen_functions', 6);
         $cptCode = (float) config('services.source_doc_ai.chars_per_token_code', 1.6);
         $out = [];
         $tok = 0;
         foreach ($relevant as $f) {
+            if (count($out) >= $maxFns) {
+                break;
+            }
             $eff = (array) ($f['effects'] ?? []);
             $crit = empty($f['called_by']) || (bool) array_intersect(['database_write', 'database_delete', 'file_write', 'external_call', 'routine_execution'], $eff) || isset($riskFns[strtolower($f['name'] ?? '')]);
             if (! $crit) {

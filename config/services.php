@@ -84,7 +84,12 @@ return [
         'max_relevant_functions'     => (int) env('SOURCE_DOC_AI_MAX_RELEVANT_FUNCTIONS', 12),
         'max_calls'                  => (int) env('SOURCE_DOC_AI_MAX_CALLS', 3),
         'max_input_tokens_per_call'  => (int) env('SOURCE_DOC_AI_MAX_INPUT_TOKENS_PER_CALL', 60000),
-        'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 2000),
+        // Output: a chamada GLOBAL precisa de mais espaço (descreve N funções+regras) que o aprofundamento.
+        'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 1800),
+        'max_output_tokens_global'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_GLOBAL', 3500),
+        // Aprofundamento (código das funções críticas): nº de funções e orçamento de tokens do código.
+        'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
+        'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),
         'hard_limit_usd'             => (float) env('SOURCE_DOC_AI_HARD_LIMIT_USD', 0.30),
         'target_small_usd'           => (float) env('SOURCE_DOC_AI_TARGET_SMALL', 0.05),
         'target_medium_usd'          => (float) env('SOURCE_DOC_AI_TARGET_MEDIUM', 0.10),
