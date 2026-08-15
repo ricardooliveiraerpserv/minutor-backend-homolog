@@ -19,6 +19,9 @@ class AdvplAnalyzer
     public const SCHEMA_VERSION = 1;
     public const ANALYZER_VERSION = '1.1';
 
+    /** Índice linha→função (O(1) lookup; evita O(eventos×funções) em fontes grandes). */
+    private array $lineIndex = [];
+
     private const NON_CALLS = [
         'if', 'iif', 'elseif', 'else', 'endif', 'while', 'enddo', 'for', 'next', 'do', 'case', 'endcase',
         'otherwise', 'return', 'local', 'private', 'public', 'static', 'default', 'begin', 'end', 'sequence',
@@ -57,6 +60,7 @@ class AdvplAnalyzer
 
         $functions = $this->extractFunctions($lex, $mc);           // base: nome/tipo/params/retorno/linhas/calls
         $fnRanges = $this->functionRanges($functions);
+        $this->lineIndex = $this->buildLineIndex($functions);       // índice O(1) p/ functionAt
 
         // Eventos de acesso a dados (nativo + SQL), com linha → função e papel de campo.
         $access = $this->collectAccessEvents($lex, $mc, $mn, $fnRanges);
@@ -149,6 +153,7 @@ class AdvplAnalyzer
             $decls[] = ['type' => $this->normFnType($x[1][0]), 'name' => $x[2][0], 'params' => $this->splitParams($x[3][0] ?? ''), 'offset' => $x[0][1]];
         }
         $names = array_map(fn ($d) => strtolower($d['name']), $decls);
+        $namesSet = array_flip($names); // lookup O(1) — evita in_array O(matches×funções)
         $out = [];
         $n = count($decls);
         for ($i = 0; $i < $n; $i++) {
@@ -165,7 +170,7 @@ class AdvplAnalyzer
                 'returns'        => $this->extractReturns($body),
                 'start_line'     => $startLine,
                 'end_line'       => $endLine,
-                'calls_internal' => $this->callsInternal($body, $names, $d['name']),
+                'calls_internal' => $this->callsInternal($body, $namesSet, $d['name']),
                 'calls_user'     => $this->userCallsIn($body),
                 'writes'         => (bool) preg_match('/\b(RecLock|FieldPut|MsUnlock|MsExecAuto|FCreate|FWrite|TCSQLExec|TCSqlExec)\b/i', $body),
                 'evidence'       => ['line_start' => $startLine, 'line_end' => $endLine],
@@ -185,12 +190,27 @@ class AdvplAnalyzer
 
     private function functionAt(array $ranges, int $line): ?string
     {
+        if (!empty($this->lineIndex)) {
+            return $this->lineIndex[$line] ?? null;
+        }
         foreach ($ranges as $r) {
             if ($line >= $r['start'] && $line <= $r['end']) {
                 return $r['name'];
             }
         }
         return null;
+    }
+
+    /** Índice linha→nome-da-função (funções são sequenciais e não se sobrepõem). */
+    private function buildLineIndex(array $functions): array
+    {
+        $idx = [];
+        foreach ($functions as $f) {
+            for ($l = $f['start_line']; $l <= $f['end_line']; $l++) {
+                $idx[$l] = $f['name'];
+            }
+        }
+        return $idx;
     }
 
     private function normFnType(string $t): string
@@ -235,18 +255,21 @@ class AdvplAnalyzer
         return array_slice($out, 0, 12);
     }
 
-    private function callsInternal(string $body, array $names, string $self): array
+    private function callsInternal(string $body, array $namesSet, string $self): array
     {
+        static $nonCalls = null;
+        $nonCalls ??= array_flip(self::NON_CALLS);
         preg_match_all('/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/', $body, $m);
         $out = [];
+        $seen = [];
+        $selfLc = strtolower($self);
         foreach ($m[1] as $name) {
             $l = strtolower($name);
-            if ($l === strtolower($self) || in_array($l, self::NON_CALLS, true)) {
+            if ($l === $selfLc || isset($nonCalls[$l]) || !isset($namesSet[$l]) || isset($seen[$l])) {
                 continue;
             }
-            if (in_array($l, $names, true) && !in_array($name, $out, true)) {
-                $out[] = $name;
-            }
+            $seen[$l] = true;
+            $out[] = $name;
         }
         return $out;
     }
@@ -322,8 +345,42 @@ class AdvplAnalyzer
             $emit(['table' => strtoupper($x['g'][1]), 'access' => $role === 'write' ? 'UPDATE' : 'READ', 'field' => strtoupper($x['g'][2]), 'field_role' => $role, 'source' => 'native', 'line' => $lex->lineAt($x['offset'])]);
         }
 
-        $queries = $this->assembleSql($lex);
+        // SQL por literais de string (TCSQLExec/TCQuery) + SQL embutido BeginSql/EndSql (não-string).
+        $queries = array_merge($this->assembleSql($lex), $this->assembleBeginSql($lex, $mn));
         return ['events' => $events, 'queries' => $queries];
+    }
+
+    /**
+     * SQL embutido em blocos BeginSql … EndSql (a instrução NÃO é string; fica no código).
+     * Resolve macros TOTVS: %Table:XXX% → nome físico; demais %…% → marcador embedded_macro.
+     * Evidência com line_start (BeginSql) e line_end (EndSql) reais.
+     */
+    private function assembleBeginSql(AdvplLexer $lex, string $mn): array
+    {
+        $out = [];
+        if (!preg_match_all('/\bBeginSql\b(.*?)\bEndSql\b/is', $mn, $m, PREG_OFFSET_CAPTURE | PREG_SET_ORDER)) {
+            return $out;
+        }
+        foreach ($m as $x) {
+            $inner = $x[1][0];
+            $offset = $x[0][1];
+            $startLine = $lex->lineAt($offset);
+            $endLine = $lex->lineAt($offset + strlen($x[0][0]));
+            $hadMacro = (bool) preg_match('/%[^%]+%/', $inner);
+            // %Table:SB1% → " SB1 " (nome físico); %xFilial:...% e demais macros → espaço.
+            $sql = preg_replace('/%\s*Table\s*:\s*([A-Za-z0-9_]+)\s*%/i', ' $1 ', $inner);
+            $sql = preg_replace('/%[^%]*%/', ' ', (string) $sql);
+            $out[] = [
+                'text'       => trim(preg_replace('/\s+/', ' ', (string) $sql)),
+                'line'       => $startLine,
+                'line_start' => $startLine,
+                'line_end'   => $endLine,
+                'fragments'  => 1,
+                'executor'   => 'BeginSql',
+                'embedded_macro' => $hadMacro,
+            ];
+        }
+        return $out;
     }
 
     /** matchAll com offset → [{g:groups, offset}] */
@@ -417,12 +474,13 @@ class AdvplAnalyzer
 
     private function buildQueries(array $rawQueries, array $fnRanges, string $mc): array
     {
-        $executor = preg_match('/\bTCSQLExec\s*\(/i', $mc) ? 'TCSQLExec'
+        $fileExecutor = preg_match('/\bTCSQLExec\s*\(/i', $mc) ? 'TCSQLExec'
             : (preg_match('/\bTCQuery\b/i', $mc) ? 'TCQuery'
             : (preg_match('/\bBeginSql\b/i', $mc) ? 'BeginSql' : 'SQL'));
         $out = [];
         foreach ($rawQueries as $q) {
             $sql = $q['text'];
+            $executor = $q['executor'] ?? $fileExecutor; // BeginSql traz executor próprio
             $op = preg_match('/^\s*UPDATE/i', $sql) ? 'UPDATE'
                 : (preg_match('/INSERT\s+INTO/i', $sql) ? 'INSERT'
                 : (preg_match('/DELETE\s+FROM/i', $sql) ? 'DELETE' : 'SELECT'));
@@ -436,7 +494,9 @@ class AdvplAnalyzer
                 }
             }
             [$readF, $writeF, $whereF] = $this->classifySqlFields($sql, $op);
-            $construction = $q['fragments'] > 1 ? 'concatenation' : (preg_match('/%\w/', $sql) ? 'embedded_macro' : 'static');
+            $construction = !empty($q['embedded_macro']) ? 'embedded_macro'
+                : ($q['fragments'] > 1 ? 'concatenation'
+                : (preg_match('/%\w/', $sql) ? 'embedded_macro' : 'static'));
             $hasWhere = (bool) preg_match('/\bWHERE\b/i', $sql);
             $fn = $this->functionAt($fnRanges, $q['line']);
             $risk = [];

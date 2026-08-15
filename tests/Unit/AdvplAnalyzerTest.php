@@ -121,6 +121,31 @@ class AdvplAnalyzerTest extends TestCase
         $this->assertContains('database_write', $types);
     }
 
+    /** SQL embutido BeginSql/EndSql (não-string) + macro %Table:XXX% + evidência line_start/line_end. */
+    public function test_beginsql_embedded(): void
+    {
+        $code = "#include 'protheus.ch'\n"
+            . "User Function ZBSQL()\n"
+            . "  Local cAlias := GetNextAlias()\n"
+            . "  BeginSql Alias cAlias\n"
+            . "     SELECT B1_COD, B1_DESC\n"
+            . "     FROM %Table:SB1% SB1\n"
+            . "     WHERE B1_FILIAL = %xFilial:SB1%\n"
+            . "  EndSql\n"
+            . "  Return Nil\n";
+        $d = (new AdvplAnalyzer())->analyze($code, ['path' => 'ZBSQL.PRW']);
+
+        $q = $d['queries'][0] ?? null;
+        $this->assertNotNull($q, 'query BeginSql detectada (não-string)');
+        $this->assertSame('SELECT', $q['operation']);
+        $this->assertSame('BeginSql', $q['executor'], 'executor por-query = BeginSql');
+        $this->assertSame('embedded_macro', $q['construction'], 'macro %…% ⇒ embedded_macro');
+        $this->assertContains('SB1', $q['tables'], 'tabela física resolvida de %Table:SB1%');
+        $this->assertSame('ZBSQL', $q['function']);
+        // evidência multilinha: BeginSql (linha 4) … EndSql (linha 8)
+        $this->assertLessThan($q['evidence']['line_end'], $q['evidence']['line_start'], 'SQL multilinha: line_start < line_end');
+    }
+
     /** Anti-alucinação: sem SQL/integração ⇒ listas vazias, não inventadas. */
     public function test_no_hallucination_empty(): void
     {
