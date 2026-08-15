@@ -603,14 +603,14 @@ class AdvplAnalyzer
 
     private function detectExternalIntegrations(string $mc, array $endpoints): array
     {
+        // Anti-alucinação: integração externa exige EVIDÊNCIA DE CHAMADA (FWRest/Http*/Soap/FTP/
+        // arquivo/mensageria). Uma URL solta em string NÃO é integração (pode ser namespace XML,
+        // texto, comentário de doc). Endpoints continuam registrados à parte (informativo).
         $out = [];
         foreach (self::INTEGRATION_SIGNS as $type => $re) {
             if (preg_match($re, $mc)) {
-                $out[] = ['type' => $type, 'evidence' => 'padrão detectado no código'];
+                $out[] = ['type' => $type, 'evidence' => 'padrão de chamada detectado no código'];
             }
-        }
-        if (!empty($endpoints) && !in_array('HTTP', array_column($out, 'type'), true) && !in_array('REST', array_column($out, 'type'), true)) {
-            $out[] = ['type' => 'HTTP/URL', 'evidence' => 'endpoint http detectado em string'];
         }
         return $out;
     }
@@ -778,12 +778,23 @@ class AdvplAnalyzer
         return array_values(array_unique(array_map('strtoupper', $m[1])));
     }
 
+    /** Domínios de ESQUEMA/namespace XML — não são endpoints de integração (ex.: NF-e/CT-e). */
+    private const SCHEMA_HOSTS = ['portalfiscal.inf.br', 'w3.org', 'xmlsoap.org', 'tempuri.org', 'www.w3.org'];
+
     private function extractEndpoints(AdvplLexer $lex): array
     {
         $out = [];
         foreach ($lex->strings as $s) {
-            if (preg_match_all('#(https?://[^\s"\'\\\\]+)#i', $s['value'], $m)) {
+            $val = $s['value'];
+            // URL dentro de xmlns="..." é namespace XML, não chamada de rede.
+            $isXmlns = (bool) preg_match('/xmlns\s*=/i', $val);
+            if (preg_match_all('#(https?://[^\s"\'\\\\]+)#i', $val, $m)) {
                 foreach ($m[1] as $u) {
+                    $host = strtolower((string) parse_url($u, PHP_URL_HOST));
+                    $isSchema = $host !== '' && (bool) array_filter(self::SCHEMA_HOSTS, fn ($d) => $host === $d || str_ends_with($host, '.' . $d));
+                    if ($isXmlns || $isSchema) {
+                        continue; // namespace/esquema — ignora
+                    }
                     if (!in_array($u, $out, true)) {
                         $out[] = $u;
                     }

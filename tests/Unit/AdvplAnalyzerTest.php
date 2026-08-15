@@ -146,6 +146,19 @@ class AdvplAnalyzerTest extends TestCase
         $this->assertLessThan($q['evidence']['line_end'], $q['evidence']['line_start'], 'SQL multilinha: line_start < line_end');
     }
 
+    /** Anti-FP: URL de namespace XML (xmlns / domínio de esquema) NÃO é integração externa. */
+    public function test_xmlns_url_is_not_integration(): void
+    {
+        $code = "User Function ZXML()\n"
+            . "  Local cXml := ''\n"
+            . "  cXml += '<CTe xmlns=\"http://www.portalfiscal.inf.br/cte\">'\n"
+            . "  cXml += '<NFe xmlns=\"http://www.portalfiscal.inf.br/nfe\">'\n"
+            . "  Return cXml\n";
+        $d = (new AdvplAnalyzer())->analyze($code, ['path' => 'ZXML.PRW']);
+        $this->assertSame([], $d['external_integrations'], 'namespace XML não é integração (só monta XML)');
+        $this->assertSame([], $d['endpoints'], 'URL de esquema/xmlns não vira endpoint');
+    }
+
     /** Anti-alucinação: sem SQL/integração ⇒ listas vazias, não inventadas. */
     public function test_no_hallucination_empty(): void
     {
