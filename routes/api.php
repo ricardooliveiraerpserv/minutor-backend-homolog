@@ -519,6 +519,13 @@ Route::prefix('v1')->group(function () {
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
         Route::post('/source-repos/{sourceRepo}/verify', [\App\Http\Controllers\ClientSourceRepoController::class, 'verify']);
+        // Central de Fontes (C1) — catálogo de documentação de fonte (SOMENTE LEITURA).
+        Route::middleware('permission.or.admin:source_docs.view')->group(function () {
+            Route::get('/source-docs', [\App\Http\Controllers\SourceDocCatalogController::class, 'index']);
+            Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1503,6 +1510,13 @@ Route::prefix('v1')->group(function () {
         Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
         Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
         Route::post('/source-repos/{sourceRepo}/verify', [\App\Http\Controllers\ClientSourceRepoController::class, 'verify']);
+        // Central de Fontes (C1) — catálogo de documentação de fonte (SOMENTE LEITURA).
+        Route::middleware('permission.or.admin:source_docs.view')->group(function () {
+            Route::get('/source-docs', [\App\Http\Controllers\SourceDocCatalogController::class, 'index']);
+            Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)

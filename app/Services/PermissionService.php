@@ -138,6 +138,8 @@ class PermissionService
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
+        // Central de Fontes (C1) — acesso ao catálogo de documentação de fonte (leitura).
+        'source_docs.view',
     ];
 
     /**
@@ -230,6 +232,8 @@ class PermissionService
             // Cofre de Senhas
             'vault.use',
             'environments.use',
+            // Central de Fontes (C1) — coordenador enxerga o catálogo de documentação.
+            'source_docs.view',
         ];
     }
 
