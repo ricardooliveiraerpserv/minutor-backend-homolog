@@ -434,13 +434,27 @@ class SourceDocRenderer
         $ext = (array) $this->g($m['d'], 'external_integrations', []);
         $h = '<h3>Acesso a Dados</h3>';
         if (!empty($da)) {
-            $h .= '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Tipo</th><th ' . self::TH . '>Operação</th><th ' . self::TH . '>Tabela</th><th ' . self::TH . '>Executor</th><th ' . self::TH . '>Função</th></tr>';
+            // Agrega por (tipo, operação, tabela, executor) — evita centenas de linhas de acesso nativo.
+            $agg = [];
             foreach ($da as $x) {
-                $h .= '<tr><td ' . self::TD . '>' . $this->e((string) $this->g($x, 'type', '—')) . '</td>'
-                    . '<td ' . self::TD . '>' . $this->e((string) $this->g($x, 'operation', '—')) . '</td>'
-                    . '<td ' . self::TD . '>' . $this->e((string) $this->g($x, 'table', '—')) . '</td>'
-                    . '<td ' . self::TD . '>' . $this->e((string) $this->g($x, 'executor', '—')) . '</td>'
-                    . '<td ' . self::TD . '>' . $this->e((string) $this->g($x, 'function', '—')) . '</td></tr>';
+                $key = implode('|', [(string) $this->g($x, 'type', ''), (string) $this->g($x, 'operation', ''), (string) $this->g($x, 'table', ''), (string) $this->g($x, 'executor', '')]);
+                if (!isset($agg[$key])) {
+                    $agg[$key] = ['type' => $this->g($x, 'type', '—'), 'operation' => $this->g($x, 'operation', '—'), 'table' => $this->g($x, 'table', '—'), 'executor' => $this->g($x, 'executor', '—'), 'count' => 0, 'fns' => []];
+                }
+                $agg[$key]['count']++;
+                $fn = (string) $this->g($x, 'function', '');
+                if ($fn !== '' && !in_array($fn, $agg[$key]['fns'], true) && count($agg[$key]['fns']) < 5) {
+                    $agg[$key]['fns'][] = $fn;
+                }
+            }
+            $h .= '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Tipo</th><th ' . self::TH . '>Operação</th><th ' . self::TH . '>Tabela</th><th ' . self::TH . '>Executor</th><th ' . self::TH . '>Qtd</th><th ' . self::TH . '>Funções</th></tr>';
+            foreach (array_values($agg) as $x) {
+                $h .= '<tr><td ' . self::TD . '>' . $this->e((string) $x['type']) . '</td>'
+                    . '<td ' . self::TD . '>' . $this->e((string) $x['operation']) . '</td>'
+                    . '<td ' . self::TD . '>' . $this->e((string) $x['table']) . '</td>'
+                    . '<td ' . self::TD . '>' . $this->e((string) $x['executor']) . '</td>'
+                    . '<td ' . self::TD . '>' . (int) $x['count'] . '</td>'
+                    . '<td ' . self::TD . '>' . $this->e(implode(', ', $x['fns']) ?: '—') . '</td></tr>';
             }
             $h .= '</table>';
         } else {
