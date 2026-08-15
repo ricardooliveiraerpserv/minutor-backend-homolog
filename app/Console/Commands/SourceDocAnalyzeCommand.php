@@ -98,11 +98,24 @@ class SourceDocAnalyzeCommand extends Command
         // source_commit_sha = o ref documentado (histórico quando --ref); branch do doc segue --branch.
         $sha = $this->option('ref') ? $ref : $auth->getBranchHeadSha($owner, $repoName, $branch);
 
+        // --parent (DIAGNÓSTICO, homolog): busca o código anterior no MESMO repo/path → SourceDiff real
+        // (modified) → habilita a estratégia C incremental (usa os MESMOS componentes do fluxo real).
+        // Segurança: parent precisa resolver no Git do próprio repo/path; senão FAILURE claro (não adivinha).
+        $parent = (string) $this->option('parent');
+        $oldCode = null;
+        if ($parent !== '') {
+            $oldCode = $auth->getFileContent($owner, $repoName, $parent, $path);
+            if ($oldCode === null) {
+                $this->error("[parent_not_found] Parent SHA não resolvido para {$owner}/{$repoName}:{$path}@{$parent}. Verifique o commit (não adivinho).");
+                return self::FAILURE;
+            }
+        }
+
         $ver = app(\App\SourceCode\SourceDocPipeline::class)->processFile([
             'customer_id' => $repo->customer_id, 'source_repo_id' => $repo->id,
             'owner' => $owner, 'repository' => $repoName, 'branch' => $branch, 'path' => $path,
-            'tipo' => $repo->tipo, 'new_code' => $newCode, 'old_code' => null,
-            'source_commit_sha' => $sha, 'source_blob_sha' => $fetched['blob_sha'] ?? null, 'parent_source_commit_sha' => null,
+            'tipo' => $repo->tipo, 'new_code' => $newCode, 'old_code' => $oldCode,
+            'source_commit_sha' => $sha, 'source_blob_sha' => $fetched['blob_sha'] ?? null, 'parent_source_commit_sha' => $parent ?: null,
             'gmud_id' => null, 'ticket_number' => 'TESTE-F3', 'responsible_user_id' => null, 'responsavel' => 'Validação Fase 3',
         ], $this->option('semantic'));
 
