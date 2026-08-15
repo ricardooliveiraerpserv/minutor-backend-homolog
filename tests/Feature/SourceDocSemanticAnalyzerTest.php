@@ -194,10 +194,10 @@ class SourceDocSemanticAnalyzerTest extends TestCase
 
     public function test_output_budget_passed_to_provider(): void
     {
-        config(['services.source_doc_ai.max_output_tokens_per_call' => 1500]);
+        config(['services.source_doc_ai.max_output_tokens_global' => 1600]);
         $ai = $this->ai(true, $this->validJson());
         $this->go($ai);
-        $this->assertSame(1500, $ai->opts[0]['max_tokens'] ?? null);
+        $this->assertSame(1600, $ai->opts[0]['max_tokens'] ?? null, 'a chamada global usa o output budget global');
     }
 
     public function test_hard_limit_skips_before_calling(): void
