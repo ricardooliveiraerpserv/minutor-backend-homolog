@@ -48,8 +48,26 @@ class SourceDocRenderCommand extends Command
         $outdated = $st['status'] === SourceDocStatusResolver::STATUS_OUTDATED;
         $customer = $doc->customer ? ['name' => $doc->customer->name] : [];
 
+        // Bloco 5 — histórico completo (todas as versões) + status do resolver, para o renderer
+        // APENAS apresentar (não recalcula nada). Retrocompatível: renderer tolera context vazio.
+        $versions = $doc->versions()->orderByDesc('created_at')->orderByDesc('id')->get()->map(function (SourceDocVersion $vv) {
+            $ds = (array) ($vv->diff_stats ?? []);
+            $sem = (array) ($vv->semantic_json ?? []);
+            return [
+                'created_at'        => (string) $vv->created_at,
+                'ticket_number'     => $vv->ticket_number,
+                'responsavel'       => $vv->responsavel,
+                'source_commit_sha' => $vv->source_commit_sha,
+                'source_blob_sha'   => $vv->source_blob_sha,
+                'analysis_status'   => $vv->analysis_status,
+                'structural_change' => $ds['structural_change'] ?? null,
+                'resumo'            => $sem['resumo_alteracao'] ?? null,
+            ];
+        })->all();
+        $context = ['status' => $st, 'versions' => $versions];
+
         if ($this->option('export-git')) {
-            $md = $renderer->markdown($json, $outdated, $customer);
+            $md = $renderer->markdown($json, $outdated, $customer, $context);
             $path = trim((string) $this->option('git-dir'), '/') . '/' . $doc->path . '.md';
             $sha = $auth->commitFiles($doc->owner, $doc->repository, $doc->branch, [$path => $md],
                 "docs: {$doc->path} (GMUD " . ($ver->ticket_number ?: '-') . ")");
@@ -62,16 +80,16 @@ class SourceDocRenderCommand extends Command
         $fmt = (string) $this->option('format');
         // --dump: devolve os bytes (base64) do binário em system_settings 'diag_render_bytes'.
         if ($this->option('dump') && in_array($fmt, ['docx', 'pdf'], true)) {
-            $bytes = $fmt === 'docx' ? $renderer->docx($json, $outdated, $customer) : $renderer->pdf($json, $outdated, $customer);
+            $bytes = $fmt === 'docx' ? $renderer->docx($json, $outdated, $customer, $context) : $renderer->pdf($json, $outdated, $customer, $context);
             SystemSetting::set('diag_render_bytes', json_encode(['format' => $fmt, 'b64' => base64_encode($bytes)], JSON_UNESCAPED_UNICODE), 'string', 'diag');
             $this->info("dump {$fmt}: " . strlen($bytes) . ' bytes → diag_render_bytes');
             return self::SUCCESS;
         }
         $out = match ($fmt) {
-            'html'  => $renderer->html($json, $outdated, $customer),
-            'docx'  => 'docx=' . strlen($renderer->docx($json, $outdated, $customer)) . ' bytes',
-            'pdf'   => 'pdf=' . strlen($renderer->pdf($json, $outdated, $customer)) . ' bytes',
-            default => $renderer->markdown($json, $outdated, $customer),
+            'html'  => $renderer->html($json, $outdated, $customer, $context),
+            'docx'  => 'docx=' . strlen($renderer->docx($json, $outdated, $customer, $context)) . ' bytes',
+            'pdf'   => 'pdf=' . strlen($renderer->pdf($json, $outdated, $customer, $context)) . ' bytes',
+            default => $renderer->markdown($json, $outdated, $customer, $context),
         };
         SystemSetting::set('diag_render', json_encode([
             'outdated' => $outdated, 'format' => $fmt,
