@@ -262,7 +262,7 @@ class AdvplAnalyzer
     {
         $calledBy = [];
         foreach ($callGraph as $e) {
-            $to = strtolower(preg_replace('/^U_/i', '', $e['to'])); // U_FTENVNFU → ftenvnfu (função definida no fonte)
+            $to = strtolower(preg_replace('/^U_/i', '', $e['to'])); // 'to' já é normalizado; strip U_ é defensivo
             $calledBy[$to][] = $e['from'];
         }
         foreach ($functions as &$f) {
@@ -377,28 +377,36 @@ class AdvplAnalyzer
         $frags = 0;
         $flush = function () use (&$buf, &$frags, &$out): void {
             if ($buf !== null) {
-                $out[] = ['text' => trim(preg_replace('/\s+/', ' ', $buf['text'])), 'line' => $buf['start'], 'fragments' => $frags];
+                $out[] = [
+                    'text'       => trim(preg_replace('/\s+/', ' ', $buf['text'])),
+                    'line'       => $buf['start'],   // compat
+                    'line_start' => $buf['start'],
+                    'line_end'   => $buf['last'],    // última linha REAL da expressão (não onde o parser terminou)
+                    'fragments'  => $frags,
+                ];
                 $buf = null;
                 $frags = 0;
             }
         };
         foreach ($lex->strings as $s) {
             $v = $s['value'];
+            $sLine = $s['line'];
+            $eLine = $sLine + substr_count($v, "\n"); // string literal pode abranger várias linhas físicas
             if ($buf === null) {
                 if (preg_match($startKw, $v)) {
-                    $buf = ['text' => $v, 'start' => $s['line'], 'last' => $s['line']];
+                    $buf = ['text' => $v, 'start' => $sLine, 'last' => $eLine];
                     $frags = 1;
                 }
                 continue;
             }
-            if ($s['line'] - $buf['last'] <= 3) {
+            if ($sLine - $buf['last'] <= 3) {
                 $buf['text'] .= ' ' . $v;
-                $buf['last'] = $s['line'];
+                $buf['last'] = max($buf['last'], $eLine);
                 $frags++;
             } else {
                 $flush();
                 if (preg_match($startKw, $v)) {
-                    $buf = ['text' => $v, 'start' => $s['line'], 'last' => $s['line']];
+                    $buf = ['text' => $v, 'start' => $sLine, 'last' => $eLine];
                     $frags = 1;
                 }
             }
@@ -451,7 +459,11 @@ class AdvplAnalyzer
                 'fields'       => array_values(array_unique(array_merge($readF, $writeF, $whereF))),
                 'has_where'    => $hasWhere,
                 'risk_flags'   => $risk,
-                'evidence'     => ['line' => $q['line']],
+                'evidence'     => [
+                    'line'       => $q['line'],                        // compat
+                    'line_start' => $q['line_start'] ?? $q['line'],
+                    'line_end'   => $q['line_end'] ?? $q['line'],
+                ],
             ];
         }
         return $out;
@@ -600,16 +612,34 @@ class AdvplAnalyzer
     // ── call graph categorizado ───────────────────────────────────────────────
     private function buildCallGraph(array $functions): array
     {
-        $defined = array_map('strtolower', array_column($functions, 'name'));
-        $totvsLc = array_map('strtolower', self::TOTVS);
+        // mapa nome-normalizado (casing da DEFINIÇÃO local) por chave minúscula sem U_.
+        $nameByLc = [];
+        foreach ($functions as $f) {
+            $nameByLc[strtolower($f['name'])] = $f['name'];
+        }
         $edges = [];
         foreach ($functions as $f) {
             foreach ($f['calls_internal'] as $c) {
-                $edges[] = ['from' => $f['name'], 'to' => $c, 'kind' => 'internal'];
+                $lc = strtolower($c);
+                $edges[] = [
+                    'from'      => $f['name'],
+                    'to'        => $nameByLc[$lc] ?? $c, // identidade normalizada (casing da definição)
+                    'called_as' => $c,                   // como foi escrito no fonte
+                    'kind'      => 'internal',
+                ];
             }
             foreach ($f['calls_user'] as $c) {
-                $bare = strtolower(preg_replace('/^U_/i', '', $c));
-                $edges[] = ['from' => $f['name'], 'to' => $c, 'kind' => in_array($bare, $defined, true) ? 'internal' : 'custom_external'];
+                $bare = preg_replace('/^U_/i', '', $c);
+                $lc = strtolower($bare);
+                $defined = isset($nameByLc[$lc]);
+                $edges[] = [
+                    'from'      => $f['name'],
+                    // normaliza p/ o nome da função quando a definição local é conhecida (U_FOO → FOO);
+                    // se for externa (sem definição no fonte), usa o nome sem o prefixo U_ como identidade.
+                    'to'        => $defined ? $nameByLc[$lc] : $bare,
+                    'called_as' => $c,                   // sintaxe AdvPL da chamada (U_FOO)
+                    'kind'      => $defined ? 'internal' : 'custom_external',
+                ];
             }
         }
         return $edges;
@@ -658,7 +688,8 @@ class AdvplAnalyzer
                 $flow[] = ['type' => 'user_input', 'function' => $f['name'], 'fields' => $inputs];
             }
             foreach (array_merge($f['calls_internal'], $f['calls_user']) as $c) {
-                $flow[] = ['type' => 'function_call', 'from' => $f['name'], 'to' => $c];
+                $lcTo = strtolower(preg_replace('/^U_/i', '', $c));
+                $flow[] = ['type' => 'function_call', 'from' => $f['name'], 'to' => $byName[$lcTo]['name'] ?? preg_replace('/^U_/i', '', $c), 'called_as' => $c];
             }
             foreach ($qByFn[$lc] ?? [] as $q) {
                 $flow[] = ['type' => 'database_operation', 'operation' => $q['operation'], 'table' => $q['table'], 'function' => $f['name']];

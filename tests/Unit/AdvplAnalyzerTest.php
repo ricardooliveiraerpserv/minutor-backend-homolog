@@ -49,9 +49,12 @@ class AdvplAnalyzerTest extends TestCase
         $this->assertNotNull($this->fn($d, 'FTENVNFE'), 'função FTENVNFE');
         $this->assertNotNull($this->fn($d, 'FTENVNFU'), 'função FTENVNFU');
 
-        // relação FTENVNFE -> FTENVNFU
-        $edge = array_filter($d['call_graph'], fn ($e) => strcasecmp($e['from'], 'FTENVNFE') === 0 && stripos($e['to'], 'FTENVNFU') !== false);
+        // relação FTENVNFE -> FTENVNFU, com identidade NORMALIZADA (U_FTENVNFU → FTENVNFU) + called_as
+        $edge = array_values(array_filter($d['call_graph'], fn ($e) => strcasecmp($e['from'], 'FTENVNFE') === 0 && stripos($e['to'], 'FTENVNFU') !== false));
         $this->assertNotEmpty($edge, 'call FTENVNFE -> FTENVNFU');
+        $this->assertSame('FTENVNFU', $edge[0]['to'], 'to normalizado (sem prefixo U_)');
+        $this->assertSame('U_FTENVNFU', $edge[0]['called_as'], 'called_as preserva a sintaxe AdvPL');
+        $this->assertSame('internal', $edge[0]['kind'], 'definição local ⇒ internal');
         $this->assertContains('FTENVNFE', $this->fn($d, 'FTENVNFU')['called_by'], 'FTENVNFU called_by FTENVNFE');
 
         // tabela SPED050 + campos por papel
@@ -74,6 +77,10 @@ class AdvplAnalyzerTest extends TestCase
         $this->assertContains('dynamic_sql_by_concatenation', $q['risk_flags']);
         $this->assertContains('EMAIL', $q['write_fields']);
         $this->assertContains('NFE_ID', $q['where_fields']);
+        // evidência com line_start/line_end (não só a linha final de montagem)
+        $this->assertArrayHasKey('line_start', $q['evidence']);
+        $this->assertArrayHasKey('line_end', $q['evidence']);
+        $this->assertLessThanOrEqual($q['evidence']['line_end'], $q['evidence']['line_start']);
 
         // efeitos + integrações + acesso a dados
         $this->assertNotEmpty(array_filter($d['effects'], fn ($e) => $e['type'] === 'database_write'), 'efeito database_write');
