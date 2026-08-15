@@ -68,6 +68,9 @@ class SourceDocPipeline
             return $ver;
         }
         $ver->fill([
+            // Bloco 3: identidade técnica do CONTEÚDO (git blob SHA autoritativo do GitHub). Não
+            // fabricar: se a origem não forneceu (versões antigas), fica null → NAO_VALIDADO.
+            'source_blob_sha'    => $ctx['source_blob_sha'] ?? $ver->source_blob_sha,
             'parent_source_commit_sha' => $ctx['parent_source_commit_sha'] ?? null,
             'gmud_id'             => $ctx['gmud_id'] ?? $ver->gmud_id,
             'ticket_number'       => $ctx['ticket_number'] ?? $ver->ticket_number,
@@ -140,10 +143,13 @@ class SourceDocPipeline
         if (!$doc || !$ver->source_commit_sha) {
             return $ver;
         }
-        $newCode = $this->auth->getFileContent($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
-        if ($newCode === null) {
+        // Bloco 3: re-busca conteúdo + blob SHA no commit documentado (ref=source_commit_sha).
+        // Resolução determinística do blob daquele commit — não fabrica (o GitHub devolve o sha).
+        $fetched = $this->auth->getFileWithSha($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
+        if ($fetched === null) {
             return $ver;
         }
+        $newCode = $fetched['content'];
         $oldCode = $ver->parent_source_commit_sha
             ? $this->auth->getFileContent($doc->owner, $doc->repository, $ver->parent_source_commit_sha, $doc->path)
             : null;
@@ -152,7 +158,8 @@ class SourceDocPipeline
             'customer_id' => $doc->customer_id, 'source_repo_id' => $doc->source_repo_id,
             'owner' => $doc->owner, 'repository' => $doc->repository, 'branch' => $doc->branch, 'path' => $doc->path,
             'tipo' => $doc->tipo, 'new_code' => $newCode, 'old_code' => $oldCode,
-            'source_commit_sha' => $ver->source_commit_sha, 'parent_source_commit_sha' => $ver->parent_source_commit_sha,
+            'source_commit_sha' => $ver->source_commit_sha, 'source_blob_sha' => $fetched['blob_sha'] ?? $ver->source_blob_sha,
+            'parent_source_commit_sha' => $ver->parent_source_commit_sha,
             'gmud_id' => $ver->gmud_id, 'ticket_number' => $ver->ticket_number,
             'responsible_user_id' => $ver->responsible_user_id, 'responsavel' => $ver->responsavel,
         ], $runSemantic);

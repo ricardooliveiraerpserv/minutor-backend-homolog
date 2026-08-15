@@ -201,8 +201,9 @@ class GithubAppAuth
      * legado dos fontes AdvPL). Retorna o SHA do commit criado.
      * @param array<string,string> $files
      */
-    public function commitFiles(string $owner, string $repo, string $branch, array $files, string $message): string
+    public function commitFiles(string $owner, string $repo, string $branch, array $files, string $message, ?array &$blobShas = null): string
     {
+        $blobShas = [];
         if (empty($files)) {
             throw SourceIntegrationException::upstream(400);
         }
@@ -233,7 +234,10 @@ class GithubAppAuth
         foreach ($files as $path => $content) {
             $blobRes = $http()->post("{$base}/git/blobs", ['content' => base64_encode($content), 'encoding' => 'base64']);
             $this->assertWrite($blobRes, $owner);
-            $tree[] = ['path' => ltrim(str_replace('\\', '/', $path), '/'), 'mode' => '100644', 'type' => 'blob', 'sha' => (string) $blobRes->json('sha')];
+            $norm = ltrim(str_replace('\\', '/', $path), '/');
+            $blobSha = (string) $blobRes->json('sha');   // git blob SHA autoritativo do GitHub
+            $blobShas[$norm] = $blobSha;                  // out: path (normalizado) → blob SHA (Bloco 3)
+            $tree[] = ['path' => $norm, 'mode' => '100644', 'type' => 'blob', 'sha' => $blobSha];
         }
 
         // 4) nova tree (sobre a base → preserva o resto do repo)
@@ -292,13 +296,23 @@ class GithubAppAuth
         }
     }
 
-    /** Conteúdo de UM arquivo na branch (read-only), ou null se não existir (fonte novo). */
+    /** Conteúdo de UM arquivo na branch/ref (read-only), ou null se não existir (fonte novo). */
     public function getFileContent(string $owner, string $repo, string $branch, string $path): ?string
+    {
+        return $this->getFileWithSha($owner, $repo, $branch, $path)['content'] ?? null;
+    }
+
+    /**
+     * Bloco 3 — conteúdo + BLOB SHA autoritativo do GitHub (Contents API: `sha` = git blob SHA do
+     * arquivo naquele ref). Devolve ['content' => string, 'blob_sha' => string] ou null se não existir.
+     * NÃO descartar o sha: é a identidade técnica do conteúdo (ver source_doc_versions.source_blob_sha).
+     */
+    public function getFileWithSha(string $owner, string $repo, string $ref, string $path): ?array
     {
         try {
             $token = $this->installationToken($owner);
             $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
-                ->get("{$this->api}/repos/{$owner}/{$repo}/contents/" . implode('/', array_map('rawurlencode', explode('/', ltrim($path, '/')))), ['ref' => $branch]);
+                ->get("{$this->api}/repos/{$owner}/{$repo}/contents/" . implode('/', array_map('rawurlencode', explode('/', ltrim($path, '/')))), ['ref' => $ref]);
             if (!$res->successful()) {
                 return null;
             }
@@ -306,12 +320,65 @@ class GithubAppAuth
             $encoding = (string) $res->json('encoding', 'base64');
             if ($encoding === 'base64') {
                 $decoded = base64_decode(str_replace(["\n", "\r"], '', $content), true);
-                return $decoded === false ? null : $decoded;
+                if ($decoded === false) {
+                    return null;
+                }
+                $content = $decoded;
             }
-            return $content;
+            return ['content' => $content, 'blob_sha' => (string) $res->json('sha', '') ?: null];
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * Bloco 3 (anti-N+1) — árvore RECURSIVA do ref: mapa [path => blob_sha] de TODOS os arquivos
+     * (type=blob) do repo naquele ref (HEAD do branch, ou um commit/tree sha). UMA chamada resolve
+     * o repo inteiro; o resolver compara localmente contra o source_blob_sha documentado.
+     *
+     * Lança SourceIntegrationException classificada (o SourceDocStatusResolver mapeia código→reason;
+     * falha técnica NUNCA vira DESATUALIZADA). Timeout de conexão → 'GITHUB_UNAVAILABLE'.
+     *
+     * @return array<string,string> path (relativo à raiz do repo) → git blob SHA
+     */
+    public function treeBlobShas(string $owner, string $repo, string $ref): array
+    {
+        try {
+            $token = $this->installationToken($owner);
+            $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
+                ->get("{$this->api}/repos/{$owner}/{$repo}/git/trees/" . rawurlencode($ref), ['recursive' => '1']);
+        } catch (\Throwable $e) {
+            // Falha de conexão/timeout → indisponibilidade técnica (jamais "desatualizada").
+            $isTimeout = stripos($e->getMessage(), 'timed out') !== false
+                || stripos($e->getMessage(), 'timeout') !== false;
+            throw new SourceIntegrationException(
+                $isTimeout ? 'TIMEOUT' : 'GITHUB_UNAVAILABLE',
+                'GitHub indisponível ao ler a árvore: ' . $e->getMessage(),
+                $isTimeout ? 504 : 502
+            );
+        }
+
+        if ($res->status() === 401) {
+            throw new SourceIntegrationException('AUTHENTICATION_ERROR', 'Falha de autenticação ao ler a árvore do repositório.', 401);
+        }
+        if ($res->status() === 404) {
+            throw SourceIntegrationException::repoNotFound("{$owner}/{$repo}@{$ref}");
+        }
+        if ($res->status() === 409) {
+            // Repositório vazio (sem commits) → árvore vazia (não é erro técnico).
+            return [];
+        }
+        if (!$res->successful()) {
+            throw new SourceIntegrationException('GITHUB_UNAVAILABLE', "GitHub devolveu {$res->status()} ao ler a árvore.", 502);
+        }
+
+        $map = [];
+        foreach ((array) $res->json('tree', []) as $node) {
+            if (($node['type'] ?? null) === 'blob' && isset($node['path'], $node['sha'])) {
+                $map[(string) $node['path']] = (string) $node['sha'];
+            }
+        }
+        return $map;
     }
 
     /** Metadados do repo (size em KB, default_branch) ou null se não existir. */

@@ -7,6 +7,7 @@ use App\Models\SourceDocVersion;
 use App\Models\SystemSetting;
 use App\SourceCode\GithubAppAuth;
 use App\SourceCode\SourceDocRenderer;
+use App\SourceCode\SourceDocStatusResolver;
 use Illuminate\Console\Command;
 
 /**
@@ -25,7 +26,7 @@ class SourceDocRenderCommand extends Command
     protected $signature = 'source-doc:render {--doc=} {--ver=} {--format=md} {--export-git} {--git-dir=docs} {--dump}';
     protected $description = 'Fase 4: renderiza (md/html/docx/pdf) e opcionalmente exporta a doc ao Git.';
 
-    public function handle(SourceDocRenderer $renderer, GithubAppAuth $auth): int
+    public function handle(SourceDocRenderer $renderer, GithubAppAuth $auth, SourceDocStatusResolver $resolver): int
     {
         $ver = $this->option('ver')
             ? SourceDocVersion::find((int) $this->option('ver'))
@@ -41,8 +42,10 @@ class SourceDocRenderCommand extends Command
             return self::FAILURE;
         }
 
-        $head = $auth->getBranchHeadSha($doc->owner, $doc->repository, $doc->branch);
-        $outdated = $head && $ver->source_commit_sha && $head !== $ver->source_commit_sha;
+        // Bloco 3 — PONTO ÚNICO DE VERDADE: só o resolver decide "desatualizada" (blob × blob).
+        // 'outdated' é ESTRITAMENTE o estado DESATUALIZADA; NAO_VALIDADO/erro técnico NÃO marca aviso.
+        $st = $resolver->resolve($doc);
+        $outdated = $st['status'] === SourceDocStatusResolver::STATUS_OUTDATED;
         $customer = $doc->customer ? ['name' => $doc->customer->name] : [];
 
         if ($this->option('export-git')) {
@@ -70,7 +73,15 @@ class SourceDocRenderCommand extends Command
             'pdf'   => 'pdf=' . strlen($renderer->pdf($json, $outdated, $customer)) . ' bytes',
             default => $renderer->markdown($json, $outdated, $customer),
         };
-        SystemSetting::set('diag_render', json_encode(['outdated' => $outdated, 'format' => $fmt, 'output' => $out], JSON_UNESCAPED_UNICODE), 'string', 'diag');
+        SystemSetting::set('diag_render', json_encode([
+            'outdated' => $outdated, 'format' => $fmt,
+            'resolver' => [
+                'status' => $st['status'], 'reason' => $st['reason'],
+                'documented_blob_sha' => $st['documented_blob_sha'], 'current_blob_sha' => $st['current_blob_sha'],
+                'source_commit_sha' => $st['source_commit_sha'],
+            ],
+            'output' => $out,
+        ], JSON_UNESCAPED_UNICODE), 'string', 'diag');
         $this->line($out);
         return self::SUCCESS;
     }

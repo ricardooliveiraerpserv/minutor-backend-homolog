@@ -78,18 +78,19 @@ class SourceDocAnalyzeCommand extends Command
             $this->error("ClientSourceRepo não encontrado para {$owner}/{$repoName}");
             return self::FAILURE;
         }
-        $newCode = $auth->getFileContent($owner, $repoName, $branch, $path);
-        if ($newCode === null) {
+        $fetched = $auth->getFileWithSha($owner, $repoName, $branch, $path);
+        if ($fetched === null) {
             $this->error('Não consegui ler o fonte.');
             return self::FAILURE;
         }
+        $newCode = $fetched['content'];
         $sha = $auth->getBranchHeadSha($owner, $repoName, $branch);
 
         $ver = app(\App\SourceCode\SourceDocPipeline::class)->processFile([
             'customer_id' => $repo->customer_id, 'source_repo_id' => $repo->id,
             'owner' => $owner, 'repository' => $repoName, 'branch' => $branch, 'path' => $path,
             'tipo' => $repo->tipo, 'new_code' => $newCode, 'old_code' => null,
-            'source_commit_sha' => $sha, 'parent_source_commit_sha' => null,
+            'source_commit_sha' => $sha, 'source_blob_sha' => $fetched['blob_sha'] ?? null, 'parent_source_commit_sha' => null,
             'gmud_id' => null, 'ticket_number' => 'TESTE-F3', 'responsible_user_id' => null, 'responsavel' => 'Validação Fase 3',
         ], $this->option('semantic'));
 

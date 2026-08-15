@@ -79,10 +79,12 @@ class GmudSourceProcessor
                     foreach ($sources as $path => $content) {
                         $oldCode[$path] = $this->auth->getFileContent($repo->owner, $repo->repository, $branch, ($basePath !== '' ? $basePath . '/' : '') . $path);
                     }
-                    $commitSha = $this->auth->commitFiles($repo->owner, $repo->repository, $branch, $files, $this->commitMessage($ticket, $comment));
+                    // Bloco 3: capturamos os blob SHAs autoritativos criados no commit (path→sha).
+                    $blobShas = [];
+                    $commitSha = $this->auth->commitFiles($repo->owner, $repo->repository, $branch, $files, $this->commitMessage($ticket, $comment), $blobShas);
                     $status = 'atualizado';
                     // Pipeline de documentação por fonte (best-effort — nunca afeta a GMUD).
-                    $this->runDocPipeline($ticket, $comment, $repo, $basePath, $branch, $sources, $oldCode, $commitSha, $parentSha);
+                    $this->runDocPipeline($ticket, $comment, $repo, $basePath, $branch, $sources, $oldCode, $commitSha, $parentSha, $blobShas);
                 } catch (SourceIntegrationException $e) {
                     $status = $e->errorCode === 'CONTENTS_WRITE_NOT_PERMITTED' ? 'pendente_permissao' : 'erro';
                     $error = $e->getMessage();
@@ -156,7 +158,7 @@ class GmudSourceProcessor
 
     /** Documenta cada fonte commitado. Semântica inline só nos primeiros N (teto de latência); o
      *  resto fica 'analyzing' (determinística pronta) e conclui via `source-doc:reprocess`. */
-    private function runDocPipeline(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ClientSourceRepo $repo, string $basePath, string $branch, array $sources, array $oldCode, string $commitSha, ?string $parentSha): void
+    private function runDocPipeline(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ClientSourceRepo $repo, string $basePath, string $branch, array $sources, array $oldCode, string $commitSha, ?string $parentSha, array $blobShas = []): void
     {
         $pipeline = app(\App\SourceCode\SourceDocPipeline::class);
         $renderer = app(\App\SourceCode\SourceDocRenderer::class);
@@ -173,7 +175,7 @@ class GmudSourceProcessor
                     'customer_id' => $ticket->customer_id, 'source_repo_id' => $repo->id,
                     'owner' => $repo->owner, 'repository' => $repo->repository, 'branch' => $branch, 'path' => $repoPath,
                     'tipo' => $repo->tipo, 'new_code' => $content, 'old_code' => $oldCode[$path] ?? null,
-                    'source_commit_sha' => $commitSha, 'parent_source_commit_sha' => $parentSha,
+                    'source_commit_sha' => $commitSha, 'source_blob_sha' => $blobShas[$repoPath] ?? null, 'parent_source_commit_sha' => $parentSha,
                     'gmud_id' => $ticket->id, 'ticket_number' => $ticket->ticket_number,
                     'responsible_user_id' => $responsibleId, 'responsavel' => $responsavel,
                 ], $i < $max);

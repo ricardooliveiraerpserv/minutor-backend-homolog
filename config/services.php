@@ -60,6 +60,9 @@ return [
         // Nº máx. de fontes cuja análise SEMÂNTICA roda inline na GMUD (teto de latência).
         // Os demais ficam 'analyzing' (determinística pronta) e concluem via source-doc:reprocess.
         'inline_semantic_max' => (int) env('SOURCE_DOC_INLINE_SEMANTIC_MAX', 3),
+        // Bloco 3: TTL do cache da árvore (path→blob_sha) usada pelo SourceDocStatusResolver.
+        // 5–15 min; 10 min por padrão. Anti-N+1: 1 resolução da árvore serve todo o repo.
+        'status_cache_seconds' => (int) env('SOURCE_DOC_STATUS_CACHE_SECONDS', 600),
     ],
 
     'source_doc_ai' => [
