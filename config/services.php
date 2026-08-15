@@ -71,6 +71,15 @@ return [
         'max_tokens' => (int) env('SOURCE_DOC_AI_MAX_TOKENS', 4096),
         'max_chars'  => (int) env('SOURCE_DOC_AI_MAX_CHARS', 40000),
         'timeout'    => (int) env('SOURCE_DOC_AI_TIMEOUT', 120),
+        // Bloco 4 — GATE HOMOLOG-ONLY (não depende de disciplina). Envio de código de cliente à IA
+        // exige ENABLED=true E ambiente autorizado. Prod (VPS) não define esses vars ⇒ BLOQUEADO.
+        // Homolog (Render) roda APP_ENV=production, por isso o ambiente é um marcador PRÓPRIO.
+        'enabled'     => filter_var(env('SOURCE_DOC_AI_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'environment' => env('SOURCE_DOC_AI_ENVIRONMENT', env('APP_ENV', 'production')),
+        'allowed_environments' => array_values(array_filter(array_map('trim', explode(',', (string) env('SOURCE_DOC_AI_ALLOWED_ENVIRONMENTS', 'homolog'))))),
+        // Observabilidade de custo (USD por 1M tokens) — só estimativa/telemetria.
+        'cost_input_per_mtok'  => (float) env('SOURCE_DOC_AI_COST_IN', 3.0),
+        'cost_output_per_mtok' => (float) env('SOURCE_DOC_AI_COST_OUT', 15.0),
     ],
 
     'openai' => [
