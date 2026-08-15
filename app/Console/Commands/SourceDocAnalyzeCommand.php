@@ -20,7 +20,7 @@ use Illuminate\Console\Command;
  */
 class SourceDocAnalyzeCommand extends Command
 {
-    protected $signature = 'source-doc:analyze {owner} {repo} {path} {--branch=main} {--parent=} {--semantic} {--persist}';
+    protected $signature = 'source-doc:analyze {owner} {repo} {path} {--branch=main} {--ref=} {--parent=} {--semantic} {--persist}';
     protected $description = 'Fase 1/2/3: extração determinística (+ semântica com --semantic) (+ pipeline/persistência com --persist).';
 
     public function handle(GithubAppAuth $auth, AdvplAnalyzer $analyzer, SecretSanitizer $sanitizer, SourceDiff $differ, SourceDocSemanticAnalyzer $semantic): int
@@ -78,13 +78,17 @@ class SourceDocAnalyzeCommand extends Command
             $this->error("ClientSourceRepo não encontrado para {$owner}/{$repoName}");
             return self::FAILURE;
         }
-        $fetched = $auth->getFileWithSha($owner, $repoName, $branch, $path);
+        // --ref: documenta o CONTEÚDO/BLOB num ref histórico (commit/tag), mantendo o branch do doc.
+        // Serve p/ validar "documentalmente antigo" (blob antigo × HEAD atual) sem alterar o Git.
+        $ref = (string) ($this->option('ref') ?: $branch);
+        $fetched = $auth->getFileWithSha($owner, $repoName, $ref, $path);
         if ($fetched === null) {
             $this->error('Não consegui ler o fonte.');
             return self::FAILURE;
         }
         $newCode = $fetched['content'];
-        $sha = $auth->getBranchHeadSha($owner, $repoName, $branch);
+        // source_commit_sha = o ref documentado (histórico quando --ref); branch do doc segue --branch.
+        $sha = $this->option('ref') ? $ref : $auth->getBranchHeadSha($owner, $repoName, $branch);
 
         $ver = app(\App\SourceCode\SourceDocPipeline::class)->processFile([
             'customer_id' => $repo->customer_id, 'source_repo_id' => $repo->id,
