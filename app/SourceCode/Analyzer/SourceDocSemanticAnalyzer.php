@@ -118,50 +118,79 @@ class SourceDocSemanticAnalyzer
         $inlineCodeMax = (int) config('services.source_doc_ai.inline_code_max_chars', 8000);
         $inlineCode = mb_strlen($maskedCode) <= $inlineCodeMax ? $maskedCode : '';
 
-        // ── plano de chamadas + estimativa ANTES de executar ──
+        // Fonte pequeno (código cabe inline) → 1 chamada com funcoes na global (saída pequena, sem
+        // risco de truncar). Fonte grande → global só NARRATIVA + aprofundamento traz as finalidades
+        // (evita empacotar narrativa + N funções numa saída só = truncava).
+        $small = $inlineCode !== '';
         $globalOut = (int) config('services.source_doc_ai.max_output_tokens_global', 3500);
         $deepenOut = (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800);
-        $globalUser = $this->globalUserPrompt($compact, $diff, $inlineCode);
-        $plan = [['system' => $this->systemPrompt(), 'user' => $globalUser, 'out' => $globalOut, 'code' => $inlineCode !== '']];
 
-        // aprofundamento: código das funções CRÍTICAS (só se o fonte é grande = sem inline)
-        $critical = $inlineCode === '' ? $this->criticalWithCode($relevant, $det, $maskedCode) : [];
-        if (! empty($critical)) {
-            $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenUserPrompt($critical), 'out' => $deepenOut, 'code' => true];
+        // ── monta prompts, estima ANTES de executar (hard limit), depois executa ──
+        $globalUser = $this->globalUserPrompt($compact, $diff, $inlineCode, $small);
+        $deepItems = (! $small && ! empty($relevant)) ? $this->buildDeepItems($relevant, $det, $maskedCode) : [];
+        $plan = [['system' => $this->systemPrompt(), 'user' => $globalUser, 'out' => $globalOut, 'code' => $small]];
+        if (! empty($deepItems)) {
+            $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenFinalidadesPrompt($deepItems), 'out' => $deepenOut, 'code' => true];
         }
         $plan = array_slice($plan, 0, (int) config('services.source_doc_ai.max_calls', 3));
-
         $est = $this->estimatePlan($plan);
         $this->usage['estimated_before_usd'] = round($est, 4);
         if ($est > (float) config('services.source_doc_ai.hard_limit_usd', 0.30)) {
             return $this->costSkipped($est, count($relNames));
         }
 
-        // ── executa ──
-        $global = $this->parseJson($this->call($plan[0]['system'], $plan[0]['user'], $plan[0]['out'])) ?? [];
-        $funcoes = $this->normFuncoes($global['funcoes'] ?? []);
-        $analyzed = count($funcoes);
+        // ── CALL 1 — narrativa global (funcoes só se pequeno) ──
+        $g = $this->callJson($plan[0]['system'], $plan[0]['user'], $globalOut);
+        $sem = is_array($g['json']) ? $g['json'] : [];
+        $funcoes = $small ? $this->normFuncoes($sem['funcoes'] ?? []) : [];
         $cachedN = 0;
-        $skippedN = 0;
+        $deepRan = false;
+        $deepTrunc = false;
 
-        if (count($plan) > 1) {
-            [$deepFuncoes, $deepRules, $deepPoints, $cachedN, $skippedN] = $this->runDeepening($critical, $plan[1], $det);
+        // narrativa mínima válida? (objetivo OU fluxo OU regras) e não truncada
+        $narrativeValid = ! $g['truncated'] && ($this->str($sem['objetivo'] ?? $sem['overview'] ?? '') !== '' || ! empty($sem['fluxo'] ?? $sem['execution_flow'] ?? []) || ! empty($sem['regras_negocio'] ?? []));
+
+        // ── CALL 2 — finalidades das funções relevantes (fonte grande) ──
+        if (! empty($deepItems) && count($plan) > 1) {
+            $deepRan = true;
+            [$deepFuncoes, $deepRules, $deepPoints, $cachedN, $deepTrunc] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
             $funcoes = $this->mergeFuncoes($funcoes, $deepFuncoes);
-            $global['regras_negocio'] = array_merge($global['regras_negocio'] ?? [], $deepRules);
-            $global['pontos_atencao'] = array_merge($global['pontos_atencao'] ?? [], $deepPoints);
-            $analyzed = count($deepFuncoes) ?: $analyzed;
+            if (! empty($deepRules)) {
+                $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $deepRules);
+            }
+            if (! empty($deepPoints)) {
+                $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $deepPoints);
+            }
         }
 
-        $global['funcoes'] = $funcoes;
-        $global['status'] = 'completed';
-        $global['strategy'] = 'initial_global_selective';
+        // ── validador de completude (nunca completed vazio) ──
+        [$status, $partialReason] = $this->completionStatus($narrativeValid, $g, $deepRan, $deepTrunc);
+        $sem['funcoes'] = $funcoes;
+        $sem['status'] = $status;
+        $sem['strategy'] = 'initial_global_selective';
+        if ($partialReason !== null) {
+            $sem['partial_reason'] = $partialReason;
+        }
         $this->coverage = [
             'relevant_functions_total'    => count($relNames),
             'relevant_functions_analyzed' => count($funcoes),
             'relevant_functions_cached'   => $cachedN,
-            'relevant_functions_skipped'  => $skippedN,
+            'relevant_functions_skipped'  => max(0, count($relNames) - count($funcoes)),
         ];
-        return $global;
+        return $sem;
+    }
+
+    /** Decide status: completed só com narrativa mínima válida e sem truncamento. */
+    private function completionStatus(bool $narrativeValid, array $g, bool $deepRan, bool $deepTrunc): array
+    {
+        if (! $narrativeValid) {
+            $reason = $g['raw_truncated'] ? 'output_truncated' : (($g['json'] ?? null) === null ? 'invalid_json' : 'empty_semantic');
+            return ['partial', $reason];
+        }
+        if ($deepRan && $deepTrunc) {
+            return ['partial', 'functions_incomplete'];
+        }
+        return ['completed', null];
     }
 
     // ── MODIFIED (C): diff-first + merge local ──────────────────────────────────
@@ -195,10 +224,14 @@ class SourceDocSemanticAnalyzer
             return $prev;
         }
 
-        $delta = $this->parseJson($this->call($plan[0]['system'], $plan[0]['user'], $plan[0]['out'])) ?? [];
+        $dc = $this->callJson($plan[0]['system'], $plan[0]['user'], $plan[0]['out']);
+        $delta = is_array($dc['json']) ? $dc['json'] : [];
         $merged = $this->mergeIncremental($prev, $delta);
-        $merged['status'] = 'completed';
+        $merged['status'] = $dc['truncated'] ? 'partial' : 'completed';
         $merged['strategy'] = 'incremental_diff';
+        if ($dc['truncated']) {
+            $merged['partial_reason'] = 'output_truncated';
+        }
         $this->coverage = [
             'relevant_functions_total'    => count($changed),
             'relevant_functions_analyzed' => count($withCode),
@@ -254,7 +287,8 @@ class SourceDocSemanticAnalyzer
     }
 
     /** Funções críticas cujo CÓDIGO vale enviar (escritoras/risco/entrypoint), dentro do orçamento. */
-    private function criticalWithCode(array $relevant, array $det, string $maskedCode): array
+    /** Itens do aprofundamento: TODAS as funções relevantes (facts) + CÓDIGO só das críticas (≤N, budget). */
+    private function buildDeepItems(array $relevant, array $det, string $maskedCode): array
     {
         $riskFns = [];
         foreach (($det['queries'] ?? []) as $q) {
@@ -264,59 +298,58 @@ class SourceDocSemanticAnalyzer
         }
         $lines = explode("\n", $maskedCode);
         $budgetTokens = (int) config('services.source_doc_ai.deepen_code_budget_tokens', 20000);
-        $maxFns = (int) config('services.source_doc_ai.max_deepen_functions', 6);
+        $maxCode = (int) config('services.source_doc_ai.max_deepen_functions', 6);
         $cptCode = (float) config('services.source_doc_ai.chars_per_token_code', 1.6);
-        $out = [];
+        $items = [];
+        $codeCount = 0;
         $tok = 0;
         foreach ($relevant as $f) {
-            if (count($out) >= $maxFns) {
-                break;
-            }
             $eff = (array) ($f['effects'] ?? []);
             $crit = empty($f['called_by']) || (bool) array_intersect(['database_write', 'database_delete', 'file_write', 'external_call', 'routine_execution'], $eff) || isset($riskFns[strtolower($f['name'] ?? '')]);
-            if (! $crit) {
-                continue;
+            $code = '';
+            if ($crit && $codeCount < $maxCode) {
+                $slice = $this->codeSlice($lines, $f);
+                $t = (int) ceil(mb_strlen($slice) / $cptCode);
+                if ($tok + $t <= $budgetTokens) {
+                    $code = $slice;
+                    $tok += $t;
+                    $codeCount++;
+                }
             }
-            $code = $this->codeSlice($lines, $f);
-            $t = (int) ceil(mb_strlen($code) / $cptCode);
-            if ($tok + $t > $budgetTokens) {
-                break;
-            }
-            $tok += $t;
-            $out[] = ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $code];
+            $items[] = ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $code];
         }
-        return $out;
+        return $items;
     }
 
-    private function runDeepening(array $critical, array $plan, array $det): array
+    /** Aprofundamento: cache por função (miss → 1 chamada) → finalidades + regras/pontos extras. */
+    private function runDeepeningFinalidades(array $items, array $det, int $out): array
     {
-        // cache por função (Cache facade) — pula funções já analisadas com o mesmo conteúdo/fatos.
+        $funcoes = [];
         $toCall = [];
-        $cachedFuncoes = [];
         $cachedN = 0;
-        foreach ($critical as $c) {
-            $key = $this->functionCacheKey($det, $c);
+        foreach ($items as $it) {
+            $key = $this->functionCacheKey($det, $it);
             $hit = $this->cacheEnabled() ? Cache::get($key) : null;
             if (is_array($hit) && ! empty($hit['name'])) {
-                $cachedFuncoes[] = $hit;
+                $funcoes[] = $hit;
                 $cachedN++;
                 $this->usage['cache_hits']++;
             } else {
-                $toCall[] = $c;
+                $toCall[] = $it;
                 $this->usage['cache_misses']++;
             }
         }
-        $deepFuncoes = $cachedFuncoes;
-        $deepRules = [];
-        $deepPoints = [];
-        $skippedN = 0;
+        $rules = [];
+        $points = [];
+        $truncated = false;
         if (! empty($toCall)) {
-            $user = $this->deepenUserPrompt($toCall);
-            $j = $this->parseJson($this->call($plan['system'], $user, $plan['out'])) ?? [];
+            $d = $this->callJson($this->systemPrompt(), $this->deepenFinalidadesPrompt($toCall), $out);
+            $truncated = $d['truncated'];
+            $j = is_array($d['json']) ? $d['json'] : [];
             foreach (($j['funcoes'] ?? []) as $f) {
                 if (! empty($f['name'])) {
                     $entry = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? '')];
-                    $deepFuncoes[] = $entry;
+                    $funcoes[] = $entry;
                     if ($this->cacheEnabled()) {
                         $c = $this->findByName($toCall, $f['name']);
                         if ($c) {
@@ -325,10 +358,10 @@ class SourceDocSemanticAnalyzer
                     }
                 }
             }
-            $deepRules = $j['regras_negocio'] ?? [];
-            $deepPoints = $j['pontos_atencao'] ?? [];
+            $rules = $j['regras_negocio'] ?? [];
+            $points = $j['pontos_atencao'] ?? [];
         }
-        return [$deepFuncoes, $deepRules, $deepPoints, $cachedN, $skippedN];
+        return [$funcoes, $rules, $points, $cachedN, $truncated];
     }
 
     // ── compact facts (sem código, sem data_access, sem listas gigantes) ─────────
@@ -531,6 +564,7 @@ class SourceDocSemanticAnalyzer
         return [
             'schema_version'   => self::SCHEMA_VERSION,
             'status'           => $sem['status'] ?? 'completed',
+            'partial_reason'   => $sem['partial_reason'] ?? null,
             'strategy'         => $sem['strategy'] ?? 'initial_global_selective',
             'provider'         => $this->ai->name(),
             'model'            => $this->ai->model(),
@@ -678,23 +712,33 @@ class SourceDocSemanticAnalyzer
             . 'Seja CONCISO (objetivo 2–4 frases; finalidade 1–2; regra 1 frase). Devolva SÓ JSON válido (sem markdown).';
     }
 
-    private function globalUserPrompt(array $compact, ?array $diff, string $inlineCode): string
+    private function globalUserPrompt(array $compact, ?array $diff, string $inlineCode, bool $withFuncoes): string
     {
         $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($inlineCode !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $inlineCode;
         }
-        $u .= "\n\nProduza JSON {objetivo, fluxo[], funcoes[{name,finalidade}] (só as funções dos fatos), "
+        // Narrativa enxuta. Em fonte grande, NÃO pedir as finalidades das funções aqui (vêm no
+        // aprofundamento) — evita saída densa que trunca o JSON.
+        $funcoesPart = $withFuncoes ? 'funcoes[{name,finalidade}] (só as funções dos fatos), ' : '';
+        $u .= "\n\nProduza JSON {objetivo (2–4 frases), fluxo[], " . $funcoesPart
             . 'regras_negocio[{id,descricao,confidence,evidence[{type,name?,table?,field?}]}], entradas[], saidas[], '
             . 'pontos_atencao[{interpretation,severity?,recommendation?,confidence,evidence[]}], change_summary}.';
         return $u;
     }
 
-    private function deepenUserPrompt(array $critical): string
+    /** Aprofundamento: finalidade de CADA função relevante (facts de todas + código só das críticas). */
+    private function deepenFinalidadesPrompt(array $items): string
     {
-        $blocks = array_map(fn ($c) => "### {$c['name']}\nFATOS: " . json_encode($c['facts'], JSON_UNESCAPED_UNICODE) . "\nCÓDIGO:\n" . $c['code'], $critical);
-        return "Aprofundamento das FUNÇÕES CRÍTICAS (código mascarado):\n" . implode("\n\n", $blocks)
-            . "\n\nPara cada função, dê finalidade (1–2 frases). Se houver, adicione regra/ponto com evidence+confidence. "
+        $blocks = array_map(function ($c) {
+            $b = "### {$c['name']}\nFATOS: " . json_encode($c['facts'], JSON_UNESCAPED_UNICODE);
+            if (! empty($c['code'])) {
+                $b .= "\nCÓDIGO (mascarado):\n" . $c['code'];
+            }
+            return $b;
+        }, $items);
+        return "FUNÇÕES RELEVANTES:\n" . implode("\n\n", $blocks)
+            . "\n\nDê a finalidade (1–2 frases) de CADA função listada. Se houver base, adicione regra/ponto com evidence+confidence. "
             . 'Devolva JSON {funcoes[{name,finalidade}], regras_negocio[...], pontos_atencao[...]}.';
     }
 
@@ -740,14 +784,23 @@ class SourceDocSemanticAnalyzer
     }
 
     // ── provider + usage ────────────────────────────────────────────────────────
-    private function call(string $system, string $user, ?int $out = null): string
+    /** @return array{text:string,truncated:bool} truncated = provider parou por max_tokens. */
+    private function call(string $system, string $user, ?int $out = null): array
     {
-        $r = $this->ai->complete($system, $user, ['max_tokens' => $out ?: (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000)]);
+        $r = $this->ai->complete($system, $user, ['max_tokens' => $out ?: (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800)]);
         $u = (array) ($r['usage'] ?? []);
         $this->usage['input_tokens'] += (int) ($u['input_tokens'] ?? 0);
         $this->usage['output_tokens'] += (int) ($u['output_tokens'] ?? 0);
         $this->usage['calls']++;
-        return (string) ($r['text'] ?? '');
+        return ['text' => (string) ($r['text'] ?? ''), 'truncated' => ($r['stop'] ?? null) === 'max_tokens'];
+    }
+
+    /** Chama + parseia. truncated = max_tokens OU JSON inválido (parse null). */
+    private function callJson(string $system, string $user, ?int $out = null): array
+    {
+        $c = $this->call($system, $user, $out);
+        $json = $this->parseJson($c['text']);
+        return ['json' => $json, 'truncated' => $c['truncated'] || $json === null, 'raw_truncated' => $c['truncated']];
     }
 
     private function usageBlock(): array

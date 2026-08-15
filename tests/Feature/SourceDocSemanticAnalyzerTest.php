@@ -77,8 +77,12 @@ class SourceDocSemanticAnalyzerTest extends TestCase
                 if ($this->r instanceof \Throwable) {
                     throw $this->r;
                 }
-                $text = is_callable($this->r) ? ($this->r)($user, $i) : (string) $this->r;
-                return ['text' => $text, 'usage' => ['input_tokens' => 120, 'output_tokens' => 60], 'stop' => 'end_turn'];
+                $res = is_callable($this->r) ? ($this->r)($user, $i) : $this->r;
+                // responder pode devolver string OU ['text'=>..,'stop'=>..] p/ simular truncamento.
+                if (is_array($res)) {
+                    return ['text' => (string) ($res['text'] ?? ''), 'usage' => ['input_tokens' => 120, 'output_tokens' => 60], 'stop' => $res['stop'] ?? 'end_turn'];
+                }
+                return ['text' => (string) $res, 'usage' => ['input_tokens' => 120, 'output_tokens' => 60], 'stop' => 'end_turn'];
             }
         };
     }
@@ -266,6 +270,69 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $this->assertNotContains('RN01', $ids);
         $this->assertContains('RN02', $ids);
         $this->assertSame(1, count($ai->calls), 'incremental usa 1 chamada');
+    }
+
+    // ── §F — truncamento / completude (nunca completed vazio) ──
+    /** (F1) stop_reason=max_tokens na global → partial, nunca completed. */
+    public function test_global_truncated_is_partial(): void
+    {
+        $ai = $this->ai(true, fn ($u, $i) => ['text' => $this->validJson(), 'stop' => 'max_tokens']);
+        $r = $this->go($ai);
+        $this->assertSame('partial', $r['status']);
+        $this->assertSame('output_truncated', $r['partial_reason']);
+    }
+
+    /** (F2) JSON inválido → partial (invalid_json), nunca completed. */
+    public function test_invalid_json_is_partial(): void
+    {
+        $r = $this->go($this->ai(true, 'isto não é json {quebrado'));
+        $this->assertSame('partial', $r['status']);
+        $this->assertSame('invalid_json', $r['partial_reason']);
+    }
+
+    /** (F3) JSON válido mas semanticamente vazio → nunca completed. */
+    public function test_empty_semantic_not_completed(): void
+    {
+        $r = $this->go($this->ai(true, json_encode(['objetivo' => '', 'fluxo' => [], 'regras_negocio' => [], 'funcoes' => []])));
+        $this->assertNotSame('completed', $r['status']);
+        $this->assertSame('empty_semantic', $r['partial_reason']);
+    }
+
+    /** (F4) global válida sem funções → completed (funções vêm do aprofundamento). */
+    public function test_global_valid_without_functions_is_ok(): void
+    {
+        config(['services.source_doc_ai.inline_code_max_chars' => 30]);
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? json_encode(['objetivo' => 'Faz X.', 'fluxo' => ['passo'], 'regras_negocio' => []]) : json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'ok']]]));
+        $r = $this->go($ai, str_repeat("linha\n", 40));
+        $this->assertSame('completed', $r['status']);
+    }
+
+    /** (F5) aprofundamento falha (truncado) mas global válida → partial + global preservada. */
+    public function test_deepening_partial_keeps_global(): void
+    {
+        config(['services.source_doc_ai.inline_code_max_chars' => 30]);
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? json_encode(['objetivo' => 'Faz X.', 'fluxo' => ['p1']]) : ['text' => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'x']]]), 'stop' => 'max_tokens']);
+        $r = $this->go($ai, str_repeat("linha\n", 40));
+        $this->assertSame('partial', $r['status']);
+        $this->assertSame('functions_incomplete', $r['partial_reason']);
+        $this->assertSame('Faz X.', $r['objetivo'], 'global preservada');
+    }
+
+    /** (F6) global + aprofundamento válidos → completed. */
+    public function test_global_and_deepening_valid_completed(): void
+    {
+        config(['services.source_doc_ai.inline_code_max_chars' => 30]);
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? json_encode(['objetivo' => 'Faz X.', 'fluxo' => ['p1'], 'regras_negocio' => []]) : json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]));
+        $r = $this->go($ai, str_repeat("linha\n", 40));
+        $this->assertSame('completed', $r['status']);
+        $this->assertContains('FTENVNFU', array_column($r['funcoes'], 'name'));
+    }
+
+    /** (F7) nenhum conteúdo semântico válido → não completed (determinístico segue intacto no pipeline). */
+    public function test_no_valid_semantic_is_partial(): void
+    {
+        $r = $this->go($this->ai(true, ''));
+        $this->assertNotSame('completed', $r['status']);
     }
 
     public function test_coverage_and_usage_present(): void
