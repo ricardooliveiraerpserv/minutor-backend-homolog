@@ -2276,6 +2276,41 @@ class TimesheetController extends Controller
         ]);
     }
 
+    /**
+     * Muda a DATA DE DIGITACAO (competencia) de um apontamento — SOMENTE ADMIN.
+     * Trava a data (date_locked) p/ o reprocesso da integracao Movidesk NAO sobrescrever.
+     * Se estava em atraso, ao mover pra periodo aberto sai do atraso (status=pending).
+     */
+    public function mudarDataDigitacao(Request $request, int $id): JsonResponse
+    {
+        $user = auth()->user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['success' => false, 'message' => 'Apenas administrador pode alterar a data de digitacao.'], 403);
+        }
+        $timesheet = Timesheet::find($id);
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento nao encontrado'], 404);
+        }
+        $validated = $request->validate(['date' => 'required|date']);
+
+        $timesheet->date        = $validated['date'];
+        $timesheet->date_locked = true; // integracao nao sobrescreve
+        if ($timesheet->status === Timesheet::STATUS_LATE) {
+            $timesheet->status = Timesheet::STATUS_PENDING;
+        }
+        $timesheet->save();
+
+        $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
+        $this->invalidateListCache('timesheets');
+        $timesheet->load(['user', 'customer', 'project']);
+
+        return response()->json([
+            'success' => true,
+            'data'    => $timesheet,
+            'message' => 'Data de digitacao alterada e travada (a integracao nao sobrescreve).',
+        ]);
+    }
+
     public function approve(int $id): JsonResponse
     {
         $user = Auth::user();
