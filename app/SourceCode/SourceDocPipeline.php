@@ -100,10 +100,19 @@ class SourceDocPipeline
             $sem = null;
             $status = 'analyzing';
             if ($runSemantic) {
-                $sem = $this->semantic->analyze($det, $sec['masked'], $diff);
+                // Bloco 4.1: passa a semântica ANTERIOR (incremental/diff-first) + blob (reuso). Só
+                // considera "anterior" se for outra versão (não a própria, ao reprocessar).
+                $prevVer = $doc->currentVersion;
+                $prevSem = ($prevVer && (int) $prevVer->id !== (int) $ver->id) ? $prevVer->semantic_json : null;
+                $sem = $this->semantic->analyze($det, $sec['masked'], $diff, [
+                    'previous_semantic' => $prevSem,
+                    'blob_sha'          => $ctx['source_blob_sha'] ?? null,
+                ]);
                 $ver->semantic_json = $sem;
                 $ver->diff_summary = $sem['resumo_alteracao'] ?? $ver->diff_summary;
-                $status = ($sem['status'] ?? '') === 'completed' ? 'completed' : 'partial';
+                // completed / skipped_* / reuse_blob ⇒ versão completa (determinístico pronto + semântica
+                // intencionalmente concluída/pulada). partial/failed/pending ⇒ partial (reprocessável).
+                $status = in_array($sem['status'] ?? '', ['completed', 'skipped_cost_limit', 'skipped_no_structural_change', 'reuse_blob'], true) ? 'completed' : 'partial';
             }
 
             $ver->documentation_json = $this->consolidate($doc, $ctx, $det, $sem, $diff, $sec['findings'], $status);

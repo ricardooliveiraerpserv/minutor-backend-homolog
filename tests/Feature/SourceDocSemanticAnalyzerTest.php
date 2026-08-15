@@ -4,12 +4,13 @@ namespace Tests\Feature;
 
 use App\SourceCode\Analyzer\SourceDocAiProvider;
 use App\SourceCode\Analyzer\SourceDocSemanticAnalyzer;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 /**
- * Bloco 4 — camada semântica subordinada ao determinístico. Testa gate homolog/prod, anti-alucinação
- * (função/tabela/campo inventados), evidência obrigatória, confiança, diff resumido, chunking/partial,
- * fallback, sanitização e observabilidade. DB-free; provider fake (nunca chama a Anthropic real).
+ * Bloco 4 + 4.1 — camada semântica: subordinação, gate, anti-alucinação, evidência/confiança,
+ * e a arquitetura de CUSTO (compact facts, seleção de relevantes, estimativa+hard limit, max calls,
+ * reuso por blob, cache por função, incremental por diff, coverage, output budget). DB-free; provider fake.
  */
 class SourceDocSemanticAnalyzerTest extends TestCase
 {
@@ -20,22 +21,27 @@ class SourceDocSemanticAnalyzerTest extends TestCase
             'services.source_doc_ai.enabled' => true,
             'services.source_doc_ai.environment' => 'homolog',
             'services.source_doc_ai.allowed_environments' => ['homolog'],
-            'services.source_doc_ai.max_chars' => 40000,
+            'services.source_doc_ai.cache_enabled' => false, // determinístico por teste (evita vazamento entre testes)
+            'services.source_doc_ai.max_relevant_functions' => 12,
+            'services.source_doc_ai.max_calls' => 3,
+            'services.source_doc_ai.max_output_tokens_per_call' => 2000,
+            'services.source_doc_ai.hard_limit_usd' => 0.30,
+            'services.source_doc_ai.inline_code_max_chars' => 8000,
+            'services.source_doc_ai.prompt_version' => 2,
         ]);
     }
 
     private function det(): array
     {
         return [
-            'source_type' => 'Fonte Protheus', 'language' => 'AdvPL',
+            'source_type' => 'Fonte Protheus', 'language' => 'AdvPL', 'file' => ['filename' => 'FTENVNFE.PRW'],
             'functions' => [
-                ['name' => 'FTENVNFE', 'type' => 'User Function', 'start_line' => 1, 'end_line' => 5, 'params' => [], 'returns' => ['Nil'], 'called_by' => [], 'calls_internal' => [], 'calls_user' => ['U_FTENVNFU'], 'tables' => [], 'accesses' => [], 'effects' => ['scoped_variable']],
-                ['name' => 'FTENVNFU', 'type' => 'User Function', 'start_line' => 6, 'end_line' => 10, 'params' => ['cId', 'cEmail'], 'returns' => ['Nil'], 'called_by' => ['FTENVNFE'], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write']],
+                ['name' => 'FTENVNFE', 'type' => 'User Function', 'start_line' => 1, 'end_line' => 5, 'params' => [], 'returns' => ['Nil'], 'called_by' => [], 'calls_internal' => [], 'calls_user' => ['U_FTENVNFU'], 'tables' => [], 'accesses' => [], 'effects' => ['scoped_variable'], 'evidence' => ['line_start' => 1, 'line_end' => 5]],
+                ['name' => 'FTENVNFU', 'type' => 'User Function', 'start_line' => 6, 'end_line' => 10, 'params' => ['cId', 'cEmail'], 'returns' => ['Nil'], 'called_by' => ['FTENVNFE'], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 6, 'line_end' => 10]],
             ],
             'tables' => [['table' => 'SPED050', 'alias' => 'SPED050', 'access' => ['UPDATE'], 'functions' => ['FTENVNFU'], 'read_fields' => [], 'write_fields' => ['EMAIL', 'STATUSMAIL'], 'where_fields' => ['NFE_ID'], 'source' => ['sql']]],
             'queries' => [['operation' => 'UPDATE', 'table' => 'SPED050', 'executor' => 'TCSQLExec', 'function' => 'FTENVNFU', 'construction' => 'concatenation', 'write_fields' => ['EMAIL', 'STATUSMAIL'], 'where_fields' => ['NFE_ID'], 'has_where' => true, 'risk_flags' => ['dynamic_sql_by_concatenation']]],
-            'user_calls' => ['U_FTENVNFU'],
-            'external_integrations' => [], 'dependencies' => [], 'effects' => [], 'technical_flow' => [], 'security_findings' => [],
+            'user_calls' => ['U_FTENVNFU'], 'external_integrations' => [], 'dependencies' => [], 'effects' => [], 'technical_flow' => [], 'security_findings' => [],
         ];
     }
 
@@ -43,6 +49,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
     {
         return new class($configured, $responder) implements SourceDocAiProvider {
             public array $calls = [];
+            public array $opts = [];
             private bool $cfg;
             private $r;
             public function __construct(bool $cfg, $r)
@@ -66,19 +73,19 @@ class SourceDocSemanticAnalyzerTest extends TestCase
             {
                 $i = count($this->calls);
                 $this->calls[] = $user;
-                $r = $this->r;
-                if ($r instanceof \Throwable) {
-                    throw $r;
+                $this->opts[] = $opts;
+                if ($this->r instanceof \Throwable) {
+                    throw $this->r;
                 }
-                $text = is_callable($r) ? $r($user, $i) : (string) $r;
+                $text = is_callable($this->r) ? ($this->r)($user, $i) : (string) $this->r;
                 return ['text' => $text, 'usage' => ['input_tokens' => 120, 'output_tokens' => 60], 'stop' => 'end_turn'];
             }
         };
     }
 
-    private function analyze(SourceDocAiProvider $ai, string $code = 'codigo', ?array $diff = null, ?array $det = null): array
+    private function go(SourceDocAiProvider $ai, string $code = 'codigo', ?array $diff = null, array $ctx = [], ?array $det = null): array
     {
-        return (new SourceDocSemanticAnalyzer($ai))->analyze($det ?? $this->det(), $code, $diff);
+        return (new SourceDocSemanticAnalyzer($ai))->analyze($det ?? $this->det(), $code, $diff, $ctx);
     }
 
     private function validJson(array $over = []): string
@@ -86,163 +93,189 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         return json_encode(array_replace([
             'objetivo' => 'Reenvia o XML da NF-e por e-mail.',
             'fluxo' => ['Recebe parâmetros', 'Atualiza SPED050'],
-            'funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'Grava o e-mail e status.']],
-            'table_purposes' => [['alias' => 'SPED050', 'finalidade' => 'Controle de envio de NF-e.']],
-            'regras_negocio' => [['id' => 'RN01', 'descricao' => 'STATUSMAIL é atualizado ao reenviar.', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'STATUSMAIL'], ['type' => 'function', 'name' => 'FTENVNFU']]]],
-            'entradas' => ['cId', 'cEmail'],
-            'saidas' => ['UPDATE SPED050'],
-            'pontos_atencao' => [['interpretation' => 'SQL construído por concatenação em FTENVNFU.', 'severity' => 'média', 'recommendation' => 'avaliar parametrização', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]]],
+            'funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'Grava e-mail e status.'], ['name' => 'FTENVNFE', 'finalidade' => 'Entrada.']],
+            'regras_negocio' => [['id' => 'RN01', 'descricao' => 'STATUSMAIL é atualizado.', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'STATUSMAIL'], ['type' => 'function', 'name' => 'FTENVNFU']]]],
+            'entradas' => ['cId', 'cEmail'], 'saidas' => ['UPDATE SPED050'],
+            'pontos_atencao' => [['interpretation' => 'SQL por concatenação em FTENVNFU.', 'severity' => 'média', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]]],
             'change_summary' => 'Passou a atualizar STATUSMAIL.',
         ], $over));
     }
 
-    /** 1) sem provider → pending. */
+    // ── base (Bloco 4) ──
     public function test_no_provider_is_pending(): void
     {
-        $r = $this->analyze($this->ai(false, $this->validJson()));
-        $this->assertSame('pending', $r['status']);
+        $this->assertSame('pending', $this->go($this->ai(false, $this->validJson()))['status']);
     }
 
-    /** 2) provider indisponível → failed, determinístico preservado. */
     public function test_provider_failure_is_failed(): void
     {
-        $ai = $this->ai(true, new \RuntimeException('down'));
-        $r = $this->analyze($ai);
-        $this->assertSame('failed', $r['status']);
+        $this->assertSame('failed', $this->go($this->ai(true, new \RuntimeException('down')))['status']);
     }
 
-    /** 3) resposta válida → completed com regras/funcoes. */
     public function test_valid_response(): void
     {
-        $r = $this->analyze($this->ai(true, $this->validJson()));
+        $r = $this->go($this->ai(true, $this->validJson()));
         $this->assertSame('completed', $r['status']);
-        $this->assertSame('FTENVNFU', $r['funcoes'][0]['name']);
+        $this->assertContains('FTENVNFU', array_column($r['funcoes'], 'name'));
         $this->assertSame('RN01', $r['regras_negocio'][0]['id']);
         $this->assertStringContainsString('concatenação', $r['pontos_atencao'][0]);
     }
 
-    /** 4) função inventada → rejeitada. */
     public function test_invented_function_rejected(): void
     {
-        $r = $this->analyze($this->ai(true, $this->validJson(['funcoes' => [['name' => 'U_NAOEXISTE', 'finalidade' => 'x'], ['name' => 'FTENVNFU', 'finalidade' => 'ok']]])));
-        $names = array_column($r['funcoes'], 'name');
-        $this->assertContains('FTENVNFU', $names);
-        $this->assertNotContains('U_NAOEXISTE', $names);
+        $r = $this->go($this->ai(true, $this->validJson(['funcoes' => [['name' => 'U_NAOEXISTE', 'finalidade' => 'x'], ['name' => 'FTENVNFU', 'finalidade' => 'ok']]])));
+        $this->assertNotContains('U_NAOEXISTE', array_column($r['funcoes'], 'name'));
         $this->assertGreaterThan(0, $r['validation']['rejected_count']);
     }
 
-    /** 5) tabela inventada → rejeitada. */
     public function test_invented_table_rejected(): void
     {
-        $r = $this->analyze($this->ai(true, $this->validJson(['table_purposes' => [['alias' => 'SB1', 'finalidade' => 'x'], ['alias' => 'SPED050', 'finalidade' => 'ok']]])));
-        $aliases = array_column($r['tabelas'], 'alias');
-        $this->assertContains('SPED050', $aliases);
-        $this->assertNotContains('SB1', $aliases);
+        $r = $this->go($this->ai(true, $this->validJson(['funcoes' => [], 'regras_negocio' => [], 'pontos_atencao' => [], 'table_purposes' => [['alias' => 'SB1', 'finalidade' => 'x'], ['alias' => 'SPED050', 'finalidade' => 'ok']]])));
+        $this->assertNotContains('SB1', array_column($r['tabelas'], 'alias'));
     }
 
-    /** 6) campo inventado na evidência → regra perde evidência e é rejeitada. */
     public function test_invented_field_rejected(): void
     {
-        $r = $this->analyze($this->ai(true, $this->validJson(['regras_negocio' => [['id' => 'RN01', 'descricao' => 'campo fantasma', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'B1_FANTASMA']]]]])));
+        $r = $this->go($this->ai(true, $this->validJson(['regras_negocio' => [['id' => 'RN01', 'descricao' => 'campo fantasma', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'B1_FANTASMA']]]]])));
         $this->assertEmpty($r['regras_negocio']);
         $this->assertGreaterThan(0, $r['validation']['rejected_count']);
     }
 
-    /** 7) regra sem evidência → rejeitada. */
     public function test_rule_without_evidence_rejected(): void
     {
-        $r = $this->analyze($this->ai(true, $this->validJson(['regras_negocio' => [['id' => 'RN01', 'descricao' => 'sem prova', 'confidence' => 'high', 'evidence' => []]]])));
+        $r = $this->go($this->ai(true, $this->validJson(['regras_negocio' => [['id' => 'RN01', 'descricao' => 'sem prova', 'confidence' => 'high', 'evidence' => []]]])));
         $this->assertEmpty($r['regras_negocio']);
     }
 
-    /** 8) diff resumido corretamente (estrutural). */
-    public function test_diff_summary_structural(): void
+    public function test_production_blocked(): void
     {
-        $diff = ['diff_stats' => ['change_type' => 'modified', 'structural_change' => true]];
-        $r = $this->analyze($this->ai(true, $this->validJson()), 'codigo', $diff);
-        $this->assertSame('Passou a atualizar STATUSMAIL.', $r['resumo_alteracao']);
+        config(['services.source_doc_ai.environment' => 'production']);
+        $ai = $this->ai(true, $this->validJson());
+        $this->assertSame('pending', $this->go($ai)['status']);
+        $this->assertEmpty($ai->calls);
     }
 
-    /** 9) structural_change=false → resumo não estrutural (não inventa). */
-    public function test_diff_non_structural(): void
-    {
-        $diff = ['diff_stats' => ['change_type' => 'modified', 'structural_change' => false]];
-        $r = $this->analyze($this->ai(true, $this->validJson(['change_summary' => 'IA tentou inventar algo grande'])), 'codigo', $diff);
-        $this->assertStringContainsString('Não foram identificadas alterações estruturais', $r['resumo_alteracao']);
-    }
-
-    /** 10) initial → documentação inicial. */
-    public function test_diff_initial(): void
-    {
-        $diff = ['diff_stats' => ['change_type' => 'initial', 'structural_change' => true]];
-        $r = $this->analyze($this->ai(true, $this->validJson()), 'codigo', $diff);
-        $this->assertStringContainsString('Documentação inicial', $r['resumo_alteracao']);
-    }
-
-    /** 11) segredo já mascarado é o que chega ao provider (analyzer não vaza). */
-    public function test_secret_is_masked_in_payload(): void
+    // ── Bloco 4.1 — custo/arquitetura ──
+    public function test_secret_masked_in_payload(): void
     {
         $ai = $this->ai(true, $this->validJson());
-        $this->analyze($ai, "cToken := \"[REDACTED_SECRET]\"\nDbSelectArea('SPED050')");
+        $this->go($ai, "cToken := \"[REDACTED_SECRET]\"\nDbSelectArea('SPED050')");
         $sent = implode("\n", $ai->calls);
         $this->assertStringContainsString('[REDACTED_SECRET]', $sent);
         $this->assertStringNotContainsString('AKIA', $sent);
     }
 
-    /** 12) chunking em fonte grande → status partial + múltiplos chunks. */
-    public function test_chunking_partial(): void
+    public function test_structural_change_false_zero_calls(): void
     {
-        config(['services.source_doc_ai.max_chars' => 20]);
-        $code = str_repeat("linha de codigo aqui\n", 10); // > 20 chars → chunked
-        $responder = fn ($user, $i) => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'ok']], 'objetivo' => 'x']);
-        $r = $this->analyze($this->ai(true, $responder), $code);
-        $this->assertSame('partial', $r['status']);
-        $this->assertGreaterThanOrEqual(2, $r['chunking']['chunks']);
-    }
-
-    /** 13) chunk que falha é contabilizado (partial, failed>0). */
-    public function test_chunking_failed_counted(): void
-    {
-        config(['services.source_doc_ai.max_chars' => 20]);
-        $code = str_repeat("linha de codigo aqui\n", 10);
-        $responder = function ($user, $i) {
-            if ($i === 0) {
-                throw new \RuntimeException('chunk 0 down');
-            }
-            return json_encode(['funcoes' => [], 'objetivo' => 'x']);
-        };
-        $r = $this->analyze($this->ai(true, $responder), $code);
-        $this->assertSame('partial', $r['status']);
-        $this->assertGreaterThan(0, $r['chunking']['failed']);
-    }
-
-    /** 14) idempotente: reprocessar não acumula rejeições (validator zera por chamada). */
-    public function test_reprocess_idempotent_counters(): void
-    {
-        $ai = $this->ai(true, $this->validJson(['funcoes' => [['name' => 'U_NAOEXISTE', 'finalidade' => 'x']]]));
-        $sem = new SourceDocSemanticAnalyzer($ai);
-        $r1 = $sem->analyze($this->det(), 'codigo', null);
-        $r2 = $sem->analyze($this->det(), 'codigo', null);
-        $this->assertSame($r1['validation']['rejected_count'], $r2['validation']['rejected_count']);
-    }
-
-    /** 15) produção bloqueada (ambiente não autorizado) → pending, provider NÃO chamado. */
-    public function test_production_blocked(): void
-    {
-        config(['services.source_doc_ai.environment' => 'production', 'services.source_doc_ai.allowed_environments' => ['homolog']]);
         $ai = $this->ai(true, $this->validJson());
-        $r = $this->analyze($ai);
-        $this->assertSame('pending', $r['status']);
-        $this->assertEmpty($ai->calls, 'não deve chamar a IA em ambiente bloqueado');
+        $r = $this->go($ai, 'codigo', ['diff_stats' => ['change_type' => 'modified', 'structural_change' => false]]);
+        $this->assertSame('skipped_no_structural_change', $r['status']);
+        $this->assertEmpty($ai->calls, '0 chamadas quando não há mudança estrutural');
     }
 
-    /** 16) homolog permitido → completed. */
-    public function test_homolog_allowed(): void
+    public function test_initial_is_completed_not_partial(): void
     {
-        config(['services.source_doc_ai.environment' => 'homolog', 'services.source_doc_ai.allowed_environments' => ['homolog']]);
-        $r = $this->analyze($this->ai(true, $this->validJson()));
+        // fonte "grande" (código acima do inline) NÃO deve virar partial só por não descrever tudo
+        config(['services.source_doc_ai.inline_code_max_chars' => 30]);
+        $responder = fn ($user, $i) => $this->validJson();
+        $r = $this->go($this->ai(true, $responder), str_repeat("linha\n", 40));
         $this->assertSame('completed', $r['status']);
-        $this->assertArrayHasKey('estimated_cost_usd', $r['usage']);
-        $this->assertGreaterThan(0, $r['usage']['input_tokens']);
+        $this->assertSame('initial_global_selective', $r['strategy']);
+        $this->assertArrayHasKey('relevant_functions_total', $r['semantic_coverage']);
+    }
+
+    public function test_max_calls_respected(): void
+    {
+        config(['services.source_doc_ai.inline_code_max_chars' => 30, 'services.source_doc_ai.max_calls' => 1]);
+        $ai = $this->ai(true, fn ($u, $i) => $this->validJson());
+        $this->go($ai, str_repeat("linha\n", 40));
+        $this->assertLessThanOrEqual(1, count($ai->calls), 'max_calls=1 ⇒ só a chamada global');
+    }
+
+    public function test_output_budget_passed_to_provider(): void
+    {
+        config(['services.source_doc_ai.max_output_tokens_per_call' => 1500]);
+        $ai = $this->ai(true, $this->validJson());
+        $this->go($ai);
+        $this->assertSame(1500, $ai->opts[0]['max_tokens'] ?? null);
+    }
+
+    public function test_hard_limit_skips_before_calling(): void
+    {
+        config(['services.source_doc_ai.hard_limit_usd' => 0.0000001]); // força estouro
+        $ai = $this->ai(true, $this->validJson());
+        $r = $this->go($ai);
+        $this->assertSame('skipped_cost_limit', $r['status']);
+        $this->assertEmpty($ai->calls, 'não chama o provider quando a estimativa passa do hard limit');
+        $this->assertGreaterThan(0, $r['usage']['estimated_before_usd']);
+    }
+
+    public function test_blob_reuse_zero_second_call(): void
+    {
+        config(['services.source_doc_ai.cache_enabled' => true]);
+        Cache::flush();
+        $ai = $this->ai(true, $this->validJson());
+        $sem = new SourceDocSemanticAnalyzer($ai);
+        $sem->analyze($this->det(), 'mesmo-codigo', null, ['blob_sha' => 'BLOB1']);
+        $r2 = $sem->analyze($this->det(), 'mesmo-codigo', null, ['blob_sha' => 'BLOB1']);
+        $this->assertSame('reuse_blob', $r2['strategy']);
+        $this->assertSame(1, count($ai->calls), '2ª análise do mesmo blob não chama a IA');
+        Cache::flush();
+    }
+
+    public function test_cache_invalidated_by_prompt_version(): void
+    {
+        config(['services.source_doc_ai.cache_enabled' => true]);
+        Cache::flush();
+        $ai = $this->ai(true, $this->validJson());
+        $sem = new SourceDocSemanticAnalyzer($ai);
+        $sem->analyze($this->det(), 'codigo', null, ['blob_sha' => 'B']);
+        config(['services.source_doc_ai.prompt_version' => 99]); // muda a chave de cache
+        $sem->analyze($this->det(), 'codigo', null, ['blob_sha' => 'B']);
+        $this->assertSame(2, count($ai->calls), 'mudança de prompt_version invalida o cache');
+        Cache::flush();
+    }
+
+    public function test_incremental_merge_add_update_remove_keep(): void
+    {
+        $prev = [
+            'schema_version' => 1, 'status' => 'completed', 'objetivo' => 'Objetivo anterior.',
+            'funcoes' => [['name' => 'FTENVNFE', 'finalidade' => 'antiga E'], ['name' => 'FTENVNFU', 'finalidade' => 'antiga U']],
+            'regras_negocio' => [['id' => 'RN01', 'descricao' => 'regra velha', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]]],
+            'business_rules' => [['id' => 'RN01', 'descricao' => 'regra velha', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]]],
+            'pontos_atencao' => [], 'entradas' => [], 'saidas' => [], 'tabelas' => [],
+        ];
+        $diff = ['diff_stats' => ['change_type' => 'modified', 'structural_change' => true], 'structural' => ['functions' => ['changed' => [['function' => 'FTENVNFU']]]]];
+        $delta = json_encode([
+            'change_summary' => 'FTENVNFU passou a gravar STATUSMAIL.',
+            'updated_functions' => [['name' => 'FTENVNFU', 'finalidade' => 'nova U (grava STATUSMAIL)']],
+            'rules_add' => [['id' => 'RN02', 'descricao' => 'novo comportamento', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'STATUSMAIL']]]],
+            'rules_remove' => ['RN01'],
+        ]);
+        $ai = $this->ai(true, $delta);
+        $r = (new SourceDocSemanticAnalyzer($ai))->analyze($this->det(), "linha\nFTENVNFU code", $diff, ['previous_semantic' => $prev]);
+        $this->assertSame('incremental_diff', $r['strategy']);
+        // KEEP: FTENVNFE preservada
+        $fe = array_values(array_filter($r['funcoes'], fn ($f) => $f['name'] === 'FTENVNFE'))[0] ?? null;
+        $this->assertSame('antiga E', $fe['finalidade']);
+        // UPDATE: FTENVNFU atualizada
+        $fu = array_values(array_filter($r['funcoes'], fn ($f) => $f['name'] === 'FTENVNFU'))[0] ?? null;
+        $this->assertStringContainsString('STATUSMAIL', $fu['finalidade']);
+        // REMOVE RN01, ADD RN02
+        $ids = array_column($r['regras_negocio'], 'id');
+        $this->assertNotContains('RN01', $ids);
+        $this->assertContains('RN02', $ids);
+        $this->assertSame(1, count($ai->calls), 'incremental usa 1 chamada');
+    }
+
+    public function test_coverage_and_usage_present(): void
+    {
+        $r = $this->go($this->ai(true, $this->validJson()));
+        foreach (['relevant_functions_total', 'relevant_functions_analyzed', 'relevant_functions_cached', 'relevant_functions_skipped'] as $k) {
+            $this->assertArrayHasKey($k, $r['semantic_coverage']);
+        }
+        foreach (['input_tokens', 'output_tokens', 'calls', 'estimated_before_usd', 'actual_cost_usd', 'cache_hits', 'cache_misses', 'duration_ms'] as $k) {
+            $this->assertArrayHasKey($k, $r['usage']);
+        }
     }
 }

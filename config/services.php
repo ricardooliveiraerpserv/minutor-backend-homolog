@@ -80,6 +80,24 @@ return [
         // Observabilidade de custo (USD por 1M tokens) — só estimativa/telemetria.
         'cost_input_per_mtok'  => (float) env('SOURCE_DOC_AI_COST_IN', 3.0),
         'cost_output_per_mtok' => (float) env('SOURCE_DOC_AI_COST_OUT', 15.0),
+        // Bloco 4.1 — orçamento/limite de custo (arquitetura A+C). Não hardcodar em vários lugares.
+        'max_relevant_functions'     => (int) env('SOURCE_DOC_AI_MAX_RELEVANT_FUNCTIONS', 12),
+        'max_calls'                  => (int) env('SOURCE_DOC_AI_MAX_CALLS', 3),
+        'max_input_tokens_per_call'  => (int) env('SOURCE_DOC_AI_MAX_INPUT_TOKENS_PER_CALL', 60000),
+        'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 2000),
+        'hard_limit_usd'             => (float) env('SOURCE_DOC_AI_HARD_LIMIT_USD', 0.30),
+        'target_small_usd'           => (float) env('SOURCE_DOC_AI_TARGET_SMALL', 0.05),
+        'target_medium_usd'          => (float) env('SOURCE_DOC_AI_TARGET_MEDIUM', 0.10),
+        'target_large_usd'           => (float) env('SOURCE_DOC_AI_TARGET_LARGE', 0.25),
+        // Código só entra na chamada global se for pequeno; acima disso vai facts + aprofundamento.
+        'inline_code_max_chars'      => (int) env('SOURCE_DOC_AI_INLINE_CODE_MAX_CHARS', 8000),
+        // Estimador conservador de tokens (chars/token). Código AdvPL ~1,42 (medido); texto/JSON ~3,5.
+        'chars_per_token_code'       => (float) env('SOURCE_DOC_AI_CPT_CODE', 1.6),
+        'chars_per_token_text'       => (float) env('SOURCE_DOC_AI_CPT_TEXT', 3.2),
+        // Cache semântico (Cache facade — NÃO é fonte da verdade; semantic_json persistido é).
+        'cache_enabled'              => filter_var(env('SOURCE_DOC_AI_CACHE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'cache_ttl'                  => (int) env('SOURCE_DOC_AI_CACHE_TTL', 2592000), // 30d
+        'prompt_version'             => (int) env('SOURCE_DOC_AI_PROMPT_VERSION', 2),   // invalida cache ao mudar prompt
     ],
 
     'openai' => [

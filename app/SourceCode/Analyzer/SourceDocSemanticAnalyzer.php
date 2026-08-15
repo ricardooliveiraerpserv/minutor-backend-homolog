@@ -2,167 +2,477 @@
 
 namespace App\SourceCode\Analyzer;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Bloco 4 — camada SEMÂNTICA (subordinada ao determinístico). Recebe os FATOS da Camada 1
- * (deterministic_json enriquecido) + o diff (Camada 2) + o CÓDIGO SANITIZADO (segredos mascarados)
- * e usa a IA (SourceDocAiProvider) só para EXPLICAR — nunca descobrir/inventar.
+ * Bloco 4 + 4.1 — camada SEMÂNTICA subordinada ao determinístico, com CUSTO como requisito.
  *
- * Analyzer = fatos · SourceDiff = mudanças · IA = interpretação · Renderer = apresentação.
+ * Arquitetura (4.1):
+ *  INITIAL  → resumo compacto de fatos + seleção determinística de funções relevantes →
+ *             estimativa de custo → 1 chamada GLOBAL (+ ≤2 aprofundamentos só do CÓDIGO das
+ *             funções críticas) → consolidação LOCAL → anti-alucinação.
+ *  MODIFIED → semântica anterior + SourceDiff + só as funções alteradas → 0–1 chamada → MERGE local.
+ *  structural_change=false → 0 chamadas (skipped_no_structural_change).
+ *  blob inalterado / cache → 0 chamadas (reuse).
+ *  estimativa > hard limit (US$ 0,30) → 0 chamadas (skipped_cost_limit); determinístico intacto.
  *
- * Garantias:
- *  - GATE homolog-only (config; prod bloqueado tecnicamente — nunca envia código à IA em prod).
- *  - ANTI-ALUCINAÇÃO pós-resposta: toda entidade citada (função/tabela/campo) é confrontada com o
- *    deterministic_json; o que não existe é REJEITADO (contado). Sem aproximar nomes.
- *  - EVIDÊNCIA + CONFIANÇA em regras/pontos de atenção; LOW não é renderizado como fato.
- *  - FALLBACK: falha/gate ⇒ status pending/failed; determinístico permanece válido.
- *  - CHUNKING por função em fontes grandes; sem truncar em silêncio (status partial + contagem).
- *  - OBSERVABILIDADE: tokens in/out, chamadas, ms, custo estimado. Logs sem código/prompt/segredo.
- *
- * A saída preserva as chaves que o Renderer (Bloco 5, TRAVADO) consome
- * (objetivo/fluxo/funcoes/tabelas/regras_negocio/entradas/saidas/pontos_atencao/resumo_alteracao/status)
- * e ADICIONA a estrutura rica (business_rules c/ evidence+confidence, attention_points, change_summary,
- * usage, validation) para governança e Central futura — sem alterar o Renderer.
+ * NUNCA envia o fonte inteiro. Código só das funções críticas (faixa de linhas, sanitizada).
+ * Segurança inalterada (homolog-only, prod bloqueado, secrets mascarados, logs sem código/prompt).
+ * Cache (Cache facade) NÃO é fonte da verdade — o semantic_json persistido é.
  */
 class SourceDocSemanticAnalyzer
 {
     public const SCHEMA_VERSION = 1;
     private const UNKNOWN = 'Não identificado automaticamente no código.';
 
-    /** @var array{input_tokens:int,output_tokens:int,calls:int,ms:int} */
-    private array $usage = ['input_tokens' => 0, 'output_tokens' => 0, 'calls' => 0, 'ms' => 0];
+    private array $usage = [];
     /** @var list<array{item:string,reason:string}> */
     private array $rejected = [];
+    private array $coverage = [];
+    private float $t0 = 0.0;
 
     public function __construct(private SourceDocAiProvider $ai)
     {
     }
 
-    /** Gate homolog-only: ENABLED=true E ambiente autorizado. Prod (sem vars) ⇒ false. */
     public function enabled(): bool
     {
         if (! (bool) config('services.source_doc_ai.enabled', false)) {
             return false;
         }
         $env = (string) config('services.source_doc_ai.environment', app()->environment());
-        $allowed = (array) config('services.source_doc_ai.allowed_environments', ['homolog']);
-        return in_array($env, $allowed, true);
+        return in_array($env, (array) config('services.source_doc_ai.allowed_environments', ['homolog']), true);
     }
 
-    public function analyze(array $deterministic, string $maskedCode, ?array $diff = null): array
+    /**
+     * @param array $ctx ['previous_semantic'=>?array, 'blob_sha'=>?string]
+     */
+    public function analyze(array $deterministic, string $maskedCode, ?array $diff = null, array $ctx = []): array
     {
-        $this->usage = ['input_tokens' => 0, 'output_tokens' => 0, 'calls' => 0, 'ms' => 0];
-        $this->rejected = [];
+        $this->resetState();
+        $prevSem = is_array($ctx['previous_semantic'] ?? null) ? $ctx['previous_semantic'] : null;
 
         if (! $this->enabled()) {
-            return $this->skeleton('pending') + ['note' => 'IA desabilitada neste ambiente (gate homolog). A documentação determinística permanece válida.'];
+            return $this->skeleton('pending') + ['note' => 'IA desabilitada neste ambiente (gate homolog).'];
         }
         if (! $this->ai->isConfigured()) {
-            return $this->skeleton('pending') + ['note' => 'IA não configurada (provider ausente). A documentação determinística permanece válida.'];
+            return $this->skeleton('pending') + ['note' => 'IA não configurada.'];
         }
 
-        $maxChars = (int) config('services.source_doc_ai.max_chars', 40000);
+        // (E) sem alteração estrutural → 0 chamadas.
+        $ds = (array) ($diff['diff_stats'] ?? []);
+        if (($diff !== null) && array_key_exists('structural_change', $ds) && $ds['structural_change'] === false) {
+            $out = $prevSem ?: $this->skeleton('completed');
+            $out['status'] = 'skipped_no_structural_change';
+            $out['resumo_alteracao'] = 'Não foram identificadas alterações estruturais relevantes.';
+            $out['strategy'] = 'skipped_no_structural_change';
+            $out['usage'] = $this->usageBlock();
+            return $out;
+        }
+
+        // (F/18) reuso por blob/conteúdo — mesma versão já analisada → 0 chamadas.
+        $blob = (string) ($ctx['blob_sha'] ?? sha1($maskedCode));
+        $reuseKey = $this->versionCacheKey($blob);
+        if ($this->cacheEnabled()) {
+            $cached = Cache::get($reuseKey);
+            if (is_array($cached)) {
+                $cached['strategy'] = 'reuse_blob';
+                $this->usage['cache_hits']++;
+                $cached['usage'] = $this->usageBlock();
+                return $cached;
+            }
+        }
+
         try {
-            if (mb_strlen($maskedCode) <= $maxChars) {
-                $sem = $this->singleCall($deterministic, $maskedCode, $diff);
-                $sem['chunking'] = ['chunks' => 1, 'processed' => 1, 'failed' => 0, 'partial' => false];
+            $changeType = $ds['change_type'] ?? ($diff !== null && ($diff['is_creation'] ?? false) ? 'initial' : ($prevSem ? 'modified' : 'initial'));
+            if ($changeType === 'modified' && $prevSem) {
+                $result = $this->incremental($deterministic, $maskedCode, $diff, $prevSem);
             } else {
-                $sem = $this->chunkedCall($deterministic, $maskedCode, $diff, $maxChars);
+                $result = $this->initial($deterministic, $maskedCode, $diff);
             }
         } catch (\Throwable $e) {
             Log::warning('source_doc_ai.analyze_failed', ['error' => $this->sanitizeLog($e->getMessage())]);
             return $this->skeleton('failed') + ['error' => 'Falha na análise semântica — reprocessável.', 'usage' => $this->usageBlock()];
         }
 
-        return $this->finalize($sem, $deterministic, $diff);
-    }
-
-    // ── uma chamada ─────────────────────────────────────────────────────────────
-    private function singleCall(array $det, string $code, ?array $diff): array
-    {
-        $out = $this->call($this->systemPrompt(), $this->userPrompt($det, $diff, $code));
-        $json = $this->parseJson($out);
-        if ($json === null) {
-            throw new \RuntimeException('Resposta da IA não é JSON válido.');
+        $final = $this->finalize($result, $deterministic, $diff);
+        if ($this->cacheEnabled() && in_array($final['status'], ['completed', 'partial'], true)) {
+            Cache::put($reuseKey, $final, (int) config('services.source_doc_ai.cache_ttl', 2592000));
         }
-        $json['status'] = 'completed';
-        return $json;
+        return $final;
     }
 
-    // ── chunking por função (fonte grande) — sem truncar em silêncio ─────────────
-    private function chunkedCall(array $det, string $code, ?array $diff, int $maxChars): array
+    // ── INITIAL (A): global compacto + aprofundamento seletivo ──────────────────
+    private function initial(array $det, string $maskedCode, ?array $diff): array
     {
-        $lines = explode("\n", $code);
-        $funcoes = [];
-        $chunks = 0;
-        $processed = 0;
-        $failed = 0;
-        $group = [];
-        $groupLen = 0;
+        $limit = (int) config('services.source_doc_ai.max_relevant_functions', 12);
+        $relevant = $this->selectRelevant($det, $diff, $limit);
+        $relNames = array_map(fn ($f) => $f['name'], $relevant);
+        $compact = $this->buildCompactFacts($det, $relevant, $diff);
+        $inlineCodeMax = (int) config('services.source_doc_ai.inline_code_max_chars', 8000);
+        $inlineCode = mb_strlen($maskedCode) <= $inlineCodeMax ? $maskedCode : '';
 
-        $flush = function () use (&$group, &$groupLen, &$funcoes, &$chunks, &$processed, &$failed, $det): void {
-            if (empty($group)) {
-                return;
+        // ── plano de chamadas + estimativa ANTES de executar ──
+        $outBudget = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000);
+        $globalUser = $this->globalUserPrompt($compact, $diff, $inlineCode);
+        $plan = [['system' => $this->systemPrompt(), 'user' => $globalUser, 'out' => $outBudget, 'code' => $inlineCode !== '']];
+
+        // aprofundamento: código das funções CRÍTICAS (só se o fonte é grande = sem inline)
+        $critical = $inlineCode === '' ? $this->criticalWithCode($relevant, $det, $maskedCode) : [];
+        if (! empty($critical)) {
+            $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenUserPrompt($critical), 'out' => $outBudget, 'code' => true];
+        }
+        $plan = array_slice($plan, 0, (int) config('services.source_doc_ai.max_calls', 3));
+
+        $est = $this->estimatePlan($plan);
+        $this->usage['estimated_before_usd'] = round($est, 4);
+        if ($est > (float) config('services.source_doc_ai.hard_limit_usd', 0.30)) {
+            return $this->costSkipped($est, count($relNames));
+        }
+
+        // ── executa ──
+        $global = $this->parseJson($this->call($plan[0]['system'], $plan[0]['user'], $plan[0]['out'])) ?? [];
+        $funcoes = $this->normFuncoes($global['funcoes'] ?? []);
+        $analyzed = count($funcoes);
+        $cachedN = 0;
+        $skippedN = 0;
+
+        if (count($plan) > 1) {
+            [$deepFuncoes, $deepRules, $deepPoints, $cachedN, $skippedN] = $this->runDeepening($critical, $plan[1], $det);
+            $funcoes = $this->mergeFuncoes($funcoes, $deepFuncoes);
+            $global['regras_negocio'] = array_merge($global['regras_negocio'] ?? [], $deepRules);
+            $global['pontos_atencao'] = array_merge($global['pontos_atencao'] ?? [], $deepPoints);
+            $analyzed = count($deepFuncoes) ?: $analyzed;
+        }
+
+        $global['funcoes'] = $funcoes;
+        $global['status'] = 'completed';
+        $global['strategy'] = 'initial_global_selective';
+        $this->coverage = [
+            'relevant_functions_total'    => count($relNames),
+            'relevant_functions_analyzed' => count($funcoes),
+            'relevant_functions_cached'   => $cachedN,
+            'relevant_functions_skipped'  => $skippedN,
+        ];
+        return $global;
+    }
+
+    // ── MODIFIED (C): diff-first + merge local ──────────────────────────────────
+    private function incremental(array $det, string $maskedCode, ?array $diff, array $prev): array
+    {
+        $changed = $this->changedFunctionNames($diff);
+        if (empty($changed)) {
+            // mudança estrutural sem função alterada (ex.: só tabela) → preserva prev + resumo do diff.
+            $prev['status'] = 'completed';
+            $prev['strategy'] = 'incremental_diff';
+            $prev['resumo_alteracao'] = $this->deterministicChangeSummary($diff) ?? ($prev['resumo_alteracao'] ?? self::UNKNOWN);
+            $this->coverage = ['relevant_functions_total' => 0, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0];
+            return $prev;
+        }
+        $changedFns = array_values(array_filter($det['functions'] ?? [], fn ($f) => in_array(strtolower($f['name'] ?? ''), array_map('strtolower', $changed), true)));
+        $lines = explode("\n", $maskedCode);
+        $withCode = array_map(fn ($f) => ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $this->codeSlice($lines, $f)], array_slice($changedFns, 0, (int) config('services.source_doc_ai.max_relevant_functions', 12)));
+
+        $outBudget = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000);
+        $user = $this->incrementalUserPrompt($prev, $diff, $withCode);
+        $plan = [['system' => $this->systemPrompt(), 'user' => $user, 'out' => $outBudget, 'code' => true]];
+        $est = $this->estimatePlan($plan);
+        $this->usage['estimated_before_usd'] = round($est, 4);
+        if ($est > (float) config('services.source_doc_ai.hard_limit_usd', 0.30)) {
+            // sobre o limite: preserva prev + resumo determinístico (não reprocessa), sem chamar IA.
+            $prev['status'] = 'completed';
+            $prev['strategy'] = 'incremental_diff';
+            $prev['resumo_alteracao'] = $this->deterministicChangeSummary($diff) ?? ($prev['resumo_alteracao'] ?? self::UNKNOWN);
+            $prev['usage'] = ($prev['usage'] ?? []) + ['estimated_before_usd' => round($est, 4), 'note_cost' => 'atualização incremental adiada por hard limit'];
+            $this->coverage = ['relevant_functions_total' => count($changed), 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => count($changed)];
+            return $prev;
+        }
+
+        $delta = $this->parseJson($this->call($plan[0]['system'], $plan[0]['user'], $plan[0]['out'])) ?? [];
+        $merged = $this->mergeIncremental($prev, $delta);
+        $merged['status'] = 'completed';
+        $merged['strategy'] = 'incremental_diff';
+        $this->coverage = [
+            'relevant_functions_total'    => count($changed),
+            'relevant_functions_analyzed' => count($withCode),
+            'relevant_functions_cached'   => 0,
+            'relevant_functions_skipped'  => max(0, count($changed) - count($withCode)),
+        ];
+        return $merged;
+    }
+
+    // ── seleção determinística de funções relevantes ────────────────────────────
+    private function selectRelevant(array $det, ?array $diff, int $limit): array
+    {
+        $fns = $det['functions'] ?? [];
+        $changed = array_map('strtolower', $this->changedFunctionNames($diff));
+        $riskFns = [];
+        foreach (($det['queries'] ?? []) as $q) {
+            if (! empty($q['risk_flags'])) {
+                $riskFns[strtolower((string) ($q['function'] ?? ''))] = true;
             }
-            $chunks++;
-            // Contexto preservado no chunk: SÓ os fatos das funções do trecho (evita reenviar o
-            // deterministic inteiro a cada chamada — custo/tokens).
-            $user = "FATOS (Camada 1) das funções deste trecho:\n" . json_encode($this->chunkFacts($det, array_column($group, 'name')), JSON_UNESCAPED_UNICODE)
-                . "\n\nCÓDIGO (segredos mascarados) das funções deste trecho:\n" . implode("\n", array_column($group, 'code'))
-                . "\n\nAnalise APENAS a finalidade das funções presentes neste trecho. Devolva JSON {funcoes:[{name,finalidade}]}.";
-            try {
-                $j = $this->parseJson($this->call($this->systemPrompt(), $user)) ?? [];
-                foreach (($j['funcoes'] ?? []) as $f) {
-                    if (! empty($f['name'])) {
-                        $funcoes[] = $f;
+        }
+        $scored = [];
+        foreach ($fns as $f) {
+            $name = $f['name'] ?? '';
+            $type = strtolower((string) ($f['type'] ?? ''));
+            $degree = count($f['called_by'] ?? []) + count($f['calls_internal'] ?? []) + count($f['calls_user'] ?? []);
+            $effects = (array) ($f['effects'] ?? []);
+            $writes = (bool) array_intersect(['database_write', 'database_delete', 'file_write', 'routine_execution'], $effects);
+            $ext = in_array('external_call', $effects, true);
+            $s = 0;
+            if (empty($f['called_by'])) {
+                $s += 100; // entrypoint
+            }
+            if (str_contains($type, 'user function')) {
+                $s += 80;
+            }
+            if (in_array(strtolower($name), $changed, true)) {
+                $s += 90; // alterada no diff
+            }
+            if ($writes) {
+                $s += 60;
+            }
+            if ($ext) {
+                $s += 60;
+            }
+            if (isset($riskFns[strtolower($name)])) {
+                $s += 60;
+            }
+            $s += min(40, $degree * 8); // grau (médio)
+            $scored[] = ['f' => $f, 's' => $s];
+        }
+        usort($scored, fn ($a, $b) => $b['s'] <=> $a['s']);
+        return array_map(fn ($x) => $x['f'], array_slice($scored, 0, max(1, $limit)));
+    }
+
+    /** Funções críticas cujo CÓDIGO vale enviar (escritoras/risco/entrypoint), dentro do orçamento. */
+    private function criticalWithCode(array $relevant, array $det, string $maskedCode): array
+    {
+        $riskFns = [];
+        foreach (($det['queries'] ?? []) as $q) {
+            if (! empty($q['risk_flags'])) {
+                $riskFns[strtolower((string) ($q['function'] ?? ''))] = true;
+            }
+        }
+        $lines = explode("\n", $maskedCode);
+        $budgetTokens = (int) config('services.source_doc_ai.max_input_tokens_per_call', 60000);
+        $cptCode = (float) config('services.source_doc_ai.chars_per_token_code', 1.6);
+        $out = [];
+        $tok = 0;
+        foreach ($relevant as $f) {
+            $eff = (array) ($f['effects'] ?? []);
+            $crit = empty($f['called_by']) || (bool) array_intersect(['database_write', 'database_delete', 'file_write', 'external_call', 'routine_execution'], $eff) || isset($riskFns[strtolower($f['name'] ?? '')]);
+            if (! $crit) {
+                continue;
+            }
+            $code = $this->codeSlice($lines, $f);
+            $t = (int) ceil(mb_strlen($code) / $cptCode);
+            if ($tok + $t > $budgetTokens) {
+                break;
+            }
+            $tok += $t;
+            $out[] = ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $code];
+        }
+        return $out;
+    }
+
+    private function runDeepening(array $critical, array $plan, array $det): array
+    {
+        // cache por função (Cache facade) — pula funções já analisadas com o mesmo conteúdo/fatos.
+        $toCall = [];
+        $cachedFuncoes = [];
+        $cachedN = 0;
+        foreach ($critical as $c) {
+            $key = $this->functionCacheKey($det, $c);
+            $hit = $this->cacheEnabled() ? Cache::get($key) : null;
+            if (is_array($hit) && ! empty($hit['name'])) {
+                $cachedFuncoes[] = $hit;
+                $cachedN++;
+                $this->usage['cache_hits']++;
+            } else {
+                $toCall[] = $c;
+                $this->usage['cache_misses']++;
+            }
+        }
+        $deepFuncoes = $cachedFuncoes;
+        $deepRules = [];
+        $deepPoints = [];
+        $skippedN = 0;
+        if (! empty($toCall)) {
+            $user = $this->deepenUserPrompt($toCall);
+            $j = $this->parseJson($this->call($plan['system'], $user, $plan['out'])) ?? [];
+            foreach (($j['funcoes'] ?? []) as $f) {
+                if (! empty($f['name'])) {
+                    $entry = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? '')];
+                    $deepFuncoes[] = $entry;
+                    if ($this->cacheEnabled()) {
+                        $c = $this->findByName($toCall, $f['name']);
+                        if ($c) {
+                            Cache::put($this->functionCacheKey($det, $c), $entry, (int) config('services.source_doc_ai.cache_ttl', 2592000));
+                        }
                     }
                 }
-                $processed++;
-            } catch (\Throwable $e) {
-                $failed++;
-                Log::warning('source_doc_ai.chunk_failed', ['chunk' => $chunks, 'error' => $this->sanitizeLog($e->getMessage())]);
             }
-            $group = [];
-            $groupLen = 0;
-        };
-
-        foreach (($det['functions'] ?? []) as $fn) {
-            $slice = implode("\n", array_slice($lines, max(0, ($fn['start_line'] ?? 1) - 1), max(1, ($fn['end_line'] ?? 1) - ($fn['start_line'] ?? 1) + 1)));
-            if (mb_strlen($slice) > $maxChars) {
-                $slice = mb_substr($slice, 0, $maxChars) . "\n// […função truncada para análise…]";
-            }
-            if ($groupLen + mb_strlen($slice) > $maxChars) {
-                $flush();
-            }
-            $group[] = ['name' => $fn['name'], 'code' => $slice];
-            $groupLen += mb_strlen($slice);
+            $deepRules = $j['regras_negocio'] ?? [];
+            $deepPoints = $j['pontos_atencao'] ?? [];
         }
-        $flush();
-
-        // Consolidação (narrativa) a partir dos FATOS + diff, SEM o código completo → partial.
-        $chunks++;
-        $consol = ['objetivo' => self::UNKNOWN, 'fluxo' => [], 'regras_negocio' => [], 'entradas' => [], 'saidas' => [], 'pontos_atencao' => [], 'table_purposes' => [], 'change_summary' => self::UNKNOWN];
-        try {
-            $user = $this->userPrompt($det, $diff, '') . "\n\nO fonte é grande e foi analisado por partes. Produza a visão geral (objetivo, fluxo, regras_negocio, entradas, saidas, pontos_atencao, table_purposes, change_summary) SOMENTE a partir dos FATOS e do diff.";
-            $j = $this->parseJson($this->call($this->systemPrompt(), $user)) ?? [];
-            $consol = array_merge($consol, array_intersect_key($j, $consol));
-            $processed++;
-        } catch (\Throwable $e) {
-            $failed++;
-            Log::warning('source_doc_ai.consolidation_failed', ['error' => $this->sanitizeLog($e->getMessage())]);
-        }
-
-        $consol['funcoes'] = $funcoes;
-        $consol['status'] = 'partial';
-        $consol['chunking'] = [
-            'chunks' => $chunks, 'processed' => $processed, 'failed' => $failed, 'partial' => true,
-            'note' => 'Fonte grande: analisado por partes; narrativa consolidada a partir dos fatos.',
-        ];
-        return $consol;
+        return [$deepFuncoes, $deepRules, $deepPoints, $cachedN, $skippedN];
     }
 
-    // ── anti-alucinação + normalização + evidência/confiança ────────────────────
+    // ── compact facts (sem código, sem data_access, sem listas gigantes) ─────────
+    private function buildCompactFacts(array $det, array $relevant, ?array $diff): array
+    {
+        $tables = $det['tables'] ?? [];
+        $written = [];
+        $read = [];
+        foreach ($tables as $t) {
+            $name = $t['table'] ?? $t['alias'] ?? null;
+            if (! $name) {
+                continue;
+            }
+            if (array_intersect(['UPDATE', 'INSERT', 'DELETE'], (array) ($t['access'] ?? []))) {
+                $written[$name] = array_slice((array) ($t['write_fields'] ?? []), 0, 8);
+            }
+            if (in_array('READ', (array) ($t['access'] ?? []), true)) {
+                $read[$name] = true;
+            }
+        }
+        $risk = [];
+        foreach (($det['queries'] ?? []) as $q) {
+            foreach ((array) ($q['risk_flags'] ?? []) as $rf) {
+                $risk[$rf] = true;
+            }
+        }
+        return [
+            'source'      => ['filename' => ($det['file']['filename'] ?? null), 'language' => $det['language'] ?? null, 'source_type' => $det['source_type'] ?? null],
+            'entrypoints' => array_values(array_map(fn ($f) => $f['name'], array_filter($det['functions'] ?? [], fn ($f) => empty($f['called_by'])))),
+            'functions'   => array_map(fn ($f) => $this->fnFact($f), $relevant),
+            'data_summary' => [
+                'tables_written' => $written,
+                'tables_read'    => array_slice(array_keys($read), 0, 25),
+                'external_integrations' => $det['external_integrations'] ?? [],
+                'risk_flags'     => array_keys($risk),
+            ],
+            'flow_summary' => array_slice(array_map(fn ($n) => [$n['type'] ?? '', $n['name'] ?? ($n['table'] ?? ($n['to'] ?? ''))], $det['technical_flow'] ?? []), 0, 24),
+            'diff'        => $diff ? $this->diffForAi($diff) : null,
+            'utility_functions_count' => max(0, count($det['functions'] ?? []) - count($relevant)),
+        ];
+    }
+
+    private function fnFact(array $f): array
+    {
+        return [
+            'name' => $f['name'] ?? null, 'type' => $f['type'] ?? null, 'params' => $f['params'] ?? [],
+            'calls' => array_slice(array_merge($f['calls_internal'] ?? [], $f['calls_user'] ?? []), 0, 10),
+            'called_by' => array_slice($f['called_by'] ?? [], 0, 8),
+            'tables' => $f['tables'] ?? [], 'accesses' => $f['accesses'] ?? [], 'effects' => $f['effects'] ?? [],
+            'evidence' => $f['evidence'] ?? null,
+        ];
+    }
+
+    private function codeSlice(array $lines, array $f): string
+    {
+        $a = max(0, (int) ($f['start_line'] ?? 1) - 1);
+        $b = max(1, (int) ($f['end_line'] ?? 1) - (int) ($f['start_line'] ?? 1) + 1);
+        $slice = implode("\n", array_slice($lines, $a, $b));
+        $cap = (int) config('services.source_doc_ai.max_input_tokens_per_call', 60000) * (int) config('services.source_doc_ai.chars_per_token_code', 1.6);
+        return mb_strlen($slice) > $cap ? mb_substr($slice, 0, (int) $cap) . "\n// […função truncada…]" : $slice;
+    }
+
+    // ── estimativa de custo (antes de chamar) ───────────────────────────────────
+    private function estimatePlan(array $plan): float
+    {
+        $cptText = (float) config('services.source_doc_ai.chars_per_token_text', 3.2);
+        $cptCode = (float) config('services.source_doc_ai.chars_per_token_code', 1.6);
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        $total = 0.0;
+        foreach ($plan as $p) {
+            $cpt = ! empty($p['code']) ? $cptCode : $cptText;
+            $in = ceil((mb_strlen($p['system']) + mb_strlen($p['user'])) / $cpt);
+            $total += $in / 1e6 * $ci + (int) $p['out'] / 1e6 * $co;
+        }
+        return $total;
+    }
+
+    private function costSkipped(float $est, int $relTotal): array
+    {
+        $this->coverage = ['relevant_functions_total' => $relTotal, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => $relTotal];
+        return $this->skeleton('skipped_cost_limit') + [
+            'strategy' => 'skipped_cost_limit',
+            'note' => 'Análise semântica não executada: estimativa de custo (US$ ' . round($est, 4) . ') acima do limite de US$ ' . config('services.source_doc_ai.hard_limit_usd', 0.30) . '. A documentação determinística permanece válida.',
+        ];
+    }
+
+    // ── merge incremental (ADD/UPDATE/REMOVE/KEEP) ──────────────────────────────
+    private function mergeIncremental(array $prev, array $delta): array
+    {
+        // funções: UPDATE as alteradas, KEEP as demais
+        $byName = [];
+        foreach (($prev['funcoes'] ?? []) as $f) {
+            $byName[strtolower($f['name'] ?? '')] = $f;
+        }
+        foreach (($delta['updated_functions'] ?? []) as $f) {
+            if (! empty($f['name'])) {
+                $byName[strtolower($f['name'])] = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? '')];
+            }
+        }
+        $prev['funcoes'] = array_values($byName);
+
+        // regras: ADD / UPDATE / REMOVE por id
+        $rules = [];
+        foreach (($prev['business_rules'] ?? $prev['regras_negocio'] ?? []) as $r) {
+            $rules[strtolower($r['id'] ?? '')] = $r;
+        }
+        foreach (($delta['rules_remove'] ?? []) as $id) {
+            unset($rules[strtolower((string) $id)]);
+        }
+        foreach (array_merge($delta['rules_update'] ?? [], $delta['rules_add'] ?? []) as $r) {
+            if (! empty($r['id'] ?? null) || ! empty($r['descricao'] ?? null)) {
+                $rules[strtolower($r['id'] ?? ('rn' . (count($rules) + 1)))] = $r;
+            }
+        }
+        $prev['regras_negocio'] = array_values($rules);
+        $prev['business_rules'] = array_values($rules);
+
+        foreach (($delta['attention_add'] ?? []) as $a) {
+            $prev['pontos_atencao'][] = $a;
+        }
+        $prev['resumo_alteracao'] = $this->str($delta['change_summary'] ?? $prev['resumo_alteracao'] ?? self::UNKNOWN);
+        $prev['change_summary'] = $prev['resumo_alteracao'];
+        return $prev;
+    }
+
+    private function changedFunctionNames(?array $diff): array
+    {
+        if (! $diff) {
+            return [];
+        }
+        $s = $diff['structural']['functions'] ?? [];
+        $names = array_merge(
+            array_map(fn ($x) => is_array($x) ? ($x['function'] ?? $x['name'] ?? '') : (string) $x, $s['changed'] ?? []),
+            array_map(fn ($x) => is_array($x) ? ($x['name'] ?? '') : (string) $x, $s['added'] ?? [])
+        );
+        // compat: campos planos
+        $names = array_merge($names, (array) ($diff['functions_changed'] ?? []), (array) ($diff['functions_added'] ?? []));
+        return array_values(array_unique(array_filter($names)));
+    }
+
+    private function deterministicChangeSummary(?array $diff): ?string
+    {
+        $ds = (array) ($diff['diff_stats'] ?? []);
+        if (($ds['change_type'] ?? null) === 'initial') {
+            return 'Documentação inicial desta versão do fonte.';
+        }
+        if (array_key_exists('structural_change', $ds) && $ds['structural_change'] === false) {
+            return 'Não foram identificadas alterações estruturais relevantes.';
+        }
+        return null;
+    }
+
+    // ── finalize (anti-alucinação + shape) ──────────────────────────────────────
     private function finalize(array $sem, array $det, ?array $diff): array
     {
         $fnSet = array_flip(array_map('strtolower', array_column($det['functions'] ?? [], 'name')));
@@ -170,49 +480,39 @@ class SourceDocSemanticAnalyzer
         [$fieldQ, $fieldBare] = $this->fieldSets($det);
         $userCalls = array_flip(array_map('strtolower', $det['user_calls'] ?? []));
 
-        // funcoes: só nomes existentes na C1 (+ dedupe — chunks sobrepostos podem repetir a função)
+        // funcoes (dedupe + só existentes)
         $funcoes = [];
-        $seenFn = [];
+        $seen = [];
         foreach ($sem['funcoes'] ?? [] as $f) {
             $name = $f['name'] ?? '';
-            if ($name === '') {
+            if ($name === '' || isset($seen[strtolower($name)])) {
                 continue;
             }
             if (! isset($fnSet[strtolower($name)])) {
-                $this->rejected[] = ['item' => 'funcao:' . $name, 'reason' => 'função inexistente no determinístico'];
+                $this->rejected[] = ['item' => 'funcao:' . $name, 'reason' => 'inexistente no determinístico'];
                 continue;
             }
-            if (isset($seenFn[strtolower($name)])) {
-                continue;
-            }
-            $seenFn[strtolower($name)] = true;
+            $seen[strtolower($name)] = true;
             $funcoes[] = ['name' => $name, 'finalidade' => $this->str($f['finalidade'] ?? '')];
         }
 
-        // table_purposes: só aliases existentes
         $tablePurposes = array_values(array_filter($sem['table_purposes'] ?? $sem['tabelas'] ?? [], function ($t) use ($tbSet) {
             $ok = ! empty($t['alias']) && isset($tbSet[strtoupper($t['alias'])]);
             if (! $ok && ! empty($t['alias'])) {
-                $this->rejected[] = ['item' => 'tabela:' . $t['alias'], 'reason' => 'tabela inexistente no determinístico'];
+                $this->rejected[] = ['item' => 'tabela:' . $t['alias'], 'reason' => 'inexistente no determinístico'];
             }
             return $ok;
         }));
 
-        // business_rules: evidência rastreável obrigatória + confiança; entidades inventadas rejeitam
         $rules = $this->validateRules($sem['regras_negocio'] ?? $sem['business_rules'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare, $userCalls);
-        // pontos de atenção: evidência + severidade + recomendação + confiança
         $attention = $this->validateAttention($sem['pontos_atencao'] ?? $sem['attention_points'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare, $userCalls);
 
-        // change_summary determinístico p/ initial / não-estrutural
-        $ds = (array) ($diff['diff_stats'] ?? []);
         $changeSummary = $this->str($sem['change_summary'] ?? $sem['resumo_alteracao'] ?? self::UNKNOWN);
-        if (($ds['change_type'] ?? ($diff['is_creation'] ?? false ? 'initial' : null)) === 'initial') {
-            $changeSummary = 'Documentação inicial desta versão do fonte.';
-        } elseif (array_key_exists('structural_change', $ds) && $ds['structural_change'] === false) {
-            $changeSummary = 'Não foram identificadas alterações estruturais relevantes.';
+        $detSummary = $this->deterministicChangeSummary($diff);
+        if ($detSummary !== null) {
+            $changeSummary = $detSummary;
         }
 
-        // regras/pontos RENDERIZÁVEIS = high/medium (LOW fica só p/ diagnóstico)
         $rulesShown = array_values(array_filter($rules, fn ($r) => in_array($r['confidence'], ['high', 'medium'], true)));
         $rulesLow = array_values(array_filter($rules, fn ($r) => $r['confidence'] === 'low'));
         $attnShown = array_values(array_filter($attention, fn ($a) => in_array($a['confidence'], ['high', 'medium'], true)));
@@ -220,31 +520,30 @@ class SourceDocSemanticAnalyzer
         return [
             'schema_version'   => self::SCHEMA_VERSION,
             'status'           => $sem['status'] ?? 'completed',
+            'strategy'         => $sem['strategy'] ?? 'initial_global_selective',
             'provider'         => $this->ai->name(),
             'model'            => $this->ai->model(),
-            // ── chaves consumidas pelo Renderer (Bloco 5, travado) ──
             'objetivo'         => $this->str($sem['objetivo'] ?? $sem['overview'] ?? self::UNKNOWN),
             'fluxo'            => $this->arr($sem['fluxo'] ?? $sem['execution_flow'] ?? []),
             'funcoes'          => $funcoes,
-            'tabelas'          => $tablePurposes, // {alias, finalidade}
+            'tabelas'          => $tablePurposes,
             'regras_negocio'   => array_map(fn ($r) => ['id' => $r['id'], 'descricao' => $r['descricao'], 'confidence' => $r['confidence'], 'evidence' => $r['evidence']], $rulesShown),
             'entradas'         => $this->arr($sem['entradas'] ?? $sem['inputs'] ?? []),
             'saidas'           => $this->arr($sem['saidas'] ?? $sem['outputs'] ?? []),
             'pontos_atencao'   => array_map(fn ($a) => $this->attnToString($a), $attnShown),
             'resumo_alteracao' => $changeSummary,
-            // ── estrutura RICA (governança / Central futura) ──
             'business_rules'   => $rules,
             'business_rules_low' => $rulesLow,
             'attention_points' => $attention,
             'change_summary'   => $changeSummary,
             'table_purposes'   => $tablePurposes,
+            'semantic_coverage' => $this->coverage ?: ['relevant_functions_total' => count($funcoes), 'relevant_functions_analyzed' => count($funcoes), 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0],
             'usage'            => $this->usageBlock(),
             'validation'       => ['rejected_count' => count($this->rejected), 'rejected' => array_slice($this->rejected, 0, 50)],
-            'chunking'         => $sem['chunking'] ?? ['chunks' => 1, 'processed' => 1, 'failed' => 0, 'partial' => false],
         ];
     }
 
-    /** @return array{0:array<string,bool>,1:array<string,bool>} [fieldsPorTabela, fieldsBare] */
+    // ── validação (reuso do Bloco 4) ────────────────────────────────────────────
     private function fieldSets(array $det): array
     {
         $q = [];
@@ -288,8 +587,7 @@ class SourceDocSemanticAnalyzer
                 $this->rejected[] = ['item' => 'regra:' . mb_substr($desc, 0, 40), 'reason' => 'menção a função inexistente'];
                 continue;
             }
-            $conf = $this->conf($r['confidence'] ?? 'low');
-            $out[] = ['id' => $r['id'] ?? ('RN' . str_pad((string) (++$i), 2, '0', STR_PAD_LEFT)), 'descricao' => $desc, 'confidence' => $conf, 'evidence' => $ev];
+            $out[] = ['id' => $r['id'] ?? ('RN' . str_pad((string) (++$i), 2, '0', STR_PAD_LEFT)), 'descricao' => $desc, 'confidence' => $this->conf($r['confidence'] ?? 'low'), 'evidence' => $ev];
         }
         return $out;
     }
@@ -298,7 +596,6 @@ class SourceDocSemanticAnalyzer
     {
         $out = [];
         foreach ($raw as $a) {
-            // aceita string simples ou estrutura {interpretation,severity,recommendation,evidence,confidence}
             if (is_string($a)) {
                 $a = ['interpretation' => $a, 'confidence' => 'medium'];
             }
@@ -321,7 +618,6 @@ class SourceDocSemanticAnalyzer
         return $out;
     }
 
-    /** Mantém só evidências que apontam entidades REAIS do determinístico. */
     private function validateEvidence($raw, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
     {
         $out = [];
@@ -347,7 +643,6 @@ class SourceDocSemanticAnalyzer
         return $out;
     }
 
-    /** Detecta menção a função U_XXX que não existe no determinístico (invenção clara). */
     private function mentionsInventedFn(string $text, array $fnSet, array $userCalls): bool
     {
         if (! preg_match_all('/\bU_([A-Za-z_][A-Za-z0-9_]*)/', $text, $m)) {
@@ -362,6 +657,163 @@ class SourceDocSemanticAnalyzer
         return false;
     }
 
+    // ── prompts (enxutos) ───────────────────────────────────────────────────────
+    private function systemPrompt(): string
+    {
+        return 'Analista Protheus/AdvPL. Os FATOS fornecidos são a AUTORIDADE — explique-os, não descubra nem invente. '
+            . 'Não crie função/tabela/campo/integração fora dos fatos. Sem evidência ⇒ "' . self::UNKNOWN . '". '
+            . 'Regras de negócio e pontos de atenção EXIGEM evidence (function/table/field dos fatos) + confidence (high|medium|low). '
+            . 'risk_flag é evidência técnica, não vulnerabilidade. Código pode vir com segredos mascarados. '
+            . 'Seja CONCISO (objetivo 2–4 frases; finalidade 1–2; regra 1 frase). Devolva SÓ JSON válido (sem markdown).';
+    }
+
+    private function globalUserPrompt(array $compact, ?array $diff, string $inlineCode): string
+    {
+        $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($inlineCode !== '') {
+            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $inlineCode;
+        }
+        $u .= "\n\nProduza JSON {objetivo, fluxo[], funcoes[{name,finalidade}] (só as funções dos fatos), "
+            . 'regras_negocio[{id,descricao,confidence,evidence[{type,name?,table?,field?}]}], entradas[], saidas[], '
+            . 'pontos_atencao[{interpretation,severity?,recommendation?,confidence,evidence[]}], change_summary}.';
+        return $u;
+    }
+
+    private function deepenUserPrompt(array $critical): string
+    {
+        $blocks = array_map(fn ($c) => "### {$c['name']}\nFATOS: " . json_encode($c['facts'], JSON_UNESCAPED_UNICODE) . "\nCÓDIGO:\n" . $c['code'], $critical);
+        return "Aprofundamento das FUNÇÕES CRÍTICAS (código mascarado):\n" . implode("\n\n", $blocks)
+            . "\n\nPara cada função, dê finalidade (1–2 frases). Se houver, adicione regra/ponto com evidence+confidence. "
+            . 'Devolva JSON {funcoes[{name,finalidade}], regras_negocio[...], pontos_atencao[...]}.';
+    }
+
+    private function incrementalUserPrompt(array $prev, ?array $diff, array $changed): string
+    {
+        $prevSummary = [
+            'objetivo' => $prev['objetivo'] ?? null,
+            'regras'   => array_map(fn ($r) => ['id' => $r['id'] ?? null, 'descricao' => $r['descricao'] ?? null], $prev['regras_negocio'] ?? []),
+        ];
+        $blocks = array_map(fn ($c) => "### {$c['name']}\nFATOS: " . json_encode($c['facts'], JSON_UNESCAPED_UNICODE) . "\nCÓDIGO:\n" . $c['code'], $changed);
+        return "SEMÂNTICA ANTERIOR (resumo):\n" . json_encode($prevSummary, JSON_UNESCAPED_UNICODE)
+            . "\n\nDIFF:\n" . json_encode($this->diffForAi($diff ?? []), JSON_UNESCAPED_UNICODE)
+            . "\n\nFUNÇÕES ALTERADAS (código mascarado):\n" . implode("\n\n", $blocks)
+            . "\n\nResponda SOMENTE o que muda: JSON {change_summary, updated_functions[{name,finalidade}], "
+            . 'rules_add[{id,descricao,confidence,evidence}], rules_update[{id,descricao,confidence,evidence}], rules_remove[id], attention_add[{interpretation,severity?,recommendation?,confidence,evidence}]}.';
+    }
+
+    private function diffForAi(array $diff): array
+    {
+        return [
+            'change_type'       => $diff['change_type'] ?? ($diff['diff_stats']['change_type'] ?? null),
+            'structural_change' => $diff['structural_change'] ?? ($diff['diff_stats']['structural_change'] ?? null),
+            'diff_stats'        => $diff['diff_stats'] ?? [],
+        ];
+    }
+
+    // ── caches ──────────────────────────────────────────────────────────────────
+    private function cacheEnabled(): bool
+    {
+        return (bool) config('services.source_doc_ai.cache_enabled', true);
+    }
+
+    private function versionCacheKey(string $blob): string
+    {
+        return 'srcdoc:sem:' . sha1($blob . '|' . self::SCHEMA_VERSION . '|' . config('services.source_doc_ai.prompt_version', 2) . '|' . $this->ai->model());
+    }
+
+    private function functionCacheKey(array $det, array $c): string
+    {
+        $norm = preg_replace('/\s+/', ' ', trim((string) ($c['code'] ?? '')));
+        $payload = ($det['language'] ?? '') . '|' . $norm . '|' . json_encode($c['facts'] ?? []) . '|' . self::SCHEMA_VERSION . '|' . config('services.source_doc_ai.prompt_version', 2) . '|' . $this->ai->model();
+        return 'srcdoc:semfn:' . sha1($payload);
+    }
+
+    // ── provider + usage ────────────────────────────────────────────────────────
+    private function call(string $system, string $user, ?int $out = null): string
+    {
+        $r = $this->ai->complete($system, $user, ['max_tokens' => $out ?: (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000)]);
+        $u = (array) ($r['usage'] ?? []);
+        $this->usage['input_tokens'] += (int) ($u['input_tokens'] ?? 0);
+        $this->usage['output_tokens'] += (int) ($u['output_tokens'] ?? 0);
+        $this->usage['calls']++;
+        return (string) ($r['text'] ?? '');
+    }
+
+    private function usageBlock(): array
+    {
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        $actual = $this->usage['input_tokens'] / 1e6 * $ci + $this->usage['output_tokens'] / 1e6 * $co;
+        return $this->usage + [
+            'duration_ms'    => (int) ((microtime(true) - $this->t0) * 1000),
+            'actual_cost_usd' => round($actual, 4),
+            'hard_limit_usd' => (float) config('services.source_doc_ai.hard_limit_usd', 0.30),
+        ];
+    }
+
+    private function resetState(): void
+    {
+        $this->t0 = microtime(true);
+        $this->usage = ['input_tokens' => 0, 'output_tokens' => 0, 'calls' => 0, 'cache_hits' => 0, 'cache_misses' => 0, 'estimated_before_usd' => 0.0];
+        $this->rejected = [];
+        $this->coverage = [];
+    }
+
+    private function skeleton(string $status): array
+    {
+        return [
+            'schema_version' => self::SCHEMA_VERSION, 'status' => $status, 'strategy' => null, 'provider' => $this->ai->name(), 'model' => $this->ai->model(),
+            'objetivo' => null, 'fluxo' => [], 'funcoes' => [], 'tabelas' => [], 'regras_negocio' => [],
+            'entradas' => [], 'saidas' => [], 'pontos_atencao' => [], 'resumo_alteracao' => null,
+            'business_rules' => [], 'business_rules_low' => [], 'attention_points' => [], 'change_summary' => null, 'table_purposes' => [],
+            'semantic_coverage' => ['relevant_functions_total' => 0, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0],
+            'usage' => $this->usageBlock(), 'validation' => ['rejected_count' => 0, 'rejected' => []],
+        ];
+    }
+
+    // ── helpers ─────────────────────────────────────────────────────────────────
+    private function normFuncoes(array $raw): array
+    {
+        $out = [];
+        foreach ($raw as $f) {
+            if (! empty($f['name'])) {
+                $out[] = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? '')];
+            }
+        }
+        return $out;
+    }
+
+    private function mergeFuncoes(array $a, array $b): array
+    {
+        $by = [];
+        foreach (array_merge($a, $b) as $f) {
+            $k = strtolower($f['name'] ?? '');
+            if ($k === '') {
+                continue;
+            }
+            if (! isset($by[$k]) || (empty($by[$k]['finalidade']) && ! empty($f['finalidade']))) {
+                $by[$k] = $f;
+            }
+        }
+        return array_values($by);
+    }
+
+    private function findByName(array $list, string $name): ?array
+    {
+        foreach ($list as $c) {
+            if (strcasecmp($c['name'] ?? '', $name) === 0) {
+                return $c;
+            }
+        }
+        return null;
+    }
+
+    private function conf($v): string
+    {
+        $v = strtolower((string) $v);
+        return in_array($v, ['high', 'medium', 'low'], true) ? $v : 'low';
+    }
+
     private function attnToString(array $a): string
     {
         $s = $a['interpretation'];
@@ -374,168 +826,9 @@ class SourceDocSemanticAnalyzer
         return $s;
     }
 
-    private function conf($v): string
-    {
-        $v = strtolower((string) $v);
-        return in_array($v, ['high', 'medium', 'low'], true) ? $v : 'low';
-    }
-
-    // ── chamada ao provider + acumulação de usage ───────────────────────────────
-    private function call(string $system, string $user): string
-    {
-        $out = $this->ai->complete($system, $user, []);
-        $u = (array) ($out['usage'] ?? []);
-        $this->usage['input_tokens'] += (int) ($u['input_tokens'] ?? 0);
-        $this->usage['output_tokens'] += (int) ($u['output_tokens'] ?? 0);
-        $this->usage['calls']++;
-        return (string) ($out['text'] ?? '');
-    }
-
-    private function usageBlock(): array
-    {
-        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
-        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
-        $cost = $this->usage['input_tokens'] / 1e6 * $ci + $this->usage['output_tokens'] / 1e6 * $co;
-        return $this->usage + ['estimated_cost_usd' => round($cost, 4)];
-    }
-
-    private function skeleton(string $status): array
-    {
-        return [
-            'schema_version' => self::SCHEMA_VERSION, 'status' => $status, 'provider' => $this->ai->name(), 'model' => $this->ai->model(),
-            'objetivo' => null, 'fluxo' => [], 'funcoes' => [], 'tabelas' => [], 'regras_negocio' => [],
-            'entradas' => [], 'saidas' => [], 'pontos_atencao' => [], 'resumo_alteracao' => null,
-            'business_rules' => [], 'business_rules_low' => [], 'attention_points' => [], 'change_summary' => null,
-            'table_purposes' => [], 'usage' => $this->usageBlock(),
-            'validation' => ['rejected_count' => 0, 'rejected' => []], 'chunking' => ['chunks' => 0, 'processed' => 0, 'failed' => 0, 'partial' => false],
-        ];
-    }
-
-    // ── prompts ────────────────────────────────────────────────────────────────
-    private function systemPrompt(): string
-    {
-        return 'Você é um analista de sistemas Protheus/AdvPL/TL++. Recebe FATOS já extraídos '
-            . 'deterministicamente (funções, call graph, tabelas, campos por papel, SQL, dependências, efeitos, '
-            . 'technical_flow) + o CÓDIGO com segredos MASCARADOS + um diff estrutural. Sua função é EXPLICAR, em '
-            . "português do Brasil, o que o código faz — NUNCA descobrir fatos novos nem inventar. Regras absolutas:\n"
-            . "1) Use SOMENTE os fatos e o código fornecidos.\n"
-            . "2) NÃO invente tabela, campo, função, integração, parâmetro, regra ou comportamento fora dos fatos.\n"
-            . "3) Sem evidência suficiente, escreva EXATAMENTE: \"" . self::UNKNOWN . "\".\n"
-            . "4) Em 'funcoes' e 'table_purposes' use EXATAMENTE os nomes/aliases dos fatos.\n"
-            . "5) Toda regra de negócio e ponto de atenção DEVE ter evidence rastreável (função/tabela/campo dos fatos) "
-            . "e confidence (high|medium|low). high=evidência direta; medium=inferência forte pelo fluxo; low=incerto.\n"
-            . "6) NÃO extrapole o diff (ex.: não afirme 'envia e-mail' se os fatos não sustentam).\n"
-            . "7) risk_flag é EVIDÊNCIA técnica, não vulnerabilidade — só sugira severidade/recomendação com base.\n"
-            . "8) É melhor documentação incompleta do que tecnicamente falsa.\n"
-            . 'Devolva EXCLUSIVAMENTE um JSON válido (sem markdown/cercas) com as chaves: '
-            . 'objetivo (string), fluxo (array de passos string), funcoes (array de {name, finalidade}), '
-            . 'table_purposes (array de {alias, finalidade}), regras_negocio (array de {id, descricao, confidence, '
-            . 'evidence:[{type:"function|table|field", name?, table?, field?, lines?}]}), entradas (array string), '
-            . 'saidas (array string), pontos_atencao (array de {interpretation, severity?, recommendation?, confidence, '
-            . 'evidence:[...]}), change_summary (string).';
-    }
-
-    private function userPrompt(array $det, ?array $diff, string $code): string
-    {
-        $u = "FATOS DETERMINÍSTICOS (Camada 1):\n" . json_encode($this->factsForAi($det), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($diff !== null) {
-            $u .= "\n\nDIFF (estrutural, Camada 2):\n" . json_encode($this->diffForAi($diff), JSON_UNESCAPED_UNICODE);
-        }
-        if ($code !== '') {
-            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
-        }
-        return $u;
-    }
-
-    /** Fatos enviados à IA (Bloco 1 enriquecido) — nomes estruturados, SEM texto SQL cru (governança). */
-    private function factsForAi(array $det, ?array $onlyFns = null): array
-    {
-        $fns = $det['functions'] ?? [];
-        if ($onlyFns !== null) {
-            $set = array_flip(array_map('strtolower', $onlyFns));
-            $fns = array_values(array_filter($fns, fn ($f) => isset($set[strtolower($f['name'] ?? '')])));
-        }
-        return [
-            'file'         => $det['file'] ?? null,
-            'source_type'  => $det['source_type'] ?? null,
-            'language'     => $det['language'] ?? null,
-            'includes'     => $det['includes'] ?? [],
-            'functions'    => array_map(fn ($f) => [
-                'name' => $f['name'] ?? null, 'type' => $f['type'] ?? null, 'params' => $f['params'] ?? [],
-                'returns' => $f['returns'] ?? [], 'called_by' => $f['called_by'] ?? [],
-                'calls_internal' => $f['calls_internal'] ?? [], 'calls_user' => $f['calls_user'] ?? [],
-                'tables' => $f['tables'] ?? [], 'accesses' => $f['accesses'] ?? [], 'effects' => $f['effects'] ?? [],
-                'evidence' => $f['evidence'] ?? null,
-            ], $fns),
-            // call_graph/technical_flow capados (fonte grande pode ter centenas) — evita inflar tokens.
-            'call_graph'   => array_slice($det['call_graph'] ?? [], 0, 120),
-            'tables'       => array_map(fn ($t) => $this->tableFact($t), $det['tables'] ?? []),
-            'queries'      => array_map(fn ($q) => $this->queryFact($q), $det['queries'] ?? []),
-            // data_access OMITIDO de propósito: é redundante com tables+queries e, em fontes grandes,
-            // tem milhares de eventos nativos (era o driver do custo de ~$9/fonte). tables/queries bastam.
-            'external_integrations' => $det['external_integrations'] ?? [],
-            'dependencies' => $det['dependencies'] ?? [],
-            'effects'      => array_slice($det['effects'] ?? [], 0, 120),
-            'technical_flow' => array_slice($det['technical_flow'] ?? [], 0, 60),
-            'sx6_params'   => $det['sx6_params'] ?? [],
-            'endpoints'    => $det['endpoints'] ?? [],
-            'security_findings_count' => count($det['security_findings'] ?? []),
-        ];
-    }
-
-    private function tableFact(array $t): array
-    {
-        return [
-            'table' => $t['table'] ?? $t['alias'] ?? null, 'access' => $t['access'] ?? [],
-            'read_fields' => $t['read_fields'] ?? [], 'write_fields' => $t['write_fields'] ?? [],
-            'where_fields' => $t['where_fields'] ?? [], 'functions' => $t['functions'] ?? [],
-        ];
-    }
-
-    private function queryFact(array $q): array
-    {
-        return [
-            'operation' => $q['operation'] ?? null, 'table' => $q['table'] ?? null, 'executor' => $q['executor'] ?? null,
-            'construction' => $q['construction'] ?? null, 'function' => $q['function'] ?? null,
-            'read_fields' => $q['read_fields'] ?? [], 'write_fields' => $q['write_fields'] ?? [], 'where_fields' => $q['where_fields'] ?? [],
-            'has_where' => $q['has_where'] ?? null, 'risk_flags' => $q['risk_flags'] ?? [], 'evidence' => $q['evidence'] ?? null,
-        ];
-    }
-
-    /** Fatos ESCOPADOS para um chunk: só as funções do trecho + suas tabelas/queries (compacto). */
-    private function chunkFacts(array $det, array $fnNames): array
-    {
-        $set = array_flip(array_map('strtolower', $fnNames));
-        $fns = array_values(array_filter($det['functions'] ?? [], fn ($f) => isset($set[strtolower($f['name'] ?? '')])));
-        $tables = array_values(array_filter($det['tables'] ?? [], fn ($t) => array_intersect($fnNames, $t['functions'] ?? [])));
-        $queries = array_values(array_filter($det['queries'] ?? [], fn ($q) => isset($set[strtolower((string) ($q['function'] ?? ''))])));
-        return [
-            'functions' => array_map(fn ($f) => [
-                'name' => $f['name'] ?? null, 'type' => $f['type'] ?? null, 'params' => $f['params'] ?? [],
-                'returns' => $f['returns'] ?? [], 'called_by' => $f['called_by'] ?? [],
-                'calls_internal' => $f['calls_internal'] ?? [], 'calls_user' => $f['calls_user'] ?? [],
-                'tables' => $f['tables'] ?? [], 'accesses' => $f['accesses'] ?? [], 'effects' => $f['effects'] ?? [],
-            ], $fns),
-            'tables'  => array_map(fn ($t) => $this->tableFact($t), $tables),
-            'queries' => array_map(fn ($q) => $this->queryFact($q), $queries),
-        ];
-    }
-
-    /** Diff enviado à IA: só os fatos estruturais (contagens + estrutura), sem ruído. */
-    private function diffForAi(array $diff): array
-    {
-        return [
-            'change_type'       => $diff['change_type'] ?? ($diff['diff_stats']['change_type'] ?? null),
-            'structural_change' => $diff['structural_change'] ?? ($diff['diff_stats']['structural_change'] ?? null),
-            'diff_stats'        => $diff['diff_stats'] ?? [],
-            'structural'        => $diff['structural'] ?? null,
-        ];
-    }
-
     private function parseJson(string $text): ?array
     {
-        $text = trim($text);
-        $text = preg_replace('/^```(?:json)?|```$/m', '', $text);
+        $text = trim(preg_replace('/^```(?:json)?|```$/m', '', trim($text)));
         $a = strpos($text, '{');
         $b = strrpos($text, '}');
         if ($a === false || $b === false || $b <= $a) {
