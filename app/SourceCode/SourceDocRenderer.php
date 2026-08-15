@@ -354,6 +354,24 @@ class SourceDocRenderer
             return $this->ni('Nenhuma tabela identificada no código.');
         }
         $h = '';
+        // Fonte grande: resumo compacto (todas) + detalhe só das relevantes (escrita/filtro).
+        $big = count($tables) > 20;
+        if ($big) {
+            $h .= '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Tabela</th><th ' . self::TH . '>Acesso</th><th ' . self::TH . '>Funções</th><th ' . self::TH . '>Origem</th></tr>';
+            foreach ($tables as $t) {
+                $h .= '<tr><td ' . self::TD . '><b>' . $this->e((string) ($this->g($t, 'table') ?? $this->g($t, 'alias', ''))) . '</b></td>'
+                    . '<td ' . self::TD . '>' . $this->e(implode(', ', (array) $this->g($t, 'access', [])) ?: '—') . '</td>'
+                    . '<td ' . self::TD . '>' . $this->e(implode(', ', array_slice((array) $this->g($t, 'functions', []), 0, 4)) ?: '—') . '</td>'
+                    . '<td ' . self::TD . '>' . $this->e(implode(', ', (array) $this->g($t, 'source', [])) ?: '—') . '</td></tr>';
+            }
+            $h .= '</table>';
+            $detail = array_values(array_filter($tables, fn ($t) => !empty($this->g($t, 'write_fields', [])) || !empty($this->g($t, 'where_fields', [])) || array_intersect(['UPDATE', 'INSERT', 'DELETE'], (array) $this->g($t, 'access', []))));
+            $detail = array_slice($detail, 0, 25);
+            if (!empty($detail)) {
+                $h .= '<h3>Detalhe (tabelas com escrita/filtro)</h3>';
+            }
+            $tables = $detail;
+        }
         foreach ($tables as $t) {
             $name = (string) ($this->g($t, 'table') ?? $this->g($t, 'alias', ''));
             $ev = (array) $this->g($t, 'evidence', []);
