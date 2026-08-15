@@ -266,7 +266,7 @@ class SourceDocRenderer
         // detalhes — para as funções relevantes (evita 79 cards). Pequeno: todas.
         $relevant = array_values(array_filter($fns, fn ($f) => !empty($this->g($f, 'tables', [])) || !empty($this->g($f, 'effects', [])) || !empty(array_merge((array) $this->g($f, 'calls_internal', []), (array) $this->g($f, 'calls_user', []))) || !empty($this->g($f, 'called_by', []))));
         $detail = count($fns) <= 12 ? $fns : $relevant;
-        $cap = 40;
+        $cap = count($fns) > 12 ? 18 : 40; // fonte grande: resumo completo + detalhe enxuto
         $capped = array_slice($detail, 0, $cap);
         if (!empty($capped)) {
             $h .= '<h3>Detalhe das funções</h3>';
@@ -504,6 +504,19 @@ class SourceDocRenderer
             return $this->ni('Nenhum efeito de escrita/integração identificado.');
         }
         $labels = ['database_write' => 'Escrita em banco', 'database_delete' => 'Exclusão em banco', 'file_write' => 'Escrita em arquivo', 'external_call' => 'Chamada externa', 'routine_execution' => 'Execução de rotina'];
+        // Fonte grande: resumo por tipo (contagem) + amostra, em vez de centenas de linhas.
+        if (count($relevant) > 40) {
+            $byType = [];
+            foreach ($relevant as $ef) {
+                $byType[(string) $this->g($ef, 'type', '')][] = (string) $this->g($ef, 'target', '');
+            }
+            $h = '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Efeito</th><th ' . self::TH . '>Qtd</th><th ' . self::TH . '>Alvos (amostra)</th></tr>';
+            foreach ($byType as $type => $targets) {
+                $uniq = array_values(array_unique(array_filter($targets)));
+                $h .= '<tr><td ' . self::TD . '>' . $this->e($labels[$type] ?? $type) . '</td><td ' . self::TD . '>' . count($targets) . '</td><td ' . self::TD . '>' . $this->e(implode(', ', array_slice($uniq, 0, 15)) . (count($uniq) > 15 ? ' …' : '')) . '</td></tr>';
+            }
+            return $h . '</table><p ' . self::NI . '>' . count($relevant) . ' efeitos no total — resumo por tipo (detalhe por linha disponível no deterministic_json).</p>';
+        }
         $h = '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Efeito</th><th ' . self::TH . '>Alvo</th><th ' . self::TH . '>Função</th><th ' . self::TH . '>Evidência</th></tr>';
         foreach ($relevant as $ef) {
             $ev = (array) $this->g($ef, 'evidence', []);
