@@ -84,9 +84,11 @@ return [
         'max_relevant_functions'     => (int) env('SOURCE_DOC_AI_MAX_RELEVANT_FUNCTIONS', 12),
         'max_calls'                  => (int) env('SOURCE_DOC_AI_MAX_CALLS', 3),
         'max_input_tokens_per_call'  => (int) env('SOURCE_DOC_AI_MAX_INPUT_TOKENS_PER_CALL', 60000),
-        // Output: a chamada GLOBAL precisa de mais espaço (descreve N funções+regras) que o aprofundamento.
-        'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 1800),
-        'max_output_tokens_global'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_GLOBAL', 3500),
+        // Output: a chamada GLOBAL (narrativa: objetivo+fluxo+regras+IO+pontos) e o aprofundamento
+        // (finalidades) precisam caber sem truncar. Ajustados APÓS medição (o ganho principal foi o
+        // split narrativa×funções; estes são o ajuste fino permitido, mantendo custo ≤ US$ 0,25).
+        'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 3000),
+        'max_output_tokens_global'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_GLOBAL', 5000),
         // Aprofundamento (código das funções críticas): nº de funções e orçamento de tokens do código.
         'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
         'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),
