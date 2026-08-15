@@ -253,7 +253,10 @@ class SourceDocCatalogTest extends TestCase
 
     public function test_show_meta_excludes_deterministic_and_shows_four_statuses(): void
     {
-        $doc = $this->makeDoc();
+        // Doc COM repo ATIVO — garante que o show() carrega sourceRepo.active e o resolver
+        // resolve ATUALIZADA (regressão do bug repository_inactive por select incompleto).
+        $repo = ClientSourceRepo::create(['customer_id' => Customer::factory()->create()->id, 'owner' => 'erpserv-clientes', 'repository' => 'concreserv', 'branch' => 'main', 'active' => true]);
+        $doc = $this->makeDoc(['repository' => 'concreserv'], [], $repo);
         $this->app->instance(GithubAppAuth::class, $this->fakeAuth([$doc->path => $doc->currentVersion->source_blob_sha]));
 
         $r = $this->actingAs($this->admin(), 'sanctum')->getJson("/api/v1/source-docs/{$doc->id}");

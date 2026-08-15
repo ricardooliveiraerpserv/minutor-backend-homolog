@@ -169,7 +169,9 @@ class SourceDocCatalogController extends Controller
             ])
             ->with([
                 'customer:id,name',
-                'sourceRepo:id,owner,repository,branch',
+                // 'active' é OBRIGATÓRIO: o SourceDocStatusResolver::preChecks lê $repo->active;
+                // sem essa coluna o repo parece inativo e a situação vira NAO_VALIDADO indevido.
+                'sourceRepo:id,owner,repository,branch,active',
                 'currentVersion:id,source_doc_id,analysis_status,source_commit_sha,source_blob_sha,gmud_id,ticket_number,responsavel,created_at',
             ])
             ->find($sourceDoc);
