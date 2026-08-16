@@ -152,12 +152,16 @@ class ProjectController extends Controller
      */
     public function myProjects(Request $request): JsonResponse
     {
-        // Inclui IC: projetos de Investimento Interno onde o consultor está
-        // alocado também aparecem em "Meus Projetos". A restrição "alocado"
-        // já é aplicada via consultant_only + filtro de IC do index().
+        // "Meus Projetos" (visão do consultor): SÓ projetos do tipo PROJETO (operacionais,
+        // cronograma) e SÓ onde ele está ALOCADO em atividade (responsável por atividade OU
+        // alocado numa etapa). NÃO entram Sustentação/Cloud/Bizify/Investimento nem projeto
+        // onde ele está só na equipe sem alocação no cronograma.
+        //  - activity_allocated=true → escopo por etapa/atividade (no index)
+        //  - projeto_only=true       → só categoria Projeto (no index)
         $request->merge([
-            'consultant_only'                => 'true',
-            'include_investimento_comercial' => 'true',
+            'consultant_only'    => 'true',
+            'activity_allocated' => 'true',
+            'projeto_only'       => 'true',
         ]);
         return $this->index($request);
     }
@@ -273,20 +277,30 @@ class ProjectController extends Controller
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
-                // $query->whereHas('consultants', function ($q) use ($targetUserId) {
-                //     $q->where('user_id', $targetUserId);
-                // });
-                $query->where(function ($q) use ($targetUserId) {
-                    $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId);
-                    })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId);
-                    })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
-                        $subQ->where('users.id', $targetUserId);
-                    })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId);
+                if ($request->boolean('activity_allocated')) {
+                    // "Meus Projetos": SÓ projetos onde o consultor está ALOCADO no cronograma —
+                    // responsável por alguma atividade OU alocado em alguma etapa. Estar só na
+                    // equipe do projeto (project_consultants) NÃO basta.
+                    $query->where(function ($q) use ($targetUserId) {
+                        $q->whereHas('stages.deliveries', function ($d) use ($targetUserId) {
+                            $d->where('responsible_user_id', $targetUserId);
+                        })->orWhereHas('stages.allocations', function ($a) use ($targetUserId) {
+                            $a->where('user_id', $targetUserId);
+                        });
                     });
-                });
+                } else {
+                    $query->where(function ($q) use ($targetUserId) {
+                        $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
+                            $subQ->where('user_id', $targetUserId);
+                        })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
+                            $subQ->where('user_id', $targetUserId);
+                        })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
+                            $subQ->where('users.id', $targetUserId);
+                        })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
+                            $subQ->where('user_id', $targetUserId);
+                        });
+                    });
+                }
             }
             // Se o usuário alvo for Administrator, não aplica filtro (vê todos os projetos)
         }
@@ -521,6 +535,22 @@ class ProjectController extends Controller
                       });
                 });
             }
+        }
+
+        // projeto_only: SÓ categoria "Projeto" (operacionais). Espelha Project::isOperational()
+        // — exclui Investimento e serviceType com nome contendo sustenta/cloud/bizify/investimento.
+        // Projeto sem serviceType = operacional (entra).
+        if ($request->boolean('projeto_only')) {
+            $query->where('is_investimento_comercial', false)
+                ->where(function ($q) {
+                    $q->whereDoesntHave('serviceType')
+                      ->orWhereHas('serviceType', function ($s) {
+                          $s->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%sustenta%'")
+                            ->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%cloud%'")
+                            ->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%bizify%'")
+                            ->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%investimento%'");
+                      });
+                });
         }
 
         // Mapeamento de campos virtuais/computados para colunas reais ou joins
