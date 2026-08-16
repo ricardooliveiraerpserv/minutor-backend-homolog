@@ -5,22 +5,34 @@ namespace App\Http\Controllers;
 use App\Jobs\InventorySourceRepoJob;
 use App\Models\ClientSourceRepo;
 use App\Models\SourceRepoCoverage;
+use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Central de Fontes — C3.5. Cobertura do acervo (dashboard) + disparo do inventário.
  * Leitura sob source_docs.view; disparo sob source_docs.inventory (estrito).
+ * C4a: cobertura e disparo escopados por cliente (deny-by-default).
  */
 class SourceDocCoverageController extends Controller
 {
+    public function __construct(private SourceDocCustomerScope $scope)
+    {
+    }
+
     /** GET /source-docs/coverage — snapshot por repo + totais. */
     public function coverage(Request $request): JsonResponse
     {
-        $rows = SourceRepoCoverage::query()
+        $query = SourceRepoCoverage::query()
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', (int) $request->query('customer_id')))
             ->with('sourceRepo:id,customer_id,owner,repository,branch,descricao')
-            ->orderBy('owner')->orderBy('repository')->get();
+            ->orderBy('owner')->orderBy('repository');
+
+        // C4a: cobertura só dos clientes no escopo (os totais derivam destas linhas → também escopados).
+        $this->scope->applyScope($query, $request->user(), 'source_repo_coverage.customer_id');
+
+        $rows = $query->get();
 
         $sum = fn (string $c) => (int) $rows->sum($c);
         $totals = [
@@ -52,10 +64,25 @@ class SourceDocCoverageController extends Controller
     /** POST /source-docs/inventory — dispara a varredura (async na fila source-doc). */
     public function inventory(Request $request): JsonResponse
     {
-        $repos = ClientSourceRepo::query()->where('active', true)
+        $targeted = $request->filled('customer_id') || $request->filled('source_repo_id');
+
+        $query = ClientSourceRepo::query()->where('active', true)
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', (int) $request->input('customer_id')))
-            ->when($request->filled('source_repo_id'), fn ($q) => $q->whereKey((int) $request->input('source_repo_id')))
-            ->get();
+            ->when($request->filled('source_repo_id'), fn ($q) => $q->whereKey((int) $request->input('source_repo_id')));
+
+        // C4a: disparo escopado — usuário não-global só enfileira inventário dos próprios clientes.
+        $this->scope->applyScope($query, $request->user(), 'client_source_repos.customer_id');
+
+        $repos = $query->get();
+
+        // Auditoria de NEGATIVA (ação sensível): alvo explícito fora do escopo → nada enfileirado.
+        if ($targeted && $repos->isEmpty() && ! $this->scope->isGlobal($request->user())) {
+            Log::channel(config('logging.default'))->warning('source_docs.inventory negado por escopo', [
+                'actor_user_id'        => $request->user()?->id,
+                'requested_customer_id'=> $request->filled('customer_id') ? (int) $request->input('customer_id') : null,
+                'requested_repo_id'    => $request->filled('source_repo_id') ? (int) $request->input('source_repo_id') : null,
+            ]);
+        }
 
         $batch = (int) ($request->input('batch') ?: 0);
         foreach ($repos as $repo) {

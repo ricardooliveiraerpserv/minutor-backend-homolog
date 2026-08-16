@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\SourceDoc;
 use App\Models\SourceDocEntity;
+use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +18,10 @@ use Illuminate\Support\Facades\DB;
 class SourceDocSearchController extends Controller
 {
     private const MAX_OCC = 20; // ocorrências mostradas por fonte
+
+    public function __construct(private SourceDocCustomerScope $scope)
+    {
+    }
 
     /** GET /source-docs/search */
     public function search(Request $request): JsonResponse
@@ -89,11 +94,15 @@ class SourceDocSearchController extends Controller
         }
         $q = trim((string) $request->query('q', ''));
 
-        $rows = SourceDocEntity::query()
+        $query = SourceDocEntity::query()
             ->where('entity_type', $entity)
             ->when($q !== '', fn ($x) => $x->whereRaw('lower(name) like ?', [mb_strtolower($q) . '%']))
-            ->when($request->filled('customer_id'), fn ($x) => $x->where('customer_id', (int) $request->query('customer_id')))
-            ->select('name')->distinct()->orderBy('name')->limit(20)->pluck('name');
+            ->when($request->filled('customer_id'), fn ($x) => $x->where('customer_id', (int) $request->query('customer_id')));
+
+        // C4a: autocomplete não pode vazar nomes de entidades de clientes fora do escopo.
+        $this->scope->applyScope($query, $request->user(), 'source_doc_entities.customer_id');
+
+        $rows = $query->select('name')->distinct()->orderBy('name')->limit(20)->pluck('name');
 
         return response()->json(['data' => $rows]);
     }
@@ -101,7 +110,8 @@ class SourceDocSearchController extends Controller
     /** GET /source-docs/{id}/entities — entidades de UM fonte (deep-link da ficha). */
     public function entities(int $sourceDoc, Request $request): JsonResponse
     {
-        if (! SourceDoc::whereKey($sourceDoc)->exists()) {
+        $doc = SourceDoc::whereKey($sourceDoc)->select('id', 'customer_id')->first();
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $rows = SourceDocEntity::query()
@@ -120,7 +130,7 @@ class SourceDocSearchController extends Controller
         $q = trim((string) $request->query('q', ''));
         $match = (string) $request->query('match', 'prefix'); // exact | prefix | contains
 
-        return SourceDocEntity::query()
+        $query = SourceDocEntity::query()
             ->where('entity_type', $entity)
             ->when($q !== '', function ($x) use ($q, $match) {
                 $lq = mb_strtolower($q);
@@ -140,5 +150,10 @@ class SourceDocSearchController extends Controller
             ->when($request->filled('customer_id'), fn ($x) => $x->where('customer_id', (int) $request->query('customer_id')))
             ->when($request->filled('owner'), fn ($x) => $x->where('owner', (string) $request->query('owner')))
             ->when($request->filled('repository'), fn ($x) => $x->where('repository', (string) $request->query('repository')));
+
+        // C4a: busca técnica NUNCA varre entidades de clientes fora do escopo (deny-by-default).
+        $this->scope->applyScope($query, $request->user(), 'source_doc_entities.customer_id');
+
+        return $query;
     }
 }

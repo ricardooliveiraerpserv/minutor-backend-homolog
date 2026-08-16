@@ -35,19 +35,23 @@ use Illuminate\Support\Facades\DB;
  */
 class SourceDocCustomerScope
 {
-    /** Memoização por request, chaveada por user id. */
-    private static array $memo = [];
+    /**
+     * Memoização POR INSTÂNCIA (chaveada por user id). O container do Laravel recria a
+     * instância a cada request, então o memo é naturalmente por-request — não vaza entre
+     * requests num worker persistente (o que deixaria escopo obsoleto se os vínculos mudam).
+     */
+    private array $memo = [];
 
     /**
      * Clientes acessíveis pelo usuário. Ver semântica na doc da classe.
      */
     public function accessibleCustomerIds(User $user): ?array
     {
-        if (array_key_exists($user->id, self::$memo)) {
-            return self::$memo[$user->id];
+        if (array_key_exists($user->id, $this->memo)) {
+            return $this->memo[$user->id];
         }
 
-        return self::$memo[$user->id] = $this->compute($user);
+        return $this->memo[$user->id] = $this->compute($user);
     }
 
     /**
@@ -110,11 +114,11 @@ class SourceDocCustomerScope
     }
 
     /**
-     * Limpa a memoização (uso em testes que trocam de usuário/vínculos no mesmo processo).
+     * Limpa a memoização desta instância (útil se os vínculos mudarem no mesmo request).
      */
-    public static function flush(): void
+    public function flush(): void
     {
-        self::$memo = [];
+        $this->memo = [];
     }
 
     // ────────────────────────────────────────────────────────────────────────

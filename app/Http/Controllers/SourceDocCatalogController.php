@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\SourceDoc;
 use App\Models\SourceDocVersion;
+use App\SourceCode\SourceDocCustomerScope;
 use App\SourceCode\SourceDocStatusResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -21,8 +22,10 @@ use Illuminate\Support\Facades\DB;
  */
 class SourceDocCatalogController extends Controller
 {
-    public function __construct(private SourceDocStatusResolver $resolver)
-    {
+    public function __construct(
+        private SourceDocStatusResolver $resolver,
+        private SourceDocCustomerScope $scope,
+    ) {
     }
 
     /**
@@ -58,6 +61,11 @@ class SourceDocCatalogController extends Controller
                 $w->where('source_docs.filename', 'ilike', "%{$q}%")
                     ->orWhere('source_docs.path', 'ilike', "%{$q}%");
             }));
+
+        // C4a — ESCOPO POR CLIENTE (enforcement em SQL, deny-by-default). O filtro customer_id
+        // acima é apenas recorte de UI; a segurança é este applyScope, que intersecta com os
+        // clientes que o usuário PODE ver. Fora do escopo simplesmente não aparece.
+        $this->scope->applyScope($query, $request->user(), 'source_docs.customer_id');
 
         switch ((string) $request->query('sort', 'last_change')) {
             case 'filename':  $query->orderBy('source_docs.filename'); break;
@@ -152,7 +160,7 @@ class SourceDocCatalogController extends Controller
      * meta da versão vigente e a documentação SEM o bloco 'deterministic' (o pesado: ~370KB em
      * fontes grandes). O 'deterministic' vem sob demanda em /documentation (ajuste #3, medido).
      */
-    public function show(int $sourceDoc): JsonResponse
+    public function show(Request $request, int $sourceDoc): JsonResponse
     {
         $doc = SourceDoc::query()
             ->select([
@@ -170,8 +178,9 @@ class SourceDocCatalogController extends Controller
             ->find($sourceDoc);
 
         // 404 explícito (o handler global da API converte exceções em 422; um RESPONSE não-lançado
-        // passa como 404 de verdade).
-        if (! $doc) {
+        // passa como 404 de verdade). C4a: recurso fora do escopo do cliente também retorna 404
+        // (mesma mensagem — não vaza existência de fonte de outro cliente).
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
 
@@ -222,9 +231,10 @@ class SourceDocCatalogController extends Controller
      * GET /source-docs/{id}/documentation — bloco 'deterministic' (o pesado), sob demanda,
      * para as abas Estrutura / Dados & SQL / Dependências. Carregado só quando o usuário abre.
      */
-    public function documentation(int $sourceDoc): JsonResponse
+    public function documentation(Request $request, int $sourceDoc): JsonResponse
     {
-        if (! SourceDoc::whereKey($sourceDoc)->exists()) {
+        $doc = SourceDoc::whereKey($sourceDoc)->select('id', 'customer_id')->first();
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
 
@@ -242,7 +252,8 @@ class SourceDocCatalogController extends Controller
      */
     public function versions(int $sourceDoc, Request $request): JsonResponse
     {
-        if (! SourceDoc::whereKey($sourceDoc)->exists()) {
+        $doc = SourceDoc::whereKey($sourceDoc)->select('id', 'customer_id')->first();
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $perPage = min(max((int) $request->query('per_page', 20) ?: 20, 1), 100);
@@ -284,9 +295,14 @@ class SourceDocCatalogController extends Controller
     /** Indicadores 100% do banco (ajuste #1) — SEM situação Git catalog-wide. */
     private function indicators(Request $request): array
     {
-        $scope = fn ($qb) => $qb
-            ->when($request->filled('customer_id'), fn ($x) => $x->where('source_docs.customer_id', (int) $request->query('customer_id')))
-            ->when($request->filled('source_repo_id'), fn ($x) => $x->where('source_docs.source_repo_id', (int) $request->query('source_repo_id')));
+        // C4a: indicadores TAMBÉM escopados por cliente (não podem contar fontes fora do escopo).
+        $scope = fn ($qb) => $this->scope->applyScope(
+            $qb
+                ->when($request->filled('customer_id'), fn ($x) => $x->where('source_docs.customer_id', (int) $request->query('customer_id')))
+                ->when($request->filled('source_repo_id'), fn ($x) => $x->where('source_docs.source_repo_id', (int) $request->query('source_repo_id'))),
+            $request->user(),
+            'source_docs.customer_id'
+        );
 
         $byAnalysis = $scope(DB::table('source_docs'))
             ->select('analysis_status', DB::raw('count(*) as c'))

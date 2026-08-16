@@ -8,6 +8,7 @@ use App\Models\SourceDocActionLog;
 use App\Models\SourceDocVersion;
 use App\SourceCode\Analyzer\SourceDiff;
 use App\SourceCode\GithubAppAuth;
+use App\SourceCode\SourceDocCustomerScope;
 use App\SourceCode\SourceDocRenderer;
 use App\SourceCode\SourceDocStatusResolver;
 use Illuminate\Database\QueryException;
@@ -25,6 +26,7 @@ class SourceDocActionController extends Controller
     public function __construct(
         private SourceDocStatusResolver $resolver,
         private GithubAppAuth $auth,
+        private SourceDocCustomerScope $scope,
     ) {
     }
 
@@ -32,7 +34,7 @@ class SourceDocActionController extends Controller
     public function validate(int $sourceDoc, Request $request): JsonResponse
     {
         $doc = SourceDoc::with(['currentVersion', 'sourceRepo:id,owner,repository,branch,active'])->find($sourceDoc);
-        if (! $doc) {
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $t0 = microtime(true);
@@ -49,7 +51,7 @@ class SourceDocActionController extends Controller
     public function reprocessPlan(int $sourceDoc, Request $request): JsonResponse
     {
         $doc = SourceDoc::with('currentVersion')->find($sourceDoc);
-        if (! $doc) {
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $layer = $this->layer($request);
@@ -63,6 +65,11 @@ class SourceDocActionController extends Controller
     {
         $doc = SourceDoc::with('currentVersion')->find($sourceDoc);
         if (! $doc) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        // C4a: fonte fora do escopo → 404 + auditoria de NEGATIVA (ação sensível de escrita/IA).
+        if (! $this->scope->canAccessDoc($request->user(), $doc)) {
+            $this->audit($doc, 'reprocess', 'denied', ['reason' => 'out_of_scope'], userId: $request->user()?->id);
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $layer = $this->layer($request);
@@ -112,8 +119,13 @@ class SourceDocActionController extends Controller
     }
 
     /** GET /source-docs/{id}/execution — estado do reprocess mais recente. */
-    public function execution(int $sourceDoc): JsonResponse
+    public function execution(int $sourceDoc, Request $request): JsonResponse
     {
+        // C4a: não vaza estado de execução de fonte fora do escopo.
+        $doc = SourceDoc::whereKey($sourceDoc)->select('id', 'customer_id')->first();
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
         $log = SourceDocActionLog::where('source_doc_id', $sourceDoc)->where('action', 'reprocess')
             ->latest('id')->first();
         if (! $log) {
@@ -131,6 +143,11 @@ class SourceDocActionController extends Controller
     {
         $doc = SourceDoc::with('customer:id,name')->find($sourceDoc);
         if (! $doc) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        // C4a: download fora do escopo → 404 + auditoria de NEGATIVA (ação sensível).
+        if (! $this->scope->canAccessDoc($request->user(), $doc)) {
+            $this->audit($doc, 'download', 'denied', ['reason' => 'out_of_scope'], userId: $request->user()?->id);
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $format = strtolower((string) $request->query('format', 'docx'));
@@ -165,6 +182,11 @@ class SourceDocActionController extends Controller
         if (! $doc) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
+        // C4a: git-url fora do escopo → 404 + auditoria de NEGATIVA (revela caminho/commit).
+        if (! $this->scope->canAccessDoc($request->user(), $doc)) {
+            $this->audit($doc, 'view_git', 'denied', ['reason' => 'out_of_scope'], userId: $request->user()?->id);
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
         $ref = $doc->currentVersion?->source_commit_sha ?: $doc->branch;
         $url = "https://github.com/{$doc->owner}/{$doc->repository}/blob/{$ref}/{$doc->path}";
         $this->audit($doc, 'view_git', 'ok', ['commit_sha' => $ref], userId: $request->user()?->id);
@@ -175,7 +197,8 @@ class SourceDocActionController extends Controller
     /** GET /source-docs/{id}/compare?from=&to= — diff estrutural entre 2 versões (determinístico). */
     public function compare(int $sourceDoc, Request $request, SourceDiff $diff): JsonResponse
     {
-        if (! SourceDoc::whereKey($sourceDoc)->exists()) {
+        $docScope = SourceDoc::whereKey($sourceDoc)->select('id', 'customer_id')->first();
+        if (! $docScope || ! $this->scope->canAccessDoc($request->user(), $docScope)) {
             return response()->json(['message' => 'Fonte não encontrada.'], 404);
         }
         $from = SourceDocVersion::where('source_doc_id', $sourceDoc)->whereKey((int) $request->query('from'))->first();

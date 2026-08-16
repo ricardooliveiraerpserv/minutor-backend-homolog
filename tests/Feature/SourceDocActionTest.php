@@ -64,12 +64,12 @@ class SourceDocActionTest extends TestCase
         };
     }
 
-    private function makeDoc(string $status = 'completed', string $blob = 'blobA', array $det = null): SourceDoc
+    private function makeDoc(string $status = 'completed', string $blob = 'blobA', array $det = null, ?int $customerId = null): SourceDoc
     {
         $doc = SourceDoc::create([
             'owner' => 'erpserv-clientes', 'repository' => 'concreserv', 'branch' => 'main',
             'path' => 'x/' . uniqid() . '.prw', 'filename' => 'CCSPCP03.PRW', 'lang' => 'advpl',
-            'tipo' => 'protheus', 'analysis_status' => $status,
+            'tipo' => 'protheus', 'analysis_status' => $status, 'customer_id' => $customerId,
         ]);
         $ver = SourceDocVersion::create([
             'source_doc_id' => $doc->id, 'source_commit_sha' => 'c' . uniqid(), 'source_blob_sha' => $blob,
@@ -85,19 +85,24 @@ class SourceDocActionTest extends TestCase
 
     public function test_permissions_per_action(): void
     {
-        $doc = $this->makeDoc();
+        // C4a: doc pertence a um cliente; o coordenador é EXECUTIVO desse cliente (tem escopo).
+        // Isola o gate de PERMISSÃO do gate de ESCOPO — aqui provamos só a permissão por ação.
+        $cust = Customer::factory()->create();
+        $doc = $this->makeDoc(customerId: $cust->id);
+        $coord = User::factory()->create(['type' => 'coordenador']);
+        $cust->update(['executive_id' => $coord->id]);
         $this->app->instance(GithubAppAuth::class, $this->fakeAuth('blobA'));
 
-        // validate: Coordenador OK, Consultor 403
-        $this->actingAs($this->coordenador(), 'sanctum')->postJson("/api/v1/source-docs/{$doc->id}/validate")->assertOk();
+        // validate: Coordenador OK, Consultor 403 (permissão barra antes do escopo)
+        $this->actingAs($coord, 'sanctum')->postJson("/api/v1/source-docs/{$doc->id}/validate")->assertOk();
         $this->actingAs($this->consultor(), 'sanctum')->postJson("/api/v1/source-docs/{$doc->id}/validate")->assertForbidden();
         // download: Coordenador OK
-        $this->actingAs($this->coordenador(), 'sanctum')->get("/api/v1/source-docs/{$doc->id}/render?format=md")->assertOk();
+        $this->actingAs($coord, 'sanctum')->get("/api/v1/source-docs/{$doc->id}/render?format=md")->assertOk();
         // reprocess: SÓ Admin — Coordenador 403
-        $this->actingAs($this->coordenador(), 'sanctum')->getJson("/api/v1/source-docs/{$doc->id}/reprocess/plan")->assertForbidden();
+        $this->actingAs($coord, 'sanctum')->getJson("/api/v1/source-docs/{$doc->id}/reprocess/plan")->assertForbidden();
         $this->actingAs($this->admin(), 'sanctum')->getJson("/api/v1/source-docs/{$doc->id}/reprocess/plan")->assertOk();
         // view_git / compare: Coordenador OK
-        $this->actingAs($this->coordenador(), 'sanctum')->getJson("/api/v1/source-docs/{$doc->id}/git-url")->assertOk();
+        $this->actingAs($coord, 'sanctum')->getJson("/api/v1/source-docs/{$doc->id}/git-url")->assertOk();
     }
 
     // ── casos obrigatórios ──────────────────────────────────────────────────────
