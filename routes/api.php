@@ -529,6 +529,26 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
+            // C3 — estado do reprocess é leitura (source_docs.view)
+            Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
+        });
+        // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
+        Route::middleware('permission.or.admin:source_docs.validate')->group(function () {
+            Route::post('/source-docs/{sourceDoc}/validate', [\App\Http\Controllers\SourceDocActionController::class, 'validate'])->whereNumber('sourceDoc');
+        });
+        // reprocess = gate ESTRITO (não auto-passa Coordenador; MVP = só Admin, data-driven).
+        Route::middleware('permission:source_docs.reprocess')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/reprocess/plan', [\App\Http\Controllers\SourceDocActionController::class, 'reprocessPlan'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/reprocess', [\App\Http\Controllers\SourceDocActionController::class, 'reprocess'])->whereNumber('sourceDoc');
+        });
+        Route::middleware('permission.or.admin:source_docs.download')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
+        });
+        Route::middleware('permission.or.admin:source_docs.view_git')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
+        });
+        Route::middleware('permission.or.admin:source_docs.view_diff')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1524,6 +1544,26 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
+            // C3 — estado do reprocess é leitura (source_docs.view)
+            Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
+        });
+        // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
+        Route::middleware('permission.or.admin:source_docs.validate')->group(function () {
+            Route::post('/source-docs/{sourceDoc}/validate', [\App\Http\Controllers\SourceDocActionController::class, 'validate'])->whereNumber('sourceDoc');
+        });
+        // reprocess = gate ESTRITO (não auto-passa Coordenador; MVP = só Admin, data-driven).
+        Route::middleware('permission:source_docs.reprocess')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/reprocess/plan', [\App\Http\Controllers\SourceDocActionController::class, 'reprocessPlan'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/reprocess', [\App\Http\Controllers\SourceDocActionController::class, 'reprocess'])->whereNumber('sourceDoc');
+        });
+        Route::middleware('permission.or.admin:source_docs.download')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
+        });
+        Route::middleware('permission.or.admin:source_docs.view_git')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
+        });
+        Route::middleware('permission.or.admin:source_docs.view_diff')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

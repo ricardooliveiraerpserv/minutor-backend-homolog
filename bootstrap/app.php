@@ -38,6 +38,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Middleware customizado para permissões
         $middleware->alias([
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,
+            'permission'          => \App\Http\Middleware\CheckPermission::class,
             'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
             'screen.action'       => \App\Http\Middleware\ScreenActionAccess::class,
             'company.context'     => \App\Http\Middleware\ResolveActiveCompany::class,

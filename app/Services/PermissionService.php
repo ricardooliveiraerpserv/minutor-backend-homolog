@@ -140,6 +140,9 @@ class PermissionService
         'source_code.manage', 'source_code.request', 'source_code.reindex',
         // Central de Fontes (C1) — acesso ao catálogo de documentação de fonte (leitura).
         'source_docs.view',
+        // Central de Fontes (C3) — ações operacionais, uma permissão por ação.
+        'source_docs.validate', 'source_docs.reprocess', 'source_docs.download',
+        'source_docs.view_git', 'source_docs.view_diff',
     ];
 
     /**
@@ -232,8 +235,10 @@ class PermissionService
             // Cofre de Senhas
             'vault.use',
             'environments.use',
-            // Central de Fontes (C1) — coordenador enxerga o catálogo de documentação.
-            'source_docs.view',
+            // Central de Fontes (C1/C3) — coordenador vê o catálogo e usa ações NÃO-destrutivas.
+            // reprocess fica SÓ p/ Admin no MVP (única ação que cria versão/consome IA).
+            'source_docs.view', 'source_docs.validate', 'source_docs.download',
+            'source_docs.view_git', 'source_docs.view_diff',
         ];
     }
 
