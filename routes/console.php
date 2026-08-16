@@ -324,12 +324,14 @@ Schedule::command('help-desk:run-scheduled-reopens')
 // Central de Fontes (C2) — mantém o read-model de busca em dia por RECONCILIAÇÃO de staleness
 // (indexed_version_id/blob × versão vigente). DESACOPLADO do motor/pipeline (sem observer):
 // uma falha aqui NUNCA afeta a GMUD/documentação. Idempotente, em lote, sem execuções concorrentes.
+// Foreground (SEM runInBackground): no container Alpine/supervisor do homolog o spawn em
+// background do scheduler não executa (o schedule:run reporta DONE mas a tarefa não roda).
+// Estes comandos são rápidos e idempotentes → rodar inline no schedule:run é confiável.
 Schedule::command('source-doc:index --stale')
   ->cron('*/10 * * * *')
   ->name('source-doc-index-stale')
   ->description('Reindexa (busca técnica) os fontes cujo índice ficou stale')
-  ->withoutOverlapping(10)
-  ->runInBackground();
+  ->withoutOverlapping(10);
 
 // Central de Fontes (C3) — recupera execuções de reprocess órfãs (queued/running vencidas),
 // liberando o lock inflight. Proteção obrigatória do gate de fila (processo morto no meio).
@@ -337,5 +339,4 @@ Schedule::command('source-doc:reap-stale-executions')
   ->cron('*/5 * * * *')
   ->name('source-doc-reap-stale')
   ->description('Marca execuções de reprocess órfãs como failed/stale_execution')
-  ->withoutOverlapping(10)
-  ->runInBackground();
+  ->withoutOverlapping(10);
