@@ -87,7 +87,10 @@ RUN sed -i \
       -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 10|' \
       /usr/local/etc/php-fpm.d/www.conf
 
-# Supervisor para rodar nginx + php-fpm + worker de fila juntos.
+# Supervisor para rodar nginx + php-fpm + workers de fila + scheduler juntos (sem serviço pago à parte).
+# Programas: helpdesk-worker (emails,default) · sourcedoc-worker (fila 'source-doc', timeout 310 p/
+# reprocess pesado da Central de Fontes) · scheduler (schedule:work → dispara source-doc:index --stale,
+# reaper e demais Schedule::command de routes/console.php).
 # O worker (helpdesk-worker) processa a fila 'emails' (disparo de e-mail do Help Desk) quando
 # QUEUE_CONNECTION=database. Com QUEUE_CONNECTION=sync os jobs rodam inline e a fila 'jobs' fica
 # vazia → o worker apenas ociosa (inofensivo). Assim protege o Azure/Graph de rate limit/blacklist
@@ -111,6 +114,28 @@ autorestart=true\n\
 startsecs=5\n\
 stopwaitsecs=190\n\
 stopsignal=TERM\n\
+stdout_logfile=/dev/stdout\n\
+stdout_logfile_maxbytes=0\n\
+stderr_logfile=/dev/stderr\n\
+stderr_logfile_maxbytes=0\n\
+[program:sourcedoc-worker]\n\
+command=php artisan queue:work database --queue=source-doc --tries=1 --timeout=310 --sleep=3 --max-time=3600\n\
+directory=/var/www\n\
+autostart=true\n\
+autorestart=true\n\
+startsecs=5\n\
+stopwaitsecs=320\n\
+stopsignal=TERM\n\
+stdout_logfile=/dev/stdout\n\
+stdout_logfile_maxbytes=0\n\
+stderr_logfile=/dev/stderr\n\
+stderr_logfile_maxbytes=0\n\
+[program:scheduler]\n\
+command=php artisan schedule:work\n\
+directory=/var/www\n\
+autostart=true\n\
+autorestart=true\n\
+startsecs=5\n\
 stdout_logfile=/dev/stdout\n\
 stdout_logfile_maxbytes=0\n\
 stderr_logfile=/dev/stderr\n\
