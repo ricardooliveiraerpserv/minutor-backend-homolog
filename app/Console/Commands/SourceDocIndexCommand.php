@@ -20,6 +20,7 @@ use Illuminate\Console\Command;
 class SourceDocIndexCommand extends Command
 {
     protected $signature = 'source-doc:index
+        {--stale : Reindexa só os que estão stale (é o comportamento padrão; flag explícita p/ o scheduler)}
         {--rebuild : Trunca o índice e reconstrói tudo}
         {--doc= : Reindexa apenas o source_doc informado}
         {--customer= : Reindexa apenas os fontes do cliente}

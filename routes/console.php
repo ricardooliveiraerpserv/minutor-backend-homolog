@@ -327,16 +327,16 @@ Schedule::command('help-desk:run-scheduled-reopens')
 // Foreground (SEM runInBackground): no container Alpine/supervisor do homolog o spawn em
 // background do scheduler não executa (o schedule:run reporta DONE mas a tarefa não roda).
 // Estes comandos são rápidos e idempotentes → rodar inline no schedule:run é confiável.
+// Sem withoutOverlapping: no homolog o lock (cache) de execuções background órfãs chegou a pular
+// os runs; foreground + comandos rápidos/idempotentes → rodar todo ciclo é mais confiável.
 Schedule::command('source-doc:index --stale')
   ->cron('*/10 * * * *')
   ->name('source-doc-index-stale')
-  ->description('Reindexa (busca técnica) os fontes cujo índice ficou stale')
-  ->withoutOverlapping(10);
+  ->description('Reindexa (busca técnica) os fontes cujo índice ficou stale');
 
 // Central de Fontes (C3) — recupera execuções de reprocess órfãs (queued/running vencidas),
 // liberando o lock inflight. Proteção obrigatória do gate de fila (processo morto no meio).
 Schedule::command('source-doc:reap-stale-executions')
   ->cron('*/5 * * * *')
   ->name('source-doc-reap-stale')
-  ->description('Marca execuções de reprocess órfãs como failed/stale_execution')
-  ->withoutOverlapping(10);
+  ->description('Marca execuções de reprocess órfãs como failed/stale_execution');
