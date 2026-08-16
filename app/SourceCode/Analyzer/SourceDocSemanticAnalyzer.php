@@ -23,8 +23,10 @@ use Illuminate\Support\Facades\Log;
  */
 class SourceDocSemanticAnalyzer
 {
-    public const SCHEMA_VERSION = 1;
+    public const SCHEMA_VERSION = 2;
     private const UNKNOWN = 'Não identificado automaticamente no código.';
+    // Bloco 4.2 — quando NÃO houver evidência suficiente para um campo interpretativo, NÃO inventar.
+    private const UNDETERMINED = 'Não foi possível determinar com segurança.';
 
     private array $usage = [];
     /** @var list<array{item:string,reason:string}> */
@@ -348,7 +350,7 @@ class SourceDocSemanticAnalyzer
             $j = is_array($d['json']) ? $d['json'] : [];
             foreach (($j['funcoes'] ?? []) as $f) {
                 if (! empty($f['name'])) {
-                    $entry = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? '')];
+                    $entry = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? ''), 'confidence' => $f['confidence'] ?? null, 'evidence' => $f['evidence'] ?? []];
                     $funcoes[] = $entry;
                     if ($this->cacheEnabled()) {
                         $c = $this->findByName($toCall, $f['name']);
@@ -537,7 +539,12 @@ class SourceDocSemanticAnalyzer
                 continue;
             }
             $seen[strtolower($name)] = true;
-            $funcoes[] = ['name' => $name, 'finalidade' => $this->str($f['finalidade'] ?? '')];
+            $funcoes[] = [
+                'name' => $name,
+                'finalidade' => $this->str($f['finalidade'] ?? '') ?: self::UNDETERMINED,
+                'confidence' => $this->conf($f['confidence'] ?? 'low'),
+                'evidence' => $this->validateEvidence($f['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare) ?: [['type' => 'function', 'name' => $name]],
+            ];
         }
 
         $tablePurposes = array_values(array_filter($sem['table_purposes'] ?? $sem['tabelas'] ?? [], function ($t) use ($tbSet) {
@@ -561,8 +568,18 @@ class SourceDocSemanticAnalyzer
         $rulesLow = array_values(array_filter($rules, fn ($r) => $r['confidence'] === 'low'));
         $attnShown = array_values(array_filter($attention, fn ($a) => in_array($a['confidence'], ['high', 'medium'], true)));
 
+        // Bloco 4.2 — dependências conhecidas (para validar dependencias_criticas): user_calls +
+        // integrações externas + funções chamadas NÃO definidas no próprio fonte.
+        $depSet = $this->knownDependencySet($det, $fnSet);
+        $entendimento = $this->buildEntendimento($sem['entendimento_funcional'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
+        $depCriticas = $this->validateDependencias($sem['dependencias_criticas'] ?? [], $depSet, $fnSet, $tbSet, $fieldQ, $fieldBare);
+        $risco = $this->buildRisco($sem['risco_alteracao'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
+
         return [
             'schema_version'   => self::SCHEMA_VERSION,
+            'entendimento_funcional' => $entendimento,
+            'dependencias_criticas'  => $depCriticas,
+            'risco_alteracao'        => $risco,
             'status'           => $sem['status'] ?? 'completed',
             'partial_reason'   => $sem['partial_reason'] ?? null,
             'strategy'         => $sem['strategy'] ?? 'initial_global_selective',
@@ -572,7 +589,7 @@ class SourceDocSemanticAnalyzer
             'fluxo'            => $this->arr($sem['fluxo'] ?? $sem['execution_flow'] ?? []),
             'funcoes'          => $funcoes,
             'tabelas'          => $tablePurposes,
-            'regras_negocio'   => array_map(fn ($r) => ['id' => $r['id'], 'descricao' => $r['descricao'], 'confidence' => $r['confidence'], 'evidence' => $r['evidence']], $rulesShown),
+            'regras_negocio'   => array_map(fn ($r) => ['id' => $r['id'], 'titulo' => $r['titulo'] ?? null, 'descricao' => $r['descricao'], 'condicao' => $r['condicao'] ?? null, 'efeito' => $r['efeito'] ?? null, 'confidence' => $r['confidence'], 'evidence' => $r['evidence']], $rulesShown),
             'entradas'         => $this->arr($sem['entradas'] ?? $sem['inputs'] ?? []),
             'saidas'           => $this->arr($sem['saidas'] ?? $sem['outputs'] ?? []),
             'pontos_atencao'   => array_map(fn ($a) => $this->attnToString($a), $attnShown),
@@ -632,7 +649,15 @@ class SourceDocSemanticAnalyzer
                 $this->rejected[] = ['item' => 'regra:' . mb_substr($desc, 0, 40), 'reason' => 'menção a função inexistente'];
                 continue;
             }
-            $out[] = ['id' => $r['id'] ?? ('RN' . str_pad((string) (++$i), 2, '0', STR_PAD_LEFT)), 'descricao' => $desc, 'confidence' => $this->conf($r['confidence'] ?? 'low'), 'evidence' => $ev];
+            $out[] = [
+                'id' => $r['id'] ?? ('RN' . str_pad((string) (++$i), 2, '0', STR_PAD_LEFT)),
+                'titulo' => $this->str($r['titulo'] ?? null),
+                'descricao' => $desc,
+                'condicao' => $this->str($r['condicao'] ?? null),
+                'efeito' => $this->str($r['efeito'] ?? null),
+                'confidence' => $this->conf($r['confidence'] ?? 'low'),
+                'evidence' => $ev,
+            ];
         }
         return $out;
     }
@@ -663,6 +688,176 @@ class SourceDocSemanticAnalyzer
         return $out;
     }
 
+    // ── Bloco 4.2 — Entendimento Funcional / Dependências / Risco (validados) ────
+    /** Dependências conhecidas: user_calls + integrações externas + chamadas a funções não definidas no fonte. */
+    private function knownDependencySet(array $det, array $fnSet): array
+    {
+        $set = [];
+        foreach ((array) ($det['user_calls'] ?? []) as $u) {
+            $set[strtolower((string) $u)] = true;
+        }
+        foreach ((array) ($det['external_integrations'] ?? []) as $i) {
+            $name = is_array($i) ? ($i['name'] ?? $i['type'] ?? '') : (string) $i;
+            if ($name !== '') {
+                $set[strtolower((string) $name)] = true;
+            }
+        }
+        foreach (($det['functions'] ?? []) as $f) {
+            foreach (array_merge((array) ($f['calls_user'] ?? []), (array) ($f['calls_internal'] ?? [])) as $c) {
+                $c = (string) $c;
+                if (! isset($fnSet[strtolower($c)])) {   // chamada externa (não definida aqui)
+                    $set[strtolower($c)] = true;
+                }
+            }
+        }
+        return $set;
+    }
+
+    /** Campo interpretativo: só aceita se tiver evidência rastreável; senão vira UNDETERMINED. */
+    private function interpretive(?string $text, $evidenceRaw, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare, string $label): array
+    {
+        $text = $this->str($text);
+        $ev = $this->validateEvidence($evidenceRaw ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
+        if ($text === null || $text === '' || $text === self::UNDETERMINED || empty($ev)) {
+            if ($text !== null && $text !== '' && $text !== self::UNDETERMINED && empty($ev)) {
+                $this->rejected[] = ['item' => $label, 'reason' => 'sem evidência rastreável'];
+            }
+            return ['texto' => self::UNDETERMINED, 'confidence' => 'low', 'evidence' => []];
+        }
+        return ['texto' => $text, 'confidence' => $this->conf(is_array($evidenceRaw) ? 'medium' : 'low'), 'evidence' => $ev];
+    }
+
+    private function buildEntendimento(array $ent, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
+    {
+        $out = $this->emptyEntendimento();
+
+        // uma_frase (exige evidência)
+        $uf = (array) ($ent['uma_frase'] ?? []);
+        $ufv = $this->interpretive($uf['texto'] ?? null, $uf['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare, 'uma_frase');
+        $out['uma_frase'] = ['texto' => $ufv['texto'], 'confidence' => $this->conf($uf['confidence'] ?? $ufv['confidence']), 'evidence' => $ufv['evidence']];
+
+        // objetivo (texto de propósito; aceita sem evidence estruturada mas com fatos — objetivo é síntese)
+        $obj = $this->str($ent['objetivo'] ?? null);
+        $out['objetivo'] = ($obj !== null && $obj !== '') ? $obj : self::UNDETERMINED;
+
+        // quando_usado
+        $qu = $this->str($ent['quando_usado'] ?? null);
+        $out['quando_usado'] = ($qu !== null && $qu !== '') ? $qu : self::UNDETERMINED;
+
+        // processo_modulo (exige evidência)
+        $pm = (array) ($ent['processo_modulo'] ?? []);
+        $pmEv = $this->validateEvidence($pm['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
+        if (! empty($pmEv) && $this->str($pm['modulo'] ?? null)) {
+            $out['processo_modulo'] = [
+                'processo' => $this->str($pm['processo'] ?? null) ?: self::UNDETERMINED,
+                'modulo'   => $this->str($pm['modulo'] ?? null),
+                'confidence' => $this->conf($pm['confidence'] ?? 'low'),
+                'evidence' => $pmEv,
+            ];
+        }
+
+        // entradas/saidas principais (item exige evidência)
+        $out['entradas_principais'] = $this->ioItems($ent['entradas_principais'] ?? $ent['entradas'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare, 'entrada');
+        $out['saidas_principais']   = $this->ioItems($ent['saidas_principais'] ?? $ent['saidas'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare, 'saida');
+
+        // o_que_faz (passos com evidência)
+        $steps = [];
+        foreach ((array) ($ent['o_que_faz'] ?? []) as $s) {
+            $passo = is_array($s) ? $this->str($s['passo'] ?? $s['descricao'] ?? null) : $this->str($s);
+            if ($passo === null || $passo === '') {
+                continue;
+            }
+            $ev = is_array($s) ? $this->validateEvidence($s['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare) : [];
+            $steps[] = ['passo' => $passo, 'evidence' => $ev];
+        }
+        $out['o_que_faz'] = $steps;
+
+        return $out;
+    }
+
+    private function ioItems($raw, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare, string $label): array
+    {
+        $out = [];
+        foreach ((array) $raw as $it) {
+            if (is_string($it)) {
+                $it = ['descricao' => $it];
+            }
+            $desc = $this->str($it['descricao'] ?? $it['nome'] ?? null);
+            if ($desc === null || $desc === '') {
+                continue;
+            }
+            $out[] = [
+                'tipo' => $this->str($it['tipo'] ?? null),
+                'nome' => $this->str($it['nome'] ?? null),
+                'descricao' => $desc,
+                'evidence' => $this->validateEvidence($it['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare),
+            ];
+        }
+        return $out;
+    }
+
+    /** dependencias_criticas — nome DEVE existir no conjunto de dependências determinísticas. */
+    private function validateDependencias(array $raw, array $depSet, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
+    {
+        $out = [];
+        foreach ($raw as $d) {
+            $nome = $this->str($d['nome'] ?? $d['name'] ?? null);
+            if ($nome === null || $nome === '') {
+                continue;
+            }
+            // normaliza U_FUNC / include: aceita se casar no depSet (com/sem prefixo) ou for função do fonte.
+            $keys = [strtolower($nome), strtolower(ltrim($nome, 'uU_')), 'u_' . strtolower(ltrim($nome, 'uU_'))];
+            $known = false;
+            foreach ($keys as $k) {
+                if (isset($depSet[$k]) || isset($fnSet[$k])) {
+                    $known = true;
+                    break;
+                }
+            }
+            if (! $known) {
+                $this->rejected[] = ['item' => 'dependencia:' . $nome, 'reason' => 'inexistente no determinístico'];
+                continue;
+            }
+            $out[] = [
+                'nome' => $nome,
+                'como_participa' => $this->str($d['como_participa'] ?? null) ?: self::UNDETERMINED,
+                'impacto_se_indisponivel' => $this->str($d['impacto_se_indisponivel'] ?? null) ?: self::UNDETERMINED,
+                'onde_chamada' => $this->str($d['onde_chamada'] ?? null),
+                'confidence' => $this->conf($d['confidence'] ?? 'low'),
+                'evidence' => $this->validateEvidence($d['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare),
+            ];
+        }
+        return $out;
+    }
+
+    /** risco_alteracao — fatores baseados em FATOS (cada fator exige evidência). */
+    private function buildRisco(array $raw, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
+    {
+        $tipos = ['dependencia', 'escrita', 'tabela', 'caller', 'integracao', 'complexidade'];
+        $fatores = [];
+        foreach ((array) ($raw['fatores'] ?? []) as $f) {
+            $desc = $this->str($f['descricao'] ?? null);
+            if ($desc === null || $desc === '') {
+                continue;
+            }
+            $ev = $this->validateEvidence($f['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
+            if (empty($ev)) {
+                $this->rejected[] = ['item' => 'risco:' . mb_substr($desc, 0, 40), 'reason' => 'sem evidência rastreável'];
+                continue;
+            }
+            $tipo = strtolower((string) ($f['tipo'] ?? ''));
+            $fatores[] = [
+                'tipo' => in_array($tipo, $tipos, true) ? $tipo : 'complexidade',
+                'descricao' => $desc,
+                'evidence' => $ev,
+            ];
+        }
+        return [
+            'resumo' => $this->str($raw['resumo'] ?? null) ?: ($fatores ? null : self::UNDETERMINED),
+            'fatores' => $fatores,
+        ];
+    }
+
     private function validateEvidence($raw, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
     {
         $out = [];
@@ -671,8 +866,11 @@ class SourceDocSemanticAnalyzer
                 continue;
             }
             $type = strtolower((string) ($ev['type'] ?? ''));
+            // linhas: aceita {lines:[a,b]} ou {line_start,line_end}
+            $ls = isset($ev['line_start']) ? (int) $ev['line_start'] : (is_array($ev['lines'] ?? null) ? (int) ($ev['lines'][0] ?? 0) : null);
+            $le = isset($ev['line_end']) ? (int) $ev['line_end'] : (is_array($ev['lines'] ?? null) ? (int) ($ev['lines'][1] ?? 0) : null);
             if ($type === 'function' && isset($fnSet[strtolower((string) ($ev['name'] ?? ''))])) {
-                $out[] = ['type' => 'function', 'name' => $ev['name'], 'lines' => $ev['lines'] ?? null];
+                $out[] = ['type' => 'function', 'name' => $ev['name'], 'line_start' => $ls ?: null, 'line_end' => $le ?: null];
             } elseif ($type === 'table' && isset($tbSet[strtoupper((string) ($ev['table'] ?? $ev['alias'] ?? ''))])) {
                 $out[] = ['type' => 'table', 'table' => strtoupper((string) ($ev['table'] ?? $ev['alias']))];
             } elseif ($type === 'field') {
@@ -705,11 +903,17 @@ class SourceDocSemanticAnalyzer
     // ── prompts (enxutos) ───────────────────────────────────────────────────────
     private function systemPrompt(): string
     {
-        return 'Analista Protheus/AdvPL. Os FATOS fornecidos são a AUTORIDADE — explique-os, não descubra nem invente. '
-            . 'Não crie função/tabela/campo/integração fora dos fatos. Sem evidência ⇒ "' . self::UNKNOWN . '". '
-            . 'Regras de negócio e pontos de atenção EXIGEM evidence (function/table/field dos fatos) + confidence (high|medium|low). '
+        return 'Analista Protheus/AdvPL. Os FATOS determinísticos são a AUTORIDADE — você EXPLICA/INTERPRETA/'
+            . 'ORGANIZA/CONTEXTUALIZA, NÃO descobre nem inventa. Proibido: supor, completar lacunas por conhecimento '
+            . 'genérico de Protheus, ou deduzir finalidade só porque o NOME "parece" indicar algo. '
+            . 'Não crie função/tabela/campo/integração/dependência fora dos fatos. '
+            . 'TODO campo interpretativo (uma_frase, objetivo, quando_usado, processo_modulo, entradas/saidas, '
+            . 'o_que_faz, finalidade de função, dependencias_criticas, risco_alteracao, regras, pontos) EXIGE evidence '
+            . '(function/table/field/dependency dos fatos) + confidence (high|medium|low). '
+            . 'SEM evidência suficiente ⇒ use exatamente "' . self::UNDETERMINED . '" e explique o motivo em "motivo". '
             . 'risk_flag é evidência técnica, não vulnerabilidade. Código pode vir com segredos mascarados. '
-            . 'Seja CONCISO (objetivo 2–4 frases; finalidade 1–2; regra 1 frase). Devolva SÓ JSON válido (sem markdown).';
+            . 'Explique PROPÓSITO de negócio, não a mecânica ("chama X, acessa Y") que já está no determinístico. '
+            . 'Seja CONCISO. Devolva SÓ JSON válido (sem markdown).';
     }
 
     private function globalUserPrompt(array $compact, ?array $diff, string $inlineCode, bool $withFuncoes): string
@@ -720,10 +924,23 @@ class SourceDocSemanticAnalyzer
         }
         // Narrativa enxuta. Em fonte grande, NÃO pedir as finalidades das funções aqui (vêm no
         // aprofundamento) — evita saída densa que trunca o JSON.
-        $funcoesPart = $withFuncoes ? 'funcoes[{name,finalidade}] (só as funções dos fatos), ' : '';
-        $u .= "\n\nProduza JSON {objetivo (2–4 frases), fluxo[], " . $funcoesPart
-            . 'regras_negocio[{id,descricao,confidence,evidence[{type,name?,table?,field?}]}], entradas[], saidas[], '
-            . 'pontos_atencao[{interpretation,severity?,recommendation?,confidence,evidence[]}], change_summary}.';
+        $funcoesPart = $withFuncoes ? 'funcoes[{name,finalidade,confidence,evidence[]}] (só as funções dos fatos), ' : '';
+        $u .= "\n\nProduza JSON com:\n"
+            . 'entendimento_funcional{'
+            . 'uma_frase{texto,confidence,evidence[{type,name?,table?,field?,dependency?}]}, '
+            . 'objetivo (2–5 frases de PROPÓSITO de negócio), '
+            . 'quando_usado (evento/processo/rotina que dispara; se indeterminável use "' . self::UNDETERMINED . '"), '
+            . 'processo_modulo{processo,modulo,confidence,evidence[]} (módulo Protheus por evidência, NÃO pelo nome do arquivo), '
+            . 'entradas_principais[{tipo,nome,descricao,evidence[]}], '
+            . 'saidas_principais[{tipo,nome,descricao,evidence[]}], '
+            . 'o_que_faz[{passo,evidence[]}] (sequência FUNCIONAL, não a lista de chamadas)'
+            . "}, \n"
+            . 'fluxo[], ' . $funcoesPart
+            . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[{type,name?,table?,field?,line_start?,line_end?}]}], '
+            . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[]}] (só o que interfere materialmente; NÃO listar todo include), '
+            . 'risco_alteracao{resumo,fatores[{tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao,evidence[]}]}, '
+            . 'pontos_atencao[{interpretation,categoria?,severity?,recommendation?,confidence,evidence[]}], change_summary. '
+            . 'Sem evidência para um campo ⇒ "' . self::UNDETERMINED . '".';
         return $u;
     }
 
@@ -738,8 +955,10 @@ class SourceDocSemanticAnalyzer
             return $b;
         }, $items);
         return "FUNÇÕES RELEVANTES:\n" . implode("\n\n", $blocks)
-            . "\n\nDê a finalidade (1–2 frases) de CADA função listada. Se houver base, adicione regra/ponto com evidence+confidence. "
-            . 'Devolva JSON {funcoes[{name,finalidade}], regras_negocio[...], pontos_atencao[...]}.';
+            . "\n\nDê a finalidade FUNCIONAL (a responsabilidade da função no processo, 1–2 frases; NÃO 'chama X/acessa Y') "
+            . 'de CADA função listada, com confidence + evidence. Sem base ⇒ finalidade="' . self::UNDETERMINED . '". '
+            . 'Se houver base, adicione regra/ponto/dependência com evidence+confidence. '
+            . 'Devolva JSON {funcoes[{name,finalidade,confidence,evidence[]}], regras_negocio[...], pontos_atencao[...], dependencias_criticas[...]}.';
     }
 
     private function incrementalUserPrompt(array $prev, ?array $diff, array $changed): string
@@ -827,11 +1046,27 @@ class SourceDocSemanticAnalyzer
     {
         return [
             'schema_version' => self::SCHEMA_VERSION, 'status' => $status, 'strategy' => null, 'provider' => $this->ai->name(), 'model' => $this->ai->model(),
+            // Bloco 4.2 — Entendimento Funcional (novo topo).
+            'entendimento_funcional' => $this->emptyEntendimento(),
+            'dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => null, 'fatores' => []],
             'objetivo' => null, 'fluxo' => [], 'funcoes' => [], 'tabelas' => [], 'regras_negocio' => [],
             'entradas' => [], 'saidas' => [], 'pontos_atencao' => [], 'resumo_alteracao' => null,
             'business_rules' => [], 'business_rules_low' => [], 'attention_points' => [], 'change_summary' => null, 'table_purposes' => [],
             'semantic_coverage' => ['relevant_functions_total' => 0, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0],
             'usage' => $this->usageBlock(), 'validation' => ['rejected_count' => 0, 'rejected' => []],
+        ];
+    }
+
+    private function emptyEntendimento(): array
+    {
+        return [
+            'uma_frase' => ['texto' => self::UNDETERMINED, 'confidence' => 'low', 'evidence' => []],
+            'objetivo' => self::UNDETERMINED,
+            'quando_usado' => self::UNDETERMINED,
+            'processo_modulo' => ['processo' => self::UNDETERMINED, 'modulo' => self::UNDETERMINED, 'confidence' => 'low', 'evidence' => []],
+            'entradas_principais' => [],
+            'saidas_principais' => [],
+            'o_que_faz' => [],
         ];
     }
 
@@ -841,7 +1076,8 @@ class SourceDocSemanticAnalyzer
         $out = [];
         foreach ($raw as $f) {
             if (! empty($f['name'])) {
-                $out[] = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? '')];
+                // Bloco 4.2 — preserva confidence + evidence (o finalize valida; sem isso vinham perdidos).
+                $out[] = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? ''), 'confidence' => $f['confidence'] ?? null, 'evidence' => $f['evidence'] ?? []];
             }
         }
         return $out;

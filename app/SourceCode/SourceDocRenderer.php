@@ -21,6 +21,7 @@ class SourceDocRenderer
 {
     private const SEM_PENDING = 'Descrição funcional ainda não disponível (análise semântica pendente). Os dados técnicos abaixo permanecem válidos.';
     private const SEM_RULES   = 'Regras funcionais ainda não analisadas semanticamente.';
+    private const UNDET       = 'Não foi possível determinar com segurança.';
 
     private const TABLE = 'style="border-collapse:collapse;width:100%;margin:3pt 0;font-size:9.5pt"';
     private const TH    = 'style="background:#e8f1f2;border:1px solid #b9cdd1;padding:3pt 6pt;text-align:left;color:#0d4766"';
@@ -154,18 +155,19 @@ class SourceDocRenderer
     /** @return list<array{n:int,title:string,html:string,heavy:bool}> */
     private function sections(array $m): array
     {
+        // Bloco 4.2 — Entendimento Funcional PRIMEIRO (por que existe), depois o mapa técnico.
         return [
-            ['n' => 1,  'title' => 'Visão Geral',              'html' => $this->secOverview($m),     'heavy' => false],
-            ['n' => 2,  'title' => 'Mapa Técnico',             'html' => $this->secTechFlow($m),     'heavy' => false],
-            ['n' => 3,  'title' => 'Fluxo de Execução',        'html' => $this->secFlow($m),         'heavy' => false],
-            ['n' => 4,  'title' => 'Funções',                  'html' => $this->secFunctions($m),    'heavy' => true],
-            ['n' => 5,  'title' => 'Call Graph',               'html' => $this->secCallGraph($m),    'heavy' => false],
-            ['n' => 6,  'title' => 'Regras de Negócio',        'html' => $this->secRules($m),        'heavy' => false],
-            ['n' => 7,  'title' => 'Tabelas e Campos',         'html' => $this->secTables($m),       'heavy' => true],
-            ['n' => 8,  'title' => 'SQL',                      'html' => $this->secSql($m),          'heavy' => false],
-            ['n' => 9,  'title' => 'Acesso a Dados e Integrações', 'html' => $this->secDataVsIntegr($m), 'heavy' => false],
-            ['n' => 10, 'title' => 'Dependências',             'html' => $this->secDependencies($m), 'heavy' => false],
-            ['n' => 11, 'title' => 'Entradas e Saídas',        'html' => $this->secIO($m),           'heavy' => false],
+            ['n' => 1,  'title' => 'Entendimento Funcional',   'html' => $this->secEntendimento($m),  'heavy' => false],
+            ['n' => 2,  'title' => 'Resumo para Manutenção',   'html' => $this->secResumoManutencao($m), 'heavy' => false],
+            ['n' => 3,  'title' => 'Fluxo Funcional',          'html' => $this->secFlow($m),         'heavy' => false],
+            ['n' => 4,  'title' => 'Regras de Negócio',        'html' => $this->secRules($m),        'heavy' => false],
+            ['n' => 5,  'title' => 'Mapa Técnico',             'html' => $this->secTechFlow($m),     'heavy' => false],
+            ['n' => 6,  'title' => 'Funções',                  'html' => $this->secFunctions($m),    'heavy' => true],
+            ['n' => 7,  'title' => 'Call Graph',               'html' => $this->secCallGraph($m),    'heavy' => false],
+            ['n' => 8,  'title' => 'Tabelas e Campos',         'html' => $this->secTables($m),       'heavy' => true],
+            ['n' => 9,  'title' => 'SQL',                      'html' => $this->secSql($m),          'heavy' => false],
+            ['n' => 10, 'title' => 'Acesso a Dados e Integrações', 'html' => $this->secDataVsIntegr($m), 'heavy' => false],
+            ['n' => 11, 'title' => 'Dependências',             'html' => $this->secDependencies($m), 'heavy' => false],
             ['n' => 12, 'title' => 'Impactos / Efeitos',       'html' => $this->secEffects($m),      'heavy' => false],
             ['n' => 13, 'title' => 'Pontos de Atenção',        'html' => $this->secAttention($m),    'heavy' => false],
             ['n' => 14, 'title' => 'Histórico de Alterações',  'html' => $this->secHistory($m),      'heavy' => true],
@@ -176,6 +178,126 @@ class SourceDocRenderer
     private function ni(string $msg): string
     {
         return '<p ' . self::NI . '>' . $this->e($msg) . '</p>';
+    }
+
+    // ── Bloco 4.2 — Entendimento Funcional (topo) ───────────────────────────────
+    private function secEntendimento(array $m): string
+    {
+        if ($m['semPending']) {
+            return $this->ni(self::SEM_PENDING);
+        }
+        $ent = (array) $this->g($m['s'], 'entendimento_funcional', []);
+        // compat: schema antigo (sem entendimento_funcional) → usa objetivo/entradas/saidas soltos.
+        $objetivo = (string) $this->g($ent, 'objetivo', (string) $this->g($m['s'], 'objetivo', ''));
+        $uf = (array) $this->g($ent, 'uma_frase', []);
+        $frase = (string) $this->g($uf, 'texto', '');
+
+        if ($objetivo === '' && $frase === '' && empty($ent)) {
+            return $this->ni('Entendimento funcional depende da análise semântica (pendente).');
+        }
+
+        $h = '';
+        if ($frase !== '') {
+            $h .= '<p style="font-size:12pt"><b>Em uma frase:</b> ' . $this->e($frase) . ' ' . $this->confBadge((string) $this->g($uf, 'confidence', '')) . '</p>';
+        }
+        $h .= '<h3>Objetivo</h3><p>' . ($objetivo !== '' ? $this->e($objetivo) : $this->undet()) . '</p>';
+        $h .= '<h3>Quando é utilizado</h3><p>' . $this->e((string) $this->g($ent, 'quando_usado', self::UNDET)) . '</p>';
+
+        $pm = (array) $this->g($ent, 'processo_modulo', []);
+        $h .= '<h3>Processo / Módulo</h3><p>Processo: <b>' . $this->e((string) $this->g($pm, 'processo', self::UNDET)) . '</b>'
+            . ' · Módulo: <b>' . $this->e((string) $this->g($pm, 'modulo', self::UNDET)) . '</b> ' . $this->confBadge((string) $this->g($pm, 'confidence', '')) . '</p>';
+
+        $h .= $this->ioBlock('Entradas principais', (array) $this->g($ent, 'entradas_principais', []), (array) $this->g($m['s'], 'entradas', []));
+        $h .= $this->ioBlock('Saídas principais', (array) $this->g($ent, 'saidas_principais', []), (array) $this->g($m['s'], 'saidas', []));
+
+        $steps = (array) $this->g($ent, 'o_que_faz', []);
+        if (! empty($steps)) {
+            $h .= '<h3>O que faz</h3><ol>';
+            foreach ($steps as $s) {
+                $h .= '<li>' . $this->e((string) $this->g($s, 'passo', '')) . '</li>';
+            }
+            $h .= '</ol>';
+        }
+        return $h;
+    }
+
+    /** Bloco enxuto p/ quem vai manter o fonte: o essencial em um só lugar. */
+    private function secResumoManutencao(array $m): string
+    {
+        $d = $m['d'];
+        $entrypoints = array_values(array_filter((array) $this->g($d, 'functions', []), fn ($f) => empty($this->g($f, 'called_by', []))));
+        $principal = $entrypoints[0]['name'] ?? ($this->g($d, 'functions', [])[0]['name'] ?? '—');
+
+        $written = [];
+        foreach ((array) $this->g($d, 'tables', []) as $t) {
+            if (array_intersect(['UPDATE', 'INSERT', 'DELETE'], (array) $this->g($t, 'access', []))) {
+                $written[] = (string) ($t['table'] ?? $t['alias'] ?? '');
+            }
+        }
+        $deps = array_map(fn ($x) => (string) $this->g($x, 'nome', ''), (array) $this->g($m['s'], 'dependencias_criticas', []));
+        $integr = array_map(fn ($x) => is_array($x) ? (string) ($x['name'] ?? $x['type'] ?? '') : (string) $x, (array) $this->g($d, 'external_integrations', []));
+        $regras = (array) $this->g($m['s'], 'regras_negocio', []);
+        $risco = (array) $this->g($m['s'], 'risco_alteracao', []);
+
+        $rows = [
+            ['Função principal', $this->e($principal)],
+            ['Tabelas gravadas', $this->e(implode(', ', array_filter(array_unique($written))) ?: '—')],
+            ['Dependências críticas', $this->e(implode(', ', array_filter($deps)) ?: ($m['semPending'] ? 'análise semântica pendente' : '—'))],
+            ['Integrações', $this->e(implode(', ', array_filter($integr)) ?: '—')],
+            ['Regras principais', (string) count($regras) . ($regras ? ' (ver seção Regras de Negócio)' : ($m['semPending'] ? ' — pendente' : ' — nenhuma com evidência'))],
+        ];
+        $h = '<table ' . self::TABLE . '>';
+        foreach ($rows as [$k, $v]) {
+            $h .= '<tr><td ' . self::TDL . '>' . $this->e($k) . '</td><td ' . self::TD . '>' . $v . '</td></tr>';
+        }
+        $h .= '</table>';
+
+        $fatores = (array) $this->g($risco, 'fatores', []);
+        if (! empty($fatores)) {
+            $h .= '<h3>Fatores de risco de alteração</h3><ul>';
+            foreach ($fatores as $f) {
+                $h .= '<li><b>' . $this->e((string) $this->g($f, 'tipo', '')) . ':</b> ' . $this->e((string) $this->g($f, 'descricao', '')) . '</li>';
+            }
+            $h .= '</ul>';
+        } elseif (! $m['semPending']) {
+            $h .= '<p ' . self::NI . '>' . $this->e(self::UNDET) . ' (fatores de risco)</p>';
+        }
+        return $h;
+    }
+
+    private function ioBlock(string $title, array $rich, array $legacy): string
+    {
+        if (! empty($rich)) {
+            $h = '<h3>' . $this->e($title) . '</h3><ul>';
+            foreach ($rich as $it) {
+                $nome = (string) $this->g($it, 'nome', '');
+                $tipo = (string) $this->g($it, 'tipo', '');
+                $desc = (string) $this->g($it, 'descricao', '');
+                $h .= '<li>' . ($nome !== '' ? '<b>' . $this->e($nome) . '</b> — ' : '') . $this->e($desc) . ($tipo !== '' ? ' <span style="color:#6b7d80">(' . $this->e($tipo) . ')</span>' : '') . '</li>';
+            }
+            return $h . '</ul>';
+        }
+        if (! empty($legacy)) {
+            return '<h3>' . $this->e($title) . '</h3><ul>' . implode('', array_map(fn ($x) => '<li>' . $this->e((string) $x) . '</li>', $legacy)) . '</ul>';
+        }
+        return '<h3>' . $this->e($title) . '</h3><p ' . self::NI . '>' . $this->e(self::UNDET) . '</p>';
+    }
+
+    private function confBadge(string $c): string
+    {
+        $c = strtolower($c);
+        if ($c === 'low') {
+            return '<span style="font-size:8pt;color:#a04318">(possível — baixa confiança)</span>';
+        }
+        if ($c === 'medium') {
+            return '<span style="font-size:8pt;color:#6b7d80">(confiança média)</span>';
+        }
+        return '';
+    }
+
+    private function undet(): string
+    {
+        return '<span ' . self::NI . '>' . $this->e(self::UNDET) . '</span>';
     }
 
     private function secOverview(array $m): string
@@ -266,7 +388,9 @@ class SourceDocRenderer
         // detalhes — para as funções relevantes (evita 79 cards). Pequeno: todas.
         $relevant = array_values(array_filter($fns, fn ($f) => !empty($this->g($f, 'tables', [])) || !empty($this->g($f, 'effects', [])) || !empty(array_merge((array) $this->g($f, 'calls_internal', []), (array) $this->g($f, 'calls_user', []))) || !empty($this->g($f, 'called_by', []))));
         $detail = count($fns) <= 12 ? $fns : $relevant;
-        $cap = count($fns) > 12 ? 18 : 40; // fonte grande: resumo completo + detalhe enxuto
+        // Bloco 4.2 — sem omitir informação silenciosamente: a tabela-resumo acima já lista TODAS
+        // as funções (fatos técnicos). O detalhe estendido cobre as relevantes com folga.
+        $cap = count($fns) > 12 ? 60 : 60;
         $capped = array_slice($detail, 0, $cap);
         if (!empty($capped)) {
             $h .= '<h3>Detalhe das funções</h3>';
@@ -294,8 +418,12 @@ class SourceDocRenderer
         }
         $rest = count($detail) - count($capped);
         $utils = count($fns) - count($detail);
+        // Nada é "omitido por limite": a tabela-resumo acima contém TODAS as funções. O bloco de
+        // detalhe apenas aprofunda as relevantes; deixamos isso explícito (sem perda de informação).
         if ($rest > 0 || $utils > 0) {
-            $h .= '<p ' . self::NI . '>' . ($utils > 0 ? $utils . ' função(ões) utilitária(s) listada(s) apenas no resumo. ' : '') . ($rest > 0 ? $rest . ' detalhe(s) omitido(s) por limite de página.' : '') . '</p>';
+            $h .= '<p ' . self::NI . '>Todas as ' . count($fns) . ' funções constam na tabela-resumo acima (fatos técnicos completos). '
+                . ($utils > 0 ? $utils . ' função(ões) utilitária(s) sem detalhe estendido. ' : '')
+                . ($rest > 0 ? $rest . ' função(ões) relevante(s) adicional(is) na tabela-resumo.' : '') . '</p>';
         }
         return $h;
     }
@@ -340,11 +468,22 @@ class SourceDocRenderer
         if ($m['semPending'] || empty($this->g($m['s'], 'regras_negocio', []))) {
             return $this->ni(self::SEM_RULES);
         }
-        $h = '<ul>';
+        $h = '';
         foreach ((array) $this->g($m['s'], 'regras_negocio', []) as $r) {
-            $h .= '<li><b>' . $this->e((string) $this->g($r, 'id', 'RN')) . ':</b> ' . $this->e((string) $this->g($r, 'descricao', '')) . '</li>';
+            $titulo = (string) $this->g($r, 'titulo', '');
+            $h .= '<p style="margin:4pt 0 1pt"><b>' . $this->e((string) $this->g($r, 'id', 'RN')) . ($titulo !== '' ? ' — ' . $this->e($titulo) : '') . '</b> ' . $this->confBadge((string) $this->g($r, 'confidence', '')) . '</p>';
+            $h .= '<p style="margin:0 0 3pt 12pt">' . $this->e((string) $this->g($r, 'descricao', ''));
+            $cond = (string) $this->g($r, 'condicao', '');
+            $efe = (string) $this->g($r, 'efeito', '');
+            if ($cond !== '') {
+                $h .= '<br><span style="color:#6b7d80">Condição:</span> ' . $this->e($cond);
+            }
+            if ($efe !== '') {
+                $h .= '<br><span style="color:#6b7d80">Efeito:</span> ' . $this->e($efe);
+            }
+            $h .= '</p>';
         }
-        return $h . '</ul>';
+        return $h;
     }
 
     private function secTables(array $m): string
@@ -475,6 +614,26 @@ class SourceDocRenderer
 
     private function secDependencies(array $m): string
     {
+        $h = '';
+        // Bloco 4.2 — dependências CRÍTICAS interpretadas (semântico) primeiro, com explicação.
+        $criticas = (array) $this->g($m['s'], 'dependencias_criticas', []);
+        if (! empty($criticas)) {
+            $h .= '<h3>Dependências críticas</h3>';
+            foreach ($criticas as $c) {
+                $h .= '<p style="margin:3pt 0"><b>' . $this->e((string) $this->g($c, 'nome', '')) . '</b> ' . $this->confBadge((string) $this->g($c, 'confidence', ''));
+                $part = (string) $this->g($c, 'como_participa', '');
+                $imp = (string) $this->g($c, 'impacto_se_indisponivel', '');
+                if ($part !== '' && $part !== self::UNDET) {
+                    $h .= '<br>' . $this->e($part);
+                }
+                if ($imp !== '' && $imp !== self::UNDET) {
+                    $h .= '<br><span style="color:#6b7d80">Se indisponível:</span> ' . $this->e($imp);
+                }
+                $h .= '</p>';
+            }
+            $h .= '<h3>Inventário de dependências</h3>';
+        }
+
         $dep = (array) $this->g($m['d'], 'dependencies', []);
         $custom = array_map(fn ($c) => (string) $this->g($c, 'name', ''), (array) $this->g($dep, 'custom_external_functions', []));
         $groups = [
@@ -486,7 +645,7 @@ class SourceDocRenderer
             'APIs'                 => (array) $this->g($dep, 'apis', []),
         ];
         $any = false;
-        $h = '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Grupo</th><th ' . self::TH . '>Qtd</th><th ' . self::TH . '>Itens</th></tr>';
+        $h .= '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Grupo</th><th ' . self::TH . '>Qtd</th><th ' . self::TH . '>Itens</th></tr>';
         foreach ($groups as $name => $items) {
             if (empty($items)) {
                 continue;
@@ -497,7 +656,7 @@ class SourceDocRenderer
             $h .= '<tr><td ' . self::TD . '><b>' . $this->e($name) . '</b></td><td ' . self::TD . '>' . count($items) . '</td><td ' . self::TD . '>' . $this->e($txt) . '</td></tr>';
         }
         $h .= '</table>';
-        return $any ? $h : $this->ni('Nenhuma dependência identificada.');
+        return ($any || ! empty($criticas)) ? $h : $this->ni('Nenhuma dependência identificada.');
     }
 
     private function secIO(array $m): string
@@ -512,10 +671,11 @@ class SourceDocRenderer
 
     private function secEffects(array $m): string
     {
+        $risco = $this->riscoBlock($m);
         $effects = (array) $this->g($m['d'], 'effects', []);
         $relevant = array_values(array_filter($effects, fn ($e) => $this->g($e, 'type') !== 'scoped_variable'));
         if (empty($relevant)) {
-            return $this->ni('Nenhum efeito de escrita/integração identificado.');
+            return $this->ni('Nenhum efeito de escrita/integração identificado.') . $risco;
         }
         $labels = ['database_write' => 'Escrita em banco', 'database_delete' => 'Exclusão em banco', 'file_write' => 'Escrita em arquivo', 'external_call' => 'Chamada externa', 'routine_execution' => 'Execução de rotina'];
         // Fonte grande: resumo por tipo (contagem) + amostra, em vez de centenas de linhas.
@@ -529,7 +689,7 @@ class SourceDocRenderer
                 $uniq = array_values(array_unique(array_filter($targets)));
                 $h .= '<tr><td ' . self::TD . '>' . $this->e($labels[$type] ?? $type) . '</td><td ' . self::TD . '>' . count($targets) . '</td><td ' . self::TD . '>' . $this->e(implode(', ', array_slice($uniq, 0, 15)) . (count($uniq) > 15 ? ' …' : '')) . '</td></tr>';
             }
-            return $h . '</table><p ' . self::NI . '>' . count($relevant) . ' efeitos no total — resumo por tipo (detalhe por linha disponível no deterministic_json).</p>';
+            return $h . '</table><p ' . self::NI . '>' . count($relevant) . ' efeitos no total — resumo por tipo (detalhe por linha disponível no deterministic_json).</p>' . $risco;
         }
         $h = '<table ' . self::TABLE . '><tr><th ' . self::TH . '>Efeito</th><th ' . self::TH . '>Alvo</th><th ' . self::TH . '>Função</th><th ' . self::TH . '>Evidência</th></tr>';
         foreach ($relevant as $ef) {
@@ -539,7 +699,27 @@ class SourceDocRenderer
                 . '<td ' . self::TD . '>' . $this->e((string) $this->g($ef, 'function', '—')) . '</td>'
                 . '<td ' . self::TD . '>' . ($this->g($ev, 'line') ? 'linha ' . $this->g($ev, 'line') : '—') . '</td></tr>';
         }
-        return $h . '</table>';
+        return $h . '</table>' . $risco;
+    }
+
+    /** Bloco de risco de alteração (semântico, baseado em fatores com evidência). */
+    private function riscoBlock(array $m): string
+    {
+        $risco = (array) $this->g($m['s'], 'risco_alteracao', []);
+        $fatores = (array) $this->g($risco, 'fatores', []);
+        if (empty($fatores)) {
+            return '';
+        }
+        $resumo = (string) $this->g($risco, 'resumo', '');
+        $h = '<h3>Risco de alteração</h3>';
+        if ($resumo !== '' && $resumo !== self::UNDET) {
+            $h .= '<p>' . $this->e($resumo) . '</p>';
+        }
+        $h .= '<ul>';
+        foreach ($fatores as $f) {
+            $h .= '<li><b>' . $this->e((string) $this->g($f, 'tipo', '')) . ':</b> ' . $this->e((string) $this->g($f, 'descricao', '')) . '</li>';
+        }
+        return $h . '</ul>';
     }
 
     private function secAttention(array $m): string
