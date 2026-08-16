@@ -100,6 +100,27 @@ class SourceDocSemanticV2ContractTest extends TestCase
         $this->assertSame(2, SourceDocSemanticAnalyzer::SCHEMA_VERSION);
     }
 
+    public function test_documentary_completeness_complete(): void
+    {
+        // conteúdo cobre todas as camadas ⇒ qualidade documental 'completa' (independe do status IA)
+        $r = $this->go($this->richJson());
+        $this->assertSame('completa', $r['documentary_completeness']['level']);
+        $this->assertEmpty($r['documentary_completeness']['missing']);
+    }
+
+    public function test_documentary_completeness_partial_lists_missing(): void
+    {
+        // objetivo vazio + sem regras/funções ⇒ 'parcial' com a lista do que falta (não mascara)
+        $json = json_encode([
+            'entendimento_funcional' => ['uma_frase' => ['texto' => 'x', 'confidence' => 'low', 'evidence' => []], 'objetivo' => '', 'o_que_faz' => []],
+            'regras_negocio' => [], 'funcoes' => [], 'change_summary' => 'x',
+        ], JSON_UNESCAPED_UNICODE);
+        $r = $this->go($json);
+        $this->assertSame('parcial', $r['documentary_completeness']['level']);
+        $this->assertContains('objetivo', $r['documentary_completeness']['missing']);
+        $this->assertContains('o_que_faz', $r['documentary_completeness']['missing']);
+    }
+
     public function test_entendimento_funcional_built(): void
     {
         $r = $this->go($this->richJson());

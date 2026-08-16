@@ -119,7 +119,73 @@ class SourceDocRenderer
         }
         $h .= '</table>';
         $h .= $this->statusBox($m);
+        $h .= $this->qualityBox($m);
         return $h;
+    }
+
+    /** Bloco 4.2 — Qualidade DOCUMENTAL (conteúdo cobre o exigido?) × Execução da IA (truncou?). */
+    private function qualityBox(array $m): string
+    {
+        $s = $m['s'];
+        if ($m['semPending'] || ! is_array($s)) {
+            return '';
+        }
+        // qualidade documental: usa o campo salvo; se ausente (doc antigo), DERIVA do conteúdo.
+        $dc = $this->g($s, 'documentary_completeness', null);
+        $level = is_array($dc) ? (string) $this->g($dc, 'level', '') : $this->deriveDocQuality($s);
+        $missing = is_array($dc) ? (array) $this->g($dc, 'missing', []) : $this->deriveDocMissing($s);
+
+        [$qLabel, $qColor, $qBg] = $level === 'completa'
+            ? ['COMPLETA', '1c6b45', 'e0f0e8']
+            : ['PARCIAL', 'a04318', 'f6e8d6'];
+
+        // execução da IA
+        $exec = (string) $this->g($s, 'status', '');
+        $reason = (string) $this->g($s, 'partial_reason', '');
+        $execLabel = match ($exec) {
+            'completed' => 'Completa',
+            'partial'   => 'Parcial' . ($reason !== '' ? ' (' . $this->e($reason) . ')' : ''),
+            'skipped_cost_limit' => 'Não executada (limite de custo)',
+            default     => ucfirst($exec ?: '—'),
+        };
+
+        $h = '<div style="margin:8pt 0;padding:6pt 10pt;background:#' . $qBg . ';border-left:3px solid #' . $qColor . '">';
+        $h .= '<b style="color:#' . $qColor . '">Qualidade documental: ' . $qLabel . '</b>';
+        if ($level !== 'completa' && ! empty($missing)) {
+            $h .= '<span style="font-size:9pt;color:#3a4a4d"> — faltando: ' . $this->e(implode(', ', $missing)) . '</span>';
+        }
+        $h .= '<div style="font-size:9pt;color:#3a4a4d;margin-top:2pt">Execução da análise (IA): ' . $execLabel
+            . '. <i>Qualidade documental e execução da IA são medidas distintas: um documento pode conter tudo o que o padrão exige mesmo quando a IA atingiu o limite de saída.</i></div>';
+        $h .= '</div>';
+        return $h;
+    }
+
+    private function deriveDocQuality(array $s): string
+    {
+        return empty($this->deriveDocMissing($s)) ? 'completa' : 'parcial';
+    }
+
+    private function deriveDocMissing(array $s): array
+    {
+        $ent = (array) $this->g($s, 'entendimento_funcional', []);
+        $missing = [];
+        $obj = (string) $this->g($ent, 'objetivo', (string) $this->g($s, 'objetivo', ''));
+        if ($obj === '' || $obj === self::UNDET) {
+            $missing[] = 'objetivo';
+        }
+        if (empty($this->g($ent, 'o_que_faz', []))) {
+            $missing[] = 'o_que_faz';
+        }
+        if (empty($this->g($s, 'regras_negocio', []))) {
+            $missing[] = 'regras_negocio';
+        }
+        if (empty($this->g($s, 'funcoes', []))) {
+            $missing[] = 'finalidades_funcoes';
+        }
+        if (empty($this->g((array) $this->g($s, 'risco_alteracao', []), 'fatores', []))) {
+            $missing[] = 'fatores_risco';
+        }
+        return $missing;
     }
 
     private function statusBox(array $m): string

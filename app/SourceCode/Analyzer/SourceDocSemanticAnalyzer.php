@@ -650,9 +650,16 @@ class SourceDocSemanticAnalyzer
         $depCriticas = $this->validateDependencias($sem['dependencias_criticas'] ?? [], $depSet, $fnSet, $tbSet, $fieldQ, $fieldBare);
         $risco = $this->buildRisco($sem['risco_alteracao'] ?? [], $det, $fnSet, $tbSet, $fieldQ, $fieldBare);
 
+        // Bloco 4.2 — QUALIDADE DOCUMENTAL (o conteúdo cobre o que o contrato exige?) é conceito
+        // SEPARADO da EXECUÇÃO DA IA (status: houve truncamento?). Um doc pode ter execução 'partial'
+        // (modelo bateu o teto) e ainda assim estar documentalmente COMPLETO. Não mascara truncamento:
+        // se um bloco realmente perdeu conteúdo exigido, a qualidade cai para 'parcial' com o que falta.
+        $docCompleteness = $this->documentaryCompleteness($entendimento, $rulesShown, $funcoes, $risco, $this->coverage);
+
         return [
             'schema_version'   => self::SCHEMA_VERSION,
             'block_status'     => $sem['block_status'] ?? null,
+            'documentary_completeness' => $docCompleteness,
             'entendimento_funcional' => $entendimento,
             'dependencias_criticas'  => $depCriticas,
             'risco_alteracao'        => $risco,
@@ -762,6 +769,43 @@ class SourceDocSemanticAnalyzer
             ];
         }
         return $out;
+    }
+
+    /**
+     * QUALIDADE DOCUMENTAL — o conteúdo entrega as camadas exigidas? (conceito à parte do status
+     * de execução da IA). 'completa' se todas as camadas essenciais têm conteúdo real; senão
+     * 'parcial' com a lista do que falta. NÃO mascara truncamento: se um bloco perdeu conteúdo
+     * exigido (ex.: objetivo indeterminado, sem função explicada), a qualidade cai.
+     */
+    private function documentaryCompleteness(array $ent, array $regras, array $funcoes, array $risco, array $coverage): array
+    {
+        $missing = [];
+        $objetivo = $this->str($ent['objetivo'] ?? null);
+        if ($objetivo === null || $objetivo === '' || $objetivo === self::UNDETERMINED) {
+            $missing[] = 'objetivo';
+        }
+        if (empty($ent['o_que_faz'])) {
+            $missing[] = 'o_que_faz';
+        }
+        if (empty($regras)) {
+            $missing[] = 'regras_negocio';
+        }
+        // funções: a maioria das relevantes precisa estar explicada (coverage).
+        $total = (int) ($coverage['relevant_functions_total'] ?? 0);
+        $analyzed = (int) ($coverage['relevant_functions_analyzed'] ?? count($funcoes));
+        if ($total > 0 && $analyzed < (int) ceil($total * 0.8)) {
+            $missing[] = 'finalidades_funcoes';
+        } elseif ($total === 0 && empty($funcoes)) {
+            $missing[] = 'finalidades_funcoes';
+        }
+        if (empty($risco['fatores'] ?? [])) {
+            $missing[] = 'fatores_risco';
+        }
+
+        return [
+            'level'   => empty($missing) ? 'completa' : 'parcial',
+            'missing' => $missing,
+        ];
     }
 
     // ── Bloco 4.2 — Entendimento Funcional / Dependências / Risco (validados) ────
@@ -1206,6 +1250,7 @@ class SourceDocSemanticAnalyzer
         return [
             'schema_version' => self::SCHEMA_VERSION, 'status' => $status, 'strategy' => null, 'provider' => $this->ai->name(), 'model' => $this->ai->model(),
             // Bloco 4.2 — Entendimento Funcional (novo topo).
+            'documentary_completeness' => ['level' => 'parcial', 'missing' => ['objetivo', 'o_que_faz', 'regras_negocio', 'finalidades_funcoes', 'fatores_risco']],
             'entendimento_funcional' => $this->emptyEntendimento(),
             'dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => null, 'fatores' => []],
             'objetivo' => null, 'fluxo' => [], 'funcoes' => [], 'tabelas' => [], 'regras_negocio' => [],
