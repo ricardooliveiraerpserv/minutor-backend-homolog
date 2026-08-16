@@ -522,6 +522,10 @@ Route::prefix('v1')->group(function () {
         // Central de Fontes (C1) — catálogo de documentação de fonte (SOMENTE LEITURA).
         Route::middleware('permission.or.admin:source_docs.view')->group(function () {
             Route::get('/source-docs', [\App\Http\Controllers\SourceDocCatalogController::class, 'index']);
+            // C2 — busca técnica (read-model)
+            Route::get('/source-docs/search', [\App\Http\Controllers\SourceDocSearchController::class, 'search']);
+            Route::get('/source-docs/search/suggest', [\App\Http\Controllers\SourceDocSearchController::class, 'suggest']);
+            Route::get('/source-docs/{sourceDoc}/entities', [\App\Http\Controllers\SourceDocSearchController::class, 'entities'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
@@ -1513,6 +1517,10 @@ Route::prefix('v1')->group(function () {
         // Central de Fontes (C1) — catálogo de documentação de fonte (SOMENTE LEITURA).
         Route::middleware('permission.or.admin:source_docs.view')->group(function () {
             Route::get('/source-docs', [\App\Http\Controllers\SourceDocCatalogController::class, 'index']);
+            // C2 — busca técnica (read-model)
+            Route::get('/source-docs/search', [\App\Http\Controllers\SourceDocSearchController::class, 'search']);
+            Route::get('/source-docs/search/suggest', [\App\Http\Controllers\SourceDocSearchController::class, 'suggest']);
+            Route::get('/source-docs/{sourceDoc}/entities', [\App\Http\Controllers\SourceDocSearchController::class, 'entities'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');

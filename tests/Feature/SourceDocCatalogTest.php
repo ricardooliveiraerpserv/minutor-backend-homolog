@@ -9,6 +9,7 @@ use App\Models\SourceDocVersion;
 use App\Models\User;
 use App\SourceCode\Exceptions\SourceIntegrationException;
 use App\SourceCode\GithubAppAuth;
+use App\SourceCode\SourceDocIndexer;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -96,6 +97,10 @@ class SourceDocCatalogTest extends TestCase
 
         // Espelha o documentation_json no doc vivo (como faz o pipeline).
         $doc->forceFill(['current_version_id' => $ver->id, 'documentation_json' => $ver->documentation_json])->save();
+        $doc->refresh();
+
+        // C2: functions_count do catálogo vem do read-model → indexa o fonte.
+        app(SourceDocIndexer::class)->index($doc);
 
         return $doc->refresh();
     }
@@ -150,7 +155,7 @@ class SourceDocCatalogTest extends TestCase
         $this->makeDoc();
         $r = $this->actingAs($this->admin(), 'sanctum')->getJson('/api/v1/source-docs?with_situation=false');
         $row = $r->json('data.0');
-        $this->assertSame(2, $row['functions_count']);              // veio do json_array_length
+        $this->assertSame(2, $row['functions_count']);              // veio do source_doc_index (C2)
         $this->assertContains($row['semantic_quality'], ['completed', 'partial', 'none']);
         $this->assertArrayNotHasKey('deterministic_json', $row);    // nada pesado por linha
         $this->assertArrayNotHasKey('semantic_json', $row);

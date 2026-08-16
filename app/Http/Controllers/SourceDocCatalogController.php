@@ -36,6 +36,8 @@ class SourceDocCatalogController extends Controller
 
         $query = SourceDoc::query()
             ->leftJoin('source_doc_versions as cv', 'cv.id', '=', 'source_docs.current_version_id')
+            // C2: functions_count vem do read-model (O(1)), não mais do json_array_length do JSON pesado.
+            ->leftJoin('source_doc_index as si', 'si.source_doc_id', '=', 'source_docs.id')
             ->with([
                 'customer:id,name',
                 'sourceRepo:id,owner,repository,branch',
@@ -64,16 +66,10 @@ class SourceDocCatalogController extends Controller
         }
 
         // SELECT enxuto: nada de deterministic/semantic/documentation JSON por linha.
-        // has_semantic é booleano (não detoasta o JSON).
-        //
-        // functions_count: MEDIDO custa ~160ms/página (json_array_length lê o deterministic_json
-        // de ~360KB por linha; sem ele a query é ~0,5ms). O motor está congelado (não dá p/
-        // denormalizar um contador no pipeline) e um contador materializado é C2. Por isso é
-        // OPCIONAL via with_counts (default true p/ manter a coluna Funções; with_counts=false
-        // devolve a página em <5ms). Ver limitação reportada.
-        $withCounts = $request->query('with_counts', 'true') !== 'false';
+        // has_semantic é booleano (não detoasta o JSON). functions_count vem do READ-MODEL C2
+        // (source_doc_index) — O(1), sem ler o JSON pesado; null enquanto o fonte não foi indexado.
         // Colunas explícitas — NUNCA source_docs.* (traria documentation_json, ~360KB/linha).
-        $select = [
+        $query->select([
             'source_docs.id', 'source_docs.customer_id', 'source_docs.source_repo_id',
             'source_docs.owner', 'source_docs.repository', 'source_docs.branch', 'source_docs.path',
             'source_docs.filename', 'source_docs.tipo', 'source_docs.lang', 'source_docs.size_bytes',
@@ -84,11 +80,8 @@ class SourceDocCatalogController extends Controller
             DB::raw('cv.ticket_number as cv_ticket_number'),
             DB::raw('cv.responsavel as cv_responsavel'),
             DB::raw('(cv.semantic_json is not null) as has_semantic'),
-        ];
-        $select[] = $withCounts
-            ? DB::raw("json_array_length(coalesce(cv.deterministic_json->'functions', '[]'::json)) as functions_count")
-            : DB::raw('null::int as functions_count');
-        $query->select($select);
+            DB::raw('si.functions_count as functions_count'),
+        ]);
 
         $page = $query->paginate($perPage);
 
