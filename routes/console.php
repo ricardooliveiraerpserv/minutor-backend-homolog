@@ -320,3 +320,13 @@ Schedule::command('help-desk:run-scheduled-reopens')
   ->description('Reabre chamados resolvidos/encerrados com reabertura agendada vencida')
   ->withoutOverlapping(10)
   ->runInBackground();
+
+// Central de Fontes (C2) — mantém o read-model de busca em dia por RECONCILIAÇÃO de staleness
+// (indexed_version_id/blob × versão vigente). DESACOPLADO do motor/pipeline (sem observer):
+// uma falha aqui NUNCA afeta a GMUD/documentação. Idempotente, em lote, sem execuções concorrentes.
+Schedule::command('source-doc:index --stale')
+  ->cron('*/10 * * * *')
+  ->name('source-doc-index-stale')
+  ->description('Reindexa (busca técnica) os fontes cujo índice ficou stale')
+  ->withoutOverlapping(10)
+  ->runInBackground();
