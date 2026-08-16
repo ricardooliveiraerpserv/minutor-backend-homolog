@@ -552,7 +552,14 @@ class NotificationController extends Controller
 
         // COM botões de decisão: cada destinatário recebe o e-mail com SEUS botões de 1 clique (link assinado).
         if (!empty($n->actions)) {
-            $users = $this->resolveRecipientUsers($n)->filter(fn ($u) => filled($u->email));
+            // Quem JÁ decidiu (respondeu um botão / confirmou → ack_at gravado) NÃO recebe o e-mail
+            // de novo nas recorrências/reenvios. Só continua recebendo quem NÃO respondeu ou clicou
+            // "Decidir depois" (que não grava ack_at). Espelha a lógica do pop-up em fire().
+            $decidedIds = NotificationRead::where('notification_id', $n->id)
+                ->whereNotNull('ack_at')
+                ->pluck('user_id')->all();
+            $users = $this->resolveRecipientUsers($n)
+                ->filter(fn ($u) => filled($u->email) && !in_array($u->id, $decidedIds, true));
             $sent = 0;
             foreach ($users as $u) {
                 $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
