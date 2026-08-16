@@ -55,11 +55,12 @@ class SourceDocInventory
             ksort($tree); // ordem determinística p/ cursor
 
             $github = count($tree);
-            $eligible = $new = $unchanged = $changed = $ignored = 0;
-            $cursor = $cov->last_scan_cursor;
-            $resuming = ! empty($cursor);
+            $eligible = $documented = $unchanged = $changed = $ignored = $remainingNew = 0;
             $status = 'completed';
 
+            // Classifica a árvore INTEIRA (grátis, só strings/DB). Só a DOCUMENTAÇÃO (fetch+parse) é
+            // limitada ao lote; o resto fica "não catalogado" p/ o próximo ciclo. Retomável pelo
+            // doc-exists (o já documentado vira coberto), sem precisar de cursor.
             foreach ($tree as $path => $blob) {
                 if (! $this->eligible($path, $base, $exts)) {
                     $ignored++;
@@ -67,36 +68,24 @@ class SourceDocInventory
                 }
                 $eligible++;
 
-                // retomada: pula tudo até (inclusive) o último path processado
-                if ($resuming) {
-                    if ($path === $cursor) {
-                        $resuming = false;
-                    }
-                    continue;
-                }
-
                 $doc = SourceDoc::where([
                     'owner' => $repo->owner, 'repository' => $repo->repository,
                     'branch' => $repo->branch, 'path' => $path,
                 ])->first();
 
                 if ($doc) {
-                    $documented = $doc->relationLoaded('currentVersion')
+                    $dblob = $doc->relationLoaded('currentVersion')
                         ? $doc->currentVersion?->source_blob_sha
                         : $doc->currentVersion()->first()?->source_blob_sha;
-                    if ($documented === $blob) {
-                        $unchanged++;              // coberto
-                    } else {
-                        $changed++;                // DOCUMENTAÇÃO DESATUALIZADA (não reprocessa aqui)
-                    }
+                    $dblob === $blob ? $unchanged++ : $changed++; // coberto × documentação desatualizada
                     continue;
                 }
 
-                // NOVO (não catalogado) → documenta DETERMINÍSTICO (runSemantic=false FIXO)
-                if ($maxNew > 0 && $new >= $maxNew) {
-                    // last_scan_cursor já aponta o último NOVO processado → retoma daqui.
+                // NÃO catalogado → documenta DETERMINÍSTICO (runSemantic=false FIXO), até o lote
+                if ($maxNew > 0 && $documented >= $maxNew) {
+                    $remainingNew++;        // fica p/ o próximo ciclo (não busca no GitHub agora)
                     $status = 'partial';
-                    break;
+                    continue;
                 }
                 $content = $this->auth->getFileContent($repo->owner, $repo->repository, $head ?: $repo->branch, $path);
                 if ($content === null) {
@@ -118,17 +107,15 @@ class SourceDocInventory
                 if ($indexDoc) {
                     $this->indexer->index($indexDoc);
                 }
-                $new++;
-                $cov->last_scan_cursor = $path;
+                $documented++;
             }
 
-            if ($status === 'completed') {
-                $cov->last_scan_cursor = null; // varredura inteira concluída
-            }
+            // "não catalogados" que ficaram p/ o próximo ciclo (retomável pelo doc-exists).
+            $cov->last_scan_cursor = $remainingNew > 0 ? "remaining_new={$remainingNew}" : null;
             $cov->fill([
                 'scan_status' => $status, 'scan_finished_at' => now(), 'last_synced_at' => now(),
                 'github_files' => $github, 'eligible_source_files' => $eligible,
-                'new_files' => $new, 'unchanged_files' => $unchanged,
+                'new_files' => $documented, 'unchanged_files' => $unchanged,
                 'changed_files' => $changed, 'ignored_files' => $ignored,
             ]);
             $this->refreshCounts($cov, $repo);
