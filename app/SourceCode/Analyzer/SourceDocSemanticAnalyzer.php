@@ -110,7 +110,9 @@ class SourceDocSemanticAnalyzer
         return $final;
     }
 
-    // ── INITIAL (A): global compacto + aprofundamento seletivo ──────────────────
+    // ── INITIAL (Bloco 4.2): 3 blocos INDEPENDENTES, cada um com status próprio ──
+    // Bloco 1 Entendimento Funcional (prioridade) · Bloco 2 Regras/Deps/Risco/Pontos ·
+    // Aprofundamento Funções. Truncar/JSON inválido em um bloco NÃO descarta os válidos anteriores.
     private function initial(array $det, string $maskedCode, ?array $diff): array
     {
         $limit = (int) config('services.source_doc_ai.max_relevant_functions', 12);
@@ -119,18 +121,24 @@ class SourceDocSemanticAnalyzer
         $compact = $this->buildCompactFacts($det, $relevant, $diff);
         $inlineCodeMax = (int) config('services.source_doc_ai.inline_code_max_chars', 8000);
         $inlineCode = mb_strlen($maskedCode) <= $inlineCodeMax ? $maskedCode : '';
+        // Fonte grande: manda no INPUT o código dos ENTRYPOINTS (aterra objetivo/o_que_faz sem custo
+        // de saída). Input não é o gargalo — o truncamento era de SAÍDA.
+        $entCode = $inlineCode !== '' ? $inlineCode : $this->entrypointCode($det, $maskedCode);
 
-        // Fonte pequeno (código cabe inline) → 1 chamada com funcoes na global (saída pequena, sem
-        // risco de truncar). Fonte grande → global só NARRATIVA + aprofundamento traz as finalidades
-        // (evita empacotar narrativa + N funções numa saída só = truncava).
-        $small = $inlineCode !== '';
-        $globalOut = (int) config('services.source_doc_ai.max_output_tokens_global', 3500);
+        // Orçamentos POR BLOCO (não um teto global inflado). Ajustáveis; hard limit total = US$ 0,30.
+        $entOut   = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 2400);
+        $rulesOut = (int) config('services.source_doc_ai.max_output_tokens_rules', 2600);
         $deepenOut = (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800);
 
-        // ── monta prompts, estima ANTES de executar (hard limit), depois executa ──
-        $globalUser = $this->globalUserPrompt($compact, $diff, $inlineCode, $small);
-        $deepItems = (! $small && ! empty($relevant)) ? $this->buildDeepItems($relevant, $det, $maskedCode) : [];
-        $plan = [['system' => $this->systemPrompt(), 'user' => $globalUser, 'out' => $globalOut, 'code' => $small]];
+        $entUser   = $this->entendimentoUserPrompt($compact, $diff, $entCode);
+        $rulesUser = $this->rulesUserPrompt($compact, $diff, $inlineCode);
+        $deepItems = ! empty($relevant) ? $this->buildDeepItems($relevant, $det, $maskedCode) : [];
+
+        // ── estimativa da ESTRATÉGIA COMPLETA antes de executar (hard limit; nada silencioso) ──
+        $plan = [
+            ['system' => $this->systemPrompt(), 'user' => $entUser,   'out' => $entOut,   'code' => ($entCode !== '')],
+            ['system' => $this->systemPrompt(), 'user' => $rulesUser, 'out' => $rulesOut, 'code' => ($inlineCode !== '')],
+        ];
         if (! empty($deepItems)) {
             $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenFinalidadesPrompt($deepItems), 'out' => $deepenOut, 'code' => true];
         }
@@ -141,22 +149,53 @@ class SourceDocSemanticAnalyzer
             return $this->costSkipped($est, count($relNames));
         }
 
-        // ── CALL 1 — narrativa global (funcoes só se pequeno) ──
-        $g = $this->callJson($plan[0]['system'], $plan[0]['user'], $globalOut);
-        $sem = is_array($g['json']) ? $g['json'] : [];
-        $funcoes = $small ? $this->normFuncoes($sem['funcoes'] ?? []) : [];
+        $sem = [];
+        $blocks = [];
+
+        // ── BLOCO 1 — Entendimento Funcional (PRIORIDADE; preservado mesmo se o resto falhar) ──
+        $g1 = $this->callJson($this->systemPrompt(), $entUser, $entOut);
+        $j1 = is_array($g1['json']) ? $g1['json'] : [];
+        if (! empty($j1['entendimento_funcional'])) {
+            $sem['entendimento_funcional'] = $j1['entendimento_funcional'];
+            $sem['objetivo'] = $j1['entendimento_funcional']['objetivo'] ?? ($j1['objetivo'] ?? null);
+        }
+        if (! empty($j1['fluxo'])) {
+            $sem['fluxo'] = $j1['fluxo'];
+        }
+        $entOk = ! $g1['truncated'] && ! empty($j1['entendimento_funcional']);
+        $blocks['entendimento'] = $entOk ? 'ok' : ($g1['raw_truncated'] ? 'truncated' : 'invalid_json');
+
+        // ── BLOCO 2 — Regras / Dependências / Risco / Pontos (independente; respeita max_calls) ──
+        $runRules = count($plan) >= 2;
+        $rulesOk = false;
+        if ($runRules) {
+            $g2 = $this->callJson($this->systemPrompt(), $rulesUser, $rulesOut);
+            $j2 = is_array($g2['json']) ? $g2['json'] : [];
+            foreach (['regras_negocio', 'dependencias_criticas', 'pontos_atencao'] as $k) {
+                if (! empty($j2[$k])) {
+                    $sem[$k] = $j2[$k];
+                }
+            }
+            if (! empty($j2['risco_alteracao'])) {
+                $sem['risco_alteracao'] = $j2['risco_alteracao'];
+            }
+            if (! empty($j2['change_summary'])) {
+                $sem['change_summary'] = $j2['change_summary'];
+            }
+            $rulesOk = ! $g2['truncated'] && $j2 !== [];
+            $blocks['regras'] = $rulesOk ? 'ok' : ($g2['raw_truncated'] ? 'truncated' : 'invalid_json');
+        } else {
+            $blocks['regras'] = 'skipped';
+        }
+
+        // ── APROFUNDAMENTO — Funções relevantes (estratégia seletiva existente) ──
+        $funcoes = [];
         $cachedN = 0;
-        $deepRan = false;
         $deepTrunc = false;
-
-        // narrativa mínima válida? (objetivo OU fluxo OU regras) e não truncada
-        $narrativeValid = ! $g['truncated'] && ($this->str($sem['objetivo'] ?? $sem['overview'] ?? '') !== '' || ! empty($sem['fluxo'] ?? $sem['execution_flow'] ?? []) || ! empty($sem['regras_negocio'] ?? []));
-
-        // ── CALL 2 — finalidades das funções relevantes (fonte grande) ──
-        if (! empty($deepItems) && count($plan) > 1) {
+        $deepRan = false;
+        if (! empty($deepItems) && count($plan) >= 3) {
             $deepRan = true;
-            [$deepFuncoes, $deepRules, $deepPoints, $cachedN, $deepTrunc] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
-            $funcoes = $this->mergeFuncoes($funcoes, $deepFuncoes);
+            [$funcoes, $deepRules, $deepPoints, $cachedN, $deepTrunc] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
             if (! empty($deepRules)) {
                 $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $deepRules);
             }
@@ -164,14 +203,26 @@ class SourceDocSemanticAnalyzer
                 $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $deepPoints);
             }
         }
-
-        // ── validador de completude (nunca completed vazio) ──
-        [$status, $partialReason] = $this->completionStatus($narrativeValid, $g, $deepRan, $deepTrunc);
         $sem['funcoes'] = $funcoes;
+        $blocks['funcoes'] = $deepTrunc ? 'truncated' : ($deepRan ? 'ok' : 'skipped');
+
+        // ── status GLOBAL: completed só se tudo válido; senão partial preservando o válido ──
+        $truncatedAny = $blocks['entendimento'] !== 'ok' || ! $rulesOk || $deepTrunc;
+        if (! $entOk) {
+            $status = 'partial';
+            $reason = 'entendimento_' . $blocks['entendimento'];
+        } elseif ($truncatedAny) {
+            $status = 'partial';
+            $reason = ! $rulesOk ? ('regras_' . $blocks['regras']) : 'functions_incomplete';
+        } else {
+            $status = 'completed';
+            $reason = null;
+        }
         $sem['status'] = $status;
-        $sem['strategy'] = 'initial_global_selective';
-        if ($partialReason !== null) {
-            $sem['partial_reason'] = $partialReason;
+        $sem['strategy'] = 'initial_blocks_v2';
+        $sem['block_status'] = $blocks;
+        if ($reason !== null) {
+            $sem['partial_reason'] = $reason;
         }
         $this->coverage = [
             'relevant_functions_total'    => count($relNames),
@@ -182,17 +233,26 @@ class SourceDocSemanticAnalyzer
         return $sem;
     }
 
-    /** Decide status: completed só com narrativa mínima válida e sem truncamento. */
-    private function completionStatus(bool $narrativeValid, array $g, bool $deepRan, bool $deepTrunc): array
+    /** Código dos ENTRYPOINTS (funções sem called_by), limitado por budget de chars. */
+    private function entrypointCode(array $det, string $maskedCode): string
     {
-        if (! $narrativeValid) {
-            $reason = $g['raw_truncated'] ? 'output_truncated' : (($g['json'] ?? null) === null ? 'invalid_json' : 'empty_semantic');
-            return ['partial', $reason];
+        $lines = explode("\n", $maskedCode);
+        $entries = array_values(array_filter($det['functions'] ?? [], fn ($f) => empty($f['called_by'])));
+        if (empty($entries)) {
+            $entries = array_slice($det['functions'] ?? [], 0, 1);
         }
-        if ($deepRan && $deepTrunc) {
-            return ['partial', 'functions_incomplete'];
+        $budget = (int) config('services.source_doc_ai.entendimento_code_budget_chars', 14000);
+        $out = [];
+        $used = 0;
+        foreach ($entries as $f) {
+            $slice = $this->codeSlice($lines, $f);
+            if ($used + mb_strlen($slice) > $budget) {
+                break;
+            }
+            $out[] = "// função {$f['name']}\n" . $slice;
+            $used += mb_strlen($slice);
         }
-        return ['completed', null];
+        return implode("\n\n", $out);
     }
 
     // ── MODIFIED (C): diff-first + merge local ──────────────────────────────────
@@ -577,6 +637,7 @@ class SourceDocSemanticAnalyzer
 
         return [
             'schema_version'   => self::SCHEMA_VERSION,
+            'block_status'     => $sem['block_status'] ?? null,
             'entendimento_funcional' => $entendimento,
             'dependencias_criticas'  => $depCriticas,
             'risco_alteracao'        => $risco,
@@ -916,31 +977,42 @@ class SourceDocSemanticAnalyzer
             . 'Seja CONCISO. Devolva SÓ JSON válido (sem markdown).';
     }
 
-    private function globalUserPrompt(array $compact, ?array $diff, string $inlineCode, bool $withFuncoes): string
+    /** BLOCO 1 (prioridade) — só o Entendimento Funcional. Saída pequena e objetiva → não trunca. */
+    private function entendimentoUserPrompt(array $compact, ?array $diff, string $code): string
     {
         $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($inlineCode !== '') {
-            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $inlineCode;
+        if ($code !== '') {
+            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
-        // Narrativa enxuta. Em fonte grande, NÃO pedir as finalidades das funções aqui (vêm no
-        // aprofundamento) — evita saída densa que trunca o JSON.
-        $funcoesPart = $withFuncoes ? 'funcoes[{name,finalidade,confidence,evidence[]}] (só as funções dos fatos), ' : '';
-        $u .= "\n\nProduza JSON com:\n"
+        if ($diff) {
+            $u .= "\n\nDIFF:\n" . json_encode($this->diffForAi($diff), JSON_UNESCAPED_UNICODE);
+        }
+        $u .= "\n\nProduza SOMENTE o Entendimento Funcional (PROPÓSITO de negócio, não a mecânica). JSON:\n"
             . 'entendimento_funcional{'
-            . 'uma_frase{texto,confidence,evidence[{type,name?,table?,field?,dependency?}]}, '
-            . 'objetivo (2–5 frases de PROPÓSITO de negócio), '
-            . 'quando_usado (evento/processo/rotina que dispara; se indeterminável use "' . self::UNDETERMINED . '"), '
-            . 'processo_modulo{processo,modulo,confidence,evidence[]} (módulo Protheus por evidência, NÃO pelo nome do arquivo), '
+            . 'uma_frase{texto,confidence,evidence[{type,name?,table?,field?}]}, '
+            . 'objetivo (2–5 frases: o que resolve, responsabilidade principal, resultado que produz), '
+            . 'quando_usado (evento/processo/rotina que dispara; indeterminável ⇒ "' . self::UNDETERMINED . '"), '
+            . 'processo_modulo{processo,modulo,confidence,evidence[]} (módulo Protheus POR EVIDÊNCIA, não pelo nome do arquivo), '
             . 'entradas_principais[{tipo,nome,descricao,evidence[]}], '
             . 'saidas_principais[{tipo,nome,descricao,evidence[]}], '
-            . 'o_que_faz[{passo,evidence[]}] (sequência FUNCIONAL, não a lista de chamadas)'
-            . "}, \n"
-            . 'fluxo[], ' . $funcoesPart
+            . 'o_que_faz[{passo,evidence[]}] (sequência FUNCIONAL, não a lista de chamadas)}'
+            . ', fluxo[]. Sem evidência para um campo ⇒ "' . self::UNDETERMINED . '".';
+        return $u;
+    }
+
+    /** BLOCO 2 — Regras / Dependências / Risco / Pontos. Independente do Bloco 1. */
+    private function rulesUserPrompt(array $compact, ?array $diff, string $code): string
+    {
+        $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($code !== '') {
+            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
+        }
+        $u .= "\n\nProduza JSON {"
             . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[{type,name?,table?,field?,line_start?,line_end?}]}], '
-            . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[]}] (só o que interfere materialmente; NÃO listar todo include), '
+            . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[]}] (SÓ o que interfere materialmente; NÃO listar todo include/framework), '
             . 'risco_alteracao{resumo,fatores[{tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao,evidence[]}]}, '
-            . 'pontos_atencao[{interpretation,categoria?,severity?,recommendation?,confidence,evidence[]}], change_summary. '
-            . 'Sem evidência para um campo ⇒ "' . self::UNDETERMINED . '".';
+            . 'pontos_atencao[{interpretation,categoria?,severity?,recommendation?,confidence,evidence[]}], change_summary}. '
+            . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita.';
         return $u;
     }
 

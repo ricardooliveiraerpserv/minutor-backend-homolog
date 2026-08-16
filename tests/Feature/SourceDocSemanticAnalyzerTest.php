@@ -95,6 +95,15 @@ class SourceDocSemanticAnalyzerTest extends TestCase
     private function validJson(array $over = []): string
     {
         return json_encode(array_replace([
+            'entendimento_funcional' => [
+                'uma_frase' => ['texto' => 'Reenvia o XML da NF-e e grava o status de envio.', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]],
+                'objetivo' => 'Reenvia o XML da NF-e por e-mail e registra o status no SPED050.',
+                'quando_usado' => 'No reenvio de NF-e.',
+                'processo_modulo' => ['processo' => 'Emissão fiscal', 'modulo' => 'Fiscal', 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]],
+                'entradas_principais' => [['tipo' => 'parametro', 'nome' => 'cId', 'descricao' => 'Id da NF-e', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]]],
+                'saidas_principais' => [['tipo' => 'atualizacao', 'nome' => 'SPED050.STATUSMAIL', 'descricao' => 'Status do envio', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'STATUSMAIL']]]],
+                'o_que_faz' => [['passo' => 'Recebe o id', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]]],
+            ],
             'objetivo' => 'Reenvia o XML da NF-e por e-mail.',
             'fluxo' => ['Recebe parâmetros', 'Atualiza SPED050'],
             'funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'Grava e-mail e status.'], ['name' => 'FTENVNFE', 'finalidade' => 'Entrada.']],
@@ -104,6 +113,17 @@ class SourceDocSemanticAnalyzerTest extends TestCase
             'change_summary' => 'Passou a atualizar STATUSMAIL.',
         ], $over));
     }
+
+
+    private function entBlock(): string
+    {
+        return json_encode(['entendimento_funcional' => [
+            'uma_frase' => ['texto' => 'Faz X.', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'FTENVNFU']]],
+            'objetivo' => 'Faz X.', 'quando_usado' => 'No reenvio.', 'o_que_faz' => [],
+        ], 'fluxo' => ['p1']]);
+    }
+    private function rulesBlock(): string { return json_encode(['regras_negocio' => [], 'change_summary' => 'x']); }
+    private function funcoesBlock(): string { return json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]); }
 
     // ── base (Bloco 4) ──
     public function test_no_provider_is_pending(): void
@@ -184,7 +204,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $responder = fn ($user, $i) => $this->validJson();
         $r = $this->go($this->ai(true, $responder), str_repeat("linha\n", 40));
         $this->assertSame('completed', $r['status']);
-        $this->assertSame('initial_global_selective', $r['strategy']);
+        $this->assertSame('initial_blocks_v2', $r['strategy']);
         $this->assertArrayHasKey('relevant_functions_total', $r['semantic_coverage']);
     }
 
@@ -198,10 +218,10 @@ class SourceDocSemanticAnalyzerTest extends TestCase
 
     public function test_output_budget_passed_to_provider(): void
     {
-        config(['services.source_doc_ai.max_output_tokens_global' => 1600]);
+        config(['services.source_doc_ai.max_output_tokens_entendimento' => 1600]);
         $ai = $this->ai(true, $this->validJson());
         $this->go($ai);
-        $this->assertSame(1600, $ai->opts[0]['max_tokens'] ?? null, 'a chamada global usa o output budget global');
+        $this->assertSame(1600, $ai->opts[0]['max_tokens'] ?? null, 'a 1ª chamada (Entendimento) usa seu output budget');
     }
 
     public function test_hard_limit_skips_before_calling(): void
@@ -223,7 +243,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $sem->analyze($this->det(), 'mesmo-codigo', null, ['blob_sha' => 'BLOB1']);
         $r2 = $sem->analyze($this->det(), 'mesmo-codigo', null, ['blob_sha' => 'BLOB1']);
         $this->assertSame('reuse_blob', $r2['strategy']);
-        $this->assertSame(1, count($ai->calls), '2ª análise do mesmo blob não chama a IA');
+        $this->assertSame(3, count($ai->calls), '2ª análise do mesmo blob não chama a IA (1ª = 3 blocos)');
         Cache::flush();
     }
 
@@ -236,7 +256,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $sem->analyze($this->det(), 'codigo', null, ['blob_sha' => 'B']);
         config(['services.source_doc_ai.prompt_version' => 99]); // muda a chave de cache
         $sem->analyze($this->det(), 'codigo', null, ['blob_sha' => 'B']);
-        $this->assertSame(2, count($ai->calls), 'mudança de prompt_version invalida o cache');
+        $this->assertSame(6, count($ai->calls), 'mudança de prompt_version invalida o cache (2 análises × 3 blocos)');
         Cache::flush();
     }
 
@@ -279,7 +299,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $ai = $this->ai(true, fn ($u, $i) => ['text' => $this->validJson(), 'stop' => 'max_tokens']);
         $r = $this->go($ai);
         $this->assertSame('partial', $r['status']);
-        $this->assertSame('output_truncated', $r['partial_reason']);
+        $this->assertSame('entendimento_truncated', $r['partial_reason']);
     }
 
     /** (F2) JSON inválido → partial (invalid_json), nunca completed. */
@@ -287,43 +307,49 @@ class SourceDocSemanticAnalyzerTest extends TestCase
     {
         $r = $this->go($this->ai(true, 'isto não é json {quebrado'));
         $this->assertSame('partial', $r['status']);
-        $this->assertSame('invalid_json', $r['partial_reason']);
+        $this->assertSame('entendimento_invalid_json', $r['partial_reason']);
     }
 
     /** (F3) JSON válido mas semanticamente vazio → nunca completed. */
     public function test_empty_semantic_not_completed(): void
     {
-        $r = $this->go($this->ai(true, json_encode(['objetivo' => '', 'fluxo' => [], 'regras_negocio' => [], 'funcoes' => []])));
+        $r = $this->go($this->ai(true, '{}'));
         $this->assertNotSame('completed', $r['status']);
-        $this->assertSame('empty_semantic', $r['partial_reason']);
+        $this->assertSame('entendimento_invalid_json', $r['partial_reason']);
     }
 
     /** (F4) global válida sem funções → completed (funções vêm do aprofundamento). */
     public function test_global_valid_without_functions_is_ok(): void
     {
+        // ent + regras válidos + funções válidas ⇒ completed (blocos independentes)
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
-        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? json_encode(['objetivo' => 'Faz X.', 'fluxo' => ['passo'], 'regras_negocio' => []]) : json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'ok']]]));
-        $r = $this->go($ai, str_repeat("linha\n", 40));
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? $this->entBlock() : ($i === 1 ? $this->rulesBlock() : $this->funcoesBlock()));
+        $r = $this->go($ai, str_repeat("linha
+", 40));
         $this->assertSame('completed', $r['status']);
+        $this->assertSame('Faz X.', $r['entendimento_funcional']['objetivo']);
     }
 
     /** (F5) aprofundamento falha (truncado) mas global válida → partial + global preservada. */
     public function test_deepening_partial_keeps_global(): void
     {
+        // Entendimento válido; aprofundamento (funções) trunca ⇒ partial preservando o Entendimento.
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
-        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? json_encode(['objetivo' => 'Faz X.', 'fluxo' => ['p1']]) : ['text' => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'x']]]), 'stop' => 'max_tokens']);
-        $r = $this->go($ai, str_repeat("linha\n", 40));
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? $this->entBlock() : ($i === 1 ? $this->rulesBlock() : ['text' => $this->funcoesBlock(), 'stop' => 'max_tokens']));
+        $r = $this->go($ai, str_repeat("linha
+", 40));
         $this->assertSame('partial', $r['status']);
         $this->assertSame('functions_incomplete', $r['partial_reason']);
-        $this->assertSame('Faz X.', $r['objetivo'], 'global preservada');
+        $this->assertSame('Faz X.', $r['entendimento_funcional']['objetivo'], 'entendimento preservado');
     }
 
     /** (F6) global + aprofundamento válidos → completed. */
     public function test_global_and_deepening_valid_completed(): void
     {
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
-        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? json_encode(['objetivo' => 'Faz X.', 'fluxo' => ['p1'], 'regras_negocio' => []]) : json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]));
-        $r = $this->go($ai, str_repeat("linha\n", 40));
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? $this->entBlock() : ($i === 1 ? $this->rulesBlock() : $this->funcoesBlock()));
+        $r = $this->go($ai, str_repeat("linha
+", 40));
         $this->assertSame('completed', $r['status']);
         $this->assertContains('FTENVNFU', array_column($r['funcoes'], 'name'));
     }
