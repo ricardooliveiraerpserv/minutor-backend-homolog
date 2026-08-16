@@ -126,9 +126,9 @@ class SourceDocSemanticAnalyzer
         $entCode = $inlineCode !== '' ? $inlineCode : $this->entrypointCode($det, $maskedCode);
 
         // Orçamentos POR BLOCO (não um teto global inflado). Ajustáveis; hard limit total = US$ 0,30.
-        $entOut     = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 3000);
+        $entOut     = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 4000);
         $regrasOut  = (int) config('services.source_doc_ai.max_output_tokens_regras', 2600);
-        $depRiscoOut = (int) config('services.source_doc_ai.max_output_tokens_deprisco', 2600);
+        $depRiscoOut = (int) config('services.source_doc_ai.max_output_tokens_deprisco', 3000);
         $deepenOut  = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2600);
 
         $entUser     = $this->entendimentoUserPrompt($compact, $diff, $entCode);
@@ -1003,16 +1003,16 @@ class SourceDocSemanticAnalyzer
             $u .= "\n\nDIFF:\n" . json_encode($this->diffForAi($diff), JSON_UNESCAPED_UNICODE);
         }
         $u .= "\n\nProduza SOMENTE o Entendimento Funcional (PROPÓSITO de negócio, não a mecânica). "
-            . 'SEJA ENXUTO: no máx. 1 evidence por item; listas curtas. JSON:\n'
+            . 'MUITO ENXUTO: evidence só {type,name/table/field}, no MÁX. 1 por item; descrições curtas. JSON:\n'
             . 'entendimento_funcional{'
-            . 'uma_frase{texto,confidence,evidence[≤1 {type,name?,table?,field?}]}, '
-            . 'objetivo (2–4 frases: o que resolve, responsabilidade, resultado), '
+            . 'uma_frase{texto,confidence,evidence[≤1]}, '
+            . 'objetivo (2–3 frases curtas: o que resolve, responsabilidade, resultado), '
             . 'quando_usado (1 frase; indeterminável ⇒ "' . self::UNDETERMINED . '"), '
             . 'processo_modulo{processo,modulo,confidence,evidence[≤1]} (módulo POR EVIDÊNCIA, não pelo nome do arquivo), '
-            . 'entradas_principais[≤5 {tipo,nome,descricao(≤12 palavras),evidence[≤1]}], '
-            . 'saidas_principais[≤5 {tipo,nome,descricao(≤12 palavras),evidence[≤1]}], '
-            . 'o_que_faz[≤7 {passo(≤15 palavras),evidence[≤1]}] (sequência FUNCIONAL, não a lista de chamadas)}'
-            . ', fluxo[≤8 strings curtas]. Sem evidência para um campo ⇒ "' . self::UNDETERMINED . '".';
+            . 'entradas_principais[≤4 {tipo,nome,descricao(≤10 palavras),evidence[≤1]}], '
+            . 'saidas_principais[≤4 {tipo,nome,descricao(≤10 palavras),evidence[≤1]}], '
+            . 'o_que_faz[≤7 {passo(≤14 palavras),evidence[≤1]}] (sequência FUNCIONAL, não a lista de chamadas)}'
+            . ', fluxo[≤6 strings curtas]. Ordene os campos EXATAMENTE nessa sequência. Sem evidência ⇒ "' . self::UNDETERMINED . '".';
         return $u;
     }
 
@@ -1036,10 +1036,11 @@ class SourceDocSemanticAnalyzer
         if ($code !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
-        $u .= "\n\nSEJA ENXUTO (≤2 evidence por item). Produza JSON {"
-            . 'dependencias_criticas[≤8 {nome,como_participa(≤15 palavras),impacto_se_indisponivel(≤12 palavras),onde_chamada,confidence,evidence[≤2]}] (SÓ o que interfere materialmente; NÃO listar todo include/framework), '
-            . 'risco_alteracao{resumo(≤20 palavras),fatores[≤6 {tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao(≤15 palavras),evidence[≤2]}]}, '
-            . 'pontos_atencao[≤6 {interpretation(≤20 palavras),categoria?,severity?,recommendation?,confidence,evidence[≤2]}]}. '
+        // risco_alteracao PRIMEIRO (é pequeno e valioso) → sobrevive ao salvamento se a cauda truncar.
+        $u .= "\n\nSEJA ENXUTO (≤1 evidence por item; descrições curtas). Produza JSON {"
+            . 'risco_alteracao{resumo(≤20 palavras),fatores[≤5 {tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao(≤12 palavras),evidence[≤1]}]}, '
+            . 'dependencias_criticas[≤6 {nome,como_participa(≤12 palavras),impacto_se_indisponivel(≤10 palavras),onde_chamada,confidence,evidence[≤1]}] (SÓ o que interfere materialmente; NÃO listar todo include/framework), '
+            . 'pontos_atencao[≤5 {interpretation(≤15 palavras),categoria?,severity?,recommendation?,confidence,evidence[≤1]}]}. '
             . 'Cada item EXIGE evidence dos fatos (nome de dependência DEVE existir nos fatos); sem evidência ⇒ omita.';
         return $u;
     }
