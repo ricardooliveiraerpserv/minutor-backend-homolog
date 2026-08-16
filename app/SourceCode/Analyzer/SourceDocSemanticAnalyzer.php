@@ -126,23 +126,28 @@ class SourceDocSemanticAnalyzer
         $entCode = $inlineCode !== '' ? $inlineCode : $this->entrypointCode($det, $maskedCode);
 
         // Orçamentos POR BLOCO (não um teto global inflado). Ajustáveis; hard limit total = US$ 0,30.
-        $entOut   = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 3200);
-        $rulesOut = (int) config('services.source_doc_ai.max_output_tokens_rules', 3200);
-        $deepenOut = (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800);
+        $entOut     = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 3000);
+        $regrasOut  = (int) config('services.source_doc_ai.max_output_tokens_regras', 2600);
+        $depRiscoOut = (int) config('services.source_doc_ai.max_output_tokens_deprisco', 2600);
+        $deepenOut  = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2600);
 
-        $entUser   = $this->entendimentoUserPrompt($compact, $diff, $entCode);
-        $rulesUser = $this->rulesUserPrompt($compact, $diff, $inlineCode);
-        $deepItems = ! empty($relevant) ? $this->buildDeepItems($relevant, $det, $maskedCode) : [];
+        $entUser     = $this->entendimentoUserPrompt($compact, $diff, $entCode);
+        $regrasUser  = $this->regrasUserPrompt($compact, $diff, $inlineCode);
+        $depRiscoUser = $this->depRiscoUserPrompt($compact, $diff, $inlineCode);
+        $deepItems   = ! empty($relevant) ? $this->buildDeepItems($relevant, $det, $maskedCode) : [];
 
-        // ── estimativa da ESTRATÉGIA COMPLETA antes de executar (hard limit; nada silencioso) ──
+        // ── 4 BLOCOS INDEPENDENTES: Entendimento · Regras · Deps+Risco · Funções ──
+        // estimativa da ESTRATÉGIA COMPLETA antes de executar (hard limit; nada silencioso).
         $plan = [
-            ['system' => $this->systemPrompt(), 'user' => $entUser,   'out' => $entOut,   'code' => ($entCode !== '')],
-            ['system' => $this->systemPrompt(), 'user' => $rulesUser, 'out' => $rulesOut, 'code' => ($inlineCode !== '')],
+            ['system' => $this->systemPrompt(), 'user' => $entUser,      'out' => $entOut,      'code' => ($entCode !== '')],
+            ['system' => $this->systemPrompt(), 'user' => $regrasUser,   'out' => $regrasOut,   'code' => ($inlineCode !== '')],
+            ['system' => $this->systemPrompt(), 'user' => $depRiscoUser, 'out' => $depRiscoOut, 'code' => ($inlineCode !== '')],
         ];
         if (! empty($deepItems)) {
             $plan[] = ['system' => $this->systemPrompt(), 'user' => $this->deepenFinalidadesPrompt($deepItems), 'out' => $deepenOut, 'code' => true];
         }
-        $plan = array_slice($plan, 0, (int) config('services.source_doc_ai.max_calls', 3));
+        // a estratégia de 4 blocos exige ao menos 4 chamadas (piso), respeitando um cap maior se houver.
+        $plan = array_slice($plan, 0, max(4, (int) config('services.source_doc_ai.max_calls', 4)));
         $est = $this->estimatePlan($plan);
         $this->usage['estimated_before_usd'] = round($est, 4);
         if ($est > (float) config('services.source_doc_ai.hard_limit_usd', 0.30)) {
@@ -165,35 +170,40 @@ class SourceDocSemanticAnalyzer
         $entOk = ! $g1['truncated'] && ! empty($j1['entendimento_funcional']);
         $blocks['entendimento'] = $entOk ? 'ok' : ($g1['raw_truncated'] ? 'truncated' : 'invalid_json');
 
-        // ── BLOCO 2 — Regras / Dependências / Risco / Pontos (independente; respeita max_calls) ──
-        $runRules = count($plan) >= 2;
-        $rulesOk = false;
-        if ($runRules) {
-            $g2 = $this->callJson($this->systemPrompt(), $rulesUser, $rulesOut);
-            $j2 = is_array($g2['json']) ? $g2['json'] : [];
-            foreach (['regras_negocio', 'dependencias_criticas', 'pontos_atencao'] as $k) {
-                if (! empty($j2[$k])) {
-                    $sem[$k] = $j2[$k];
-                }
-            }
-            if (! empty($j2['risco_alteracao'])) {
-                $sem['risco_alteracao'] = $j2['risco_alteracao'];
-            }
-            if (! empty($j2['change_summary'])) {
-                $sem['change_summary'] = $j2['change_summary'];
-            }
-            $rulesOk = ! $g2['truncated'] && $j2 !== [];
-            $blocks['regras'] = $rulesOk ? 'ok' : ($g2['raw_truncated'] ? 'truncated' : 'invalid_json');
-        } else {
-            $blocks['regras'] = 'skipped';
+        // ── BLOCO 2 — SÓ Regras de Negócio (independente) ──
+        $regrasOk = false;
+        $g2 = $this->callJson($this->systemPrompt(), $regrasUser, $regrasOut);
+        $j2 = is_array($g2['json']) ? $g2['json'] : [];
+        if (! empty($j2['regras_negocio'])) {
+            $sem['regras_negocio'] = $j2['regras_negocio'];
         }
+        if (! empty($j2['change_summary'])) {
+            $sem['change_summary'] = $j2['change_summary'];
+        }
+        $regrasOk = ! $g2['truncated'] && $j2 !== [];
+        $blocks['regras'] = $regrasOk ? 'ok' : ($g2['raw_truncated'] ? 'truncated' : 'invalid_json');
 
-        // ── APROFUNDAMENTO — Funções relevantes (estratégia seletiva existente) ──
+        // ── BLOCO 3 — SÓ Dependências Críticas + Risco + Pontos (independente) ──
+        $depRiscoOk = false;
+        $g3 = $this->callJson($this->systemPrompt(), $depRiscoUser, $depRiscoOut);
+        $j3 = is_array($g3['json']) ? $g3['json'] : [];
+        foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
+            if (! empty($j3[$k])) {
+                $sem[$k] = $j3[$k];
+            }
+        }
+        if (! empty($j3['risco_alteracao'])) {
+            $sem['risco_alteracao'] = $j3['risco_alteracao'];
+        }
+        $depRiscoOk = ! $g3['truncated'] && $j3 !== [];
+        $blocks['deps_risco'] = $depRiscoOk ? 'ok' : ($g3['raw_truncated'] ? 'truncated' : 'invalid_json');
+
+        // ── BLOCO 4 — Aprofundamento de Funções (estratégia seletiva existente) ──
         $funcoes = [];
         $cachedN = 0;
         $deepTrunc = false;
         $deepRan = false;
-        if (! empty($deepItems) && count($plan) >= 3) {
+        if (! empty($deepItems)) {
             $deepRan = true;
             [$funcoes, $deepRules, $deepPoints, $cachedN, $deepTrunc] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
             if (! empty($deepRules)) {
@@ -206,20 +216,25 @@ class SourceDocSemanticAnalyzer
         $sem['funcoes'] = $funcoes;
         $blocks['funcoes'] = $deepTrunc ? 'truncated' : ($deepRan ? 'ok' : 'skipped');
 
-        // ── status GLOBAL: completed só se tudo válido; senão partial preservando o válido ──
-        $truncatedAny = $blocks['entendimento'] !== 'ok' || ! $rulesOk || $deepTrunc;
+        // ── status GLOBAL: completed só se todos válidos; senão partial preservando o válido ──
         if (! $entOk) {
             $status = 'partial';
             $reason = 'entendimento_' . $blocks['entendimento'];
-        } elseif ($truncatedAny) {
+        } elseif (! $regrasOk) {
             $status = 'partial';
-            $reason = ! $rulesOk ? ('regras_' . $blocks['regras']) : 'functions_incomplete';
+            $reason = 'regras_' . $blocks['regras'];
+        } elseif (! $depRiscoOk) {
+            $status = 'partial';
+            $reason = 'deps_risco_' . $blocks['deps_risco'];
+        } elseif ($deepTrunc) {
+            $status = 'partial';
+            $reason = 'functions_incomplete';
         } else {
             $status = 'completed';
             $reason = null;
         }
         $sem['status'] = $status;
-        $sem['strategy'] = 'initial_blocks_v2';
+        $sem['strategy'] = 'initial_blocks_v3';
         $sem['block_status'] = $blocks;
         if ($reason !== null) {
             $sem['partial_reason'] = $reason;
@@ -359,7 +374,7 @@ class SourceDocSemanticAnalyzer
             }
         }
         $lines = explode("\n", $maskedCode);
-        $budgetTokens = (int) config('services.source_doc_ai.deepen_code_budget_tokens', 20000);
+        $budgetTokens = (int) config('services.source_doc_ai.deepen_code_budget_tokens', 12000);
         $maxCode = (int) config('services.source_doc_ai.max_deepen_functions', 6);
         $cptCode = (float) config('services.source_doc_ai.chars_per_token_code', 1.6);
         $items = [];
@@ -1001,19 +1016,31 @@ class SourceDocSemanticAnalyzer
         return $u;
     }
 
-    /** BLOCO 2 — Regras / Dependências / Risco / Pontos. Independente do Bloco 1. */
-    private function rulesUserPrompt(array $compact, ?array $diff, string $code): string
+    /** BLOCO 2 — SÓ Regras de Negócio. Independente. */
+    private function regrasUserPrompt(array $compact, ?array $diff, string $code): string
     {
         $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($code !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
-        $u .= "\n\nSEJA ENXUTO (no máx. 2 evidence por item; listas curtas). Produza JSON {"
-            . 'regras_negocio[≤8 {id,titulo(≤8 palavras),descricao(≤20 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
+        $u .= "\n\nSEJA ENXUTO (≤2 evidence por item). Produza JSON {"
+            . 'regras_negocio[≤10 {id,titulo(≤8 palavras),descricao(≤20 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
+            . 'change_summary}. Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita.';
+        return $u;
+    }
+
+    /** BLOCO 3 — SÓ Dependências Críticas + Risco de Alteração + Pontos. Independente. */
+    private function depRiscoUserPrompt(array $compact, ?array $diff, string $code): string
+    {
+        $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($code !== '') {
+            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
+        }
+        $u .= "\n\nSEJA ENXUTO (≤2 evidence por item). Produza JSON {"
             . 'dependencias_criticas[≤8 {nome,como_participa(≤15 palavras),impacto_se_indisponivel(≤12 palavras),onde_chamada,confidence,evidence[≤2]}] (SÓ o que interfere materialmente; NÃO listar todo include/framework), '
             . 'risco_alteracao{resumo(≤20 palavras),fatores[≤6 {tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao(≤15 palavras),evidence[≤2]}]}, '
-            . 'pontos_atencao[≤6 {interpretation(≤20 palavras),categoria?,severity?,recommendation?,confidence,evidence[≤2]}], change_summary}. '
-            . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita.';
+            . 'pontos_atencao[≤6 {interpretation(≤20 palavras),categoria?,severity?,recommendation?,confidence,evidence[≤2]}]}. '
+            . 'Cada item EXIGE evidence dos fatos (nome de dependência DEVE existir nos fatos); sem evidência ⇒ omita.';
         return $u;
     }
 

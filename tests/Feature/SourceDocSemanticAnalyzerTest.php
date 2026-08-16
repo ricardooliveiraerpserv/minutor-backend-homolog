@@ -217,16 +217,18 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $responder = fn ($user, $i) => $this->validJson();
         $r = $this->go($this->ai(true, $responder), str_repeat("linha\n", 40));
         $this->assertSame('completed', $r['status']);
-        $this->assertSame('initial_blocks_v2', $r['strategy']);
+        $this->assertSame('initial_blocks_v3', $r['strategy']);
         $this->assertArrayHasKey('relevant_functions_total', $r['semantic_coverage']);
     }
 
     public function test_max_calls_respected(): void
     {
-        config(['services.source_doc_ai.inline_code_max_chars' => 30, 'services.source_doc_ai.max_calls' => 1]);
+        // Estratégia de 4 blocos independentes tem PISO de 4 chamadas; a proteção de custo é o
+        // hard_limit (estimativa), não um cap de chamadas abaixo de 4.
+        config(['services.source_doc_ai.inline_code_max_chars' => 30]);
         $ai = $this->ai(true, fn ($u, $i) => $this->validJson());
         $this->go($ai, str_repeat("linha\n", 40));
-        $this->assertLessThanOrEqual(1, count($ai->calls), 'max_calls=1 ⇒ só a chamada global');
+        $this->assertSame(4, count($ai->calls), 'Entendimento + Regras + Deps/Risco + Funções');
     }
 
     public function test_output_budget_passed_to_provider(): void
@@ -256,7 +258,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $sem->analyze($this->det(), 'mesmo-codigo', null, ['blob_sha' => 'BLOB1']);
         $r2 = $sem->analyze($this->det(), 'mesmo-codigo', null, ['blob_sha' => 'BLOB1']);
         $this->assertSame('reuse_blob', $r2['strategy']);
-        $this->assertSame(3, count($ai->calls), '2ª análise do mesmo blob não chama a IA (1ª = 3 blocos)');
+        $this->assertSame(4, count($ai->calls), '2ª análise do mesmo blob não chama a IA (1ª = 4 blocos)');
         Cache::flush();
     }
 
@@ -269,7 +271,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $sem->analyze($this->det(), 'codigo', null, ['blob_sha' => 'B']);
         config(['services.source_doc_ai.prompt_version' => 99]); // muda a chave de cache
         $sem->analyze($this->det(), 'codigo', null, ['blob_sha' => 'B']);
-        $this->assertSame(6, count($ai->calls), 'mudança de prompt_version invalida o cache (2 análises × 3 blocos)');
+        $this->assertSame(8, count($ai->calls), 'mudança de prompt_version invalida o cache (2 análises × 4 blocos)');
         Cache::flush();
     }
 
@@ -346,9 +348,15 @@ class SourceDocSemanticAnalyzerTest extends TestCase
     /** (F5) aprofundamento falha (truncado) mas global válida → partial + global preservada. */
     public function test_deepening_partial_keeps_global(): void
     {
-        // Entendimento válido; aprofundamento (funções) trunca ⇒ partial preservando o Entendimento.
+        // 4 blocos: ent(0)+regras(1)+deps/risco(2) OK; aprofundamento de funções(3) TRUNCA
+        // ⇒ partial (functions_incomplete) preservando o Entendimento.
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
-        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? $this->entBlock() : ($i === 1 ? $this->rulesBlock() : ['text' => $this->funcoesBlock(), 'stop' => 'max_tokens']));
+        $ai = $this->ai(true, fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(),
+            1 => $this->rulesBlock(),
+            2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
+            default => ['text' => $this->funcoesBlock(), 'stop' => 'max_tokens'],
+        });
         $r = $this->go($ai, str_repeat("linha
 ", 40));
         $this->assertSame('partial', $r['status']);
