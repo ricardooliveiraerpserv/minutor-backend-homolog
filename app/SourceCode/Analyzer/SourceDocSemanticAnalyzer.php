@@ -648,7 +648,7 @@ class SourceDocSemanticAnalyzer
         $depSet = $this->knownDependencySet($det, $fnSet);
         $entendimento = $this->buildEntendimento($sem['entendimento_funcional'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
         $depCriticas = $this->validateDependencias($sem['dependencias_criticas'] ?? [], $depSet, $fnSet, $tbSet, $fieldQ, $fieldBare);
-        $risco = $this->buildRisco($sem['risco_alteracao'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
+        $risco = $this->buildRisco($sem['risco_alteracao'] ?? [], $det, $fnSet, $tbSet, $fieldQ, $fieldBare);
 
         return [
             'schema_version'   => self::SCHEMA_VERSION,
@@ -881,9 +881,11 @@ class SourceDocSemanticAnalyzer
             if ($nome === null || $nome === '') {
                 continue;
             }
-            // normaliza U_FUNC / include: aceita se casar no depSet (com/sem prefixo) ou for função do fonte.
+            // Aceita se casar no depSet (user_calls/integrações/chamadas externas, com/sem prefixo U_),
+            // se for função do fonte, OU se for uma TABELA (dependência de dados crítica — spec inclui
+            // "tabela crítica"). Só rejeita nome que não existe em NADA do determinístico.
             $keys = [strtolower($nome), strtolower(ltrim($nome, 'uU_')), 'u_' . strtolower(ltrim($nome, 'uU_'))];
-            $known = false;
+            $known = isset($tbSet[strtoupper($nome)]);
             foreach ($keys as $k) {
                 if (isset($depSet[$k]) || isset($fnSet[$k])) {
                     $known = true;
@@ -894,8 +896,11 @@ class SourceDocSemanticAnalyzer
                 $this->rejected[] = ['item' => 'dependencia:' . $nome, 'reason' => 'inexistente no determinístico'];
                 continue;
             }
+            // classifica o "kind" p/ o leitor: tabela vs função/rotina.
+            $kind = isset($tbSet[strtoupper($nome)]) ? 'tabela' : 'rotina';
             $out[] = [
                 'nome' => $nome,
+                'kind' => $kind,
                 'como_participa' => $this->str($d['como_participa'] ?? null) ?: self::UNDETERMINED,
                 'impacto_se_indisponivel' => $this->str($d['impacto_se_indisponivel'] ?? null) ?: self::UNDETERMINED,
                 'onde_chamada' => $this->str($d['onde_chamada'] ?? null),
@@ -907,29 +912,82 @@ class SourceDocSemanticAnalyzer
     }
 
     /** risco_alteracao — fatores baseados em FATOS (cada fator exige evidência). */
-    private function buildRisco(array $raw, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
+    /**
+     * risco_alteracao — fatores DETERMINÍSTICOS (do índice; sempre com evidência real) + resumo da IA.
+     * Não depende da IA acertar a evidência: os fatores de risco são fatos do próprio código
+     * (tamanho, escrita, nº de tabelas, isolamento, integrações, dependências customizadas).
+     */
+    private function buildRisco(array $raw, array $det, array $fnSet, array $tbSet, array $fieldQ, array $fieldBare): array
     {
-        $tipos = ['dependencia', 'escrita', 'tabela', 'caller', 'integracao', 'complexidade'];
         $fatores = [];
+
+        // (complexidade) maior função
+        $maxLines = 0;
+        $maxFn = '';
+        foreach (($det['functions'] ?? []) as $f) {
+            $l = (int) ($f['end_line'] ?? 0) - (int) ($f['start_line'] ?? 0);
+            if ($l > $maxLines) {
+                $maxLines = $l;
+                $maxFn = (string) ($f['name'] ?? '');
+            }
+        }
+        if ($maxLines >= 300 && $maxFn !== '') {
+            $fatores[] = ['tipo' => 'complexidade', 'descricao' => "Função {$maxFn} extensa (~{$maxLines} linhas) — maior superfície de alteração.", 'evidence' => [['type' => 'function', 'name' => $maxFn]]];
+        }
+
+        // (escrita) tabelas gravadas
+        $writes = [];
+        $allTables = [];
+        foreach (($det['tables'] ?? []) as $t) {
+            $name = (string) ($t['table'] ?? $t['alias'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $allTables[strtoupper($name)] = true;
+            if (array_intersect(['UPDATE', 'INSERT', 'DELETE'], (array) ($t['access'] ?? []))) {
+                $writes[strtoupper($name)] = true;
+            }
+        }
+        if (! empty($writes)) {
+            $w = array_keys($writes);
+            $fatores[] = ['tipo' => 'escrita', 'descricao' => 'Grava em ' . count($w) . ' tabela(s): ' . implode(', ', array_slice($w, 0, 8)) . '.', 'evidence' => array_map(fn ($t) => ['type' => 'table', 'table' => $t], array_slice($w, 0, 3))];
+        }
+
+        // (tabela) volume de tabelas acessadas
+        if (count($allTables) >= 10) {
+            $fatores[] = ['tipo' => 'tabela', 'descricao' => 'Acessa ' . count($allTables) . ' tabelas distintas — amplo acoplamento a dados.', 'evidence' => array_map(fn ($t) => ['type' => 'table', 'table' => $t], array_slice(array_keys($allTables), 0, 3))];
+        }
+
+        // (integracao) integrações externas
+        $integr = (array) ($det['external_integrations'] ?? []);
+        if (! empty($integr)) {
+            $fatores[] = ['tipo' => 'integracao', 'descricao' => count($integr) . ' integração(ões) externa(s) — alteração pode afetar sistemas externos.', 'evidence' => []];
+        }
+
+        // (dependencia) funções customizadas externas
+        $custom = array_values(array_filter(array_map(fn ($c) => is_array($c) ? (string) ($c['name'] ?? '') : (string) $c, (array) ($det['dependencies']['custom_external_functions'] ?? []))));
+        if (! empty($custom)) {
+            $fatores[] = ['tipo' => 'dependencia', 'descricao' => 'Depende de customização externa: ' . implode(', ', array_slice($custom, 0, 6)) . '.', 'evidence' => []];
+        }
+
+        // enriquecimento OPCIONAL da IA: só fatores com evidência válida que ainda não cobrimos.
+        $tipos = ['dependencia', 'escrita', 'tabela', 'caller', 'integracao', 'complexidade'];
+        $have = array_flip(array_column($fatores, 'tipo'));
         foreach ((array) ($raw['fatores'] ?? []) as $f) {
             $desc = $this->str($f['descricao'] ?? null);
-            if ($desc === null || $desc === '') {
+            $tipo = strtolower((string) ($f['tipo'] ?? ''));
+            if ($desc === null || $desc === '' || ! in_array($tipo, $tipos, true) || isset($have[$tipo])) {
                 continue;
             }
             $ev = $this->validateEvidence($f['evidence'] ?? [], $fnSet, $tbSet, $fieldQ, $fieldBare);
             if (empty($ev)) {
-                $this->rejected[] = ['item' => 'risco:' . mb_substr($desc, 0, 40), 'reason' => 'sem evidência rastreável'];
-                continue;
+                continue; // sem evidência → descarta (não rejeita ruidosamente; determinístico já cobre)
             }
-            $tipo = strtolower((string) ($f['tipo'] ?? ''));
-            $fatores[] = [
-                'tipo' => in_array($tipo, $tipos, true) ? $tipo : 'complexidade',
-                'descricao' => $desc,
-                'evidence' => $ev,
-            ];
+            $fatores[] = ['tipo' => $tipo, 'descricao' => $desc, 'evidence' => $ev];
         }
+
         return [
-            'resumo' => $this->str($raw['resumo'] ?? null) ?: ($fatores ? null : self::UNDETERMINED),
+            'resumo' => $this->str($raw['resumo'] ?? null) ?: ($fatores ? 'Fatores de risco derivados do código (determinísticos).' : self::UNDETERMINED),
             'fatores' => $fatores,
         ];
     }
