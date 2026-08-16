@@ -145,6 +145,12 @@ class PermissionService
         'source_docs.view_git', 'source_docs.view_diff',
         // Central de Fontes (C3.5) — inventário/cobertura do acervo (Admin/ops).
         'source_docs.inventory',
+        // Central de Fontes (C4a) — governança/escopo multi-tenant.
+        // view_all_customers = enxergar o acervo de TODOS os clientes por permissão explícita
+        //   (auditável; NÃO se aplica a cliente externo — regra de segurança tem precedência).
+        // view_cross_customer = RESERVADA para C4b (impacto multi-cliente); ainda sem efeito.
+        'source_docs.view_all_customers',
+        'source_docs.view_cross_customer',
     ];
 
     /**
