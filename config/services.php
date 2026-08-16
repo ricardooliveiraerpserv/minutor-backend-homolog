@@ -95,6 +95,17 @@ return [
         'hard_limit_usd'             => (float) env('SOURCE_DOC_AI_HARD_LIMIT_USD', 0.30),
         // C3 — limite p/ o reaper marcar execução de reprocess como órfã (stale_execution).
         'reap_stale_minutes'         => (int) env('SOURCE_DOC_REAP_STALE_MINUTES', 15),
+    ],
+
+    // C3.5 — inventário/cobertura do acervo (determinístico, sem IA).
+    'source_doc' => [
+        // Extensões elegíveis (AdvPL/TLPP). Configurável via env (CSV).
+        'inventory_extensions' => array_values(array_filter(array_map(
+            fn ($x) => strtolower(trim($x, " \t.")),
+            explode(',', (string) env('SOURCE_DOC_INVENTORY_EXTENSIONS', 'prw,prx,prg,prz,tlpp,tlp,aph'))
+        ))),
+        // Máx. de fontes NOVOS documentados por execução (controle de lote/rate-limit). 0 = sem teto.
+        'inventory_batch' => (int) env('SOURCE_DOC_INVENTORY_BATCH', 150),
         'target_small_usd'           => (float) env('SOURCE_DOC_AI_TARGET_SMALL', 0.05),
         'target_medium_usd'          => (float) env('SOURCE_DOC_AI_TARGET_MEDIUM', 0.10),
         'target_large_usd'           => (float) env('SOURCE_DOC_AI_TARGET_LARGE', 0.25),

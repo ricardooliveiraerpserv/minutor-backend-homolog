@@ -341,3 +341,10 @@ Schedule::command('source-doc:reap-stale-executions')
   ->cron('*/5 * * * *')
   ->name('source-doc-reap-stale')
   ->description('Marca execuções de reprocess órfãs como failed/stale_execution');
+
+// Central de Fontes (C3.5) — inventário INCREMENTAL do acervo (diff por blob; determinístico, IA zero).
+// Cataloga fontes novos/alterados dos repos ativos. De hora em hora (a carga inicial é manual/lotes).
+Schedule::command('source-doc:inventory --incremental')
+  ->hourly()
+  ->name('source-doc-inventory-incremental')
+  ->description('Cataloga fontes novos dos repos ativos (determinístico, sem IA)');

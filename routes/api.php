@@ -531,6 +531,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
             // C3 — estado do reprocess é leitura (source_docs.view)
             Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
+            // C3.5 — cobertura do acervo (leitura)
+            Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+        });
+        // C3.5 — disparar inventário (Admin/ops, gate estrito)
+        Route::middleware('permission:source_docs.inventory')->group(function () {
+            Route::post('/source-docs/inventory', [\App\Http\Controllers\SourceDocCoverageController::class, 'inventory']);
         });
         // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
         Route::middleware('permission.or.admin:source_docs.validate')->group(function () {
@@ -1546,6 +1552,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
             // C3 — estado do reprocess é leitura (source_docs.view)
             Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
+            // C3.5 — cobertura do acervo (leitura)
+            Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+        });
+        // C3.5 — disparar inventário (Admin/ops, gate estrito)
+        Route::middleware('permission:source_docs.inventory')->group(function () {
+            Route::post('/source-docs/inventory', [\App\Http\Controllers\SourceDocCoverageController::class, 'inventory']);
         });
         // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
         Route::middleware('permission.or.admin:source_docs.validate')->group(function () {
