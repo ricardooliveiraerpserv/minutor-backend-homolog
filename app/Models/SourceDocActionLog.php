@@ -28,6 +28,8 @@ class SourceDocActionLog extends Model
         'blob_sha', 'commit_sha', 'situation', 'analysis_status', 'format', 'from_version',
         'to_version', 'force', 'reused', 'new_version_id', 'estimated_cost_usd', 'hard_limit_usd',
         'functions_count', 'bytes', 'ai_enabled', 'environment',
+        // C4a: motivo de NEGATIVA (valor enumerado curto, não-sensível), p/ auditoria consultável.
+        'reason',
     ];
 
     /** Mantém só metadata operacional segura; corta qualquer conteúdo sensível/volumoso. */
