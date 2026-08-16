@@ -93,6 +93,8 @@ return [
         'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
         'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),
         'hard_limit_usd'             => (float) env('SOURCE_DOC_AI_HARD_LIMIT_USD', 0.30),
+        // C3 — limite p/ o reaper marcar execução de reprocess como órfã (stale_execution).
+        'reap_stale_minutes'         => (int) env('SOURCE_DOC_REAP_STALE_MINUTES', 15),
         'target_small_usd'           => (float) env('SOURCE_DOC_AI_TARGET_SMALL', 0.05),
         'target_medium_usd'          => (float) env('SOURCE_DOC_AI_TARGET_MEDIUM', 0.10),
         'target_large_usd'           => (float) env('SOURCE_DOC_AI_TARGET_LARGE', 0.25),

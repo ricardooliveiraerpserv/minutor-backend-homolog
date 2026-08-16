@@ -330,3 +330,12 @@ Schedule::command('source-doc:index --stale')
   ->description('Reindexa (busca técnica) os fontes cujo índice ficou stale')
   ->withoutOverlapping(10)
   ->runInBackground();
+
+// Central de Fontes (C3) — recupera execuções de reprocess órfãs (queued/running vencidas),
+// liberando o lock inflight. Proteção obrigatória do gate de fila (processo morto no meio).
+Schedule::command('source-doc:reap-stale-executions')
+  ->cron('*/5 * * * *')
+  ->name('source-doc-reap-stale')
+  ->description('Marca execuções de reprocess órfãs como failed/stale_execution')
+  ->withoutOverlapping(10)
+  ->runInBackground();

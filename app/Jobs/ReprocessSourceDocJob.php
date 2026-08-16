@@ -30,6 +30,10 @@ class ReprocessSourceDocJob implements ShouldQueue
         public bool $force,
         public int $logId,
     ) {
+        // Async DEDICADO (gate de fila C3): conexão 'database' + fila 'source-doc' — o reprocess
+        // NUNCA roda inline (mesmo com QUEUE_CONNECTION=sync global) e fica isolado de outras filas.
+        // O worker do homolog consome exatamente essa fila. Não altera o motor.
+        $this->onConnection('database')->onQueue('source-doc');
     }
 
     public function handle(SourceDocPipeline $pipeline, GithubAppAuth $auth): void
