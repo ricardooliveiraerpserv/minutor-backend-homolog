@@ -525,6 +525,8 @@ Route::prefix('v1')->group(function () {
             // C2 — busca técnica (read-model)
             Route::get('/source-docs/search', [\App\Http\Controllers\SourceDocSearchController::class, 'search']);
             Route::get('/source-docs/search/suggest', [\App\Http\Controllers\SourceDocSearchController::class, 'suggest']);
+            // C4b — análise de impacto (impacto no próprio escopo = source_docs.view; cross gateado no serviço)
+            Route::get('/source-docs/impact', [\App\Http\Controllers\SourceDocImpactController::class, 'impact']);
             Route::get('/source-docs/{sourceDoc}/entities', [\App\Http\Controllers\SourceDocSearchController::class, 'entities'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
@@ -1546,6 +1548,8 @@ Route::prefix('v1')->group(function () {
             // C2 — busca técnica (read-model)
             Route::get('/source-docs/search', [\App\Http\Controllers\SourceDocSearchController::class, 'search']);
             Route::get('/source-docs/search/suggest', [\App\Http\Controllers\SourceDocSearchController::class, 'suggest']);
+            // C4b — análise de impacto (impacto no próprio escopo = source_docs.view; cross gateado no serviço)
+            Route::get('/source-docs/impact', [\App\Http\Controllers\SourceDocImpactController::class, 'impact']);
             Route::get('/source-docs/{sourceDoc}/entities', [\App\Http\Controllers\SourceDocSearchController::class, 'entities'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
