@@ -125,6 +125,19 @@ class SourceDocSemanticAnalyzerTest extends TestCase
     private function rulesBlock(): string { return json_encode(['regras_negocio' => [], 'change_summary' => 'x']); }
     private function funcoesBlock(): string { return json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]); }
 
+    public function test_truncated_entendimento_is_salvaged(): void
+    {
+        // Bloco 1 trunca no meio do o_que_faz (stop=max_tokens) — o conteúdo já completo (uma_frase,
+        // objetivo) DEVE ser salvo; status partial; nunca voltar vazio.
+        $trunc = '{"entendimento_funcional":{"uma_frase":{"texto":"Reenvia o XML.","confidence":"high","evidence":[{"type":"function","name":"FTENVNFU"}]},"objetivo":"Reenvia a NF-e por e-mail e grava status.","o_que_faz":[{"passo":"recebe id","evidence":[]},{"passo":"grava sta';
+        $ai = $this->ai(true, fn ($u, $i) => $i === 0 ? ['text' => $trunc, 'stop' => 'max_tokens'] : $this->rulesBlock());
+        $r = $this->go($ai);
+        $this->assertStringContainsString('Reenvia o XML', $r['entendimento_funcional']['uma_frase']['texto'], 'conteúdo salvo apesar do truncamento');
+        $this->assertStringContainsString('Reenvia a NF-e', $r['entendimento_funcional']['objetivo']);
+        $this->assertSame('partial', $r['status']);
+        $this->assertSame('entendimento_truncated', $r['partial_reason']);
+    }
+
     // ── base (Bloco 4) ──
     public function test_no_provider_is_pending(): void
     {

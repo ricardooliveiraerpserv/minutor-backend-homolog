@@ -126,8 +126,8 @@ class SourceDocSemanticAnalyzer
         $entCode = $inlineCode !== '' ? $inlineCode : $this->entrypointCode($det, $maskedCode);
 
         // Orçamentos POR BLOCO (não um teto global inflado). Ajustáveis; hard limit total = US$ 0,30.
-        $entOut   = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 2400);
-        $rulesOut = (int) config('services.source_doc_ai.max_output_tokens_rules', 2600);
+        $entOut   = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 3200);
+        $rulesOut = (int) config('services.source_doc_ai.max_output_tokens_rules', 3200);
         $deepenOut = (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800);
 
         $entUser   = $this->entendimentoUserPrompt($compact, $diff, $entCode);
@@ -241,7 +241,7 @@ class SourceDocSemanticAnalyzer
         if (empty($entries)) {
             $entries = array_slice($det['functions'] ?? [], 0, 1);
         }
-        $budget = (int) config('services.source_doc_ai.entendimento_code_budget_chars', 14000);
+        $budget = (int) config('services.source_doc_ai.entendimento_code_budget_chars', 9000);
         $out = [];
         $used = 0;
         foreach ($entries as $f) {
@@ -987,16 +987,17 @@ class SourceDocSemanticAnalyzer
         if ($diff) {
             $u .= "\n\nDIFF:\n" . json_encode($this->diffForAi($diff), JSON_UNESCAPED_UNICODE);
         }
-        $u .= "\n\nProduza SOMENTE o Entendimento Funcional (PROPÓSITO de negócio, não a mecânica). JSON:\n"
+        $u .= "\n\nProduza SOMENTE o Entendimento Funcional (PROPÓSITO de negócio, não a mecânica). "
+            . 'SEJA ENXUTO: no máx. 1 evidence por item; listas curtas. JSON:\n'
             . 'entendimento_funcional{'
-            . 'uma_frase{texto,confidence,evidence[{type,name?,table?,field?}]}, '
-            . 'objetivo (2–5 frases: o que resolve, responsabilidade principal, resultado que produz), '
-            . 'quando_usado (evento/processo/rotina que dispara; indeterminável ⇒ "' . self::UNDETERMINED . '"), '
-            . 'processo_modulo{processo,modulo,confidence,evidence[]} (módulo Protheus POR EVIDÊNCIA, não pelo nome do arquivo), '
-            . 'entradas_principais[{tipo,nome,descricao,evidence[]}], '
-            . 'saidas_principais[{tipo,nome,descricao,evidence[]}], '
-            . 'o_que_faz[{passo,evidence[]}] (sequência FUNCIONAL, não a lista de chamadas)}'
-            . ', fluxo[]. Sem evidência para um campo ⇒ "' . self::UNDETERMINED . '".';
+            . 'uma_frase{texto,confidence,evidence[≤1 {type,name?,table?,field?}]}, '
+            . 'objetivo (2–4 frases: o que resolve, responsabilidade, resultado), '
+            . 'quando_usado (1 frase; indeterminável ⇒ "' . self::UNDETERMINED . '"), '
+            . 'processo_modulo{processo,modulo,confidence,evidence[≤1]} (módulo POR EVIDÊNCIA, não pelo nome do arquivo), '
+            . 'entradas_principais[≤5 {tipo,nome,descricao(≤12 palavras),evidence[≤1]}], '
+            . 'saidas_principais[≤5 {tipo,nome,descricao(≤12 palavras),evidence[≤1]}], '
+            . 'o_que_faz[≤7 {passo(≤15 palavras),evidence[≤1]}] (sequência FUNCIONAL, não a lista de chamadas)}'
+            . ', fluxo[≤8 strings curtas]. Sem evidência para um campo ⇒ "' . self::UNDETERMINED . '".';
         return $u;
     }
 
@@ -1007,11 +1008,11 @@ class SourceDocSemanticAnalyzer
         if ($code !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
-        $u .= "\n\nProduza JSON {"
-            . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[{type,name?,table?,field?,line_start?,line_end?}]}], '
-            . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[]}] (SÓ o que interfere materialmente; NÃO listar todo include/framework), '
-            . 'risco_alteracao{resumo,fatores[{tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao,evidence[]}]}, '
-            . 'pontos_atencao[{interpretation,categoria?,severity?,recommendation?,confidence,evidence[]}], change_summary}. '
+        $u .= "\n\nSEJA ENXUTO (no máx. 2 evidence por item; listas curtas). Produza JSON {"
+            . 'regras_negocio[≤8 {id,titulo(≤8 palavras),descricao(≤20 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
+            . 'dependencias_criticas[≤8 {nome,como_participa(≤15 palavras),impacto_se_indisponivel(≤12 palavras),onde_chamada,confidence,evidence[≤2]}] (SÓ o que interfere materialmente; NÃO listar todo include/framework), '
+            . 'risco_alteracao{resumo(≤20 palavras),fatores[≤6 {tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao(≤15 palavras),evidence[≤2]}]}, '
+            . 'pontos_atencao[≤6 {interpretation(≤20 palavras),categoria?,severity?,recommendation?,confidence,evidence[≤2]}], change_summary}. '
             . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita.';
         return $u;
     }
@@ -1202,11 +1203,86 @@ class SourceDocSemanticAnalyzer
     {
         $text = trim(preg_replace('/^```(?:json)?|```$/m', '', trim($text)));
         $a = strpos($text, '{');
-        $b = strrpos($text, '}');
-        if ($a === false || $b === false || $b <= $a) {
+        if ($a === false) {
             return null;
         }
-        $j = json_decode(substr($text, $a, $b - $a + 1), true);
+        // 1) tentativa normal (do 1º { ao último })
+        $b = strrpos($text, '}');
+        if ($b !== false && $b > $a) {
+            $j = json_decode(substr($text, $a, $b - $a + 1), true);
+            if (is_array($j)) {
+                return $j;
+            }
+        }
+        // 2) SALVAMENTO de JSON truncado (stop=max_tokens): fecha strings/estruturas abertas
+        // e descarta o último par chave/valor incompleto. Preserva os campos JÁ completos.
+        return $this->repairTruncatedJson(substr($text, $a));
+    }
+
+    /** Repara JSON truncado balanceando aspas/colchetes/chaves e cortando o resíduo incompleto. */
+    private function repairTruncatedJson(string $s): ?array
+    {
+        $stack = [];
+        $inStr = false;
+        $esc = false;
+        $lastSafe = -1; // posição logo após um valor completo em profundidade >= 1
+        $len = strlen($s);
+        for ($i = 0; $i < $len; $i++) {
+            $c = $s[$i];
+            if ($inStr) {
+                if ($esc) {
+                    $esc = false;
+                } elseif ($c === '\\') {
+                    $esc = true;
+                } elseif ($c === '"') {
+                    $inStr = false;
+                }
+                continue;
+            }
+            if ($c === '"') {
+                $inStr = true;
+            } elseif ($c === '{' || $c === '[') {
+                $stack[] = $c === '{' ? '}' : ']';
+            } elseif ($c === '}' || $c === ']') {
+                array_pop($stack);
+                if (count($stack) >= 1) {
+                    $lastSafe = $i;
+                }
+            } elseif ($c === ',' && count($stack) >= 1) {
+                $lastSafe = $i - 1; // corta ANTES da vírgula (último elemento completo)
+            }
+        }
+        if ($lastSafe < 0) {
+            return null;
+        }
+        // mantém até o último ponto seguro e fecha as estruturas que ficaram abertas.
+        $frag = substr($s, 0, $lastSafe + 1);
+        // recomputa a pilha aberta no fragmento cortado.
+        $stack = [];
+        $inStr = false;
+        $esc = false;
+        for ($i = 0, $n = strlen($frag); $i < $n; $i++) {
+            $c = $frag[$i];
+            if ($inStr) {
+                if ($esc) {
+                    $esc = false;
+                } elseif ($c === '\\') {
+                    $esc = true;
+                } elseif ($c === '"') {
+                    $inStr = false;
+                }
+                continue;
+            }
+            if ($c === '"') {
+                $inStr = true;
+            } elseif ($c === '{' || $c === '[') {
+                $stack[] = $c === '{' ? '}' : ']';
+            } elseif ($c === '}' || $c === ']') {
+                array_pop($stack);
+            }
+        }
+        $frag .= implode('', array_reverse($stack));
+        $j = json_decode($frag, true);
         return is_array($j) ? $j : null;
     }
 
