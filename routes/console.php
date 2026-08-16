@@ -102,12 +102,13 @@ Schedule::command('timesheets:resolve-stale-conflicts')
 
 // Help Desk — ingestão de e-mails (Graph Mail.Read) → cria/atualiza chamados a partir da
 // caixa configurada. Idempotente (ledger de mensagens): execuções sobrepostas não duplicam.
+// Cadência 1min preservada (era o cron dedicado de ingest a cada minuto; ao unificar no
+// schedule:run mantemos */1). Foreground: no homolog o runInBackground do scheduler não completa.
 Schedule::command('help-desk:ingest-emails --limit=25')
-  ->cron('*/5 * * * *')
+  ->cron('* * * * *')
   ->name('help-desk-ingest-emails')
   ->description('Ingere e-mails da caixa do Help Desk e abre/atualiza chamados')
-  ->withoutOverlapping(10)
-  ->runInBackground();
+  ->withoutOverlapping(10);
 
 // Sync de apontamentos Movidesk (fallback do webhook — garante que nenhum apontamento seja perdido)
 Schedule::command('movidesk:sync')
