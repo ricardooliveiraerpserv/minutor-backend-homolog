@@ -28,11 +28,14 @@ class SourceDocSearchController extends Controller
         $perPage = min(max((int) $request->query('per_page', 30) ?: 30, 1), 100);
 
         $base = $this->baseQuery($request, $entity);
+        $page = max(1, (int) $request->query('page', 1));
 
-        // Página de fontes DISTINTAS que casam.
-        $docPage = (clone $base)->select('source_doc_id')->distinct()
-            ->orderBy('source_doc_id')->paginate($perPage);
-        $docIds = collect($docPage->items())->pluck('source_doc_id')->all();
+        // Página de fontes DISTINTAS que casam. total = count(distinct source_doc_id) — o paginate()
+        // padrão contaria as LINHAS de entidade (várias por fonte), inflando o total; por isso é manual.
+        $total = (clone $base)->distinct()->count('source_doc_id');
+        $docIds = (clone $base)->select('source_doc_id')->distinct()
+            ->orderBy('source_doc_id')->forPage($page, $perPage)->pluck('source_doc_id')->all();
+        $lastPage = (int) max(1, ceil($total / $perPage));
 
         $occByDoc = collect();
         $docsMeta = collect();
@@ -67,8 +70,8 @@ class SourceDocSearchController extends Controller
         return response()->json([
             'data' => $data,
             'pagination' => [
-                'current_page' => $docPage->currentPage(), 'per_page' => $docPage->perPage(),
-                'total' => $docPage->total(), 'last_page' => $docPage->lastPage(),
+                'current_page' => $page, 'per_page' => $perPage,
+                'total' => $total, 'last_page' => $lastPage,
             ],
             'query' => [
                 'entity' => $entity, 'q' => $request->query('q'), 'match' => $request->query('match', 'prefix'),

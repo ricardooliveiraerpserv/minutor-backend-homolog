@@ -199,6 +199,17 @@ class SourceDocSearchTest extends TestCase
         $this->assertSame(2, $row['functions_count']); // veio do source_doc_index
     }
 
+    public function test_pagination_total_counts_distinct_docs_not_entity_rows(): void
+    {
+        // 1 fonte com VÁRIOS campos (C2_NUM, C2_STATUS, STATUS) → busca entity=field deve
+        // reportar total=1 (fontes distintas), não o nº de linhas de entidade.
+        $this->makeIndexedDoc();
+        $r = $this->actingAs($this->admin(), 'sanctum')->getJson('/api/v1/source-docs/search?entity=field');
+        $r->assertOk();
+        $this->assertSame(1, $r->json('pagination.total'));
+        $this->assertCount(1, $r->json('data'));
+    }
+
     public function test_invalid_entity_returns_422(): void
     {
         $this->actingAs($this->admin(), 'sanctum')->getJson('/api/v1/source-docs/search?entity=bogus&q=x')->assertStatus(422);
