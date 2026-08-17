@@ -118,6 +118,11 @@ return [
         'cache_enabled'              => filter_var(env('SOURCE_DOC_AI_CACHE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         'cache_ttl'                  => (int) env('SOURCE_DOC_AI_CACHE_TTL', 2592000), // 30d
         'prompt_version'             => (int) env('SOURCE_DOC_AI_PROMPT_VERSION', 2),   // invalida cache ao mudar prompt
+        // Bloco 4.2.1-A: reuso semântico PERSISTENTE por blob (read-model derivado). A chave inclui
+        // facts_version = versão do contrato determinístico/de fatos: se o parser evoluir e extrair
+        // novos fatos do MESMO código, bumpar isto invalida semânticas antigas (não congela p/ sempre).
+        'facts_version'              => (int) env('SOURCE_DOC_FACTS_VERSION', 1),
+        'blob_reuse_enabled'         => filter_var(env('SOURCE_DOC_AI_BLOB_REUSE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
     ],
 
     'openai' => [

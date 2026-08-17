@@ -8,6 +8,7 @@ use App\SourceCode\Analyzer\AdvplAnalyzer;
 use App\SourceCode\Analyzer\SecretSanitizer;
 use App\SourceCode\Analyzer\SourceDiff;
 use App\SourceCode\Analyzer\SourceDocSemanticAnalyzer;
+use App\SourceCode\SemanticBlobReuse;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -27,6 +28,7 @@ class SourceDocPipeline
         private AdvplAnalyzer $analyzer,
         private SourceDiff $differ,
         private SourceDocSemanticAnalyzer $semantic,
+        private SemanticBlobReuse $blobReuse,
     ) {
     }
 
@@ -104,15 +106,23 @@ class SourceDocPipeline
                 // considera "anterior" se for outra versão (não a própria, ao reprocessar).
                 $prevVer = $doc->currentVersion;
                 $prevSem = ($prevVer && (int) $prevVer->id !== (int) $ver->id) ? $prevVer->semantic_json : null;
-                $sem = $this->semantic->analyze($det, $sec['masked'], $diff, [
-                    'previous_semantic' => $prevSem,
-                    'blob_sha'          => $ctx['source_blob_sha'] ?? null,
-                ]);
+                $blob = $ctx['source_blob_sha'] ?? null;
+
+                // Bloco 4.2.1-A: reuso PERSISTENTE por blob+contrato. HIT ⇒ 0 chamadas IA (copia a
+                // análise; o documento/versão continua sendo deste doc). MISS ⇒ analisa e persiste.
+                $sem = $this->blobReuse->get($blob, (int) $doc->id);
+                if ($sem === null) {
+                    $sem = $this->semantic->analyze($det, $sec['masked'], $diff, [
+                        'previous_semantic' => $prevSem,
+                        'blob_sha'          => $blob,
+                    ]);
+                    $this->blobReuse->put($blob, $sem, (int) $doc->id);
+                }
                 $ver->semantic_json = $sem;
                 $ver->diff_summary = $sem['resumo_alteracao'] ?? $ver->diff_summary;
-                // completed / skipped_* / reuse_blob ⇒ versão completa (determinístico pronto + semântica
-                // intencionalmente concluída/pulada). partial/failed/pending ⇒ partial (reprocessável).
-                $status = in_array($sem['status'] ?? '', ['completed', 'skipped_cost_limit', 'skipped_no_structural_change', 'reuse_blob'], true) ? 'completed' : 'partial';
+                // completed / skipped_* / reuse_* ⇒ versão completa (determinístico pronto + semântica
+                // intencionalmente concluída/pulada/reusada). partial/failed/pending ⇒ partial (reprocessável).
+                $status = in_array($sem['status'] ?? '', ['completed', 'skipped_cost_limit', 'skipped_no_structural_change', 'reuse_blob', 'reuse_blob_persistent'], true) ? 'completed' : 'partial';
             }
 
             $ver->documentation_json = $this->consolidate($doc, $ctx, $det, $sem, $diff, $sec['findings'], $status);
