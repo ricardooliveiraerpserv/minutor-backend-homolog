@@ -118,6 +118,69 @@ class SourceDocActionController extends Controller
         return response()->json(['data' => ['action' => $plan['action'], 'execution_id' => $log->id, 'status' => 'queued', 'plan' => $plan]], 202);
     }
 
+    /**
+     * POST /source-docs/{id}/topup — TOP-UP/RECOVERY seletivo de fonte PARCIAL (enriquece o semantic_json
+     * existente reprocessando só blocos quebrados + funções em missing técnico). Síncrono; devolve
+     * before × after. Homolog-only. Caminho ESPECÍFICO de enriquecimento (não é o reprocess genérico).
+     */
+    public function topup(int $sourceDoc, Request $request): JsonResponse
+    {
+        $doc = SourceDoc::with('currentVersion')->find($sourceDoc);
+        if (! $doc) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        if (! $this->scope->canAccessDoc($request->user(), $doc)) {
+            $this->audit($doc, 'topup', 'denied', ['reason' => 'out_of_scope'], userId: $request->user()?->id);
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        $ver = $doc->currentVersion;
+        if (! $ver || ! is_array($ver->semantic_json)) {
+            return response()->json(['message' => 'Fonte sem semântica para enriquecer.'], 422);
+        }
+        $pipeline = app(\App\SourceCode\SourceDocPipeline::class);
+        $before = $this->topupSnapshot($ver->semantic_json);
+        $t0 = microtime(true);
+        try {
+            $ver = $pipeline->topUpVersion($ver);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Falha no top-up.', 'error' => mb_substr($e->getMessage(), 0, 200)], 500);
+        }
+        $after = $this->topupSnapshot($ver->semantic_json);
+        $this->audit($doc, 'topup', 'ok', ['before' => $before['documentary_completeness'] ?? null, 'after' => $after['documentary_completeness'] ?? null], durationMs: (int) ((microtime(true) - $t0) * 1000), userId: $request->user()?->id);
+        return response()->json(['data' => ['id' => $doc->id, 'file' => $doc->filename ?: $doc->path, 'before' => $before, 'after' => $after]]);
+    }
+
+    /** Métricas comparáveis do semantic_json p/ before × after do top-up. */
+    private function topupSnapshot($sem): array
+    {
+        $sem = is_array($sem) ? $sem : [];
+        $trace = (array) ($sem['funcoes_trace'] ?? []);
+        $tech = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
+        $techMiss = count(array_filter($trace['missing'] ?? [], fn ($m) => in_array($m['reason'] ?? '', $tech, true)));
+        $dc = (array) ($sem['documentary_completeness'] ?? []);
+        $u = (array) ($sem['usage'] ?? []);
+        return [
+            'status' => $sem['status'] ?? null,
+            'partial_reason' => $sem['partial_reason'] ?? null,
+            'strategy' => $sem['strategy'] ?? null,
+            'block_status' => $sem['block_status'] ?? null,
+            'completed' => count($trace['completed'] ?? []),
+            'not_identified' => count($trace['not_identified'] ?? []),
+            'missing_total' => count($trace['missing'] ?? []),
+            'missing_tecnico' => $techMiss,
+            'regras' => count($sem['regras_negocio'] ?? []),
+            'deps' => count($sem['dependencias_criticas'] ?? []),
+            'risco' => ! empty(($sem['risco_alteracao']['fatores'] ?? [])),
+            'documentary_completeness' => $dc['level'] ?? null,
+            'dc_missing_dims' => $dc['missing'] ?? [],
+            'rejeicoes_evidencia' => (int) ($sem['validation']['rejected_count'] ?? 0),
+            'cost_usd' => $u['actual_cost_usd'] ?? null,
+            'topup_cost_usd' => $u['topup_cost_usd'] ?? null,
+            'topup_calls' => $u['topup_calls'] ?? null,
+            'calls' => $u['calls'] ?? null,
+        ];
+    }
+
     /** GET /source-docs/{id}/execution — estado do reprocess mais recente. */
     public function execution(int $sourceDoc, Request $request): JsonResponse
     {

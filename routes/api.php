@@ -558,6 +558,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:source_docs.reprocess')->group(function () {
             Route::get('/source-docs/{sourceDoc}/reprocess/plan', [\App\Http\Controllers\SourceDocActionController::class, 'reprocessPlan'])->whereNumber('sourceDoc');
             Route::post('/source-docs/{sourceDoc}/reprocess', [\App\Http\Controllers\SourceDocActionController::class, 'reprocess'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/topup', [\App\Http\Controllers\SourceDocActionController::class, 'topup'])->whereNumber('sourceDoc');
         });
         Route::middleware('permission.or.admin:source_docs.download')->group(function () {
             Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
@@ -1591,6 +1592,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:source_docs.reprocess')->group(function () {
             Route::get('/source-docs/{sourceDoc}/reprocess/plan', [\App\Http\Controllers\SourceDocActionController::class, 'reprocessPlan'])->whereNumber('sourceDoc');
             Route::post('/source-docs/{sourceDoc}/reprocess', [\App\Http\Controllers\SourceDocActionController::class, 'reprocess'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/topup', [\App\Http\Controllers\SourceDocActionController::class, 'topup'])->whereNumber('sourceDoc');
         });
         Route::middleware('permission.or.admin:source_docs.download')->group(function () {
             Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
