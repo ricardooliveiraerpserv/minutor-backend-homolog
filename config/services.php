@@ -119,6 +119,14 @@ return [
                 'grava?log,^log,isrunning,^get.*cod$,^u?_?fmt,format,^str,conout,sleep,^is[A-Z]'))))),
             'chars_per_line'     => (int) env('SOURCE_DOC_CTX_CHARS_PER_LINE', 45), // p/ estimar tokens do snippet
         ],
+        // Fase 3 — INJEÇÃO cross-source bounded no prompt semântico. DESLIGADO por padrão: com off, o
+        // pipeline se comporta EXATAMENTE como hoje (sem resolver, fingerprint neutro, reuse intacto).
+        // Só liga a alimentação do contexto externo (resolved-only) quando explicitamente habilitado.
+        'cross_source' => [
+            'inject_enabled' => filter_var(env('SOURCE_DOC_XSRC_INJECT_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // ambiguous NÃO entra neste gate (superfície de contaminação); só resolved sustenta contexto/evidence C.
+            'include_ambiguous' => filter_var(env('SOURCE_DOC_XSRC_INCLUDE_AMBIGUOUS', false), FILTER_VALIDATE_BOOLEAN),
+        ],
         // P0 — GUARDA DE CUSTO INVIOLÁVEL (dentro do array certo!): reserva de CADA chamada =
         // estimativa × fator. Ancorado no gate: actual/estimated por chamada ∈ ~0,59–1,09 (máx 1,09) →
         // 1,25 ≈ máx observado + 15% de margem. 1,9 super-reservava ~2× e barrava deps que caberia.

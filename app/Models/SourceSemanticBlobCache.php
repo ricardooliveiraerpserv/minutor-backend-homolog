@@ -13,7 +13,7 @@ class SourceSemanticBlobCache extends Model
     protected $table = 'source_semantic_blob_cache';
 
     protected $fillable = [
-        'blob_sha', 'facts_version', 'schema_version', 'prompt_version', 'model',
+        'blob_sha', 'facts_version', 'schema_version', 'prompt_version', 'model', 'context_fingerprint',
         'semantic_json', 'first_source_doc_id', 'hits',
     ];
 

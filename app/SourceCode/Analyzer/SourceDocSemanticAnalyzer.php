@@ -41,6 +41,12 @@ class SourceDocSemanticAnalyzer
     private array $callLog = [];
     // Fase 2 — id do source_doc DEPENDENTE (origem), p/ validar evidência cross-source contra o grafo/edges.
     private ?int $contextDocId = null;
+    // Fase 3 — contexto cross-source BOUNDED (materializado pelo pipeline) injetado no prompt; fingerprint
+    // determinístico do contexto usado (entra na chave de cache); trilha de evidence C aceita/rejeitada.
+    private array $crossSource = [];
+    private string $contextFingerprint = '';
+    /** @var list<array> */ private array $xsrcAccepted = [];
+    /** @var list<array> */ private array $xsrcRejected = [];
     // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
     private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
 
@@ -64,6 +70,10 @@ class SourceDocSemanticAnalyzer
     {
         $this->resetState();
         $this->contextDocId = isset($ctx['source_doc_id']) ? (int) $ctx['source_doc_id'] : null; // Fase 2 — cross-source
+        // Fase 3 — contexto cross-source já resolvido/materializado DETERMINISTICAMENTE pelo pipeline. A IA
+        // recebe SÓ isto (não navega). Fingerprint entra na chave de cache (blob A + ctx B ≠ blob A + ctx C).
+        $this->crossSource = is_array($ctx['cross_source']['sources'] ?? null) ? $ctx['cross_source']['sources'] : [];
+        $this->contextFingerprint = (string) ($ctx['cross_source']['fingerprint'] ?? $ctx['context_fingerprint'] ?? '');
         $prevSem = is_array($ctx['previous_semantic'] ?? null) ? $ctx['previous_semantic'] : null;
 
         if (! $this->enabled()) {
@@ -1320,6 +1330,46 @@ class SourceDocSemanticAnalyzer
             'semantic_coverage' => $this->coverage ?: ['relevant_functions_total' => count($funcoes), 'relevant_functions_analyzed' => count($funcoes), 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0],
             'usage'            => $this->usageBlock(),
             'validation'       => ['rejected_count' => count($this->rejected), 'rejected' => array_slice($this->rejected, 0, 50)],
+            'cross_source'     => $this->crossSourceProvenance(),
+        ];
+    }
+
+    /**
+     * Fase 3 — PROVENIÊNCIA cross-source no semantic_json: fingerprint do contexto usado, fontes
+     * injetadas (facts-first), evidências C aceitas/rejeitadas pelo validador e a estimativa de custo
+     * ADICIONAL do contexto. Self-contained ⇒ enabled=false, fingerprint '' (rastro neutro, sem ruído).
+     * A afirmação fica rastreável: doc origem → símbolo → alvo → blob → facts → evidence C → ACCEPT/REJECT.
+     */
+    private function crossSourceProvenance(): array
+    {
+        if (! $this->crossSource && $this->contextFingerprint === '' && ! $this->xsrcRejected) {
+            return ['enabled' => false, 'context_fingerprint' => ''];
+        }
+        // custo ADICIONAL estimado: tamanho do bloco injetado × nº de prompts em que aparece (ent + depRisco).
+        $blockChars = mb_strlen($this->crossSourceBlock());
+        $cpt = (float) config('services.source_doc_ai.chars_per_token_text', 3.2);
+        $perCallTokens = (int) ceil($blockChars / max($cpt, 1));
+        $injectedCalls = $this->crossSource ? 2 : 0; // entendimentoUserPrompt + depRiscoUserPrompt
+        $addedInput = $perCallTokens * $injectedCalls;
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        return [
+            'enabled'              => (bool) $this->crossSource,
+            'context_fingerprint'  => $this->contextFingerprint,
+            'sources'              => array_map(fn ($s) => [
+                'source_doc_id' => $s['source_doc_id'], 'path' => $s['path'], 'blob_sha' => $s['blob_sha'],
+                'symbol' => $s['symbol'], 'relation' => $s['relation'],
+                'facts_included' => $s['facts_included'], 'snippet_included' => $s['snippet_included'],
+                'snippet_skipped_reason' => $s['snippet_skipped_reason'],
+                'estimated_context_tokens' => $s['estimated_context_tokens'],
+            ], $this->crossSource),
+            'evidence_accepted'    => $this->xsrcAccepted,
+            'evidence_rejected'    => $this->xsrcRejected,
+            'cost'                 => [
+                'estimated_added_input_tokens_per_call' => $perCallTokens,
+                'injected_in_calls'                     => $injectedCalls,
+                'estimated_added_input_tokens'          => $addedInput,
+                'estimated_added_cost_usd'              => round($addedInput / 1e6 * $ci, 6),
+            ],
         ];
     }
 
@@ -1741,8 +1791,10 @@ class SourceDocSemanticAnalyzer
                 $r = app(\App\SourceCode\CrossSourceEvidenceValidator::class)->validate($ev, $this->contextDocId);
                 if ($r['accepted']) {
                     $out[] = $r['evidence'];
+                    $this->xsrcAccepted[] = $r['evidence']; // Fase 3 — proveniência (evidência externa validada)
                 } else {
                     $this->rejected[] = ['item' => 'xsrc:' . ($ev['symbol'] ?? '?') . '@doc' . ($ev['source_doc_id'] ?? '?'), 'reason' => 'cross_source_' . $r['reason']];
+                    $this->xsrcRejected[] = ['source_doc_id' => $ev['source_doc_id'] ?? null, 'symbol' => $ev['symbol'] ?? null, 'reason' => $r['reason']];
                 }
                 continue;
             }
@@ -1797,6 +1849,29 @@ class SourceDocSemanticAnalyzer
             . 'Seja CONCISO. Devolva SÓ JSON válido (sem markdown).';
     }
 
+    /**
+     * Fase 3 — CONTEXTO CROSS-SOURCE (auxiliar). Bloco ADITIVO e isolado: apresenta APENAS os facts das
+     * dependências resolved que o Minutor selecionou. A IA não escolhe, não busca, não resolve. Regras
+     * explícitas: contexto é auxiliar; afirmação cross-source EXIGE evidence estruturada; sem base ⇒
+     * not_identified; nunca completar por conhecimento geral. '' quando não há contexto (self-contained).
+     */
+    private function crossSourceBlock(): string
+    {
+        if (! $this->crossSource) {
+            return '';
+        }
+        $b = "\n\nCONTEXTO CROSS-SOURCE (AUXILIAR — dependências resolvidas DETERMINISTICAMENTE pelo Minutor):\n"
+            . json_encode(array_map(fn ($s) => [
+                'source_doc_id' => $s['source_doc_id'], 'path' => $s['path'], 'blob_sha' => $s['blob_sha'],
+                'symbol' => $s['symbol'], 'relation' => $s['relation'], 'facts' => $s['facts'],
+            ], $this->crossSource), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $b .= "\n\nREGRAS DO CONTEXTO EXTERNO: (a) é AUXILIAR — não é o fonte principal; (b) qualquer afirmação "
+            . "que dependa dele DEVE incluir no evidence do item um objeto {source_doc_id, blob_sha, symbol, relation, "
+            . "type} apontando o alvo; (c) sem evidência suficiente ⇒ \"" . self::UNDETERMINED . "\"; (d) NÃO complete "
+            . "lacunas por conhecimento geral nem transforme dependência em fato sem os facts acima.";
+        return $b;
+    }
+
     /** BLOCO 1 (prioridade) — só o Entendimento Funcional. Saída pequena e objetiva → não trunca. */
     private function entendimentoUserPrompt(array $compact, ?array $diff, string $code): string
     {
@@ -1807,6 +1882,7 @@ class SourceDocSemanticAnalyzer
         if ($diff) {
             $u .= "\n\nDIFF:\n" . json_encode($this->diffForAi($diff), JSON_UNESCAPED_UNICODE);
         }
+        $u .= $this->crossSourceBlock();
         $u .= "\n\nProduza SOMENTE o Entendimento Funcional (PROPÓSITO de negócio, não a mecânica). "
             . 'MUITO ENXUTO: evidence só {type,name/table/field}, no MÁX. 1 por item; descrições curtas. JSON:\n'
             . 'entendimento_funcional{'
@@ -1841,6 +1917,7 @@ class SourceDocSemanticAnalyzer
         if ($code !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
+        $u .= $this->crossSourceBlock(); // Fase 3 — dependências externas resolvidas ajudam dependencias_criticas/risco
         // risco_alteracao PRIMEIRO (é pequeno e valioso) → sobrevive ao salvamento se a cauda truncar.
         $u .= "\n\nSEJA ENXUTO (≤1 evidence por item; descrições curtas). Produza JSON {"
             . 'risco_alteracao{resumo(≤20 palavras),fatores[≤5 {tipo(dependencia|escrita|tabela|caller|integracao|complexidade),descricao(≤12 palavras),evidence[≤1]}]}, '
@@ -1898,7 +1975,9 @@ class SourceDocSemanticAnalyzer
 
     private function versionCacheKey(string $blob): string
     {
-        return 'srcdoc:sem:' . sha1($blob . '|' . self::SCHEMA_VERSION . '|' . config('services.source_doc_ai.prompt_version', 2) . '|' . $this->ai->model());
+        // Fase 3 — o contexto EXTERNO faz parte da chave: fingerprint '' (self-contained) preserva a chave
+        // atual; contexto distinto gera chave distinta (nunca reusa semântica de contexto incompatível).
+        return 'srcdoc:sem:' . sha1($blob . '|' . self::SCHEMA_VERSION . '|' . config('services.source_doc_ai.prompt_version', 2) . '|' . $this->ai->model() . '|' . $this->contextFingerprint);
     }
 
     private function functionCacheKey(array $det, array $c): string
@@ -2026,6 +2105,8 @@ class SourceDocSemanticAnalyzer
         $this->coverage = [];
         $this->costBaseUsd = 0.0;
         $this->callLog = [];
+        $this->xsrcAccepted = [];
+        $this->xsrcRejected = [];
     }
 
     private function skeleton(string $status): array

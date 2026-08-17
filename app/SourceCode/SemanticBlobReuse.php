@@ -44,7 +44,7 @@ class SemanticBlobReuse
      * Busca semântica reutilizável para (blob + contrato atual). Retorna o semantic_json (marcado
      * com bloco 'reuse') ou null. Em HIT, incrementa hits e audita.
      */
-    public function get(?string $blob, ?int $sourceDocId = null): ?array
+    public function get(?string $blob, ?int $sourceDocId = null, string $contextFingerprint = ''): ?array
     {
         if (! $this->enabled() || ! $blob) {
             return null;
@@ -56,6 +56,9 @@ class SemanticBlobReuse
             ->where('schema_version', $k['schema_version'])
             ->where('prompt_version', $k['prompt_version'])
             ->where('model', $k['model'])
+            // Fase 3 — contexto EXTERNO faz parte da chave: blob A + contexto B NÃO reutiliza blob A + contexto C.
+            // '' (self-contained neutro) casa com as linhas antigas → reuso sem contexto permanece intacto.
+            ->where('context_fingerprint', $contextFingerprint)
             ->first();
 
         if (! $row) {
@@ -87,7 +90,7 @@ class SemanticBlobReuse
      * Persiste a semântica recém-analisada para reuso futuro. Só guarda resultados APROVEITÁVEIS
      * (completed/partial com conteúdo). NÃO guarda skip por custo/estrutura (repetir é barato/vazio).
      */
-    public function put(?string $blob, array $semantic, ?int $sourceDocId = null): void
+    public function put(?string $blob, array $semantic, ?int $sourceDocId = null, string $contextFingerprint = ''): void
     {
         if (! $this->enabled() || ! $blob) {
             return;
@@ -103,11 +106,12 @@ class SemanticBlobReuse
         $k = $this->contractKey();
         SourceSemanticBlobCache::updateOrCreate(
             [
-                'blob_sha'       => $blob,
-                'facts_version'  => $k['facts_version'],
-                'schema_version' => $k['schema_version'],
-                'prompt_version' => $k['prompt_version'],
-                'model'          => $k['model'],
+                'blob_sha'            => $blob,
+                'facts_version'       => $k['facts_version'],
+                'schema_version'      => $k['schema_version'],
+                'prompt_version'      => $k['prompt_version'],
+                'model'               => $k['model'],
+                'context_fingerprint' => $contextFingerprint, // Fase 3 — isola semânticas com contexto externo distinto
             ],
             [
                 'semantic_json'       => $semantic,

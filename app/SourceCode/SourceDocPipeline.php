@@ -29,6 +29,7 @@ class SourceDocPipeline
         private SourceDiff $differ,
         private SourceDocSemanticAnalyzer $semantic,
         private SemanticBlobReuse $blobReuse,
+        private CrossSourceContextBuilder $contextBuilder,
     ) {
     }
 
@@ -108,15 +109,24 @@ class SourceDocPipeline
                 $prevSem = ($prevVer && (int) $prevVer->id !== (int) $ver->id) ? $prevVer->semantic_json : null;
                 $blob = $ctx['source_blob_sha'] ?? null;
 
-                // Bloco 4.2.1-A: reuso PERSISTENTE por blob+contrato. HIT ⇒ 0 chamadas IA (copia a
-                // análise; o documento/versão continua sendo deste doc). MISS ⇒ analisa e persiste.
-                $sem = $this->blobReuse->get($blob, (int) $doc->id);
+                // Fase 3 — CONTEXTO CROSS-SOURCE bounded: resolve DETERMINISTICAMENTE (resolved-only) a partir
+                // do det que está sendo analisado ($ver), materializa facts-first e calcula o fingerprint.
+                // OFF (default) ⇒ neutro (fingerprint '', sem contexto): tudo abaixo se comporta como hoje.
+                $doc->setRelation('currentVersion', $ver);
+                $xsrc = $this->contextBuilder->build($doc);
+                $fp = (string) ($xsrc['fingerprint'] ?? '');
+
+                // Bloco 4.2.1-A: reuso PERSISTENTE por blob+contrato (+ fingerprint de contexto). HIT ⇒ 0
+                // chamadas IA. MISS ⇒ analisa e persiste. O fingerprint impede reuso entre contextos distintos.
+                $sem = $this->blobReuse->get($blob, (int) $doc->id, $fp);
                 if ($sem === null) {
                     $sem = $this->semantic->analyze($det, $sec['masked'], $diff, [
                         'previous_semantic' => $prevSem,
                         'blob_sha'          => $blob,
+                        'source_doc_id'     => (int) $doc->id, // Fase 2 — dependente, p/ validar evidência cross-source
+                        'cross_source'      => $xsrc,          // Fase 3 — contexto materializado + fingerprint
                     ]);
-                    $this->blobReuse->put($blob, $sem, (int) $doc->id);
+                    $this->blobReuse->put($blob, $sem, (int) $doc->id, $fp);
                 }
                 $ver->semantic_json = $sem;
                 $ver->diff_summary = $sem['resumo_alteracao'] ?? $ver->diff_summary;
@@ -219,9 +229,11 @@ class SourceDocPipeline
         $ver->analysis_status = $status;
         $ver->save();
 
-        // réplicas do MESMO blob herdam o enriquecimento (cache persistente por blob).
+        // réplicas do MESMO blob+contexto herdam o enriquecimento (cache persistente por blob+fingerprint).
+        // Fingerprint vem da proveniência já registrada no semantic_json (self-contained ⇒ '' neutro).
         if ($ver->source_blob_sha) {
-            $this->blobReuse->put($ver->source_blob_sha, $sem, (int) $doc->id);
+            $fp = (string) (($sem['cross_source']['context_fingerprint'] ?? '') ?: '');
+            $this->blobReuse->put($ver->source_blob_sha, $sem, (int) $doc->id, $fp);
         }
         if ((int) $doc->current_version_id === (int) $ver->id) {
             $doc->documentation_json = $ver->documentation_json;

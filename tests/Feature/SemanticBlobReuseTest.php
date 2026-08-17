@@ -101,4 +101,26 @@ class SemanticBlobReuseTest extends TestCase
         $svc->put('BLOBOFF', $this->sem(), 1);
         $this->assertNull($svc->get('BLOBOFF', 2)); // rollback: no-op
     }
+
+    // ── Fase 3 — P0: contexto externo faz parte da chave ─────────────────────────
+
+    public function test_different_context_fingerprint_does_not_reuse(): void
+    {
+        // MESMO blob principal, contexto EXTERNO diferente (B vs C) → NÃO reutiliza (erro silencioso evitado).
+        $svc = new SemanticBlobReuse();
+        $svc->put('BLOBCTX', $this->sem(), 1, 'fingerprintB');
+        $this->assertNull($svc->get('BLOBCTX', 2, 'fingerprintC'), 'blob A + ctx B não pode servir blob A + ctx C');
+        $r = $svc->get('BLOBCTX', 2, 'fingerprintB');
+        $this->assertNotNull($r, 'mesmo blob + mesmo contexto → reutiliza');
+        $this->assertTrue($r['reuse']['hit']);
+    }
+
+    public function test_self_contained_neutral_fingerprint_reuses(): void
+    {
+        // self-contained (fingerprint '') é o comportamento atual e casa com linhas sem contexto.
+        $svc = new SemanticBlobReuse();
+        $svc->put('BLOBNEUTRO', $this->sem(), 1);          // put sem fingerprint → '' neutro
+        $this->assertNotNull($svc->get('BLOBNEUTRO', 2));  // get sem fingerprint → HIT
+        $this->assertNull($svc->get('BLOBNEUTRO', 2, 'ctxX'), 'contexto externo não reusa a semântica sem contexto');
+    }
 }
