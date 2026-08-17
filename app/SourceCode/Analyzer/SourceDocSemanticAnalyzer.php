@@ -523,11 +523,25 @@ class SourceDocSemanticAnalyzer
         $maxCalls  = (int) config('services.source_doc_ai.deepen_max_calls', 12);
         $calls = 0;
 
+        // GUARDA DE CUSTO ACUMULADO: o chunking não pode estourar o hard_limit por fonte. Antes de
+        // cada chunk, se o custo já gasto + a reserva de mais um chunk passar do teto, PARA (resto
+        // vira missing por orçamento) — mantém o custo/fonte <= hard_limit sem elevar o teto.
+        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $chunkReserve = ($out / 1e6 * $co) + (12000 / 1e6 * $ci) + 0.01; // saída do chunk + entrada típica + margem
+        $costBudgetHit = false;
+
         // pilha de subconjuntos a processar (retry adaptativo empilha metades do não-recuperado).
         $stack = array_chunk($toCall, $chunkSize);
         while (! empty($stack)) {
             if ($calls >= $maxCalls) {
                 $anyTrunc = true; // orçamento de chamadas esgotado → resto vira missing
+                break;
+            }
+            if ($this->currentCostUsd() + $chunkReserve > $hardLimit) {
+                $anyTrunc = true;
+                $costBudgetHit = true; // teto de custo por fonte → resto vira missing
                 break;
             }
             $cur = array_shift($stack);
@@ -564,9 +578,10 @@ class SourceDocSemanticAnalyzer
         // trace: requested → completed → missing (+motivo)
         $doneSet = array_flip(array_map('strtolower', array_map(fn ($f) => (string) $f['name'], $funcoes)));
         $missing = [];
+        $missReason = $costBudgetHit ? 'cost_budget' : ($calls >= $maxCalls ? 'deepen_call_budget' : 'truncated_unrecovered');
         foreach ($requested as $n) {
             if (! isset($doneSet[strtolower($n)])) {
-                $missing[] = ['name' => $n, 'reason' => $calls >= $maxCalls ? 'deepen_call_budget' : 'truncated_unrecovered'];
+                $missing[] = ['name' => $n, 'reason' => $missReason];
             }
         }
         $trace = [
@@ -1422,6 +1437,14 @@ class SourceDocSemanticAnalyzer
         $c = $this->call($system, $user, $out);
         $json = $this->parseJson($c['text']);
         return ['json' => $json, 'truncated' => $c['truncated'] || $json === null, 'raw_truncated' => $c['truncated']];
+    }
+
+    /** Custo real acumulado até agora (US$), p/ a guarda de orçamento por fonte no aprofundamento. */
+    private function currentCostUsd(): float
+    {
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        return ($this->usage['input_tokens'] ?? 0) / 1e6 * $ci + ($this->usage['output_tokens'] ?? 0) / 1e6 * $co;
     }
 
     private function usageBlock(): array

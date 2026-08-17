@@ -139,6 +139,26 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $this->assertSame('entendimento_truncated', $r['partial_reason']);
     }
 
+    public function test_deepen_cost_guard_never_exceeds_hard_limit(): void
+    {
+        // Bloco 4.2.1-B: guarda de custo acumulado — chunking NÃO pode estourar o hard_limit por fonte.
+        // hard_limit minúsculo ⇒ aprofundamento para cedo; restante vira missing (reason cost_budget).
+        config(['services.source_doc_ai.inline_code_max_chars' => 30, 'services.source_doc_ai.hard_limit_usd' => 0.05, 'services.source_doc_ai.deepen_chunk_size' => 1]);
+        $ai = $this->ai(true, fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(),
+            1 => $this->rulesBlock(),
+            2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
+            default => $this->funcoesBlock(),
+        });
+        $r = $this->go($ai, str_repeat("linha\n", 40));
+        // custo real reportado <= hard_limit (a guarda impediu chamadas que estourariam)
+        $this->assertLessThanOrEqual(0.05, (float) $r['usage']['actual_cost_usd']);
+        // se sobraram funções, ficam rastreadas como missing por orçamento (não somem sem registro)
+        if (! empty($r['funcoes_trace']['missing'])) {
+            $this->assertSame('cost_budget', $r['funcoes_trace']['missing'][0]['reason']);
+        }
+    }
+
     // ── base (Bloco 4) ──
     public function test_no_provider_is_pending(): void
     {
