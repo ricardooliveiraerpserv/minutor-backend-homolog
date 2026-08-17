@@ -27,11 +27,11 @@ class NotificationController extends Controller
         return $u && in_array($u->type, self::MANAGERS, true);
     }
 
-    /** Admin gerencia qualquer publicação; coordenador/administrativo só as que criou. */
+    /** Admin e ADMINISTRATIVO gerenciam qualquer publicação; coordenador só as que criou. */
     private function authorizeOwnOrAdmin(?\App\Models\User $u, AppNotification $n): void
     {
         abort_unless($this->canManage($u), 403);
-        abort_if(!$u->isAdmin() && (int) $n->created_by !== (int) $u->id, 403, 'Você só pode gerenciar as publicações que criou.');
+        abort_if(!$u->isAdmin() && !$u->isAdministrativo() && (int) $n->created_by !== (int) $u->id, 403, 'Você só pode gerenciar as publicações que criou.');
     }
 
     /** Notificações visíveis ao usuário + estado de leitura/aceite + flags computadas. */
@@ -334,8 +334,8 @@ class NotificationController extends Controller
         $rows = AppNotification::withCount(['reads as acks_count' => fn ($q) => $q->whereNotNull('ack_at')])
             ->with('poll.options')
             ->when($reminderIds, fn ($q) => $q->whereNotIn('id', $reminderIds))
-            // Não-admin (coordenador/administrativo) só enxerga/gerencia as publicações que criou.
-            ->when(!$admin->isAdmin(), fn ($q) => $q->where('created_by', $admin->id))
+            // Admin e ADMINISTRATIVO gerenciam TODAS as publicações; coordenador só as que criou.
+            ->when(!$admin->isAdmin() && !$admin->isAdministrativo(), fn ($q) => $q->where('created_by', $admin->id))
             ->orderByDesc('created_at')->get()
             ->map(function (AppNotification $n) use ($admin) {
                 $arr = $n->toArray();
