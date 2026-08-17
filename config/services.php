@@ -126,6 +126,8 @@ return [
             'inject_enabled' => filter_var(env('SOURCE_DOC_XSRC_INJECT_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
             // ambiguous NÃO entra neste gate (superfície de contaminação); só resolved sustenta contexto/evidence C.
             'include_ambiguous' => filter_var(env('SOURCE_DOC_XSRC_INCLUDE_AMBIGUOUS', false), FILTER_VALIDATE_BOOLEAN),
+            // teto BOUNDED de tabelas do alvo materializadas nos facts (fallback nunca despeja tudo).
+            'max_context_tables' => (int) env('SOURCE_DOC_XSRC_MAX_TABLES', 6),
         ],
         // P0 — GUARDA DE CUSTO INVIOLÁVEL (dentro do array certo!): reserva de CADA chamada =
         // estimativa × fator. Ancorado no gate: actual/estimated por chamada ∈ ~0,59–1,09 (máx 1,09) →

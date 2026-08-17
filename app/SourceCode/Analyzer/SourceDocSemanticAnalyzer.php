@@ -45,8 +45,14 @@ class SourceDocSemanticAnalyzer
     // determinístico do contexto usado (entra na chave de cache); trilha de evidence C aceita/rejeitada.
     private array $crossSource = [];
     private string $contextFingerprint = '';
+    private array $crossSourceMeta = []; // saída completa do builder (resolved/telemetry), p/ proveniência real
     /** @var list<array> */ private array $xsrcAccepted = [];
     /** @var list<array> */ private array $xsrcRejected = [];
+    // Fase 3 (Gate 3B) — contabilidade da injeção EFETIVA: contada no choke-point call() pelo marcador do
+    // bloco, cobrindo TODA rota (simple/multi-bloco/deepen/incremental/topUp) — presente ou futura.
+    private int $xsrcInjectedCalls = 0;
+    private int $xsrcInjectedChars = 0;
+    private const XSRC_MARKER = 'CONTEXTO CROSS-SOURCE (AUXILIAR';
     // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
     private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
 
@@ -72,8 +78,7 @@ class SourceDocSemanticAnalyzer
         $this->contextDocId = isset($ctx['source_doc_id']) ? (int) $ctx['source_doc_id'] : null; // Fase 2 — cross-source
         // Fase 3 — contexto cross-source já resolvido/materializado DETERMINISTICAMENTE pelo pipeline. A IA
         // recebe SÓ isto (não navega). Fingerprint entra na chave de cache (blob A + ctx B ≠ blob A + ctx C).
-        $this->crossSource = is_array($ctx['cross_source']['sources'] ?? null) ? $ctx['cross_source']['sources'] : [];
-        $this->contextFingerprint = (string) ($ctx['cross_source']['fingerprint'] ?? $ctx['context_fingerprint'] ?? '');
+        $this->loadCrossSource($ctx);
         $prevSem = is_array($ctx['previous_semantic'] ?? null) ? $ctx['previous_semantic'] : null;
 
         if (! $this->enabled()) {
@@ -446,6 +451,7 @@ class SourceDocSemanticAnalyzer
         if ($inlineCode !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $inlineCode;
         }
+        $u .= $this->crossSourceBlock(); // Fase 3 — rota simples produz TODAS as afirmações numa chamada
         $u .= "\n\nFonte SIMPLES: documente o essencial SEM inventar. Se não houver regra/dependência/risco "
             . 'reais, deixe as listas VAZIAS (não invente). Produza JSON {'
             . 'entendimento_funcional{uma_frase{texto,confidence,evidence[≤1]}, objetivo (1–3 frases), quando_usado, '
@@ -887,9 +893,12 @@ class SourceDocSemanticAnalyzer
      * e são registrados separadamente (usage.topup_*). Preserva finalidades/blocos já válidos.
      * Caminho ESPECÍFICO de enriquecimento — não é o reprocesso genérico.
      */
-    public function topUp(array $existing, array $det, string $maskedCode, ?array $diff = null): array
+    public function topUp(array $existing, array $det, string $maskedCode, ?array $diff = null, array $ctx = []): array
     {
         $this->resetState();
+        // Fase 3 — top-up pode RE-PRODUZIR blocos/finalidades dependentes de contexto externo → carrega o
+        // mesmo contexto cross-source do initial (senão o retry/deepening sairia sem o contexto).
+        $this->loadCrossSource($ctx);
         $this->costBaseUsd = (float) (($existing['usage']['actual_cost_usd'] ?? 0.0));
         $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
 
@@ -1342,33 +1351,41 @@ class SourceDocSemanticAnalyzer
      */
     private function crossSourceProvenance(): array
     {
-        if (! $this->crossSource && $this->contextFingerprint === '' && ! $this->xsrcRejected) {
+        $resolvedN = (int) ($this->crossSourceMeta['telemetry']['resolved'] ?? 0);
+        if (! $this->crossSource && $this->contextFingerprint === '' && ! $this->xsrcRejected && $resolvedN === 0) {
             return ['enabled' => false, 'context_fingerprint' => ''];
         }
-        // custo ADICIONAL estimado: tamanho do bloco injetado × nº de prompts em que aparece (ent + depRisco).
-        $blockChars = mb_strlen($this->crossSourceBlock());
+        // CUSTO/TOKENS = SÓ o que foi EFETIVAMENTE enviado (contado no choke-point call()). Contexto resolvido
+        // mas NÃO injetado (ex.: rota não coberta) ⇒ injected=false, tokens/custo = 0. Nada de intenção.
         $cpt = (float) config('services.source_doc_ai.chars_per_token_text', 3.2);
-        $perCallTokens = (int) ceil($blockChars / max($cpt, 1));
-        $injectedCalls = $this->crossSource ? 2 : 0; // entendimentoUserPrompt + depRiscoUserPrompt
-        $addedInput = $perCallTokens * $injectedCalls;
-        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $ci  = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $addedInput = (int) ceil($this->xsrcInjectedChars / max($cpt, 1));
+        $injected = $this->xsrcInjectedCalls > 0;
+        $emitted = count($this->xsrcAccepted) + count($this->xsrcRejected);
         return [
             'enabled'              => (bool) $this->crossSource,
             'context_fingerprint'  => $this->contextFingerprint,
+            // ETAPAS REAIS do circuito (execução, não intenção):
+            'resolved'             => $resolvedN,
+            'materialized'         => count($this->crossSource),
+            'injected'             => $injected,
+            'injected_calls'       => $this->xsrcInjectedCalls,
+            'used_by_model'        => $emitted > 0, // sinal determinístico de uso: emitiu evidência estruturada
+            'evidence_emitted'     => $emitted,
+            'evidence_accepted'    => $this->xsrcAccepted,
+            'evidence_rejected'    => $this->xsrcRejected,
             'sources'              => array_map(fn ($s) => [
                 'source_doc_id' => $s['source_doc_id'], 'path' => $s['path'], 'blob_sha' => $s['blob_sha'],
                 'symbol' => $s['symbol'], 'relation' => $s['relation'],
+                'facts_strategy' => $s['facts_strategy'] ?? null,
                 'facts_included' => $s['facts_included'], 'snippet_included' => $s['snippet_included'],
                 'snippet_skipped_reason' => $s['snippet_skipped_reason'],
                 'estimated_context_tokens' => $s['estimated_context_tokens'],
             ], $this->crossSource),
-            'evidence_accepted'    => $this->xsrcAccepted,
-            'evidence_rejected'    => $this->xsrcRejected,
             'cost'                 => [
-                'estimated_added_input_tokens_per_call' => $perCallTokens,
-                'injected_in_calls'                     => $injectedCalls,
-                'estimated_added_input_tokens'          => $addedInput,
-                'estimated_added_cost_usd'              => round($addedInput / 1e6 * $ci, 6),
+                'added_input_tokens'     => $addedInput,          // efetivo (0 se não injetado)
+                'injected_in_calls'      => $this->xsrcInjectedCalls,
+                'added_cost_usd'         => round($addedInput / 1e6 * $ci, 6),
             ],
         ];
     }
@@ -1909,6 +1926,7 @@ class SourceDocSemanticAnalyzer
         if ($code !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
+        $u .= $this->crossSourceBlock(); // Fase 3 — regra é tipo de afirmação; pode depender de dependência externa
         $u .= "\n\nSEJA ENXUTO (≤2 evidence por item). Produza JSON {"
             . 'regras_negocio[≤10 {id,titulo(≤8 palavras),descricao(≤20 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
             . 'change_summary}. Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita.';
@@ -1943,6 +1961,7 @@ class SourceDocSemanticAnalyzer
             return $b;
         }, $items);
         return "FUNÇÕES RELEVANTES:\n" . implode("\n\n", $blocks)
+            . $this->crossSourceBlock() // Fase 3 — finalidade/deps são afirmações que podem depender do contexto externo
             . "\n\nDê a finalidade FUNCIONAL (a responsabilidade da função no processo, 1–2 frases; NÃO 'chama X/acessa Y') "
             . 'de CADA função listada, com confidence + evidence. Sem base ⇒ finalidade="' . self::UNDETERMINED . '". '
             . 'Se houver base, adicione regra/ponto/dependência com evidence+confidence. '
@@ -1959,6 +1978,7 @@ class SourceDocSemanticAnalyzer
         return "SEMÂNTICA ANTERIOR (resumo):\n" . json_encode($prevSummary, JSON_UNESCAPED_UNICODE)
             . "\n\nDIFF:\n" . json_encode($this->diffForAi($diff ?? []), JSON_UNESCAPED_UNICODE)
             . "\n\nFUNÇÕES ALTERADAS (código mascarado):\n" . implode("\n\n", $blocks)
+            . $this->crossSourceBlock() // Fase 3 — regras/finalidades alteradas podem depender do contexto externo
             . "\n\nResponda SOMENTE o que muda: JSON {change_summary, updated_functions[{name,finalidade}], "
             . 'rules_add[{id,descricao,confidence,evidence}], rules_update[{id,descricao,confidence,evidence}], rules_remove[id], attention_add[{interpretation,severity?,recommendation?,confidence,evidence}]}.';
     }
@@ -1996,6 +2016,12 @@ class SourceDocSemanticAnalyzer
     /** @return array{text:string,truncated:bool} truncated = provider parou por max_tokens. */
     private function call(string $system, string $user, ?int $out = null): array
     {
+        // Fase 3 — injeção EFETIVA: se o prompt REALMENTE enviado carrega o bloco cross-source, conta a
+        // chamada e os chars do bloco (proveniência = o que foi enviado, não intenção). Route-agnostic.
+        if ($this->crossSource && str_contains($user, self::XSRC_MARKER)) {
+            $this->xsrcInjectedCalls++;
+            $this->xsrcInjectedChars += mb_strlen($this->crossSourceBlock());
+        }
         $r = $this->ai->complete($system, $user, ['max_tokens' => $out ?: (int) config('services.source_doc_ai.max_output_tokens_per_call', 1800)]);
         $u = (array) ($r['usage'] ?? []);
         $this->usage['input_tokens'] += (int) ($u['input_tokens'] ?? 0);
@@ -2112,6 +2138,16 @@ class SourceDocSemanticAnalyzer
         $this->callLog = [];
         $this->xsrcAccepted = [];
         $this->xsrcRejected = [];
+        $this->xsrcInjectedCalls = 0;
+        $this->xsrcInjectedChars = 0;
+    }
+
+    /** Fase 3 — carrega o contexto cross-source do $ctx (usado por analyze e topUp; resetState já rodou). */
+    private function loadCrossSource(array $ctx): void
+    {
+        $this->crossSource = is_array($ctx['cross_source']['sources'] ?? null) ? $ctx['cross_source']['sources'] : [];
+        $this->contextFingerprint = (string) ($ctx['cross_source']['fingerprint'] ?? $ctx['context_fingerprint'] ?? '');
+        $this->crossSourceMeta = is_array($ctx['cross_source'] ?? null) ? $ctx['cross_source'] : [];
     }
 
     private function skeleton(string $status): array

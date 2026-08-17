@@ -89,6 +89,37 @@ class CrossSourceContextBuilderTest extends TestCase
         $this->assertSame([], $r['sources']);
     }
 
+    public function test_facts_fallback_file_bounded_when_no_function_attribution(): void
+    {
+        // alvo cujas tabelas NÃO são atribuídas à função-alvo (como o 2096 real): P1 vazio → fallback bounded.
+        $t = SourceDoc::create(['owner' => 'cli', 'repository' => 'r1', 'branch' => 'main', 'path' => 'CLRFIN01.PRW', 'filename' => 'CLRFIN01.PRW']);
+        $tv = SourceDocVersion::create(['source_doc_id' => $t->id, 'source_commit_sha' => 'cf', 'source_blob_sha' => 'blobF',
+            'deterministic_json' => ['functions' => [['name' => 'CLRFIN01', 'start_line' => 26, 'end_line' => 408, 'calls_internal' => []]],
+                'tables' => [
+                    ['table' => 'SE1', 'access' => ['READ'], 'read_fields' => ['E1_NUMBOR'], 'functions' => ['Impres2']],   // sub-função, não CLRFIN01
+                    ['table' => 'SEE', 'access' => ['WRITE'], 'write_fields' => ['EE_NUM'], 'functions' => ['Modulo6']],
+                ]]]);
+        $t->update(['current_version_id' => $tv->id]);
+        DB::table('source_symbol_definition')->insert([
+            'symbol_norm' => 'clrfin01', 'source_doc_id' => $t->id, 'blob_sha' => 'blobF', 'owner' => 'cli', 'repository' => 'r1',
+            'function_name' => 'CLRFIN01', 'start_line' => 26, 'end_line' => 408, 'is_user_function' => true, 'writes' => true,
+            'touches_tables' => 5, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $d = SourceDoc::create(['owner' => 'cli', 'repository' => 'r1', 'branch' => 'main', 'path' => 'CLRFIN02.prw', 'filename' => 'CLRFIN02.prw']);
+        SourceDocVersion::create(['source_doc_id' => $d->id, 'source_commit_sha' => 'cd2', 'source_blob_sha' => 'blobD2',
+            'deterministic_json' => ['user_calls' => ['U_CLRFIN01'], 'functions' => [['name' => 'CLRFIN02']],
+                'dependencies' => ['internal_functions' => ['CLRFIN02'], 'totvs_framework_functions' => []]]]);
+        $d->update(['current_version_id' => $d->currentVersion?->id ?: SourceDocVersion::where('source_doc_id', $d->id)->value('id')]);
+
+        $r = app(CrossSourceContextBuilder::class)->build(SourceDoc::with('currentVersion')->find($d->id));
+        $this->assertCount(1, $r['sources']);
+        $s = $r['sources'][0];
+        $this->assertSame('file_bounded_fallback', $s['facts_strategy'], 'sem atribuição por função → fallback bounded');
+        $tables = array_column($s['facts']['tables'], 'table');
+        $this->assertContains('SEE', $tables, 'fallback traz tabelas do arquivo (sinal de negócio)');
+        $this->assertSame('SEE', $tables[0], 'escrita priorizada (SEE antes de SE1)');
+    }
+
     public function test_fingerprint_is_deterministic_and_context_sensitive(): void
     {
         $b = app(CrossSourceContextBuilder::class);

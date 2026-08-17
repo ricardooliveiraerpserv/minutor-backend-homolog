@@ -214,7 +214,11 @@ class SourceDocPipeline
             ? $ver->deterministic_json
             : $this->analyzer->analyze($fetched['content'], ['path' => $doc->path, 'filename' => basename($doc->path)]);
 
-        $sem = $this->semantic->topUp($ver->semantic_json, $det, $sec['masked'], null);
+        // Fase 3 — top-up re-produz blocos/finalidades que podem depender de contexto externo: resolve o
+        // mesmo contexto cross-source bounded (resolved-only) e passa ao topUp (OFF ⇒ neutro, como antes).
+        $doc->setRelation('currentVersion', $ver);
+        $xsrc = $this->contextBuilder->build($doc);
+        $sem = $this->semantic->topUp($ver->semantic_json, $det, $sec['masked'], null, ['cross_source' => $xsrc]);
         $status = in_array($sem['status'] ?? '', ['completed', 'skipped_cost_limit', 'skipped_no_structural_change', 'reuse_blob', 'reuse_blob_persistent'], true) ? 'completed' : 'partial';
 
         $ctx = [

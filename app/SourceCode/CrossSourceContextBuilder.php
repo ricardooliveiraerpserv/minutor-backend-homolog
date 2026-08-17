@@ -56,6 +56,7 @@ class CrossSourceContextBuilder
                 'symbol'                 => (string) $cs['symbol'],
                 'relation'               => 'calls_user',
                 'facts'                  => $facts['facts'],
+                'facts_strategy'         => $facts['strategy'], // function_scoped | related_functions | file_bounded_fallback
                 'facts_included'         => true,
                 'snippet_included'       => $snippetIncluded,
                 'snippet_skipped_reason' => $snippetSkipped,
@@ -82,8 +83,13 @@ class CrossSourceContextBuilder
     }
 
     /**
-     * Facts mínimos do ALVO a partir do determinístico dele (assinatura + tabelas/campos + operações da
-     * função referenciada). NUNCA inventa: se o alvo não tiver a função nos fatos, retorna só metadados.
+     * Facts mínimos do ALVO a partir do determinístico dele. Fallback BOUNDED em 3 níveis quando o
+     * determinístico não atribui tabelas à função-alvo (comum: tabelas ficam em sub-funções):
+     *   P1 function_scoped     — tabelas atribuídas DIRETAMENTE à função resolvida;
+     *   P2 related_functions   — tabelas das funções chamadas pela resolvida (calls_internal/calls_user do alvo);
+     *   fallback file_bounded  — conjunto BOUNDED das tabelas do arquivo, priorizando SINAL (escrita > leitura),
+     *                            com teto (nunca despeja tudo).
+     * Prioriza sinal funcional (escritas primeiro). NUNCA inventa: só usa o que está no determinístico do alvo.
      */
     private function materializeFacts(int $targetDocId, string $symbolNorm): ?array
     {
@@ -100,36 +106,78 @@ class CrossSourceContextBuilder
                 break;
             }
         }
-        // tabelas efetivamente tocadas pela função (ou, na ausência, as do arquivo) — bounded.
-        $tables = [];
-        foreach (($det['tables'] ?? []) as $t) {
-            $touchedByFn = $fn && in_array((string) ($fn['name'] ?? ''), (array) ($t['functions'] ?? []), true);
-            if ($fn && ! $touchedByFn) {
-                continue;
-            }
-            $tables[] = array_filter([
-                'table'        => $t['table'] ?? $t['alias'] ?? null,
-                'access'       => $t['access'] ?? null,
-                'read_fields'  => array_slice((array) ($t['read_fields'] ?? []), 0, 8),
-                'write_fields' => array_slice((array) ($t['write_fields'] ?? []), 0, 8),
-            ], fn ($v) => $v !== null && $v !== []);
-            if (count($tables) >= 6) {
-                break;
+        $fnName = (string) ($fn['name'] ?? $symbolNorm);
+        $cap = (int) config('services.source_doc_ai.cross_source.max_context_tables', 6);
+        $allTables = (array) ($det['tables'] ?? []);
+
+        // P1 — função-alvo.
+        $names = [$fnName];
+        $tables = $this->tablesForFns($allTables, $names, $cap);
+        $strategy = 'function_scoped';
+
+        // P2 — funções relacionadas (chamadas pela função-alvo dentro do próprio alvo).
+        if (! $tables && $fn) {
+            $related = array_merge((array) ($fn['calls_internal'] ?? []), (array) ($fn['calls_user'] ?? []));
+            $related = array_values(array_unique(array_map('strval', $related)));
+            if ($related) {
+                $tables = $this->tablesForFns($allTables, $related, $cap);
+                if ($tables) {
+                    $strategy = 'related_functions';
+                }
             }
         }
 
+        // Fallback — arquivo, BOUNDED e priorizando escrita (sinal de negócio). Não despeja tudo.
+        if (! $tables) {
+            $tables = $this->tablesForFns($allTables, null, $cap); // null = todas, priorizadas + capadas
+            $strategy = $tables ? 'file_bounded_fallback' : 'none';
+        }
+
         return [
-            'path'  => $doc->path,
-            'facts' => array_filter([
-                'function'      => $fn['name'] ?? $symbolNorm,
+            'path'     => $doc->path,
+            'strategy' => $strategy,
+            'facts'    => array_filter([
+                'function'      => $fnName,
                 'is_user_function' => true,
                 'line_start'    => $fn['start_line'] ?? ($fn['line_start'] ?? null),
                 'line_end'      => $fn['end_line'] ?? ($fn['line_end'] ?? null),
                 'params'        => array_slice((array) ($fn['params'] ?? $fn['parameters'] ?? []), 0, 8),
                 'calls_user'    => array_slice((array) ($fn['calls_user'] ?? []), 0, 8),
                 'tables'        => $tables,
+                'facts_strategy' => $strategy,
             ], fn ($v) => $v !== null && $v !== []),
         ];
+    }
+
+    /**
+     * Seleciona tabelas do alvo priorizando SINAL (escrita > leitura material > demais), com teto BOUNDED.
+     * $fnNames = null ⇒ todas (fallback de arquivo); senão só as atribuídas a essas funções.
+     */
+    private function tablesForFns(array $allTables, ?array $fnNames, int $cap): array
+    {
+        $fnSet = $fnNames === null ? null : array_flip(array_map('strval', $fnNames));
+        $picked = [];
+        foreach ($allTables as $t) {
+            if ($fnSet !== null) {
+                $tfns = (array) ($t['functions'] ?? []);
+                if (! array_intersect_key($fnSet, array_flip(array_map('strval', $tfns)))) {
+                    continue;
+                }
+            }
+            $writes = (array) ($t['write_fields'] ?? []);
+            $reads  = (array) ($t['read_fields'] ?? []);
+            $picked[] = [
+                '_signal' => ! empty($writes) ? 2 : (! empty($reads) ? 1 : 0), // escrita > leitura > só referência
+                'row'     => array_filter([
+                    'table'        => $t['table'] ?? $t['alias'] ?? null,
+                    'access'       => $t['access'] ?? null,
+                    'read_fields'  => array_slice($reads, 0, 8),
+                    'write_fields' => array_slice($writes, 0, 8),
+                ], fn ($v) => $v !== null && $v !== []),
+            ];
+        }
+        usort($picked, fn ($a, $b) => $b['_signal'] <=> $a['_signal']); // escrita primeiro
+        return array_map(fn ($p) => $p['row'], array_slice($picked, 0, max(1, $cap)));
     }
 
     /**
