@@ -849,7 +849,10 @@ class SourceDocSemanticAnalyzer
         // (b PRIMEIRO) Refinamento 2 — PRIORIDADE DE ORÇAMENTO: as funções em missing técnico vêm antes
         // dos retries de bloco, para um retry não faminta finalidades que caberiam no teto.
         if (! empty($techMissNames)) {
-            $missFns = array_values(array_filter($det['functions'] ?? [], fn ($f) => isset($techMissNames[strtolower((string) ($f['name'] ?? ''))])));
+            // Casa pela identidade ESTÁVEL (name@line em fontes-classe), pois o trace guarda o display,
+            // não o nome-base — senão em fonte-classe o missFns fica vazio e o top-up não recupera nada.
+            $dupTop = $this->fnDupNames($det);
+            $missFns = array_values(array_filter($det['functions'] ?? [], fn ($f) => isset($techMissNames[strtolower($this->fnDisplayName($f, $dupTop))])));
             $items = $this->buildDeepItems($missFns, $det, $maskedCode);
             [$newFuncoes, $newRules, $newPoints, , , $newTrace] = $this->runDeepeningFinalidades($items, $det, $deepenOut);
             $sem['funcoes'] = $this->mergeFuncoes($existing['funcoes'] ?? [], $newFuncoes);

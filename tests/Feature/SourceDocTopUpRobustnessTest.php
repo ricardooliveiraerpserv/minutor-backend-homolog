@@ -345,6 +345,33 @@ class SourceDocTopUpRobustnessTest extends TestCase
         $this->assertLessThanOrEqual(0.30 + 1e-9, (float) $r['usage']['actual_cost_usd']);
     }
 
+    // ── Ajuste (b) — top-up de fonte-classe casa missing pelo DISPLAY (name@line), não pelo nome-base ──
+    public function test_topup_class_source_matches_missing_by_display_identity(): void
+    {
+        // det com 2 métodos homônimos 'KLASS' (linhas 1 e 6). O missing do trace guarda 'KLASS@6'.
+        $det = $this->det(0);
+        $det['functions'] = [
+            ['name' => 'KLASS', 'type' => 'Method', 'start_line' => 1, 'end_line' => 5, 'called_by' => [], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 1, 'line_end' => 5]],
+            ['name' => 'KLASS', 'type' => 'Method', 'start_line' => 6, 'end_line' => 9, 'called_by' => ['KLASS'], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 6, 'line_end' => 9]],
+        ];
+        $existing = [
+            'schema_version' => 2,
+            'block_status' => ['entendimento' => 'ok', 'regras' => 'ok', 'deps_risco' => 'ok', 'funcoes' => 'partial'],
+            'funcoes_trace' => ['requested' => ['KLASS@1', 'KLASS@6'], 'completed' => ['KLASS@1'], 'not_identified' => [],
+                'missing' => [['name' => 'KLASS@6', 'reason' => 'cost_budget']], 'calls' => 1],
+            'entendimento_funcional' => ['uma_frase' => ['texto' => 'x', 'confidence' => 'low', 'evidence' => []], 'objetivo' => 'o', 'quando_usado' => 'q', 'o_que_faz' => [['passo' => 'p', 'evidence' => []]], 'entradas_principais' => [], 'saidas_principais' => [], 'processo_modulo' => ['processo' => 'p', 'modulo' => 'm', 'confidence' => 'low', 'evidence' => []]],
+            'dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'r', 'fatores' => []],
+            'funcoes' => [['name' => 'KLASS@1', 'finalidade' => 'faz 1', 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]]],
+            'regras_negocio' => [], 'status' => 'partial', 'partial_reason' => 'functions_incomplete', 'strategy' => 'initial_blocks_v3',
+            'usage' => ['input_tokens' => 5000, 'output_tokens' => 2000, 'calls' => 3, 'actual_cost_usd' => 0.10, 'hard_limit_usd' => 0.30],
+        ];
+        $ai = $this->ai(fn ($u, $i) => $this->funcsBlock(['KLASS@6'])); // top-up devolve a identidade display
+        $r = $this->make($ai)->topUp($existing, $det, 'codigo', null);
+        $this->assertContains('KLASS@6', $r['funcoes_trace']['completed'], 'top-up achou e recuperou o método homônimo faltante');
+        $this->assertSame([], $r['funcoes_trace']['missing'], 'sem missing técnico após top-up');
+        $this->assertGreaterThanOrEqual(1, count($ai->calls), 'houve chamada de recuperação (missFns não ficou vazio)');
+    }
+
     /** semantic_json parcial sintético: N completed + M missing(cost_budget) sobre det(12). */
     private function existingPartial(int $completed, int $missing, string $missReason): array
     {
