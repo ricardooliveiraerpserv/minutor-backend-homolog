@@ -89,6 +89,13 @@ return [
         // split narrativa×funções; estes são o ajuste fino permitido, mantendo custo ≤ US$ 0,25).
         'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 3000),
         'max_output_tokens_global'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_GLOBAL', 5000),
+        // Política C — output ADAPTATIVO por bloco (centralizado; não constante mágica no código).
+        // Calibrado por medição histórica (n=42): output real P90 ~ ent 1166 / regras 1123 / deps 638
+        // (máx 1313/1199/906). Reservados P90×1,6 (>> máximo), cortando ~3–4× a reserva ociosa que
+        // faminta os demais blocos — permite Entendimento+funções+regras+deps na 1ª passada ≤ US$ 0,30.
+        'max_output_tokens_entendimento' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_ENTENDIMENTO', 1900),
+        'max_output_tokens_regras'       => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_REGRAS', 1800),
+        'max_output_tokens_deprisco'     => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_DEPRISCO', 1500),
         // Aprofundamento (código das funções críticas): nº de funções e orçamento de tokens do código.
         'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
         'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),

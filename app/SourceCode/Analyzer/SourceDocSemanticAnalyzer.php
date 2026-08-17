@@ -167,8 +167,13 @@ class SourceDocSemanticAnalyzer
 
         $sem = [];
         $blocks = [];
+        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
 
-        // ── BLOCO 1 — Entendimento Funcional (PRIORIDADE; preservado mesmo se o resto falhar) ──
+        // ── POLÍTICA C — ordem: Entendimento → Funções → Regras → Deps/Risco, com orçamento dinâmico.
+        // Reserva estimada (payload real) dos complementares p/ as funções não os faminta.
+        $reserveReg = $this->estimateCallUsd($regrasUser, $regrasOut, $inlineCode !== '');
+
+        // ── BLOCO 1 — Entendimento Funcional (PRIORIDADE MÁXIMA; roda 1º; protegido) ──
         $g1 = $this->callJson($this->systemPrompt(), $entUser, $entOut);
         $j1 = is_array($g1['json']) ? $g1['json'] : [];
         if (! empty($j1['entendimento_funcional'])) {
@@ -181,12 +186,31 @@ class SourceDocSemanticAnalyzer
         $entOk = ! $g1['truncated'] && ! empty($j1['entendimento_funcional']);
         $blocks['entendimento'] = $entOk ? 'ok' : ($g1['raw_truncated'] ? 'truncated' : 'invalid_json');
 
-        // ── BLOCO 2 — SÓ Regras de Negócio (independente) ──
+        // ── BLOCO 2 — FUNÇÕES (prioridade sobre os complementares; ANTES de regras/deps) ──
+        // teto = hard_limit − reserva(regras); regras fica protegida, deps usa a folga + redistribuição.
+        $funcoes = [];
+        $cachedN = 0;
+        $deepTrunc = false;
+        $deepRan = false;
+        $deepTrace = null;
+        if (! empty($deepItems)) {
+            $deepRan = true;
+            $funcCeiling = max($this->currentCostUsd() + 0.005, $hardLimit - $reserveReg);
+            [$funcoes, $deepRules, $deepPoints, $cachedN, $deepTrunc, $deepTrace] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut, $funcCeiling);
+            if (! empty($deepRules)) {
+                $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $deepRules);
+            }
+            if (! empty($deepPoints)) {
+                $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $deepPoints);
+            }
+        }
+
+        // ── BLOCO 3 — Regras de Negócio (após funções; reserva protegida) ──
         $regrasOk = false;
         $g2 = $this->callJson($this->systemPrompt(), $regrasUser, $regrasOut);
         $j2 = is_array($g2['json']) ? $g2['json'] : [];
         if (! empty($j2['regras_negocio'])) {
-            $sem['regras_negocio'] = $j2['regras_negocio'];
+            $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j2['regras_negocio']);
         }
         if (! empty($j2['change_summary'])) {
             $sem['change_summary'] = $j2['change_summary'];
@@ -194,7 +218,7 @@ class SourceDocSemanticAnalyzer
         $regrasOk = ! $g2['truncated'] && $j2 !== [];
         $blocks['regras'] = $regrasOk ? 'ok' : ($g2['raw_truncated'] ? 'truncated' : 'invalid_json');
 
-        // ── BLOCO 3 — SÓ Dependências Críticas + Risco + Pontos (independente) ──
+        // ── BLOCO 4 — Dependências Críticas + Risco + Pontos (após regras; folga restante) ──
         $depRiscoOk = false;
         $g3 = $this->callJson($this->systemPrompt(), $depRiscoUser, $depRiscoOut);
         $j3 = is_array($g3['json']) ? $g3['json'] : [];
@@ -209,9 +233,33 @@ class SourceDocSemanticAnalyzer
         $depRiscoOk = ! $g3['truncated'] && $j3 !== [];
         $blocks['deps_risco'] = $depRiscoOk ? 'ok' : ($g3['raw_truncated'] ? 'truncated' : 'invalid_json');
 
+        // ── POLÍTICA C — REDISTRIBUIÇÃO: a sobra dos complementares (mais baratos que a reserva) volta
+        // p/ as funções em missing técnico, dentro do hard_limit real. Mantém top-up como exceção.
+        if ($deepRan && is_array($deepTrace) && $this->currentCostUsd() < $hardLimit - 0.01) {
+            $techMissNames = [];
+            foreach (($deepTrace['missing'] ?? []) as $m) {
+                if (in_array($m['reason'] ?? '', self::TECH_MISS, true) && ! empty($m['name'])) {
+                    $techMissNames[strtolower((string) $m['name'])] = true;
+                }
+            }
+            if (! empty($techMissNames)) {
+                $missItems = array_values(array_filter($deepItems, fn ($it) => isset($techMissNames[strtolower((string) ($it['name'] ?? ''))])));
+                if (! empty($missItems)) {
+                    [$more, $mr, $mp, , $mtr, $moreTrace] = $this->runDeepeningFinalidades($missItems, $det, $deepenOut, $hardLimit);
+                    $funcoes = $this->mergeFuncoes($funcoes, $more);
+                    if (! empty($mr)) {
+                        $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $mr);
+                    }
+                    if (! empty($mp)) {
+                        $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $mp);
+                    }
+                    $deepTrace = $this->mergeTrace($deepTrace, $moreTrace, $deepTrace['requested'] ?? []);
+                }
+            }
+        }
+
         // ── Ponto 3 — RETRY SELETIVO de bloco quebrado (truncado/JSON inválido), preservando os
         // válidos e sem refazer os demais. Só dispara se o bloco falhou E há folga no teto (US$ 0,30).
-        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
         if (! $entOk) {
             [$ok, $j] = $this->retryBlockCall($entUser, $entOut, $entCode !== '', $hardLimit, ($blocks['entendimento'] ?? '') === 'truncated');
             if ($ok && ! empty($j['entendimento_funcional'])) {
@@ -253,26 +301,16 @@ class SourceDocSemanticAnalyzer
             }
         }
 
-        // ── BLOCO 4 — Aprofundamento de Funções (estratégia seletiva existente) ──
-        $funcoes = [];
-        $cachedN = 0;
-        $deepTrunc = false;
-        $deepRan = false;
-        $deepTrace = null;
-        if (! empty($deepItems)) {
-            $deepRan = true;
-            [$funcoes, $deepRules, $deepPoints, $cachedN, $deepTrunc, $deepTrace] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
-            if (! empty($deepRules)) {
-                $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $deepRules);
-            }
-            if (! empty($deepPoints)) {
-                $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $deepPoints);
+        // (Funções já foram aprofundadas ANTES de regras/deps — Política C — e redistribuídas acima.)
+        $sem['funcoes'] = $funcoes;
+        $sem['funcoes_trace'] = $deepTrace; // requested/completed/not_identified/missing p/ reprocesso seletivo
+        // 'ok' só se aprofundou E não ficou missing TÉCNICO; not_identified honesto não penaliza.
+        $missingN = 0;
+        foreach ((is_array($deepTrace) ? ($deepTrace['missing'] ?? []) : []) as $m) {
+            if (in_array($m['reason'] ?? '', self::TECH_MISS, true)) {
+                $missingN++;
             }
         }
-        $sem['funcoes'] = $funcoes;
-        $sem['funcoes_trace'] = $deepTrace; // Bloco 4.2.1-B: requested/completed/missing p/ reprocesso seletivo
-        // 'ok' só se aprofundou E não ficou nenhuma função faltante; senão 'partial'/'truncated'.
-        $missingN = is_array($deepTrace) ? count($deepTrace['missing'] ?? []) : 0;
         $blocks['funcoes'] = ! $deepRan ? 'skipped' : ($missingN > 0 ? 'partial' : 'ok');
 
         // ── status GLOBAL: completed só se todos válidos; senão partial preservando o válido ──
@@ -575,7 +613,7 @@ class SourceDocSemanticAnalyzer
      * Rastreabilidade: requested → completed → missing (com motivo), p/ reprocessar só as faltantes.
      * @return array{0:array,1:array,2:array,3:int,4:bool,5:array} funcoes, rules, points, cachedN, truncated, trace
      */
-    private function runDeepeningFinalidades(array $items, array $det, int $out): array
+    private function runDeepeningFinalidades(array $items, array $det, int $out, ?float $budgetCeiling = null): array
     {
         $requested = array_values(array_filter(array_map(fn ($it) => (string) ($it['name'] ?? ''), $items)));
         $funcoes = [];
@@ -603,7 +641,9 @@ class SourceDocSemanticAnalyzer
         // GUARDA DE CUSTO ACUMULADO por FONTE (≤ hard_limit). Ponto 1: a reserva é estimada pelo
         // PAYLOAD REAL de cada sub-lote (não 12k fixo). Ponto 2: chunk ELÁSTICO — se o chunk cheio
         // não couber, reduz 4→2→1; só marca cost_budget quando NEM UMA função cabe no restante.
-        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+        // Política C — teto de orçamento das FUNÇÕES: por padrão o hard_limit por fonte, mas o initial()
+        // passa um teto MENOR (reservando regras+deps) para as funções não faminta os complementares.
+        $hardLimit = $budgetCeiling ?? (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
         $costBudgetHit = false;
 
         $attempted = [];    // name(lower) => true : o sub-lote da função foi efetivamente chamado

@@ -142,13 +142,16 @@ class SourceDocTopUpRobustnessTest extends TestCase
     // ── Ponto 3 — retry SOMENTE do bloco truncado (regras), preservando os demais ──
     public function test_retry_only_regras_block(): void
     {
-        // regras trunca na 1ª vez (i=1) e recupera no retry; ent/deps/funcoes intactos.
-        $ai = $this->ai(fn ($u, $i) => match ($i) {
-            0 => $this->entBlock(),
-            1 => ['text' => '{"regras_negocio":[{"id":"RN01"', 'stop' => 'max_tokens'], // regras TRUNCADO
-            2 => $this->depsBlock(),
-            3 => $this->funcsBlock(['FN1', 'FN2']),
-            default => json_encode(['regras_negocio' => [['id' => 'RN01', 'titulo' => 't', 'descricao' => 'Grava EMAIL no SPED050', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'EMAIL']]]], 'change_summary' => 'x']), // RETRY regras OK
+        // regras trunca na 1ª vez e recupera no retry; ent/deps/funcoes intactos. (dispatch por conteúdo)
+        $c = ['reg' => 0];
+        $ai = $this->ai(function ($u, $i) use (&$c) {
+            if (str_contains($u, 'FUNÇÕES RELEVANTES')) { return $this->funcsBlock(['FN1', 'FN2']); }
+            if (str_contains($u, 'entendimento_funcional')) { return $this->entBlock(); }
+            if (str_contains($u, 'dependencias_criticas')) { return $this->depsBlock(); }
+            $c['reg']++; // bloco regras
+            return $c['reg'] === 1
+                ? ['text' => '{"regras_negocio":[{"id":"RN01"', 'stop' => 'max_tokens'] // TRUNCADO
+                : json_encode(['regras_negocio' => [['id' => 'RN01', 'titulo' => 't', 'descricao' => 'Grava EMAIL no SPED050', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'EMAIL']]]], 'change_summary' => 'x']); // RETRY OK
         });
         $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
         $this->assertSame('ok', $r['block_status']['regras'], 'regras recuperado pelo retry');
@@ -160,12 +163,13 @@ class SourceDocTopUpRobustnessTest extends TestCase
     // ── Ponto 3 — retry SOMENTE do bloco com JSON inválido (deps) ──
     public function test_retry_only_deps_invalid_json(): void
     {
-        $ai = $this->ai(fn ($u, $i) => match ($i) {
-            0 => $this->entBlock(),
-            1 => $this->rulesBlock(),
-            2 => 'isto não é json', // deps INVALID_JSON
-            3 => $this->funcsBlock(['FN1', 'FN2']),
-            default => $this->depsBlock(), // RETRY deps OK
+        $c = ['dep' => 0];
+        $ai = $this->ai(function ($u, $i) use (&$c) {
+            if (str_contains($u, 'FUNÇÕES RELEVANTES')) { return $this->funcsBlock(['FN1', 'FN2']); }
+            if (str_contains($u, 'entendimento_funcional')) { return $this->entBlock(); }
+            if (str_contains($u, 'regras_negocio') && ! str_contains($u, 'dependencias_criticas')) { return $this->rulesBlock(); }
+            $c['dep']++; // bloco deps
+            return $c['dep'] === 1 ? 'isto não é json' : $this->depsBlock(); // INVALID_JSON -> RETRY OK
         });
         $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
         $this->assertSame('ok', $r['block_status']['deps_risco'], 'deps recuperado pelo retry');
@@ -217,10 +221,10 @@ class SourceDocTopUpRobustnessTest extends TestCase
     {
         // 2 funções; aprofundamento (chunk elástico até 1) devolve SEMPRE o nome da CLASSE 'KLASS'.
         config(['services.source_doc_ai.deepen_chunk_size' => 1]); // força sub-lotes unitários
-        $ai = $this->ai(fn ($u, $i) => match ($i) {
-            0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(),
-            default => json_encode(['funcoes' => [['name' => 'KLASS', 'finalidade' => 'faz algo', 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]]]]),
-        });
+        $ai = $this->ai(fn ($u, $i) => str_contains($u, 'FUNÇÕES RELEVANTES')
+            ? json_encode(['funcoes' => [['name' => 'KLASS', 'finalidade' => 'faz algo', 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]]]])
+            : (str_contains($u, 'entendimento_funcional') ? $this->entBlock()
+            : (str_contains($u, 'dependencias_criticas') ? $this->depsBlock() : $this->rulesBlock())));
         $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
         $done = $r['funcoes_trace']['completed'];
         sort($done);
@@ -250,10 +254,10 @@ class SourceDocTopUpRobustnessTest extends TestCase
             ['name' => 'KLASS', 'type' => 'Method', 'start_line' => 1, 'end_line' => 5, 'called_by' => [], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 1, 'line_end' => 5]],
             ['name' => 'KLASS', 'type' => 'Method', 'start_line' => 6, 'end_line' => 9, 'called_by' => ['KLASS'], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 6, 'line_end' => 9]],
         ];
-        $ai = $this->ai(fn ($u, $i) => match ($i) {
-            0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(),
-            default => $this->funcsBlock(['KLASS@1', 'KLASS@6']), // modelo ecoa a identidade estável
-        });
+        $ai = $this->ai(fn ($u, $i) => str_contains($u, 'FUNÇÕES RELEVANTES')
+            ? $this->funcsBlock(['KLASS@1', 'KLASS@6']) // modelo ecoa a identidade estável
+            : (str_contains($u, 'entendimento_funcional') ? $this->entBlock()
+            : (str_contains($u, 'dependencias_criticas') ? $this->depsBlock() : $this->rulesBlock())));
         $r = $this->make($ai)->analyze($det, 'codigo', null, []);
         $done = $r['funcoes_trace']['completed']; sort($done);
         $this->assertSame(['KLASS@1', 'KLASS@6'], $done, 'métodos homônimos distinguidos por linha');

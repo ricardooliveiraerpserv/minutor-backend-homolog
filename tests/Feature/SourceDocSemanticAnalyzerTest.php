@@ -372,12 +372,11 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         // 2 funções relevantes; aprofundamento TRUNCA (stop=max_tokens) recuperando só 1 ⇒ a outra vira
         // missing TÉCNICO (truncated_unrecovered) preservando o Entendimento; NUNCA 2→0.
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
-        $ai = $this->ai(true, fn ($u, $i) => match ($i) {
-            0 => $this->entBlock(),
-            1 => $this->rulesBlock(),
-            2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
-            default => ['text' => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), 'stop' => 'max_tokens'], // só 1 de 2, TRUNCADO
-        });
+        $ai = $this->ai(true, fn ($u, $i) => str_contains($u, 'FUNÇÕES RELEVANTES')
+            ? ['text' => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), 'stop' => 'max_tokens'] // só 1 de 2, TRUNCADO
+            : (str_contains($u, 'entendimento_funcional') ? $this->entBlock()
+            : (str_contains($u, 'dependencias_criticas') ? json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]])
+            : $this->rulesBlock())));
         $r = $this->go($ai, str_repeat("linha
 ", 40));
         $this->assertSame('partial', $r['status']);
@@ -395,12 +394,11 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         // resposta VÁLIDA (não truncada) devolvendo só 1 de 2 ⇒ a outra foi analisada mas sem finalidade
         // determinável → not_identified honesto (não penaliza); sem missing técnico ⇒ completed.
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
-        $ai = $this->ai(true, fn ($u, $i) => match ($i) {
-            0 => $this->entBlock(),
-            1 => $this->rulesBlock(),
-            2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
-            default => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), // 1 de 2, NÃO truncado
-        });
+        $ai = $this->ai(true, fn ($u, $i) => str_contains($u, 'FUNÇÕES RELEVANTES')
+            ? json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]) // 1 de 2, NÃO truncado
+            : (str_contains($u, 'entendimento_funcional') ? $this->entBlock()
+            : (str_contains($u, 'dependencias_criticas') ? json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]])
+            : $this->rulesBlock())));
         $r = $this->go($ai, str_repeat("linha
 ", 40));
         $this->assertContains('FTENVNFU', $r['funcoes_trace']['completed']);
