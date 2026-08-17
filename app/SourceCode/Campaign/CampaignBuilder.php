@@ -50,7 +50,7 @@ class CampaignBuilder
                     coalesce(json_array_length(sd.documentation_json::json->'deterministic'->'functions'),0) as funcs
                 from source_docs sd
                 join source_doc_versions cv on cv.id = sd.current_version_id
-                where sd.deleted_at is null $filter
+                where sd.current_version_id is not null $filter
             )
             select id, blob, $bandExpr as band,
                 (row_number() over (partition by blob order by id) = 1) as is_rep
