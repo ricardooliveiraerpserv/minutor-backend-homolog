@@ -101,6 +101,24 @@ return [
         'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
         'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),
         'hard_limit_usd'             => (float) env('SOURCE_DOC_AI_HARD_LIMIT_USD', 0.30),
+        // Cross-source Fase 1 — resolução determinística (read-only). Limites do 1º gate (depth 1, max 3).
+        // Relevância/blocklist NÃO cristalizadas: configuráveis, auditáveis, reversíveis (todo descarte
+        // registra symbol/target/reason/relevance_score). Nada aqui envia contexto à IA nesta fase.
+        'context_resolver' => [
+            'enabled'             => filter_var(env('SOURCE_DOC_CTX_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'depth'              => (int) env('SOURCE_DOC_CTX_DEPTH', 1),
+            'max_context_sources' => (int) env('SOURCE_DOC_CTX_MAX_SOURCES', 3),
+            'max_context_tokens' => (int) env('SOURCE_DOC_CTX_MAX_TOKENS', 2500),
+            // FACTS-FIRST: facts mínimos do alvo entram SEMPRE (barato); snippet completo só se couber.
+            // Resolved nunca é descartado por o snippet inteiro não caber (some a perda artificial ~29%).
+            'facts_tokens'       => (int) env('SOURCE_DOC_CTX_FACTS_TOKENS', 120),
+            'relevance_min'      => (float) env('SOURCE_DOC_CTX_RELEVANCE_MIN', 0.30),
+            // blocklist de utilitários (regex, case-insensitive) — descarta contexto trivial. AJUSTÁVEL:
+            // o 1º caso real pode mostrar que um "utilitário" é funcional → basta remover daqui.
+            'utility_patterns'   => array_values(array_filter(array_map('trim', explode(',', (string) env('SOURCE_DOC_CTX_UTILITY_PATTERNS',
+                'grava?log,^log,isrunning,^get.*cod$,^u?_?fmt,format,^str,conout,sleep,^is[A-Z]'))))),
+            'chars_per_line'     => (int) env('SOURCE_DOC_CTX_CHARS_PER_LINE', 45), // p/ estimar tokens do snippet
+        ],
         // P0 — GUARDA DE CUSTO INVIOLÁVEL (dentro do array certo!): reserva de CADA chamada =
         // estimativa × fator. Ancorado no gate: actual/estimated por chamada ∈ ~0,59–1,09 (máx 1,09) →
         // 1,25 ≈ máx observado + 15% de margem. 1,9 super-reservava ~2× e barrava deps que caberia.
