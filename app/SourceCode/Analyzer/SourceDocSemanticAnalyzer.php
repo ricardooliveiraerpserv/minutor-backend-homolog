@@ -39,6 +39,8 @@ class SourceDocSemanticAnalyzer
     // P0 — trilha por chamada: estimated / reserved / actual / ratio (reconcilia estimador com o real).
     /** @var list<array{block:string,estimated:float,reserved:float,actual:float,ratio:?float,skipped:bool}> */
     private array $callLog = [];
+    // Fase 2 — id do source_doc DEPENDENTE (origem), p/ validar evidência cross-source contra o grafo/edges.
+    private ?int $contextDocId = null;
     // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
     private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
 
@@ -61,6 +63,7 @@ class SourceDocSemanticAnalyzer
     public function analyze(array $deterministic, string $maskedCode, ?array $diff = null, array $ctx = []): array
     {
         $this->resetState();
+        $this->contextDocId = isset($ctx['source_doc_id']) ? (int) $ctx['source_doc_id'] : null; // Fase 2 — cross-source
         $prevSem = is_array($ctx['previous_semantic'] ?? null) ? $ctx['previous_semantic'] : null;
 
         if (! $this->enabled()) {
@@ -1730,6 +1733,17 @@ class SourceDocSemanticAnalyzer
         $out = [];
         foreach ((array) $raw as $ev) {
             if (! is_array($ev)) {
+                continue;
+            }
+            // Fase 2 — evidência CROSS-SOURCE (aponta p/ outro source_doc): mesmo juiz, rota determinística.
+            // Local (sem source_doc_id) segue o comportamento atual, intacto.
+            if (isset($ev['source_doc_id'])) {
+                $r = app(\App\SourceCode\CrossSourceEvidenceValidator::class)->validate($ev, $this->contextDocId);
+                if ($r['accepted']) {
+                    $out[] = $r['evidence'];
+                } else {
+                    $this->rejected[] = ['item' => 'xsrc:' . ($ev['symbol'] ?? '?') . '@doc' . ($ev['source_doc_id'] ?? '?'), 'reason' => 'cross_source_' . $r['reason']];
+                }
                 continue;
             }
             $type = strtolower((string) ($ev['type'] ?? ''));
