@@ -136,13 +136,17 @@ class FechamentoParceiroController extends Controller
 
             // Quebra serviços × despesas. O pagamento de SERVIÇOS (mão de obra) é sem despesas —
             // usado no Relatório de Pagamentos, onde despesas (reembolso) não entram no valor.
-            $servicos = 0.0; $despesasReais = 0.0;
+            $servicos = 0.0; $despesasReais = 0.0; $horas = 0.0;
             if ($yearMonth) {
                 if ($f?->isClosed()) {
                     $servicos      = round(collect($f->snapshot_consultores ?? [])->sum('total'), 2);
+                    $horas         = round((float) ($f->total_horas ?? 0), 2);   // snapshot já tem o total gravado
                     $despesasReais = round((float) ($f->total_despesas ?? 0), 2);
                 } else {
-                    $servicos      = round(collect($this->consultoresData($partner, $yearMonth))->sum('total'), 2);
+                    // Ao vivo: horas E serviços saem da MESMA consulta (uma chamada só).
+                    $consData      = collect($this->consultoresData($partner, $yearMonth));
+                    $servicos      = round($consData->sum('total'), 2);
+                    $horas         = round($consData->sum('horas'), 2);
                     $despesasReais = round(collect($this->despesasData((int) $partner->id, $yearMonth))->where('is_paid', false)->sum('valor'), 2);
                 }
             }
@@ -168,7 +172,7 @@ class FechamentoParceiroController extends Controller
                 'pricing_type'   => $partner->pricing_type,
                 'hourly_rate'    => (float) ($partner->hourly_rate ?? 0),
                 'status'         => $f?->status ?? 'sem_registro',
-                'total_horas'    => (float) ($f?->total_horas ?? 0),
+                'total_horas'    => (float) $horas,   // ao vivo (open) ou snapshot (closed) — antes só vinha no fechado
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
                 'total_servicos' => $servicos,
                 'total_a_pagar'  => round($totalAPagar, 2),
