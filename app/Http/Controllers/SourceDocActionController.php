@@ -284,13 +284,21 @@ class SourceDocActionController extends Controller
         if (! $ver || ! is_array($ver->deterministic_json)) {
             return 0.0;
         }
-        $funcs = count($ver->deterministic_json['functions'] ?? []);
-        $detBytes = strlen(json_encode($ver->deterministic_json));
-        // heurística grosseira: ~tokens de entrada pelos fatos + saída pelas finalidades das funções.
-        $inTokens = $detBytes / 3.2;
-        $outTokens = min($funcs, (int) config('services.source_doc_ai.max_relevant_functions', 12)) * 120 + 800;
-        // preços aproximados sonnet (US$/1k): in 0.003, out 0.015.
-        return ($inTokens / 1000) * 0.003 + ($outTokens / 1000) * 0.015;
+        // O analyzer (Bloco 4.2) NÃO envia o determinístico inteiro: manda COMPACT FACTS (limitados às
+        // ~12 funções relevantes) + código CAPADO (entrypoint + budget de aprofundamento) em 4 blocos.
+        // Estimar pelo det inteiro superestima MUITO e bloqueava indevidamente fontes grandes.
+        $det = $ver->deterministic_json;
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        // facts compactos: subconjunto do det, com teto (não crescem com o tamanho do fonte).
+        $factsTok = min(strlen(json_encode($det)) / 3.2, 6000);
+        $entCodeTok = (int) config('services.source_doc_ai.entendimento_code_budget_chars', 9000) / 1.6;
+        $deepenTok  = (int) config('services.source_doc_ai.deepen_code_budget_tokens', 12000);
+        // facts vão nos 3 blocos narrativos + código do entrypoint (bloco 1) + código do aprofundamento.
+        $inTokens  = $factsTok * 3 + $entCodeTok + $deepenTok;
+        // 4 blocos de saída (entendimento, regras, deps/risco, funções).
+        $outTokens = 3000 + 2600 + 3000 + 2600;
+        return $inTokens / 1e6 * $ci + $outTokens / 1e6 * $co;
     }
 
     private function audit(SourceDoc $doc, string $action, string $status, array $params = [], ?string $layer = null, ?int $durationMs = null, ?int $userId = null, ?float $cost = null, ?int $versionId = null): void
