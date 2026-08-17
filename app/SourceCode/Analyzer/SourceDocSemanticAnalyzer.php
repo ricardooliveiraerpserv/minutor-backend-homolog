@@ -90,6 +90,12 @@ class SourceDocSemanticAnalyzer
             $changeType = $ds['change_type'] ?? ($diff !== null && ($diff['is_creation'] ?? false) ? 'initial' : ($prevSem ? 'modified' : 'initial'));
             if ($changeType === 'modified' && $prevSem) {
                 $result = $this->incremental($deterministic, $maskedCode, $diff, $prevSem);
+            } elseif ($this->isSimpleSource($deterministic, $maskedCode)) {
+                // Bloco 4.2.1-C: fonte simples → 1 chamada; se truncar/vier vazio, FALLBACK p/ 4 blocos.
+                $result = $this->simple($deterministic, $maskedCode, $diff);
+                if (! empty($result['__fallback'])) {
+                    $result = $this->initial($deterministic, $maskedCode, $diff);
+                }
             } else {
                 $result = $this->initial($deterministic, $maskedCode, $diff);
             }
@@ -203,9 +209,10 @@ class SourceDocSemanticAnalyzer
         $cachedN = 0;
         $deepTrunc = false;
         $deepRan = false;
+        $deepTrace = null;
         if (! empty($deepItems)) {
             $deepRan = true;
-            [$funcoes, $deepRules, $deepPoints, $cachedN, $deepTrunc] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
+            [$funcoes, $deepRules, $deepPoints, $cachedN, $deepTrunc, $deepTrace] = $this->runDeepeningFinalidades($deepItems, $det, $deepenOut);
             if (! empty($deepRules)) {
                 $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $deepRules);
             }
@@ -214,7 +221,10 @@ class SourceDocSemanticAnalyzer
             }
         }
         $sem['funcoes'] = $funcoes;
-        $blocks['funcoes'] = $deepTrunc ? 'truncated' : ($deepRan ? 'ok' : 'skipped');
+        $sem['funcoes_trace'] = $deepTrace; // Bloco 4.2.1-B: requested/completed/missing p/ reprocesso seletivo
+        // 'ok' só se aprofundou E não ficou nenhuma função faltante; senão 'partial'/'truncated'.
+        $missingN = is_array($deepTrace) ? count($deepTrace['missing'] ?? []) : 0;
+        $blocks['funcoes'] = ! $deepRan ? 'skipped' : ($missingN > 0 ? 'partial' : 'ok');
 
         // ── status GLOBAL: completed só se todos válidos; senão partial preservando o válido ──
         if (! $entOk) {
@@ -226,7 +236,7 @@ class SourceDocSemanticAnalyzer
         } elseif (! $depRiscoOk) {
             $status = 'partial';
             $reason = 'deps_risco_' . $blocks['deps_risco'];
-        } elseif ($deepTrunc) {
+        } elseif ($missingN > 0) {
             $status = 'partial';
             $reason = 'functions_incomplete';
         } else {
@@ -246,6 +256,89 @@ class SourceDocSemanticAnalyzer
             'relevant_functions_skipped'  => max(0, count($relNames) - count($funcoes)),
         ];
         return $sem;
+    }
+
+    /** Fonte SIMPLES: código cabe inline + poucas funções + poucas queries. */
+    private function isSimpleSource(array $det, string $maskedCode): bool
+    {
+        if (! (bool) config('services.source_doc_ai.simple_route_enabled', true)) {
+            return false;
+        }
+        $inlineMax = (int) config('services.source_doc_ai.inline_code_max_chars', 8000);
+        $maxFn = (int) config('services.source_doc_ai.simple_max_functions', 3);
+        $maxQ = (int) config('services.source_doc_ai.simple_max_queries', 2);
+        return mb_strlen($maskedCode) <= $inlineMax
+            && count($det['functions'] ?? []) <= $maxFn
+            && count($det['queries'] ?? []) <= $maxQ;
+    }
+
+    /** Bloco 4.2.1-C — ROTA SIMPLES: 1 chamada com o contrato inteiro (saída pequena p/ fonte simples). */
+    private function simple(array $det, string $maskedCode, ?array $diff): array
+    {
+        $relevant = $this->selectRelevant($det, $diff, (int) config('services.source_doc_ai.max_relevant_functions', 12));
+        $relNames = array_map(fn ($f) => (string) $f['name'], $relevant);
+        $compact = $this->buildCompactFacts($det, $relevant, $diff);
+        $out = (int) config('services.source_doc_ai.max_output_tokens_simple', 3000);
+
+        $plan = [['system' => $this->systemPrompt(), 'user' => $this->simpleUserPrompt($compact, $maskedCode), 'out' => $out, 'code' => true]];
+        $est = $this->estimatePlan($plan);
+        $this->usage['estimated_before_usd'] = round($est, 4);
+        if ($est > (float) config('services.source_doc_ai.hard_limit_usd', 0.30)) {
+            return $this->costSkipped($est, count($relNames));
+        }
+
+        $g = $this->callJson($this->systemPrompt(), $this->simpleUserPrompt($compact, $maskedCode), $out);
+        $j = is_array($g['json']) ? $g['json'] : [];
+        // fallback se veio vazio OU truncou sem entendimento aproveitável.
+        if (empty($j) || ($g['truncated'] && empty($j['entendimento_funcional']))) {
+            return ['__fallback' => true];
+        }
+
+        $sem = $j;
+        $funcoes = $this->normFuncoes($j['funcoes'] ?? []);
+        $sem['funcoes'] = $funcoes;
+        $done = array_map('strtolower', array_map(fn ($f) => (string) $f['name'], $funcoes));
+        $missing = array_values(array_filter($relNames, fn ($n) => ! in_array(strtolower($n), $done, true)));
+        $sem['funcoes_trace'] = [
+            'requested' => $relNames,
+            'completed' => array_values(array_map(fn ($f) => (string) $f['name'], $funcoes)),
+            'missing'   => array_map(fn ($n) => ['name' => $n, 'reason' => 'simple_truncated'], $missing),
+            'calls'     => 1,
+        ];
+        $st = $g['truncated'] ? 'entendimento' : 'ok';
+        $sem['block_status'] = ['entendimento' => empty($j['entendimento_funcional']) ? 'invalid_json' : ($g['truncated'] ? 'truncated' : 'ok'),
+            'regras' => 'ok', 'deps_risco' => 'ok', 'funcoes' => empty($missing) ? 'ok' : 'partial'];
+        $sem['status'] = ($g['truncated'] || ! empty($missing)) ? 'partial' : 'completed';
+        if ($sem['status'] === 'partial') {
+            $sem['partial_reason'] = $g['truncated'] ? 'simple_truncated' : 'functions_incomplete';
+        }
+        $sem['strategy'] = 'simple_single_call';
+        $this->coverage = [
+            'relevant_functions_total'    => count($relNames),
+            'relevant_functions_analyzed' => count($funcoes),
+            'relevant_functions_cached'   => 0,
+            'relevant_functions_skipped'  => count($missing),
+        ];
+        return $sem;
+    }
+
+    /** Prompt monolítico ENXUTO — só p/ fontes simples (saída pequena, sem risco de truncar). */
+    private function simpleUserPrompt(array $compact, string $inlineCode): string
+    {
+        $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($inlineCode !== '') {
+            $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $inlineCode;
+        }
+        $u .= "\n\nFonte SIMPLES: documente o essencial SEM inventar. Se não houver regra/dependência/risco "
+            . 'reais, deixe as listas VAZIAS (não invente). Produza JSON {'
+            . 'entendimento_funcional{uma_frase{texto,confidence,evidence[≤1]}, objetivo (1–3 frases), quando_usado, '
+            . 'processo_modulo{processo,modulo,confidence,evidence[≤1]}, entradas_principais[≤4], saidas_principais[≤4], o_que_faz[≤6 {passo,evidence[≤1]}]}, '
+            . 'funcoes[{name,finalidade,confidence,evidence[≤1]}] (só as dos fatos), '
+            . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2]}] (só se houver regra REAL), '
+            . 'dependencias_criticas[{nome,como_participa,confidence,evidence[≤1]}] (só o que interfere), '
+            . 'risco_alteracao{resumo,fatores[{tipo,descricao,evidence[≤1]}]}, change_summary}. '
+            . 'Sem evidência ⇒ "' . self::UNDETERMINED . '".';
+        return $u;
     }
 
     /** Código dos ENTRYPOINTS (funções sem called_by), limitado por budget de chars. */
@@ -399,14 +492,20 @@ class SourceDocSemanticAnalyzer
     }
 
     /** Aprofundamento: cache por função (miss → 1 chamada) → finalidades + regras/pontos extras. */
+    /**
+     * Bloco 4.2.1-B — aprofundamento ROBUSTO: chunks pequenos + retry adaptativo do subconjunto
+     * NÃO recuperado (subdivide até 1) + acúmulo incremental. Truncar um chunk nunca zera o todo.
+     * Rastreabilidade: requested → completed → missing (com motivo), p/ reprocessar só as faltantes.
+     * @return array{0:array,1:array,2:array,3:int,4:bool,5:array} funcoes, rules, points, cachedN, truncated, trace
+     */
     private function runDeepeningFinalidades(array $items, array $det, int $out): array
     {
+        $requested = array_values(array_filter(array_map(fn ($it) => (string) ($it['name'] ?? ''), $items)));
         $funcoes = [];
         $toCall = [];
         $cachedN = 0;
         foreach ($items as $it) {
-            $key = $this->functionCacheKey($det, $it);
-            $hit = $this->cacheEnabled() ? Cache::get($key) : null;
+            $hit = $this->cacheEnabled() ? Cache::get($this->functionCacheKey($det, $it)) : null;
             if (is_array($hit) && ! empty($hit['name'])) {
                 $funcoes[] = $hit;
                 $cachedN++;
@@ -416,29 +515,81 @@ class SourceDocSemanticAnalyzer
                 $this->usage['cache_misses']++;
             }
         }
+
         $rules = [];
         $points = [];
-        $truncated = false;
-        if (! empty($toCall)) {
-            $d = $this->callJson($this->systemPrompt(), $this->deepenFinalidadesPrompt($toCall), $out);
-            $truncated = $d['truncated'];
-            $j = is_array($d['json']) ? $d['json'] : [];
-            foreach (($j['funcoes'] ?? []) as $f) {
-                if (! empty($f['name'])) {
-                    $entry = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? ''), 'confidence' => $f['confidence'] ?? null, 'evidence' => $f['evidence'] ?? []];
-                    $funcoes[] = $entry;
-                    if ($this->cacheEnabled()) {
-                        $c = $this->findByName($toCall, $f['name']);
-                        if ($c) {
-                            Cache::put($this->functionCacheKey($det, $c), $entry, (int) config('services.source_doc_ai.cache_ttl', 2592000));
-                        }
+        $anyTrunc = false;
+        $chunkSize = max(1, (int) config('services.source_doc_ai.deepen_chunk_size', 4));
+        $maxCalls  = (int) config('services.source_doc_ai.deepen_max_calls', 12);
+        $calls = 0;
+
+        // pilha de subconjuntos a processar (retry adaptativo empilha metades do não-recuperado).
+        $stack = array_chunk($toCall, $chunkSize);
+        while (! empty($stack)) {
+            if ($calls >= $maxCalls) {
+                $anyTrunc = true; // orçamento de chamadas esgotado → resto vira missing
+                break;
+            }
+            $cur = array_shift($stack);
+            if (empty($cur)) {
+                continue;
+            }
+            $calls++;
+            [$got, $r, $p, $trunc] = $this->deepenCall($cur, $det, $out);
+            $rules = array_merge($rules, $r);
+            $points = array_merge($points, $p);
+            $gotNames = array_map(fn ($f) => strtolower((string) $f['name']), $got);
+            foreach ($got as $entry) {
+                $funcoes[] = $entry;
+                if ($this->cacheEnabled()) {
+                    $c = $this->findByName($cur, $entry['name']);
+                    if ($c) {
+                        Cache::put($this->functionCacheKey($det, $c), $entry, (int) config('services.source_doc_ai.cache_ttl', 2592000));
                     }
                 }
             }
-            $rules = $j['regras_negocio'] ?? [];
-            $points = $j['pontos_atencao'] ?? [];
+            // não recuperados NESTE sub-lote → retry subdividido (até 1 função) se truncou.
+            $unrec = array_values(array_filter($cur, fn ($it) => ! in_array(strtolower((string) ($it['name'] ?? '')), $gotNames, true)));
+            if (! empty($unrec)) {
+                $anyTrunc = $anyTrunc || $trunc;
+                if ($trunc && count($cur) > 1) {
+                    $half = (int) ceil(count($unrec) / 2);
+                    $stack[] = array_slice($unrec, 0, $half);
+                    $stack[] = array_slice($unrec, $half);
+                }
+                // count($cur)==1 e truncou → função grande demais; fica missing (rastreada abaixo).
+            }
         }
-        return [$funcoes, $rules, $points, $cachedN, $truncated];
+
+        // trace: requested → completed → missing (+motivo)
+        $doneSet = array_flip(array_map('strtolower', array_map(fn ($f) => (string) $f['name'], $funcoes)));
+        $missing = [];
+        foreach ($requested as $n) {
+            if (! isset($doneSet[strtolower($n)])) {
+                $missing[] = ['name' => $n, 'reason' => $calls >= $maxCalls ? 'deepen_call_budget' : 'truncated_unrecovered'];
+            }
+        }
+        $trace = [
+            'requested' => $requested,
+            'completed' => array_values(array_unique(array_map(fn ($f) => (string) $f['name'], $funcoes))),
+            'missing'   => $missing,
+            'calls'     => $calls,
+        ];
+        return [$funcoes, $rules, $points, $cachedN, $anyTrunc, $trace];
+    }
+
+    /** Uma chamada de aprofundamento para um sub-lote de funções. */
+    private function deepenCall(array $items, array $det, int $out): array
+    {
+        $d = $this->callJson($this->systemPrompt(), $this->deepenFinalidadesPrompt($items), $out);
+        $j = is_array($d['json']) ? $d['json'] : [];
+        $got = [];
+        foreach (($j['funcoes'] ?? []) as $f) {
+            if (! empty($f['name'])) {
+                $got[] = ['name' => $f['name'], 'finalidade' => $this->str($f['finalidade'] ?? ''), 'confidence' => $f['confidence'] ?? null, 'evidence' => $f['evidence'] ?? []];
+            }
+        }
+        return [$got, $j['regras_negocio'] ?? [], $j['pontos_atencao'] ?? [], $d['truncated']];
     }
 
     // ── compact facts (sem código, sem data_access, sem listas gigantes) ─────────
@@ -654,11 +805,12 @@ class SourceDocSemanticAnalyzer
         // SEPARADO da EXECUÇÃO DA IA (status: houve truncamento?). Um doc pode ter execução 'partial'
         // (modelo bateu o teto) e ainda assim estar documentalmente COMPLETO. Não mascara truncamento:
         // se um bloco realmente perdeu conteúdo exigido, a qualidade cai para 'parcial' com o que falta.
-        $docCompleteness = $this->documentaryCompleteness($entendimento, $rulesShown, $funcoes, $risco, $this->coverage);
+        $docCompleteness = $this->documentaryCompleteness($entendimento, $rulesShown, $funcoes, $risco, $depCriticas, $det, (array) ($sem['block_status'] ?? []), $sem['funcoes_trace'] ?? null);
 
         return [
             'schema_version'   => self::SCHEMA_VERSION,
             'block_status'     => $sem['block_status'] ?? null,
+            'funcoes_trace'    => $sem['funcoes_trace'] ?? null,
             'documentary_completeness' => $docCompleteness,
             'entendimento_funcional' => $entendimento,
             'dependencias_criticas'  => $depCriticas,
@@ -777,34 +929,81 @@ class SourceDocSemanticAnalyzer
      * 'parcial' com a lista do que falta. NÃO mascara truncamento: se um bloco perdeu conteúdo
      * exigido (ex.: objetivo indeterminado, sem função explicada), a qualidade cai.
      */
-    private function documentaryCompleteness(array $ent, array $regras, array $funcoes, array $risco, array $coverage): array
+    /**
+     * Bloco 4.2.1-C — QUALIDADE DOCUMENTAL por APLICABILIDADE, 4 estados por dimensão:
+     *   present         — evidência existe e foi documentada;
+     *   not_applicable  — os fatos indicam que a dimensão não se aplica (resultado VÁLIDO);
+     *   not_identified  — poderia existir, mas os fatos não permitem concluir (resultado VÁLIDO);
+     *   missing         — deveria ter sido produzida, mas houve FALHA/TRUNCAMENTO (problema).
+     * level = 'parcial' SOMENTE se houver algum 'missing'. not_applicable/not_identified NÃO penalizam.
+     * Condicional/query NÃO é, por si, evidência de regra de negócio (evita falso positivo).
+     */
+    private function documentaryCompleteness(array $ent, array $regras, array $funcoes, array $risco, array $depCriticas, array $det, array $blocks, ?array $trace): array
     {
-        $missing = [];
-        $objetivo = $this->str($ent['objetivo'] ?? null);
-        if ($objetivo === null || $objetivo === '' || $objetivo === self::UNDETERMINED) {
-            $missing[] = 'objetivo';
-        }
-        if (empty($ent['o_que_faz'])) {
-            $missing[] = 'o_que_faz';
-        }
-        if (empty($regras)) {
-            $missing[] = 'regras_negocio';
-        }
-        // funções: a maioria das relevantes precisa estar explicada (coverage).
-        $total = (int) ($coverage['relevant_functions_total'] ?? 0);
-        $analyzed = (int) ($coverage['relevant_functions_analyzed'] ?? count($funcoes));
-        if ($total > 0 && $analyzed < (int) ceil($total * 0.8)) {
-            $missing[] = 'finalidades_funcoes';
-        } elseif ($total === 0 && empty($funcoes)) {
-            $missing[] = 'finalidades_funcoes';
-        }
-        if (empty($risco['fatores'] ?? [])) {
-            $missing[] = 'fatores_risco';
+        $dim = [];
+        $bOk = fn (string $b) => ($blocks[$b] ?? 'ok') === 'ok'; // bloco produziu sem truncar?
+
+        // objetivo (bloco entendimento)
+        $obj = $this->str($ent['objetivo'] ?? null);
+        $dim['objetivo'] = ($obj && $obj !== self::UNDETERMINED) ? 'present'
+            : (! $bOk('entendimento') ? 'missing' : 'not_identified');
+
+        // o_que_faz (bloco entendimento)
+        $dim['o_que_faz'] = ! empty($ent['o_que_faz']) ? 'present'
+            : (! $bOk('entendimento') ? 'missing' : 'not_identified');
+
+        // finalidades de funções — usa o TRACE (requested/completed/missing) do aprofundamento.
+        $reqN = is_array($trace) ? count($trace['requested'] ?? []) : (int) ($this->coverage['relevant_functions_total'] ?? 0);
+        $missN = is_array($trace) ? count($trace['missing'] ?? []) : 0;
+        if ($reqN === 0) {
+            $dim['finalidades_funcoes'] = empty($funcoes) ? 'not_applicable' : 'present';
+        } elseif ($missN === 0) {
+            $dim['finalidades_funcoes'] = 'present';
+        } else {
+            // faltaram por truncamento/orçamento → missing (recuperável via reprocesso seletivo)
+            $dim['finalidades_funcoes'] = 'missing';
         }
 
+        // regras — condicional/query NÃO conta como regra. Aplicabilidade: só ESCRITA de dados é sinal
+        // de que regra de negócio PODE existir (não_identified); leitura pura ⇒ not_applicable.
+        $hasWrite = false;
+        foreach (($det['tables'] ?? []) as $t) {
+            if (array_intersect(['UPDATE', 'INSERT', 'DELETE'], (array) ($t['access'] ?? []))) {
+                $hasWrite = true;
+                break;
+            }
+        }
+        if (! empty($regras)) {
+            $dim['regras_negocio'] = 'present';
+        } elseif (! $bOk('regras')) {
+            $dim['regras_negocio'] = 'missing';
+        } else {
+            $dim['regras_negocio'] = $hasWrite ? 'not_identified' : 'not_applicable';
+        }
+
+        // dependências — aplicável se há dep externa nos fatos (user_calls/integrações/custom).
+        $depSet = $this->knownDependencySet($det, array_flip(array_map('strtolower', array_column($det['functions'] ?? [], 'name'))));
+        if (! empty($depCriticas)) {
+            $dim['dependencias'] = 'present';
+        } elseif (! $bOk('deps_risco')) {
+            $dim['dependencias'] = 'missing';
+        } else {
+            $dim['dependencias'] = ! empty($depSet) ? 'not_identified' : 'not_applicable';
+        }
+
+        // integrações — aplicável só se o determinístico registrou integração externa.
+        $hasIntegr = ! empty($det['external_integrations'] ?? []);
+        $dim['integracoes'] = $hasIntegr ? 'present' : 'not_applicable';
+
+        // risco — SEMPRE avaliado (determinístico). 0 fatores = 'nenhum fator relevante' (not_applicable).
+        $dim['risco'] = ! empty($risco['fatores'] ?? []) ? 'present' : 'not_applicable';
+
+        $missing = array_keys(array_filter($dim, fn ($s) => $s === 'missing'));
+
         return [
-            'level'   => empty($missing) ? 'completa' : 'parcial',
-            'missing' => $missing,
+            'level'      => empty($missing) ? 'completa' : 'parcial',
+            'dimensions' => $dim,
+            'missing'    => array_values($missing),
         ];
     }
 

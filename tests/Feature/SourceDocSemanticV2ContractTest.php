@@ -21,6 +21,7 @@ class SourceDocSemanticV2ContractTest extends TestCase
             'services.source_doc_ai.allowed_environments' => ['homolog'],
             'services.source_doc_ai.cache_enabled' => false,
             'services.source_doc_ai.hard_limit_usd' => 0.30,
+            'services.source_doc_ai.simple_route_enabled' => false, // testes do 4-blocos; rota simples tem testes próprios
             'services.source_doc_ai.inline_code_max_chars' => 8000,
         ]);
     }
@@ -108,17 +109,21 @@ class SourceDocSemanticV2ContractTest extends TestCase
         $this->assertEmpty($r['documentary_completeness']['missing']);
     }
 
-    public function test_documentary_completeness_partial_lists_missing(): void
+    public function test_documentary_states_4way(): void
     {
-        // objetivo vazio + sem regras/funções ⇒ 'parcial' com a lista do que falta (não mascara)
+        // Bloco 4.2.1-C: objetivo/o_que_faz vazios com o BLOCO ok ⇒ 'not_identified' (VÁLIDO, não penaliza).
+        // As 2 funções relevantes não vieram ⇒ finalidades_funcoes = 'missing' (falha recuperável) ⇒ parcial.
         $json = json_encode([
             'entendimento_funcional' => ['uma_frase' => ['texto' => 'x', 'confidence' => 'low', 'evidence' => []], 'objetivo' => '', 'o_que_faz' => []],
             'regras_negocio' => [], 'funcoes' => [], 'change_summary' => 'x',
         ], JSON_UNESCAPED_UNICODE);
         $r = $this->go($json);
+        $dim = $r['documentary_completeness']['dimensions'];
+        $this->assertSame('not_identified', $dim['objetivo']);
+        $this->assertSame('not_identified', $dim['o_que_faz']);
+        $this->assertSame('missing', $dim['finalidades_funcoes']);
         $this->assertSame('parcial', $r['documentary_completeness']['level']);
-        $this->assertContains('objetivo', $r['documentary_completeness']['missing']);
-        $this->assertContains('o_que_faz', $r['documentary_completeness']['missing']);
+        $this->assertContains('finalidades_funcoes', $r['documentary_completeness']['missing']);
     }
 
     public function test_entendimento_funcional_built(): void

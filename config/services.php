@@ -123,6 +123,14 @@ return [
         // novos fatos do MESMO código, bumpar isto invalida semânticas antigas (não congela p/ sempre).
         'facts_version'              => (int) env('SOURCE_DOC_FACTS_VERSION', 1),
         'blob_reuse_enabled'         => filter_var(env('SOURCE_DOC_AI_BLOB_REUSE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        // Bloco 4.2.1-B: aprofundamento robusto (chunk adaptativo).
+        'deepen_chunk_size'          => (int) env('SOURCE_DOC_AI_DEEPEN_CHUNK_SIZE', 4),
+        'deepen_max_calls'           => (int) env('SOURCE_DOC_AI_DEEPEN_MAX_CALLS', 12),
+        // Bloco 4.2.1-C: rota small/simple (1 chamada) p/ fontes simples, com fallback à 4-blocos.
+        'simple_route_enabled'       => filter_var(env('SOURCE_DOC_AI_SIMPLE_ROUTE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'simple_max_functions'       => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_FUNCTIONS', 3),
+        'simple_max_queries'         => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_QUERIES', 2),
+        'max_output_tokens_simple'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_SIMPLE', 3000),
     ],
 
     'openai' => [

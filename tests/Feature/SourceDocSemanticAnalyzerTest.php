@@ -26,6 +26,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
             'services.source_doc_ai.max_calls' => 3,
             'services.source_doc_ai.max_output_tokens_per_call' => 2000,
             'services.source_doc_ai.hard_limit_usd' => 0.30,
+            'services.source_doc_ai.simple_route_enabled' => false, // testes do 4-blocos; rota simples tem testes próprios
             'services.source_doc_ai.inline_code_max_chars' => 8000,
             'services.source_doc_ai.prompt_version' => 2,
         ]);
@@ -123,7 +124,7 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         ], 'fluxo' => ['p1']]);
     }
     private function rulesBlock(): string { return json_encode(['regras_negocio' => [], 'change_summary' => 'x']); }
-    private function funcoesBlock(): string { return json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]); }
+    private function funcoesBlock(): string { return json_encode(['funcoes' => [['name' => 'FTENVNFE', 'finalidade' => 'entrada'], ['name' => 'FTENVNFU', 'finalidade' => 'grava']]]); }
 
     public function test_truncated_entendimento_is_salvaged(): void
     {
@@ -348,20 +349,23 @@ class SourceDocSemanticAnalyzerTest extends TestCase
     /** (F5) aprofundamento falha (truncado) mas global válida → partial + global preservada. */
     public function test_deepening_partial_keeps_global(): void
     {
-        // 4 blocos: ent(0)+regras(1)+deps/risco(2) OK; aprofundamento de funções(3) TRUNCA
-        // ⇒ partial (functions_incomplete) preservando o Entendimento.
+        // Bloco 4.2.1-B: 2 funções relevantes, aprofundamento recupera só 1 ⇒ partial com trace
+        // (missing = a outra) preservando o Entendimento; NUNCA 2→0.
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
         $ai = $this->ai(true, fn ($u, $i) => match ($i) {
             0 => $this->entBlock(),
             1 => $this->rulesBlock(),
             2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
-            default => ['text' => $this->funcoesBlock(), 'stop' => 'max_tokens'],
+            default => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), // só 1 de 2
         });
         $r = $this->go($ai, str_repeat("linha
 ", 40));
         $this->assertSame('partial', $r['status']);
         $this->assertSame('functions_incomplete', $r['partial_reason']);
         $this->assertSame('Faz X.', $r['entendimento_funcional']['objetivo'], 'entendimento preservado');
+        $this->assertContains('FTENVNFU', $r['funcoes_trace']['completed']);
+        $this->assertSame('FTENVNFE', $r['funcoes_trace']['missing'][0]['name']);
+        $this->assertNotEmpty($r['funcoes'], 'nunca 2 selecionadas -> 0 documentadas');
     }
 
     /** (F6) global + aprofundamento válidos → completed. */

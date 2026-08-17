@@ -531,8 +531,18 @@ class SourceDocRenderer
 
     private function secRules(array $m): string
     {
-        if ($m['semPending'] || empty($this->g($m['s'], 'regras_negocio', []))) {
+        if ($m['semPending']) {
             return $this->ni(self::SEM_RULES);
+        }
+        // Bloco 4.2.1-C: 0 regras num fonte JÁ analisado = resultado válido (não "pendente"). Diferencia
+        // not_applicable (leitura pura) de not_identified/missing pelo estado de completude, quando houver.
+        if (empty($this->g($m['s'], 'regras_negocio', []))) {
+            $dims = (array) $this->g((array) $this->g($m['s'], 'documentary_completeness', []), 'dimensions', []);
+            $rst = (string) ($dims['regras_negocio'] ?? '');
+            $msg = $rst === 'missing'
+                ? 'Regras de negócio não puderam ser documentadas nesta execução (falha/truncamento) — reprocessável.'
+                : 'Não foram identificadas regras de negócio específicas neste fonte a partir das evidências disponíveis.';
+            return $this->ni($msg);
         }
         $h = '';
         foreach ((array) $this->g($m['s'], 'regras_negocio', []) as $r) {
