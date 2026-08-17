@@ -465,6 +465,7 @@ Route::prefix('v1')->group(function () {
         // 🏢 CLIENT PORTAL
         Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
+        Route::get('/client/portal/cost-centers', [ClientPortalController::class, 'costCenters'])->name('client.portal.cost-centers');
         Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
@@ -473,6 +474,9 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:customers.view')->group(function () {
             Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
             Route::get('/customers/user-linked', [CustomerController::class, 'getUserLinkedCustomers'])->name('customers.user-linked');
+            // Centro de custo — leitura (template + lista por cliente). ANTES de /customers/{customer}.
+            Route::get('/cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('cost-centers.template');
+            Route::get('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'index'])->name('customers.cost-centers.index');
             Route::get('/customers/{customer}', [CustomerController::class, 'show'])->name('customers.show');
         });
 
@@ -482,6 +486,11 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:customers.update')->group(function () {
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
+            // Centro de custo — escrita (criar/importar por cliente, editar/excluir).
+            Route::post('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'store'])->name('customers.cost-centers.store');
+            Route::post('/customers/{customer}/cost-centers/import', [\App\Http\Controllers\CostCenterController::class, 'import'])->name('customers.cost-centers.import');
+            Route::put('/cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'update'])->name('cost-centers.update');
+            Route::delete('/cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'destroy'])->name('cost-centers.destroy');
         });
 
         Route::middleware('permission.or.admin:customers.delete')->group(function () {
@@ -571,6 +580,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             Route::get('/projects/kanban-column-history', [\App\Http\Controllers\KanbanLogController::class, 'columnHistory'])->name('projects.kanban-column-history'); // ANTES de /projects/{project}
+            // Rateio do projeto por centro de custo (% do valor total do projeto).
+            Route::get('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'rateio'])->name('projects.rateio');
+            Route::put('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'saveRateio'])->name('projects.rateio.save');
             Route::get('/projects/audit', [\App\Http\Controllers\ProjectAuditController::class, 'index'])->name('projects.audit'); // ANTES de /projects/{project}
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');

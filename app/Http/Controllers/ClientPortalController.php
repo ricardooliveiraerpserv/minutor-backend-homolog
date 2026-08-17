@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\CostCenter;
 use App\Models\Customer;
 use App\Models\Project;
 use App\Models\ProjectStage;
@@ -197,6 +198,77 @@ class ClientPortalController extends Controller
         }
 
         return response()->json($customers);
+    }
+
+    /**
+     * Visão de CENTROS DE CUSTO do cliente: cada centro com o valor total rateado
+     * (Σ valor total do projeto × %/100) e os projetos associados. Cliente vê só o próprio.
+     */
+    public function costCenters(Request $request): JsonResponse
+    {
+        $user       = $request->user();
+        $customerId = $request->get('customer_id');
+
+        // CLIENTE só enxerga o próprio customer_id (IDOR).
+        if ($user && method_exists($user, 'isCliente') && $user->isCliente()) {
+            $customerId = $user->customer_id;
+        }
+        if (!$customerId) {
+            return response()->json(['message' => 'customer_id obrigatório'], 422);
+        }
+
+        // Coordenador: só clientes dos seus próprios projetos.
+        if ($user->isCoordenador()) {
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
+            $hasAccess = Project::where('customer_id', $customerId)
+                ->where(function ($q) use ($user, $isSustentacao) {
+                    $q->whereHas('coordinators', fn ($sq) => $sq->where('users.id', $user->id));
+                    if ($isSustentacao) {
+                        $q->orWhereHas('serviceType', fn ($sq) => $sq->where('code', 'sustentacao'));
+                    }
+                })->exists();
+            if (!$hasAccess) {
+                return response()->json(['message' => 'Acesso negado'], 403);
+            }
+        }
+
+        $centers = CostCenter::where('customer_id', $customerId)
+            ->orderBy('code')
+            ->with(['allocations.project.hourContributions', 'allocations.project:id,code,name,hourly_rate,sold_hours,hour_contribution,customer_id'])
+            ->get();
+
+        $data = $centers->map(function ($cc) {
+            $projetos = [];
+            $total = 0.0;
+            foreach ($cc->allocations as $a) {
+                $p = $a->project;
+                if (!$p) continue;
+                $pv  = round($p->calculateTotalProjectValue(), 2);
+                $val = round($pv * (float) $a->percentual / 100, 2);
+                $total += $val;
+                $projetos[] = [
+                    'project_id' => $p->id,
+                    'code'       => $p->code,
+                    'name'       => $p->name,
+                    'percentual' => (float) $a->percentual,
+                    'valor'      => $val,
+                ];
+            }
+
+            return [
+                'id'          => $cc->id,
+                'code'        => $cc->code,
+                'description' => $cc->description,
+                'active'      => (bool) $cc->active,
+                'valor_total' => round($total, 2),
+                'projetos'    => $projetos,
+            ];
+        });
+
+        return response()->json([
+            'data'        => $data,
+            'total_geral' => round($data->sum('valor_total'), 2),
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
