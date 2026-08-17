@@ -247,11 +247,12 @@ class ClientPortalController extends Controller
                 $val = round($pv * (float) $a->percentual / 100, 2);
                 $total += $val;
                 $projetos[] = [
-                    'project_id' => $p->id,
-                    'code'       => $p->code,
-                    'name'       => $p->name,
-                    'percentual' => (float) $a->percentual,
-                    'valor'      => $val,
+                    'project_id'    => $p->id,
+                    'code'          => $p->code,
+                    'name'          => $p->name,
+                    'percentual'    => (float) $a->percentual,
+                    'valor'         => $val,
+                    'project_total' => $pv,   // valor total do projeto (base do rateio)
                 ];
             }
 
