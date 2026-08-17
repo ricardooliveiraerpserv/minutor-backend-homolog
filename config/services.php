@@ -141,7 +141,9 @@ return [
         // P0 — GUARDA DE CUSTO INVIOLÁVEL: como a estimativa ficou ~1,7× abaixo do real no gate, a
         // reserva de CADA chamada = estimativa × fator (conservador, > erro observado). Nenhum caminho
         // do analyzer inicia chamada cuja reserva possa ultrapassar o hard-limit de US$ 0,30.
-        'cost_reserve_factor'        => (float) env('SOURCE_DOC_AI_COST_RESERVE_FACTOR', 1.9),
+        // Ancorado nos dados do gate: actual/estimated por chamada ∈ ~0,59–1,09 (máx 1,09). 1,25 ≈ máx
+        // observado + 15% de margem — reserva segura sem super-reservar (~2×, que barrava deps que caberia).
+        'cost_reserve_factor'        => (float) env('SOURCE_DOC_AI_COST_RESERVE_FACTOR', 1.25),
         // Refinamento 4 — output ADAPTATIVO do aprofundamento: proporcional ao nº de funções do chunk
         // (base + por_funcao × n), limitado por max_output_tokens_per_call. Remove o piso artificial de
         // ~2600 tokens/chamada. Calibrado pelos outputs dos pilotos (finalidade curta ~200-350 tok/função).

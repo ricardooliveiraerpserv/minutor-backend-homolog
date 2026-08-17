@@ -1960,7 +1960,16 @@ class SourceDocSemanticAnalyzer
         $before = $this->currentCostUsd();
         $g = $this->callJson($this->systemPrompt(), $user, $out);
         $actual = $this->currentCostUsd() - $before;
-        $this->callLog[] = ['block' => $block, 'estimated' => round($est, 5), 'reserved' => round($reserved, 5), 'actual' => round($actual, 5), 'ratio' => $est > 0 ? round($actual / $est, 2) : null, 'skipped' => false];
+        $this->callLog[] = [
+            'block' => $block,
+            'estimated' => round($est, 5),
+            'reserved' => round($reserved, 5),
+            'actual' => round($actual, 5),
+            'ratio' => $est > 0 ? round($actual / $est, 2) : null,          // actual/estimated
+            'ratio_reserved' => $reserved > 0 ? round($actual / $reserved, 2) : null, // actual/reserved (≤1 = reserva segura)
+            'over_reserve' => $actual > $reserved + 1e-9,                    // chamada ultrapassou a própria reserva?
+            'skipped' => false,
+        ];
         return $g;
     }
 
@@ -1980,11 +1989,16 @@ class SourceDocSemanticAnalyzer
             $extra['topup_cost_usd'] = round($thisRun, 4);
             $extra['topup_calls']    = (int) ($this->usage['calls'] ?? 0);
         }
-        // P1 — trilha por chamada (estimated/reserved/actual/ratio) p/ reconciliar o estimador com o real.
+        // P1 — trilha por chamada (estimated/reserved/actual + ratios) p/ reconciliar o estimador e checar
+        // se a reserva é suficiente (actual/reserved ≤ 1 = segura).
         if (! empty($this->callLog)) {
-            $ratios = array_values(array_filter(array_map(fn ($c) => $c['ratio'] ?? null, $this->callLog), fn ($r) => $r !== null && $r > 0));
+            $done = array_values(array_filter($this->callLog, fn ($c) => empty($c['skipped'])));
+            $ratios = array_values(array_filter(array_map(fn ($c) => $c['ratio'] ?? null, $done), fn ($r) => $r !== null && $r > 0));
+            $rr = array_values(array_filter(array_map(fn ($c) => $c['ratio_reserved'] ?? null, $done), fn ($r) => $r !== null));
             $extra['cost_calls'] = $this->callLog;
             $extra['est_error_ratio_avg'] = $ratios ? round(array_sum($ratios) / count($ratios), 2) : null;
+            $extra['ratio_reserved_max'] = $rr ? max($rr) : null;              // >1 = alguma chamada estourou a reserva
+            $extra['calls_over_reserve'] = count(array_filter($done, fn ($c) => ! empty($c['over_reserve'])));
             $extra['calls_skipped_budget'] = count(array_filter($this->callLog, fn ($c) => ! empty($c['skipped'])));
         }
         return $this->usage + $extra;
