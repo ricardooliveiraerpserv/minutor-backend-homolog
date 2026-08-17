@@ -1865,10 +1865,15 @@ class SourceDocSemanticAnalyzer
                 'source_doc_id' => $s['source_doc_id'], 'path' => $s['path'], 'blob_sha' => $s['blob_sha'],
                 'symbol' => $s['symbol'], 'relation' => $s['relation'], 'facts' => $s['facts'],
             ], $this->crossSource), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        $b .= "\n\nREGRAS DO CONTEXTO EXTERNO: (a) é AUXILIAR — não é o fonte principal; (b) qualquer afirmação "
-            . "que dependa dele DEVE incluir no evidence do item um objeto {source_doc_id, blob_sha, symbol, relation, "
-            . "type} apontando o alvo; (c) sem evidência suficiente ⇒ \"" . self::UNDETERMINED . "\"; (d) NÃO complete "
-            . "lacunas por conhecimento geral nem transforme dependência em fato sem os facts acima.";
+        $b .= "\n\nREGRAS DO CONTEXTO EXTERNO (OBRIGATÓRIAS): "
+            . "(a) é AUXILIAR — não substitui o fonte principal. "
+            . "(b) SEMPRE que uma afirmação (objetivo, regra, finalidade de função, dependência crítica ou risco) "
+            . "usar informação vinda deste contexto externo, o evidence do item DEVE conter um objeto de EVIDÊNCIA C "
+            . "estruturada com EXATAMENTE estes campos: {source_doc_id, blob_sha, symbol, relation, evidence_type} "
+            . "(evidence_type ∈ function|table|field) apontando o alvo de onde a informação veio. "
+            . "(c) Se a afirmação DEPENDE do contexto externo e você NÃO consegue emitir uma evidência C válida, "
+            . "NÃO mantenha a afirmação como fato: use \"" . self::UNDETERMINED . "\" (ou rebaixe a confidence) e não a inclua. "
+            . "(d) NUNCA complete lacunas por conhecimento geral de Protheus nem transforme dependência em fato sem a evidência C acima.";
         return $b;
     }
 
