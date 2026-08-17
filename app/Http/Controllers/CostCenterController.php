@@ -179,4 +179,86 @@ class CostCenterController extends Controller
 
         return response()->json(['message' => 'Rateio salvo.']);
     }
+
+    // ── Portal do Cliente: o próprio cliente gerencia os SEUS centros de custo ──
+
+    private function clientCustomer(Request $request): ?Customer
+    {
+        $user = $request->user();
+        if ($user && method_exists($user, 'isCliente') && $user->isCliente() && $user->customer_id) {
+            return Customer::find($user->customer_id);
+        }
+        return null;
+    }
+
+    public function myIndex(Request $request): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c) return response()->json(['message' => 'Disponível apenas para o perfil cliente.'], 403);
+        return $this->index($c);
+    }
+
+    public function myStore(Request $request): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c) return response()->json(['message' => 'Disponível apenas para o perfil cliente.'], 403);
+        return $this->store($request, $c);
+    }
+
+    public function myUpdate(Request $request, CostCenter $costCenter): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c || (int) $costCenter->customer_id !== (int) $c->id) {
+            return response()->json(['message' => 'Acesso negado.'], 403);
+        }
+        return $this->update($request, $costCenter);
+    }
+
+    public function myDestroy(Request $request, CostCenter $costCenter): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c || (int) $costCenter->customer_id !== (int) $c->id) {
+            return response()->json(['message' => 'Acesso negado.'], 403);
+        }
+        return $this->destroy($costCenter);
+    }
+
+    public function myImport(Request $request): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c) return response()->json(['message' => 'Disponível apenas para o perfil cliente.'], 403);
+        return $this->import($request, $c);
+    }
+
+    /** Projetos do cliente (para o cliente escolher no rateio). */
+    public function myProjects(Request $request): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c) return response()->json(['message' => 'Disponível apenas para o perfil cliente.'], 403);
+
+        $projects = Project::where('customer_id', $c->id)
+            ->whereNull('parent_project_id')
+            ->orderBy('name')
+            ->get(['id', 'code', 'name']);
+
+        return response()->json(['data' => $projects]);
+    }
+
+    public function myRateio(Request $request, Project $project): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c || (int) $project->customer_id !== (int) $c->id) {
+            return response()->json(['message' => 'Acesso negado.'], 403);
+        }
+        return $this->rateio($project);
+    }
+
+    public function mySaveRateio(Request $request, Project $project): JsonResponse
+    {
+        $c = $this->clientCustomer($request);
+        if (!$c || (int) $project->customer_id !== (int) $c->id) {
+            return response()->json(['message' => 'Acesso negado.'], 403);
+        }
+        return $this->saveRateio($request, $project);
+    }
 }

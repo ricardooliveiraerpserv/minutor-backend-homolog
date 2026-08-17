@@ -466,6 +466,17 @@ Route::prefix('v1')->group(function () {
         Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
         Route::get('/client/portal/cost-centers', [ClientPortalController::class, 'costCenters'])->name('client.portal.cost-centers');
+        // Cliente gerencia os PRÓPRIOS centros de custo (cadastro no menu do portal).
+        Route::get('/client/portal/my-cost-centers', [\App\Http\Controllers\CostCenterController::class, 'myIndex'])->name('client.portal.my-cost-centers.index');
+        Route::post('/client/portal/my-cost-centers', [\App\Http\Controllers\CostCenterController::class, 'myStore'])->name('client.portal.my-cost-centers.store');
+        Route::post('/client/portal/my-cost-centers/import', [\App\Http\Controllers\CostCenterController::class, 'myImport'])->name('client.portal.my-cost-centers.import');
+        Route::get('/client/portal/my-cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('client.portal.my-cost-centers.template');
+        Route::put('/client/portal/my-cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'myUpdate'])->name('client.portal.my-cost-centers.update');
+        Route::delete('/client/portal/my-cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'myDestroy'])->name('client.portal.my-cost-centers.destroy');
+        // Cliente distribui o rateio dos PRÓPRIOS projetos.
+        Route::get('/client/portal/my-projects', [\App\Http\Controllers\CostCenterController::class, 'myProjects'])->name('client.portal.my-projects');
+        Route::get('/client/portal/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'myRateio'])->name('client.portal.project-rateio');
+        Route::put('/client/portal/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'mySaveRateio'])->name('client.portal.project-rateio.save');
         Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
