@@ -104,22 +104,22 @@ class SourceDocTopUpRobustnessTest extends TestCase
         for ($k = 1; $k <= 4; $k++) {
             $items[] = ['name' => 'FN' . $k, 'facts' => ['x' => str_repeat('y', 200)], 'code' => str_repeat("z", 300)];
         }
-        $out = 0;
-        // reservas REAIS do payload por tamanho de sub-lote (monotônicas).
-        $r = fn ($n) => $this->priv($an, 'estimateCallUsd', [$this->priv($an, 'deepenFinalidadesPrompt', [array_slice($items, 0, $n)]), $out, true]) + 0.005;
+        $cap = 2600;
+        // reservas REAIS por tamanho de sub-lote, com output ADAPTATIVO (mesma conta do deepenFitCount).
+        $r = fn ($n) => $this->priv($an, 'estimateCallUsd', [$this->priv($an, 'deepenFinalidadesPrompt', [array_slice($items, 0, $n)]), $this->priv($an, 'deepenOutFor', [$n, $cap]), true]) + 0.005;
         [$r4, $r2, $r1] = [$r(4), $r(2), $r(1)];
-        $this->assertGreaterThan($r2, $r4, 'reserva de 4 > de 2 (payload real, não fixo)');
+        $this->assertGreaterThan($r2, $r4, 'reserva de 4 > de 2 (payload + output adaptativo)');
         $this->assertGreaterThan($r1, $r2, 'reserva de 2 > de 1');
 
         $this->setProp($an, 'costBaseUsd', 0.0);
         // teto entre r2 e r4 ⇒ 4 não cabe, 2 cabe.
-        $this->assertSame(2, $this->priv($an, 'deepenFitCount', [$items, $out, $r2]));
+        $this->assertSame(2, $this->priv($an, 'deepenFitCount', [$items, $cap, $r2]));
         // teto = r1 ⇒ só 1 cabe.
-        $this->assertSame(1, $this->priv($an, 'deepenFitCount', [$items, $out, $r1]));
+        $this->assertSame(1, $this->priv($an, 'deepenFitCount', [$items, $cap, $r1]));
         // teto abaixo de r1 ⇒ nem 1 cabe (cost_budget).
-        $this->assertSame(0, $this->priv($an, 'deepenFitCount', [$items, $out, $r1 - 0.001]));
+        $this->assertSame(0, $this->priv($an, 'deepenFitCount', [$items, $cap, $r1 - 0.001]));
         // INVARIANTE: se cabe n>0, então custo + reserva(n) ≤ teto.
-        $n = $this->priv($an, 'deepenFitCount', [$items, $out, $r2]);
+        $n = $this->priv($an, 'deepenFitCount', [$items, $cap, $r2]);
         $this->assertLessThanOrEqual($r2 + 1e-9, 0.0 + $r($n));
     }
 
@@ -289,6 +289,60 @@ class SourceDocTopUpRobustnessTest extends TestCase
             : json_encode(['regras_negocio' => [['id' => 'RN01', 'titulo' => 't', 'descricao' => 'Grava EMAIL', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'EMAIL']]]], 'change_summary' => 'x']));
         $this->make($ai)->topUp($existing, $this->det(12), 'codigo', null);
         $this->assertStringContainsString('FUNÇÕES RELEVANTES', $ai->calls[0], 'funções aprofundadas ANTES do retry de bloco');
+    }
+
+    // ── Refinamento 4 — output do aprofundamento PROPORCIONAL ao nº de funções ──
+    public function test_deepen_output_scales_with_chunk_size(): void
+    {
+        config(['services.source_doc_ai.deepen_out_base' => 300, 'services.source_doc_ai.deepen_out_per_function' => 450, 'services.source_doc_ai.max_output_tokens_per_call' => 2600]);
+        $an = $this->make($this->ai(''));
+        $o1 = $this->priv($an, 'deepenOutFor', [1, 2600]);
+        $o2 = $this->priv($an, 'deepenOutFor', [2, 2600]);
+        $o4 = $this->priv($an, 'deepenOutFor', [4, 2600]);
+        $this->assertSame(750, $o1, '1 função → 300 + 450');
+        $this->assertSame(1200, $o2, '2 funções');
+        $this->assertSame(2100, $o4, '4 funções');
+        $this->assertGreaterThan($o1, $o2);
+        $this->assertGreaterThan($o2, $o4);
+        // nunca acima do cap.
+        $this->assertLessThanOrEqual(2600, $this->priv($an, 'deepenOutFor', [20, 2600]));
+    }
+
+    // ── Refinamento 4 — output adaptativo CABE numa folga onde o fixo de 2600 NÃO cabia ──
+    public function test_adaptive_output_fits_where_fixed_2600_would_not(): void
+    {
+        config(['services.source_doc_ai.deepen_out_base' => 300, 'services.source_doc_ai.deepen_out_per_function' => 450,
+            'services.source_doc_ai.max_output_tokens_per_call' => 2600, 'services.source_doc_ai.cost_output_per_mtok' => 15.0, 'services.source_doc_ai.cost_input_per_mtok' => 3.0]);
+        $an = $this->make($this->ai(''));
+        $items = [['name' => 'FN1', 'base_name' => 'FN1', 'facts' => ['a' => 'b'], 'code' => '']];
+        $hl = 0.30;
+        $base = 0.265; // folga = 0.035 — faixa em que 2600 fixos estouram, mas o adaptativo cabe.
+        $this->setProp($an, 'costBaseUsd', $base);
+        $reserveFixed = $this->priv($an, 'estimateCallUsd', [$this->priv($an, 'deepenFinalidadesPrompt', [$items]), 2600, true]) + 0.005;
+        $this->assertGreaterThan($hl - $base, $reserveFixed, 'com 2600 fixos NÃO caberia na folga (0.035)');
+        $this->assertSame(1, $this->priv($an, 'deepenFitCount', [$items, 2600, $hl]), 'com output adaptativo, 1 função CABE');
+    }
+
+    // ── Refinamento 4 (guarda) — output menor trunca ⇒ retry do MESMO chunk com budget maior ──
+    public function test_adaptive_truncation_retries_same_chunk_with_bigger_budget(): void
+    {
+        config(['services.source_doc_ai.deepen_out_base' => 300, 'services.source_doc_ai.deepen_out_per_function' => 450, 'services.source_doc_ai.deepen_chunk_size' => 1, 'services.source_doc_ai.inline_code_max_chars' => 30]);
+        // 1ª chamada de função TRUNCA (out pequeno); retry com budget maior devolve a finalidade.
+        $seen = ['n' => 0];
+        $ai = $this->ai(function ($u, $i) use (&$seen) {
+            if (! str_contains($u, 'FUNÇÕES RELEVANTES')) {
+                return match ($i) { 0 => $this->entBlock(), 1 => $this->rulesBlock(), default => $this->depsBlock() };
+            }
+            $seen['n']++;
+            // 1º deepen truncado; 2º (retry maior) ok.
+            return $seen['n'] === 1
+                ? ['text' => '{"funcoes":[{"name":"FN1"', 'stop' => 'max_tokens']
+                : $this->funcsBlock(['FN1']);
+        });
+        $r = $this->make($ai)->analyze($this->det(1), str_repeat("l\n", 40), null, []);
+        $this->assertContains('FN1', $r['funcoes_trace']['completed'], 'retry com budget maior recuperou a função');
+        $this->assertGreaterThanOrEqual(2, $seen['n'], 'houve retry do mesmo chunk');
+        $this->assertLessThanOrEqual(0.30 + 1e-9, (float) $r['usage']['actual_cost_usd']);
     }
 
     /** semantic_json parcial sintético: N completed + M missing(cost_budget) sobre det(12). */

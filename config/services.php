@@ -130,6 +130,11 @@ return [
         'block_retry_enabled'        => filter_var(env('SOURCE_DOC_AI_BLOCK_RETRY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // Refinamento 1 — saída mínima útil p/ retry de bloco; abaixo disso não gasta chamada.
         'block_retry_min_out'        => (int) env('SOURCE_DOC_AI_BLOCK_RETRY_MIN_OUT', 1200),
+        // Refinamento 4 — output ADAPTATIVO do aprofundamento: proporcional ao nº de funções do chunk
+        // (base + por_funcao × n), limitado por max_output_tokens_per_call. Remove o piso artificial de
+        // ~2600 tokens/chamada. Calibrado pelos outputs dos pilotos (finalidade curta ~200-350 tok/função).
+        'deepen_out_base'            => (int) env('SOURCE_DOC_AI_DEEPEN_OUT_BASE', 300),
+        'deepen_out_per_function'    => (int) env('SOURCE_DOC_AI_DEEPEN_OUT_PER_FUNCTION', 450),
         // Bloco 4.2.1-C: rota small/simple (1 chamada) p/ fontes simples, com fallback à 4-blocos.
         'simple_route_enabled'       => filter_var(env('SOURCE_DOC_AI_SIMPLE_ROUTE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         'simple_max_functions'       => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_FUNCTIONS', 3),

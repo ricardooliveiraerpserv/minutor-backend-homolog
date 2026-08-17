@@ -638,7 +638,22 @@ class SourceDocSemanticAnalyzer
                 $attempted[strtolower((string) ($it['name'] ?? ''))] = true;
             }
             $calls++;
-            [$got, $r, $p, $trunc] = $this->deepenCall($proc, $det, $out);
+            // Refinamento 4 — output PROPORCIONAL ao tamanho do chunk (não o piso fixo de 2600).
+            $callOut = $this->deepenOutFor(count($proc), $out);
+            [$got, $r, $p, $trunc] = $this->deepenCall($proc, $det, $callOut);
+            // Refinamento 4 (guarda) — se o output menor TRUNCOU, retry SÓ deste chunk com budget maior,
+            // desde que ainda caiba na folga do teto (não subdivide antes de tentar mais saída).
+            if ($trunc && $calls < $maxCalls) {
+                $affOut = $this->affordableOutTokens($this->deepenFinalidadesPrompt($proc), true, $hardLimit);
+                if ($affOut > $callOut + 300) {
+                    $bigOut = min($affOut, max($callOut * 2, $callOut + 800));
+                    [$got2, $r2, $p2, $trunc2] = $this->deepenCall($proc, $det, $bigOut);
+                    $calls++;
+                    if (count($got2) >= count($got)) {
+                        [$got, $r, $p, $trunc] = [$got2, $r2, $p2, $trunc2];
+                    }
+                }
+            }
             // Ponto 6 — colisão de nome (fontes orientados a classe): sub-lote unitário ⇒ a finalidade
             // retornada pertence, sem ambiguidade, à função canônica do determinístico. Só quando NÃO
             // truncou e a finalidade é real (não mascara truncamento como conclusão).
@@ -719,16 +734,25 @@ class SourceDocSemanticAnalyzer
         return $f !== '' && $f !== self::UNDETERMINED;
     }
 
+    /** Refinamento 4 — output do aprofundamento PROPORCIONAL ao nº de funções do chunk (limitado pelo cap). */
+    private function deepenOutFor(int $n, int $cap): int
+    {
+        $base = (int) config('services.source_doc_ai.deepen_out_base', 300);
+        $per  = (int) config('services.source_doc_ai.deepen_out_per_function', 450);
+        return min(max(1, $cap), $base + $per * max(1, $n));
+    }
+
     /**
-     * Ponto 1+2 — quantas funções do sub-lote CABEM no orçamento restante (custo acumulado por fonte +
-     * reserva do PAYLOAD REAL ≤ hard_limit). Reduz 4 → 2 → 1; 0 = nem uma unidade cabe (cost_budget).
+     * Ponto 1+2 (+Refinamento 4) — quantas funções do sub-lote CABEM no orçamento restante (custo
+     * acumulado por fonte + reserva do PAYLOAD REAL, com output ADAPTATIVO ao tamanho, ≤ hard_limit).
+     * Reduz 4 → 2 → 1; 0 = nem uma unidade cabe (cost_budget). $cap = teto de output por chamada.
      */
-    private function deepenFitCount(array $cur, int $out, float $hardLimit): int
+    private function deepenFitCount(array $cur, int $cap, float $hardLimit): int
     {
         $n = count($cur);
         while ($n >= 1) {
             $sub = array_slice($cur, 0, $n);
-            $reserve = $this->estimateCallUsd($this->deepenFinalidadesPrompt($sub), $out, true) + 0.005;
+            $reserve = $this->estimateCallUsd($this->deepenFinalidadesPrompt($sub), $this->deepenOutFor($n, $cap), true) + 0.005;
             if ($this->currentCostUsd() + $reserve <= $hardLimit) {
                 return $n;
             }
