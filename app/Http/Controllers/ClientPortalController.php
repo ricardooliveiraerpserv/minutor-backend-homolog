@@ -234,7 +234,7 @@ class ClientPortalController extends Controller
 
         $centers = CostCenter::where('customer_id', $customerId)
             ->orderBy('code')
-            ->with(['allocations.project.hourContributions', 'allocations.project:id,code,name,hourly_rate,sold_hours,hour_contribution,customer_id'])
+            ->with(['allocations.project.hourContributions', 'allocations.project:id,code,name,hourly_rate,sold_hours,hour_contribution,customer_id,start_date'])
             ->get();
 
         $data = $centers->map(function ($cc) {
@@ -253,6 +253,7 @@ class ClientPortalController extends Controller
                     'percentual'    => (float) $a->percentual,
                     'valor'         => $val,
                     'project_total' => $pv,   // valor total do projeto (base do rateio)
+                    'start_date'    => optional($p->start_date)->format('Y-m-d'),
                 ];
             }
 
