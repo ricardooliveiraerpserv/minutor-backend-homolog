@@ -111,8 +111,10 @@ class SourceDocSemanticV2ContractTest extends TestCase
 
     public function test_documentary_states_4way(): void
     {
-        // Bloco 4.2.1-C: objetivo/o_que_faz vazios com o BLOCO ok ⇒ 'not_identified' (VÁLIDO, não penaliza).
-        // As 2 funções relevantes não vieram ⇒ finalidades_funcoes = 'missing' (falha recuperável) ⇒ parcial.
+        // Ponto 5/7 — blocos OK, mas conteúdo vazio SEM truncamento: objetivo/o_que_faz e as funções
+        // foram analisados e nada foi determinável ⇒ 'not_identified' (VÁLIDO, honesto). Como NÃO houve
+        // FALHA TÉCNICA (missing), o nível permanece 'completa' (não maquia, mas também não penaliza
+        // resultado honesto). O estado 'missing' técnico é coberto por truncamento (ver teste F5).
         $json = json_encode([
             'entendimento_funcional' => ['uma_frase' => ['texto' => 'x', 'confidence' => 'low', 'evidence' => []], 'objetivo' => '', 'o_que_faz' => []],
             'regras_negocio' => [], 'funcoes' => [], 'change_summary' => 'x',
@@ -121,9 +123,11 @@ class SourceDocSemanticV2ContractTest extends TestCase
         $dim = $r['documentary_completeness']['dimensions'];
         $this->assertSame('not_identified', $dim['objetivo']);
         $this->assertSame('not_identified', $dim['o_que_faz']);
-        $this->assertSame('missing', $dim['finalidades_funcoes']);
-        $this->assertSame('parcial', $r['documentary_completeness']['level']);
-        $this->assertContains('finalidades_funcoes', $r['documentary_completeness']['missing']);
+        $this->assertSame('not_identified', $dim['finalidades_funcoes'], 'funções analisadas sem evidência = not_identified, não missing');
+        $this->assertSame('not_applicable', $dim['integracoes']);
+        $this->assertSame('present', $dim['risco'], 'risco é determinístico (escrita em SPED050)');
+        $this->assertNotContains('missing', array_values($dim), 'nenhuma dimensão missing sem falha técnica');
+        $this->assertSame('completa', $r['documentary_completeness']['level']);
     }
 
     public function test_entendimento_funcional_built(): void

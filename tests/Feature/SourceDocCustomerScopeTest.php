@@ -37,7 +37,6 @@ class SourceDocCustomerScopeTest extends TestCase
         }
         parent::setUp();
         config(['multiempresa.scoping_enabled' => false]);
-        SourceDocCustomerScope::flush();
         $this->scope = new SourceDocCustomerScope();
     }
 

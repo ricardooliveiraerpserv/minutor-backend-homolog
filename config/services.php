@@ -126,6 +126,8 @@ return [
         // Bloco 4.2.1-B: aprofundamento robusto (chunk adaptativo).
         'deepen_chunk_size'          => (int) env('SOURCE_DOC_AI_DEEPEN_CHUNK_SIZE', 4),
         'deepen_max_calls'           => (int) env('SOURCE_DOC_AI_DEEPEN_MAX_CALLS', 12),
+        // Robustez grandes — retry seletivo de bloco truncado/inválido (ponto 3). Preserva blocos válidos.
+        'block_retry_enabled'        => filter_var(env('SOURCE_DOC_AI_BLOCK_RETRY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // Bloco 4.2.1-C: rota small/simple (1 chamada) p/ fontes simples, com fallback à 4-blocos.
         'simple_route_enabled'       => filter_var(env('SOURCE_DOC_AI_SIMPLE_ROUTE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         'simple_max_functions'       => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_FUNCTIONS', 3),

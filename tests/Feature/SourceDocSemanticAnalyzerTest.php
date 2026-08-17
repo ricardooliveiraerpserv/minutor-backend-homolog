@@ -366,17 +366,17 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $this->assertSame('Faz X.', $r['entendimento_funcional']['objetivo']);
     }
 
-    /** (F5) aprofundamento falha (truncado) mas global válida → partial + global preservada. */
+    /** (F5) aprofundamento TRUNCADO → missing TÉCNICO (recuperável), global preservada, nunca 2→0. */
     public function test_deepening_partial_keeps_global(): void
     {
-        // Bloco 4.2.1-B: 2 funções relevantes, aprofundamento recupera só 1 ⇒ partial com trace
-        // (missing = a outra) preservando o Entendimento; NUNCA 2→0.
+        // 2 funções relevantes; aprofundamento TRUNCA (stop=max_tokens) recuperando só 1 ⇒ a outra vira
+        // missing TÉCNICO (truncated_unrecovered) preservando o Entendimento; NUNCA 2→0.
         config(['services.source_doc_ai.inline_code_max_chars' => 30]);
         $ai = $this->ai(true, fn ($u, $i) => match ($i) {
             0 => $this->entBlock(),
             1 => $this->rulesBlock(),
             2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
-            default => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), // só 1 de 2
+            default => ['text' => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), 'stop' => 'max_tokens'], // só 1 de 2, TRUNCADO
         });
         $r = $this->go($ai, str_repeat("linha
 ", 40));
@@ -385,7 +385,28 @@ class SourceDocSemanticAnalyzerTest extends TestCase
         $this->assertSame('Faz X.', $r['entendimento_funcional']['objetivo'], 'entendimento preservado');
         $this->assertContains('FTENVNFU', $r['funcoes_trace']['completed']);
         $this->assertSame('FTENVNFE', $r['funcoes_trace']['missing'][0]['name']);
+        $this->assertSame('truncated_unrecovered', $r['funcoes_trace']['missing'][0]['reason']);
         $this->assertNotEmpty($r['funcoes'], 'nunca 2 selecionadas -> 0 documentadas');
+    }
+
+    /** (F5b) Ponto 5 — omissão SEM truncamento (sem evidência) → not_identified, NÃO missing; completed. */
+    public function test_deepening_omission_without_truncation_is_not_identified(): void
+    {
+        // resposta VÁLIDA (não truncada) devolvendo só 1 de 2 ⇒ a outra foi analisada mas sem finalidade
+        // determinável → not_identified honesto (não penaliza); sem missing técnico ⇒ completed.
+        config(['services.source_doc_ai.inline_code_max_chars' => 30]);
+        $ai = $this->ai(true, fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(),
+            1 => $this->rulesBlock(),
+            2 => json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]),
+            default => json_encode(['funcoes' => [['name' => 'FTENVNFU', 'finalidade' => 'grava']]]), // 1 de 2, NÃO truncado
+        });
+        $r = $this->go($ai, str_repeat("linha
+", 40));
+        $this->assertContains('FTENVNFU', $r['funcoes_trace']['completed']);
+        $this->assertContains('FTENVNFE', $r['funcoes_trace']['not_identified'], 'omissão sem truncamento = not_identified');
+        $this->assertSame([], $r['funcoes_trace']['missing'], 'sem missing técnico');
+        $this->assertSame('completed', $r['status'], 'not_identified honesto não vira partial');
     }
 
     /** (F6) global + aprofundamento válidos → completed. */

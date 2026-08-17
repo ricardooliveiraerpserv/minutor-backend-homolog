@@ -33,6 +33,11 @@ class SourceDocSemanticAnalyzer
     private array $rejected = [];
     private array $coverage = [];
     private float $t0 = 0.0;
+    // Ponto 4 — TOP-UP: custo JÁ gasto em execuções anteriores desta MESMA fonte. A guarda de custo
+    // por fonte (≤ hard_limit) deve considerar o acumulado, não só o gasto do top-up atual.
+    private float $costBaseUsd = 0.0;
+    // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
+    private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
 
     public function __construct(private SourceDocAiProvider $ai)
     {
@@ -203,6 +208,50 @@ class SourceDocSemanticAnalyzer
         }
         $depRiscoOk = ! $g3['truncated'] && $j3 !== [];
         $blocks['deps_risco'] = $depRiscoOk ? 'ok' : ($g3['raw_truncated'] ? 'truncated' : 'invalid_json');
+
+        // ── Ponto 3 — RETRY SELETIVO de bloco quebrado (truncado/JSON inválido), preservando os
+        // válidos e sem refazer os demais. Só dispara se o bloco falhou E há folga no teto (US$ 0,30).
+        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+        if (! $entOk) {
+            [$ok, $j] = $this->retryBlockCall($entUser, $entOut, $entCode !== '', $hardLimit);
+            if ($ok && ! empty($j['entendimento_funcional'])) {
+                $sem['entendimento_funcional'] = $j['entendimento_funcional'];
+                $sem['objetivo'] = $j['entendimento_funcional']['objetivo'] ?? ($sem['objetivo'] ?? null);
+                if (! empty($j['fluxo'])) {
+                    $sem['fluxo'] = $j['fluxo'];
+                }
+                $entOk = true;
+                $blocks['entendimento'] = 'ok';
+            }
+        }
+        if (! $regrasOk) {
+            [$ok, $j] = $this->retryBlockCall($regrasUser, $regrasOut, $inlineCode !== '', $hardLimit);
+            if ($ok) {
+                if (! empty($j['regras_negocio'])) {
+                    $sem['regras_negocio'] = $j['regras_negocio'];
+                }
+                if (! empty($j['change_summary'])) {
+                    $sem['change_summary'] = $j['change_summary'];
+                }
+                $regrasOk = true;
+                $blocks['regras'] = 'ok';
+            }
+        }
+        if (! $depRiscoOk) {
+            [$ok, $j] = $this->retryBlockCall($depRiscoUser, $depRiscoOut, $inlineCode !== '', $hardLimit);
+            if ($ok) {
+                foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
+                    if (! empty($j[$k])) {
+                        $sem[$k] = $j[$k];
+                    }
+                }
+                if (! empty($j['risco_alteracao'])) {
+                    $sem['risco_alteracao'] = $j['risco_alteracao'];
+                }
+                $depRiscoOk = true;
+                $blocks['deps_risco'] = 'ok';
+            }
+        }
 
         // ── BLOCO 4 — Aprofundamento de Funções (estratégia seletiva existente) ──
         $funcoes = [];
@@ -523,74 +572,311 @@ class SourceDocSemanticAnalyzer
         $maxCalls  = (int) config('services.source_doc_ai.deepen_max_calls', 12);
         $calls = 0;
 
-        // GUARDA DE CUSTO ACUMULADO: o chunking não pode estourar o hard_limit por fonte. Antes de
-        // cada chunk, se o custo já gasto + a reserva de mais um chunk passar do teto, PARA (resto
-        // vira missing por orçamento) — mantém o custo/fonte <= hard_limit sem elevar o teto.
+        // GUARDA DE CUSTO ACUMULADO por FONTE (≤ hard_limit). Ponto 1: a reserva é estimada pelo
+        // PAYLOAD REAL de cada sub-lote (não 12k fixo). Ponto 2: chunk ELÁSTICO — se o chunk cheio
+        // não couber, reduz 4→2→1; só marca cost_budget quando NEM UMA função cabe no restante.
         $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
-        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
-        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
-        $chunkReserve = ($out / 1e6 * $co) + (12000 / 1e6 * $ci) + 0.01; // saída do chunk + entrada típica + margem
         $costBudgetHit = false;
+
+        $attempted = [];    // name(lower) => true : o sub-lote da função foi efetivamente chamado
+        $truncName = [];    // name(lower) => true : última tentativa truncou e não recuperou (missing técnico)
 
         // pilha de subconjuntos a processar (retry adaptativo empilha metades do não-recuperado).
         $stack = array_chunk($toCall, $chunkSize);
         while (! empty($stack)) {
             if ($calls >= $maxCalls) {
-                $anyTrunc = true; // orçamento de chamadas esgotado → resto vira missing
-                break;
-            }
-            if ($this->currentCostUsd() + $chunkReserve > $hardLimit) {
-                $anyTrunc = true;
-                $costBudgetHit = true; // teto de custo por fonte → resto vira missing
+                $anyTrunc = true; // orçamento de chamadas esgotado → resto vira missing (deepen_call_budget)
                 break;
             }
             $cur = array_shift($stack);
             if (empty($cur)) {
                 continue;
             }
+            // FIT ELÁSTICO: reduz o sub-lote até caber no orçamento restante (ou nada cabe).
+            $fit = $this->deepenFitCount($cur, $out, $hardLimit);
+            $proc = $fit > 0 ? array_slice($cur, 0, $fit) : [];
+            if (empty($proc)) {
+                // nem 1 função cabe no restante → teto de custo por fonte atingido; resto vira missing.
+                $anyTrunc = true;
+                $costBudgetHit = true;
+                break;
+            }
+            $leftover = array_slice($cur, count($proc));
+            if (! empty($leftover)) {
+                array_unshift($stack, $leftover); // processa o excedente depois (se couber)
+            }
+
+            foreach ($proc as $it) {
+                $attempted[strtolower((string) ($it['name'] ?? ''))] = true;
+            }
             $calls++;
-            [$got, $r, $p, $trunc] = $this->deepenCall($cur, $det, $out);
+            [$got, $r, $p, $trunc] = $this->deepenCall($proc, $det, $out);
+            // Ponto 6 — colisão de nome (fontes orientados a classe): sub-lote unitário ⇒ a finalidade
+            // retornada pertence, sem ambiguidade, à função canônica do determinístico. Só quando NÃO
+            // truncou e a finalidade é real (não mascara truncamento como conclusão).
+            if (count($proc) === 1 && ! $trunc && ! empty($got) && $this->isRealFinalidade($got[0]['finalidade'] ?? '')) {
+                $g0 = $got[0];
+                $g0['name'] = $proc[0]['name'];
+                $got = [$g0];
+            }
             $rules = array_merge($rules, $r);
             $points = array_merge($points, $p);
             $gotNames = array_map(fn ($f) => strtolower((string) $f['name']), $got);
             foreach ($got as $entry) {
                 $funcoes[] = $entry;
-                if ($this->cacheEnabled()) {
-                    $c = $this->findByName($cur, $entry['name']);
+                if ($this->cacheEnabled() && $this->isRealFinalidade($entry['finalidade'] ?? '')) {
+                    $c = $this->findByName($proc, $entry['name']);
                     if ($c) {
                         Cache::put($this->functionCacheKey($det, $c), $entry, (int) config('services.source_doc_ai.cache_ttl', 2592000));
                     }
                 }
             }
             // não recuperados NESTE sub-lote → retry subdividido (até 1 função) se truncou.
-            $unrec = array_values(array_filter($cur, fn ($it) => ! in_array(strtolower((string) ($it['name'] ?? '')), $gotNames, true)));
+            $unrec = array_values(array_filter($proc, fn ($it) => ! in_array(strtolower((string) ($it['name'] ?? '')), $gotNames, true)));
             if (! empty($unrec)) {
                 $anyTrunc = $anyTrunc || $trunc;
-                if ($trunc && count($cur) > 1) {
+                if ($trunc && count($proc) > 1) {
                     $half = (int) ceil(count($unrec) / 2);
-                    $stack[] = array_slice($unrec, 0, $half);
-                    $stack[] = array_slice($unrec, $half);
+                    array_unshift($stack, array_slice($unrec, $half));
+                    array_unshift($stack, array_slice($unrec, 0, $half));
+                } elseif ($trunc) {
+                    // count($proc)==1 e truncou → função grande demais; missing técnico rastreado.
+                    $truncName[strtolower((string) ($unrec[0]['name'] ?? ''))] = true;
                 }
-                // count($cur)==1 e truncou → função grande demais; fica missing (rastreada abaixo).
+                // não truncou e não retornou ⇒ o modelo não determinou finalidade → not_identified (abaixo).
             }
         }
 
-        // trace: requested → completed → missing (+motivo)
-        $doneSet = array_flip(array_map('strtolower', array_map(fn ($f) => (string) $f['name'], $funcoes)));
+        // trace: requested → completed / not_identified / missing(técnico). Ponto 5: rejeição/ausência
+        // de evidência é not_identified (resultado honesto), NÃO missing. Missing = só falha técnica.
+        $byName = [];
+        foreach ($funcoes as $f) {
+            $byName[strtolower((string) $f['name'])] = $f;
+        }
+        $completed = [];
+        $notIdentified = [];
         $missing = [];
-        $missReason = $costBudgetHit ? 'cost_budget' : ($calls >= $maxCalls ? 'deepen_call_budget' : 'truncated_unrecovered');
-        foreach ($requested as $n) {
-            if (! isset($doneSet[strtolower($n)])) {
-                $missing[] = ['name' => $n, 'reason' => $missReason];
+        foreach ($requested as $rname) {
+            $low = strtolower($rname);
+            $f = $byName[$low] ?? null;
+            if ($f && $this->isRealFinalidade($f['finalidade'] ?? '')) {
+                $completed[] = $rname;
+            } elseif (isset($truncName[$low])) {
+                $missing[] = ['name' => $rname, 'reason' => 'truncated_unrecovered'];
+            } elseif (isset($attempted[$low])) {
+                // analisada, mas sem finalidade determinável → not_identified honesto (não penaliza).
+                $notIdentified[] = $rname;
+                if (! $f) {
+                    $funcoes[] = ['name' => $rname, 'finalidade' => self::UNDETERMINED, 'confidence' => 'low', 'evidence' => []];
+                }
+            } else {
+                // nunca tentada por orçamento (custo/chamadas) → missing técnico recuperável por top-up.
+                $missing[] = ['name' => $rname, 'reason' => $costBudgetHit ? 'cost_budget' : ($calls >= $maxCalls ? 'deepen_call_budget' : 'truncated_unrecovered')];
             }
         }
         $trace = [
-            'requested' => $requested,
-            'completed' => array_values(array_unique(array_map(fn ($f) => (string) $f['name'], $funcoes))),
-            'missing'   => $missing,
-            'calls'     => $calls,
+            'requested'      => $requested,
+            'completed'      => $completed,
+            'not_identified' => $notIdentified,
+            'missing'        => $missing,
+            'calls'          => $calls,
         ];
         return [$funcoes, $rules, $points, $cachedN, $anyTrunc, $trace];
+    }
+
+    /** Uma finalidade "real" (documentada) — não vazia e não o marcador de indeterminação. */
+    private function isRealFinalidade(?string $f): bool
+    {
+        $f = trim((string) $f);
+        return $f !== '' && $f !== self::UNDETERMINED;
+    }
+
+    /**
+     * Ponto 1+2 — quantas funções do sub-lote CABEM no orçamento restante (custo acumulado por fonte +
+     * reserva do PAYLOAD REAL ≤ hard_limit). Reduz 4 → 2 → 1; 0 = nem uma unidade cabe (cost_budget).
+     */
+    private function deepenFitCount(array $cur, int $out, float $hardLimit): int
+    {
+        $n = count($cur);
+        while ($n >= 1) {
+            $sub = array_slice($cur, 0, $n);
+            $reserve = $this->estimateCallUsd($this->deepenFinalidadesPrompt($sub), $out, true) + 0.005;
+            if ($this->currentCostUsd() + $reserve <= $hardLimit) {
+                return $n;
+            }
+            $n = intdiv($n, 2); // 4 → 2 → 1
+        }
+        return 0;
+    }
+
+    /** Ponto 3 — reexecuta UM bloco (sem refazer os demais). Retorna [sucesso, json]. Respeita o teto. */
+    private function retryBlockCall(string $user, int $out, bool $code, float $hardLimit): array
+    {
+        if (! (bool) config('services.source_doc_ai.block_retry_enabled', true)) {
+            return [false, []];
+        }
+        if ($this->currentCostUsd() + $this->estimateCallUsd($user, $out, $code) + 0.005 > $hardLimit) {
+            return [false, []]; // sem folga no teto por fonte → não reprocessa (fica missing honesto)
+        }
+        $g = $this->callJson($this->systemPrompt(), $user, $out);
+        $j = is_array($g['json']) ? $g['json'] : [];
+        return [! $g['truncated'] && $j !== [], $j];
+    }
+
+    /**
+     * Ponto 4 — TOP-UP / RECOVERY: enriquece um semantic_json EXISTENTE sem refazer do zero.
+     * Reexecuta SÓ (a) blocos quebrados e (b) funções em funcoes_trace.missing por FALHA TÉCNICA,
+     * aproveitando o function cache. Custo/chamadas adicionais entram no acumulado por fonte (≤ US$ 0,30)
+     * e são registrados separadamente (usage.topup_*). Preserva finalidades/blocos já válidos.
+     * Caminho ESPECÍFICO de enriquecimento — não é o reprocesso genérico.
+     */
+    public function topUp(array $existing, array $det, string $maskedCode, ?array $diff = null): array
+    {
+        $this->resetState();
+        $this->costBaseUsd = (float) (($existing['usage']['actual_cost_usd'] ?? 0.0));
+        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+
+        $blocks = (array) ($existing['block_status'] ?? []);
+        $trace  = (array) ($existing['funcoes_trace'] ?? []);
+        $techMissNames = [];
+        foreach (($trace['missing'] ?? []) as $m) {
+            if (in_array($m['reason'] ?? '', self::TECH_MISS, true) && ! empty($m['name'])) {
+                $techMissNames[strtolower((string) $m['name'])] = (string) $m['name'];
+            }
+        }
+        $blocksBroken = array_filter(['entendimento', 'regras', 'deps_risco'], fn ($b) => ($blocks[$b] ?? 'ok') !== 'ok');
+        if (empty($techMissNames) && empty($blocksBroken)) {
+            return $existing; // nada a recuperar — no-op (não gera chamada)
+        }
+
+        // contexto de prompts (idêntico ao initial), para retry de bloco e aprofundamento seletivo.
+        $limit = (int) config('services.source_doc_ai.max_relevant_functions', 12);
+        $relevant = $this->selectRelevant($det, $diff, $limit);
+        $compact = $this->buildCompactFacts($det, $relevant, $diff);
+        $inlineCodeMax = (int) config('services.source_doc_ai.inline_code_max_chars', 8000);
+        $inlineCode = mb_strlen($maskedCode) <= $inlineCodeMax ? $maskedCode : '';
+        $entCode = $inlineCode !== '' ? $inlineCode : $this->entrypointCode($det, $maskedCode);
+        $entOut     = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 4000);
+        $regrasOut  = (int) config('services.source_doc_ai.max_output_tokens_regras', 2600);
+        $depRiscoOut = (int) config('services.source_doc_ai.max_output_tokens_deprisco', 3000);
+        $deepenOut  = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2600);
+
+        $sem = $existing;
+
+        // (a) retry seletivo dos blocos quebrados — funções ficam por último (prioridade de orçamento).
+        if (($blocks['entendimento'] ?? 'ok') !== 'ok') {
+            [$ok, $j] = $this->retryBlockCall($this->entendimentoUserPrompt($compact, $diff, $entCode), $entOut, $entCode !== '', $hardLimit);
+            if ($ok && ! empty($j['entendimento_funcional'])) {
+                $sem['entendimento_funcional'] = $j['entendimento_funcional'];
+                $sem['objetivo'] = $j['entendimento_funcional']['objetivo'] ?? ($sem['objetivo'] ?? null);
+                if (! empty($j['fluxo'])) {
+                    $sem['fluxo'] = $j['fluxo'];
+                }
+                $blocks['entendimento'] = 'ok';
+            }
+        }
+        if (($blocks['regras'] ?? 'ok') !== 'ok') {
+            [$ok, $j] = $this->retryBlockCall($this->regrasUserPrompt($compact, $diff, $inlineCode), $regrasOut, $inlineCode !== '', $hardLimit);
+            if ($ok) {
+                if (! empty($j['regras_negocio'])) {
+                    $sem['regras_negocio'] = $j['regras_negocio'];
+                }
+                if (! empty($j['change_summary'])) {
+                    $sem['change_summary'] = $j['change_summary'];
+                }
+                $blocks['regras'] = 'ok';
+            }
+        }
+        if (($blocks['deps_risco'] ?? 'ok') !== 'ok') {
+            [$ok, $j] = $this->retryBlockCall($this->depRiscoUserPrompt($compact, $diff, $inlineCode), $depRiscoOut, $inlineCode !== '', $hardLimit);
+            if ($ok) {
+                foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
+                    if (! empty($j[$k])) {
+                        $sem[$k] = $j[$k];
+                    }
+                }
+                if (! empty($j['risco_alteracao'])) {
+                    $sem['risco_alteracao'] = $j['risco_alteracao'];
+                }
+                $blocks['deps_risco'] = 'ok';
+            }
+        }
+
+        // (b) aprofundamento seletivo SOMENTE das funções em missing técnico (aproveita function cache).
+        if (! empty($techMissNames)) {
+            $missFns = array_values(array_filter($det['functions'] ?? [], fn ($f) => isset($techMissNames[strtolower((string) ($f['name'] ?? ''))])));
+            $items = $this->buildDeepItems($missFns, $det, $maskedCode);
+            [$newFuncoes, $newRules, $newPoints, , , $newTrace] = $this->runDeepeningFinalidades($items, $det, $deepenOut);
+            $sem['funcoes'] = $this->mergeFuncoes($existing['funcoes'] ?? [], $newFuncoes);
+            if (! empty($newRules)) {
+                $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $newRules);
+            }
+            if (! empty($newPoints)) {
+                $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $newPoints);
+            }
+            $trace = $this->mergeTrace($trace, $newTrace);
+        }
+
+        // block_status + status recomputados sobre o resultado do top-up.
+        $newTechMiss = 0;
+        foreach (($trace['missing'] ?? []) as $m) {
+            if (in_array($m['reason'] ?? '', self::TECH_MISS, true)) {
+                $newTechMiss++;
+            }
+        }
+        $blocks['funcoes'] = empty($trace['requested'] ?? []) ? ($blocks['funcoes'] ?? 'skipped') : ($newTechMiss > 0 ? 'partial' : 'ok');
+        $sem['block_status'] = $blocks;
+        $sem['funcoes_trace'] = $trace;
+
+        if (($blocks['entendimento'] ?? 'ok') !== 'ok') {
+            $sem['status'] = 'partial';
+            $sem['partial_reason'] = 'entendimento_' . $blocks['entendimento'];
+        } elseif (($blocks['regras'] ?? 'ok') !== 'ok') {
+            $sem['status'] = 'partial';
+            $sem['partial_reason'] = 'regras_' . $blocks['regras'];
+        } elseif (($blocks['deps_risco'] ?? 'ok') !== 'ok') {
+            $sem['status'] = 'partial';
+            $sem['partial_reason'] = 'deps_risco_' . $blocks['deps_risco'];
+        } elseif ($newTechMiss > 0) {
+            $sem['status'] = 'partial';
+            $sem['partial_reason'] = 'functions_incomplete';
+        } else {
+            $sem['status'] = 'completed';
+            $sem['partial_reason'] = null;
+        }
+        $sem['strategy'] = 'topup_recovery';
+        $this->coverage = [
+            'relevant_functions_total'    => count($trace['requested'] ?? []) ?: (int) ($existing['semantic_coverage']['relevant_functions_total'] ?? 0),
+            'relevant_functions_analyzed' => count($trace['completed'] ?? []),
+            'relevant_functions_cached'   => (int) ($existing['semantic_coverage']['relevant_functions_cached'] ?? 0),
+            'relevant_functions_skipped'  => $newTechMiss,
+        ];
+
+        return $this->finalize($sem, $det, $diff);
+    }
+
+    /** Une o trace anterior com o do top-up: completed acumula; not_identified perde os que completaram; missing = restante técnico. */
+    private function mergeTrace(array $prev, array $new): array
+    {
+        $completed = array_values(array_unique(array_merge($prev['completed'] ?? [], $new['completed'] ?? [])));
+        $done = array_flip(array_map('strtolower', $completed));
+        $notId = array_values(array_filter(
+            array_unique(array_merge($prev['not_identified'] ?? [], $new['not_identified'] ?? [])),
+            fn ($n) => ! isset($done[strtolower((string) $n)])
+        ));
+        // missing final = missing do top-up (técnico ainda não recuperado), fora os que completaram/viraram not_identified.
+        $notIdSet = array_flip(array_map('strtolower', $notId));
+        $missing = array_values(array_filter(
+            $new['missing'] ?? [],
+            fn ($m) => ! isset($done[strtolower((string) ($m['name'] ?? ''))]) && ! isset($notIdSet[strtolower((string) ($m['name'] ?? ''))])
+        ));
+        return [
+            'requested'      => $prev['requested'] ?? ($new['requested'] ?? []),
+            'completed'      => $completed,
+            'not_identified' => $notId,
+            'missing'        => $missing,
+            'calls'          => (int) ($prev['calls'] ?? 0) + (int) ($new['calls'] ?? 0),
+        ];
     }
 
     /** Uma chamada de aprofundamento para um sub-lote de funções. */
@@ -967,16 +1253,26 @@ class SourceDocSemanticAnalyzer
         $dim['o_que_faz'] = ! empty($ent['o_que_faz']) ? 'present'
             : (! $bOk('entendimento') ? 'missing' : 'not_identified');
 
-        // finalidades de funções — usa o TRACE (requested/completed/missing) do aprofundamento.
-        $reqN = is_array($trace) ? count($trace['requested'] ?? []) : (int) ($this->coverage['relevant_functions_total'] ?? 0);
-        $missN = is_array($trace) ? count($trace['missing'] ?? []) : 0;
+        // finalidades de funções — usa o TRACE. Ponto 5/7: só FALHA TÉCNICA (missing) penaliza; funções
+        // analisadas sem evidência (not_identified) são resultado HONESTO e NÃO viram 'missing'.
+        $reqN  = is_array($trace) ? count($trace['requested'] ?? []) : (int) ($this->coverage['relevant_functions_total'] ?? 0);
+        $techMissN = 0;
+        if (is_array($trace)) {
+            foreach (($trace['missing'] ?? []) as $m) {
+                if (in_array($m['reason'] ?? '', self::TECH_MISS, true)) {
+                    $techMissN++;
+                }
+            }
+        }
+        $completedN = is_array($trace) ? count($trace['completed'] ?? []) : count($funcoes);
         if ($reqN === 0) {
             $dim['finalidades_funcoes'] = empty($funcoes) ? 'not_applicable' : 'present';
-        } elseif ($missN === 0) {
-            $dim['finalidades_funcoes'] = 'present';
+        } elseif ($techMissN > 0) {
+            $dim['finalidades_funcoes'] = 'missing'; // recuperável via top-up seletivo
+        } elseif ($completedN > 0) {
+            $dim['finalidades_funcoes'] = 'present';  // documentou o que tinha evidência (resto not_identified)
         } else {
-            // faltaram por truncamento/orçamento → missing (recuperável via reprocesso seletivo)
-            $dim['finalidades_funcoes'] = 'missing';
+            $dim['finalidades_funcoes'] = 'not_identified'; // todas analisadas, nenhuma determinável
         }
 
         // regras — condicional/query NÃO conta como regra. Aplicabilidade: só ESCRITA de dados é sinal
@@ -1444,19 +1740,37 @@ class SourceDocSemanticAnalyzer
     {
         $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
         $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
-        return ($this->usage['input_tokens'] ?? 0) / 1e6 * $ci + ($this->usage['output_tokens'] ?? 0) / 1e6 * $co;
+        // acumulado por FONTE = base (execuções anteriores) + gasto desta execução.
+        return $this->costBaseUsd + ($this->usage['input_tokens'] ?? 0) / 1e6 * $ci + ($this->usage['output_tokens'] ?? 0) / 1e6 * $co;
+    }
+
+    /** Custo estimado de UMA chamada a partir do payload REAL (sem premissa fixa de 12k) — Ponto 1. */
+    private function estimateCallUsd(string $user, int $out, bool $code): float
+    {
+        $cpt = $code ? (float) config('services.source_doc_ai.chars_per_token_code', 1.6) : (float) config('services.source_doc_ai.chars_per_token_text', 3.2);
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        $in = ceil((mb_strlen($this->systemPrompt()) + mb_strlen($user)) / $cpt);
+        return $in / 1e6 * $ci + $out / 1e6 * $co;
     }
 
     private function usageBlock(): array
     {
         $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
         $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
-        $actual = $this->usage['input_tokens'] / 1e6 * $ci + $this->usage['output_tokens'] / 1e6 * $co;
-        return $this->usage + [
+        $thisRun = $this->usage['input_tokens'] / 1e6 * $ci + $this->usage['output_tokens'] / 1e6 * $co;
+        $extra = [
             'duration_ms'    => (int) ((microtime(true) - $this->t0) * 1000),
-            'actual_cost_usd' => round($actual, 4),
+            'actual_cost_usd' => round($this->costBaseUsd + $thisRun, 4), // acumulado por fonte (≤ hard_limit)
             'hard_limit_usd' => (float) config('services.source_doc_ai.hard_limit_usd', 0.30),
         ];
+        // Ponto 4 — top-up registra custo/chamadas ADICIONAIS separadamente do acumulado.
+        if ($this->costBaseUsd > 0.0) {
+            $extra['base_cost_usd']  = round($this->costBaseUsd, 4);
+            $extra['topup_cost_usd'] = round($thisRun, 4);
+            $extra['topup_calls']    = (int) ($this->usage['calls'] ?? 0);
+        }
+        return $this->usage + $extra;
     }
 
     private function resetState(): void
@@ -1465,6 +1779,7 @@ class SourceDocSemanticAnalyzer
         $this->usage = ['input_tokens' => 0, 'output_tokens' => 0, 'calls' => 0, 'cache_hits' => 0, 'cache_misses' => 0, 'estimated_before_usd' => 0.0];
         $this->rejected = [];
         $this->coverage = [];
+        $this->costBaseUsd = 0.0;
     }
 
     private function skeleton(string $status): array

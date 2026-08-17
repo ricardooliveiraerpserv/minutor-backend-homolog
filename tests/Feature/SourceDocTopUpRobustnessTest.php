@@ -1,0 +1,271 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\SourceCode\Analyzer\SourceDocAiProvider;
+use App\SourceCode\Analyzer\SourceDocSemanticAnalyzer;
+use ReflectionClass;
+use Tests\TestCase;
+
+/**
+ * Robustez dos fontes GRANDES (top-up/recovery) — os testes obrigatórios do pacote:
+ * reserva realista ≤ US$ 0,30, chunk elástico 4→2→1→cost_budget, retry seletivo de bloco,
+ * top-up sem repagar o já feito, missing × not_identified, colisão de classe, merge sem perda.
+ * DB-free; provider fake.
+ */
+class SourceDocTopUpRobustnessTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        config([
+            'services.source_doc_ai.enabled' => true,
+            'services.source_doc_ai.environment' => 'homolog',
+            'services.source_doc_ai.allowed_environments' => ['homolog'],
+            'services.source_doc_ai.cache_enabled' => false,
+            'services.source_doc_ai.simple_route_enabled' => false,
+            'services.source_doc_ai.hard_limit_usd' => 0.30,
+            'services.source_doc_ai.inline_code_max_chars' => 8000,
+            'services.source_doc_ai.block_retry_enabled' => true,
+            'services.source_doc_ai.prompt_version' => 2,
+        ]);
+    }
+
+    private function ai($responder, int $inTok = 120, int $outTok = 60): SourceDocAiProvider
+    {
+        return new class($responder, $inTok, $outTok) implements SourceDocAiProvider {
+            public array $calls = [];
+            private $r;
+            private int $in;
+            private int $out;
+            public function __construct($r, int $in, int $out) { $this->r = $r; $this->in = $in; $this->out = $out; }
+            public function isConfigured(): bool { return true; }
+            public function name(): string { return 'fake'; }
+            public function model(): string { return 'fake-1'; }
+            public function complete(string $system, string $user, array $opts = []): array
+            {
+                $i = count($this->calls);
+                $this->calls[] = $user;
+                $res = is_callable($this->r) ? ($this->r)($user, $i) : $this->r;
+                $stop = 'end_turn';
+                if (is_array($res)) { $stop = $res['stop'] ?? 'end_turn'; $res = $res['text'] ?? ''; }
+                return ['text' => (string) $res, 'usage' => ['input_tokens' => $this->in, 'output_tokens' => $this->out], 'stop' => $stop];
+            }
+        };
+    }
+
+    private function det(int $nFuncs = 2): array
+    {
+        $fns = [];
+        for ($k = 1; $k <= $nFuncs; $k++) {
+            $fns[] = ['name' => 'FN' . $k, 'type' => 'Static Function', 'start_line' => $k, 'end_line' => $k,
+                'called_by' => $k === 1 ? [] : ['FN1'], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'],
+                'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => $k, 'line_end' => $k]];
+        }
+        return [
+            'source_type' => 'Fonte Protheus', 'language' => 'AdvPL', 'file' => ['filename' => 'X.PRW'],
+            'functions' => $fns,
+            'tables' => [['table' => 'SPED050', 'alias' => 'SPED050', 'access' => ['UPDATE'], 'write_fields' => ['EMAIL'], 'where_fields' => ['ID']]],
+            'queries' => [['operation' => 'UPDATE', 'table' => 'SPED050', 'function' => 'FN1', 'write_fields' => ['EMAIL'], 'risk_flags' => []]],
+            'user_calls' => [], 'external_integrations' => [], 'dependencies' => [], 'effects' => [], 'technical_flow' => [], 'security_findings' => [],
+        ];
+    }
+
+    private function entBlock(): string
+    {
+        return json_encode(['entendimento_funcional' => ['uma_frase' => ['texto' => 'Faz X.', 'confidence' => 'medium', 'evidence' => []], 'objetivo' => 'Faz X.', 'quando_usado' => 'sempre', 'o_que_faz' => [['passo' => 'p1', 'evidence' => []]], 'entradas_principais' => [], 'saidas_principais' => [], 'processo_modulo' => ['processo' => 'p', 'modulo' => 'm', 'confidence' => 'low', 'evidence' => []]]]);
+    }
+    private function rulesBlock(): string { return json_encode(['regras_negocio' => [], 'change_summary' => 'x']); }
+    private function depsBlock(): string { return json_encode(['dependencias_criticas' => [], 'risco_alteracao' => ['resumo' => 'r', 'fatores' => []]]); }
+    private function funcsBlock(array $names): string
+    {
+        return json_encode(['funcoes' => array_map(fn ($n) => ['name' => $n, 'finalidade' => 'faz ' . $n, 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]], $names)]);
+    }
+
+    private function make($ai): SourceDocSemanticAnalyzer { return new SourceDocSemanticAnalyzer($ai); }
+
+    private function priv(object $o, string $m, array $args = [])
+    {
+        $r = new ReflectionClass($o);
+        $mm = $r->getMethod($m); $mm->setAccessible(true);
+        return $mm->invokeArgs($o, $args);
+    }
+    private function setProp(object $o, string $p, $v): void
+    {
+        $r = new ReflectionClass($o);
+        $pp = $r->getProperty($p); $pp->setAccessible(true); $pp->setValue($o, $v);
+    }
+
+    // ── Ponto 1+2 — reserva realista + chunk elástico 4→2→1→0 (determinístico via reserva real) ──
+    public function test_elastic_fit_4_2_1_0(): void
+    {
+        $an = $this->make($this->ai(''));
+        $items = [];
+        for ($k = 1; $k <= 4; $k++) {
+            $items[] = ['name' => 'FN' . $k, 'facts' => ['x' => str_repeat('y', 200)], 'code' => str_repeat("z", 300)];
+        }
+        $out = 0;
+        // reservas REAIS do payload por tamanho de sub-lote (monotônicas).
+        $r = fn ($n) => $this->priv($an, 'estimateCallUsd', [$this->priv($an, 'deepenFinalidadesPrompt', [array_slice($items, 0, $n)]), $out, true]) + 0.005;
+        [$r4, $r2, $r1] = [$r(4), $r(2), $r(1)];
+        $this->assertGreaterThan($r2, $r4, 'reserva de 4 > de 2 (payload real, não fixo)');
+        $this->assertGreaterThan($r1, $r2, 'reserva de 2 > de 1');
+
+        $this->setProp($an, 'costBaseUsd', 0.0);
+        // teto entre r2 e r4 ⇒ 4 não cabe, 2 cabe.
+        $this->assertSame(2, $this->priv($an, 'deepenFitCount', [$items, $out, $r2]));
+        // teto = r1 ⇒ só 1 cabe.
+        $this->assertSame(1, $this->priv($an, 'deepenFitCount', [$items, $out, $r1]));
+        // teto abaixo de r1 ⇒ nem 1 cabe (cost_budget).
+        $this->assertSame(0, $this->priv($an, 'deepenFitCount', [$items, $out, $r1 - 0.001]));
+        // INVARIANTE: se cabe n>0, então custo + reserva(n) ≤ teto.
+        $n = $this->priv($an, 'deepenFitCount', [$items, $out, $r2]);
+        $this->assertLessThanOrEqual($r2 + 1e-9, 0.0 + $r($n));
+    }
+
+    // ── Ponto 4 (cost_budget observável): a guarda IMPEDE o aprofundamento quando não há folga no teto ──
+    public function test_cost_budget_blocks_deepening_before_spending(): void
+    {
+        // provider reporta uso ALTO nos blocos ⇒ ao chegar no aprofundamento não há folga: NENHUMA chamada
+        // de função é disparada (a guarda barra ANTES de gastar) e todas viram missing cost_budget.
+        config(['services.source_doc_ai.cost_input_per_mtok' => 3.0, 'services.source_doc_ai.cost_output_per_mtok' => 15.0]);
+        $ai = $this->ai(fn ($u, $i) => match ($i) { 0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(), default => $this->funcsBlock(['FN1', 'FN2']) }, 6_000_000, 0);
+        $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
+        $miss = $r['funcoes_trace']['missing'] ?? [];
+        $this->assertCount(2, $miss, 'ambas faltantes por orçamento');
+        $this->assertSame('cost_budget', $miss[0]['reason']);
+        $this->assertSame('cost_budget', $miss[1]['reason']);
+        $this->assertSame(3, count($ai->calls), 'só os 3 blocos foram chamados; aprofundamento barrado ANTES de gastar');
+        $this->assertSame([], $r['funcoes_trace']['completed'], 'nenhuma função aprofundada');
+    }
+
+    // ── Ponto 3 — retry SOMENTE do bloco truncado (regras), preservando os demais ──
+    public function test_retry_only_regras_block(): void
+    {
+        // regras trunca na 1ª vez (i=1) e recupera no retry; ent/deps/funcoes intactos.
+        $ai = $this->ai(fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(),
+            1 => ['text' => '{"regras_negocio":[{"id":"RN01"', 'stop' => 'max_tokens'], // regras TRUNCADO
+            2 => $this->depsBlock(),
+            3 => $this->funcsBlock(['FN1', 'FN2']),
+            default => json_encode(['regras_negocio' => [['id' => 'RN01', 'titulo' => 't', 'descricao' => 'Grava EMAIL no SPED050', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'EMAIL']]]], 'change_summary' => 'x']), // RETRY regras OK
+        });
+        $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
+        $this->assertSame('ok', $r['block_status']['regras'], 'regras recuperado pelo retry');
+        $this->assertSame('ok', $r['block_status']['entendimento']);
+        $this->assertSame('ok', $r['block_status']['deps_risco']);
+        $this->assertNotEmpty($r['regras_negocio'], 'regra do retry aplicada');
+    }
+
+    // ── Ponto 3 — retry SOMENTE do bloco com JSON inválido (deps) ──
+    public function test_retry_only_deps_invalid_json(): void
+    {
+        $ai = $this->ai(fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(),
+            1 => $this->rulesBlock(),
+            2 => 'isto não é json', // deps INVALID_JSON
+            3 => $this->funcsBlock(['FN1', 'FN2']),
+            default => $this->depsBlock(), // RETRY deps OK
+        });
+        $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
+        $this->assertSame('ok', $r['block_status']['deps_risco'], 'deps recuperado pelo retry');
+        $this->assertSame('ok', $r['block_status']['regras']);
+    }
+
+    // ── Ponto 4 — TOP-UP não repaga o já feito; só chama para o missing técnico ──
+    public function test_topup_recovers_only_missing_without_repaying(): void
+    {
+        // semantic_json EXISTENTE: 8 completed + 4 missing(cost_budget); top-up só reprocessa os 4.
+        $existing = $this->existingPartial(completed: 8, missing: 4, missReason: 'cost_budget');
+        $ai = $this->ai(fn ($u, $i) => $this->funcsBlock(['FN9', 'FN10', 'FN11', 'FN12'])); // só as faltantes
+        $an = $this->make($ai);
+        $r = $an->topUp($existing, $this->det(12), 'codigo', null);
+        // as 8 já feitas seguem documentadas (não foram repagas / reprocessadas)
+        foreach (['FN1', 'FN2', 'FN8'] as $keep) {
+            $this->assertContains($keep, array_column($r['funcoes'], 'name'), "manteve $keep");
+        }
+        $this->assertContains('FN9', array_column($r['funcoes'], 'name'), 'recuperou FN9');
+        $this->assertSame(0, count(array_filter($r['funcoes_trace']['missing'], fn ($m) => in_array($m['reason'], ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'], true))), 'sem missing técnico após top-up');
+        $this->assertSame('completed', $r['status']);
+        $this->assertSame('topup_recovery', $r['strategy']);
+        // custo adicional registrado separadamente e acumulado ≤ teto.
+        $this->assertArrayHasKey('topup_cost_usd', $r['usage']);
+        $this->assertLessThanOrEqual(0.30 + 1e-9, (float) $r['usage']['actual_cost_usd']);
+        // não houve 12 chamadas de função — só o necessário para 4.
+        $this->assertLessThanOrEqual(4, count($ai->calls));
+    }
+
+    // ── Ponto 5 — rejeição/ausência de evidência é not_identified, não missing ──
+    public function test_evidence_absence_is_not_identified_not_missing(): void
+    {
+        // aprofundamento devolve FN1 real e FN2 com finalidade UNDETERMINED (sem evidência) — não truncou.
+        $ai = $this->ai(fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(),
+            default => json_encode(['funcoes' => [
+                ['name' => 'FN1', 'finalidade' => 'faz FN1', 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]],
+                ['name' => 'FN2', 'finalidade' => 'Não foi possível determinar com segurança.', 'confidence' => 'low', 'evidence' => []],
+            ]]),
+        });
+        $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
+        $this->assertContains('FN2', $r['funcoes_trace']['not_identified'], 'sem evidência ⇒ not_identified');
+        $this->assertSame([], array_filter($r['funcoes_trace']['missing'], fn ($m) => in_array($m['reason'], ['cost_budget', 'truncated_unrecovered'], true)), 'não vira missing técnico');
+        $this->assertSame('completed', $r['status']);
+    }
+
+    // ── Ponto 6 — colisão de nome (classe): sub-lote unitário atribui à função canônica; missing não infla ──
+    public function test_class_name_collision_does_not_inflate_missing(): void
+    {
+        // 2 funções; aprofundamento (chunk elástico até 1) devolve SEMPRE o nome da CLASSE 'KLASS'.
+        config(['services.source_doc_ai.deepen_chunk_size' => 1]); // força sub-lotes unitários
+        $ai = $this->ai(fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(),
+            default => json_encode(['funcoes' => [['name' => 'KLASS', 'finalidade' => 'faz algo', 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]]]]),
+        });
+        $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
+        $done = $r['funcoes_trace']['completed'];
+        sort($done);
+        $this->assertSame(['FN1', 'FN2'], $done, 'nomes canônicos, não a classe');
+        $this->assertSame([], $r['funcoes_trace']['missing'], 'colisão não infla missing');
+    }
+
+    // ── Ponto (merge) — top-up não perde conteúdo já válido do semantic_json ──
+    public function test_topup_merge_preserves_existing_content(): void
+    {
+        $existing = $this->existingPartial(completed: 8, missing: 4, missReason: 'cost_budget');
+        $existing['entendimento_funcional']['objetivo'] = 'OBJETIVO ORIGINAL';
+        $existing['regras_negocio'] = [['id' => 'RN01', 'titulo' => 't', 'descricao' => 'Grava EMAIL no SPED050', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'EMAIL']]]];
+        $ai = $this->ai(fn ($u, $i) => $this->funcsBlock(['FN9', 'FN10', 'FN11', 'FN12']));
+        $r = $this->make($ai)->topUp($existing, $this->det(12), 'codigo', null);
+        $this->assertSame('OBJETIVO ORIGINAL', $r['entendimento_funcional']['objetivo'], 'entendimento preservado');
+        $this->assertNotEmpty($r['regras_negocio'], 'regras preservadas');
+        $this->assertGreaterThanOrEqual(12, count($r['funcoes']), 'funções acumuladas (8 + 4)');
+    }
+
+    /** semantic_json parcial sintético: N completed + M missing(cost_budget) sobre det(12). */
+    private function existingPartial(int $completed, int $missing, string $missReason): array
+    {
+        $funcoes = [];
+        $comp = [];
+        for ($k = 1; $k <= $completed; $k++) {
+            $funcoes[] = ['name' => 'FN' . $k, 'finalidade' => 'faz FN' . $k, 'confidence' => 'medium', 'evidence' => [['type' => 'table', 'table' => 'SPED050']]];
+            $comp[] = 'FN' . $k;
+        }
+        $miss = [];
+        for ($k = $completed + 1; $k <= $completed + $missing; $k++) {
+            $miss[] = ['name' => 'FN' . $k, 'reason' => $missReason];
+        }
+        $req = array_map(fn ($k) => 'FN' . $k, range(1, $completed + $missing));
+        return [
+            'schema_version' => 2,
+            'block_status' => ['entendimento' => 'ok', 'regras' => 'ok', 'deps_risco' => 'ok', 'funcoes' => 'partial'],
+            'funcoes_trace' => ['requested' => $req, 'completed' => $comp, 'not_identified' => [], 'missing' => $miss, 'calls' => 3],
+            'entendimento_funcional' => ['uma_frase' => ['texto' => 'x', 'confidence' => 'low', 'evidence' => []], 'objetivo' => 'obj', 'quando_usado' => 'q', 'o_que_faz' => [['passo' => 'p', 'evidence' => []]], 'entradas_principais' => [], 'saidas_principais' => [], 'processo_modulo' => ['processo' => 'p', 'modulo' => 'm', 'confidence' => 'low', 'evidence' => []]],
+            'dependencias_criticas' => [],
+            'risco_alteracao' => ['resumo' => 'r', 'fatores' => []],
+            'funcoes' => $funcoes,
+            'regras_negocio' => [],
+            'status' => 'partial', 'partial_reason' => 'functions_incomplete', 'strategy' => 'initial_blocks_v3',
+            'usage' => ['input_tokens' => 20000, 'output_tokens' => 8000, 'calls' => 5, 'actual_cost_usd' => 0.18, 'hard_limit_usd' => 0.30],
+        ];
+    }
+}

@@ -184,6 +184,53 @@ class SourceDocPipeline
         ], $runSemantic);
     }
 
+    /**
+     * TOP-UP / RECOVERY de uma versão PARCIAL: enriquece o semantic_json existente reprocessando SÓ
+     * blocos quebrados + funções em missing técnico (não refaz do zero). Custo adicional entra no
+     * acumulado por fonte (≤ hard_limit). Caminho ESPECÍFICO de enriquecimento — não é reprocesso genérico.
+     */
+    public function topUpVersion(SourceDocVersion $ver): SourceDocVersion
+    {
+        $doc = $ver->doc;
+        if (! $doc || ! $ver->source_commit_sha || ! is_array($ver->semantic_json) || ! $this->semantic->enabled()) {
+            return $ver;
+        }
+        $fetched = $this->auth->getFileWithSha($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
+        if ($fetched === null) {
+            return $ver;
+        }
+        $sec = $this->sanitizer->scan($fetched['content']);
+        $det = is_array($ver->deterministic_json)
+            ? $ver->deterministic_json
+            : $this->analyzer->analyze($fetched['content'], ['path' => $doc->path, 'filename' => basename($doc->path)]);
+
+        $sem = $this->semantic->topUp($ver->semantic_json, $det, $sec['masked'], null);
+        $status = in_array($sem['status'] ?? '', ['completed', 'skipped_cost_limit', 'skipped_no_structural_change', 'reuse_blob', 'reuse_blob_persistent'], true) ? 'completed' : 'partial';
+
+        $ctx = [
+            'customer_id' => $doc->customer_id, 'owner' => $doc->owner, 'repository' => $doc->repository, 'branch' => $doc->branch,
+            'path' => $doc->path, 'tipo' => $doc->tipo, 'source_commit_sha' => $ver->source_commit_sha,
+            'parent_source_commit_sha' => $ver->parent_source_commit_sha, 'gmud_id' => $ver->gmud_id,
+            'ticket_number' => $ver->ticket_number, 'responsavel' => $ver->responsavel,
+        ];
+        $ver->semantic_json = $sem;
+        $ver->diff_summary = $sem['resumo_alteracao'] ?? $ver->diff_summary;
+        $ver->documentation_json = $this->consolidate($doc, $ctx, $det, $sem, ['diff_stats' => $ver->diff_stats], (array) ($det['security_findings'] ?? []), $status);
+        $ver->analysis_status = $status;
+        $ver->save();
+
+        // réplicas do MESMO blob herdam o enriquecimento (cache persistente por blob).
+        if ($ver->source_blob_sha) {
+            $this->blobReuse->put($ver->source_blob_sha, $sem, (int) $doc->id);
+        }
+        if ((int) $doc->current_version_id === (int) $ver->id) {
+            $doc->documentation_json = $ver->documentation_json;
+            $doc->analysis_status = $status;
+            $doc->save();
+        }
+        return $ver;
+    }
+
     /** JSON consolidado renderizável (a Fase 4 compõe as 14 seções daqui). Lossless. */
     private function consolidate(SourceDoc $doc, array $ctx, array $det, ?array $sem, array $diff, array $findings, string $status): array
     {
