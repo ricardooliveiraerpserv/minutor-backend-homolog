@@ -36,6 +36,9 @@ class SourceDocSemanticAnalyzer
     // Ponto 4 — TOP-UP: custo JÁ gasto em execuções anteriores desta MESMA fonte. A guarda de custo
     // por fonte (≤ hard_limit) deve considerar o acumulado, não só o gasto do top-up atual.
     private float $costBaseUsd = 0.0;
+    // P0 — trilha por chamada: estimated / reserved / actual / ratio (reconcilia estimador com o real).
+    /** @var list<array{block:string,estimated:float,reserved:float,actual:float,ratio:?float,skipped:bool}> */
+    private array $callLog = [];
     // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
     private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
 
@@ -170,21 +173,26 @@ class SourceDocSemanticAnalyzer
         $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
 
         // ── POLÍTICA C — ordem: Entendimento → Funções → Regras → Deps/Risco, com orçamento dinâmico.
-        // Reserva estimada (payload real) dos complementares p/ as funções não os faminta.
-        $reserveReg = $this->estimateCallUsd($regrasUser, $regrasOut, $inlineCode !== '');
+        // Reserva CONSERVADORA (P0) de regras p/ as funções não a faminta; deps usa a folga + top-up.
+        $reserveReg = $this->reservedCallUsd($regrasUser, $regrasOut, $inlineCode !== '');
 
-        // ── BLOCO 1 — Entendimento Funcional (PRIORIDADE MÁXIMA; roda 1º; protegido) ──
-        $g1 = $this->callJson($this->systemPrompt(), $entUser, $entOut);
-        $j1 = is_array($g1['json']) ? $g1['json'] : [];
-        if (! empty($j1['entendimento_funcional'])) {
-            $sem['entendimento_funcional'] = $j1['entendimento_funcional'];
-            $sem['objetivo'] = $j1['entendimento_funcional']['objetivo'] ?? ($j1['objetivo'] ?? null);
+        // ── BLOCO 1 — Entendimento Funcional (PRIORIDADE MÁXIMA; roda 1º; protegido; guarda P0) ──
+        $g1 = $this->guardedCallJson($entUser, $entOut, $entCode !== '', 'entendimento');
+        $entOk = false;
+        if ($g1 === null) {
+            $blocks['entendimento'] = 'skipped_budget';
+        } else {
+            $j1 = is_array($g1['json']) ? $g1['json'] : [];
+            if (! empty($j1['entendimento_funcional'])) {
+                $sem['entendimento_funcional'] = $j1['entendimento_funcional'];
+                $sem['objetivo'] = $j1['entendimento_funcional']['objetivo'] ?? ($j1['objetivo'] ?? null);
+            }
+            if (! empty($j1['fluxo'])) {
+                $sem['fluxo'] = $j1['fluxo'];
+            }
+            $entOk = ! $g1['truncated'] && ! empty($j1['entendimento_funcional']);
+            $blocks['entendimento'] = $entOk ? 'ok' : ($g1['raw_truncated'] ? 'truncated' : 'invalid_json');
         }
-        if (! empty($j1['fluxo'])) {
-            $sem['fluxo'] = $j1['fluxo'];
-        }
-        $entOk = ! $g1['truncated'] && ! empty($j1['entendimento_funcional']);
-        $blocks['entendimento'] = $entOk ? 'ok' : ($g1['raw_truncated'] ? 'truncated' : 'invalid_json');
 
         // ── BLOCO 2 — FUNÇÕES (prioridade sobre os complementares; ANTES de regras/deps) ──
         // teto = hard_limit − reserva(regras); regras fica protegida, deps usa a folga + redistribuição.
@@ -205,33 +213,42 @@ class SourceDocSemanticAnalyzer
             }
         }
 
-        // ── BLOCO 3 — Regras de Negócio (após funções; reserva protegida) ──
+        // ── BLOCO 3 — Regras de Negócio (após funções; reserva protegida; guarda P0) ──
         $regrasOk = false;
-        $g2 = $this->callJson($this->systemPrompt(), $regrasUser, $regrasOut);
-        $j2 = is_array($g2['json']) ? $g2['json'] : [];
-        if (! empty($j2['regras_negocio'])) {
-            $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j2['regras_negocio']);
-        }
-        if (! empty($j2['change_summary'])) {
-            $sem['change_summary'] = $j2['change_summary'];
-        }
-        $regrasOk = ! $g2['truncated'] && $j2 !== [];
-        $blocks['regras'] = $regrasOk ? 'ok' : ($g2['raw_truncated'] ? 'truncated' : 'invalid_json');
-
-        // ── BLOCO 4 — Dependências Críticas + Risco + Pontos (após regras; folga restante) ──
-        $depRiscoOk = false;
-        $g3 = $this->callJson($this->systemPrompt(), $depRiscoUser, $depRiscoOut);
-        $j3 = is_array($g3['json']) ? $g3['json'] : [];
-        foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
-            if (! empty($j3[$k])) {
-                $sem[$k] = $j3[$k];
+        $g2 = $this->guardedCallJson($regrasUser, $regrasOut, $inlineCode !== '', 'regras');
+        if ($g2 === null) {
+            $blocks['regras'] = 'skipped_budget'; // sem reserva segura → deixa p/ top-up (P2)
+        } else {
+            $j2 = is_array($g2['json']) ? $g2['json'] : [];
+            if (! empty($j2['regras_negocio'])) {
+                $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j2['regras_negocio']);
             }
+            if (! empty($j2['change_summary'])) {
+                $sem['change_summary'] = $j2['change_summary'];
+            }
+            $regrasOk = ! $g2['truncated'] && $j2 !== [];
+            $blocks['regras'] = $regrasOk ? 'ok' : ($g2['raw_truncated'] ? 'truncated' : 'invalid_json');
         }
-        if (! empty($j3['risco_alteracao'])) {
-            $sem['risco_alteracao'] = $j3['risco_alteracao'];
+
+        // ── BLOCO 4 — Dependências Críticas + Risco + Pontos (após regras; folga restante; guarda P0) ──
+        // P2 — se não houver orçamento SEGURO para deps, NÃO executa (fica p/ top-up); risco é determinístico.
+        $depRiscoOk = false;
+        $g3 = $this->guardedCallJson($depRiscoUser, $depRiscoOut, $inlineCode !== '', 'deps_risco');
+        if ($g3 === null) {
+            $blocks['deps_risco'] = 'skipped_budget';
+        } else {
+            $j3 = is_array($g3['json']) ? $g3['json'] : [];
+            foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
+                if (! empty($j3[$k])) {
+                    $sem[$k] = $j3[$k];
+                }
+            }
+            if (! empty($j3['risco_alteracao'])) {
+                $sem['risco_alteracao'] = $j3['risco_alteracao'];
+            }
+            $depRiscoOk = ! $g3['truncated'] && $j3 !== [];
+            $blocks['deps_risco'] = $depRiscoOk ? 'ok' : ($g3['raw_truncated'] ? 'truncated' : 'invalid_json');
         }
-        $depRiscoOk = ! $g3['truncated'] && $j3 !== [];
-        $blocks['deps_risco'] = $depRiscoOk ? 'ok' : ($g3['raw_truncated'] ? 'truncated' : 'invalid_json');
 
         // ── POLÍTICA C — REDISTRIBUIÇÃO: a sobra dos complementares (mais baratos que a reserva) volta
         // p/ as funções em missing técnico, dentro do hard_limit real. Mantém top-up como exceção.
@@ -792,7 +809,7 @@ class SourceDocSemanticAnalyzer
         $n = count($cur);
         while ($n >= 1) {
             $sub = array_slice($cur, 0, $n);
-            $reserve = $this->estimateCallUsd($this->deepenFinalidadesPrompt($sub), $this->deepenOutFor($n, $cap), true) + 0.005;
+            $reserve = $this->reservedCallUsd($this->deepenFinalidadesPrompt($sub), $this->deepenOutFor($n, $cap), true); // P0 — reserva conservadora
             if ($this->currentCostUsd() + $reserve <= $hardLimit) {
                 return $n;
             }
@@ -801,18 +818,21 @@ class SourceDocSemanticAnalyzer
         return 0;
     }
 
-    /** Refinamento 1 — quantos tokens de SAÍDA cabem na folga restante do fonte p/ esta chamada. */
+    /** Refinamento 1 + P0 — tokens de SAÍDA que cabem na folga, com RESERVA CONSERVADORA (fator). */
     private function affordableOutTokens(string $user, bool $code, float $hardLimit): int
     {
         $cpt = $code ? (float) config('services.source_doc_ai.chars_per_token_code', 1.6) : (float) config('services.source_doc_ai.chars_per_token_text', 3.2);
         $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
         $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        $factor = (float) config('services.source_doc_ai.cost_reserve_factor', 1.9);
         $inTok = ceil((mb_strlen($this->systemPrompt()) + mb_strlen($user)) / $cpt);
-        $room = $hardLimit - $this->currentCostUsd() - ($inTok / 1e6 * $ci) - 0.005;
-        if ($room <= 0) {
+        // reserved = (inCost + outCost) × fator + 0,005 ≤ hard_limit − custo_acumulado
+        $room = $hardLimit - $this->currentCostUsd() - 0.005;
+        $outCost = $room / max($factor, 0.001) - ($inTok / 1e6 * $ci);
+        if ($outCost <= 0) {
             return 0;
         }
-        return (int) floor($room * 1e6 / max($co, 1e-9));
+        return (int) floor($outCost * 1e6 / max($co, 1e-9));
     }
 
     /**
@@ -838,7 +858,11 @@ class SourceDocSemanticAnalyzer
         } else {
             $out = min($aff, $baseOut); // invalid_json (transiente): mesma faixa basta
         }
-        $g = $this->callJson($this->systemPrompt(), $user, $out);
+        // passa pela guarda central P0 (reserva conservadora + log + reconciliação).
+        $g = $this->guardedCallJson($user, $out, $code, 'retry', $hardLimit);
+        if ($g === null) {
+            return [false, []];
+        }
         $j = is_array($g['json']) ? $g['json'] : [];
         return [! $g['truncated'] && $j !== [], $j];
     }
@@ -1909,6 +1933,37 @@ class SourceDocSemanticAnalyzer
         return $in / 1e6 * $ci + $out / 1e6 * $co;
     }
 
+    /** P0 — RESERVA CONSERVADORA de uma chamada: estimativa × fator (> erro observado) + margem fixa. */
+    private function reservedCallUsd(string $user, int $out, bool $code): float
+    {
+        $factor = (float) config('services.source_doc_ai.cost_reserve_factor', 1.9);
+        return $this->estimateCallUsd($user, $out, $code) * $factor + 0.005;
+    }
+
+    /**
+     * P0 — GUARDA CENTRAL: única porta para toda chamada Anthropic paga do fluxo semântico. Só inicia a
+     * chamada se custo_acumulado + RESERVA (conservadora) ≤ teto (hard_limit por padrão, ou um teto menor
+     * p/ reservar blocos posteriores). Reconcilia o custo REAL após a chamada e registra a trilha por
+     * chamada (estimated/reserved/actual/ratio). Retorna null quando NÃO pode iniciar (o chamador pula).
+     */
+    private function guardedCallJson(string $user, int $out, bool $code, string $block, ?float $ceiling = null): ?array
+    {
+        $ceil = $ceiling ?? (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+        $hard = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+        $ceil = min($ceil, $hard); // o teto efetivo NUNCA excede o hard_limit
+        $est = $this->estimateCallUsd($user, $out, $code);
+        $reserved = $this->reservedCallUsd($user, $out, $code);
+        if ($this->currentCostUsd() + $reserved > $ceil) {
+            $this->callLog[] = ['block' => $block, 'estimated' => round($est, 5), 'reserved' => round($reserved, 5), 'actual' => 0.0, 'ratio' => null, 'skipped' => true];
+            return null; // sem reserva segura → não inicia (mantém o hard_limit inviolável)
+        }
+        $before = $this->currentCostUsd();
+        $g = $this->callJson($this->systemPrompt(), $user, $out);
+        $actual = $this->currentCostUsd() - $before;
+        $this->callLog[] = ['block' => $block, 'estimated' => round($est, 5), 'reserved' => round($reserved, 5), 'actual' => round($actual, 5), 'ratio' => $est > 0 ? round($actual / $est, 2) : null, 'skipped' => false];
+        return $g;
+    }
+
     private function usageBlock(): array
     {
         $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
@@ -1925,6 +1980,13 @@ class SourceDocSemanticAnalyzer
             $extra['topup_cost_usd'] = round($thisRun, 4);
             $extra['topup_calls']    = (int) ($this->usage['calls'] ?? 0);
         }
+        // P1 — trilha por chamada (estimated/reserved/actual/ratio) p/ reconciliar o estimador com o real.
+        if (! empty($this->callLog)) {
+            $ratios = array_values(array_filter(array_map(fn ($c) => $c['ratio'] ?? null, $this->callLog), fn ($r) => $r !== null && $r > 0));
+            $extra['cost_calls'] = $this->callLog;
+            $extra['est_error_ratio_avg'] = $ratios ? round(array_sum($ratios) / count($ratios), 2) : null;
+            $extra['calls_skipped_budget'] = count(array_filter($this->callLog, fn ($c) => ! empty($c['skipped'])));
+        }
         return $this->usage + $extra;
     }
 
@@ -1935,6 +1997,7 @@ class SourceDocSemanticAnalyzer
         $this->rejected = [];
         $this->coverage = [];
         $this->costBaseUsd = 0.0;
+        $this->callLog = [];
     }
 
     private function skeleton(string $status): array

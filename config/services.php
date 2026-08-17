@@ -89,13 +89,14 @@ return [
         // split narrativa×funções; estes são o ajuste fino permitido, mantendo custo ≤ US$ 0,25).
         'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 3000),
         'max_output_tokens_global'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_GLOBAL', 5000),
-        // Política C — output ADAPTATIVO por bloco (centralizado; não constante mágica no código).
-        // Calibrado por medição histórica (n=42): output real P90 ~ ent 1166 / regras 1123 / deps 638
-        // (máx 1313/1199/906). Reservados P90×1,6 (>> máximo), cortando ~3–4× a reserva ociosa que
-        // faminta os demais blocos — permite Entendimento+funções+regras+deps na 1ª passada ≤ US$ 0,30.
-        'max_output_tokens_entendimento' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_ENTENDIMENTO', 1900),
-        'max_output_tokens_regras'       => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_REGRAS', 1800),
-        'max_output_tokens_deprisco'     => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_DEPRISCO', 1500),
+        // P1 — output por bloco (centralizado) calibrado pelo output BRUTO medido (não o finalizado):
+        // máx observado nos grandes ent 2408 / regras 2649 / deps 2877 (nenhum truncou a 4000). Caps ≥ máx
+        // com folga p/ NÃO truncar previsivelmente. O bruto é ~2× (deps ~4×) o finalizado — logo o corte
+        // possível é pequeno (ent 4000→2600). O ganho de orçamento vem do #4 (deepening) + guarda P0, não
+        // de espremer estes blocos: espremê-los só troca desperdício por truncamento→retry.
+        'max_output_tokens_entendimento' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_ENTENDIMENTO', 2600),
+        'max_output_tokens_regras'       => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_REGRAS', 2800),
+        'max_output_tokens_deprisco'     => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_DEPRISCO', 3000),
         // Aprofundamento (código das funções críticas): nº de funções e orçamento de tokens do código.
         'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
         'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),
@@ -137,6 +138,10 @@ return [
         'block_retry_enabled'        => filter_var(env('SOURCE_DOC_AI_BLOCK_RETRY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         // Refinamento 1 — saída mínima útil p/ retry de bloco; abaixo disso não gasta chamada.
         'block_retry_min_out'        => (int) env('SOURCE_DOC_AI_BLOCK_RETRY_MIN_OUT', 1200),
+        // P0 — GUARDA DE CUSTO INVIOLÁVEL: como a estimativa ficou ~1,7× abaixo do real no gate, a
+        // reserva de CADA chamada = estimativa × fator (conservador, > erro observado). Nenhum caminho
+        // do analyzer inicia chamada cuja reserva possa ultrapassar o hard-limit de US$ 0,30.
+        'cost_reserve_factor'        => (float) env('SOURCE_DOC_AI_COST_RESERVE_FACTOR', 1.9),
         // Refinamento 4 — output ADAPTATIVO do aprofundamento: proporcional ao nº de funções do chunk
         // (base + por_funcao × n), limitado por max_output_tokens_per_call. Remove o piso artificial de
         // ~2600 tokens/chamada. Calibrado pelos outputs dos pilotos (finalidade curta ~200-350 tok/função).

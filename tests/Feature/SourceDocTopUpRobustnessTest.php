@@ -105,8 +105,8 @@ class SourceDocTopUpRobustnessTest extends TestCase
             $items[] = ['name' => 'FN' . $k, 'facts' => ['x' => str_repeat('y', 200)], 'code' => str_repeat("z", 300)];
         }
         $cap = 2600;
-        // reservas REAIS por tamanho de sub-lote, com output ADAPTATIVO (mesma conta do deepenFitCount).
-        $r = fn ($n) => $this->priv($an, 'estimateCallUsd', [$this->priv($an, 'deepenFinalidadesPrompt', [array_slice($items, 0, $n)]), $this->priv($an, 'deepenOutFor', [$n, $cap]), true]) + 0.005;
+        // reservas CONSERVADORAS (P0) por sub-lote — mesma conta do deepenFitCount (reservedCallUsd).
+        $r = fn ($n) => $this->priv($an, 'reservedCallUsd', [$this->priv($an, 'deepenFinalidadesPrompt', [array_slice($items, 0, $n)]), $this->priv($an, 'deepenOutFor', [$n, $cap]), true]);
         [$r4, $r2, $r1] = [$r(4), $r(2), $r(1)];
         $this->assertGreaterThan($r2, $r4, 'reserva de 4 > de 2 (payload + output adaptativo)');
         $this->assertGreaterThan($r1, $r2, 'reserva de 2 > de 1');
@@ -123,20 +123,23 @@ class SourceDocTopUpRobustnessTest extends TestCase
         $this->assertLessThanOrEqual($r2 + 1e-9, 0.0 + $r($n));
     }
 
-    // ── Ponto 4 (cost_budget observável): a guarda IMPEDE o aprofundamento quando não há folga no teto ──
-    public function test_cost_budget_blocks_deepening_before_spending(): void
+    // ── P0 — guarda inviolável: custo alto após o 1º bloco BARRA todos os subsequentes (funções E blocos) ──
+    public function test_cost_guard_blocks_all_subsequent_calls(): void
     {
-        // provider reporta uso ALTO nos blocos ⇒ ao chegar no aprofundamento não há folga: NENHUMA chamada
-        // de função é disparada (a guarda barra ANTES de gastar) e todas viram missing cost_budget.
+        // provider reporta uso ALTÍSSIMO no Entendimento ⇒ ao chegar em funções/regras/deps não há folga:
+        // a guarda barra ANTES de gastar. Ordem Política C: ent (roda) → funções → regras → deps (todos barrados).
         config(['services.source_doc_ai.cost_input_per_mtok' => 3.0, 'services.source_doc_ai.cost_output_per_mtok' => 15.0]);
-        $ai = $this->ai(fn ($u, $i) => match ($i) { 0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(), default => $this->funcsBlock(['FN1', 'FN2']) }, 6_000_000, 0);
+        $ai = $this->ai(fn ($u, $i) => str_contains($u, 'entendimento_funcional') ? $this->entBlock()
+            : (str_contains($u, 'FUNÇÕES RELEVANTES') ? $this->funcsBlock(['FN1', 'FN2'])
+            : (str_contains($u, 'dependencias_criticas') ? $this->depsBlock() : $this->rulesBlock())), 6_000_000, 0);
         $r = $this->make($ai)->analyze($this->det(2), 'codigo', null, []);
+        $this->assertSame(1, count($ai->calls), 'só o Entendimento rodou; tudo depois barrado ANTES de gastar');
         $miss = $r['funcoes_trace']['missing'] ?? [];
-        $this->assertCount(2, $miss, 'ambas faltantes por orçamento');
+        $this->assertCount(2, $miss, 'ambas as funções faltantes por orçamento');
         $this->assertSame('cost_budget', $miss[0]['reason']);
-        $this->assertSame('cost_budget', $miss[1]['reason']);
-        $this->assertSame(3, count($ai->calls), 'só os 3 blocos foram chamados; aprofundamento barrado ANTES de gastar');
         $this->assertSame([], $r['funcoes_trace']['completed'], 'nenhuma função aprofundada');
+        $this->assertSame('skipped_budget', $r['block_status']['regras'], 'regras barrada pela guarda');
+        $this->assertSame('skipped_budget', $r['block_status']['deps_risco'], 'deps barrada pela guarda');
     }
 
     // ── Ponto 3 — retry SOMENTE do bloco truncado (regras), preservando os demais ──
