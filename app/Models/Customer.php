@@ -208,6 +208,14 @@ class Customer extends Model
     }
 
     /**
+     * Centros de custo cadastrados para este cliente (usados no rateio dos projetos).
+     */
+    public function costCenters(): HasMany
+    {
+        return $this->hasMany(CostCenter::class);
+    }
+
+    /**
      * Relacionamento com usuários do cliente
      */
     public function users(): HasMany
