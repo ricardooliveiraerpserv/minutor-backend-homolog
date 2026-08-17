@@ -14,6 +14,11 @@ class NotificationController extends Controller
     /** Perfis que podem publicar/gerir publicações internas (avisos, enquetes, presença). */
     private const MANAGERS = ['admin', 'administrativo', 'coordenador'];
 
+    // Conclusões de tarefa (auto): SENSÍVEL (reunião) — na tela de gerenciar só p/ destinatário.
+    private const COMPLETION_TITLES = ['Tarefa de reunião concluída', 'Tarefa concluída', 'Tarefa resolvida pela coordenação'];
+    // Notificações PESSOAIS de apontamento (auto): NÃO são publicações — fora do gerenciamento.
+    private const APONTAMENTO_TITLES = ['Apontamento rejeitado', 'Ajuste solicitado no apontamento'];
+
     private function internalOrAbort(Request $request): \App\Models\User
     {
         $u = $request->user();
@@ -334,8 +339,24 @@ class NotificationController extends Controller
         $rows = AppNotification::withCount(['reads as acks_count' => fn ($q) => $q->whereNotNull('ack_at')])
             ->with('poll.options')
             ->when($reminderIds, fn ($q) => $q->whereNotIn('id', $reminderIds))
-            // Admin e ADMINISTRATIVO gerenciam TODAS as publicações; coordenador só as que criou.
-            ->when(!$admin->isAdmin() && !$admin->isAdministrativo(), fn ($q) => $q->where('created_by', $admin->id))
+            ->where(function ($q) use ($admin) {
+                // PUBLICAÇÕES (avisos/comunicados/enquetes): admin e ADMINISTRATIVO gerenciam TODAS;
+                // coordenador só as que criou.
+                $q->where(function ($pub) use ($admin) {
+                    // Fora do gerenciamento: conclusões de tarefa E notificações de apontamento (pessoais).
+                    $pub->whereNotIn('title', array_merge(self::COMPLETION_TITLES, self::APONTAMENTO_TITLES));
+                    if (!$admin->isAdmin() && !$admin->isAdministrativo()) {
+                        $pub->where('created_by', $admin->id);
+                    }
+                })
+                // 🔒 CONCLUSÕES de tarefa (auto-geradas, SENSÍVEL — reunião): só aparecem p/ quem é
+                // DESTINATÁRIO (participante/criador da tarefa), ou seja, tem notification_reads. NUNCA
+                // p/ quem não participa — nem admin/administrativo. (pedido Ricardo: reunião só p/ envolvidos)
+                ->orWhere(function ($done) use ($admin) {
+                    $done->whereIn('title', self::COMPLETION_TITLES)
+                        ->whereHas('reads', fn ($r) => $r->where('user_id', $admin->id));
+                });
+            })
             ->orderByDesc('created_at')->get()
             ->map(function (AppNotification $n) use ($admin) {
                 $arr = $n->toArray();
