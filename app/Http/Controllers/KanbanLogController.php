@@ -90,6 +90,9 @@ class KanbanLogController extends Controller
         // criados direto em execução) + terminais que têm log. Antes só entravam os que tinham log,
         // então projetos ativos sem transição registrada (ex.: criado já "Em Andamento") sumiam da tela.
         $projects = \App\Models\Project::whereDoesntHave('serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))
+            // Investimento (comercial/interno + lead-projeto) NÃO é card do pipeline — mora em "Investimento Interno".
+            // Mesma exclusão dos cards de Demandas e Projetos (ContractController::kanban) p/ a tela bater 1:1.
+            ->where(fn ($iq) => $iq->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
             ->where(fn ($q) => $q->whereNotIn('status', $terminal)->orWhereIn('id', $logsByProject->keys()->all()))
             ->with(['customer:id,name,executive_id,executive_bizify_id', 'customer.executive:id,name', 'customer.executiveBizify:id,name', 'executivoConta:id,name', 'kanbanOverrideCoordinator:id,name', 'coordinators:id,name'])
             ->get(['id', 'code', 'name', 'customer_id', 'created_at', 'status', 'service_type_id', 'executivo_conta_id', 'kanban_coordinator_override_id'])->keyBy('id');
