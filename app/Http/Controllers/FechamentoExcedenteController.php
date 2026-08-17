@@ -457,7 +457,7 @@ class FechamentoExcedenteController extends Controller
         $bodyHtml = view('emails.fechamento.excedente', [
             'clienteName'     => $viewData['clienteName'] ?? $customer->name,
             'senderName'      => $sender->name,
-            'periodo'         => $periodo,
+            'periodo'         => $viewData['competencia'] ?? Carbon::parse($yearMonth . '-01')->format('m/Y'),
             'valorTotal'      => $viewData['totalFmt'],
             'mensagem'        => $mensagem,
             'withAttachments' => true,
