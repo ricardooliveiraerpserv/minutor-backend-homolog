@@ -109,13 +109,18 @@ class ApprovalController extends Controller
         if ($u->isCoordenador() && $u->coordinator_type === 'sustentacao') {
             return $query->count(); // build*Query já restringe à fila de sustentação/cloud
         }
+        // ESPELHA EXATAMENTE o filtro coordinator_id da LISTA (applyTimesheetFilters/applyExpenseFilters):
+        //   override do kanban aponta pra ele  OU  (sem override + não-sustentação + coordenador do projeto).
+        // Antes contava também "M2M mesmo com override apontando p/ outro" e "executivo de Investimento
+        // Comercial" — casos que o link (coordinator_id=$u) NÃO consegue mostrar → badge dizia "N p/ aprovar"
+        // e a tela abria vazia. Agora o contador = o que a tela mostra ao abrir pelo card.
         $query->where(function ($outer) use ($u) {
-            $outer->whereHas('project', fn ($pq) => $pq
-                    ->whereHas('coordinators', fn ($c) => $c->where('users.id', $u->id))
-                    ->orWhere('kanban_coordinator_override_id', $u->id))
-                ->orWhereHas('project', fn ($pq) => $pq
-                    ->where('is_investimento_comercial', true)->where('categoria_interna', 'Comercial')
-                    ->whereHas('customer', fn ($cq) => $cq->where('executive_id', $u->id)));
+            $outer->whereHas('project', fn ($pq) => $pq->where('kanban_coordinator_override_id', $u->id));
+            $outer->orWhere(function ($q2) use ($u) {
+                $q2->whereHas('project', fn ($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereDoesntHave('serviceType', fn ($sq) => $sq->where('code', 'sustentacao')))
+                   ->whereHas('project.coordinators', fn ($cq) => $cq->where('users.id', $u->id));
+            });
         });
         return $query->count();
     }
