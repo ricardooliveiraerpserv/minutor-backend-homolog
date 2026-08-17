@@ -300,7 +300,10 @@ class ClosingService
         ClosingLog::create([
             'event' => $event, 'period_kind' => $kind, 'period_key' => $key,
             'project_id' => $projectId, 'user_id' => $userId,
-            'occurred_at' => Carbon::now(self::TZ), 'note' => $note,
+            // Gravar em UTC (timezone do app). Antes usava Carbon::now(self::TZ) = hora BRT,
+            // que era persistida como wall-clock naïve e relida como UTC → o log exibia 3h a menos
+            // (17:29 virava 14:29). now() garante que o horário salvo == horário real após conversão.
+            'occurred_at' => Carbon::now(), 'note' => $note,
         ]);
     }
 
