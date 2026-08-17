@@ -213,7 +213,7 @@ class SourceDocSemanticAnalyzer
         // válidos e sem refazer os demais. Só dispara se o bloco falhou E há folga no teto (US$ 0,30).
         $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
         if (! $entOk) {
-            [$ok, $j] = $this->retryBlockCall($entUser, $entOut, $entCode !== '', $hardLimit);
+            [$ok, $j] = $this->retryBlockCall($entUser, $entOut, $entCode !== '', $hardLimit, ($blocks['entendimento'] ?? '') === 'truncated');
             if ($ok && ! empty($j['entendimento_funcional'])) {
                 $sem['entendimento_funcional'] = $j['entendimento_funcional'];
                 $sem['objetivo'] = $j['entendimento_funcional']['objetivo'] ?? ($sem['objetivo'] ?? null);
@@ -225,7 +225,7 @@ class SourceDocSemanticAnalyzer
             }
         }
         if (! $regrasOk) {
-            [$ok, $j] = $this->retryBlockCall($regrasUser, $regrasOut, $inlineCode !== '', $hardLimit);
+            [$ok, $j] = $this->retryBlockCall($regrasUser, $regrasOut, $inlineCode !== '', $hardLimit, ($blocks['regras'] ?? '') === 'truncated');
             if ($ok) {
                 if (! empty($j['regras_negocio'])) {
                     $sem['regras_negocio'] = $j['regras_negocio'];
@@ -238,7 +238,7 @@ class SourceDocSemanticAnalyzer
             }
         }
         if (! $depRiscoOk) {
-            [$ok, $j] = $this->retryBlockCall($depRiscoUser, $depRiscoOut, $inlineCode !== '', $hardLimit);
+            [$ok, $j] = $this->retryBlockCall($depRiscoUser, $depRiscoOut, $inlineCode !== '', $hardLimit, ($blocks['deps_risco'] ?? '') === 'truncated');
             if ($ok) {
                 foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
                     if (! empty($j[$k])) {
@@ -505,6 +505,31 @@ class SourceDocSemanticAnalyzer
         return array_map(fn ($x) => $x['f'], array_slice($scored, 0, max(1, $limit)));
     }
 
+    /**
+     * Nomes de função DUPLICADOS no determinístico (fontes orientados a classe onde todos os métodos
+     * saem com o mesmo nome). Refinamento 3: identidade estável precisa de name + start_line nesses casos.
+     */
+    private function fnDupNames(array $det): array
+    {
+        $count = [];
+        foreach (($det['functions'] ?? []) as $f) {
+            $n = strtolower((string) ($f['name'] ?? ''));
+            $count[$n] = ($count[$n] ?? 0) + 1;
+        }
+        return array_filter($count, fn ($c) => $c > 1);
+    }
+
+    /** Identidade ESTÁVEL exibível: só o nome quando é único; name@start_line quando o nome se repete. */
+    private function fnDisplayName(array $f, array $dup): string
+    {
+        $name = (string) ($f['name'] ?? '');
+        if (isset($dup[strtolower($name)])) {
+            $line = $f['start_line'] ?? ($f['evidence']['line_start'] ?? '?');
+            return $name . '@' . $line;
+        }
+        return $name;
+    }
+
     /** Funções críticas cujo CÓDIGO vale enviar (escritoras/risco/entrypoint), dentro do orçamento. */
     /** Itens do aprofundamento: TODAS as funções relevantes (facts) + CÓDIGO só das críticas (≤N, budget). */
     private function buildDeepItems(array $relevant, array $det, string $maskedCode): array
@@ -515,6 +540,7 @@ class SourceDocSemanticAnalyzer
                 $riskFns[strtolower((string) ($q['function'] ?? ''))] = true;
             }
         }
+        $dup = $this->fnDupNames($det); // refinamento 3 — identidade estável em fontes-classe
         $lines = explode("\n", $maskedCode);
         $budgetTokens = (int) config('services.source_doc_ai.deepen_code_budget_tokens', 12000);
         $maxCode = (int) config('services.source_doc_ai.max_deepen_functions', 6);
@@ -535,7 +561,9 @@ class SourceDocSemanticAnalyzer
                     $codeCount++;
                 }
             }
-            $items[] = ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $code];
+            // 'name' = identidade estável (name@line em fontes-classe) — distingue métodos homônimos no
+            // matching/trace/dedup e é o rótulo que o modelo ecoa de volta.
+            $items[] = ['name' => $this->fnDisplayName($f, $dup), 'base_name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $code];
         }
         return $items;
     }
@@ -709,14 +737,42 @@ class SourceDocSemanticAnalyzer
         return 0;
     }
 
-    /** Ponto 3 — reexecuta UM bloco (sem refazer os demais). Retorna [sucesso, json]. Respeita o teto. */
-    private function retryBlockCall(string $user, int $out, bool $code, float $hardLimit): array
+    /** Refinamento 1 — quantos tokens de SAÍDA cabem na folga restante do fonte p/ esta chamada. */
+    private function affordableOutTokens(string $user, bool $code, float $hardLimit): int
+    {
+        $cpt = $code ? (float) config('services.source_doc_ai.chars_per_token_code', 1.6) : (float) config('services.source_doc_ai.chars_per_token_text', 3.2);
+        $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
+        $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
+        $inTok = ceil((mb_strlen($this->systemPrompt()) + mb_strlen($user)) / $cpt);
+        $room = $hardLimit - $this->currentCostUsd() - ($inTok / 1e6 * $ci) - 0.005;
+        if ($room <= 0) {
+            return 0;
+        }
+        return (int) floor($room * 1e6 / max($co, 1e-9));
+    }
+
+    /**
+     * Ponto 3 + Refinamento 1 — reexecuta UM bloco (sem refazer os demais) com budget de saída ADAPTATIVO.
+     * Se o bloco já TRUNCOU, não repete com o mesmo max_output_tokens: amplia dentro da folga; se não
+     * houver folga p/ ampliar (nem p/ um mínimo útil), NÃO gasta chamada. Retorna [sucesso, json].
+     */
+    private function retryBlockCall(string $user, int $baseOut, bool $code, float $hardLimit, bool $wasTruncated): array
     {
         if (! (bool) config('services.source_doc_ai.block_retry_enabled', true)) {
             return [false, []];
         }
-        if ($this->currentCostUsd() + $this->estimateCallUsd($user, $out, $code) + 0.005 > $hardLimit) {
-            return [false, []]; // sem folga no teto por fonte → não reprocessa (fica missing honesto)
+        $aff = $this->affordableOutTokens($user, $code, $hardLimit);
+        $minOut = (int) config('services.source_doc_ai.block_retry_min_out', 1200);
+        if ($aff < $minOut) {
+            return [false, []]; // sem folga p/ uma chamada útil → não gasta (fica honesto)
+        }
+        if ($wasTruncated) {
+            if ($aff <= $baseOut) {
+                return [false, []]; // truncou antes e não dá p/ ampliar além do base → chamada inútil, pula
+            }
+            $out = min($aff, max($baseOut * 2, $baseOut + 800)); // amplia a saída dentro da folga
+        } else {
+            $out = min($aff, $baseOut); // invalid_json (transiente): mesma faixa basta
         }
         $g = $this->callJson($this->systemPrompt(), $user, $out);
         $j = is_array($g['json']) ? $g['json'] : [];
@@ -762,47 +818,12 @@ class SourceDocSemanticAnalyzer
         $deepenOut  = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2600);
 
         $sem = $existing;
+        // conjunto RELEVANTE atual com identidade estável (refinamento 3) — base de um trace limpo.
+        $dup = $this->fnDupNames($det);
+        $freshRequested = array_values(array_map(fn ($f) => $this->fnDisplayName($f, $dup), $relevant));
 
-        // (a) retry seletivo dos blocos quebrados — funções ficam por último (prioridade de orçamento).
-        if (($blocks['entendimento'] ?? 'ok') !== 'ok') {
-            [$ok, $j] = $this->retryBlockCall($this->entendimentoUserPrompt($compact, $diff, $entCode), $entOut, $entCode !== '', $hardLimit);
-            if ($ok && ! empty($j['entendimento_funcional'])) {
-                $sem['entendimento_funcional'] = $j['entendimento_funcional'];
-                $sem['objetivo'] = $j['entendimento_funcional']['objetivo'] ?? ($sem['objetivo'] ?? null);
-                if (! empty($j['fluxo'])) {
-                    $sem['fluxo'] = $j['fluxo'];
-                }
-                $blocks['entendimento'] = 'ok';
-            }
-        }
-        if (($blocks['regras'] ?? 'ok') !== 'ok') {
-            [$ok, $j] = $this->retryBlockCall($this->regrasUserPrompt($compact, $diff, $inlineCode), $regrasOut, $inlineCode !== '', $hardLimit);
-            if ($ok) {
-                if (! empty($j['regras_negocio'])) {
-                    $sem['regras_negocio'] = $j['regras_negocio'];
-                }
-                if (! empty($j['change_summary'])) {
-                    $sem['change_summary'] = $j['change_summary'];
-                }
-                $blocks['regras'] = 'ok';
-            }
-        }
-        if (($blocks['deps_risco'] ?? 'ok') !== 'ok') {
-            [$ok, $j] = $this->retryBlockCall($this->depRiscoUserPrompt($compact, $diff, $inlineCode), $depRiscoOut, $inlineCode !== '', $hardLimit);
-            if ($ok) {
-                foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
-                    if (! empty($j[$k])) {
-                        $sem[$k] = $j[$k];
-                    }
-                }
-                if (! empty($j['risco_alteracao'])) {
-                    $sem['risco_alteracao'] = $j['risco_alteracao'];
-                }
-                $blocks['deps_risco'] = 'ok';
-            }
-        }
-
-        // (b) aprofundamento seletivo SOMENTE das funções em missing técnico (aproveita function cache).
+        // (b PRIMEIRO) Refinamento 2 — PRIORIDADE DE ORÇAMENTO: as funções em missing técnico vêm antes
+        // dos retries de bloco, para um retry não faminta finalidades que caberiam no teto.
         if (! empty($techMissNames)) {
             $missFns = array_values(array_filter($det['functions'] ?? [], fn ($f) => isset($techMissNames[strtolower((string) ($f['name'] ?? ''))])));
             $items = $this->buildDeepItems($missFns, $det, $maskedCode);
@@ -814,7 +835,47 @@ class SourceDocSemanticAnalyzer
             if (! empty($newPoints)) {
                 $sem['pontos_atencao'] = array_merge($sem['pontos_atencao'] ?? [], $newPoints);
             }
-            $trace = $this->mergeTrace($trace, $newTrace);
+            $trace = $this->mergeTrace($trace, $newTrace, $freshRequested);
+        }
+
+        // (a DEPOIS) retry seletivo dos blocos quebrados, com a FOLGA restante — refinamento 1: budget
+        // de saída ADAPTATIVO (bloco que já truncou não é repetido com o mesmo max_output_tokens).
+        if (($blocks['entendimento'] ?? 'ok') !== 'ok') {
+            [$ok, $j] = $this->retryBlockCall($this->entendimentoUserPrompt($compact, $diff, $entCode), $entOut, $entCode !== '', $hardLimit, $blocks['entendimento'] === 'truncated');
+            if ($ok && ! empty($j['entendimento_funcional'])) {
+                $sem['entendimento_funcional'] = $j['entendimento_funcional'];
+                $sem['objetivo'] = $j['entendimento_funcional']['objetivo'] ?? ($sem['objetivo'] ?? null);
+                if (! empty($j['fluxo'])) {
+                    $sem['fluxo'] = $j['fluxo'];
+                }
+                $blocks['entendimento'] = 'ok';
+            }
+        }
+        if (($blocks['regras'] ?? 'ok') !== 'ok') {
+            [$ok, $j] = $this->retryBlockCall($this->regrasUserPrompt($compact, $diff, $inlineCode), $regrasOut, $inlineCode !== '', $hardLimit, $blocks['regras'] === 'truncated');
+            if ($ok) {
+                if (! empty($j['regras_negocio'])) {
+                    $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j['regras_negocio']);
+                }
+                if (! empty($j['change_summary'])) {
+                    $sem['change_summary'] = $j['change_summary'];
+                }
+                $blocks['regras'] = 'ok';
+            }
+        }
+        if (($blocks['deps_risco'] ?? 'ok') !== 'ok') {
+            [$ok, $j] = $this->retryBlockCall($this->depRiscoUserPrompt($compact, $diff, $inlineCode), $depRiscoOut, $inlineCode !== '', $hardLimit, $blocks['deps_risco'] === 'truncated');
+            if ($ok) {
+                foreach (['dependencias_criticas', 'pontos_atencao'] as $k) {
+                    if (! empty($j[$k])) {
+                        $sem[$k] = $j[$k];
+                    }
+                }
+                if (! empty($j['risco_alteracao'])) {
+                    $sem['risco_alteracao'] = $j['risco_alteracao'];
+                }
+                $blocks['deps_risco'] = 'ok';
+            }
         }
 
         // block_status + status recomputados sobre o resultado do top-up.
@@ -855,23 +916,47 @@ class SourceDocSemanticAnalyzer
         return $this->finalize($sem, $det, $diff);
     }
 
-    /** Une o trace anterior com o do top-up: completed acumula; not_identified perde os que completaram; missing = restante técnico. */
-    private function mergeTrace(array $prev, array $new): array
+    /**
+     * Recomputa o trace do top-up SOBRE o conjunto relevante ATUAL ($freshRequested, identidade estável),
+     * evitando o missing INFLADO por nomes duplicados de fontes-classe. completed acumula (anterior +
+     * novo) restrito ao conjunto atual; not_identified idem (menos os que completaram); missing = o que
+     * sobrou, com o motivo técnico do top-up. Tudo por chave de identidade estável (name@line quando dup).
+     */
+    private function mergeTrace(array $prev, array $new, array $freshRequested): array
     {
-        $completed = array_values(array_unique(array_merge($prev['completed'] ?? [], $new['completed'] ?? [])));
+        $reqSet = array_flip(array_map('strtolower', $freshRequested));
+        $inReq = fn ($n) => isset($reqSet[strtolower((string) $n)]);
+
+        $completed = array_values(array_unique(array_filter(
+            array_merge($prev['completed'] ?? [], $new['completed'] ?? []),
+            $inReq
+        )));
         $done = array_flip(array_map('strtolower', $completed));
-        $notId = array_values(array_filter(
-            array_unique(array_merge($prev['not_identified'] ?? [], $new['not_identified'] ?? [])),
-            fn ($n) => ! isset($done[strtolower((string) $n)])
-        ));
-        // missing final = missing do top-up (técnico ainda não recuperado), fora os que completaram/viraram not_identified.
+
+        $notId = array_values(array_unique(array_filter(
+            array_merge($prev['not_identified'] ?? [], $new['not_identified'] ?? []),
+            fn ($n) => $inReq($n) && ! isset($done[strtolower((string) $n)])
+        )));
         $notIdSet = array_flip(array_map('strtolower', $notId));
-        $missing = array_values(array_filter(
-            $new['missing'] ?? [],
-            fn ($m) => ! isset($done[strtolower((string) ($m['name'] ?? ''))]) && ! isset($notIdSet[strtolower((string) ($m['name'] ?? ''))])
-        ));
+
+        // motivos técnicos por nome, vindos do top-up (fallback cost_budget).
+        $reasonByName = [];
+        foreach ($new['missing'] ?? [] as $m) {
+            if (! empty($m['name'])) {
+                $reasonByName[strtolower((string) $m['name'])] = $m['reason'] ?? 'cost_budget';
+            }
+        }
+        // missing = relevante atual que não completou nem virou not_identified.
+        $missing = [];
+        foreach ($freshRequested as $n) {
+            $low = strtolower((string) $n);
+            if (isset($done[$low]) || isset($notIdSet[$low])) {
+                continue;
+            }
+            $missing[] = ['name' => $n, 'reason' => $reasonByName[$low] ?? 'cost_budget'];
+        }
         return [
-            'requested'      => $prev['requested'] ?? ($new['requested'] ?? []),
+            'requested'      => array_values($freshRequested),
             'completed'      => $completed,
             'not_identified' => $notId,
             'missing'        => $missing,
@@ -1061,7 +1146,10 @@ class SourceDocSemanticAnalyzer
             if ($name === '' || isset($seen[strtolower($name)])) {
                 continue;
             }
-            if (! isset($fnSet[strtolower($name)])) {
+            // Refinamento 3 — identidade estável name@line: valida pelo nome-BASE (sem o sufixo de linha),
+            // mas deduplica pelo nome COMPLETO (métodos homônimos de fonte-classe são distintos).
+            $base = preg_replace('/@\d+$/', '', (string) $name);
+            if (! isset($fnSet[strtolower($base)])) {
                 $this->rejected[] = ['item' => 'funcao:' . $name, 'reason' => 'inexistente no determinístico'];
                 continue;
             }

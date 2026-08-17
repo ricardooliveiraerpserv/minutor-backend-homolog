@@ -128,6 +128,8 @@ return [
         'deepen_max_calls'           => (int) env('SOURCE_DOC_AI_DEEPEN_MAX_CALLS', 12),
         // Robustez grandes — retry seletivo de bloco truncado/inválido (ponto 3). Preserva blocos válidos.
         'block_retry_enabled'        => filter_var(env('SOURCE_DOC_AI_BLOCK_RETRY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        // Refinamento 1 — saída mínima útil p/ retry de bloco; abaixo disso não gasta chamada.
+        'block_retry_min_out'        => (int) env('SOURCE_DOC_AI_BLOCK_RETRY_MIN_OUT', 1200),
         // Bloco 4.2.1-C: rota small/simple (1 chamada) p/ fontes simples, com fallback à 4-blocos.
         'simple_route_enabled'       => filter_var(env('SOURCE_DOC_AI_SIMPLE_ROUTE_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         'simple_max_functions'       => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_FUNCTIONS', 3),

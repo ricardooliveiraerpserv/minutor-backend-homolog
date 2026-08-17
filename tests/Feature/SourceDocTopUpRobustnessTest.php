@@ -241,6 +241,56 @@ class SourceDocTopUpRobustnessTest extends TestCase
         $this->assertGreaterThanOrEqual(12, count($r['funcoes']), 'funções acumuladas (8 + 4)');
     }
 
+    // ── Refinamento 3 — identidade estável name@start_line em fonte-classe (métodos homônimos) ──
+    public function test_class_source_stable_identity_name_at_line(): void
+    {
+        // det com 2 métodos AMBOS 'KLASS' (nomes colidem); identidade estável = KLASS@1 / KLASS@6.
+        $det = $this->det(0);
+        $det['functions'] = [
+            ['name' => 'KLASS', 'type' => 'Method', 'start_line' => 1, 'end_line' => 5, 'called_by' => [], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 1, 'line_end' => 5]],
+            ['name' => 'KLASS', 'type' => 'Method', 'start_line' => 6, 'end_line' => 9, 'called_by' => ['KLASS'], 'calls_internal' => [], 'calls_user' => [], 'tables' => ['SPED050'], 'accesses' => ['UPDATE'], 'effects' => ['database_write'], 'evidence' => ['line_start' => 6, 'line_end' => 9]],
+        ];
+        $ai = $this->ai(fn ($u, $i) => match ($i) {
+            0 => $this->entBlock(), 1 => $this->rulesBlock(), 2 => $this->depsBlock(),
+            default => $this->funcsBlock(['KLASS@1', 'KLASS@6']), // modelo ecoa a identidade estável
+        });
+        $r = $this->make($ai)->analyze($det, 'codigo', null, []);
+        $done = $r['funcoes_trace']['completed']; sort($done);
+        $this->assertSame(['KLASS@1', 'KLASS@6'], $done, 'métodos homônimos distinguidos por linha');
+        $this->assertSame([], $r['funcoes_trace']['missing'], 'colisão de classe não infla missing');
+        $this->assertCount(2, $r['funcoes'], 'duas funções distintas documentadas (não deduplicadas para 1)');
+    }
+
+    // ── Refinamento 1 — retry de bloco NÃO gasta chamada quando não há folga p/ ampliar (truncado) ──
+    public function test_adaptive_block_retry_skips_when_no_room(): void
+    {
+        $an = $this->make($ai = $this->ai(fn ($u, $i) => $this->rulesBlock()));
+        // sem folga: custo-base perto do teto ⇒ affordable < mínimo ⇒ não chama.
+        $this->setProp($an, 'costBaseUsd', 0.299);
+        [$ok, $j] = $this->priv($an, 'retryBlockCall', ['prompt regras longo', 2600, false, 0.30, true]);
+        $this->assertFalse($ok);
+        $this->assertSame(0, count($ai->calls), 'não gastou chamada inútil sem folga');
+        // truncado + folga insuficiente p/ AMPLIAR além do base ⇒ também não chama.
+        $this->setProp($an, 'costBaseUsd', 0.0);
+        config(['services.source_doc_ai.cost_output_per_mtok' => 15.0, 'services.source_doc_ai.cost_input_per_mtok' => 3.0]);
+        // baseOut absurdo (não há como ampliar dentro de 0.30) ⇒ pula.
+        [$ok2] = $this->priv($an, 'retryBlockCall', ['x', 900000, false, 0.30, true]);
+        $this->assertFalse($ok2, 'truncado sem espaço p/ ampliar ⇒ pula');
+    }
+
+    // ── Refinamento 2 — no top-up, FUNÇÕES vêm antes do retry de bloco ──
+    public function test_topup_functions_before_block_retry(): void
+    {
+        // existente: regras TRUNCADO + 2 funções missing técnico. Ordem esperada: deepen (funções) 1º.
+        $existing = $this->existingPartial(completed: 10, missing: 2, missReason: 'cost_budget');
+        $existing['block_status']['regras'] = 'truncated';
+        $ai = $this->ai(fn ($u, $i) => str_contains($u, 'FUNÇÕES RELEVANTES')
+            ? $this->funcsBlock(['FN11', 'FN12'])
+            : json_encode(['regras_negocio' => [['id' => 'RN01', 'titulo' => 't', 'descricao' => 'Grava EMAIL', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'SPED050', 'field' => 'EMAIL']]]], 'change_summary' => 'x']));
+        $this->make($ai)->topUp($existing, $this->det(12), 'codigo', null);
+        $this->assertStringContainsString('FUNÇÕES RELEVANTES', $ai->calls[0], 'funções aprofundadas ANTES do retry de bloco');
+    }
+
     /** semantic_json parcial sintético: N completed + M missing(cost_budget) sobre det(12). */
     private function existingPartial(int $completed, int $missing, string $missReason): array
     {
