@@ -342,6 +342,14 @@ Schedule::command('source-doc:reap-stale-executions')
   ->name('source-doc-reap-stale')
   ->description('Marca execuções de reprocess órfãs como failed/stale_execution');
 
+// Campanha de Documentação Semântica Inicial — avança campanhas RUNNING (dispatch governado por
+// orçamento/concorrência). Foreground no schedule:run (o background do scheduler não completa).
+Schedule::command('source-doc:campaign-tick')
+  ->everyMinute()
+  ->name('source-doc-campaign-tick')
+  ->withoutOverlapping()
+  ->description('Despacha itens das campanhas de documentação semântica em execução');
+
 // Central de Fontes (C3.5) — inventário INCREMENTAL do acervo (diff por blob; determinístico, IA zero).
 // Cataloga fontes novos/alterados dos repos ativos. De hora em hora (a carga inicial é manual/lotes).
 Schedule::command('source-doc:inventory --incremental')

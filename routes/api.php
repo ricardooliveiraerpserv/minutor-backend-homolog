@@ -540,6 +540,16 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:source_docs.inventory')->group(function () {
             Route::post('/source-docs/inventory', [\App\Http\Controllers\SourceDocCoverageController::class, 'inventory']);
         });
+        // Campanha de Documentação Semântica Inicial (Admin) — baseline governado, interno ERPSERV.
+        Route::middleware('permission:source_docs.semantic_campaign')->group(function () {
+            Route::get('/source-docs/campaigns', [\App\Http\Controllers\SourceDocCampaignController::class, 'index']);
+            Route::post('/source-docs/campaigns', [\App\Http\Controllers\SourceDocCampaignController::class, 'store']);
+            Route::get('/source-docs/campaigns/{id}', [\App\Http\Controllers\SourceDocCampaignController::class, 'show'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/start', [\App\Http\Controllers\SourceDocCampaignController::class, 'start'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/pause', [\App\Http\Controllers\SourceDocCampaignController::class, 'pause'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/resume', [\App\Http\Controllers\SourceDocCampaignController::class, 'resume'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/cancel', [\App\Http\Controllers\SourceDocCampaignController::class, 'cancel'])->whereNumber('id');
+        });
         // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
         Route::middleware('permission.or.admin:source_docs.validate')->group(function () {
             Route::post('/source-docs/{sourceDoc}/validate', [\App\Http\Controllers\SourceDocActionController::class, 'validate'])->whereNumber('sourceDoc');
@@ -1562,6 +1572,16 @@ Route::prefix('v1')->group(function () {
         // C3.5 — disparar inventário (Admin/ops, gate estrito)
         Route::middleware('permission:source_docs.inventory')->group(function () {
             Route::post('/source-docs/inventory', [\App\Http\Controllers\SourceDocCoverageController::class, 'inventory']);
+        });
+        // Campanha de Documentação Semântica Inicial (Admin) — baseline governado, interno ERPSERV.
+        Route::middleware('permission:source_docs.semantic_campaign')->group(function () {
+            Route::get('/source-docs/campaigns', [\App\Http\Controllers\SourceDocCampaignController::class, 'index']);
+            Route::post('/source-docs/campaigns', [\App\Http\Controllers\SourceDocCampaignController::class, 'store']);
+            Route::get('/source-docs/campaigns/{id}', [\App\Http\Controllers\SourceDocCampaignController::class, 'show'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/start', [\App\Http\Controllers\SourceDocCampaignController::class, 'start'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/pause', [\App\Http\Controllers\SourceDocCampaignController::class, 'pause'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/resume', [\App\Http\Controllers\SourceDocCampaignController::class, 'resume'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/cancel', [\App\Http\Controllers\SourceDocCampaignController::class, 'cancel'])->whereNumber('id');
         });
         // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
         Route::middleware('permission.or.admin:source_docs.validate')->group(function () {

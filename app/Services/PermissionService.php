@@ -151,6 +151,8 @@ class PermissionService
         // view_cross_customer = RESERVADA para C4b (impacto multi-cliente); ainda sem efeito.
         'source_docs.view_all_customers',
         'source_docs.view_cross_customer',
+        // Campanha de Documentação Semântica Inicial (baseline). Admin-only na prática (via '*').
+        'source_docs.semantic_campaign',
     ];
 
     /**

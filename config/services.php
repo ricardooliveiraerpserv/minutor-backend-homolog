@@ -131,6 +131,12 @@ return [
         'simple_max_functions'       => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_FUNCTIONS', 3),
         'simple_max_queries'         => (int) env('SOURCE_DOC_AI_SIMPLE_MAX_QUERIES', 2),
         'max_output_tokens_simple'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_SIMPLE', 3000),
+        // Campanha — custos estimados por faixa (PRELIMINARES; recalibrar após o piloto).
+        'est_pequeno_usd'            => (float) env('SOURCE_DOC_AI_EST_PEQUENO', 0.05),
+        'est_medio_usd'              => (float) env('SOURCE_DOC_AI_EST_MEDIO', 0.20),
+        'est_grande_usd'            => (float) env('SOURCE_DOC_AI_EST_GRANDE', 0.28),
+        'campaign_error_rate_max'    => (float) env('SOURCE_DOC_AI_CAMPAIGN_ERROR_RATE_MAX', 0.15),
+        'campaign_max_attempts'      => (int) env('SOURCE_DOC_AI_CAMPAIGN_MAX_ATTEMPTS', 3),
     ],
 
     'openai' => [
