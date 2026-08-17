@@ -28,6 +28,20 @@ class TaskController extends Controller
                     'to_me' => $q->where('created_by', '!=', $u->id)->where($isMine),                      // delegadas para mim
                     default => $q->where($isMine),                                                          // minhas (sou responsável)
                 };
+            })
+            // Reunião: tarefa (e seu texto) de reunião só aparece p/ quem PARTICIPA ou CRIOU a reunião.
+            // As demais tarefas (sem reunião) não sofrem restrição.
+            ->where(function ($q) use ($u) {
+                $q->where('entity_type', '!=', 'meeting')
+                  ->orWhereNull('entity_type')
+                  ->orWhere(fn ($mq) => $mq->where('entity_type', 'meeting')
+                      ->whereExists(fn ($sub) => $sub->selectRaw('1')->from('meetings')
+                          ->whereColumn('meetings.id', 'tasks.entity_id')
+                          ->whereNull('meetings.deleted_at')
+                          ->where(fn ($mw) => $mw->where('meetings.created_by_id', $u->id)
+                              ->orWhereExists(fn ($pp) => $pp->selectRaw('1')->from('meeting_participants')
+                                  ->whereColumn('meeting_participants.meeting_id', 'meetings.id')
+                                  ->where('meeting_participants.user_id', $u->id)))));
             });
 
         if ($completed) {
