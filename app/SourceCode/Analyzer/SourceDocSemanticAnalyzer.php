@@ -582,6 +582,10 @@ class SourceDocSemanticAnalyzer
     {
         // GMUD — Impact Resolver: fatos removidos (claims stale) + fatos ADICIONADOS (candidatos a rules_add).
         $removed = $this->gmudRemovedTokens($diff);
+        // cross-source: user_call que saiu do V1 conta como "função removida" p/ invalidar rules/entendimento que o citam.
+        foreach (array_keys($this->removedCrossSourceSymbols($prev, $det)) as $s) {
+            $removed['functions'][$s] = true;
+        }
         $added = $this->gmudAddedTokens($diff);
         $stale = $this->staleRulesByGmud($prev, $removed);
         $changed = $this->changedFunctionNames($diff);
@@ -1500,7 +1504,43 @@ class SourceDocSemanticAnalyzer
                 return true;
             }
         }
+        foreach (array_keys($removed['functions']) as $fn) {
+            if (strlen($fn) >= 4 && (str_contains($txt, mb_strtoupper($fn)) || str_contains($txt, mb_strtoupper('U_' . $fn)))) {
+                return true; // regra/claim que cita função/user_call REMOVIDA no texto → stale
+            }
+        }
         return false;
+    }
+
+    /** GMUD cross-source — símbolos de user_call que existiam no V0 (deps) e NÃO são mais chamados no V1. */
+    private function removedCrossSourceSymbols(array $prev, array $det): array
+    {
+        $sym = fn ($x) => strtolower(ltrim(preg_replace('/^u_/i', '', (string) $x), ''));
+        $v1 = [];
+        foreach ((array) ($det['user_calls'] ?? []) as $c) {
+            $v1[$sym($c)] = true;
+        }
+        foreach (($det['functions'] ?? []) as $f) {
+            foreach ((array) ($f['calls_user'] ?? []) as $c) {
+                $v1[$sym($c)] = true;
+            }
+        }
+        $out = [];
+        foreach ((array) ($prev['dependencias_criticas'] ?? []) as $d) {
+            $s = '';
+            foreach ((array) ($d['evidence'] ?? []) as $e) {
+                if (is_array($e) && isset($e['source_doc_id'])) {
+                    $s = $sym($e['symbol'] ?? '');
+                }
+            }
+            if ($s === '' && preg_match('/U_([A-Za-z0-9_]+)/', (string) ($d['nome'] ?? ''), $m)) {
+                $s = $sym($m[1]);
+            }
+            if ($s !== '' && ! isset($v1[$s]) && strlen($s) >= 4) {
+                $out[$s] = true;
+            }
+        }
+        return $out;
     }
 
     /** V0 claims (regras) STALE por GMUD — p/ o prompt incremental obrigar a re-decisão (não herança). */
@@ -1627,6 +1667,12 @@ class SourceDocSemanticAnalyzer
                         $e['blob_sha'] = $c['blob_sha'];
                         $e['refresh_reason'] = 'target_blob_changed';
                         $refreshed++;
+                    }
+                    // evidence C de user_call é do tipo 'function' — corrige tipo malformado do baseline (senão o
+                    // validador não confirma o símbolo nos facts do alvo). É proveniência determinística.
+                    $et = strtolower((string) ($e['evidence_type'] ?? $e['type'] ?? ''));
+                    if (! in_array($et, ['function', 'table', 'field'], true)) {
+                        $e['evidence_type'] = 'function';
                     }
                     $out[] = $e; // símbolo chamado + resolvido p/ mesmo alvo/símbolo → mantém (blob fresco)
                 } else {
