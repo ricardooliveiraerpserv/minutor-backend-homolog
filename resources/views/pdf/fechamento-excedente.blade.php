@@ -117,29 +117,31 @@
       </p>
       <table class="rows" style="table-layout:fixed;">
         <colgroup>
+          <col style="width:16%;">
+          <col style="width:auto;">
           <col style="width:12%;">
-          <col style="width:20%;">
-          <col style="width:58%;">
-          <col style="width:10%;">
         </colgroup>
         <thead>
           <tr>
             <th>Data</th>
             <th>Consultor</th>
-            <th>Descrição</th>
             <th class="right">Horas</th>
           </tr>
         </thead>
         <tbody>
           @forelse ($ap['itens'] as $it)
             <tr>
-              <td class="nowrap">{{ $it['data'] }}</td>
-              <td style="word-wrap:break-word;">{{ $it['consultor'] }}</td>
-              <td style="word-wrap:break-word;overflow-wrap:break-word;">{{ $it['descricao'] }}</td>
-              <td class="right nowrap">{{ $it['horas'] }}h</td>
+              <td class="nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['data'] }}</td>
+              <td style="border-bottom:none;padding-bottom:1px;word-wrap:break-word;">{{ $it['consultor'] }}</td>
+              <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['horas'] }}h</td>
+            </tr>
+            <tr>
+              <td colspan="3" style="padding:0 6px 8px;border-bottom:1px solid #e5e7eb;word-wrap:break-word;overflow-wrap:break-word;color:#374151;">
+                <span style="color:#6b7280;font-weight:bold;">Descrição:</span> {{ $it['descricao'] !== '' ? $it['descricao'] : '—' }}
+              </td>
             </tr>
           @empty
-            <tr><td colspan="4" class="empty">Sem apontamentos na competência.</td></tr>
+            <tr><td colspan="3" class="empty">Sem apontamentos na competência.</td></tr>
           @endforelse
         </tbody>
       </table>
