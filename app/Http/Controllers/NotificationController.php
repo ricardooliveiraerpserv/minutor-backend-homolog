@@ -16,8 +16,9 @@ class NotificationController extends Controller
 
     // Conclusões de tarefa (auto): SENSÍVEL (reunião) — na tela de gerenciar só p/ destinatário.
     private const COMPLETION_TITLES = ['Tarefa de reunião concluída', 'Tarefa concluída', 'Tarefa resolvida pela coordenação'];
-    // Notificações PESSOAIS de apontamento (auto): NÃO são publicações — fora do gerenciamento.
-    private const APONTAMENTO_TITLES = ['Apontamento rejeitado', 'Ajuste solicitado no apontamento'];
+    // Notificações PESSOAIS/automáticas (apontamento, comentário de projeto): NÃO são publicações —
+    // fora do gerenciamento p/ qualquer perfil.
+    private const APONTAMENTO_TITLES = ['Apontamento rejeitado', 'Ajuste solicitado no apontamento', 'Novo comentário no projeto'];
 
     private function internalOrAbort(Request $request): \App\Models\User
     {
