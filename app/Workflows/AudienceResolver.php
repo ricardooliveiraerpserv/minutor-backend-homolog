@@ -25,6 +25,7 @@ class AudienceResolver
         $list = match ($audience) {
             'cliente'              => $this->cliente($ctx),
             'contatos_do_contrato' => $this->contatosContrato($ctx),
+            'contatos_alerta_consumo' => $this->contatosAlertaConsumo($ctx),
             'executivo_de_contas'  => $this->executivo($ctx),
             'coordenador'          => $this->coordenador($ctx),
             'administrativo'       => $this->administrativo(),
@@ -72,6 +73,21 @@ class AudienceResolver
         }
         $contract->loadMissing('contacts');
         return $contract->contacts->pluck('email')->all();
+    }
+
+    /** Só os contatos do contrato marcados para receber alerta de consumo de horas. */
+    private function contatosAlertaConsumo(array $ctx): array
+    {
+        $contract = $this->contract($ctx);
+        if (!$contract) {
+            return [];
+        }
+        $contract->loadMissing('contacts');
+        return $contract->contacts
+            ->where('recebe_alerta_consumo', true)
+            ->pluck('email')
+            ->filter()
+            ->all();
     }
 
     private function executivo(array $ctx): array

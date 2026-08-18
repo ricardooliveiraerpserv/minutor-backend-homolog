@@ -471,7 +471,25 @@ class Timesheet extends Model
         $this->reviewed_at = now();
         $this->rejection_reason = null;
 
-        return $this->save();
+        $saved = $this->save();
+
+        // Alerta de consumo de horas do contrato — 2º plano, após o commit. Nunca
+        // interfere na aprovação: dispatch protegido; o Job absorve toda falha.
+        // Só enfileira quando o recurso está ligado (nasce DESLIGADO).
+        if ($saved && $this->project_id && \App\Models\SystemSetting::get(\App\Services\ContractHoursConsumptionAlertService::FLAG_KEY, false)) {
+            $projectId = (int) $this->project_id;
+            DB::afterCommit(function () use ($projectId) {
+                try {
+                    \App\Jobs\CheckContractHoursConsumptionAlertJob::dispatch($projectId);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('[hours_alert] dispatch falhou', [
+                        'project' => $projectId, 'err' => $e->getMessage(),
+                    ]);
+                }
+            });
+        }
+
+        return $saved;
     }
 
     /**

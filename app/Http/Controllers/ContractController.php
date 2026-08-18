@@ -129,6 +129,7 @@ class ContractController extends Controller
             'contacts.*.cargo'       => 'nullable|string',
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
+            'contacts.*.recebe_alerta_consumo' => 'nullable|boolean',
             // Itens SaaS/Cloud (Setup/Desenvolvimento) — cada um gera um card de projeto Fechado.
             'items'                       => 'nullable|array',
             'items.*.id'                  => 'nullable|integer',
@@ -681,6 +682,7 @@ class ContractController extends Controller
             'contacts.*.cargo'       => 'nullable|string',
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
+            'contacts.*.recebe_alerta_consumo' => 'nullable|boolean',
             'items'                       => 'nullable|array',
             'items.*.id'                  => 'nullable|integer',
             'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',

@@ -1235,6 +1235,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/aditivo',                                [ContractController::class, 'storeAditivo'])->name('contracts.aditivo.store');
             Route::put('/aditivo/{contract}',                      [ContractController::class, 'updateAditivo'])->name('contracts.aditivo.update');
             Route::get('/deletion-logs',                           [ContractController::class, 'deletionLogs'])->name('contracts.deletion-logs');
+            // Alerta de consumo de horas — config geral (antes de /{contract} pra não casar como id)
+            Route::get('/hours-alerts/settings',                   [\App\Http\Controllers\ContractHoursAlertController::class, 'settings'])->name('contracts.hours-alerts.settings');
+            Route::put('/hours-alerts/settings',                   [\App\Http\Controllers\ContractHoursAlertController::class, 'updateSettings'])->name('contracts.hours-alerts.settings.update');
             Route::get('/{contract}',                              [ContractController::class, 'show'])->name('contracts.show');
             Route::put('/{contract}',                              [ContractController::class, 'update'])->name('contracts.update');
             Route::delete('/{contract}',                           [ContractController::class, 'destroy'])->name('contracts.destroy');
@@ -1243,6 +1246,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/{contract}/attachments',                 [ContractController::class, 'uploadAttachment'])->name('contracts.upload-attachment');
             Route::get('/{contract}/attachments/{attachment}',     [ContractController::class, 'downloadAttachment'])->name('contracts.download-attachment');
             Route::delete('/{contract}/attachments/{attachment}',  [ContractController::class, 'deleteAttachment'])->name('contracts.delete-attachment');
+            // Alerta de consumo de horas — histórico + reenvio manual por contrato
+            Route::get('/{contract}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'index'])->name('contracts.hours-alerts.index');
+            Route::post('/{contract}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resend'])->name('contracts.hours-alerts.resend');
         });
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)

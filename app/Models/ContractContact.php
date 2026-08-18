@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ContractContact extends Model
 {
-    protected $fillable = ['contract_id', 'name', 'cargo', 'email', 'phone'];
+    protected $fillable = ['contract_id', 'name', 'cargo', 'email', 'phone', 'recebe_alerta_consumo'];
+
+    protected $casts = ['recebe_alerta_consumo' => 'boolean'];
 
     public function contract(): BelongsTo
     {
