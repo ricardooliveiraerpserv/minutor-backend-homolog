@@ -179,6 +179,39 @@ class GoldenGapFixesTest extends TestCase
         $this->assertLessThanOrEqual(0.30, $r['usage']['topup_cost_usd'], 'passo próprio ≤ US$ 0,30');
     }
 
+    public function test_gmud_invalidates_stale_claims_not_inherited(): void
+    {
+        // GMUD remove a tabela ZZ0; a regra V0 que cita ZZ0 NÃO pode sobreviver por herança do previous_semantic.
+        $prev = [
+            'objetivo' => 'x',
+            'entendimento_funcional' => ['uma_frase' => ['texto' => 'x', 'confidence' => 'low', 'evidence' => []], 'objetivo' => 'x', 'quando_usado' => 'x',
+                'entradas_principais' => [['tipo' => 'tabela', 'nome' => 'ZZ0 (ZZ0_STATUS)', 'descricao' => 'status', 'evidence' => [['type' => 'table', 'table' => 'ZZ0']]]], 'o_que_faz' => []],
+            'regras_negocio' => [
+                ['id' => 'RN01', 'descricao' => 'Atualiza ZZ0_STATUS ao processar.', 'confidence' => 'high', 'evidence' => [['type' => 'table', 'table' => 'ZZ0']]],
+                ['id' => 'RN02', 'descricao' => 'Valida cliente em SA1.', 'confidence' => 'high', 'evidence' => [['type' => 'table', 'table' => 'SA1']]],
+            ],
+        ];
+        $det = [
+            'source_type' => 'x', 'language' => 'AdvPL', 'file' => ['filename' => 'A.prw'],
+            'functions' => [['name' => 'A', 'type' => 'User Function', 'start_line' => 1, 'end_line' => 6, 'tables' => ['SA1'], 'evidence' => ['line_start' => 1, 'line_end' => 6]]],
+            'tables' => [['table' => 'SA1', 'alias' => 'SA1', 'access' => ['READ'], 'functions' => ['A'], 'read_fields' => ['A1_COD']]],
+            'queries' => [], 'user_calls' => [], 'dependencies' => [], 'security_findings' => [],
+        ];
+        $diff = ['diff_stats' => ['change_type' => 'modified', 'structural_change' => true],
+            'structural' => ['tables' => ['removed' => [['table' => 'ZZ0']]], 'functions' => ['changed' => [['function' => 'A', 'changes' => ['tables_removed' => ['ZZ0']]]]], 'fields' => ['removed' => [['table' => 'ZZ0', 'field' => 'ZZ0_STATUS']]]]];
+        // IA incremental "preguiçosa": não re-decide nada (delta vazio) — a invalidação determinística tem de agir.
+        $ai = $this->ai(json_encode(['change_summary' => 'sem mudança relevante', 'updated_functions' => [], 'rules_add' => [], 'rules_update' => [], 'rules_remove' => [], 'attention_add' => []]));
+        $r = (new SourceDocSemanticAnalyzer($ai))->analyze($det, 'codigo', $diff, ['previous_semantic' => $prev]);
+        $ids = array_map(fn ($x) => $x['id'] ?? '', $r['regras_negocio']);
+        $this->assertNotContains('RN01', $ids, 'regra que cita a tabela REMOVIDA não sobrevive por herança');
+        $this->assertContains('RN02', $ids, 'regra sobre SA1 (não afetada) permanece');
+        // ZZ0 pode (e deve) aparecer na proveniência da invalidação/change_summary; mas NÃO nas CLAIMS.
+        $claims = json_encode([$r['regras_negocio'], $r['entendimento_funcional'], $r['dependencias_criticas']], JSON_UNESCAPED_UNICODE);
+        $this->assertStringNotContainsString('ZZ0', $claims, 'nenhum vestígio do fato removido nas claims (entrada/regra/dep)');
+        $this->assertArrayHasKey('gmud_invalidation', $r);
+        $this->assertStringContainsString('GMUD removeu', (string) $r['change_summary'], 'muda funcional é reconhecida (não "sem mudança")');
+    }
+
     public function test_crp_noop_when_no_uncovered_candidate(): void
     {
         // sem candidato descoberto → CRP não dispara, custo 0.

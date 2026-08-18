@@ -578,12 +578,16 @@ class SourceDocSemanticAnalyzer
     // ── MODIFIED (C): diff-first + merge local ──────────────────────────────────
     private function incremental(array $det, string $maskedCode, ?array $diff, array $prev): array
     {
+        // GMUD — Impact Resolver: fatos removidos + claims V0 stale (não podem ser herdadas sem re-decisão).
+        $removed = $this->gmudRemovedTokens($diff);
+        $stale = $this->staleRulesByGmud($prev, $removed);
         $changed = $this->changedFunctionNames($diff);
         if (empty($changed)) {
-            // mudança estrutural sem função alterada (ex.: só tabela) → preserva prev + resumo do diff.
+            // mudança estrutural sem função alterada (ex.: só tabela) → preserva prev + INVALIDA dependentes.
             $prev['status'] = 'completed';
             $prev['strategy'] = 'incremental_diff';
             $prev['resumo_alteracao'] = $this->deterministicChangeSummary($diff) ?? ($prev['resumo_alteracao'] ?? self::UNKNOWN);
+            $prev = $this->applyGmudInvalidation($prev, $removed); // patrimônio dependente do removido não sobrevive por herança
             $this->coverage = ['relevant_functions_total' => 0, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0];
             return $prev;
         }
@@ -592,7 +596,7 @@ class SourceDocSemanticAnalyzer
         $withCode = array_map(fn ($f) => ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $this->codeSlice($lines, $f)], array_slice($changedFns, 0, (int) config('services.source_doc_ai.max_relevant_functions', 12)));
 
         $outBudget = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000);
-        $user = $this->incrementalUserPrompt($prev, $diff, $withCode);
+        $user = $this->incrementalUserPrompt($prev, $diff, $withCode, $stale);
         $plan = [['system' => $this->systemPrompt(), 'user' => $user, 'out' => $outBudget, 'code' => true]];
         $est = $this->estimatePlan($plan);
         $this->usage['estimated_before_usd'] = round($est, 4);
@@ -609,6 +613,9 @@ class SourceDocSemanticAnalyzer
         $dc = $this->callJson($plan[0]['system'], $plan[0]['user'], $plan[0]['out']);
         $delta = is_array($dc['json']) ? $dc['json'] : [];
         $merged = $this->mergeIncremental($prev, $delta);
+        // GMUD — invalidação DETERMINÍSTICA pós-merge: claim que ainda cita fato removido é stale → podada
+        // (a IA teve a chance de re-expressar sem o token; herança do V0 não preserva o obsoleto).
+        $merged = $this->applyGmudInvalidation($merged, $removed);
         $merged['status'] = $dc['truncated'] ? 'partial' : 'completed';
         $merged['strategy'] = 'incremental_diff';
         if ($dc['truncated']) {
@@ -1336,6 +1343,150 @@ class SourceDocSemanticAnalyzer
         return $prev;
     }
 
+    /**
+     * GMUD — Impact Resolver: tokens REMOVIDOS estruturalmente pela alteração (tabelas/campos/funções),
+     * a partir do SourceDiff. Base determinística p/ invalidar claims dependentes do patrimônio V0.
+     */
+    private function gmudRemovedTokens(?array $diff): array
+    {
+        $s = (array) ($diff['structural'] ?? []);
+        $tables = [];
+        $fields = [];
+        $funcs = [];
+        foreach ((array) ($s['tables']['removed'] ?? []) as $t) {
+            $n = strtoupper((string) (is_array($t) ? ($t['table'] ?? $t['alias'] ?? '') : $t));
+            if ($n !== '') {
+                $tables[$n] = true;
+            }
+        }
+        foreach ((array) ($s['functions']['removed'] ?? []) as $f) {
+            $n = strtolower((string) (is_array($f) ? ($f['function'] ?? $f['name'] ?? '') : $f));
+            if ($n !== '') {
+                $funcs[$n] = true;
+            }
+        }
+        foreach ((array) ($s['fields']['removed'] ?? []) as $fl) {
+            if (is_array($fl)) {
+                $fields[strtoupper((string) ($fl['field'] ?? ''))] = true;
+            } elseif (is_string($fl)) {
+                $fields[strtoupper($fl)] = true;
+            }
+        }
+        // remoções DENTRO de funções alteradas (ex.: tables_removed no changed).
+        foreach ((array) ($s['functions']['changed'] ?? []) as $f) {
+            foreach ((array) ($f['changes']['tables_removed'] ?? []) as $tr) {
+                $tables[strtoupper((string) $tr)] = true;
+            }
+            foreach ((array) ($f['changes']['fields_removed'] ?? []) as $fr) {
+                $fields[strtoupper((string) (is_array($fr) ? ($fr['field'] ?? '') : $fr))] = true;
+            }
+        }
+        unset($tables[''], $funcs[''], $fields['']);
+        return ['tables' => $tables, 'fields' => $fields, 'functions' => $funcs];
+    }
+
+    /** Uma claim REFERENCIA um token removido? (evidência OU texto) — critério de "stale por GMUD". */
+    private function claimRefsRemoved(array $item, array $removed): bool
+    {
+        foreach ((array) ($item['evidence'] ?? []) as $e) {
+            if (! is_array($e)) {
+                continue;
+            }
+            if (isset($removed['tables'][strtoupper((string) ($e['table'] ?? $e['alias'] ?? ''))])) {
+                return true;
+            }
+            if (isset($removed['functions'][strtolower((string) ($e['name'] ?? ''))])) {
+                return true;
+            }
+            $f = strtoupper((string) ($e['field'] ?? ''));
+            if ($f !== '' && isset($removed['fields'][$f])) {
+                return true;
+            }
+        }
+        $txt = mb_strtoupper(json_encode([
+            $item['descricao'] ?? '', $item['condicao'] ?? '', $item['efeito'] ?? '', $item['titulo'] ?? '',
+            $item['nome'] ?? '', $item['passo'] ?? '', $item['como_participa'] ?? '', $item['descricao'] ?? '',
+        ], JSON_UNESCAPED_UNICODE));
+        foreach (array_keys($removed['tables']) as $t) {
+            if ($t !== '' && str_contains($txt, $t)) {
+                return true;
+            }
+        }
+        foreach (array_keys($removed['fields']) as $f) {
+            if (strlen($f) >= 4 && str_contains($txt, $f)) { // campos ≥4 chars p/ evitar falso-positivo curto
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** V0 claims (regras) STALE por GMUD — p/ o prompt incremental obrigar a re-decisão (não herança). */
+    private function staleRulesByGmud(array $prev, array $removed): array
+    {
+        if (! $removed['tables'] && ! $removed['fields'] && ! $removed['functions']) {
+            return [];
+        }
+        $out = [];
+        foreach ((array) ($prev['regras_negocio'] ?? $prev['business_rules'] ?? []) as $r) {
+            if ($this->claimRefsRemoved($r, $removed)) {
+                $out[] = ['id' => $r['id'] ?? '?', 'descricao' => $this->str($r['descricao'] ?? '')];
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * GMUD — INVALIDAÇÃO determinística pós-merge: nenhuma claim que dependa de fato REMOVIDO sobrevive por
+     * herança do V0. A IA teve a chance de RE-EXPRESSAR (prompt) sem o token removido; o que restar citando o
+     * removido é stale → podado. Não é "apagar toda regra que cita a tabela": a re-expressão válida (sem o
+     * token) sobrevive; o finalize ainda revalida a evidência contra o V1.
+     */
+    private function applyGmudInvalidation(array $sem, array $removed): array
+    {
+        if (! $removed['tables'] && ! $removed['fields'] && ! $removed['functions']) {
+            return $sem;
+        }
+        $invalidated = [];
+        foreach (['regras_negocio', 'business_rules'] as $key) {
+            if (! empty($sem[$key])) {
+                $sem[$key] = array_values(array_filter($sem[$key], function ($r) use ($removed, &$invalidated) {
+                    if ($this->claimRefsRemoved((array) $r, $removed)) {
+                        $invalidated[] = 'regra:' . ($r['id'] ?? '?');
+                        return false;
+                    }
+                    return true;
+                }));
+            }
+        }
+        $ef = (array) ($sem['entendimento_funcional'] ?? []);
+        foreach (['entradas_principais', 'saidas_principais', 'o_que_faz'] as $k) {
+            if (! empty($ef[$k])) {
+                $before = count($ef[$k]);
+                $ef[$k] = array_values(array_filter($ef[$k], fn ($it) => ! $this->claimRefsRemoved((array) $it, $removed)));
+                if (count($ef[$k]) < $before) {
+                    $invalidated[] = "entendimento:$k";
+                }
+            }
+        }
+        $sem['entendimento_funcional'] = $ef;
+        if (! empty($sem['dependencias_criticas'])) {
+            $before = count($sem['dependencias_criticas']);
+            $sem['dependencias_criticas'] = array_values(array_filter($sem['dependencias_criticas'], fn ($d) => ! $this->claimRefsRemoved((array) $d, $removed)));
+            if (count($sem['dependencias_criticas']) < $before) {
+                $invalidated[] = 'dependencias';
+            }
+        }
+        if (! empty($invalidated)) {
+            $rm = array_merge(array_keys($removed['tables']), array_keys($removed['fields']), array_map('strtoupper', array_keys($removed['functions'])));
+            $sem['gmud_invalidation'] = ['removed' => array_values(array_unique($rm)), 'invalidated_claims' => $invalidated];
+            // o resumo NÃO pode dizer "sem mudança": houve remoção estrutural com invalidação de patrimônio.
+            $sem['change_summary'] = 'GMUD removeu fato(s) [' . implode(', ', array_slice(array_values(array_unique($rm)), 0, 8))
+                . ']; conhecimento dependente foi invalidado/atualizado (' . count($invalidated) . ' claim(s)).';
+            $sem['resumo_alteracao'] = $sem['change_summary'];
+        }
+        return $sem;
+    }
+
     private function changedFunctionNames(?array $diff): array
     {
         if (! $diff) {
@@ -1460,7 +1611,7 @@ class SourceDocSemanticAnalyzer
             'usage'            => $this->usageBlock(),
             'validation'       => ['rejected_count' => count($this->rejected), 'rejected' => array_slice($this->rejected, 0, 50)],
             'cross_source'     => $this->crossSourceProvenance(),
-        ];
+        ] + (isset($sem['gmud_invalidation']) ? ['gmud_invalidation' => $sem['gmud_invalidation']] : []); // GMUD — proveniência da invalidação sobrevive ao finalize
     }
 
     /**
@@ -2230,19 +2381,26 @@ class SourceDocSemanticAnalyzer
             . 'Devolva JSON {funcoes[{name,finalidade,confidence,evidence[]}], regras_negocio[...], pontos_atencao[...], dependencias_criticas[...]}.';
     }
 
-    private function incrementalUserPrompt(array $prev, ?array $diff, array $changed): string
+    private function incrementalUserPrompt(array $prev, ?array $diff, array $changed, array $stale = []): string
     {
         $prevSummary = [
             'objetivo' => $prev['objetivo'] ?? null,
             'regras'   => array_map(fn ($r) => ['id' => $r['id'] ?? null, 'descricao' => $r['descricao'] ?? null], $prev['regras_negocio'] ?? []),
         ];
         $blocks = array_map(fn ($c) => "### {$c['name']}\nFATOS: " . json_encode($c['facts'], JSON_UNESCAPED_UNICODE) . "\nCÓDIGO:\n" . $c['code'], $changed);
-        return "SEMÂNTICA ANTERIOR (resumo):\n" . json_encode($prevSummary, JSON_UNESCAPED_UNICODE)
+        $u = "SEMÂNTICA ANTERIOR (resumo):\n" . json_encode($prevSummary, JSON_UNESCAPED_UNICODE)
             . "\n\nDIFF:\n" . json_encode($this->diffForAi($diff ?? []), JSON_UNESCAPED_UNICODE)
             . "\n\nFUNÇÕES ALTERADAS (código mascarado):\n" . implode("\n\n", $blocks)
-            . $this->crossSourceBlock() // Fase 3 — regras/finalidades alteradas podem depender do contexto externo
-            . "\n\nResponda SOMENTE o que muda: JSON {change_summary, updated_functions[{name,finalidade}], "
-            . 'rules_add[{id,descricao,confidence,evidence}], rules_update[{id,descricao,confidence,evidence}], rules_remove[id], attention_add[{interpretation,severity?,recommendation?,confidence,evidence}]}.';
+            . $this->crossSourceBlock(); // Fase 3 — regras/finalidades alteradas podem depender do contexto externo
+        if (! empty($stale)) {
+            // GMUD — claims INVALIDADAS: dependem de fatos REMOVIDOS pela alteração. NÃO podem ser herdadas.
+            $u .= "\n\nCLAIMS INVALIDADAS PELA GMUD (dependem de fatos REMOVIDOS no DIFF — NÃO pode mantê-las como estão): "
+                . json_encode(array_map(fn ($s) => ['id' => $s['id'], 'descricao' => $s['descricao']], $stale), JSON_UNESCAPED_UNICODE)
+                . '. Para CADA uma decida: rules_update (re-expresse SEM o fato removido, se o comportamento persistir por outra implementação) OU rules_remove (se ficou obsoleta). Não invente; sem base no V1 ⇒ rules_remove.';
+        }
+        $u .= "\n\nResponda SOMENTE o que muda: JSON {change_summary, updated_functions[{name,finalidade}], "
+            . 'rules_add[{id,descricao,confidence,evidence}], rules_update[{id,descricao,condicao,efeito,confidence,evidence}], rules_remove[id], attention_add[{interpretation,severity?,recommendation?,confidence,evidence}]}.';
+        return $u;
     }
 
     private function diffForAi(array $diff): array
