@@ -1487,7 +1487,9 @@ class SourceDocSemanticAnalyzer
             }
         }
         // strings interpretativas (objetivo/uma_frase/quando_usado) que citam o removido → re-expressão obrigatória.
-        $objs = [(string) ($ef['objetivo'] ?? ''), (string) ($sem['objetivo'] ?? ''), (string) (($ef['uma_frase']['texto'] ?? '')), (string) ($ef['quando_usado'] ?? '')];
+        $safe = fn ($v) => is_array($v) ? json_encode($v, JSON_UNESCAPED_UNICODE) : (string) $v;
+        $uf = is_array($ef['uma_frase'] ?? null) ? ($ef['uma_frase']['texto'] ?? '') : ($ef['uma_frase'] ?? '');
+        $objs = [$safe($ef['objetivo'] ?? ''), $safe($sem['objetivo'] ?? ''), $safe($uf), $safe($ef['quando_usado'] ?? '')];
         foreach ($objs as $o) {
             if ($o !== '' && $this->textRefsRemoved($o, $removed)) {
                 $this->gmudEntendimentoStale = true;
