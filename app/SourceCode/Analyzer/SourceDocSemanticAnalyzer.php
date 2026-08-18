@@ -59,6 +59,8 @@ class SourceDocSemanticAnalyzer
     // v5 — trechos de CÓDIGO dos candidatos (p/ o bloco de regras CONFIRMAR regra code-gated em fonte GRANDE,
     // onde o código inteiro não cabe inline). Bounded: só as linhas ao redor dos sinais detectados.
     private string $ruleCandidateCode = '';
+    // GMUD — entendimento (objetivo/uma_frase/passos) do V0 ficou stale por remoção → precisa RE-EXPRESSÃO.
+    private bool $gmudEntendimentoStale = false;
     // v4 — custo dos PASSOS anteriores (ex.: initial), informativo. NÃO entra no orçamento deste passo:
     // o hard-limit US$ 0,30 é POR PASSO SEMÂNTICO (initial normalmente basta; top-up é excepcional).
     private float $stepBaseCostUsd = 0.0;
@@ -616,6 +618,21 @@ class SourceDocSemanticAnalyzer
         // GMUD — invalidação DETERMINÍSTICA pós-merge: claim que ainda cita fato removido é stale → podada
         // (a IA teve a chance de re-expressar sem o token; herança do V0 não preserva o obsoleto).
         $merged = $this->applyGmudInvalidation($merged, $removed);
+        if ($this->gmudEntendimentoStale) {
+            // O Entendimento V0 citava fato removido → RE-EXPRESSA sobre o V1 (não pode ser herdado stale).
+            $rel = $this->selectRelevant($det, $diff, (int) config('services.source_doc_ai.max_relevant_functions', 12));
+            $compact = $this->buildCompactFacts($det, $rel, $diff);
+            $entCode = mb_strlen($maskedCode) <= (int) config('services.source_doc_ai.inline_code_max_chars', 8000) ? $maskedCode : $this->entrypointCode($det, $maskedCode);
+            $entOut = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 2600);
+            $g = $this->guardedCallJson($this->entendimentoUserPrompt($compact, null, $entCode), $entOut, $entCode !== '', 'gmud_entendimento');
+            if ($g !== null && ! empty($g['json']['entendimento_funcional'])) {
+                $merged['entendimento_funcional'] = $g['json']['entendimento_funcional'];
+                $merged['objetivo'] = $g['json']['entendimento_funcional']['objetivo'] ?? ($merged['objetivo'] ?? null);
+                if (! empty($g['json']['fluxo'])) {
+                    $merged['fluxo'] = $g['json']['fluxo'];
+                }
+            }
+        }
         $merged['status'] = $dc['truncated'] ? 'partial' : 'completed';
         $merged['strategy'] = 'incremental_diff';
         if ($dc['truncated']) {
@@ -1465,7 +1482,17 @@ class SourceDocSemanticAnalyzer
                 $ef[$k] = array_values(array_filter($ef[$k], fn ($it) => ! $this->claimRefsRemoved((array) $it, $removed)));
                 if (count($ef[$k]) < $before) {
                     $invalidated[] = "entendimento:$k";
+                    $this->gmudEntendimentoStale = true; // itens podados → re-expressar o entendimento
                 }
+            }
+        }
+        // strings interpretativas (objetivo/uma_frase/quando_usado) que citam o removido → re-expressão obrigatória.
+        $objs = [(string) ($ef['objetivo'] ?? ''), (string) ($sem['objetivo'] ?? ''), (string) (($ef['uma_frase']['texto'] ?? '')), (string) ($ef['quando_usado'] ?? '')];
+        foreach ($objs as $o) {
+            if ($o !== '' && $this->textRefsRemoved($o, $removed)) {
+                $this->gmudEntendimentoStale = true;
+                $invalidated[] = 'entendimento:objetivo/uma_frase';
+                break;
             }
         }
         $sem['entendimento_funcional'] = $ef;
@@ -2569,6 +2596,24 @@ class SourceDocSemanticAnalyzer
         $this->ruleCandidates = [];
         $this->ruleCandidateCode = '';
         $this->stepBaseCostUsd = 0.0;
+        $this->gmudEntendimentoStale = false;
+    }
+
+    /** Texto (string) referencia um token removido? (p/ objetivo/uma_frase/quando_usado do entendimento). */
+    private function textRefsRemoved(string $txt, array $removed): bool
+    {
+        $t = mb_strtoupper($txt);
+        foreach (array_keys($removed['tables']) as $x) {
+            if ($x !== '' && str_contains($t, $x)) {
+                return true;
+            }
+        }
+        foreach (array_keys($removed['fields']) as $x) {
+            if (strlen($x) >= 4 && str_contains($t, $x)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
