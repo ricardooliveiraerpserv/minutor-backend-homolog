@@ -591,6 +591,7 @@ class SourceDocSemanticAnalyzer
             $prev['strategy'] = 'incremental_diff';
             $prev['resumo_alteracao'] = $this->deterministicChangeSummary($diff) ?? ($prev['resumo_alteracao'] ?? self::UNKNOWN);
             $prev = $this->applyGmudInvalidation($prev, $removed); // patrimônio dependente do removido não sobrevive por herança
+            $prev = $this->applyCrossSourceGmud($prev, $det); // dep cross-source removida + refresh determinístico de blob
             $this->coverage = ['relevant_functions_total' => 0, 'relevant_functions_analyzed' => 0, 'relevant_functions_cached' => 0, 'relevant_functions_skipped' => 0];
             return $prev;
         }
@@ -619,6 +620,7 @@ class SourceDocSemanticAnalyzer
         // GMUD — invalidação DETERMINÍSTICA pós-merge: claim que ainda cita fato removido é stale → podada
         // (a IA teve a chance de re-expressar sem o token; herança do V0 não preserva o obsoleto).
         $merged = $this->applyGmudInvalidation($merged, $removed);
+        $merged = $this->applyCrossSourceGmud($merged, $det); // dep cross-source removida + refresh determinístico de blob
         if ($this->gmudEntendimentoStale) {
             // O Entendimento V0 citava fato removido → RE-EXPRESSA sobre o V1 (não pode ser herdado stale).
             $rel = $this->selectRelevant($det, $diff, (int) config('services.source_doc_ai.max_relevant_functions', 12));
@@ -1578,6 +1580,116 @@ class SourceDocSemanticAnalyzer
             $sem['resumo_alteracao'] = $sem['change_summary'];
         }
         return $sem;
+    }
+
+    /**
+     * GMUD CROSS-SOURCE — identidade e ciclo de vida das dependências externas na manutenção:
+     *  (1) DEP REMOVIDA (determinístico): símbolo ∈ V0 mas ∉ user_calls do V1 → dependency STALE_BY_GMUD →
+     *      dep + evidence C associada NÃO sobrevivem por herança (não depende de a IA perceber).
+     *  (2) EVIDENCE C REFRESH (proveniência determinística, sem IA): se o símbolo continua chamado, o resolver
+     *      V1 continua resolved p/ o MESMO alvo/símbolo e só o BLOB mudou → atualiza blob_old→blob_new. Se
+     *      qualquer outra coisa mudou (alvo/símbolo/resolução) → não refresh; a evidence stale é invalidada.
+     */
+    private function applyCrossSourceGmud(array $sem, array $det): array
+    {
+        $sym = fn ($x) => strtolower(ltrim(preg_replace('/^u_/i', '', (string) $x), ''));
+        // símbolos ainda CHAMADOS no V1 (user_calls topo ∪ calls_user por função).
+        $v1 = [];
+        foreach ((array) ($det['user_calls'] ?? []) as $c) {
+            $v1[$sym($c)] = true;
+        }
+        foreach (($det['functions'] ?? []) as $f) {
+            foreach ((array) ($f['calls_user'] ?? []) as $c) {
+                $v1[$sym($c)] = true;
+            }
+        }
+        // contexto cross-source ATUAL (por source_doc_id): blob/símbolo atuais que o builder conhece.
+        $cur = [];
+        foreach ((array) ($this->crossSourceMeta['sources'] ?? []) as $s) {
+            $cur[(int) ($s['source_doc_id'] ?? 0)] = $s;
+        }
+        $removedDeps = 0;
+        $refreshed = 0;
+        $invalEv = 0;
+        // refresca/invalida evidence C de uma lista de evidences (fix 2).
+        $fixEv = function (array $evs) use ($cur, $v1, $sym, &$refreshed, &$invalEv) {
+            $out = [];
+            foreach ($evs as $e) {
+                if (! is_array($e) || ! isset($e['source_doc_id'])) {
+                    $out[] = $e;
+                    continue;
+                }
+                $doc = (int) $e['source_doc_id'];
+                $s = $sym($e['symbol'] ?? '');
+                $c = $cur[$doc] ?? null;
+                if ($c && isset($v1[$s]) && $sym($c['symbol'] ?? '') === $s) {
+                    if ((string) ($e['blob_sha'] ?? '') !== (string) ($c['blob_sha'] ?? '')) {
+                        $e['blob_sha'] = $c['blob_sha'];
+                        $e['refresh_reason'] = 'target_blob_changed';
+                        $refreshed++;
+                    }
+                    $out[] = $e; // símbolo chamado + resolvido p/ mesmo alvo/símbolo → mantém (blob fresco)
+                } else {
+                    $invalEv++; // símbolo removido OU não resolvido OU alvo/símbolo mudou → não sobrevive
+                }
+            }
+            return $out;
+        };
+        // (1) dependências: remove as de user-function cujo símbolo saiu do V1; refresca evidence C das que ficam.
+        $deps = [];
+        foreach ((array) ($sem['dependencias_criticas'] ?? []) as $d) {
+            $depSym = '';
+            foreach ((array) ($d['evidence'] ?? []) as $e) {
+                if (is_array($e) && isset($e['source_doc_id'])) {
+                    $depSym = $sym($e['symbol'] ?? '');
+                }
+            }
+            if ($depSym === '' && preg_match('/U_([A-Za-z0-9_]+)/', (string) ($d['nome'] ?? ''), $mm)) {
+                $depSym = $sym($mm[1]);
+            }
+            $isUserCallDep = $depSym !== '' && (str_contains(strtoupper((string) ($d['nome'] ?? '')), 'U_') || $this->depHasCrossC($d));
+            if ($isUserCallDep && ! isset($v1[$depSym])) {
+                $removedDeps++;
+                continue; // dependência cross-source cujo símbolo o V1 não chama mais → STALE_BY_GMUD (poda)
+            }
+            if (! empty($d['evidence'])) {
+                $d['evidence'] = $fixEv($d['evidence']);
+            }
+            $deps[] = $d;
+        }
+        $sem['dependencias_criticas'] = $deps;
+        // (2) evidence C dentro de regras também é refrescada/invalidada.
+        foreach (['regras_negocio', 'business_rules'] as $k) {
+            if (! empty($sem[$k])) {
+                foreach ($sem[$k] as &$r) {
+                    if (! empty($r['evidence'])) {
+                        $r['evidence'] = $fixEv($r['evidence']);
+                    }
+                }
+                unset($r);
+            }
+        }
+        if ($removedDeps || $refreshed || $invalEv) {
+            $prov = (array) ($sem['gmud_invalidation'] ?? []);
+            $prov['dependency_invalidation_count'] = ($prov['dependency_invalidation_count'] ?? 0) + $removedDeps;
+            $prov['evidence_refresh_count'] = ($prov['evidence_refresh_count'] ?? 0) + $refreshed;
+            $prov['evidence_invalidated_count'] = ($prov['evidence_invalidated_count'] ?? 0) + $invalEv;
+            $prov['reasons'] = array_values(array_unique(array_merge($prov['reasons'] ?? [],
+                array_filter([$removedDeps ? 'user_call_removed' : null, $refreshed ? 'target_blob_changed' : null]))));
+            $sem['gmud_invalidation'] = $prov;
+        }
+        return $sem;
+    }
+
+    /** Dependência carrega evidência cross-source (level C / source_doc_id)? */
+    private function depHasCrossC(array $d): bool
+    {
+        foreach ((array) ($d['evidence'] ?? []) as $e) {
+            if (is_array($e) && (isset($e['source_doc_id']) || ($e['level'] ?? '') === 'C')) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private function changedFunctionNames(?array $diff): array

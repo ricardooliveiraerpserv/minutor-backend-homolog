@@ -229,6 +229,32 @@ class GoldenGapFixesTest extends TestCase
         $this->assertGreaterThanOrEqual(4, $n['baseline_normalization']['confidence_numeric_to_enum'], 'registra o que converteu (não silencioso)');
     }
 
+    public function test_cross_source_gmud_removes_dep_and_refreshes_blob(): void
+    {
+        // GMUD: U_FTelEmail deixou de ser chamado (dep removida); U_PEDVEN continua (só o blob do alvo mudou → refresh).
+        $a = new SourceDocSemanticAnalyzer($this->ai('{}'));
+        $meta = new \ReflectionProperty(SourceDocSemanticAnalyzer::class, 'crossSourceMeta');
+        $meta->setAccessible(true);
+        $meta->setValue($a, ['sources' => [['source_doc_id' => 1327, 'symbol' => 'pedven', 'blob_sha' => 'BLOB_NEW']]]);
+        $sem = ['dependencias_criticas' => [
+            ['nome' => 'U_PEDVEN', 'evidence' => [['level' => 'C', 'source_doc_id' => 1327, 'symbol' => 'pedven', 'relation' => 'calls_user', 'blob_sha' => 'BLOB_OLD']]],
+            ['nome' => 'U_FTelEmail', 'evidence' => [['level' => 'C', 'source_doc_id' => 1278, 'symbol' => 'ftelemail', 'relation' => 'calls_user', 'blob_sha' => 'BLOB_FTEL']]],
+        ]];
+        $det = ['user_calls' => ['U_PEDVEN'], 'functions' => []]; // FTelEmail NÃO está mais nas chamadas do V1
+        $m = new \ReflectionMethod(SourceDocSemanticAnalyzer::class, 'applyCrossSourceGmud');
+        $m->setAccessible(true);
+        $r = $m->invoke($a, $sem, $det);
+        $nomes = array_column($r['dependencias_criticas'], 'nome');
+        $this->assertContains('U_PEDVEN', $nomes, 'dependência ainda chamada permanece');
+        $this->assertNotContains('U_FTelEmail', $nomes, 'dependência cujo símbolo saiu do V1 é podada (determinístico)');
+        $ev = $r['dependencias_criticas'][0]['evidence'][0];
+        $this->assertSame('BLOB_NEW', $ev['blob_sha'], 'blob refrescado deterministicamente para o atual do alvo');
+        $this->assertSame('target_blob_changed', $ev['refresh_reason']);
+        $gi = $r['gmud_invalidation'];
+        $this->assertSame(1, $gi['dependency_invalidation_count']);
+        $this->assertSame(1, $gi['evidence_refresh_count']);
+    }
+
     public function test_crp_noop_when_no_uncovered_candidate(): void
     {
         // sem candidato descoberto → CRP não dispara, custo 0.
