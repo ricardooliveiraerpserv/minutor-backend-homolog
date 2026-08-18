@@ -78,12 +78,12 @@ class ClosingService
     {
         [$y, $m] = array_map('intval', explode('-', $ym));
         $next = Carbon::create($y, $m, 1, 0, 0, 0, self::TZ)->addMonthNoOverflow();
-        return $this->secondBusinessDayDeadline($next);
+        return $this->firstBusinessDayDeadline($next);
     }
 
     public function weekDeadline(Carbon $weekStart): Carbon
     {
-        return $this->secondBusinessDayDeadline($weekStart->copy()->addWeek());
+        return $this->firstBusinessDayDeadline($weekStart->copy()->addWeek());
     }
 
     /** Marco "daqui pra frente": semanas com prazo < isso nunca fecham pela regra semanal. */
