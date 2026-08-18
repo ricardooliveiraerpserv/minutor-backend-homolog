@@ -115,7 +115,13 @@
       <p style="font-size:11px;font-weight:bold;color:#1f2937;margin:14px 0 4px;">
         {{ $ap['projeto'] }} <span style="font-weight:normal;color:#6b7280;">— {{ $ap['total_horas'] }}</span>
       </p>
-      <table class="rows">
+      <table class="rows" style="table-layout:fixed;">
+        <colgroup>
+          <col style="width:12%;">
+          <col style="width:20%;">
+          <col style="width:58%;">
+          <col style="width:10%;">
+        </colgroup>
         <thead>
           <tr>
             <th>Data</th>
@@ -128,8 +134,8 @@
           @forelse ($ap['itens'] as $it)
             <tr>
               <td class="nowrap">{{ $it['data'] }}</td>
-              <td>{{ $it['consultor'] }}</td>
-              <td>{{ $it['descricao'] }}</td>
+              <td style="word-wrap:break-word;">{{ $it['consultor'] }}</td>
+              <td style="word-wrap:break-word;overflow-wrap:break-word;">{{ $it['descricao'] }}</td>
               <td class="right nowrap">{{ $it['horas'] }}h</td>
             </tr>
           @empty
