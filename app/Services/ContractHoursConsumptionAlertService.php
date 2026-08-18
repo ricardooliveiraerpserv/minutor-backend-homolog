@@ -113,7 +113,7 @@ class ContractHoursConsumptionAlertService
     // ───────────────────────── núcleo ─────────────────────────
 
     /** Resolve destinatários, envia e grava/atualiza o histórico. */
-    private function deliver(Project $project, array $m, int $band, int $availSnap, ?ContractHoursAlert $existing): void
+    private function deliver(Project $project, array $m, int $band, int $availSnap, ?ContractHoursAlert $existing): ContractHoursAlert
     {
         $ctx  = $this->context($project);
         $vars = $this->vars($project, $m, $band);
@@ -165,9 +165,71 @@ class ContractHoursConsumptionAlertService
 
         if ($existing) {
             $existing->update($payload);
-        } else {
-            ContractHoursAlert::create($payload);
+            return $existing->fresh();
         }
+        return ContractHoursAlert::create($payload);
+    }
+
+    /**
+     * Envio MANUAL imediato (botão "Enviar agora" na Gestão de Contratos). Usa o
+     * estado atual do contrato, ignora a flag mestre e o dedup — é ação explícita
+     * do admin. Registra no histórico e retorna a linha.
+     */
+    public function sendManual(Project $project): ContractHoursAlert
+    {
+        $project = $this->ensureLoaded($project);
+        $m = $this->metrics($project);
+        $band = $this->manualBand($m['percentual']);
+        $availSnap = (int) round($m['available']);
+
+        $existing = ContractHoursAlert::where('project_id', $project->id)
+            ->where('band', $band)
+            ->where('available_snapshot', $availSnap)
+            ->first();
+
+        return $this->deliver($project, $m, $band, $availSnap, $existing);
+    }
+
+    /** Faixa para envio manual: a maior faixa atingida ou, abaixo de 70%, a dezena arredondada. */
+    private function manualBand(float $pct): int
+    {
+        return $this->targetBand($pct) ?? max(0, (int) (floor($pct / 10) * 10));
+    }
+
+    /**
+     * Prévia do e-mail (mesmos dados que seriam enviados), para exibir na tela.
+     * @return array{band:int, fields:array<int,array{label:string,value:string}>}
+     */
+    public function preview(Project $project): array
+    {
+        $project = $this->ensureLoaded($project);
+        $m = $this->metrics($project);
+        $band = $this->manualBand($m['percentual']);
+        $vars = $this->vars($project, $m, $band);
+
+        $labels = [
+            'cliente'       => 'Cliente',
+            'contrato'      => 'Contrato',
+            'periodo'       => 'Período de apuração',
+            'limite'        => 'Limite de horas',
+            'aprovadas'     => 'Horas aprovadas',
+            'consumidas'    => 'Horas consumidas (aprovadas + pendentes)',
+            'saldo'         => 'Saldo disponível',
+            'excedente'     => 'Horas excedentes',
+            'percentual'    => 'Percentual atingido',
+            'classificacao' => 'Classificação do alerta',
+            'executivo'     => 'Executivo responsável',
+        ];
+        $fields = [];
+        foreach ($labels as $k => $label) {
+            $fields[] = ['label' => $label, 'value' => (string) ($vars[$k] ?? '—')];
+        }
+        return ['band' => $band, 'fields' => $fields];
+    }
+
+    private function ensureLoaded(Project $project): Project
+    {
+        return $project->relationLoaded('contractType') ? $project : ($this->loadProject($project->id) ?? $project);
     }
 
     /** Métricas do contrato: mesma fonte da Gestão de Contratos. */
