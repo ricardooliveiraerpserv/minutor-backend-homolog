@@ -236,10 +236,11 @@ class CostCenterController extends Controller
         $c = $this->clientCustomer($request);
         if (!$c) return response()->json(['message' => 'Disponível apenas para o perfil cliente.'], 403);
 
+        // Inclui projetos pais E filhos (subprojetos) — a Auster rateia nos filhos.
         $projects = Project::where('customer_id', $c->id)
-            ->whereNull('parent_project_id')
             // NÃO trazer Investimento (Comercial/Projetos/Suporte) — não são cards do pipeline Demandas e Projetos.
             ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+            ->orderBy('code')
             ->orderBy('name')
             ->get(['id', 'code', 'name']);
 
