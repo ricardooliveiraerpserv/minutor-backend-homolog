@@ -663,9 +663,8 @@ class RelatorioRentabilidadeController extends Controller
             $agg[$pid]['custo']   += $h * ($userRate[$row->user_id] ?? 0);
         }
 
-        // Despesas (aprovadas + pendentes) entram no custo.
+        // Despesas (aprovadas + pendentes) entram no custo. (tabela expenses sem soft-delete)
         $exp = \Illuminate\Support\Facades\DB::table('expenses')
-            ->whereNull('deleted_at')
             ->whereIn('status', [\App\Models\Expense::STATUS_APPROVED, \App\Models\Expense::STATUS_PENDING])
             ->selectRaw('project_id, SUM(amount) as total')
             ->groupBy('project_id')
