@@ -1286,6 +1286,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/ic-analytics', [ProjectController::class, 'icAnalytics'])->name('projects.ic-analytics');
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
+            // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
+            Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
+            Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
+            Route::post('/projects/{project}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resendByProject'])->name('projects.hours-alerts.resend');
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/sold-hours-history', [ProjectController::class, 'soldHoursHistoryIndex'])->name('projects.sold-hours-history.index');
@@ -2448,6 +2452,7 @@ Route::prefix('v1')->group(function () {
             // Alerta de consumo de horas — histórico + reenvio manual por contrato
             Route::get('/{contract}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'index'])->name('contracts.hours-alerts.index');
             Route::post('/{contract}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resend'])->name('contracts.hours-alerts.resend');
+            Route::put('/{contract}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContacts'])->name('contracts.hours-alerts.contacts');
         });
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)
