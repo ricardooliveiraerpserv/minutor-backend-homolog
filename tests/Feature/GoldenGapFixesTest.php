@@ -128,4 +128,37 @@ class GoldenGapFixesTest extends TestCase
         $m->setAccessible(true);
         return $m->invoke(new SourceDocSemanticAnalyzer($this->ai('{}')), $det);
     }
+
+    public function test_v4_detects_critical_rule_candidates_without_overfitting(): void
+    {
+        // detecta CATEGORIAS (autorização/limite), não o parâmetro específico → sem overfit.
+        $m = new \ReflectionMethod(SourceDocSemanticAnalyzer::class, 'detectCriticalRuleCandidates');
+        $m->setAccessible(true);
+        $code = 'If !(cUsuario $ GetMV("MV_XUSRZ07")); MsgStop("Sem permissao"); Return .F.; EndIf'
+            . ' nTeto := GetMV("MV_XPCDPED"); If nDesc > nTeto; Return .F.; EndIf';
+        $hints = $m->invoke(new SourceDocSemanticAnalyzer($this->ai('{}')), ['sx6_params' => []], $code);
+        $blob = implode(' | ', $hints);
+        $this->assertStringContainsString('MV_XUSRZ07', $blob);
+        $this->assertStringContainsString('AUTORIZAÇÃO', $blob);
+        $this->assertStringContainsString('MV_XPCDPED', $blob);
+        $this->assertStringContainsString('LIMITE/TETO', $blob);
+        $this->assertStringContainsString('BLOQUEIO', $blob);
+    }
+
+    public function test_v4_topup_uses_per_step_budget_and_labels_cost(): void
+    {
+        // top-up parte de orçamento FRESCO (costBase=0) e rotula custo por passo (não "por fonte").
+        $existing = ['status' => 'partial', 'usage' => ['actual_cost_usd' => 0.26],
+            'block_status' => ['entendimento' => 'ok', 'regras' => 'truncated', 'deps_risco' => 'ok'],
+            'funcoes_trace' => ['requested' => [], 'completed' => [], 'missing' => []], 'funcoes' => [], 'regras_negocio' => []];
+        $ai = $this->ai(fn ($u) => str_contains($u, 'regras_negocio') || str_contains($u, 'RECUPERAÇÃO')
+            ? json_encode(['regras_negocio' => [['id' => 'RN01', 'descricao' => 'Atualiza ZZ0_STATUS.', 'confidence' => 'high', 'evidence' => [['type' => 'field', 'table' => 'ZZ0', 'field' => 'ZZ0_STATUS']]]], 'change_summary' => 'x'])
+            : json_encode(['risco_alteracao' => ['resumo' => 'x', 'fatores' => []]]));
+        $r = (new SourceDocSemanticAnalyzer($ai))->topUp($existing, $this->detBiz(), 'codigo', null, []);
+        $u = $r['usage'];
+        $this->assertSame('per_semantic_step', $u['cost_model']);
+        $this->assertSame(0.26, $u['initial_cost_usd']);            // custo do initial preservado (informativo)
+        $this->assertLessThanOrEqual(0.30, $u['topup_cost_usd']);   // o PASSO respeita o hard-limit sozinho
+        $this->assertArrayHasKey('total_cost_usd', $u);             // total da fonte = soma dos passos
+    }
 }

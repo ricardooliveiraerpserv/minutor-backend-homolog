@@ -53,6 +53,12 @@ class SourceDocSemanticAnalyzer
     private int $xsrcInjectedCalls = 0;
     private int $xsrcInjectedChars = 0;
     private const XSRC_MARKER = 'CONTEXTO CROSS-SOURCE (AUXILIAR';
+    // v4 — candidatos a REGRA MATERIAL detectados DETERMINISTICAMENTE (sinais MV_/autorização/limite/status);
+    // não são regras prontas — a IA investiga cada um. Evita overfit (não ensina parâmetro específico).
+    private array $ruleCandidates = [];
+    // v4 — custo dos PASSOS anteriores (ex.: initial), informativo. NÃO entra no orçamento deste passo:
+    // o hard-limit US$ 0,30 é POR PASSO SEMÂNTICO (initial normalmente basta; top-up é excepcional).
+    private float $stepBaseCostUsd = 0.0;
     // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
     private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
     // v3 GAP 4 — processo/módulo por EVIDÊNCIA (não adivinhar; não NI quando há sinais suficientes).
@@ -156,6 +162,7 @@ class SourceDocSemanticAnalyzer
     // Aprofundamento Funções. Truncar/JSON inválido em um bloco NÃO descarta os válidos anteriores.
     private function initial(array $det, string $maskedCode, ?array $diff): array
     {
+        $this->ruleCandidates = $this->detectCriticalRuleCandidates($det, $maskedCode); // v4 — candidatos p/ o bloco de regras
         $limit = (int) config('services.source_doc_ai.max_relevant_functions', 12);
         $relevant = $this->selectRelevant($det, $diff, $limit);
         $relNames = array_map(fn ($f) => $f['name'], $relevant);
@@ -435,6 +442,7 @@ class SourceDocSemanticAnalyzer
     /** Bloco 4.2.1-C — ROTA SIMPLES: 1 chamada com o contrato inteiro (saída pequena p/ fonte simples). */
     private function simple(array $det, string $maskedCode, ?array $diff): array
     {
+        $this->ruleCandidates = $this->detectCriticalRuleCandidates($det, $maskedCode); // v4 — candidatos p/ regras
         $relevant = $this->selectRelevant($det, $diff, (int) config('services.source_doc_ai.max_relevant_functions', 12));
         $relNames = array_map(fn ($f) => (string) $f['name'], $relevant);
         $compact = $this->buildCompactFacts($det, $relevant, $diff);
@@ -515,7 +523,8 @@ class SourceDocSemanticAnalyzer
             . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[≤1]}] (o que interfere materialmente), '
             . 'risco_alteracao{resumo,fatores[≤5 {tipo,descricao,evidence[≤1]}]}, pontos_atencao[≤5 {interpretation,severity?,recommendation?,confidence,evidence[≤1]}], change_summary}. '
             . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita o item (não invente). '
-            . self::RULES_COVERAGE . self::MODULE_HINT; // v3 GAP 2+4
+            . self::RULES_COVERAGE . self::MODULE_HINT // v3 GAP 2+4
+            . $this->ruleCandidatesBlock(); // v4 — candidatos determinísticos a investigar
         return $u;
     }
 
@@ -995,7 +1004,11 @@ class SourceDocSemanticAnalyzer
         // Fase 3 — top-up pode RE-PRODUZIR blocos/finalidades dependentes de contexto externo → carrega o
         // mesmo contexto cross-source do initial (senão o retry/deepening sairia sem o contexto).
         $this->loadCrossSource($ctx);
-        $this->costBaseUsd = (float) (($existing['usage']['actual_cost_usd'] ?? 0.0));
+        $this->ruleCandidates = $this->detectCriticalRuleCandidates($det, $maskedCode); // v4 — candidatos p/ retry de regras
+        // v4 — TETO PRÓPRIO POR PASSO: o top-up recebe US$ 0,30 FRESCOS (costBaseUsd=0), não o acumulado do
+        // initial. O custo do initial fica só como informação (stepBaseCostUsd). "US$ 0,30 por passo semântico".
+        $this->stepBaseCostUsd = (float) (($existing['usage']['actual_cost_usd'] ?? $existing['usage']['total_cost_usd'] ?? 0.0));
+        $this->costBaseUsd = 0.0;
         $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
 
         $blocks = (array) ($existing['block_status'] ?? []);
@@ -2026,7 +2039,8 @@ class SourceDocSemanticAnalyzer
         $u .= $this->crossSourceBlock(); // Fase 3 — regra é tipo de afirmação; pode depender de dependência externa
         $u .= "\n\nProduza JSON {"
             . 'regras_negocio[{id,titulo(≤8 palavras),descricao(≤24 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
-            . 'change_summary}. Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita. ' . self::RULES_COVERAGE; // v3 GAP 2
+            . 'change_summary}. Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita. ' . self::RULES_COVERAGE // v3 GAP 2
+            . $this->ruleCandidatesBlock(); // v4 — candidatos determinísticos a investigar
         return $u;
     }
 
@@ -2040,7 +2054,8 @@ class SourceDocSemanticAnalyzer
         $u .= $this->crossSourceBlock();
         $u .= "\n\nRECUPERAÇÃO FOCADA: produza SOMENTE as regras de negócio MATERIAIS observáveis nos fatos. "
             . 'JSON {regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?}]}]}. '
-            . 'Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita. ' . self::RULES_COVERAGE;
+            . 'Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita. ' . self::RULES_COVERAGE
+            . $this->ruleCandidatesBlock(); // v4 — na recuperação focada também
         return $u;
     }
 
@@ -2213,16 +2228,22 @@ class SourceDocSemanticAnalyzer
         $ci = (float) config('services.source_doc_ai.cost_input_per_mtok', 3.0);
         $co = (float) config('services.source_doc_ai.cost_output_per_mtok', 15.0);
         $thisRun = $this->usage['input_tokens'] / 1e6 * $ci + $this->usage['output_tokens'] / 1e6 * $co;
+        $stepCost = $this->costBaseUsd + $thisRun; // custo DESTE passo semântico (≤ hard_limit por passo)
         $extra = [
             'duration_ms'    => (int) ((microtime(true) - $this->t0) * 1000),
-            'actual_cost_usd' => round($this->costBaseUsd + $thisRun, 4), // acumulado por fonte (≤ hard_limit)
+            'actual_cost_usd' => round($stepCost, 4),          // custo DESTE passo (initial: total; top-up: só o passo)
             'hard_limit_usd' => (float) config('services.source_doc_ai.hard_limit_usd', 0.30),
         ];
-        // Ponto 4 — top-up registra custo/chamadas ADICIONAIS separadamente do acumulado.
-        if ($this->costBaseUsd > 0.0) {
-            $extra['base_cost_usd']  = round($this->costBaseUsd, 4);
-            $extra['topup_cost_usd'] = round($thisRun, 4);
-            $extra['topup_calls']    = (int) ($this->usage['calls'] ?? 0);
+        // v4 — CUSTO POR PASSO SEMÂNTICO (não "por fonte"). Num top-up, o custo do initial fica explícito e o
+        // TOTAL da fonte é a soma dos passos — cada passo respeita o hard-limit de US$ 0,30 individualmente.
+        if ($this->stepBaseCostUsd > 0.0) {
+            $extra['cost_model']       = 'per_semantic_step';
+            $extra['step']             = 'top_up';
+            $extra['initial_cost_usd'] = round($this->stepBaseCostUsd, 4);
+            $extra['topup_cost_usd']   = round($stepCost, 4);
+            $extra['topup_calls']      = (int) ($this->usage['calls'] ?? 0);
+            $extra['total_cost_usd']   = round($this->stepBaseCostUsd + $stepCost, 4); // soma dos passos da fonte
+            $extra['step_hard_limit_usd'] = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
         }
         // P1 — trilha por chamada (estimated/reserved/actual + ratios) p/ reconciliar o estimador e checar
         // se a reserva é suficiente (actual/reserved ≤ 1 = segura).
@@ -2251,6 +2272,60 @@ class SourceDocSemanticAnalyzer
         $this->xsrcRejected = [];
         $this->xsrcInjectedCalls = 0;
         $this->xsrcInjectedChars = 0;
+        $this->ruleCandidates = [];
+        $this->stepBaseCostUsd = 0.0;
+    }
+
+    /**
+     * v4 — detecção DETERMINÍSTICA de CANDIDATOS a regra material (não gera a regra; sinaliza onde investigar).
+     * Evita overfitting: não conhece MV_XUSRZ07 — reconhece CATEGORIAS (autorização, limite/teto, bloqueio,
+     * mudança de estado, validação). Varre o código mascarado + parâmetros SX6 dos fatos.
+     */
+    private function detectCriticalRuleCandidates(array $det, string $code): array
+    {
+        $hints = [];
+        $mv = [];
+        if (preg_match_all('/\bMV_[A-Z0-9_]{2,}/i', $code, $m)) {
+            $mv = array_map('strtoupper', $m[0]);
+        }
+        foreach (($det['sx6_params'] ?? []) as $p) {
+            $n = strtoupper((string) ($p['param'] ?? $p['name'] ?? $p['mv'] ?? ''));
+            if ($n !== '') {
+                $mv[] = $n;
+            }
+        }
+        foreach (array_values(array_unique($mv)) as $p) {
+            if (preg_match('/USR|USER|PERM|PERF|ALCAD|APROV|LIBER/i', $p)) {
+                $hints[] = "$p (parâmetro) — possível regra de AUTORIZAÇÃO/PERMISSÃO";
+            } elseif (preg_match('/PC|PCT|PERC|VLR|VAL|MAX|TETO|LIM|DESC/i', $p)) {
+                $hints[] = "$p (parâmetro) — possível regra de LIMITE/TETO/VALOR";
+            }
+        }
+        $sig = [
+            'AUTORIZAÇÃO por usuário/perfil/alçada' => '/usu[aá]rio|permiss|al[çc]ada|autoriz|perfil/i',
+            'LIMITE/TETO/percentual/desconto' => '/limite|teto|m[aá]ximo|percentual|desconto/i',
+            'BLOQUEIO/validação que impede operação' => '/Return\s*\.F\.|MsgStop|MsgAlert|bloque|impede|n[aã]o\s+permit|inconsist/i',
+            'MUDANÇA DE STATUS condicionada' => '/_STATUS|aprov|reabr|finaliz|cancel/i',
+            'EXCEÇÃO fiscal/financeira' => '/ICMS|PIS|COFINS|imposto|al[íi]quota|isen[çc]/i',
+        ];
+        foreach ($sig as $label => $re) {
+            if (preg_match($re, $code)) {
+                $hints[] = "sinal de $label — investigue se há regra material comprovável";
+            }
+        }
+        return array_slice(array_values(array_unique($hints)), 0, 14);
+    }
+
+    /** v4 — bloco de candidatos p/ os prompts de regras (comum a multi-bloco/simple/recuperação focada). */
+    private function ruleCandidatesBlock(): string
+    {
+        if (empty($this->ruleCandidates)) {
+            return '';
+        }
+        return "\n\nCANDIDATOS A REGRA MATERIAL (detectados deterministicamente — NÃO são regras prontas; "
+            . 'INVESTIGUE cada um nos fatos/código e, se CONFIRMAR, produza a regra com condicao+efeito+evidence '
+            . '(prioridade a autorização/permissão, limite/teto, bloqueio, mudança de estado); se NÃO confirmar, '
+            . 'omita — não invente): ' . implode('; ', $this->ruleCandidates) . '.';
     }
 
     /** Fase 3 — carrega o contexto cross-source do $ctx (usado por analyze e topUp; resetState já rodou). */
