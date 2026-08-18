@@ -241,6 +241,22 @@ class FechamentoExcedenteController extends Controller
         return 'R$ ' . number_format($v, 2, ',', '.');
     }
 
+    /** Converte a observação (rich-text/HTML) do apontamento em texto puro legível p/ o relatório. */
+    private function plainText(?string $html): string
+    {
+        $s = (string) $html;
+        if ($s === '') return '';
+        $s = preg_replace('/<(script|style)\b[^>]*>.*?<\/\1>/is', ' ', $s);   // remove script/style
+        $s = preg_replace('/<img\b[^>]*>/i', ' ', $s);                          // remove imagens (URLs assinadas)
+        $s = preg_replace('/<br\s*\/?>/i', "\n", $s);
+        $s = preg_replace('/<\/(p|div|h[1-6]|li|tr|pre)>/i', "\n", $s);
+        $s = strip_tags($s);
+        $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $s = preg_replace('/[ \t]+/u', ' ', $s);
+        $s = preg_replace('/\n{2,}/', "\n", $s);
+        return trim($s);
+    }
+
     /** Dados da view do relatório de horas excedentes de um cliente. */
     private function buildExcedenteViewData(Customer $customer, string $yearMonth): array
     {
@@ -299,7 +315,7 @@ class FechamentoExcedenteController extends Controller
                         'data'      => Carbon::parse($t->date)->format('d/m/Y'),
                         'consultor' => $t->user->name ?? '—',
                         'horas'     => number_format((float) ($t->effort_minutes ?? 0) / 60, 2, ',', '.'),
-                        'descricao' => trim((string) ($t->observation ?? '')),
+                        'descricao' => $this->plainText($t->observation),
                     ])->values()->all(),
                 ];
             }
