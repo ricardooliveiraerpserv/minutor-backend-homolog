@@ -145,6 +145,20 @@ class GoldenGapFixesTest extends TestCase
         $this->assertStringContainsString('BLOQUEIO', $blob);
     }
 
+    public function test_v5_candidate_code_extracts_bounded_snippets(): void
+    {
+        // extrai SÓ as linhas ao redor dos sinais (autorização/teto/bloqueio) — não o arquivo inteiro.
+        $m = new \ReflectionMethod(SourceDocSemanticAnalyzer::class, 'criticalRuleCandidateCode');
+        $m->setAccessible(true);
+        $code = "Local x := 1\nLocal y := 2\n_cUserAuth := superGetMV(\"MV_XUSRZ07\", .f., \"\")\nIf !(cUsuario \$ _cUserAuth)\n  MsgStop(\"Sem permissao\")\n  Return .F.\nEndIf\nLocal z := 3\nProcessa()\nnTeto := getMV(\"MV_XPCDPED\")\n";
+        $snip = $m->invoke(new SourceDocSemanticAnalyzer($this->ai('{}')), [], $code, 3500);
+        $this->assertStringContainsString('MV_XUSRZ07', $snip);
+        $this->assertStringContainsString('MV_XPCDPED', $snip);
+        $this->assertStringContainsString('Return .F.', $snip);
+        $this->assertStringNotContainsString('Local x := 1', $snip, 'linhas sem sinal não entram (bounded)');
+        $this->assertStringNotContainsString('Local z := 3', $snip);
+    }
+
     public function test_v4_topup_uses_per_step_budget_and_labels_cost(): void
     {
         // top-up parte de orçamento FRESCO (costBase=0) e rotula custo por passo (não "por fonte").

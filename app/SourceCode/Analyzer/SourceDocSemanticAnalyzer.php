@@ -56,6 +56,9 @@ class SourceDocSemanticAnalyzer
     // v4 — candidatos a REGRA MATERIAL detectados DETERMINISTICAMENTE (sinais MV_/autorização/limite/status);
     // não são regras prontas — a IA investiga cada um. Evita overfit (não ensina parâmetro específico).
     private array $ruleCandidates = [];
+    // v5 — trechos de CÓDIGO dos candidatos (p/ o bloco de regras CONFIRMAR regra code-gated em fonte GRANDE,
+    // onde o código inteiro não cabe inline). Bounded: só as linhas ao redor dos sinais detectados.
+    private string $ruleCandidateCode = '';
     // v4 — custo dos PASSOS anteriores (ex.: initial), informativo. NÃO entra no orçamento deste passo:
     // o hard-limit US$ 0,30 é POR PASSO SEMÂNTICO (initial normalmente basta; top-up é excepcional).
     private float $stepBaseCostUsd = 0.0;
@@ -163,6 +166,7 @@ class SourceDocSemanticAnalyzer
     private function initial(array $det, string $maskedCode, ?array $diff): array
     {
         $this->ruleCandidates = $this->detectCriticalRuleCandidates($det, $maskedCode); // v4 — candidatos p/ o bloco de regras
+        $this->ruleCandidateCode = $this->criticalRuleCandidateCode($det, $maskedCode); // v5 — trechos de código dos candidatos
         $limit = (int) config('services.source_doc_ai.max_relevant_functions', 12);
         $relevant = $this->selectRelevant($det, $diff, $limit);
         $relNames = array_map(fn ($f) => $f['name'], $relevant);
@@ -179,8 +183,11 @@ class SourceDocSemanticAnalyzer
         $depRiscoOut = (int) config('services.source_doc_ai.max_output_tokens_deprisco', 3000);
         $deepenOut  = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2600);
 
+        // v5 — fonte grande (inlineCode='') → o bloco de regras recebe os TRECHOS de código dos candidatos
+        // (autorização/teto/bloqueio) p/ CONFIRMAR regras code-gated; fonte pequena usa o código inteiro.
+        $regrasCode = $inlineCode !== '' ? $inlineCode : $this->ruleCandidateCode;
         $entUser     = $this->entendimentoUserPrompt($compact, $diff, $entCode);
-        $regrasUser  = $this->regrasUserPrompt($compact, $diff, $inlineCode);
+        $regrasUser  = $this->regrasUserPrompt($compact, $diff, $regrasCode);
         $depRiscoUser = $this->depRiscoUserPrompt($compact, $diff, $inlineCode);
         $deepItems   = ! empty($relevant) ? $this->buildDeepItems($relevant, $det, $maskedCode) : [];
 
@@ -208,7 +215,7 @@ class SourceDocSemanticAnalyzer
 
         // ── POLÍTICA C — ordem: Entendimento → Funções → Regras → Deps/Risco, com orçamento dinâmico.
         // Reserva CONSERVADORA (P0) de regras p/ as funções não a faminta; deps usa a folga + top-up.
-        $reserveReg = $this->reservedCallUsd($regrasUser, $regrasOut, $inlineCode !== '');
+        $reserveReg = $this->reservedCallUsd($regrasUser, $regrasOut, $regrasCode !== '');
 
         // ── BLOCO 1 — Entendimento Funcional (PRIORIDADE MÁXIMA; roda 1º; protegido; guarda P0) ──
         $g1 = $this->guardedCallJson($entUser, $entOut, $entCode !== '', 'entendimento');
@@ -249,7 +256,7 @@ class SourceDocSemanticAnalyzer
 
         // ── BLOCO 3 — Regras de Negócio (após funções; reserva protegida; guarda P0) ──
         $regrasOk = false;
-        $g2 = $this->guardedCallJson($regrasUser, $regrasOut, $inlineCode !== '', 'regras');
+        $g2 = $this->guardedCallJson($regrasUser, $regrasOut, $regrasCode !== '', 'regras');
         if ($g2 === null) {
             $blocks['regras'] = 'skipped_budget'; // sem reserva segura → deixa p/ top-up (P2)
         } else {
@@ -324,7 +331,7 @@ class SourceDocSemanticAnalyzer
             }
         }
         if (! $regrasOk) {
-            [$ok, $j] = $this->retryBlockCall($regrasUser, $regrasOut, $inlineCode !== '', $hardLimit, ($blocks['regras'] ?? '') === 'truncated');
+            [$ok, $j] = $this->retryBlockCall($regrasUser, $regrasOut, $regrasCode !== '', $hardLimit, ($blocks['regras'] ?? '') === 'truncated');
             if ($ok) {
                 if (! empty($j['regras_negocio'])) {
                     $sem['regras_negocio'] = $j['regras_negocio'];
@@ -1005,6 +1012,7 @@ class SourceDocSemanticAnalyzer
         // mesmo contexto cross-source do initial (senão o retry/deepening sairia sem o contexto).
         $this->loadCrossSource($ctx);
         $this->ruleCandidates = $this->detectCriticalRuleCandidates($det, $maskedCode); // v4 — candidatos p/ retry de regras
+        $this->ruleCandidateCode = $this->criticalRuleCandidateCode($det, $maskedCode); // v5 — código dos candidatos
         // v4 — TETO PRÓPRIO POR PASSO: o top-up recebe US$ 0,30 FRESCOS (costBaseUsd=0), não o acumulado do
         // initial. O custo do initial fica só como informação (stepBaseCostUsd). "US$ 0,30 por passo semântico".
         $this->stepBaseCostUsd = (float) (($existing['usage']['actual_cost_usd'] ?? $existing['usage']['total_cost_usd'] ?? 0.0));
@@ -1031,6 +1039,7 @@ class SourceDocSemanticAnalyzer
         $inlineCodeMax = (int) config('services.source_doc_ai.inline_code_max_chars', 8000);
         $inlineCode = mb_strlen($maskedCode) <= $inlineCodeMax ? $maskedCode : '';
         $entCode = $inlineCode !== '' ? $inlineCode : $this->entrypointCode($det, $maskedCode);
+        $regrasCode = $inlineCode !== '' ? $inlineCode : $this->ruleCandidateCode; // v5 — código dos candidatos p/ regras
         $entOut     = (int) config('services.source_doc_ai.max_output_tokens_entendimento', 4000);
         $regrasOut  = (int) config('services.source_doc_ai.max_output_tokens_regras', 2600);
         $depRiscoOut = (int) config('services.source_doc_ai.max_output_tokens_deprisco', 3000);
@@ -1062,7 +1071,9 @@ class SourceDocSemanticAnalyzer
 
         // (a DEPOIS) retry seletivo dos blocos quebrados, com a FOLGA restante — refinamento 1: budget
         // de saída ADAPTATIVO (bloco que já truncou não é repetido com o mesmo max_output_tokens).
-        if (($blocks['entendimento'] ?? 'ok') !== 'ok') {
+        // v5 — NÃO refaz Entendimento já VÁLIDO (objetivo presente): preserva orçamento do passo p/ as
+        // dimensões críticas realmente faltantes (Regras/Deps). Só retenta se estiver de fato pobre.
+        if (($blocks['entendimento'] ?? 'ok') !== 'ok' && ! $this->entendimentoValidEnough($sem)) {
             [$ok, $j] = $this->retryBlockCall($this->entendimentoUserPrompt($compact, $diff, $entCode), $entOut, $entCode !== '', $hardLimit, $blocks['entendimento'] === 'truncated');
             if ($ok && ! empty($j['entendimento_funcional'])) {
                 $sem['entendimento_funcional'] = $j['entendimento_funcional'];
@@ -1072,9 +1083,9 @@ class SourceDocSemanticAnalyzer
                 }
                 $blocks['entendimento'] = 'ok';
             }
-        }
+        } // se válido o suficiente e ainda não-ok: preserva o parcial (honesto) e economiza a chamada p/ regras
         if (($blocks['regras'] ?? 'ok') !== 'ok') {
-            [$ok, $j] = $this->retryBlockCall($this->regrasUserPrompt($compact, $diff, $inlineCode), $regrasOut, $inlineCode !== '', $hardLimit, $blocks['regras'] === 'truncated');
+            [$ok, $j] = $this->retryBlockCall($this->regrasUserPrompt($compact, $diff, $regrasCode), $regrasOut, $regrasCode !== '', $hardLimit, $blocks['regras'] === 'truncated');
             if ($ok) {
                 if (! empty($j['regras_negocio'])) {
                     $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j['regras_negocio']);
@@ -2051,6 +2062,7 @@ class SourceDocSemanticAnalyzer
     private function regrasFocusedPrompt(array $compact): string
     {
         $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $u .= $this->ruleCandidateCode; // v5 — trechos de código dos candidatos (confirma regra code-gated)
         $u .= $this->crossSourceBlock();
         $u .= "\n\nRECUPERAÇÃO FOCADA: produza SOMENTE as regras de negócio MATERIAIS observáveis nos fatos. "
             . 'JSON {regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?}]}]}. '
@@ -2273,7 +2285,62 @@ class SourceDocSemanticAnalyzer
         $this->xsrcInjectedCalls = 0;
         $this->xsrcInjectedChars = 0;
         $this->ruleCandidates = [];
+        $this->ruleCandidateCode = '';
         $this->stepBaseCostUsd = 0.0;
+    }
+
+    /**
+     * v5 — CÓDIGO BOUNDED dos candidatos a regra material: extrai só as linhas ao redor dos sinais
+     * (MV_/autorização/limite/bloqueio/status/validação) p/ o bloco de regras CONFIRMAR uma regra
+     * code-gated mesmo em fonte GRANDE (onde o código inteiro não entra inline). NÃO manda o arquivo todo.
+     */
+    private function criticalRuleCandidateCode(array $det, string $maskedCode, int $budget = 3500): string
+    {
+        if ($maskedCode === '') {
+            return '';
+        }
+        $lines = explode("\n", $maskedCode);
+        $re = '/MV_[A-Z0-9_]{2,}|usu[aá]rio|permiss|al[çc]ada|autoriz|perfil|limite|teto|m[aá]ximo|percentual|'
+            . 'desconto|Return\s*\.F\.|MsgStop|MsgAlert|bloque|impede|n[aã]o\s+permit|_STATUS|aprov|reabr|finaliz|'
+            . 'ICMS|PIS|COFINS|al[íi]quota|isen[çc]/i';
+        $keep = [];
+        $n = count($lines);
+        foreach ($lines as $i => $ln) {
+            if (preg_match($re, $ln)) {
+                for ($j = max(0, $i - 1); $j <= min($n - 1, $i + 1); $j++) {
+                    $keep[$j] = true;
+                }
+            }
+        }
+        if (! $keep) {
+            return '';
+        }
+        ksort($keep);
+        $out = [];
+        $chars = 0;
+        $prev = -2;
+        foreach (array_keys($keep) as $i) {
+            if ($i > $prev + 1) {
+                $out[] = '...';
+            }
+            $line = 'L' . ($i + 1) . ': ' . trim($lines[$i]);
+            if (($chars += mb_strlen($line)) > $budget) {
+                $out[] = '...(demais trechos omitidos)';
+                break;
+            }
+            $out[] = $line;
+            $prev = $i;
+        }
+        return "\n\nTRECHOS DE CÓDIGO DAS REGRAS CANDIDATAS (confirme cada regra material AQUI; se o trecho comprovar, "
+            . "produza a regra com evidence; senão, omita):\n" . implode("\n", $out);
+    }
+
+    /** v5 — entendimento já é "bom o suficiente" (não vale re-truncar/refazer no top-up gastando orçamento). */
+    private function entendimentoValidEnough(array $sem): bool
+    {
+        $ef = $sem['entendimento_funcional'] ?? [];
+        $obj = (string) ($ef['objetivo'] ?? $sem['objetivo'] ?? '');
+        return $ef !== [] && $obj !== '' && ! str_contains($obj, self::UNDETERMINED);
     }
 
     /**
