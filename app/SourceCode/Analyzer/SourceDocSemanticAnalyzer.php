@@ -580,8 +580,9 @@ class SourceDocSemanticAnalyzer
     // ── MODIFIED (C): diff-first + merge local ──────────────────────────────────
     private function incremental(array $det, string $maskedCode, ?array $diff, array $prev): array
     {
-        // GMUD — Impact Resolver: fatos removidos + claims V0 stale (não podem ser herdadas sem re-decisão).
+        // GMUD — Impact Resolver: fatos removidos (claims stale) + fatos ADICIONADOS (candidatos a rules_add).
         $removed = $this->gmudRemovedTokens($diff);
+        $added = $this->gmudAddedTokens($diff);
         $stale = $this->staleRulesByGmud($prev, $removed);
         $changed = $this->changedFunctionNames($diff);
         if (empty($changed)) {
@@ -598,7 +599,7 @@ class SourceDocSemanticAnalyzer
         $withCode = array_map(fn ($f) => ['name' => $f['name'], 'facts' => $this->fnFact($f), 'code' => $this->codeSlice($lines, $f)], array_slice($changedFns, 0, (int) config('services.source_doc_ai.max_relevant_functions', 12)));
 
         $outBudget = (int) config('services.source_doc_ai.max_output_tokens_per_call', 2000);
-        $user = $this->incrementalUserPrompt($prev, $diff, $withCode, $stale);
+        $user = $this->incrementalUserPrompt($prev, $diff, $withCode, $stale, $added);
         $plan = [['system' => $this->systemPrompt(), 'user' => $user, 'out' => $outBudget, 'code' => true]];
         $est = $this->estimatePlan($plan);
         $this->usage['estimated_before_usd'] = round($est, 4);
@@ -1400,6 +1401,69 @@ class SourceDocSemanticAnalyzer
         }
         unset($tables[''], $funcs[''], $fields['']);
         return ['tables' => $tables, 'fields' => $fields, 'functions' => $funcs];
+    }
+
+    /**
+     * Contrato do BASELINE (Executor A / Claude) — validação de ENTRADA: normaliza confidence NUMÉRICA
+     * (ex.: 0.95) p/ o enum high|medium|low ANTES de o V0 virar patrimônio. Não silencia p/ low (o finalize
+     * fazia isso); registra o que converteu em baseline_normalization. Deve ser chamado na ingestão do baseline.
+     */
+    public function normalizeBaseline(array $sem): array
+    {
+        $converted = 0;
+        $walk = function (&$node) use (&$walk, &$converted) {
+            if (! is_array($node)) {
+                return;
+            }
+            foreach ($node as $k => &$v) {
+                if ($k === 'confidence' && is_numeric($v)) {
+                    $n = (float) $v;
+                    $v = $n >= 0.8 ? 'high' : ($n >= 0.55 ? 'medium' : 'low');
+                    $converted++;
+                } elseif (is_array($v)) {
+                    $walk($v);
+                }
+            }
+        };
+        $walk($sem);
+        if ($converted > 0) {
+            $sem['baseline_normalization'] = ['confidence_numeric_to_enum' => $converted];
+        }
+        return $sem;
+    }
+
+    /** GMUD — tokens ADICIONADOS estruturalmente (tabelas/campos/funções) — candidatos a rules_add FUNDAMENTADO. */
+    private function gmudAddedTokens(?array $diff): array
+    {
+        $s = (array) ($diff['structural'] ?? []);
+        $tables = [];
+        $fields = [];
+        $funcs = [];
+        foreach ((array) ($s['tables']['added'] ?? []) as $t) {
+            $n = strtoupper((string) (is_array($t) ? ($t['table'] ?? $t['alias'] ?? '') : $t));
+            if ($n !== '') {
+                $tables[$n] = true;
+            }
+        }
+        foreach ((array) ($s['functions']['added'] ?? []) as $f) {
+            $n = (string) (is_array($f) ? ($f['function'] ?? $f['name'] ?? '') : $f);
+            if ($n !== '') {
+                $funcs[$n] = true;
+            }
+        }
+        foreach ((array) ($s['fields']['added'] ?? []) as $fl) {
+            $fields[strtoupper((string) (is_array($fl) ? (($fl['table'] ?? '') . '.' . ($fl['field'] ?? '')) : $fl))] = true;
+        }
+        foreach ((array) ($s['functions']['changed'] ?? []) as $f) {
+            foreach ((array) ($f['changes']['tables_added'] ?? []) as $ta) {
+                $tables[strtoupper((string) $ta)] = true;
+            }
+            foreach ((array) ($f['changes']['fields_added'] ?? []) as $fa) {
+                $fields[strtoupper((string) (is_array($fa) ? (($fa['table'] ?? '') . '.' . ($fa['field'] ?? '')) : $fa))] = true;
+            }
+        }
+        unset($tables[''], $funcs[''], $fields[''], $fields['.']);
+        return ['tables' => array_keys($tables), 'fields' => array_keys($fields), 'functions' => array_keys($funcs)];
     }
 
     /** Uma claim REFERENCIA um token removido? (evidência OU texto) — critério de "stale por GMUD". */
@@ -2410,7 +2474,7 @@ class SourceDocSemanticAnalyzer
             . 'Devolva JSON {funcoes[{name,finalidade,confidence,evidence[]}], regras_negocio[...], pontos_atencao[...], dependencias_criticas[...]}.';
     }
 
-    private function incrementalUserPrompt(array $prev, ?array $diff, array $changed, array $stale = []): string
+    private function incrementalUserPrompt(array $prev, ?array $diff, array $changed, array $stale = [], array $added = []): string
     {
         $prevSummary = [
             'objetivo' => $prev['objetivo'] ?? null,
@@ -2426,6 +2490,13 @@ class SourceDocSemanticAnalyzer
             $u .= "\n\nCLAIMS INVALIDADAS PELA GMUD (dependem de fatos REMOVIDOS no DIFF — NÃO pode mantê-las como estão): "
                 . json_encode(array_map(fn ($s) => ['id' => $s['id'], 'descricao' => $s['descricao']], $stale), JSON_UNESCAPED_UNICODE)
                 . '. Para CADA uma decida: rules_update (re-expresse SEM o fato removido, se o comportamento persistir por outra implementação) OU rules_remove (se ficou obsoleta). Não invente; sem base no V1 ⇒ rules_remove.';
+        }
+        if (! empty(array_filter($added))) {
+            // FUNDAMENTADO NO DIFF/FATOS (não no resumo): fatos NOVOS no V1 são candidatos a regra material.
+            $u .= "\n\nFATOS ADICIONADOS no V1 (do DIFF): " . json_encode($added, JSON_UNESCAPED_UNICODE)
+                . '. Se algum implementa uma REGRA de negócio material (condição/efeito), emita-a em rules_add com '
+                . 'evidence CITANDO o fato adicionado (tabela/campo/função do V1). NÃO derive regra do change_summary '
+                . 'nem invente: sem evidência no código/fatos do V1 ⇒ não emita.';
         }
         $u .= "\n\nResponda SOMENTE o que muda: JSON {change_summary, updated_functions[{name,finalidade}], "
             . 'rules_add[{id,descricao,confidence,evidence}], rules_update[{id,descricao,condicao,efeito,confidence,evidence}], rules_remove[id], attention_add[{interpretation,severity?,recommendation?,confidence,evidence}]}.';
@@ -2801,8 +2872,13 @@ class SourceDocSemanticAnalyzer
 
     private function conf($v): string
     {
+        // Robustez: confidence NUMÉRICA (ex.: baseline com 0.95) mapeia p/ enum — não silencia p/ low.
+        if (is_numeric($v)) {
+            $n = (float) $v;
+            return $n >= 0.8 ? 'high' : ($n >= 0.55 ? 'medium' : 'low');
+        }
         $v = strtolower((string) $v);
-        return in_array($v, ['high', 'medium', 'low'], true) ? $v : 'low';
+        return in_array($v, ['high', 'medium', 'low'], true) ? $v : 'medium';
     }
 
     private function attnToString(array $a): string

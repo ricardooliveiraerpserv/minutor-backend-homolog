@@ -212,6 +212,23 @@ class GoldenGapFixesTest extends TestCase
         $this->assertStringContainsString('GMUD removeu', (string) $r['change_summary'], 'muda funcional é reconhecida (não "sem mudança")');
     }
 
+    public function test_baseline_normalization_numeric_confidence_to_enum(): void
+    {
+        // baseline Claude com confidence NUMÉRICA (0.95) → enum, sem silenciar p/ low. Registra o que converteu.
+        $a = new SourceDocSemanticAnalyzer($this->ai('{}'));
+        $sem = ['regras_negocio' => [
+            ['id' => 'RN01', 'descricao' => 'x', 'confidence' => 0.95, 'evidence' => [['type' => 'function', 'name' => 'A', 'confidence' => 0.9]]],
+            ['id' => 'RN02', 'descricao' => 'y', 'confidence' => 0.6],
+            ['id' => 'RN03', 'descricao' => 'z', 'confidence' => 0.3],
+            ['id' => 'RN04', 'descricao' => 'w', 'confidence' => 'high'],
+        ]];
+        $n = $a->normalizeBaseline($sem);
+        $c = array_column($n['regras_negocio'], 'confidence');
+        $this->assertSame(['high', 'medium', 'low', 'high'], $c, '0.95→high, 0.6→medium, 0.3→low, high mantém');
+        $this->assertSame('high', $n['regras_negocio'][0]['evidence'][0]['confidence'], 'normaliza também em profundidade');
+        $this->assertGreaterThanOrEqual(4, $n['baseline_normalization']['confidence_numeric_to_enum'], 'registra o que converteu (não silencioso)');
+    }
+
     public function test_crp_noop_when_no_uncovered_candidate(): void
     {
         // sem candidato descoberto → CRP não dispara, custo 0.
