@@ -612,6 +612,86 @@ class RelatorioRentabilidadeController extends Controller
      *
      * Query: ?cnpjs=11111111000111,22222222000122&receb=2026-02,2026-03
      */
+    /**
+     * Rentabilidade CUMULATIVA por PROJETO (todo o histórico), p/ o dashboard gerencial.
+     * Mesma fórmula do relatório de rentabilidade de clientes:
+     *   receita = Σ horas faturáveis × R$/h do PROJETO (reflete o último aporte)
+     *   custo   = Σ horas × R$/h do CONSULTOR (mensalista = salário ÷ 160) + despesas (aprov+pend)
+     *   margem  = receita − custo ; margem% = margem / receita.
+     * Financeiro → restrito a admin / diretor.
+     * @return JsonResponse array<{project_id, receita, custo, margem, margem_pct}>
+     */
+    public function projetos(Request $request): JsonResponse
+    {
+        $u = auth()->user();
+        if (!$u || (!$u->isAdmin() && !$u->is_diretor && !$u->is_diretor_projetos)) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        // Horas faturáveis por (projeto, consultor) — mesma regra do clientes().
+        $rows = \Illuminate\Support\Facades\DB::table('timesheets')
+            ->whereNull('deleted_at')
+            ->whereNotIn('status', [
+                Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED,
+                Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE,
+            ])
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->selectRaw('project_id, user_id, SUM(effort_minutes) as mins')
+            ->groupBy('project_id', 'user_id')
+            ->get();
+
+        $projRate = \App\Models\Project::pluck('hourly_rate', 'id'); // R$/h do projeto (último aporte)
+
+        // Custo/hora efetivo por consultor (atual): mensalista = salário ÷ 160; parceiro fixo = R$/h do parceiro.
+        $userRate = [];
+        foreach (\App\Models\User::select('id', 'hourly_rate', 'rate_type', 'partner_id')->with('partner:id,pricing_type,hourly_rate')->get() as $usr) {
+            if ($usr->partner_id && $usr->partner && $usr->partner->pricing_type === Partner::PRICING_FIXED) {
+                $userRate[$usr->id] = (float) ($usr->partner->hourly_rate ?? 0);
+                continue;
+            }
+            $r = (float) ($usr->hourly_rate ?? 0);
+            $userRate[$usr->id] = ($usr->rate_type === 'monthly' && $r > 0) ? round($r / 160, 4) : $r;
+        }
+
+        $agg = [];
+        foreach ($rows as $row) {
+            $pid = (int) $row->project_id;
+            $h = ((float) $row->mins) / 60;
+            if (!isset($agg[$pid])) $agg[$pid] = ['receita' => 0.0, 'custo' => 0.0];
+            $agg[$pid]['receita'] += $h * (float) ($projRate[$pid] ?? 0);
+            $agg[$pid]['custo']   += $h * ($userRate[$row->user_id] ?? 0);
+        }
+
+        // Despesas (aprovadas + pendentes) entram no custo.
+        $exp = \Illuminate\Support\Facades\DB::table('expenses')
+            ->whereNull('deleted_at')
+            ->whereIn('status', [\App\Models\Expense::STATUS_APPROVED, \App\Models\Expense::STATUS_PENDING])
+            ->selectRaw('project_id, SUM(amount) as total')
+            ->groupBy('project_id')
+            ->get();
+        foreach ($exp as $e) {
+            $pid = (int) $e->project_id;
+            if (!isset($agg[$pid])) $agg[$pid] = ['receita' => 0.0, 'custo' => 0.0];
+            $agg[$pid]['custo'] += (float) $e->total;
+        }
+
+        $out = [];
+        foreach ($agg as $pid => $v) {
+            $receita = round($v['receita'], 2);
+            $custo   = round($v['custo'], 2);
+            $margem  = round($receita - $custo, 2);
+            $out[] = [
+                'project_id' => $pid,
+                'receita'    => $receita,
+                'custo'      => $custo,
+                'margem'     => $margem,
+                'margem_pct' => $receita > 0 ? round($margem / $receita * 100, 1) : null,
+            ];
+        }
+        return response()->json($out);
+    }
+
     public function keruakTitulos(Request $request): JsonResponse
     {
         $cnpjs = array_filter(array_map(
