@@ -107,5 +107,37 @@
       <td class="total-value">{{ $totalFmt }}</td>
     </tr>
   </table>
+
+  @if (!empty($apontamentos))
+    <h2 style="font-size:13px;color:#0e7490;margin:24px 0 4px;">Apontamentos da competência</h2>
+    <p class="doc-sub" style="margin:0 0 8px;">Detalhamento dos apontamentos que compõem o consumo apurado.</p>
+    @foreach ($apontamentos as $ap)
+      <p style="font-size:11px;font-weight:bold;color:#1f2937;margin:14px 0 4px;">
+        {{ $ap['projeto'] }} <span style="font-weight:normal;color:#6b7280;">— {{ $ap['total_horas'] }}</span>
+      </p>
+      <table class="rows">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Consultor</th>
+            <th>Descrição</th>
+            <th class="right">Horas</th>
+          </tr>
+        </thead>
+        <tbody>
+          @forelse ($ap['itens'] as $it)
+            <tr>
+              <td class="nowrap">{{ $it['data'] }}</td>
+              <td>{{ $it['consultor'] }}</td>
+              <td>{{ $it['descricao'] }}</td>
+              <td class="right nowrap">{{ $it['horas'] }}h</td>
+            </tr>
+          @empty
+            <tr><td colspan="4" class="empty">Sem apontamentos na competência.</td></tr>
+          @endforelse
+        </tbody>
+      </table>
+    @endforeach
+  @endif
 </body>
 </html>

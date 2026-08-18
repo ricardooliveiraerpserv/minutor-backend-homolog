@@ -99,8 +99,10 @@
                 $esc = preg_replace('/\*\*(.+?)\*\*/u', '<strong style="color:#111827;">$1</strong>', $esc);           // **negrito**
                 $esc = preg_replace('/^([ \t]*[•\-][ \t]*)([^:\n]{1,80}):/mu', '$1<strong style="color:#111827;">$2:</strong>', $esc); // rótulo do bullet
                 $esc = preg_replace('/^([^:\n•\-][^:\n]{0,80}):[ \t]*$/mu', '<strong style="color:#111827;">$1:</strong>', $esc);       // cabeçalho de seção
+                // Quebra de linha via <br> (clientes de e-mail ignoram white-space:pre-wrap) — aplica após os regex multiline.
+                $esc = nl2br($esc, false);
               @endphp
-              <div style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.6;white-space:pre-wrap;">{!! $esc !!}</div>
+              <div style="margin:8px 0 0;font-size:15px;color:#4B5563;line-height:1.6;">{!! $esc !!}</div>
             </td>
           </tr>
 

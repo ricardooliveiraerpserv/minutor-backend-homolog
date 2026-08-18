@@ -1026,6 +1026,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-excedente',                                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'index']);
             Route::get('/fechamento-excedente/{customerId}/{yearMonth}/report-html',    [\App\Http\Controllers\FechamentoExcedenteController::class, 'reportHtml']);
+            Route::get('/fechamento-excedente/{customerId}/{yearMonth}/export-excel',    [\App\Http\Controllers\FechamentoExcedenteController::class, 'exportExcel']);
             Route::post('/fechamento-excedente/{customerId}/{yearMonth}/email-preview', [\App\Http\Controllers\FechamentoExcedenteController::class, 'emailPreview']);
             Route::post('/fechamento-excedente/{customerId}/{yearMonth}/email',         [\App\Http\Controllers\FechamentoExcedenteController::class, 'enviarEmail']);
             Route::patch('/fechamento-excedente/{project}/flag',                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'toggleFlag']);

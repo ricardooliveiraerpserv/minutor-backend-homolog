@@ -278,12 +278,40 @@ class FechamentoExcedenteController extends Controller
             'valor'      => $this->brl((float) $r['excess_value']),
         ])->all();
 
+        // Apontamentos (detalhamento) da competência apurada — por projeto excedente.
+        $apontamentos = [];
+        $projIds = $rows->pluck('project_id')->filter()->all();
+        if (!empty($projIds)) {
+            $from = Carbon::parse($yearMonth . '-01')->startOfMonth()->toDateString();
+            $to   = Carbon::parse($yearMonth . '-01')->endOfMonth()->toDateString();
+            $ts = \App\Models\Timesheet::with(['user:id,name'])
+                ->whereIn('project_id', $projIds)
+                ->whereIn('status', ['approved', 'pending'])
+                ->whereBetween('date', [$from, $to])
+                ->orderBy('project_id')->orderBy('date')->get()
+                ->groupBy('project_id');
+            foreach ($rows as $r) {
+                $g = $ts->get($r['project_id']) ?? collect();
+                $apontamentos[] = [
+                    'projeto'     => $r['code'] . ' — ' . $r['project_name'],
+                    'total_horas' => number_format((float) $g->sum('effort_minutes') / 60, 2, ',', '.') . 'h',
+                    'itens'       => $g->map(fn ($t) => [
+                        'data'      => Carbon::parse($t->date)->format('d/m/Y'),
+                        'consultor' => $t->user->name ?? '—',
+                        'horas'     => number_format((float) ($t->effort_minutes ?? 0) / 60, 2, ',', '.'),
+                        'descricao' => trim((string) ($t->observation ?? '')),
+                    ])->values()->all(),
+                ];
+            }
+        }
+
         return [
             'clienteName' => $customer->name,
             'periodo'     => $this->periodoExtenso($yearMonth),
             'logoDataUri' => $logoDataUri,
             'emitidoEm'   => now()->format('d/m/Y'),
             'linhas'      => $linhas,
+            'apontamentos'=> $apontamentos,
             'qtd'         => count($linhas),
             'totalFmt'    => $this->brl($total),
             'totalValue'  => $total,
@@ -355,6 +383,19 @@ class FechamentoExcedenteController extends Controller
             'html'            => $html,
             'default_message' => $this->mensagemPadrao($customer, $viewData, $yearMonth),
         ]);
+    }
+
+    /** GET /fechamento-excedente/{customerId}/{yearMonth}/export-excel — Excel (resumo + apontamentos). */
+    public function exportExcel(Request $request, string $customerId, string $yearMonth)
+    {
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
+        }
+        $viewData = $this->buildExcedenteViewData($customer, $yearMonth);
+        $safeName = preg_replace('/[^A-Za-z0-9]+/', '_', (string) $customer->name);
+        $fileName = "Horas_Excedentes_{$yearMonth}_{$safeName}.xlsx";
+        return \Maatwebsite\Excel\Facades\Excel::download(new \App\Exports\ExcedenteExport($viewData), $fileName);
     }
 
     /** POST .../email-preview — prévia do E-MAIL (layout branded, mesma Blade do envio), live com a mensagem editada. */
@@ -453,6 +494,11 @@ class FechamentoExcedenteController extends Controller
             ->setPaper('a4', 'portrait')->setOption(['defaultMediaType' => 'print']);
         file_put_contents($pdfPath, $pdf->output());
 
+        // Excel (resumo + apontamentos) — anexado junto do PDF.
+        $xlsxName = "Horas_Excedentes_{$yearMonth}_{$safeName}.xlsx";
+        $xlsxPath = "{$dirFull}/{$xlsxName}";
+        file_put_contents($xlsxPath, \Maatwebsite\Excel\Facades\Excel::raw(new \App\Exports\ExcedenteExport($viewData), \Maatwebsite\Excel\Excel::XLSX));
+
         // E-mail no layout branded padrão (mesmo dos demais fechamentos), com a mensagem/resumo no corpo.
         $bodyHtml = view('emails.fechamento.excedente', [
             'clienteName'     => $viewData['clienteName'] ?? $customer->name,
@@ -465,12 +511,13 @@ class FechamentoExcedenteController extends Controller
 
         try {
             if (\App\Services\GraphMailer::enabled() && filled($sender->email)) {
-                \App\Services\GraphMailer::sendAs($sender->email, $to, $cc, $subject, $bodyHtml, [$pdfPath]);
+                \App\Services\GraphMailer::sendAs($sender->email, $to, $cc, $subject, $bodyHtml, [$pdfPath, $xlsxPath]);
             } else {
-                Mail::html($bodyHtml, function ($m) use ($to, $cc, $subject, $sender, $pdfPath, $pdfName) {
+                Mail::html($bodyHtml, function ($m) use ($to, $cc, $subject, $sender, $pdfPath, $pdfName, $xlsxPath, $xlsxName) {
                     $m->to($to)->subject($subject)->from($sender->email, $sender->name);
                     if (!empty($cc)) { $m->cc($cc); }
                     $m->attach($pdfPath, ['as' => $pdfName, 'mime' => 'application/pdf']);
+                    $m->attach($xlsxPath, ['as' => $xlsxName, 'mime' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']);
                 });
             }
 
@@ -481,8 +528,10 @@ class FechamentoExcedenteController extends Controller
                 'cliente' => $customer->id, 'remetente' => $sender->id, 'to' => $to, 'cc' => $cc, 'total' => $viewData['totalValue'],
             ]);
             @unlink($pdfPath);
+            @unlink($xlsxPath);
         } catch (\Throwable $e) {
             @unlink($pdfPath);
+            @unlink($xlsxPath);
             Log::error('Falha ao enviar horas excedentes por e-mail', ['cliente' => $customer->id, 'erro' => $e->getMessage()]);
             return response()->json(['success' => false, 'message' => 'Falha ao enviar o e-mail: ' . $e->getMessage()], 500);
         }
