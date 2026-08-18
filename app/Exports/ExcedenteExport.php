@@ -21,30 +21,12 @@ class ExcedenteExport implements FromArray, WithTitle
     public function array(): array
     {
         $d = $this->data;
-        $out = [];
 
-        $out[] = ['Relatório de Horas Excedentes'];
-        $out[] = ['Cliente', $d['clienteName'] ?? ''];
-        $out[] = ['Competência', $d['periodo'] ?? ''];
-        $out[] = ['Emitido em', $d['emitidoEm'] ?? ''];
-        $out[] = [];
-
-        $out[] = ['Contrato / Projeto', 'Tipo', 'Contratadas', 'Consumido', 'Excedente', 'Hora adic.', 'Valor'];
-        foreach (($d['linhas'] ?? []) as $l) {
-            $out[] = [$l['projeto'], $l['tipo'], $l['contratadas'], $l['consumido'], $l['excedente'], $l['hora_adic'], $l['valor']];
-        }
-        $out[] = ['', '', '', '', '', 'Total a cobrar', $d['totalFmt'] ?? ''];
-        $out[] = [];
-
-        if (!empty($d['apontamentos'])) {
-            $out[] = ['Apontamentos da competência'];
-            foreach ($d['apontamentos'] as $ap) {
-                $out[] = [];
-                $out[] = [$ap['projeto'] . ' — ' . $ap['total_horas']];
-                $out[] = ['Data', 'Consultor', 'Descrição', 'Horas'];
-                foreach ($ap['itens'] as $it) {
-                    $out[] = [$it['data'], $it['consultor'], $it['descricao'], $it['horas']];
-                }
+        // Só a tabela de apontamentos: cabeçalho das colunas + linhas (sem título/resumo).
+        $out = [['Data', 'Consultor', 'Projeto', 'Descrição', 'Horas']];
+        foreach (($d['apontamentos'] ?? []) as $ap) {
+            foreach ($ap['itens'] as $it) {
+                $out[] = [$it['data'], $it['consultor'], $ap['projeto'], $it['descricao'], $it['horas']];
             }
         }
 
