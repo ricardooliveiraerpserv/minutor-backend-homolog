@@ -336,6 +336,34 @@ class SourceDocSemanticAnalyzer
             }
         }
 
+        // ── GAP 2 — REDE DE SEGURANÇA de dimensão crítica ──────────────────────────────────────────
+        // Um bloco crítico VAZIO por truncamento/skip/invalid NÃO pode virar 0 silencioso quando ainda há
+        // orçamento seguro: última tentativa com output REDUZIDO (floor menor que o retry normal). Sem
+        // orçamento ⇒ marca missing_cost_budget (honesto, recuperável por top-up). NÃO muda a ordem/reserva
+        // da Política C — só recupera o que o fechamento deixaria zerado.
+        if (! $entOk && empty($sem['entendimento_funcional'])) {
+            [$st, $j] = $this->criticalRecover($entUser, $entCode !== '', $hardLimit);
+            if ($st === 'ok' && ! empty($j['entendimento_funcional'])) {
+                $sem['entendimento_funcional'] = $j['entendimento_funcional'];
+                $sem['objetivo'] = $j['entendimento_funcional']['objetivo'] ?? ($sem['objetivo'] ?? null);
+                $entOk = true;
+                $blocks['entendimento'] = 'recovered';
+            } elseif ($st === 'no_budget') {
+                $blocks['entendimento'] = 'missing_cost_budget';
+            } // 'failed' → preserva o block_status original (invalid_json/truncated) — não é problema de orçamento
+        }
+        if (! $regrasOk && empty($sem['regras_negocio'])) {
+            [$st, $j] = $this->criticalRecover($regrasUser, $inlineCode !== '', $hardLimit);
+            if ($st === 'ok' && ! empty($j['regras_negocio'])) {
+                $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j['regras_negocio']);
+                $regrasOk = true;
+                $blocks['regras'] = 'recovered';
+            } elseif ($st === 'no_budget' && $this->hasBusinessOps($det)) {
+                // só é "perda por orçamento" se HAVIA operação de negócio; fonte sem regra real fica legítimo.
+                $blocks['regras'] = 'missing_cost_budget';
+            } // 'failed' → preserva block_status original
+        }
+
         // (Funções já foram aprofundadas ANTES de regras/deps — Política C — e redistribuídas acima.)
         $sem['funcoes'] = $funcoes;
         $sem['funcoes_trace'] = $deepTrace; // requested/completed/not_identified/missing p/ reprocesso seletivo
@@ -411,8 +439,13 @@ class SourceDocSemanticAnalyzer
 
         $g = $this->callJson($this->systemPrompt(), $this->simpleUserPrompt($compact, $maskedCode), $out);
         $j = is_array($g['json']) ? $g['json'] : [];
-        // fallback se veio vazio OU truncou sem entendimento aproveitável.
-        if (empty($j) || ($g['truncated'] && empty($j['entendimento_funcional']))) {
+        // GAP 1 — fallback p/ multi-bloco quando a chamada única ficou INCOMPLETA (dentro do hard-limit):
+        //  (a) vazia; (b) truncou sem entendimento aproveitável; (c) SEM regras apesar de haver operação de
+        //  negócio determinística (grava/consulta/decide) — melhor gastar mais que documentar pobre.
+        $incompleto = empty($j)
+            || ($g['truncated'] && empty($j['entendimento_funcional']))
+            || (empty($j['regras_negocio']) && $this->hasBusinessOps($det));
+        if ($incompleto) {
             return ['__fallback' => true];
         }
 
@@ -447,21 +480,48 @@ class SourceDocSemanticAnalyzer
     /** Prompt monolítico ENXUTO — só p/ fontes simples (saída pequena, sem risco de truncar). */
     private function simpleUserPrompt(array $compact, string $inlineCode): string
     {
+        // GAP 1 — simple_complete_single_call: 1 chamada, mas o contrato EXIGE o conjunto semântico
+        // ESSENCIAL COMPLETO (não uma versão resumida). Fonte pequeno cabe folgado no output; a economia
+        // vem de ser 1 chamada, não de documentar menos. NÃO inventar — só omitir se realmente sem base.
         $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($inlineCode !== '') {
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $inlineCode;
         }
         $u .= $this->crossSourceBlock(); // Fase 3 — rota simples produz TODAS as afirmações numa chamada
-        $u .= "\n\nFonte SIMPLES: documente o essencial SEM inventar. Se não houver regra/dependência/risco "
-            . 'reais, deixe as listas VAZIAS (não invente). Produza JSON {'
-            . 'entendimento_funcional{uma_frase{texto,confidence,evidence[≤1]}, objetivo (1–3 frases), quando_usado, '
-            . 'processo_modulo{processo,modulo,confidence,evidence[≤1]}, entradas_principais[≤4], saidas_principais[≤4], o_que_faz[≤6 {passo,evidence[≤1]}]}, '
-            . 'funcoes[{name,finalidade,confidence,evidence[≤1]}] (só as dos fatos), '
-            . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2]}] (só se houver regra REAL), '
-            . 'dependencias_criticas[{nome,como_participa,confidence,evidence[≤1]}] (só o que interfere), '
-            . 'risco_alteracao{resumo,fatores[{tipo,descricao,evidence[≤1]}]}, change_summary}. '
-            . 'Sem evidência ⇒ "' . self::UNDETERMINED . '".';
+        $u .= "\n\nFonte pequeno — documente o ESSENCIAL COMPLETO (PROPÓSITO de negócio, não a mecânica), "
+            . 'com evidence + confidence em CADA campo interpretativo. Extraia o que EXISTE nos fatos/código; '
+            . 'só use "' . self::UNDETERMINED . '" quando realmente NÃO houver base (não use como atalho). '
+            . 'IMPORTANTE: se o código tem operação de negócio (grava/atualiza tabela, consulta com filtro, '
+            . 'decisão condicional, integração), ela DEVE virar regra_negocio com condicao+efeito+evidence — '
+            . 'NÃO deixe regras_negocio vazio quando há lógica real. Produza JSON {'
+            . 'entendimento_funcional{uma_frase{texto,confidence,evidence[≤2]}, objetivo (2–3 frases: o que resolve, responsabilidade, resultado), '
+            . 'quando_usado, processo_modulo{processo,modulo,confidence,evidence[≤2]} (módulo POR EVIDÊNCIA, não pelo nome do arquivo), '
+            . 'entradas_principais[≤5 {tipo,nome,descricao,evidence[≤1]}], saidas_principais[≤5 {tipo,nome,descricao,evidence[≤1]}], '
+            . 'o_que_faz[≤8 {passo(sequência FUNCIONAL),evidence[≤1]}]}, '
+            . 'funcoes[{name,finalidade(responsabilidade no processo),confidence,evidence[≤1]}] (TODAS as dos fatos), '
+            . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2]}] (toda operação/decisão material vira regra; sem base ⇒ omita, mas NÃO ignore lógica existente), '
+            . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[≤1]}] (o que interfere materialmente), '
+            . 'risco_alteracao{resumo,fatores[≤5 {tipo,descricao,evidence[≤1]}]}, pontos_atencao[≤5 {interpretation,severity?,recommendation?,confidence,evidence[≤1]}], change_summary}. '
+            . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita o item (não invente).';
         return $u;
+    }
+
+    /** GAP 1 — sinal DETERMINÍSTICO de que a fonte tem operação de negócio (p/ detectar regras=0 indevido). */
+    private function hasBusinessOps(array $det): bool
+    {
+        if (! empty($det['queries']) || ! empty($det['write_effects']) || ! empty($det['effects'])) {
+            return true;
+        }
+        foreach (($det['tables'] ?? []) as $t) {
+            $acc = strtoupper(json_encode($t['access'] ?? []));
+            if (str_contains($acc, 'WRITE') || str_contains($acc, 'UPDATE') || str_contains($acc, 'INSERT') || str_contains($acc, 'DELETE')) {
+                return true;
+            }
+            if (! empty($t['write_fields'])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Código dos ENTRYPOINTS (funções sem called_by), limitado por budget de chars. */
@@ -884,6 +944,29 @@ class SourceDocSemanticAnalyzer
         }
         $j = is_array($g['json']) ? $g['json'] : [];
         return [! $g['truncated'] && $j !== [], $j];
+    }
+
+    /**
+     * GAP 2 — ÚLTIMA recuperação de dimensão crítica que ficaria ZERADA. Usa um floor de output MENOR que
+     * o retry normal (min_out) para caber na folga restante e trazer AO MENOS o conteúdo essencial da
+     * dimensão. Retorna [false,[]] se não houver orçamento seguro (o caller marca missing_cost_budget).
+     * Passa pela guarda P0 (nunca ultrapassa o hard-limit).
+     * @return array{0:bool,1:array}
+     */
+    private function criticalRecover(string $user, bool $code, float $hardLimit): array
+    {
+        $aff = $this->affordableOutTokens($user, $code, $hardLimit);
+        $floor = (int) config('services.source_doc_ai.critical_recover_min_out', 700);
+        if ($aff < $floor) {
+            return ['no_budget', []]; // sem orçamento seguro → caller marca cost_budget (honesto)
+        }
+        $g = $this->guardedCallJson($user, min($aff, 1600), $code, 'critical_recover', $hardLimit);
+        if ($g === null) {
+            return ['no_budget', []]; // guarda P0 recusou por orçamento
+        }
+        $j = is_array($g['json']) ? $g['json'] : [];
+        // 'failed' = tentou mas a IA veio vazia/inválida (NÃO é problema de orçamento → não mislabel).
+        return [$j !== [] ? 'ok' : 'failed', $j];
     }
 
     /**
