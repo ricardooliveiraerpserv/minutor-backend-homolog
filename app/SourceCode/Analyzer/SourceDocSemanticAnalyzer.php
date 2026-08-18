@@ -1611,6 +1611,34 @@ class SourceDocSemanticAnalyzer
                 $invalidated[] = 'dependencias';
             }
         }
+        // risco_alteracao: poda fatores stale; resumo (string) que cita removido descreve comportamento obsoleto → substitui.
+        $risco = (array) ($sem['risco_alteracao'] ?? []);
+        if (! empty($risco['fatores'])) {
+            $before = count($risco['fatores']);
+            $risco['fatores'] = array_values(array_filter($risco['fatores'], fn ($x) => ! $this->claimRefsRemoved((array) $x, $removed)));
+            if (count($risco['fatores']) < $before) {
+                $invalidated[] = 'risco:fatores';
+            }
+        }
+        if (! empty($risco['resumo']) && is_string($risco['resumo']) && $this->textRefsRemoved($risco['resumo'], $removed)) {
+            $risco['resumo'] = 'Risco derivado do estado atual do código (V1); resumo anterior invalidado por remoção de comportamento.';
+            $invalidated[] = 'risco:resumo';
+        }
+        $sem['risco_alteracao'] = $risco;
+        // pontos_atencao que citam o removido (exceto os que DOCUMENTAM a remoção) → poda.
+        if (! empty($sem['pontos_atencao'])) {
+            $before = count($sem['pontos_atencao']);
+            $sem['pontos_atencao'] = array_values(array_filter($sem['pontos_atencao'], function ($p) use ($removed) {
+                $txt = mb_strtoupper(is_array($p) ? json_encode($p, JSON_UNESCAPED_UNICODE) : (string) $p);
+                if (str_contains($txt, 'REMOV') || str_contains($txt, 'DESCONTINU')) {
+                    return true; // ponto que DOCUMENTA a remoção (nexo com a GMUD) permanece
+                }
+                return ! $this->claimRefsRemoved(is_array($p) ? $p : ['interpretation' => (string) $p], $removed);
+            }));
+            if (count($sem['pontos_atencao']) < $before) {
+                $invalidated[] = 'pontos_atencao';
+            }
+        }
         if (! empty($invalidated)) {
             $rm = array_merge(array_keys($removed['tables']), array_keys($removed['fields']), array_map('strtoupper', array_keys($removed['functions'])));
             $sem['gmud_invalidation'] = ['removed' => array_values(array_unique($rm)), 'invalidated_claims' => $invalidated];
