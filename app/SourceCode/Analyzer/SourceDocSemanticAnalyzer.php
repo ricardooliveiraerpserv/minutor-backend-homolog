@@ -2872,6 +2872,11 @@ class SourceDocSemanticAnalyzer
                 return true;
             }
         }
+        foreach (array_keys($removed['functions']) as $x) {
+            if (strlen($x) >= 4 && (str_contains($t, mb_strtoupper($x)) || str_contains($t, mb_strtoupper('U_' . $x)))) {
+                return true;
+            }
+        }
         return false;
     }
 
