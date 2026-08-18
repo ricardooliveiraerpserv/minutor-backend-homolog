@@ -130,6 +130,7 @@ class ContractController extends Controller
             'contacts.*.cargo'       => 'nullable|string',
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
+            'contacts.*.recebe_alerta_consumo' => 'nullable|boolean',
         ]);
 
         // Aporte do subprojeto faturado (se houver) — notificado APÓS o commit, igual aos
@@ -680,6 +681,7 @@ class ContractController extends Controller
             'contacts.*.cargo'       => 'nullable|string',
             'contacts.*.email'       => 'nullable|email',
             'contacts.*.phone'       => 'nullable|string',
+            'contacts.*.recebe_alerta_consumo' => 'nullable|boolean',
         ]);
 
         DB::transaction(function () use ($contract, $validated) {

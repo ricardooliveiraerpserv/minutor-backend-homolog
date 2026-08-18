@@ -33,6 +33,7 @@ return [
         'contract.reajuste.estorno'    => '#F87171', // vermelho claro (estorno)
         'contract.reajuste.aviso'      => '#38BDF8', // azul (aviso prévio)
         'contract.reajustes_pendentes' => '#FB923C', // laranja
+        'contract.hours_alert'         => '#F97316', // laranja forte (alerta de consumo)
         'request.phase.backlog'              => '#93C5FD',
         'request.phase.novo_projeto'         => '#60A5FA',
         'request.phase.em_planejamento'      => '#38BDF8',
@@ -77,6 +78,7 @@ return [
     'audiences' => [
         'cliente'              => 'Cliente (usuários do cliente)',
         'contatos_do_contrato' => 'Contatos do contrato',
+        'contatos_alerta_consumo' => 'Contatos c/ alerta de consumo',
         'executivo_de_contas'  => 'Executivo de contas',
         'coordenador'          => 'Coordenador(es) do projeto',
         'administrativo'       => 'Administrativo',
@@ -96,6 +98,7 @@ return [
     'audience_requires' => [
         'cliente'              => ['customer'],
         'contatos_do_contrato' => ['contract'],
+        'contatos_alerta_consumo' => ['contract'],
         'executivo_de_contas'  => ['contract', 'customer'],
         'coordenador'          => ['project'],
         'administrativo'       => [],
@@ -126,6 +129,7 @@ return [
         'contract.reajuste.estorno'    => ['contract', 'customer', 'actor'],
         'contract.reajuste.aviso'      => ['contract', 'customer', 'actor'],
         'contract.reajustes_pendentes' => [],
+        'contract.hours_alert'         => ['contract', 'project', 'customer'],
         'expense.approved_pending_payment' => ['actor'],
         'request.phase.backlog'              => ['request', 'customer', 'actor'],
         'request.phase.novo_projeto'         => ['request', 'customer', 'actor'],
@@ -231,6 +235,23 @@ return [
             'subject'   => 'Reajustes de contrato pendentes',
             'body'      => 'Há contratos com reajuste vencido/pendente aguardando ação.',
             'variables' => [],
+        ],
+        'contract.hours_alert' => [
+            'subject'   => 'Consumo de horas em {percentual} — {cliente} ({contrato})',
+            'body'      => 'O contrato {contrato} do cliente {cliente} atingiu {percentual} do limite de horas contratadas. Classificação: {classificacao}. Recomendamos avaliar o saldo restante e, se necessário, alinhar um novo aporte de horas.',
+            'variables' => [
+                'cliente'       => 'Cliente',
+                'contrato'      => 'Contrato',
+                'periodo'       => 'Período de apuração',
+                'limite'        => 'Limite de horas',
+                'aprovadas'     => 'Horas aprovadas',
+                'consumidas'    => 'Horas consumidas (aprovadas + pendentes)',
+                'saldo'         => 'Saldo disponível',
+                'excedente'     => 'Horas excedentes',
+                'percentual'    => 'Percentual atingido',
+                'classificacao' => 'Classificação do alerta',
+                'executivo'     => 'Executivo responsável',
+            ],
         ],
         'request.phase.backlog' => [
             'subject'   => 'Requisição {codigo} criada — Backlog',
@@ -509,6 +530,19 @@ return [
             'audiences'   => [
                 'financeiro'     => 'to',
                 'administrativo' => 'to',
+            ],
+        ],
+
+        'contract.hours_alert' => [
+            'label'       => 'Alerta de consumo de horas',
+            'domain'      => 'Contratos',
+            'description' => 'Ao aprovar um apontamento, se o consumo de horas do contrato (aprovadas + pendentes, mesma regra da Gestão de Contratos) cruzar uma faixa (70/80/90/100% e, daí, a cada 10%). Enviado aos contatos do contrato marcados com "Recebe alerta de consumo" e ao executivo de contas. O liga/desliga geral fica em Gestão de Contratos (nasce DESLIGADO).',
+            'audiences'   => [
+                'contatos_alerta_consumo' => 'to',
+                'executivo_de_contas'     => 'to',
+                'coordenador'             => 'off',
+                'diretor'                 => 'off',
+                'administrativo'          => 'off',
             ],
         ],
 
