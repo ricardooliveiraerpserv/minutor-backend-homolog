@@ -1971,6 +1971,130 @@ class SourceDocSemanticAnalyzer
     }
 
     // ── prompts (enxutos) ───────────────────────────────────────────────────────
+    /**
+     * CRITICAL RULES PASS — passo operacional DEDICADO e ESTREITO. Dispara quando há candidatos críticos
+     * NÃO cobertos por regra validada (ou regras truncou deixando candidatos sem decisão). Para CADA
+     * candidato o modelo DECIDE: confirmed_rule | not_a_rule | not_identified — sem competir com dezenas de
+     * regras num prompt geral. TETO PRÓPRIO ≤ US$ 0,30 (passo semântico). Anti-alucinação: as regras
+     * confirmadas passam pela mesma validação determinística (evidence tem de existir nos fatos).
+     */
+    public function criticalRulesPass(array $existing, array $det, string $maskedCode, array $ctx = []): array
+    {
+        $this->resetState();
+        $this->loadCrossSource($ctx);
+        $this->stepBaseCostUsd = (float) (($existing['usage']['total_cost_usd'] ?? $existing['usage']['actual_cost_usd'] ?? 0.0));
+        $this->costBaseUsd = 0.0; // passo próprio ≤ US$ 0,30
+        $hardLimit = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+
+        $candidates = $this->detectCriticalRuleCandidates($det, $maskedCode);
+        $existingRules = (array) ($existing['regras_negocio'] ?? $existing['business_rules'] ?? []);
+        $uncovered = $this->uncoveredCandidates($candidates, $existingRules);
+        $sem = $existing;
+        $prov = ['triggered' => false, 'candidates' => $candidates, 'uncovered' => $uncovered, 'decisions' => [], 'confirmed' => 0];
+
+        if (! (bool) config('services.source_doc_ai.critical_rules_pass_enabled', true) || empty($uncovered)) {
+            $prov['reason'] = empty($uncovered) ? 'no_uncovered_candidate' : 'disabled';
+            $sem['critical_rules_pass'] = $prov;
+            $sem['usage'] = $this->usageBlock();
+            return $sem;
+        }
+
+        $prov['triggered'] = true;
+        $prov['reason'] = ($existing['block_status']['regras'] ?? 'ok') !== 'ok' ? 'regras_' . ($existing['block_status']['regras'] ?? '') : 'uncovered_critical_candidates';
+        $relevant = $this->selectRelevant($det, null, (int) config('services.source_doc_ai.max_relevant_functions', 12));
+        $compact = $this->buildCompactFacts($det, $relevant, null);
+        $code = $this->criticalRuleCandidateCode($det, $maskedCode);
+        $out = (int) config('services.source_doc_ai.max_output_tokens_critical_rules', 2400);
+
+        $g = $this->guardedCallJson($this->criticalRulesPassPrompt($uncovered, $code, $compact), $out, $code !== '', 'critical_rules', $hardLimit);
+        if ($g === null) {
+            $prov['skipped'] = 'cost_budget'; // não coube no passo → fica partial_recoverable (on-demand)
+            $sem['critical_rules_pass'] = $prov;
+            $sem['usage'] = $this->usageBlock();
+            return $sem;
+        }
+        $decisions = is_array($g['json']['decisions'] ?? null) ? $g['json']['decisions'] : [];
+        $prov['decisions'] = $decisions;
+
+        // extrai as regras CONFIRMADAS e valida contra os fatos (anti-alucinação — mesmo juiz das demais).
+        $newRaw = [];
+        foreach ($decisions as $d) {
+            if (($d['decision'] ?? '') === 'confirmed_rule' && ! empty($d['rule']) && is_array($d['rule'])) {
+                $r = $d['rule'];
+                $r['id'] = $r['id'] ?? ('RC' . (count($newRaw) + 1));
+                $newRaw[] = $r;
+            }
+        }
+        $fnSet = array_flip(array_map('strtolower', array_column($det['functions'] ?? [], 'name')));
+        $tbSet = array_flip(array_map('strtoupper', array_map(fn ($t) => $t['table'] ?? $t['alias'] ?? '', $det['tables'] ?? [])));
+        [$fieldQ, $fieldBare] = $this->fieldSets($det);
+        $userCalls = array_flip(array_map('strtolower', $det['user_calls'] ?? []));
+        $validated = $this->validateRules($newRaw, $fnSet, $tbSet, $fieldQ, $fieldBare, $userCalls);
+
+        if (! empty($validated)) {
+            $sem['regras_negocio'] = $this->mergeRulesById(array_values((array) ($sem['regras_negocio'] ?? [])), $validated);
+            $sem['business_rules'] = $this->mergeRulesById(array_values((array) ($sem['business_rules'] ?? [])), $validated);
+            if (($sem['block_status']['regras'] ?? '') !== 'ok') {
+                $sem['block_status']['regras'] = 'critical_rules_recovered';
+            }
+        }
+        $prov['confirmed'] = count($validated);
+        $sem['critical_rules_pass'] = $prov;
+        $sem['strategy'] = 'critical_rules_pass';
+        $sem['usage'] = $this->usageBlock();
+        return $sem;
+    }
+
+    /** Candidatos ainda NÃO cobertos por regra validada existente (evita re-perguntar o que já virou regra). */
+    private function uncoveredCandidates(array $candidates, array $existingRules): array
+    {
+        $hay = strtolower(json_encode($existingRules, JSON_UNESCAPED_UNICODE));
+        $out = [];
+        foreach ($candidates as $c) {
+            if (preg_match('/MV_[A-Z0-9_]{2,}/i', $c, $m)) {
+                if (! str_contains($hay, strtolower($m[0]))) {
+                    $out[] = $c; // parâmetro material ainda não referenciado por nenhuma regra
+                }
+            } else {
+                $out[] = $c; // sinal por categoria — barato perguntar; a decisão pode ser not_a_rule
+            }
+        }
+        return array_slice(array_values(array_unique($out)), 0, 14);
+    }
+
+    /** Merge de regras por id/titulo (não duplica o que já existe). */
+    private function mergeRulesById(array $base, array $add): array
+    {
+        $seen = [];
+        foreach ($base as $r) {
+            $seen[strtolower((string) ($r['titulo'] ?? $r['descricao'] ?? $r['id'] ?? ''))] = true;
+        }
+        foreach ($add as $r) {
+            $k = strtolower((string) ($r['titulo'] ?? $r['descricao'] ?? $r['id'] ?? ''));
+            if ($k !== '' && ! isset($seen[$k])) {
+                $base[] = $r;
+                $seen[$k] = true;
+            }
+        }
+        return $base;
+    }
+
+    /** Prompt ESTREITO do Critical Rules Pass — decisão obrigatória por candidato. */
+    private function criticalRulesPassPrompt(array $candidates, string $code, array $compact): string
+    {
+        $u = "FATOS COMPACTOS (autoridade):\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $u .= $code; // trechos de código dos candidatos
+        $u .= $this->crossSourceBlock();
+        $u .= "\n\nPASSO DE REGRAS CRÍTICAS — decisão ESTREITA e OBRIGATÓRIA. Para CADA candidato abaixo, com base "
+            . 'NOS FATOS e no TRECHO DE CÓDIGO, decida EXATAMENTE uma opção: "confirmed_rule" | "not_a_rule" | "'
+            . self::UNDETERMINED . '". Se confirmed_rule, entregue a regra material: '
+            . '{titulo,descricao,condicao,efeito,operacoes_protegidas[],confidence,evidence[≤2 {type,name?,table?,field?}]}. '
+            . 'NÃO invente: sem trecho/fato que COMPROVE ⇒ not_a_rule ou "' . self::UNDETERMINED . '". '
+            . 'Priorize AUTORIZAÇÃO/PERMISSÃO, LIMITE/TETO, BLOQUEIO, MUDANÇA DE ESTADO. '
+            . 'Devolva SÓ JSON {decisions:[{candidato,decision,rule?}]}.' . "\n\nCANDIDATOS:\n- " . implode("\n- ", $candidates);
+        return $u;
+    }
+
     private function systemPrompt(): string
     {
         return 'Analista Protheus/AdvPL. Os FATOS determinísticos são a AUTORIDADE — você EXPLICA/INTERPRETA/'

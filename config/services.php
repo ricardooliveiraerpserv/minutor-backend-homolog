@@ -172,6 +172,11 @@ return [
         'block_retry_min_out'        => (int) env('SOURCE_DOC_AI_BLOCK_RETRY_MIN_OUT', 1200),
         // GAP 2 — floor MENOR p/ a última recuperação de dimensão crítica que ficaria zerada (regras/entend.).
         'critical_recover_min_out'   => (int) env('SOURCE_DOC_AI_CRITICAL_RECOVER_MIN_OUT', 700),
+        // Critical Rules Pass — passo operacional DEDICADO e estreito (decide candidatos críticos), com TETO
+        // PRÓPRIO ≤ US$ 0,30. Política: Initial (≤0,30) + Critical Rules Pass (≤0,30) = máx 0,60/fonte; além
+        // disso o doc fica partial_recoverable e o aprofundamento é on-demand (não automático).
+        'critical_rules_pass_enabled'   => filter_var(env('SOURCE_DOC_AI_CRP_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        'max_output_tokens_critical_rules' => (int) env('SOURCE_DOC_AI_CRP_MAX_OUTPUT', 2400),
         // Refinamento 4 — output ADAPTATIVO do aprofundamento: proporcional ao nº de funções do chunk
         // (base + por_funcao × n), limitado por max_output_tokens_per_call. Remove o piso artificial de
         // ~2600 tokens/chamada. Calibrado pelos outputs dos pilotos (finalidade curta ~200-350 tok/função).

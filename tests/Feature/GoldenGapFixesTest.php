@@ -159,6 +159,36 @@ class GoldenGapFixesTest extends TestCase
         $this->assertStringNotContainsString('Local z := 3', $snip);
     }
 
+    public function test_crp_confirms_uncovered_critical_rule_with_own_budget(): void
+    {
+        // regra de autorização candidata (MV_XUSRZ07) não coberta → CRP confirma e valida contra os fatos.
+        $existing = ['status' => 'partial', 'usage' => ['actual_cost_usd' => 0.25],
+            'block_status' => ['entendimento' => 'ok', 'regras' => 'truncated', 'deps_risco' => 'ok'],
+            'regras_negocio' => [['id' => 'RN01', 'descricao' => 'Regra genérica.', 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'A']]]]];
+        $code = '_cAuth := superGetMV("MV_XUSRZ07",.f.,""); If !(cUsr $ _cAuth); MsgStop("x"); Return .F.; EndIf';
+        $ai = $this->ai(fn ($u) => json_encode(['decisions' => [
+            ['candidato' => 'MV_XUSRZ07', 'decision' => 'confirmed_rule', 'rule' => ['titulo' => 'Autorização por MV_XUSRZ07', 'descricao' => 'Só usuários listados em MV_XUSRZ07 podem aprovar.', 'condicao' => 'usuário não está em MV_XUSRZ07', 'efeito' => 'bloqueia a ação', 'operacoes_protegidas' => ['aprovar'], 'confidence' => 'high', 'evidence' => [['type' => 'function', 'name' => 'A']]]],
+        ]]));
+        $r = (new SourceDocSemanticAnalyzer($ai))->criticalRulesPass($existing, $this->detBiz(), $code, []);
+        $crp = $r['critical_rules_pass'];
+        $this->assertTrue($crp['triggered']);
+        $this->assertSame(1, $crp['confirmed'], 'regra crítica confirmada e validada contra os fatos');
+        $titulos = array_map(fn ($x) => $x['titulo'] ?? '', $r['regras_negocio']);
+        $this->assertContains('Autorização por MV_XUSRZ07', $titulos, 'regra material sobreviveu com evidência');
+        $this->assertSame('per_semantic_step', $r['usage']['cost_model']);
+        $this->assertLessThanOrEqual(0.30, $r['usage']['topup_cost_usd'], 'passo próprio ≤ US$ 0,30');
+    }
+
+    public function test_crp_noop_when_no_uncovered_candidate(): void
+    {
+        // sem candidato descoberto → CRP não dispara, custo 0.
+        $existing = ['status' => 'completed', 'usage' => ['actual_cost_usd' => 0.05], 'regras_negocio' => []];
+        $ai = $this->ai(json_encode(['decisions' => []]));
+        $r = (new SourceDocSemanticAnalyzer($ai))->criticalRulesPass($existing, ['functions' => [], 'tables' => []], 'Local x := 1', []);
+        $this->assertFalse($r['critical_rules_pass']['triggered']);
+        $this->assertCount(0, $ai->prompts, 'não gasta chamada quando não há candidato');
+    }
+
     public function test_v4_topup_uses_per_step_budget_and_labels_cost(): void
     {
         // top-up parte de orçamento FRESCO (costBase=0) e rotula custo por passo (não "por fonte").
