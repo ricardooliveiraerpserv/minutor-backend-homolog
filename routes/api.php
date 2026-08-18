@@ -586,6 +586,8 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission.or.admin:source_docs.view_git')->group(function () {
             Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
+            // F3 — código da versão atual (somente leitura), para a aba Código do Acervo.
+            Route::get('/source-docs/{sourceDoc}/source', [\App\Http\Controllers\SourceDocActionController::class, 'source'])->whereNumber('sourceDoc');
         });
         Route::middleware('permission.or.admin:source_docs.view_diff')->group(function () {
             Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
@@ -1641,6 +1643,8 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission.or.admin:source_docs.view_git')->group(function () {
             Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
+            // F3 — código da versão atual (somente leitura), para a aba Código do Acervo.
+            Route::get('/source-docs/{sourceDoc}/source', [\App\Http\Controllers\SourceDocActionController::class, 'source'])->whereNumber('sourceDoc');
         });
         Route::middleware('permission.or.admin:source_docs.view_diff')->group(function () {
             Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');

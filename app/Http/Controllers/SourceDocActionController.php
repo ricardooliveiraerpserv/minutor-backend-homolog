@@ -293,6 +293,29 @@ class SourceDocActionController extends Controller
         return response()->json(['data' => ['url' => $url]]);
     }
 
+    /** GET /source-docs/{id}/source — código da versão atual (SOMENTE LEITURA, escopado). F3 aba Código. */
+    public function source(int $sourceDoc, Request $request): JsonResponse
+    {
+        $doc = SourceDoc::with('currentVersion:id,source_doc_id,source_commit_sha')->find($sourceDoc);
+        if (! $doc) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        if (! $this->scope->canAccessDoc($request->user(), $doc)) {
+            $this->audit($doc, 'view_git', 'denied', ['reason' => 'out_of_scope'], userId: $request->user()?->id);
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        $ref = $doc->currentVersion?->source_commit_sha ?: $doc->branch;
+        $content = $this->auth->getFileContent($doc->owner, $doc->repository, $ref, $doc->path);
+        if ($content === null) {
+            return response()->json(['message' => 'Código indisponível no momento.'], 502);
+        }
+        $this->audit($doc, 'view_git', 'ok', ['commit_sha' => $ref, 'bytes' => strlen($content)], userId: $request->user()?->id);
+
+        return response()->json(['data' => [
+            'content' => $content, 'path' => $doc->path, 'lang' => $doc->lang, 'commit_sha' => $ref, 'bytes' => strlen($content),
+        ]]);
+    }
+
     /** GET /source-docs/{id}/compare?from=&to= — diff estrutural entre 2 versões (determinístico). */
     public function compare(int $sourceDoc, Request $request, SourceDiff $diff): JsonResponse
     {
