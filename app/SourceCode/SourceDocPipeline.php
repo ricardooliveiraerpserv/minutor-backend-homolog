@@ -174,7 +174,7 @@ class SourceDocPipeline
         }
         // Bloco 3: re-busca conteúdo + blob SHA no commit documentado (ref=source_commit_sha).
         // Resolução determinística do blob daquele commit — não fabrica (o GitHub devolve o sha).
-        $fetched = $this->auth->getFileWithSha($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
+        $fetched = $this->fetchWithRetry($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
         if ($fetched === null) {
             return $ver;
         }
@@ -205,7 +205,7 @@ class SourceDocPipeline
         if (! $doc || ! $ver->source_commit_sha || ! is_array($ver->semantic_json) || ! $this->semantic->enabled()) {
             return $ver;
         }
-        $fetched = $this->auth->getFileWithSha($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
+        $fetched = $this->fetchWithRetry($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
         if ($fetched === null) {
             return $ver;
         }
@@ -258,7 +258,7 @@ class SourceDocPipeline
         if (! $doc || ! $ver->source_commit_sha || ! is_array($ver->semantic_json) || ! $this->semantic->enabled()) {
             return $ver;
         }
-        $fetched = $this->auth->getFileWithSha($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
+        $fetched = $this->fetchWithRetry($doc->owner, $doc->repository, $ver->source_commit_sha, $doc->path);
         if ($fetched === null) {
             return $ver;
         }
@@ -295,6 +295,25 @@ class SourceDocPipeline
             $doc->save();
         }
         return $ver;
+    }
+
+    /**
+     * Reliability — busca o arquivo com RETRY bounded (falhas transitórias do GitHub: rate-limit/timeout/5xx
+     * são engolidas como null por getFileWithSha). NÃO altera semântica; só evita early-return por falha de rede.
+     */
+    private function fetchWithRetry(string $owner, string $repo, string $ref, string $path, int $tries = 3): ?array
+    {
+        for ($i = 0; $i < max(1, $tries); $i++) {
+            $f = $this->auth->getFileWithSha($owner, $repo, $ref, $path);
+            if ($f !== null) {
+                return $f;
+            }
+            if ($i < $tries - 1) {
+                usleep(400000 * ($i + 1)); // backoff 0,4s · 0,8s (transiente)
+            }
+        }
+        Log::warning('source_doc.fetch_failed_after_retry', compact('owner', 'repo', 'ref', 'path'));
+        return null;
     }
 
     /** JSON consolidado renderizável (a Fase 4 compõe as 14 seções daqui). Lossless. */
