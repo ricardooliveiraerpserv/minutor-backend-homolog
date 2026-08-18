@@ -594,6 +594,10 @@ Route::prefix('v1')->group(function () {
             // Rateio do projeto por centro de custo (% do valor total do projeto).
             Route::get('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'rateio'])->name('projects.rateio');
             Route::put('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'saveRateio'])->name('projects.rateio.save');
+            // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
+            Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
+            Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
+            Route::post('/projects/{project}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resendByProject'])->name('projects.hours-alerts.resend');
             Route::get('/projects/audit', [\App\Http\Controllers\ProjectAuditController::class, 'index'])->name('projects.audit'); // ANTES de /projects/{project}
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
@@ -1249,6 +1253,7 @@ Route::prefix('v1')->group(function () {
             // Alerta de consumo de horas — histórico + reenvio manual por contrato
             Route::get('/{contract}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'index'])->name('contracts.hours-alerts.index');
             Route::post('/{contract}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resend'])->name('contracts.hours-alerts.resend');
+            Route::put('/{contract}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContacts'])->name('contracts.hours-alerts.contacts');
         });
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)
