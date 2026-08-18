@@ -39,6 +39,9 @@ class GoldenGapFixesTest extends TestCase
             {
                 $this->prompts[] = $user;
                 $t = is_callable($this->r) ? ($this->r)($user, count($this->prompts) - 1) : $this->r;
+                if (is_array($t)) { // suporta simulação de truncamento: ['text'=>..,'stop'=>'max_tokens']
+                    return ['text' => (string) ($t['text'] ?? ''), 'usage' => ['input_tokens' => 120, 'output_tokens' => 60], 'stop' => $t['stop'] ?? 'end_turn'];
+                }
                 return ['text' => (string) $t, 'usage' => ['input_tokens' => 120, 'output_tokens' => 60], 'stop' => 'end_turn'];
             }
         };
@@ -99,14 +102,30 @@ class GoldenGapFixesTest extends TestCase
         $this->assertCount(1, $ai->prompts, 'economia: 1 chamada só');
     }
 
-    public function test_gap1_no_fallback_when_no_business_ops(): void
+    public function test_gap1_v3_truncation_triggers_fallback_regardless_of_business_ops(): void
     {
-        // fonte SEM operação de negócio: regras=0 é legítimo → sem fallback.
+        // v3: truncou (dimensão crítica) ⇒ cai p/ multi-bloco MESMO sem sinal determinístico de operação.
         $det = $this->detBiz();
         $det['tables'] = [['table' => 'ZZ0', 'alias' => 'ZZ0', 'access' => ['READ'], 'functions' => ['A'], 'read_fields' => ['ZZ0_COD']]];
-        $det['queries'] = [];
-        $ai = $this->ai(json_encode(['entendimento_funcional' => ['uma_frase' => ['texto' => 'Só lê.', 'confidence' => 'high', 'evidence' => []], 'objetivo' => 'x', 'quando_usado' => 'x', 'o_que_faz' => []], 'funcoes' => [], 'regras_negocio' => []]));
+        $det['queries'] = []; // hasBusinessOps=false, mas truncamento deve bastar
+        $this->assertFalse($this->analyzerHasBusinessOps($det));
+        $ai = $this->ai(function ($user) {
+            if (str_contains($user, 'Fonte pequeno')) {
+                return ['text' => '{"entendimento_funcional":{"uma_frase":{"texto":"x","confidence":"low","evidence":[]},"objetivo":"x","o_que_faz":[]}', 'stop' => 'max_tokens']; // truncado
+            }
+            if (str_contains($user, 'regras_negocio[')) { return json_encode(['regras_negocio' => [], 'change_summary' => 'x']); }
+            if (str_contains($user, 'FUNÇÕES RELEVANTES')) { return json_encode(['funcoes' => [['name' => 'A', 'finalidade' => 'y', 'confidence' => 'low', 'evidence' => []]]]); }
+            if (str_contains($user, 'entendimento_funcional')) { return $this->entJson(); }
+            return json_encode(['risco_alteracao' => ['resumo' => 'x', 'fatores' => []], 'dependencias_criticas' => [], 'pontos_atencao' => []]);
+        });
         $r = (new SourceDocSemanticAnalyzer($ai))->analyze($det, 'codigo', null, []);
-        $this->assertSame('simple_single_call', $r['strategy'], 'sem operação de negócio, regras=0 é legítimo (sem fallback)');
+        $this->assertSame('initial_blocks_v3', $r['strategy'], 'truncamento na rota simple ⇒ fallback independente de hasBusinessOps');
+    }
+
+    private function analyzerHasBusinessOps(array $det): bool
+    {
+        $m = new \ReflectionMethod(SourceDocSemanticAnalyzer::class, 'hasBusinessOps');
+        $m->setAccessible(true);
+        return $m->invoke(new SourceDocSemanticAnalyzer($this->ai('{}')), $det);
     }
 }

@@ -55,6 +55,15 @@ class SourceDocSemanticAnalyzer
     private const XSRC_MARKER = 'CONTEXTO CROSS-SOURCE (AUXILIAR';
     // motivos de missing considerados FALHA TÉCNICA (recuperáveis por top-up) — o resto é not_identified.
     private const TECH_MISS = ['cost_budget', 'truncated_unrecovered', 'deepen_call_budget', 'simple_truncated'];
+    // v3 GAP 4 — processo/módulo por EVIDÊNCIA (não adivinhar; não NI quando há sinais suficientes).
+    private const MODULE_HINT = 'Para processo_modulo: infira por EVIDÊNCIA — tabelas típicas (SA1/SA2/SD2/SF2=Faturamento/Vendas; '
+        . 'SE1/SE2/SEE/SA6=Financeiro; SB1/SB2/SC5/SC6/SC7=Estoque/Compras; SRA/SPI/SP9/SPB=RH/Ponto; SUA/SUB=Televendas/TMK; '
+        . 'Z*/customizadas=conforme uso), operações SQL, caminho do arquivo/repositório, funções-padrão, includes e contexto cross-source. '
+        . 'Preencha quando houver sinais suficientes (cite a evidência); só use "' . self::UNDETERMINED . '" quando REALMENTE ambíguo. ';
+    // v3 GAP 2 — regras por COBERTURA MATERIAL (semântica), não quantidade/redação.
+    private const RULES_COVERAGE = 'COBERTURA MATERIAL obrigatória: não omita regra OBSERVÁVEL — cubra, quando existir nos fatos/código, '
+        . 'autorização/permissão (parâmetros MV_ de usuário, checagens de usuário), limites/tetos (MV_ de percentual/valor), '
+        . 'bloqueios por status, cálculos, validações e mudanças de estado. Prefira perder redação a perder uma regra material. ';
 
     public function __construct(private SourceDocAiProvider $ai)
     {
@@ -353,7 +362,8 @@ class SourceDocSemanticAnalyzer
             } // 'failed' → preserva o block_status original (invalid_json/truncated) — não é problema de orçamento
         }
         if (! $regrasOk && empty($sem['regras_negocio'])) {
-            [$st, $j] = $this->criticalRecover($regrasUser, $inlineCode !== '', $hardLimit);
+            // v3 GAP 3 — recuperação FOCADA e barata (só facts) p/ caber no saldo real remanescente.
+            [$st, $j] = $this->criticalRecover($this->regrasFocusedPrompt($compact), false, $hardLimit);
             if ($st === 'ok' && ! empty($j['regras_negocio'])) {
                 $sem['regras_negocio'] = array_merge($sem['regras_negocio'] ?? [], $j['regras_negocio']);
                 $regrasOk = true;
@@ -439,12 +449,14 @@ class SourceDocSemanticAnalyzer
 
         $g = $this->callJson($this->systemPrompt(), $this->simpleUserPrompt($compact, $maskedCode), $out);
         $j = is_array($g['json']) ? $g['json'] : [];
-        // GAP 1 — fallback p/ multi-bloco quando a chamada única ficou INCOMPLETA (dentro do hard-limit):
-        //  (a) vazia; (b) truncou sem entendimento aproveitável; (c) SEM regras apesar de haver operação de
-        //  negócio determinística (grava/consulta/decide) — melhor gastar mais que documentar pobre.
+        // v3 GAP 1 — fallback p/ multi-bloco SEMPRE que uma DIMENSÃO CRÍTICA truncar/faltar, INDEPENDENTE de
+        //  hasBusinessOps (o determinístico não reconhece toda semântica de negócio; não pode impedir recuperação).
+        //  Fonte pequeno tem folga enorme até US$ 0,30 — melhor gastar que documentar pobre. hasBusinessOps deixa
+        //  de ser gate; segue só como sinal (o fonte sem regra real produz regras=[] no multi-bloco, legítimo).
         $incompleto = empty($j)
-            || ($g['truncated'] && empty($j['entendimento_funcional']))
-            || (empty($j['regras_negocio']) && $this->hasBusinessOps($det));
+            || $g['truncated']                          // qualquer truncamento de bloco crítico
+            || empty($j['entendimento_funcional'])      // entendimento ausente
+            || empty($j['regras_negocio']);             // regras ausente → recupera na multi-bloco
         if ($incompleto) {
             return ['__fallback' => true];
         }
@@ -502,7 +514,8 @@ class SourceDocSemanticAnalyzer
             . 'regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2]}] (toda operação/decisão material vira regra; sem base ⇒ omita, mas NÃO ignore lógica existente), '
             . 'dependencias_criticas[{nome,como_participa,impacto_se_indisponivel,onde_chamada,confidence,evidence[≤1]}] (o que interfere materialmente), '
             . 'risco_alteracao{resumo,fatores[≤5 {tipo,descricao,evidence[≤1]}]}, pontos_atencao[≤5 {interpretation,severity?,recommendation?,confidence,evidence[≤1]}], change_summary}. '
-            . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita o item (não invente).';
+            . 'Cada item EXIGE evidence dos fatos; sem evidência ⇒ omita o item (não invente). '
+            . self::RULES_COVERAGE . self::MODULE_HINT; // v3 GAP 2+4
         return $u;
     }
 
@@ -1998,7 +2011,8 @@ class SourceDocSemanticAnalyzer
             . 'entradas_principais[≤4 {tipo,nome,descricao(≤10 palavras),evidence[≤1]}], '
             . 'saidas_principais[≤4 {tipo,nome,descricao(≤10 palavras),evidence[≤1]}], '
             . 'o_que_faz[≤7 {passo(≤14 palavras),evidence[≤1]}] (sequência FUNCIONAL, não a lista de chamadas)}'
-            . ', fluxo[≤6 strings curtas]. Ordene os campos EXATAMENTE nessa sequência. Sem evidência ⇒ "' . self::UNDETERMINED . '".';
+            . ', fluxo[≤6 strings curtas]. Ordene os campos EXATAMENTE nessa sequência. Sem evidência ⇒ "' . self::UNDETERMINED . '". '
+            . self::MODULE_HINT; // v3 GAP 4 — módulo por evidência, reduzir NI Miss
         return $u;
     }
 
@@ -2010,9 +2024,23 @@ class SourceDocSemanticAnalyzer
             $u .= "\n\nCÓDIGO (segredos mascarados):\n" . $code;
         }
         $u .= $this->crossSourceBlock(); // Fase 3 — regra é tipo de afirmação; pode depender de dependência externa
-        $u .= "\n\nSEJA ENXUTO (≤2 evidence por item). Produza JSON {"
-            . 'regras_negocio[≤10 {id,titulo(≤8 palavras),descricao(≤20 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
-            . 'change_summary}. Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita.';
+        $u .= "\n\nProduza JSON {"
+            . 'regras_negocio[{id,titulo(≤8 palavras),descricao(≤24 palavras),condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?,line_start?,line_end?}]}], '
+            . 'change_summary}. Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita. ' . self::RULES_COVERAGE; // v3 GAP 2
+        return $u;
+    }
+
+    /**
+     * v3 GAP 3 — recuperação FOCADA de regras: prompt ENXUTO (só facts, sem código inline) p/ caber no saldo
+     * real remanescente até US$ 0,30. Pede EXCLUSIVAMENTE as regras materiais ainda ausentes.
+     */
+    private function regrasFocusedPrompt(array $compact): string
+    {
+        $u = "FATOS COMPACTOS:\n" . json_encode($compact, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $u .= $this->crossSourceBlock();
+        $u .= "\n\nRECUPERAÇÃO FOCADA: produza SOMENTE as regras de negócio MATERIAIS observáveis nos fatos. "
+            . 'JSON {regras_negocio[{id,titulo,descricao,condicao,efeito,confidence,evidence[≤2 {type,name?,table?,field?}]}]}. '
+            . 'Cada regra EXIGE evidence dos fatos; sem evidência ⇒ omita. ' . self::RULES_COVERAGE;
         return $u;
     }
 
