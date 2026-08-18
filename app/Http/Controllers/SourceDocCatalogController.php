@@ -60,7 +60,11 @@ class SourceDocCatalogController extends Controller
             ->when($q !== '', fn ($x) => $x->where(function ($w) use ($q) {
                 $w->where('source_docs.filename', 'ilike', "%{$q}%")
                     ->orWhere('source_docs.path', 'ilike', "%{$q}%");
-            }));
+            }))
+            // F2 (Acervo): conteúdo de uma pasta (recursivo) via prefixo do path Git.
+            ->when($request->filled('path_prefix'), fn ($x) => $x->where(
+                'source_docs.path', 'like', str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], (string) $request->query('path_prefix')) . '%'
+            ));
 
         // C4a — ESCOPO POR CLIENTE (enforcement em SQL, deny-by-default). O filtro customer_id
         // acima é apenas recorte de UI; a segurança é este applyScope, que intersecta com os

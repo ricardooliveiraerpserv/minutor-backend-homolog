@@ -535,6 +535,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
             // C3.5 — cobertura do acervo (leitura)
             Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+            // F2 — Acervo: árvore lazy Empresa → Repositório → Diretório Git → Fonte (leitura, escopado).
+            Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
+            Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
+            Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
         });
         // C3.5 — disparar inventário (Admin/ops, gate estrito)
         Route::middleware('permission:source_docs.inventory')->group(function () {
@@ -1586,6 +1590,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
             // C3.5 — cobertura do acervo (leitura)
             Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+            // F2 — Acervo: árvore lazy Empresa → Repositório → Diretório Git → Fonte (leitura, escopado).
+            Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
+            Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
+            Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
         });
         // C3.5 — disparar inventário (Admin/ops, gate estrito)
         Route::middleware('permission:source_docs.inventory')->group(function () {
