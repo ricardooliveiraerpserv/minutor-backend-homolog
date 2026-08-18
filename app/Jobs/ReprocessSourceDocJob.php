@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\SourceDoc;
 use App\Models\SourceDocActionLog;
+use App\SourceCode\Cost\SourceCostGovernor;
 use App\SourceCode\GithubAppAuth;
 use App\SourceCode\SourceDocPipeline;
 use Illuminate\Bus\Queueable;
@@ -36,7 +37,7 @@ class ReprocessSourceDocJob implements ShouldQueue
         $this->onConnection('database')->onQueue('source-doc');
     }
 
-    public function handle(SourceDocPipeline $pipeline, GithubAppAuth $auth): void
+    public function handle(SourceDocPipeline $pipeline, GithubAppAuth $auth, SourceCostGovernor $governor): void
     {
         $log = SourceDocActionLog::find($this->logId);
         $doc = SourceDoc::with('currentVersion')->find($this->docId);
@@ -48,6 +49,8 @@ class ReprocessSourceDocJob implements ShouldQueue
         $log->update(['status' => 'running']);
         $t0 = microtime(true);
         $runSemantic = ($this->layer === 'semantic' || $this->layer === 'both');
+        // Frente A — reserva feita pelo controller = estimated_cost_usd nos params; liquidamos aqui.
+        $reserved = $runSemantic ? (float) (($log->params['estimated_cost_usd'] ?? 0)) : 0.0;
 
         try {
             $ver = $doc->currentVersion;
@@ -74,6 +77,9 @@ class ReprocessSourceDocJob implements ShouldQueue
             }
 
             $cost = $this->extractCost($newVer);
+            if ($reserved > 0) {
+                $governor->settle($doc, $reserved, (float) ($cost ?? 0)); // reserva → custo real
+            }
             $params = array_merge($log->params ?? [], SourceDocActionLog::sanitize([
                 'new_version_id' => $newVer->id,
                 'analysis_status' => $newVer->analysis_status,
@@ -83,6 +89,9 @@ class ReprocessSourceDocJob implements ShouldQueue
                 'duration_ms' => (int) ((microtime(true) - $t0) * 1000), 'params' => $params,
             ]);
         } catch (\Throwable $e) {
+            if ($reserved > 0) {
+                $governor->release($doc, $reserved); // libera a reserva sem gasto
+            }
             $log->update([
                 'status' => 'failed',
                 'reason' => mb_substr($this->sanitizeError($e->getMessage()), 0, 200),
@@ -113,6 +122,12 @@ class ReprocessSourceDocJob implements ShouldQueue
 
     public function failed(\Throwable $e): void
     {
+        // Caminho não-capturado por handle() (falha de infra/serialização): libera a reserva presa.
+        $log = SourceDocActionLog::find($this->logId);
+        $reserved = ($this->layer === 'semantic' || $this->layer === 'both') ? (float) (($log?->params['estimated_cost_usd'] ?? 0)) : 0.0;
+        if ($reserved > 0 && ($doc = SourceDoc::find($this->docId))) {
+            app(SourceCostGovernor::class)->release($doc, $reserved);
+        }
         SourceDocActionLog::where('id', $this->logId)->update(['status' => 'failed', 'reason' => 'job falhou']);
     }
 }

@@ -550,6 +550,23 @@ Route::prefix('v1')->group(function () {
             Route::post('/source-docs/campaigns/{id}/resume', [\App\Http\Controllers\SourceDocCampaignController::class, 'resume'])->whereNumber('id');
             Route::post('/source-docs/campaigns/{id}/cancel', [\App\Http\Controllers\SourceDocCampaignController::class, 'cancel'])->whereNumber('id');
         });
+        // Frente A — Governança de custo de IA (Admin/interno ERPSERV; sem escopo de cliente).
+        Route::middleware('permission:source_docs.cost_settings.view')->group(function () {
+            Route::get('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'index']);
+        });
+        Route::middleware('permission:source_docs.cost_settings.manage')->group(function () {
+            Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
+        });
+        Route::middleware('permission:source_docs.cost_approval.view')->group(function () {
+            Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);
+            Route::get('/source-docs/cost-approvals/{id}', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:source_docs.cost_approval.decide')->group(function () {
+            Route::post('/source-docs/cost-approvals/{id}/approve-step', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'approveStep'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/approve-limit', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'approveLimit'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/close-partial', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'closePartial'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/reject', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'reject'])->whereNumber('id');
+        });
         // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
         Route::middleware('permission.or.admin:source_docs.validate')->group(function () {
             Route::post('/source-docs/{sourceDoc}/validate', [\App\Http\Controllers\SourceDocActionController::class, 'validate'])->whereNumber('sourceDoc');
@@ -1583,6 +1600,23 @@ Route::prefix('v1')->group(function () {
             Route::post('/source-docs/campaigns/{id}/pause', [\App\Http\Controllers\SourceDocCampaignController::class, 'pause'])->whereNumber('id');
             Route::post('/source-docs/campaigns/{id}/resume', [\App\Http\Controllers\SourceDocCampaignController::class, 'resume'])->whereNumber('id');
             Route::post('/source-docs/campaigns/{id}/cancel', [\App\Http\Controllers\SourceDocCampaignController::class, 'cancel'])->whereNumber('id');
+        });
+        // Frente A — Governança de custo de IA (Admin/interno ERPSERV; sem escopo de cliente).
+        Route::middleware('permission:source_docs.cost_settings.view')->group(function () {
+            Route::get('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'index']);
+        });
+        Route::middleware('permission:source_docs.cost_settings.manage')->group(function () {
+            Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
+        });
+        Route::middleware('permission:source_docs.cost_approval.view')->group(function () {
+            Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);
+            Route::get('/source-docs/cost-approvals/{id}', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:source_docs.cost_approval.decide')->group(function () {
+            Route::post('/source-docs/cost-approvals/{id}/approve-step', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'approveStep'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/approve-limit', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'approveLimit'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/close-partial', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'closePartial'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/reject', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'reject'])->whereNumber('id');
         });
         // C3 — ações operacionais: uma permissão por ação (nada hardcoded no controller).
         Route::middleware('permission.or.admin:source_docs.validate')->group(function () {

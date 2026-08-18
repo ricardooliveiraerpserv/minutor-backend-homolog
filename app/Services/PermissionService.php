@@ -153,6 +153,9 @@ class PermissionService
         'source_docs.view_cross_customer',
         // Campanha de Documentação Semântica Inicial (baseline). Admin-only na prática (via '*').
         'source_docs.semantic_campaign',
+        // Frente A — Governança de custo de IA (config + fila de aprovação). Interno ERPSERV (Admin via '*').
+        'source_docs.cost_settings.view', 'source_docs.cost_settings.manage',
+        'source_docs.cost_approval.view', 'source_docs.cost_approval.decide',
     ];
 
     /**

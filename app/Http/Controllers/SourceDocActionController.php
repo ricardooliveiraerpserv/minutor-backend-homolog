@@ -7,6 +7,7 @@ use App\Models\SourceDoc;
 use App\Models\SourceDocActionLog;
 use App\Models\SourceDocVersion;
 use App\SourceCode\Analyzer\SourceDiff;
+use App\SourceCode\Cost\SourceCostGovernor;
 use App\SourceCode\GithubAppAuth;
 use App\SourceCode\SourceDocCustomerScope;
 use App\SourceCode\SourceDocRenderer;
@@ -27,6 +28,7 @@ class SourceDocActionController extends Controller
         private SourceDocStatusResolver $resolver,
         private GithubAppAuth $auth,
         private SourceDocCustomerScope $scope,
+        private SourceCostGovernor $governor,
     ) {
     }
 
@@ -93,6 +95,22 @@ class SourceDocActionController extends Controller
             return response()->json(['message' => 'Versão concluída idêntica é imutável — nada a refazer.', 'plan' => $plan], 409);
         }
 
+        // Frente A — GOVERNANÇA DE CUSTO POR FONTE (orquestração; motor congelado intocado). Só a camada
+        // semântica gasta IA: reserva atômica antes de enfileirar; se estoura o limite operacional por
+        // fonte e a aprovação está ligada → cria solicitação e NÃO enfileira (nenhuma chamada de IA).
+        if ($this->wantsSemantic($layer) && $plan['ai_enabled']) {
+            $decision = $this->governor->authorizeStep($doc, 'reprocess', (float) $plan['estimated_cost_usd'], $request->user()?->id, [
+                'reason' => 'reprocessamento semântico',
+                'completeness_level' => $doc->currentVersion?->analysis_status,
+            ]);
+            if ($decision->needsApproval()) {
+                return response()->json(['message' => 'Custo acima do limite por fonte — enviado para aprovação.', 'action' => 'awaiting_cost_approval', 'approval_id' => $decision->approval?->id, 'plan' => $plan, 'cost' => $decision->settings->toArray()], 202);
+            }
+            if ($decision->outcome === 'deny_partial') {
+                return response()->json(['message' => 'Custo acima do limite por fonte — aprovação desligada; não enfileirado.', 'action' => 'cost_denied_partial', 'plan' => $plan], 422);
+            }
+        }
+
         // Idempotência + anti-concorrência: o índice parcial único (idempotency_key em queued/running)
         // rejeita uma 2ª execução equivalente (clique duplo / requests simultâneas).
         try {
@@ -137,15 +155,33 @@ class SourceDocActionController extends Controller
         if (! $ver || ! is_array($ver->semantic_json)) {
             return response()->json(['message' => 'Fonte sem semântica para enriquecer.'], 422);
         }
+        // Frente A — GOVERNANÇA DE CUSTO POR FONTE: o top-up é um PASSO pago fresco (~US$0,30). Reserva
+        // antes de rodar; se estoura o limite operacional por fonte → aprovação (não roda a IA).
+        $stepEstimate = (float) config('services.source_doc_ai.hard_limit_usd', 0.30);
+        $decision = $this->governor->authorizeStep($doc, 'top_up', $stepEstimate, $request->user()?->id, [
+            'reason' => 'top-up de fonte parcial',
+            'completeness_level' => $ver->semantic_json['documentary_completeness']['level'] ?? null,
+            'gaps' => $ver->semantic_json['documentary_completeness']['missing'] ?? null,
+        ]);
+        if ($decision->needsApproval()) {
+            return response()->json(['message' => 'Custo acima do limite por fonte — enviado para aprovação.', 'action' => 'awaiting_cost_approval', 'approval_id' => $decision->approval?->id, 'cost' => $decision->settings->toArray()], 202);
+        }
+        if ($decision->outcome === 'deny_partial') {
+            return response()->json(['message' => 'Custo acima do limite por fonte — aprovação desligada.', 'action' => 'cost_denied_partial'], 422);
+        }
         $pipeline = app(\App\SourceCode\SourceDocPipeline::class);
         $before = $this->topupSnapshot($ver->semantic_json);
         $t0 = microtime(true);
         try {
             $ver = $pipeline->topUpVersion($ver);
         } catch (\Throwable $e) {
+            $this->governor->release($doc, $decision->reservedUsd); // libera reserva sem gasto
             return response()->json(['message' => 'Falha no top-up.', 'error' => mb_substr($e->getMessage(), 0, 200)], 500);
         }
         $after = $this->topupSnapshot($ver->semantic_json);
+        // liquida a reserva com o custo real do passo de top-up.
+        $realStep = (float) ($ver->semantic_json['usage']['topup_cost_usd'] ?? $after['topup_cost_usd'] ?? 0.0);
+        $this->governor->settle($doc, $decision->reservedUsd, $realStep);
         $this->audit($doc, 'topup', 'ok', ['before' => $before['documentary_completeness'] ?? null, 'after' => $after['documentary_completeness'] ?? null], durationMs: (int) ((microtime(true) - $t0) * 1000), userId: $request->user()?->id);
         return response()->json(['data' => ['id' => $doc->id, 'file' => $doc->filename ?: $doc->path, 'before' => $before, 'after' => $after]]);
     }
