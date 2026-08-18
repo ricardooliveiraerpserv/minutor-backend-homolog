@@ -597,6 +597,7 @@ Route::prefix('v1')->group(function () {
             // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
             Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
             Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
+            Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send');
             Route::post('/projects/{project}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resendByProject'])->name('projects.hours-alerts.resend');
             Route::get('/projects/audit', [\App\Http\Controllers\ProjectAuditController::class, 'index'])->name('projects.audit'); // ANTES de /projects/{project}
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
@@ -1254,6 +1255,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/{contract}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'index'])->name('contracts.hours-alerts.index');
             Route::post('/{contract}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resend'])->name('contracts.hours-alerts.resend');
             Route::put('/{contract}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContacts'])->name('contracts.hours-alerts.contacts');
+            Route::post('/{contract}/hours-alerts/send',           [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManual'])->name('contracts.hours-alerts.send');
         });
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)

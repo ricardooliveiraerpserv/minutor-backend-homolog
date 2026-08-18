@@ -44,6 +44,19 @@ class ContractHoursAlertController extends Controller
         return $this->doResend($alert, (int) $contract->project_id, (int) $contract->id);
     }
 
+    public function sendManual(Contract $contract): JsonResponse
+    {
+        if (!$contract->project_id) {
+            return response()->json(['message' => 'Contrato sem projeto vinculado.'], 422);
+        }
+        $project = Project::find($contract->project_id);
+        $alert = $this->service->sendManual($project);
+        return response()->json([
+            'message' => $alert->status === 'sent' ? 'Alerta enviado.' : 'Não foi possível enviar — verifique os destinatários.',
+            'alert'   => $alert,
+        ] + $this->payloadFor($contract->project_id, $contract));
+    }
+
     public function setContacts(Contract $contract, Request $request): JsonResponse
     {
         return response()->json($this->doSetContacts($contract, $request));
@@ -60,6 +73,16 @@ class ContractHoursAlertController extends Controller
     public function resendByProject(Project $project, ContractHoursAlert $alert): JsonResponse
     {
         return $this->doResend($alert, (int) $project->id, null);
+    }
+
+    public function sendManualByProject(Project $project): JsonResponse
+    {
+        $alert = $this->service->sendManual($project);
+        $contract = Contract::where('project_id', $project->id)->first();
+        return response()->json([
+            'message' => $alert->status === 'sent' ? 'Alerta enviado.' : 'Não foi possível enviar — verifique os destinatários.',
+            'alert'   => $alert,
+        ] + $this->payloadFor($project->id, $contract, $project));
     }
 
     public function setContactsByProject(Project $project, Request $request): JsonResponse
@@ -87,6 +110,7 @@ class ContractHoursAlertController extends Controller
         }
 
         $current = null;
+        $preview = null;
         $proj = $project ?: ($projectId ? Project::find($projectId) : null);
         if ($proj) {
             $m = $this->service->metrics($proj);
@@ -98,6 +122,7 @@ class ContractHoursAlertController extends Controller
                 'percentual' => round($m['percentual'], 1),
                 'basis'      => $m['basis'],
             ];
+            $preview = $this->service->preview($proj);
         }
 
         $contacts = [];
@@ -116,6 +141,7 @@ class ContractHoursAlertController extends Controller
             'enabled'     => $this->service->isEnabled(),
             'contract_id' => $contract->id ?? null,
             'current'     => $current,
+            'preview'     => $preview,
             'contacts'    => $contacts,
             'alerts'      => $alerts,
         ];
