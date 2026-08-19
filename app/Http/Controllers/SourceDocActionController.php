@@ -358,6 +358,41 @@ class SourceDocActionController extends Controller
         ]]);
     }
 
+    /**
+     * POST /source-docs/{id}/manual-semantic {semantic, responsavel?} — documentação MANUAL (sem IA):
+     * grava um semantic_json montado fora do motor na versão atual (reusa o determinístico), reconsolida
+     * e reindexa. NÃO chama IA, não gasta crédito. Bloqueado em produção (só homolog/dev).
+     */
+    public function manualSemantic(int $sourceDoc, Request $request): JsonResponse
+    {
+        if (app()->environment('production')) {
+            return response()->json(['message' => 'Documentação manual não é permitida em produção.'], 403);
+        }
+        $doc = SourceDoc::with('currentVersion')->find($sourceDoc);
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        $ver = $doc->currentVersion;
+        if (! $ver || ! is_array($ver->deterministic_json)) {
+            return response()->json(['message' => 'Fonte sem versão determinística para documentar.'], 422);
+        }
+        $data = $request->validate([
+            'semantic' => ['required', 'array'],
+            'responsavel' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $out = app(\App\SourceCode\SourceDocPipeline::class)->applyManualSemantic(
+            $ver, $data['semantic'], $data['responsavel'] ?? 'Documentação manual (sem IA)'
+        );
+        $this->audit($doc, 'reprocess', 'ok', ['mode' => 'manual_semantic', 'version_id' => $out->id], userId: $request->user()?->id);
+
+        return response()->json(['data' => [
+            'source_doc_id' => $doc->id, 'version_id' => $out->id,
+            'analysis_status' => $out->analysis_status,
+            'has_semantic' => ! empty($out->semantic_json),
+        ]]);
+    }
+
     /** GET /source-docs/{id}/compare?from=&to= — diff estrutural entre 2 versões (determinístico). */
     public function compare(int $sourceDoc, Request $request, SourceDiff $diff): JsonResponse
     {

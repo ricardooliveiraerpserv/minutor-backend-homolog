@@ -341,4 +341,44 @@ class SourceDocPipeline
             'security_findings' => $findings,
         ];
     }
+
+    /**
+     * Documentação MANUAL (sem IA): injeta um semantic_json montado FORA do motor na versão atual,
+     * reusando o determinístico já persistido. Reconsolida documentation_json e refaz o read-model
+     * (source_doc_index + source_doc_entities). Status honesto por documentary_completeness.level
+     * (completo→completed, senão partial). Não chama a IA, não gasta crédito.
+     */
+    public function applyManualSemantic(SourceDocVersion $ver, array $semantic, ?string $responsavel = null): SourceDocVersion
+    {
+        $doc = $ver->doc;
+        if (! $doc) {
+            return $ver;
+        }
+        $det = is_array($ver->deterministic_json) ? $ver->deterministic_json : [];
+        $level = (string) ($semantic['documentary_completeness']['level'] ?? 'parcial');
+        $status = $level === 'completo' ? 'completed' : 'partial';
+
+        $ctx = [
+            'customer_id' => $doc->customer_id, 'owner' => $doc->owner, 'repository' => $doc->repository, 'branch' => $doc->branch,
+            'path' => $doc->path, 'tipo' => $doc->tipo, 'source_commit_sha' => $ver->source_commit_sha,
+            'parent_source_commit_sha' => $ver->parent_source_commit_sha, 'gmud_id' => $ver->gmud_id,
+            'ticket_number' => $ver->ticket_number, 'responsavel' => $responsavel ?: $ver->responsavel,
+        ];
+        $ver->semantic_json = $semantic;
+        $ver->documentation_json = $this->consolidate($doc, $ctx, $det, $semantic, ['diff_stats' => $ver->diff_stats], (array) ($det['security_findings'] ?? []), $status);
+        $ver->analysis_status = $status;
+        if ($responsavel) {
+            $ver->responsavel = $responsavel;
+        }
+        $ver->save();
+
+        if ((int) $doc->current_version_id === (int) $ver->id) {
+            $doc->documentation_json = $ver->documentation_json;
+            $doc->analysis_status = $status;
+            $doc->save();
+        }
+        app(\App\SourceCode\SourceDocIndexer::class)->index($doc);
+
+        return $ver;
+    }
 }
