@@ -4239,6 +4239,24 @@ class ProjectController extends Controller
             $stages = $stages->filter(fn ($st) => $st->deliveries->isNotEmpty())->values();
         }
 
+        // effort_minutes_sum por atividade (apontamentos vinculados via stage_delivery_id) —
+        // usado no card do cronograma p/ mostrar "Apont" (o /schedule não trazia este campo,
+        // só o StageDeliveryController separado; por isso o card mostrava sempre 0).
+        $effortDeliveryIds = $stages->flatMap(fn ($st) => $st->deliveries->pluck('id'))->all();
+        if (!empty($effortDeliveryIds)) {
+            $effortByDelivery = DB::table('timesheets')
+                ->whereIn('stage_delivery_id', $effortDeliveryIds)
+                ->whereNull('deleted_at')
+                ->selectRaw('stage_delivery_id, COALESCE(SUM(effort_minutes), 0) as s')
+                ->groupBy('stage_delivery_id')
+                ->pluck('s', 'stage_delivery_id');
+            foreach ($stages as $st) {
+                foreach ($st->deliveries as $d) {
+                    $d->effort_minutes_sum = (int) ($effortByDelivery[$d->id] ?? 0);
+                }
+            }
+        }
+
         // Follow Ups vinculados (denormalizados em project_id/stage_id/delivery_id):
         // contadores por atividade + agregados por etapa pra exibir no cronograma.
         $fuByDelivery = [];
