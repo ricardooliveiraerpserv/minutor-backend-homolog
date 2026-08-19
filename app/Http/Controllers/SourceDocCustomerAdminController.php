@@ -103,11 +103,27 @@ class SourceDocCustomerAdminController extends Controller
         $status = (string) $request->query('status', 'open');
         $q = SourceDocSourceRequest::query()
             ->leftJoin('customers', 'customers.id', '=', 'source_doc_source_requests.customer_id')
+            ->leftJoin('users', 'users.id', '=', 'source_doc_source_requests.requested_by')
             ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_source_requests.status', $status))
+            ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_doc_source_requests.customer_id', (int) $request->query('customer_id')))
             ->orderByDesc('source_doc_source_requests.created_at')
-            ->limit(200)
-            ->get(['source_doc_source_requests.*', 'customers.name as customer_name']);
+            ->limit(300)
+            ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name']);
 
         return response()->json(['data' => $q]);
+    }
+
+    /** PATCH /source-docs/source-requests/{id} {status} — atender / rejeitar / reabrir. */
+    public function updateRequest(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate(['status' => ['required', 'in:open,provisioned,rejected']]);
+        $req = SourceDocSourceRequest::query()->find($id);
+        if (! $req) {
+            return response()->json(['message' => 'Solicitação não encontrada.'], 404);
+        }
+        $req->status = $data['status'];
+        $req->save();
+
+        return response()->json(['data' => ['id' => $req->id, 'status' => $req->status]]);
     }
 }
