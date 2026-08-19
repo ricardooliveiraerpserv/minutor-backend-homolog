@@ -51,10 +51,15 @@ class SourceDocCustomerAdminController extends Controller
         $data = $request->validate([
             'customer_id' => ['nullable', 'integer'],
             'repository' => ['nullable', 'string', 'max:255'],
+            'ticket' => ['nullable', 'string', 'max:120'],
+            'priority' => ['nullable', 'in:baixa,media,alta'],
+            'scope_type' => ['nullable', 'in:source,folder,repository'],
+            'paths' => ['nullable', 'array', 'max:500'],
+            'paths.*' => ['string', 'max:1000'],
             'note' => ['nullable', 'string', 'max:2000'],
         ]);
-        if (empty($data['customer_id']) && empty($data['repository']) && empty($data['note'])) {
-            return response()->json(['message' => 'Informe ao menos a empresa, o repositório ou uma observação.'], 422);
+        if (empty($data['customer_id']) && empty($data['repository']) && empty($data['note']) && empty($data['paths'])) {
+            return response()->json(['message' => 'Informe ao menos a empresa, o repositório, a pasta/fontes ou uma observação.'], 422);
         }
         if (! empty($data['customer_id']) && ! $this->scope->canAccessCustomerId($request->user(), (int) $data['customer_id'])) {
             return response()->json(['message' => 'Cliente fora do seu escopo.'], 404);
@@ -63,6 +68,10 @@ class SourceDocCustomerAdminController extends Controller
         $req = SourceDocSourceRequest::create([
             'customer_id' => $data['customer_id'] ?? null,
             'repository' => $data['repository'] ?? null,
+            'ticket' => $data['ticket'] ?? null,
+            'priority' => $data['priority'] ?? 'media',
+            'scope_type' => $data['scope_type'] ?? 'repository',
+            'paths' => $data['paths'] ?? null,
             'note' => $data['note'] ?? null,
             'status' => 'open',
             'requested_by' => $request->user()?->id,
