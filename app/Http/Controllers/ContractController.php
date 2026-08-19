@@ -1352,7 +1352,7 @@ class ContractController extends Controller
                 'aditivoProject:id,code,name,hourly_rate,sold_hours,contract_type_id',
                 'aditivoProject.contractType:id,code',
                 'parentContract:id,project_code_preview',
-                'childContracts:id,parent_contract_id,project_code_preview,kanban_status',
+                'childContracts:id,parent_contract_id,project_code_preview,kanban_status,valor_projeto,tipo_faturamento',
             ])->where(function ($q) {
                 $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, Contract::KANBAN_ADITIVO, 'novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
@@ -1377,7 +1377,7 @@ class ContractController extends Controller
                 'serviceType:id,name',
                 'project:id,code,name,status',
                 'parentContract:id,project_code_preview',
-                'childContracts:id,parent_contract_id,project_code_preview,kanban_status',
+                'childContracts:id,parent_contract_id,project_code_preview,kanban_status,valor_projeto,tipo_faturamento',
             ])->where('status', Contract::STATUS_INICIO_AUTORIZADO)
               ->whereNull('project_id')
               ->orderBy('kanban_order')
@@ -1394,7 +1394,7 @@ class ContractController extends Controller
             'customer.executive:id,name', 'customer.executiveBizify:id,name',
             'contract:id,project_name,project_code_preview,parent_contract_id',
             'contract.parentContract:id,project_code_preview',
-            'contract.childContracts:id,parent_contract_id,project_code_preview',
+            'contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento',
             'coordinators:id,name',
             'kanbanOverrideCoordinator:id,name',
             'consultants:id,name',
@@ -1519,7 +1519,7 @@ class ContractController extends Controller
                 'project.contractType:id,name',
                 'project.contract:id,project_name,project_code_preview,parent_contract_id',
                 'project.contract.parentContract:id,project_code_preview',
-                'project.contract.childContracts:id,parent_contract_id,project_code_preview',
+                'project.contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento',
                 'project.serviceType:id,name',
             ])
             ->whereNotNull('sustentacao_column')
@@ -2363,6 +2363,18 @@ class ContractController extends Controller
 
     private function formatKanbanCard(Contract $contract): array
     {
+        // Faturamento consolidado: item "Banco de Horas Mensal" é cobrado no contrato
+        // PAI (Cloud/mensalidade). O item mostra "fatura no principal nº X"; o pai mostra
+        // o VALOR CHEIO (mensalidade + itens BH Mensal) = fatura única.
+        $bhMensalItem = (bool) $contract->parent_contract_id && $contract->tipo_faturamento === 'banco_horas_mensal';
+        $bhKids = $contract->relationLoaded('childContracts')
+            ? $contract->childContracts->filter(fn ($c) => $c->tipo_faturamento === 'banco_horas_mensal')
+            : collect();
+        $hasBhItems = $bhKids->isNotEmpty();
+        $combinedBilling = $hasBhItems
+            ? round((float) ($contract->valor_projeto ?? 0) + (float) $bhKids->sum(fn ($c) => (float) ($c->valor_projeto ?? 0)), 2)
+            : null;
+
         return [
             'card_type'        => 'contract',
             'id'               => $contract->id,
@@ -2390,6 +2402,9 @@ class ContractController extends Controller
             // Vínculo de item SaaS/Cloud: card-filho aponta pro pai; card-pai lista os filhos.
             'parent_contract_id'   => $contract->parent_contract_id,
             'parent_contract_code' => $contract->parentContract?->project_code_preview,
+            'bh_mensal_item'         => $bhMensalItem,
+            'has_bh_mensal_items'    => $hasBhItems,
+            'combined_billing_value' => $combinedBilling,
             'linked_children'  => $contract->relationLoaded('childContracts')
                 ? $contract->childContracts->map(fn ($c) => ['id' => $c->id, 'code' => $c->project_code_preview])->values()
                 : [],
@@ -2488,7 +2503,7 @@ class ContractController extends Controller
         // Item (child) → aponta pro pai; mensalidade (pai) → lista os filhos.
         $lc = $project->contract;
         if ($lc && !$lc->relationLoaded('childContracts')) {
-            $lc->load(['parentContract:id,project_code_preview', 'childContracts:id,parent_contract_id,project_code_preview']);
+            $lc->load(['parentContract:id,project_code_preview', 'childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento']);
         }
         $linkedChildren = $lc && $lc->relationLoaded('childContracts')
             ? $lc->childContracts->map(fn ($c) => ['id' => $c->id, 'code' => $c->project_code_preview])->values()
