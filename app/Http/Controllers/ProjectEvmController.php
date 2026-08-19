@@ -373,7 +373,7 @@ class ProjectEvmController extends Controller
         $todayStart = now()->startOfDay();
 
         $q = $this->portfolioBaseQuery($request)->with(['customer:id,name', 'coordinators:id,name']);
-        $projects = $q->orderBy('name')->get(['id', 'name', 'code', 'status', 'customer_id']);
+        $projects = $q->orderBy('name')->get(['id', 'name', 'code', 'status', 'customer_id', 'sold_hours', 'coordination_hours']);
         $ids = $projects->pluck('id')->all();
         if (empty($ids)) return response()->json(['projects' => []]);
 
@@ -459,6 +459,8 @@ class ProjectEvmController extends Controller
                 'has_baseline' => (bool) $bl, 'using_live_plan' => ! $bl,
                 'pct_planned'  => $pctP, 'pct_real' => $pctR, 'spi' => $spi, 'cpi' => $cpi,
                 'hours_planned' => round($bac, 2), 'hours_ev' => $ev, 'hours_actual' => $ac,
+                // Apontáveis = horas de coordenação (se houver) senão vendidas; Apontadas = hours_actual; Saldo = FE.
+                'hours_appointable' => (float) (((float) ($p->coordination_hours ?? 0)) > 0 ? $p->coordination_hours : ($p->sold_hours ?? 0)),
                 'deliveries' => $total, 'done' => $done, 'overdue' => $overdue, 'overdue_pct' => $overduePct,
                 'health' => $health,
             ];
