@@ -7,12 +7,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ContractItem extends Model
 {
-    public const TIPOS = ['setup', 'desenvolvimento', 'setup_dev'];
+    public const TIPOS = ['setup', 'desenvolvimento', 'setup_dev', 'banco_horas_mensal'];
 
     public const TIPO_LABEL = [
-        'setup'           => 'Setup',
-        'desenvolvimento' => 'Desenvolvimento',
-        'setup_dev'       => 'Setup + Desenvolvimento',
+        'setup'              => 'Setup',
+        'desenvolvimento'    => 'Desenvolvimento',
+        'setup_dev'          => 'Setup + Desenvolvimento',
+        'banco_horas_mensal' => 'Banco de Horas Mensal',
     ];
 
     protected $fillable = [

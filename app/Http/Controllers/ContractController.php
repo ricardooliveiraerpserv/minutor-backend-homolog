@@ -133,7 +133,7 @@ class ContractController extends Controller
             // Itens SaaS/Cloud (Setup/Desenvolvimento) — cada um gera um card de projeto Fechado.
             'items'                       => 'nullable|array',
             'items.*.id'                  => 'nullable|integer',
-            'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',
+            'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev,banco_horas_mensal',
             'items.*.descricao'           => 'required|string',
             'items.*.valor_projeto'       => 'required|numeric|min:0',
             'items.*.valor_hora'          => 'required|numeric|min:0',
@@ -685,7 +685,7 @@ class ContractController extends Controller
             'contacts.*.recebe_alerta_consumo' => 'nullable|boolean',
             'items'                       => 'nullable|array',
             'items.*.id'                  => 'nullable|integer',
-            'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev',
+            'items.*.tipo'                => 'required|in:setup,desenvolvimento,setup_dev,banco_horas_mensal',
             'items.*.descricao'           => 'required|string',
             'items.*.valor_projeto'       => 'required|numeric|min:0',
             'items.*.valor_hora'          => 'required|numeric|min:0',
@@ -2649,17 +2649,23 @@ class ContractController extends Controller
     {
         $base = (string) $mensal->project_code_preview;
         $code = $base !== '' ? $base . '-' . $letter : null;
-        $closedId = \App\Models\ContractType::where('code', 'closed')->value('id') ?? $mensal->contract_type_id;
+
+        // Item "Banco de Horas Mensal" nasce como card BH Mensal (recorrente, fluxo de
+        // sustentação); os demais (Setup/Desenvolvimento) seguem como Fechado (projeto pontual).
+        $isBhMensal = $item->tipo === 'banco_horas_mensal';
+        $ctCode     = $isBhMensal ? 'monthly_hours' : 'closed';
+        $ctId       = \App\Models\ContractType::where('code', $ctCode)->value('id') ?? $mensal->contract_type_id;
 
         $sibling = Contract::create([
             'customer_id'           => $mensal->customer_id,
             'created_by_id'         => auth()->id(),
             'status'                => Contract::STATUS_RASCUNHO,
             'kanban_status'         => Contract::KANBAN_BACKLOG,
-            'categoria'             => $mensal->categoria ?: 'projeto',
+            'categoria'             => $isBhMensal ? 'sustentacao' : ($mensal->categoria ?: 'projeto'),
             'project_name'          => trim(($mensal->project_name ?: optional($mensal->customer)->name) . ' — ' . (\App\Models\ContractItem::TIPO_LABEL[$item->tipo] ?? $item->tipo)),
             'project_code_preview'  => $code,
-            'contract_type_id'      => $closedId,
+            'contract_type_id'      => $ctId,
+            'tipo_faturamento'      => $isBhMensal ? 'banco_horas_mensal' : null,
             'service_type_id'       => $mensal->service_type_id,
             'tipo_alocacao'         => $mensal->tipo_alocacao,
             'architect_id'          => $mensal->architect_id,
