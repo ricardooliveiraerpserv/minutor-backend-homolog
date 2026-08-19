@@ -55,7 +55,29 @@ class SourceDocTreeController extends Controller
             // 'desatualizadas' (situação Git) exige o resolver (caro em rollup) — omitido nesta fase.
         ]);
 
-        return response()->json(['data' => $data]);
+        // include_empty=1: anexa clientes configurados no git (ClientSourceRepo ativo) que ainda
+        // NÃO têm fontes indexadas (fontes=0), respeitando o escopo. Default OFF (não muda Acervo/Visão Geral).
+        if ($request->boolean('include_empty')) {
+            $haveDocs = $rows->pluck('customer_id')->all() ?: [0];
+            $gitQ = \App\Models\ClientSourceRepo::query()
+                ->join('customers', 'customers.id', '=', 'client_source_repos.customer_id')
+                ->where('client_source_repos.active', true)
+                ->whereNotIn('client_source_repos.customer_id', $haveDocs)
+                ->groupBy('client_source_repos.customer_id', 'customers.name')
+                ->select([
+                    'client_source_repos.customer_id',
+                    DB::raw('customers.name as name'),
+                    DB::raw('count(distinct client_source_repos.repository) as repos'),
+                ]);
+            $this->scope->applyScope($gitQ, $user, 'client_source_repos.customer_id');
+            $gitData = $gitQ->orderBy('customers.name')->get()->map(fn ($r) => [
+                'customer_id' => (int) $r->customer_id, 'name' => $r->name, 'repos' => (int) $r->repos,
+                'fontes' => 0, 'documentadas' => 0, 'completas' => 0, 'parciais' => 0, 'pendentes' => 0, 'aguardando_aprovacao' => 0,
+            ]);
+            $data = $data->concat($gitData);
+        }
+
+        return response()->json(['data' => $data->values()]);
     }
 
     /** GET /source-docs/tree/customers/{customer}/repos — L2: repos com fontes do cliente. */
