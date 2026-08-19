@@ -49,6 +49,7 @@ return [
         'card.phase_movement.project'  => '#8B5CF6', // roxo escuro (movimento projeto)
         'chat.mention'                 => '#C084FC', // lilás (marcação @)
         'fechamento.cliente'           => '#F59E0B', // âmbar
+        'fechamento.excedente'         => '#F97316', // laranja (horas excedentes)
         'fechamento.consultor'         => '#2DD4BF', // teal
         'fechamento.parceiro'          => '#FACC15', // dourado
         'fechamento.diretoria'         => '#FDBA74', // pêssego
@@ -146,6 +147,7 @@ return [
         'card.phase_movement.project'  => ['card', 'actor'],
         'chat.mention'                 => ['card', 'actor', 'mentioned'],
         'fechamento.cliente'           => ['contract', 'customer', 'actor'],
+        'fechamento.excedente'         => ['customer'],
         'fechamento.consultor'         => ['consultant', 'actor'],
         'fechamento.parceiro'          => ['partner', 'actor'],
         'fechamento.diretoria'         => ['actor'],
@@ -342,6 +344,11 @@ return [
         'fechamento.cliente' => [
             'subject'   => 'Fechamento {periodo} — {cliente}',
             'body'      => 'Segue o relatório de fechamento referente a {periodo}.',
+            'variables' => ['periodo' => 'Competência', 'cliente' => 'Cliente'],
+        ],
+        'fechamento.excedente' => [
+            'subject'   => 'Horas Excedentes {periodo} — {cliente}',
+            'body'      => 'Segue o relatório de horas excedentes referente a {periodo}.',
             'variables' => ['periodo' => 'Competência', 'cliente' => 'Cliente'],
         ],
         'fechamento.consultor' => [
@@ -690,6 +697,17 @@ return [
             'audiences'   => [
                 'executivo_de_contas' => 'cc',
                 'coordenador'         => 'off',
+                'cliente'             => 'off',
+            ],
+        ],
+        'fechamento.excedente' => [
+            'label'       => 'Horas excedentes — e-mail ao cliente',
+            'domain'      => 'Fechamento',
+            'description' => 'Envio das horas excedentes ao cliente (tela Fechamento → Horas Excedentes). Os e-mails escolhidos na tela são sempre o destinatário; a Central adiciona quem entra em cópia (ex.: financeiro/administrativo).',
+            'audiences'   => [
+                'financeiro'          => 'cc',
+                'administrativo'      => 'off',
+                'executivo_de_contas' => 'off',
                 'cliente'             => 'off',
             ],
         ],

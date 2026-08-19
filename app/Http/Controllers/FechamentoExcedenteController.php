@@ -485,8 +485,8 @@ class FechamentoExcedenteController extends Controller
 
         $to = array_values(array_unique(array_filter($validated['emails'])));
 
-        // CC: papéis configurados na Central de Workflows (executivo, financeiro), sem duplicar o To.
-        $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('fechamento.cliente', ['customer' => $customer]);
+        // CC: papéis configurados na Central de Workflows (workflow dedicado "Horas excedentes"), sem duplicar o To.
+        $wf = app(\App\Workflows\WorkflowRecipientResolver::class)->resolve('fechamento.excedente', ['customer' => $customer]);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
         $cc = array_values(array_diff(
             array_unique(array_merge(array_filter([$financeiroCc]), $wf['to'], $wf['cc'])), $to,
