@@ -591,6 +591,7 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission.or.admin:source_docs.download')->group(function () {
             Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/publish-git', [\App\Http\Controllers\SourceDocActionController::class, 'publishGit'])->whereNumber('sourceDoc')->middleware('permission.or.admin:source_docs.reprocess');
         });
         Route::middleware('permission.or.admin:source_docs.view_git')->group(function () {
             Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
@@ -1656,6 +1657,7 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission.or.admin:source_docs.download')->group(function () {
             Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/publish-git', [\App\Http\Controllers\SourceDocActionController::class, 'publishGit'])->whereNumber('sourceDoc')->middleware('permission.or.admin:source_docs.reprocess');
         });
         Route::middleware('permission.or.admin:source_docs.view_git')->group(function () {
             Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');

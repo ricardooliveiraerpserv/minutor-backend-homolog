@@ -8,6 +8,7 @@ use App\Models\SourceDocActionLog;
 use App\Models\SourceDocVersion;
 use App\SourceCode\Analyzer\SourceDiff;
 use App\SourceCode\Cost\SourceCostGovernor;
+use App\SourceCode\Exceptions\SourceIntegrationException;
 use App\SourceCode\GithubAppAuth;
 use App\SourceCode\SourceDocCustomerScope;
 use App\SourceCode\SourceDocRenderer;
@@ -272,6 +273,47 @@ class SourceDocActionController extends Controller
             'Content-Type' => $mime,
             'Content-Disposition' => "attachment; filename=\"{$base}.{$ext}\"",
         ]);
+    }
+
+    /**
+     * POST /source-docs/{id}/publish-git — publica o MD da documentação numa branch dedicada
+     * (minutor-docs) em .minutor/<path>.md. NUNCA escreve na branch de produção do cliente.
+     */
+    public function publishGit(int $sourceDoc, Request $request, SourceDocRenderer $renderer): JsonResponse
+    {
+        $doc = SourceDoc::with('customer:id,name')->find($sourceDoc);
+        if (! $doc) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        if (! $this->scope->canAccessDoc($request->user(), $doc)) {
+            $this->audit($doc, 'publish_git', 'denied', ['reason' => 'out_of_scope'], userId: $request->user()?->id);
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+
+        $docJson = DB::table('source_docs')->where('id', $doc->id)->value('documentation_json');
+        $docArr = $docJson ? json_decode($docJson, true) : [];
+        $isOutdated = ($this->resolver->resolve($doc)['status'] ?? null) === SourceDocStatusResolver::STATUS_OUTDATED;
+        $customer = $doc->customer ? ['name' => $doc->customer->name] : [];
+        $md = $renderer->markdown($docArr, $isOutdated, $customer);
+
+        $branch = 'minutor-docs';
+        $path = '.minutor/' . ltrim(str_replace('\\', '/', (string) $doc->path), '/') . '.md';
+
+        try {
+            $this->auth->ensureBranch($doc->owner, $doc->repository, $branch);
+            $sha = $this->auth->commitFiles($doc->owner, $doc->repository, $branch, [$path => $md], "docs: {$doc->filename} — documentação técnica (Minutor)");
+        } catch (SourceIntegrationException $e) {
+            $this->audit($doc, 'publish_git', 'error', ['reason' => $e->getMessage()], userId: $request->user()?->id);
+            $msg = str_contains($e->getMessage(), 'Contents') || str_contains($e->getMessage(), 'contents')
+                ? 'O GitHub App da Central não tem permissão de escrita (Contents: write) neste repositório. Conceda a permissão na instalação do App e tente novamente.'
+                : 'Não foi possível publicar no git: ' . $e->getMessage();
+            return response()->json(['message' => $msg], 422);
+        }
+
+        $this->audit($doc, 'publish_git', 'ok', ['branch' => $branch, 'path' => $path, 'commit' => $sha], userId: $request->user()?->id);
+        $url = "https://github.com/{$doc->owner}/{$doc->repository}/blob/{$branch}/" . implode('/', array_map('rawurlencode', explode('/', $path)));
+
+        return response()->json(['data' => ['branch' => $branch, 'path' => $path, 'commit' => $sha, 'url' => $url]]);
     }
 
     /** GET /source-docs/{id}/git-url — URL do arquivo no commit documentado (read-only). */

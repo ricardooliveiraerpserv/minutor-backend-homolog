@@ -296,6 +296,29 @@ class GithubAppAuth
         }
     }
 
+    /** Garante que a branch existe; cria a partir da branch padrão se necessário (escrita). */
+    public function ensureBranch(string $owner, string $repo, string $branch): void
+    {
+        if ($this->getBranchHeadSha($owner, $repo, $branch) !== null) {
+            return;
+        }
+        $token = $this->installationToken($owner);
+        $http = fn () => Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders());
+
+        $repoRes = $http()->get("{$this->api}/repos/{$owner}/{$repo}");
+        if (! $repoRes->successful()) {
+            $this->assertUpstream($repoRes);
+            throw SourceIntegrationException::upstream($repoRes->status());
+        }
+        $default = (string) ($repoRes->json('default_branch') ?: 'main');
+        $baseSha = $this->getBranchHeadSha($owner, $repo, $default);
+        if ($baseSha === null) {
+            throw SourceIntegrationException::branchNotFound($default);
+        }
+        $mk = $http()->post("{$this->api}/repos/{$owner}/{$repo}/git/refs", ['ref' => "refs/heads/{$branch}", 'sha' => $baseSha]);
+        $this->assertWrite($mk, $owner);
+    }
+
     /** Conteúdo de UM arquivo na branch/ref (read-only), ou null se não existir (fonte novo). */
     public function getFileContent(string $owner, string $repo, string $branch, string $path): ?string
     {
