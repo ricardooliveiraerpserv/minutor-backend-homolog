@@ -154,6 +154,22 @@ class SourceDocTreeTest extends TestCase
         $this->assertContains('Atualizações', collect($prot['dirs'])->pluck('name')); // acento preservado
     }
 
+    public function test_knowledge_aggregates_and_scope(): void
+    {
+        $admin = User::factory()->create(['type' => 'admin']);
+        $d = $this->actingAs($admin, 'sanctum')->getJson("/api/v1/source-docs/tree/knowledge?customer_id={$this->custA->id}&repository=repoA")->assertOk()->json('data');
+        $this->assertSame(5, $d['fontes']);
+        $this->assertArrayHasKey('cobertura_semantica', $d);
+        $this->assertArrayHasKey('saude', $d);
+        $this->assertArrayHasKey('cross_source', $d);
+        // dir scope (recursivo sob Protheus/Faturamento) = 3 fontes
+        $dir = $this->actingAs($admin, 'sanctum')->getJson('/api/v1/source-docs/tree/knowledge?customer_id=' . $this->custA->id . '&repository=repoA&path=' . rawurlencode('Protheus/Faturamento'))->assertOk()->json('data');
+        $this->assertSame(3, $dir['fontes']);
+        // IDOR
+        $coordA = $this->coordFor($this->custA);
+        $this->actingAs($coordA, 'sanctum')->getJson("/api/v1/source-docs/tree/knowledge?customer_id={$this->custB->id}")->assertNotFound();
+    }
+
     public function test_repos_lists_repo_with_counts(): void
     {
         $admin = User::factory()->create(['type' => 'admin']);

@@ -539,6 +539,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
             Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
             Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
+            // F4 — inteligência agregada do acervo por Empresa/Repo/Diretório (patrimônio já produzido; IA=US$0).
+            Route::get('/source-docs/tree/knowledge', [\App\Http\Controllers\SourceDocTreeController::class, 'knowledge']);
         });
         // C3.5 — disparar inventário (Admin/ops, gate estrito)
         Route::middleware('permission:source_docs.inventory')->group(function () {
@@ -1596,6 +1598,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
             Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
             Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
+            // F4 — inteligência agregada do acervo por Empresa/Repo/Diretório (patrimônio já produzido; IA=US$0).
+            Route::get('/source-docs/tree/knowledge', [\App\Http\Controllers\SourceDocTreeController::class, 'knowledge']);
         });
         // C3.5 — disparar inventário (Admin/ops, gate estrito)
         Route::middleware('permission:source_docs.inventory')->group(function () {

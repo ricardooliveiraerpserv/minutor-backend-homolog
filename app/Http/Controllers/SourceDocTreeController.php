@@ -174,6 +174,109 @@ class SourceDocTreeController extends Controller
         ]]);
     }
 
+    /**
+     * GET /source-docs/tree/knowledge?customer_id=&repository=&path= — F4 · inteligência AGREGADA do
+     * patrimônio JÁ produzido (custo IA adicional = US$0). Counts baratos vêm do read-model
+     * source_doc_index (O(1), sem detoast); regras/deps/processos/custo só sobre o subconjunto
+     * semântico (poucas linhas); cross-source das edges resolvidas. Escopo C4a aplicado.
+     */
+    public function knowledge(Request $request): JsonResponse
+    {
+        $customer = (int) $request->query('customer_id');
+        $repository = trim((string) $request->query('repository', ''));
+        $prefix = trim((string) $request->query('path', ''));
+        if (! $customer || ! $this->scope->canAccessCustomerId($request->user(), $customer)) {
+            return response()->json(['message' => 'Escopo não encontrado.'], 404);
+        }
+        $scoped = function ($q) use ($customer, $repository, $prefix, $request) {
+            $q->where('source_docs.customer_id', $customer);
+            if ($repository !== '') {
+                $q->where('source_docs.repository', $repository);
+            }
+            if ($prefix !== '') {
+                $q->where('source_docs.path', 'like', $this->escapeLike($prefix) . '/%');
+            }
+            $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id');
+            return $q;
+        };
+
+        // 1) Counts baratos (source_doc_index + versions; sem detoast do JSON pesado).
+        $c = $scoped(SourceDoc::query()
+            ->leftJoin('source_doc_versions as cv', 'cv.id', '=', 'source_docs.current_version_id')
+            ->leftJoin('source_doc_index as si', 'si.source_doc_id', '=', 'source_docs.id'))
+            ->selectRaw("count(*) fontes,
+                count(*) filter (where cv.semantic_json is not null) documentadas,
+                count(*) filter (where cv.semantic_json is not null and cv.analysis_status='completed') completas,
+                count(*) filter (where source_docs.analysis_status='partial') parciais,
+                count(*) filter (where source_docs.analysis_status not in ('completed','partial')) pendentes,
+                coalesce(sum(si.functions_count),0) funcoes,
+                coalesce(sum(si.tables_count),0) tabelas,
+                coalesce(sum(si.queries_count),0) queries,
+                count(*) filter (where si.has_risk) com_risco")
+            ->first();
+
+        // 2) Conhecimento do JSON — SÓ sobre semantic não-nulo (poucas linhas).
+        $k = $scoped(SourceDoc::query()->join('source_doc_versions as cv', 'cv.id', '=', 'source_docs.current_version_id')->whereNotNull('cv.semantic_json'))
+            ->selectRaw("coalesce(sum(jsonb_array_length(coalesce(cv.semantic_json::jsonb->'regras_negocio','[]'::jsonb))),0) regras,
+                coalesce(sum(jsonb_array_length(coalesce(cv.semantic_json::jsonb->'dependencias_criticas','[]'::jsonb))),0) deps,
+                coalesce(sum((cv.semantic_json::jsonb->'usage'->>'total_cost_usd')::numeric),0) custo,
+                count(*) filter (where cv.semantic_json::jsonb->'documentary_completeness'->>'level' = 'parcial') com_gaps")
+            ->first();
+
+        // processos/módulos identificados (top) — do subconjunto semântico.
+        $procs = $scoped(SourceDoc::query()->join('source_doc_versions as cv', 'cv.id', '=', 'source_docs.current_version_id')->whereNotNull('cv.semantic_json'))
+            ->selectRaw("coalesce(nullif(cv.semantic_json::jsonb->'entendimento_funcional'->'processo_modulo'->>'modulo',''),'—') modulo, count(*) n")
+            ->groupBy('modulo')->orderByDesc('n')->limit(8)->get()
+            ->map(fn ($r) => ['modulo' => $r->modulo, 'fontes' => (int) $r->n]);
+
+        // linguagens
+        $langs = $scoped(SourceDoc::query())->selectRaw("coalesce(source_docs.lang,'?') lang, count(*) n")->groupBy('lang')->orderByDesc('n')->get()
+            ->map(fn ($r) => ['lang' => $r->lang, 'fontes' => (int) $r->n]);
+
+        // 3) Cross-source: relações resolvidas cujo DEPENDENTE está no escopo (target real).
+        $edges = DB::table('source_semantic_context_edge as e')
+            ->join('source_docs as dep', 'dep.id', '=', 'e.dependent_source_doc_id')
+            ->join('source_docs as tgt', 'tgt.id', '=', 'e.target_source_doc_id')
+            ->join('customers as tc', 'tc.id', '=', 'tgt.customer_id')
+            ->where('dep.customer_id', $customer)
+            ->when($repository !== '', fn ($q) => $q->where('dep.repository', $repository))
+            ->when($prefix !== '', fn ($q) => $q->where('dep.path', 'like', $this->escapeLike($prefix) . '/%'))
+            ->whereNotNull('e.target_source_doc_id')
+            ->orderByDesc('e.relevance_score')->limit(30)
+            ->get(['e.dependent_source_doc_id as from_id', 'dep.filename as from_name', 'e.symbol', 'e.relation', 'e.state', 'e.evidence_level', 'e.target_source_doc_id as to_id', 'tgt.filename as to_name', 'tgt.path as to_path', 'tc.name as to_customer']);
+
+        $aguardando = (int) DB::table('source_doc_cost_approvals as a')->join('source_docs as d', 'd.id', '=', 'a.source_doc_id')
+            ->where('a.status', 'pending')->where('d.customer_id', $customer)
+            ->when($repository !== '', fn ($q) => $q->where('d.repository', $repository))
+            ->when($prefix !== '', fn ($q) => $q->where('d.path', 'like', $this->escapeLike($prefix) . '/%'))
+            ->count();
+
+        $fontes = (int) $c->fontes;
+        return response()->json(['data' => [
+            'scope' => ['customer_id' => $customer, 'repository' => $repository ?: null, 'path' => $prefix ?: null],
+            'fontes' => $fontes,
+            'documentadas' => (int) $c->documentadas,
+            'completas' => (int) $c->completas,
+            'parciais' => (int) $c->parciais,
+            'pendentes' => (int) $c->pendentes,
+            'cobertura_semantica' => $fontes > 0 ? round(((int) $c->documentadas) / $fontes * 100) : 0,
+            'funcoes' => (int) $c->funcoes, 'tabelas' => (int) $c->tabelas, 'queries' => (int) $c->queries,
+            'com_risco' => (int) $c->com_risco,
+            'regras' => (int) $k->regras, 'dependencias' => (int) $k->deps,
+            'com_gaps' => (int) $k->com_gaps,
+            'custo_ia_usd' => round((float) $k->custo, 4),
+            'aguardando_aprovacao' => $aguardando,
+            'saude' => ['sem_documentacao' => (int) $c->pendentes, 'parcial' => (int) $c->parciais, 'completa' => (int) $c->completas, 'com_gaps' => (int) $k->com_gaps, 'aguardando' => $aguardando],
+            'linguagens' => $langs,
+            'processos_modulos' => $procs,
+            'cross_source' => $edges->map(fn ($e) => [
+                'from_id' => (int) $e->from_id, 'from_name' => $e->from_name, 'symbol' => $e->symbol,
+                'relation' => $e->relation, 'state' => $e->state, 'evidence_level' => $e->evidence_level,
+                'to_id' => (int) $e->to_id, 'to_name' => $e->to_name, 'to_path' => $e->to_path, 'to_customer' => $e->to_customer,
+            ]),
+        ]]);
+    }
+
     /** Contagem de aprovações de IA ABERTAS por cliente (join leve, escopo já aplicado à lista de ids). */
     private function pendingApprovalsByCustomer(array $customerIds): array
     {
