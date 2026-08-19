@@ -347,6 +347,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'uploadAttachment']);
         Route::get('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'comments']);
         Route::post('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'addComment']);
+        Route::post('/help-desk/tickets/{ticket}/presence', [\App\Http\Controllers\HelpDeskPresenceController::class, 'heartbeat'])->whereNumber('ticket');
         Route::get('/help-desk/tickets/{ticket}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'context']);
         Route::post('/help-desk/tickets/{ticket}/finalize', [\App\Http\Controllers\HelpDeskTicketController::class, 'finalize']);
         Route::patch('/help-desk/tickets/{ticket}/status', [\App\Http\Controllers\HelpDeskTicketController::class, 'changeStatus']);
@@ -359,6 +360,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/portal/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskPortalController::class, 'attachments']);
         Route::post('/help-desk/portal/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskPortalController::class, 'uploadAttachment']);
         Route::post('/help-desk/portal/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskPortalController::class, 'addComment']);
+        Route::post('/help-desk/portal/tickets/{ticket}/presence', [\App\Http\Controllers\HelpDeskPresenceController::class, 'portalHeartbeat'])->whereNumber('ticket');
         Route::delete('/help-desk/tickets/{ticket}/attachments/{attachment}', [\App\Http\Controllers\HelpDeskTicketController::class, 'deleteAttachment']);
         Route::patch('/help-desk/tickets/{ticket}/comments/{comment}', [\App\Http\Controllers\HelpDeskTicketController::class, 'updateComment']);
         Route::delete('/help-desk/kb/articles/{article}/attachments/{attachment}', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'deleteAttachment']);
