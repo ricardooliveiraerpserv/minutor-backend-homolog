@@ -224,7 +224,19 @@ class ContractHoursConsumptionAlertService
         foreach ($labels as $k => $label) {
             $fields[] = ['label' => $label, 'value' => (string) ($vars[$k] ?? '—')];
         }
-        return ['band' => $band, 'fields' => $fields];
+
+        // HTML REAL do e-mail (mesmo render do envio) + destinatários resolvidos (p/ o confirmar).
+        $ctx      = $this->context($project);
+        $rendered = $this->mailer->renderHtml(self::WORKFLOW_KEY, $vars);
+        $rcpt     = $this->resolver->resolve(self::WORKFLOW_KEY, $ctx);
+
+        return [
+            'band'       => $band,
+            'fields'     => $fields,
+            'subject'    => $rendered['subject'],
+            'html'       => $rendered['html'],
+            'recipients' => ['to' => array_values($rcpt['to'] ?? []), 'cc' => array_values($rcpt['cc'] ?? [])],
+        ];
     }
 
     private function ensureLoaded(Project $project): Project
