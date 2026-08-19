@@ -6,6 +6,7 @@ use App\Models\SourceDocAiSettings;
 use App\SourceCode\Cost\CostSettingsResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 /**
@@ -70,6 +71,10 @@ class SourceDocCostSettingsController extends Controller
         $scopeType = $data['scope_type'] ?? 'global';
         $scopeId = $scopeType === 'global' ? 0 : (int) ($data['scope_id'] ?? 0);
 
+        // Auditoria: valor ANTERIOR (para registrar anterior→novo).
+        $before = SourceDocAiSettings::query()->where('scope_type', $scopeType)->where('scope_id', $scopeId)
+            ->first(['automatic_cost_limit_usd', 'safety_margin_percent', 'max_semantic_step_usd', 'approval_required_above_limit', 'max_approved_cost_usd', 'approval_mandatory_above_usd']);
+
         $row = SourceDocAiSettings::query()->updateOrCreate(
             ['scope_type' => $scopeType, 'scope_id' => $scopeId],
             [
@@ -82,6 +87,10 @@ class SourceDocCostSettingsController extends Controller
                 'updated_by' => $request->user()?->id,
             ]
         );
+        Log::channel(config('logging.default'))->info('source_docs.cost_settings.update', [
+            'actor_user_id' => $request->user()?->id, 'scope_type' => $scopeType, 'scope_id' => $scopeId,
+            'before' => $before?->toArray(), 'after' => $row->only(['automatic_cost_limit_usd', 'safety_margin_percent', 'max_semantic_step_usd', 'approval_required_above_limit', 'max_approved_cost_usd', 'approval_mandatory_above_usd']),
+        ]);
 
         return response()->json([
             'data' => [
@@ -89,5 +98,38 @@ class SourceDocCostSettingsController extends Controller
                 'global' => $this->resolver->global()->toArray(),
             ],
         ]);
+    }
+
+    /** GET /source-docs/cost-settings/resolve?customer_id=&source_repo_id=&customer_name=&repository= — config EFETIVA + origem de um escopo + se há override próprio neste nível. */
+    public function resolve(Request $request): JsonResponse
+    {
+        $cid = $request->filled('customer_id') ? (int) $request->query('customer_id') : null;
+        $rid = $request->filled('source_repo_id') ? (int) $request->query('source_repo_id') : null;
+        $eff = $this->resolver->forScope($cid, $rid, $request->query('customer_name'), $request->query('repository'));
+        $own = $rid ? $this->resolver->ownRow('repo', $rid) : ($cid ? $this->resolver->ownRow('customer', $cid) : $this->resolver->ownRow('global', 0));
+        return response()->json(['data' => [
+            'level' => $rid ? 'repo' : ($cid ? 'customer' : 'global'),
+            'scope_id' => $rid ?: ($cid ?: 0),
+            'effective' => $eff->toArray(),
+            'has_own_override' => $own !== null,
+            'own' => $own?->only(['automatic_cost_limit_usd', 'safety_margin_percent', 'max_semantic_step_usd', 'approval_required_above_limit', 'max_approved_cost_usd', 'approval_mandatory_above_usd']),
+        ]]);
+    }
+
+    /** DELETE /source-docs/cost-settings?scope_type=&scope_id= — remove o override (volta a herdar). Nunca o global. */
+    public function destroy(Request $request): JsonResponse
+    {
+        $scopeType = (string) $request->query('scope_type');
+        $scopeId = (int) $request->query('scope_id');
+        if (! in_array($scopeType, ['customer', 'repo'], true)) {
+            return response()->json(['message' => 'Só é possível remover override de empresa/repositório.'], 422);
+        }
+        $before = SourceDocAiSettings::query()->where('scope_type', $scopeType)->where('scope_id', $scopeId)
+            ->first(['automatic_cost_limit_usd', 'safety_margin_percent', 'max_semantic_step_usd', 'max_approved_cost_usd']);
+        $n = SourceDocAiSettings::query()->where('scope_type', $scopeType)->where('scope_id', $scopeId)->delete();
+        Log::channel(config('logging.default'))->info('source_docs.cost_settings.delete', [
+            'actor_user_id' => $request->user()?->id, 'scope_type' => $scopeType, 'scope_id' => $scopeId, 'before' => $before?->toArray(),
+        ]);
+        return response()->json(['data' => ['removed' => $n > 0, 'scope_type' => $scopeType, 'scope_id' => $scopeId]]);
     }
 }

@@ -559,9 +559,11 @@ Route::prefix('v1')->group(function () {
         // Frente A — Governança de custo de IA (Admin/interno ERPSERV; sem escopo de cliente).
         Route::middleware('permission:source_docs.cost_settings.view')->group(function () {
             Route::get('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'index']);
+            Route::get('/source-docs/cost-settings/resolve', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'resolve']);
         });
         Route::middleware('permission:source_docs.cost_settings.manage')->group(function () {
             Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
+            Route::delete('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'destroy']);
         });
         Route::middleware('permission:source_docs.cost_approval.view')->group(function () {
             Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);
@@ -1618,9 +1620,11 @@ Route::prefix('v1')->group(function () {
         // Frente A — Governança de custo de IA (Admin/interno ERPSERV; sem escopo de cliente).
         Route::middleware('permission:source_docs.cost_settings.view')->group(function () {
             Route::get('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'index']);
+            Route::get('/source-docs/cost-settings/resolve', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'resolve']);
         });
         Route::middleware('permission:source_docs.cost_settings.manage')->group(function () {
             Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
+            Route::delete('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'destroy']);
         });
         Route::middleware('permission:source_docs.cost_approval.view')->group(function () {
             Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);

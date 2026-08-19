@@ -266,4 +266,46 @@ class SourceDocCostGovernanceTest extends TestCase
             'approval_required_above_limit' => true, 'max_approved_cost_usd' => 3.0,
         ])->assertForbidden();
     }
+
+    // ── F6 · herança Global → Empresa → Repo + remoção de override ─────────────
+    public function test_resolve_scope_inheritance_and_override_removal(): void
+    {
+        $admin = User::factory()->create(['type' => 'admin']);
+        $cust = Customer::factory()->create(['name' => 'PROMAX']);
+        $repoId = 7777;
+        $put = fn (array $extra) => $this->actingAs($admin, 'sanctum')->putJson('/api/v1/source-docs/cost-settings', array_merge(['safety_margin_percent' => 10, 'max_semantic_step_usd' => 0.30, 'approval_required_above_limit' => true, 'max_approved_cost_usd' => 3.0], $extra));
+        $resolve = fn (string $qs) => $this->actingAs($admin, 'sanctum')->getJson("/api/v1/source-docs/cost-settings/resolve?{$qs}")->assertOk()->json('data');
+
+        // Empresa PROMAX = 2,00
+        $put(['scope_type' => 'customer', 'scope_id' => $cust->id, 'automatic_cost_limit_usd' => 2.0])->assertOk();
+        $c = $resolve("customer_id={$cust->id}");
+        $this->assertTrue($c['has_own_override']);
+        $this->assertSame(2.0, round((float) $c['effective']['automatic_cost_limit_usd'], 2));
+
+        // repo SEM override → herda 2,00 da empresa (origem customer)
+        $r = $resolve("customer_id={$cust->id}&source_repo_id={$repoId}");
+        $this->assertFalse($r['has_own_override']);
+        $this->assertSame('customer', $r['effective']['source']);
+        $this->assertSame(2.0, round((float) $r['effective']['automatic_cost_limit_usd'], 2));
+
+        // cria override no repo = 1,50
+        $put(['scope_type' => 'repo', 'scope_id' => $repoId, 'automatic_cost_limit_usd' => 1.5])->assertOk();
+        $r2 = $resolve("customer_id={$cust->id}&source_repo_id={$repoId}");
+        $this->assertTrue($r2['has_own_override']);
+        $this->assertSame(1.5, round((float) $r2['effective']['automatic_cost_limit_usd'], 2));
+
+        // remove override → volta a herdar 2,00 imediatamente
+        $this->actingAs($admin, 'sanctum')->deleteJson("/api/v1/source-docs/cost-settings?scope_type=repo&scope_id={$repoId}")->assertOk();
+        $r3 = $resolve("customer_id={$cust->id}&source_repo_id={$repoId}");
+        $this->assertFalse($r3['has_own_override']);
+        $this->assertSame(2.0, round((float) $r3['effective']['automatic_cost_limit_usd'], 2));
+    }
+
+    public function test_non_admin_cannot_manage_or_resolve_settings(): void
+    {
+        $cust = Customer::factory()->create();
+        $cli = User::factory()->create(['type' => 'cliente', 'customer_id' => $cust->id, 'extra_permissions' => ['source_docs.view']]);
+        $this->actingAs($cli, 'sanctum')->getJson('/api/v1/source-docs/cost-settings/resolve')->assertForbidden();
+        $this->actingAs($cli, 'sanctum')->deleteJson('/api/v1/source-docs/cost-settings?scope_type=customer&scope_id=' . $cust->id)->assertForbidden();
+    }
 }

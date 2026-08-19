@@ -238,6 +238,9 @@ class SourceDocCatalogController extends Controller
             ] : null,
             // Leve (~13KB mesmo em fontes grandes): identity + semantic + diff + version + status.
             'documentation_meta' => $documentationMeta,
+            // F6 — estado de governança de custo (para a ficha F3 mostrar "Aguardando aprovação de IA").
+            'open_cost_approval' => ($ap = \App\Models\SourceDocCostApproval::query()->where('source_doc_id', $doc->id)->where('status', 'pending')->first(['id', 'next_step']))
+                ? ['id' => $ap->id, 'next_step' => $ap->next_step] : null,
         ]]);
     }
 

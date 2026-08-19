@@ -37,6 +37,33 @@ class CostSettingsResolver
         return $this->global();
     }
 
+    /**
+     * F6 — resolve a configuração EFETIVA de um ESCOPO (Empresa/Repo) sem precisar de um doc.
+     * Cascata: repo (source_repo_id) → customer → global. Reusa a mesma lógica de for(doc).
+     */
+    public function forScope(?int $customerId, ?int $sourceRepoId, ?string $customerName = null, ?string $repoName = null): ResolvedCostSettings
+    {
+        if ($sourceRepoId) {
+            $row = SourceDocAiSettings::query()->where('scope_type', 'repo')->where('scope_id', $sourceRepoId)->first();
+            if ($row) {
+                return $this->fromRow($row, 'repo', 'Repositório ' . ($repoName ?: ('#' . $sourceRepoId)));
+            }
+        }
+        if ($customerId) {
+            $row = SourceDocAiSettings::query()->where('scope_type', 'customer')->where('scope_id', $customerId)->first();
+            if ($row) {
+                return $this->fromRow($row, 'customer', 'Cliente ' . ($customerName ?: ('#' . $customerId)));
+            }
+        }
+        return $this->global();
+    }
+
+    /** Existe override PRÓPRIO neste nível exato (não herdado)? */
+    public function ownRow(string $scopeType, int $scopeId): ?SourceDocAiSettings
+    {
+        return SourceDocAiSettings::query()->where('scope_type', $scopeType)->where('scope_id', $scopeId)->first();
+    }
+
     /** Configuração global vigente (ou fallback ao config quando ausente). */
     public function global(): ResolvedCostSettings
     {

@@ -33,6 +33,7 @@ class SourceDocCostApprovalController extends Controller
             ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_cost_approvals.status', $status))
             ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')))
             ->when($request->filled('repository'), fn ($qq) => $qq->where('source_docs.repository', (string) $request->query('repository')))
+            ->when($request->filled('next_step'), fn ($qq) => $qq->where('source_doc_cost_approvals.next_step', (string) $request->query('next_step')))
             ->orderByDesc('source_doc_cost_approvals.created_at')
             ->limit(200)
             ->get([
