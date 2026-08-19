@@ -71,6 +71,45 @@ class SourceDocCustomerAdminController extends Controller
         ]]);
     }
 
+    /** GET /source-docs/repos/hidden — lista os repositórios DESABILITADOS (aba Inativos), escopado. */
+    public function listHiddenRepos(Request $request): JsonResponse
+    {
+        $q = \App\Models\SourceDocRepoSetting::query()
+            ->where('source_doc_repo_settings.hidden', true)
+            ->leftJoin('customers', 'customers.id', '=', 'source_doc_repo_settings.customer_id')
+            ->leftJoin('users', 'users.id', '=', 'source_doc_repo_settings.updated_by')
+            ->when($request->filled('customer_id'), fn ($x) => $x->where('source_doc_repo_settings.customer_id', (int) $request->query('customer_id')));
+        $this->scope->applyScope($q, $request->user(), 'source_doc_repo_settings.customer_id');
+        $rows = $q->orderBy('customers.name')->orderBy('source_doc_repo_settings.repository')
+            ->get(['source_doc_repo_settings.customer_id', 'source_doc_repo_settings.repository',
+                'source_doc_repo_settings.updated_at', 'customers.name as customer_name', 'users.name as updated_by_name']);
+
+        // Contagem de fontes por (customer_id, repository) numa query só (repos hidden são poucos).
+        $counts = [];
+        if ($rows->isNotEmpty()) {
+            $cnt = \App\Models\SourceDoc::query()
+                ->where(function ($w) use ($rows) {
+                    foreach ($rows as $r) {
+                        $w->orWhere(fn ($x) => $x->where('customer_id', $r->customer_id)->where('repository', $r->repository));
+                    }
+                })
+                ->groupBy('customer_id', 'repository')
+                ->selectRaw('customer_id, repository, count(*) as fontes')->get();
+            foreach ($cnt as $c) {
+                $counts[$c->customer_id . ':' . $c->repository] = (int) $c->fontes;
+            }
+        }
+
+        return response()->json(['data' => $rows->map(fn ($r) => [
+            'customer_id' => (int) $r->customer_id,
+            'customer_name' => $r->customer_name,
+            'repository' => $r->repository,
+            'fontes' => $counts[$r->customer_id . ':' . $r->repository] ?? 0,
+            'updated_at' => $r->updated_at,
+            'updated_by_name' => $r->updated_by_name,
+        ])]);
+    }
+
     /** POST /source-docs/source-requests {customer_id?, repository?, note} — registra solicitação. */
     public function storeRequest(Request $request): JsonResponse
     {
