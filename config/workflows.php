@@ -20,6 +20,7 @@ return [
 
     // Cor de destaque — uma por workflow, pra cada e-mail ser distinguível à primeira vista.
     'workflow_accents' => [
+        'hire.new'                     => '#8B5CF6', // roxo (contratações)
         'contract.created'             => '#FBBF24', // amarelo
         'contract.project_generated'   => '#22C55E', // verde
         'project.coordinator_assigned' => '#A3E635', // lima
@@ -159,6 +160,18 @@ return [
     // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
     // Editável na Central; o layout/branding (logo, card de dados, botão) é automático.
     'templates' => [
+        'hire.new' => [
+            'subject'   => 'Nova contratação a providenciar — {nome}',
+            'body'      => 'Foi cadastrada uma nova contratação: {nome} ({cargo}, {modalidade}). Primeiro contato: {primeiro_contato}. Início previsto: {inicio}. Providenciar a passagem/onboarding.',
+            'variables' => [
+                'nome'             => 'Nome do contratado',
+                'cargo'            => 'Cargo',
+                'modalidade'       => 'Modalidade',
+                'contato'          => 'Contato (telefone/e-mail)',
+                'primeiro_contato' => 'Data de primeiro contato',
+                'inicio'           => 'Data de início',
+            ],
+        ],
         'expense.approved_pending_payment' => [
             'subject'   => 'Despesa aprovada e pendente de pagamento — {valor}',
             'body'      => 'A despesa "{descricao}" ({categoria}) no valor de {valor}, lançada por {autor}, foi aprovada e está pendente de pagamento.',
@@ -372,6 +385,18 @@ return [
 
     // Workflows agrupados por domínio.
     'workflows' => [
+
+        // ───────────────────────── Contratações ─────────────────────────
+        'hire.new' => [
+            'label'       => 'Nova contratação — avisar administrativo',
+            'domain'      => 'Contratações',
+            'description' => 'Quando uma nova contratação é incluída pela rotina de Contratação/Onboarding, avisa o administrativo que há uma contratação a providenciar. Defina a recorrência abaixo para reenviar o aviso a cada N dias enquanto a contratação não for concluída (Finalizado/Pausados). 0 = só o aviso na inclusão.',
+            'recurrence'  => true,
+            'audiences'   => [
+                'administrativo' => 'to',
+                'diretor'        => 'off',
+            ],
+        ],
 
         // ───────────────────────── Despesas ─────────────────────────
         'expense.approved_pending_payment' => [

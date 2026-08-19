@@ -68,6 +68,23 @@ class ApprovalController extends Controller
                     ->where(fn ($q) => $q->whereNull('pagar_no_fechamento')->orWhere('pagar_no_fechamento', false)))->count();
                 if ($pay > 0) $actions[] = $this->homeAction('pay_exp', 'medium', 'Despesas para pagar',
                     "{$pay} despesa(s) aprovada(s) aguardando pagamento.", 'Pagar despesas', '/pagamento-despesas?all=1', $pay);
+
+                // CONTRATAÇÕES a providenciar (script de passagem) — fixa a partir da data de primeiro
+                // contato; atrasadas (data < hoje, card ainda não Finalizado/Pausado) sobem como crítico.
+                $hoje = now()->startOfDay();
+                $hires = \App\Services\HireNotifier::pendingWithFirstContactDue($hoje)->get(['id', 'form']);
+                if ($hires->count() > 0) {
+                    $overdueHires = $hires->filter(function ($c) use ($hoje) {
+                        $d = is_array($c->form) ? ($c->form['data_primeiro_contato'] ?? '') : '';
+                        try { return $d && \Illuminate\Support\Carbon::parse($d)->startOfDay()->lt($hoje); } catch (\Throwable) { return false; }
+                    })->count();
+                    $actions[] = $this->homeAction('hire_pending', $overdueHires > 0 ? 'critical' : 'medium',
+                        'Contratações a providenciar',
+                        $overdueHires > 0
+                            ? "{$hires->count()} contratação(ões) a providenciar, {$overdueHires} em atraso."
+                            : "{$hires->count()} contratação(ões) a providenciar.",
+                        'Abrir contratações', '/competencias/contratacao', $hires->count());
+                }
             }
 
             if ($u->type === 'consultor' || $u->type === 'parceiro_admin') {

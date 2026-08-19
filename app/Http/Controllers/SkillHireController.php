@@ -87,6 +87,8 @@ class SkillHireController extends Controller
             'form.email_criado'       => 'nullable|in:sim,nao',
             'form.incluir_whatsapp'   => 'nullable|in:sim,nao',
             'form.whatsapp_date'      => 'nullable|date',
+            'form.start_date'             => 'nullable|date',   // data de início
+            'form.data_primeiro_contato'  => 'nullable|date',   // fixa a ação no Meu Dia do administrativo
             'form.observacao'         => 'nullable|string',
         ]);
         // Mescla o script informado sobre o formulário padrão (mantém as demais chaves).
@@ -123,6 +125,11 @@ class SkillHireController extends Controller
             ]);
         }
 
+        // Avisa o administrativo (e-mail via Central de Workflows + pop-up in-app).
+        // Não bloqueia a inclusão. O pop-up recorrente / atraso fica a cargo do
+        // command diário `contratacao:notify-administrativo`.
+        \App\Services\HireNotifier::onCreated($card);
+
         return response()->json($this->card($card->load('createdUser')), 201);
     }
 
@@ -152,6 +159,7 @@ class SkillHireController extends Controller
             'form.consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
             'form.valor' => 'nullable|string|max:60',
             'form.start_date' => 'nullable|date',
+            'form.data_primeiro_contato' => 'nullable|date',
             'form.tem_garantia' => 'nullable|in:sim,nao',
             'form.guaranteed_hours' => 'nullable|string|max:20',
             'form.empresa' => 'nullable|in:erpserv,bizify',

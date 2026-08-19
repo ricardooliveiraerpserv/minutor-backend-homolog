@@ -36,6 +36,7 @@ class SkillHireCard extends Model
         'pj' => 'PJ',
         'cooperado' => 'Cooperado',
         'clt' => 'CLT',
+        'a_definir' => 'Definir com o candidato',
     ];
 
     /** Recursos a provisionar no onboarding (checkboxes do script). */
@@ -71,6 +72,7 @@ class SkillHireCard extends Model
             'consultant_type' => '',             // horista | banco_de_horas | fixo (igual ao cadastro)
             'valor' => (string) ($data['valor'] ?? ''),
             'start_date' => '',                  // data de início (= bank_hours_start_date, proporcional)
+            'data_primeiro_contato' => '',       // data do 1º contato → fixa a ação no Meu Dia do administrativo; atraso se passar
             'tem_garantia' => '',                // sim | nao (só se horista)
             'guaranteed_hours' => '',            // horas garantidas
             'empresa' => 'erpserv',              // erpserv | bizify (base da folha → is_bizify)

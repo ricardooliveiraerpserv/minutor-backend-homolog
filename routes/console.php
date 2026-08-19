@@ -256,6 +256,13 @@ Schedule::command('tasks:notify-overdue')
   ->description('Notifica o responsável sobre tarefas atrasadas')
   ->withoutOverlapping();
 
+Schedule::command('contratacao:notify-administrativo')
+  ->dailyAt('08:00')
+  ->timezone($alertTz)
+  ->name('contratacao-notify-administrativo')
+  ->description('Avisa o administrativo sobre contratações a providenciar (por data de primeiro contato; atraso se passar)')
+  ->withoutOverlapping();
+
 // Log de encerramentos (fechamento SEMANAL por prazo + auto-fechamento de reaberturas
 // semana/mês). Idempotente — só registra os eventos p/ acompanhamento; o bloqueio em si
 // é lazy (compara now vs prazo/auto_close_at) e não depende deste comando.
