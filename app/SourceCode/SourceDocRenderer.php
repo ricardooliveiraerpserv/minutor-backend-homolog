@@ -82,14 +82,41 @@ class SourceDocRenderer
     {
         $m = $this->model($doc, $context, $customer);
         $h = '<style>body{font-family:Arial,Helvetica,sans-serif;color:#1b2b31;font-size:10.5pt;line-height:1.4}'
-            . 'h1{color:#0d4766;font-size:19pt;margin:0} h2{color:#0d4766;font-size:13pt;margin:14pt 0 4pt;border-bottom:1px solid #cfe0e3;padding-bottom:2pt}'
+            . 'h1{color:#157582;font-size:19pt;margin:0} h2{color:#157582;font-size:13pt;margin:14pt 0 4pt;border-bottom:1px solid #b6dde1;padding-bottom:2pt}'
             . 'h3{color:#12232b;font-size:11pt;margin:10pt 0 2pt}</style>';
+        $h .= $this->brandHeader();
         $h .= $this->cover($m);
         foreach ($this->sections($m) as $sec) {
             $h .= '<h2>' . $sec['n'] . '. ' . $this->e($sec['title']) . '</h2>' . $sec['html'];
         }
-        $h .= '<p style="color:#6b7d80;font-size:8pt;margin-top:16pt">Documentação gerada automaticamente pelo Minutor — representação do estado estruturado do fonte. As informações técnicas são determinísticas (extraídas do código); descrições funcionais dependem da análise semântica.</p>';
+        $h .= '<p style="color:#6b7d80;font-size:8pt;margin-top:16pt;border-top:1px solid #d6e6e8;padding-top:6pt">'
+            . '<b style="color:#157582">ERPSERV</b> — Documentação técnica gerada automaticamente pelo Minutor. '
+            . 'Informações técnicas determinísticas (extraídas do código); descrições funcionais dependem da análise semântica.</p>';
         return $h;
+    }
+
+    // ── identidade ERPSERV (cabeçalho de marca no PDF/HTML) ─────────────────────
+    private function brandHeader(): string
+    {
+        $logo = $this->brandLogoDataUri();
+        $left = $logo
+            ? '<img src="' . $logo . '" style="height:30pt" alt="ERPSERV"/>'
+            : '<span style="color:#ffffff;font-size:20pt;font-weight:bold;letter-spacing:2pt">ERPSERV</span>';
+
+        return '<table style="width:100%;border-collapse:collapse;margin:0 0 10pt"><tr>'
+            . '<td style="background-color:#157582;padding:12pt 16pt">' . $left . '</td></tr></table>';
+    }
+
+    private function brandLogoDataUri(): ?string
+    {
+        foreach (['logo-erpserv-white.png', 'logo-erpserv.png'] as $f) {
+            $p = public_path($f);
+            if (is_file($p)) {
+                return 'data:image/png;base64,' . base64_encode((string) file_get_contents($p));
+            }
+        }
+
+        return null;
     }
 
     // ── capa / cabeçalho ────────────────────────────────────────────────────────
@@ -100,7 +127,7 @@ class SourceDocRenderer
         $st = $m['status'];
         $blob = $this->g($st, 'documented_blob_sha', $this->g($v, 'source_blob_sha'));
         $h = '<h1>Documentação Técnica de Fonte</h1>';
-        $h .= '<div style="font-size:15pt;color:#0e7c86;margin:2pt 0 8pt"><b>' . $this->e((string) $this->g($id, 'filename', '—')) . '</b></div>';
+        $h .= '<div style="font-size:15pt;color:#157582;margin:2pt 0 8pt"><b>' . $this->e((string) $this->g($id, 'filename', '—')) . '</b></div>';
         $rows = [
             ['Cliente', $this->g($m['customer'], 'name', ($this->g($id, 'customer_id') ? '#' . $this->g($id, 'customer_id') : '—'))],
             ['Produto', 'Protheus'],
