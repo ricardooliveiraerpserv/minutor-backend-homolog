@@ -213,16 +213,16 @@ class SkillHireController extends Controller
 
         // Reusa o usuário já vinculado ao respondente, se houver; senão cria pelo
         // FLUXO OFICIAL (UserController@store): senha temporária + e-mail de boas-vindas.
-        $user = $respondent->user_id ? User::find($respondent->user_id) : null;
+        $user = ($respondent && $respondent->user_id) ? User::find($respondent->user_id) : null;
         if (! $user) {
             $form = is_array($card->form) ? $card->form : [];
 
             // Perfil: consultor ou coordenador (+ tipo de coordenação).
             $perfil = ($form['perfil'] ?? 'consultor') === 'coordenador' ? 'coordenador' : 'consultor';
             // E-mail informado no card vira o e-mail do usuário; senão gera automático.
-            $email = filled($form['email'] ?? null) ? strtolower(trim($form['email'])) : $this->uniqueEmail($respondent);
+            $email = filled($form['email'] ?? null) ? strtolower(trim($form['email'])) : $this->uniqueEmail($respondent?->email, $respondent?->name ?? $card->title);
             $payload = [
-                'name' => $respondent->name,
+                'name' => $respondent?->name ?? $card->title,
                 'email' => $email,
                 'type' => $perfil,
                 'enabled' => true,
@@ -285,7 +285,7 @@ class SkillHireController extends Controller
 
             // Telefone + endereço (CEP/logradouro/…): fora do store() oficial.
             $extra = array_filter([
-                'phone' => $respondent->phone,
+                'phone' => $respondent?->phone,
                 'cep' => $form['cep'] ?? null,
                 'address_street' => $form['logradouro'] ?? null,
                 'address_number' => $form['numero'] ?? null,
@@ -297,7 +297,7 @@ class SkillHireController extends Controller
             if ($extra && $user) {
                 $user->forceFill($extra)->save();
             }
-            $respondent->update(['user_id' => $user->id]);
+            $respondent?->update(['user_id' => $user->id]);
         }
 
         $card->update([
@@ -311,9 +311,9 @@ class SkillHireController extends Controller
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private function uniqueEmail(SkillRespondent $r): string
+    private function uniqueEmail(?string $email, string $name): string
     {
-        $base = $r->email ?: (Str::slug($r->name, '.') . '@erpserv.com.br');
+        $base = $email ?: (Str::slug($name, '.') . '@erpserv.com.br');
         if (! User::where('email', $base)->exists()) {
             return $base;
         }
