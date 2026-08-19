@@ -94,6 +94,17 @@ class SourceDocImpactService
         // customer_ids p/ filtro (null = global, sem restrição).
         $ids = $scope['ids'];
 
+        // Filtro opcional por UM cliente — só estreita DENTRO do escopo (deny-by-default:
+        // cliente fora do escopo acessível → resultado vazio, sem vazamento/IDOR).
+        $onlyCustomer = isset($q['customer_id']) && (int) $q['customer_id'] > 0 ? (int) $q['customer_id'] : null;
+        if ($onlyCustomer !== null) {
+            if ($ids === null || in_array($onlyCustomer, $ids, true)) {
+                $ids = [$onlyCustomer];
+            } else {
+                return $this->emptyResult($entity, $name, $table, $access, $page, $perPage);
+            }
+        }
+
         // Query base scoped (fresh via callback p/ clonar em summary × página).
         $base = fn () => $this->baseQuery($entity, $name, $table, $access, $ids);
 

@@ -47,6 +47,7 @@ class SourceDocImpactController extends Controller
             'table'    => $request->filled('table') ? trim((string) $request->query('table')) : null,
             'access'   => $access,
             'cross'    => $request->boolean('cross'),
+            'customer_id' => $request->filled('customer_id') ? (int) $request->query('customer_id') : null,
             'page'     => (int) $request->query('page', 1),
             'per_page' => (int) $request->query('per_page', 30),
         ]);
