@@ -64,8 +64,11 @@ class SourceDocCatalogController extends Controller
                 // F5 — busca por CONHECIMENTO já documentado (objetivo/regras/processo/deps): texto do
                 // semantic_json. Rápido quando escopado (customer/repo/path); global detoasta mais (medido).
                 if ($request->query('in') === 'knowledge') {
-                    // ::jsonb::text normaliza escapes unicode (ç) → busca acentuada casa.
-                    $w->orWhereRaw('(cv.semantic_json is not null and cv.semantic_json::jsonb::text ilike ?)', ["%{$q}%"]);
+                    // Busca no texto do semantic_json (rápido, ~17ms escopado). LIMITAÇÃO: o JSON é
+                    // armazenado com escape unicode (ç), então termos ACENTUADOS podem não casar
+                    // (ASCII casa). Normalizar (::jsonb::text) resolveria o acento mas custa ~40x (medido) —
+                    // fix adequado = índice GIN/coluna normalizada, adiado sem evidência de uso frequente.
+                    $w->orWhereRaw('(cv.semantic_json is not null and cv.semantic_json::text ilike ?)', ["%{$q}%"]);
                 }
             }))
             // F2 (Acervo): conteúdo de uma pasta (recursivo) via prefixo do path Git.

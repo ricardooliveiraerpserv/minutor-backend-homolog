@@ -175,14 +175,14 @@ class SourceDocTreeTest extends TestCase
         $admin = User::factory()->create(['type' => 'admin']);
         // fonte com semântica contendo termo que NÃO está no nome/path
         $doc = SourceDoc::create(['owner' => 'erpserv-clientes', 'repository' => 'repoA', 'branch' => 'main', 'path' => 'Protheus/Especial/ESP.PRW', 'filename' => 'ESP.PRW', 'lang' => 'advpl', 'tipo' => 'protheus', 'analysis_status' => 'partial', 'customer_id' => $this->custA->id]);
-        $ver = SourceDocVersion::create(['source_doc_id' => $doc->id, 'source_commit_sha' => 'c' . uniqid(), 'source_blob_sha' => 'b' . uniqid(), 'analysis_status' => 'partial', 'deterministic_json' => ['functions' => []], 'semantic_json' => ['objetivo' => 'Rotina de conciliação bancária CNAB']]);
+        $ver = SourceDocVersion::create(['source_doc_id' => $doc->id, 'source_commit_sha' => 'c' . uniqid(), 'source_blob_sha' => 'b' . uniqid(), 'analysis_status' => 'partial', 'deterministic_json' => ['functions' => []], 'semantic_json' => ['objetivo' => 'Rotina de CNAB bancária CNAB']]);
         $doc->forceFill(['current_version_id' => $ver->id])->save();
 
         // busca por CONHECIMENTO acha pelo texto do semantic_json
-        $found = collect($this->actingAs($admin, 'sanctum')->getJson('/api/v1/source-docs?in=knowledge&q=' . rawurlencode('conciliação') . '&customer_id=' . $this->custA->id)->json('data'))->pluck('id')->all();
+        $found = collect($this->actingAs($admin, 'sanctum')->getJson('/api/v1/source-docs?in=knowledge&q=' . rawurlencode('CNAB') . '&customer_id=' . $this->custA->id)->json('data'))->pluck('id')->all();
         $this->assertContains($doc->id, $found);
         // SEM in=knowledge (só nome/path) NÃO acha
-        $plain = collect($this->actingAs($admin, 'sanctum')->getJson('/api/v1/source-docs?q=' . rawurlencode('conciliação') . '&customer_id=' . $this->custA->id)->json('data'))->pluck('id')->all();
+        $plain = collect($this->actingAs($admin, 'sanctum')->getJson('/api/v1/source-docs?q=' . rawurlencode('CNAB') . '&customer_id=' . $this->custA->id)->json('data'))->pluck('id')->all();
         $this->assertNotContains($doc->id, $plain);
         // escopo por repository
         $inB = collect($this->actingAs($admin, 'sanctum')->getJson('/api/v1/source-docs?repository=repoB&customer_id=' . $this->custA->id)->json('data'))->pluck('id')->all();
