@@ -122,6 +122,8 @@ class SkillHireController extends Controller
                 'due_date'    => now()->addDays(2)->toDateString(),
                 'completed'   => false,
                 'priority'    => 'alta',
+                'entity_type' => 'skill_hire',   // vincula ao card → concluir = abrir o card
+                'entity_id'   => $card->id,
             ]);
         }
 
@@ -307,6 +309,11 @@ class SkillHireController extends Controller
             'completed_at' => now(),
             'created_user_id' => $user->id,
         ]);
+
+        // Contratação concluída → conclui a tarefa vinculada (Passagem de contratação).
+        Task::where('entity_type', 'skill_hire')->where('entity_id', $card->id)
+            ->where('completed', false)
+            ->update(['completed' => true, 'completed_at' => now(), 'completed_by' => auth()->id()]);
 
         return response()->json($this->card($card->fresh('respondent', 'createdUser')));
     }
