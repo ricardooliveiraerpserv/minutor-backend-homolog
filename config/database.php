@@ -97,7 +97,15 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => 'prefer',
-            'options' => [],
+            // Pooler de TRANSAÇÃO (Supabase pgbouncer, porta 6543) multiplexa conexões:
+            // um PREPARE cai numa conexão e o EXECUTE seguinte pode cair em outra que
+            // não tem aquele statement → SQLSTATE[26000] "prepared statement ... does not
+            // exist" intermitente sob carga paralela. Emular prepares (client-side) elimina
+            // os named prepared statements server-side e torna o app compatível com o pooler.
+            // Deixe DB_EMULATE_PREPARES=false em conexões diretas (sem pgbouncer) se quiser.
+            'options' => [
+                PDO::ATTR_EMULATE_PREPARES => filter_var(env('DB_EMULATE_PREPARES', true), FILTER_VALIDATE_BOOLEAN),
+            ],
         ],
 
         'sqlsrv' => [
