@@ -365,8 +365,10 @@ class SourceDocActionController extends Controller
      */
     public function manualSemantic(int $sourceDoc, Request $request): JsonResponse
     {
-        if (app()->environment('production')) {
-            return response()->json(['message' => 'Documentação manual não é permitida em produção.'], 403);
+        // Mesmo gate da IA: só nos ambientes de documentação (homolog), nunca em produção real.
+        $env = (string) config('services.source_doc_ai.environment', app()->environment());
+        if (! in_array($env, (array) config('services.source_doc_ai.allowed_environments', ['homolog']), true)) {
+            return response()->json(['message' => 'Documentação manual só é permitida no ambiente de documentação (homolog).'], 403);
         }
         $doc = SourceDoc::with('currentVersion')->find($sourceDoc);
         if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
