@@ -5,6 +5,7 @@ use App\Models\Project;
 use App\Models\ProjectStage;
 use App\Models\StageDelivery;
 use App\Models\StageAllocation;
+use Illuminate\Support\Facades\DB;
 
 /**
  * SEED de cronograma (spec fechada) — só para o ENSAIO/migração:
@@ -69,6 +70,18 @@ return new class extends Migration
                             'is_primary'          => $i === 0,
                         ]);
                     }
+
+                    // Apontamentos existentes do projeto (lançados ANTES do cronograma)
+                    // herdam a "Atividade do projeto" — senão ficam "sem atividade" e o
+                    // card mostra Apont 0h. TODOS por project_id, inclusive meses fechados.
+                    DB::table('timesheets')
+                        ->where('project_id', $p->id)
+                        ->whereNull('stage_delivery_id')
+                        ->whereNull('deleted_at')
+                        ->update([
+                            'stage_delivery_id' => $delivery->id,
+                            'stage_id'          => $stage->id,
+                        ]);
                 }
             });
     }
