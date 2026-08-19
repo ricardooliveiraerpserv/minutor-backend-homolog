@@ -103,6 +103,7 @@ class SourceDocCustomerAdminController extends Controller
         $q = \App\Models\SourceDocVersion::query()
             ->join('source_docs', 'source_docs.id', '=', 'source_doc_versions.source_doc_id')
             ->leftJoin('customers', 'customers.id', '=', 'source_docs.customer_id')
+            ->leftJoin('helpdesk_tickets as ht', 'ht.ticket_number', '=', 'source_doc_versions.ticket_number')
             ->where(fn ($w) => $w->whereNotNull('source_doc_versions.gmud_id')->orWhereNotNull('source_doc_versions.ticket_number'))
             ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')))
             ->when($request->filled('q'), fn ($qq) => $qq->where('source_docs.filename', 'ilike', '%' . trim((string) $request->query('q')) . '%'))
@@ -115,6 +116,7 @@ class SourceDocCustomerAdminController extends Controller
             'source_doc_versions.diff_summary', 'source_doc_versions.created_at',
             'source_docs.filename', 'source_docs.repository', 'source_docs.owner', 'source_docs.customer_id',
             'customers.name as customer_name',
+            'ht.id as hd_ticket_id', 'ht.subject as hd_subject',
         ]);
 
         return response()->json(['data' => $rows]);
