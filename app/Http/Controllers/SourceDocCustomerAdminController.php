@@ -80,6 +80,23 @@ class SourceDocCustomerAdminController extends Controller
         return response()->json(['data' => $req], 201);
     }
 
+    /** GET /source-docs/open-tickets?customer_id= — chamados ABERTOS da empresa (Help Desk), p/ o seletor. */
+    public function openTickets(Request $request): JsonResponse
+    {
+        $customerId = (int) $request->query('customer_id', 0);
+        if ($customerId <= 0 || ! $this->scope->canAccessCustomerId($request->user(), $customerId)) {
+            return response()->json(['data' => []]);
+        }
+        $tickets = \App\Models\HelpDeskTicket::query()
+            ->where('customer_id', $customerId)
+            ->whereHas('status', fn ($s) => $s->where('is_open', true))
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get(['id', 'ticket_number', 'subject']);
+
+        return response()->json(['data' => $tickets]);
+    }
+
     /** GET /source-docs/source-requests?status= — lista (gestão). */
     public function listRequests(Request $request): JsonResponse
     {

@@ -539,6 +539,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
             // Central de Fontes — admin por empresa (detentor/ocultar) + solicitações de fonte.
             Route::post('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'storeRequest']);
+            Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
             Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
             Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
@@ -1605,6 +1606,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
             // Central de Fontes — admin por empresa (detentor/ocultar) + solicitações de fonte.
             Route::post('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'storeRequest']);
+            Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
             Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
             Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
