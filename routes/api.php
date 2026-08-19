@@ -540,6 +540,7 @@ Route::prefix('v1')->group(function () {
             // Central de Fontes — admin por empresa (detentor/ocultar) + solicitações de fonte.
             Route::post('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'storeRequest']);
             Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
+            Route::get('/source-docs/gmud-commits', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudCommits']);
             Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
             Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
@@ -1608,6 +1609,7 @@ Route::prefix('v1')->group(function () {
             // Central de Fontes — admin por empresa (detentor/ocultar) + solicitações de fonte.
             Route::post('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'storeRequest']);
             Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
+            Route::get('/source-docs/gmud-commits', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudCommits']);
             Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
             Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');

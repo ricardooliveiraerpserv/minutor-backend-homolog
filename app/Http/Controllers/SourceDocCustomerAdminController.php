@@ -97,6 +97,26 @@ class SourceDocCustomerAdminController extends Controller
         return response()->json(['data' => $tickets]);
     }
 
+    /** GET /source-docs/gmud-commits — versões de fonte criadas via GMUD (commit + ticket), escopado. */
+    public function gmudCommits(Request $request): JsonResponse
+    {
+        $q = \App\Models\SourceDocVersion::query()
+            ->join('source_docs', 'source_docs.id', '=', 'source_doc_versions.source_doc_id')
+            ->leftJoin('customers', 'customers.id', '=', 'source_docs.customer_id')
+            ->where(fn ($w) => $w->whereNotNull('source_doc_versions.gmud_id')->orWhereNotNull('source_doc_versions.ticket_number'))
+            ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')));
+        $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id');
+        $rows = $q->orderByDesc('source_doc_versions.created_at')->limit(300)->get([
+            'source_doc_versions.id', 'source_doc_versions.source_doc_id', 'source_doc_versions.ticket_number',
+            'source_doc_versions.gmud_id', 'source_doc_versions.source_commit_sha', 'source_doc_versions.responsavel',
+            'source_doc_versions.diff_summary', 'source_doc_versions.created_at',
+            'source_docs.filename', 'source_docs.repository', 'source_docs.owner', 'source_docs.customer_id',
+            'customers.name as customer_name',
+        ]);
+
+        return response()->json(['data' => $rows]);
+    }
+
     /** GET /source-docs/source-requests?status= — lista (gestão). */
     public function listRequests(Request $request): JsonResponse
     {
