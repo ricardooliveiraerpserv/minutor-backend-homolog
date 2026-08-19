@@ -101,6 +101,7 @@ class SourceDocSearchController extends Controller
 
         // C4a: autocomplete não pode vazar nomes de entidades de clientes fora do escopo.
         $this->scope->applyScope($query, $request->user(), 'source_doc_entities.customer_id');
+        $this->scope->applyRepoVisibility($query, 'source_doc_entities'); // repo desabilitado não aparece na busca
 
         $rows = $query->select('name')->distinct()->orderBy('name')->limit(20)->pluck('name');
 
@@ -155,6 +156,7 @@ class SourceDocSearchController extends Controller
 
         // C4a: busca técnica NUNCA varre entidades de clientes fora do escopo (deny-by-default).
         $this->scope->applyScope($query, $request->user(), 'source_doc_entities.customer_id');
+        $this->scope->applyRepoVisibility($query, 'source_doc_entities'); // repo desabilitado não aparece na busca
 
         return $query;
     }

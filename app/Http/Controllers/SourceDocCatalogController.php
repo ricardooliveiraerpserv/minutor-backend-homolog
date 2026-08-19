@@ -80,6 +80,7 @@ class SourceDocCatalogController extends Controller
         // acima é apenas recorte de UI; a segurança é este applyScope, que intersecta com os
         // clientes que o usuário PODE ver. Fora do escopo simplesmente não aparece.
         $this->scope->applyScope($query, $request->user(), 'source_docs.customer_id');
+        $this->scope->applyRepoVisibility($query, 'source_docs', $request->boolean('include_hidden'));
 
         switch ((string) $request->query('sort', 'last_change')) {
             case 'filename':  $query->orderBy('source_docs.filename'); break;
@@ -313,13 +314,13 @@ class SourceDocCatalogController extends Controller
     private function indicators(Request $request): array
     {
         // C4a: indicadores TAMBÉM escopados por cliente (não podem contar fontes fora do escopo).
-        $scope = fn ($qb) => $this->scope->applyScope(
+        $scope = fn ($qb) => $this->scope->applyRepoVisibility($this->scope->applyScope(
             $qb
                 ->when($request->filled('customer_id'), fn ($x) => $x->where('source_docs.customer_id', (int) $request->query('customer_id')))
                 ->when($request->filled('source_repo_id'), fn ($x) => $x->where('source_docs.source_repo_id', (int) $request->query('source_repo_id'))),
             $request->user(),
             'source_docs.customer_id'
-        );
+        ), 'source_docs', $request->boolean('include_hidden'));
 
         $byAnalysis = $scope(DB::table('source_docs'))
             ->select('analysis_status', DB::raw('count(*) as c'))

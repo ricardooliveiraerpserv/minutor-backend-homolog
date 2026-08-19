@@ -45,6 +45,32 @@ class SourceDocCustomerAdminController extends Controller
         ]]);
     }
 
+    /** PUT /source-docs/repos/settings {customer_id, repository, hidden} — desabilita/reativa um repo na Central. */
+    public function updateRepoSettings(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'customer_id' => ['required', 'integer'],
+            'repository' => ['required', 'string', 'max:255'],
+            'hidden' => ['required', 'boolean'],
+        ]);
+        if (! $this->scope->canAccessCustomerId($request->user(), (int) $data['customer_id'])) {
+            return response()->json(['message' => 'Cliente fora do seu escopo.'], 404);
+        }
+        $setting = \App\Models\SourceDocRepoSetting::query()->firstOrNew([
+            'customer_id' => (int) $data['customer_id'],
+            'repository' => $data['repository'],
+        ]);
+        $setting->hidden = (bool) $data['hidden'];
+        $setting->updated_by = $request->user()?->id;
+        $setting->save();
+
+        return response()->json(['data' => [
+            'customer_id' => (int) $data['customer_id'],
+            'repository' => $data['repository'],
+            'hidden' => (bool) $setting->hidden,
+        ]]);
+    }
+
     /** POST /source-docs/source-requests {customer_id?, repository?, note} — registra solicitação. */
     public function storeRequest(Request $request): JsonResponse
     {

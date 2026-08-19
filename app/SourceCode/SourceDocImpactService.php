@@ -152,6 +152,14 @@ class SourceDocImpactService
             $q->whereIn('customer_id', $ids);
         }
 
+        // Repos DESABILITADOS na Central (source_doc_repo_settings.hidden) não entram na análise de impacto.
+        $q->whereNotExists(function ($sub) {
+            $sub->from('source_doc_repo_settings as rs')
+                ->whereColumn('rs.customer_id', 'source_doc_entities.customer_id')
+                ->whereColumn('rs.repository', 'source_doc_entities.repository')
+                ->where('rs.hidden', true);
+        });
+
         return $q;
     }
 

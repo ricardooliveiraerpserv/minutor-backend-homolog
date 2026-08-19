@@ -29,6 +29,7 @@ class SourceDocTreeController extends Controller
             ->leftJoin('source_doc_versions as cv', 'cv.id', '=', 'source_docs.current_version_id')
             ->groupBy('source_docs.customer_id', 'customers.name');
         $this->scope->applyScope($q, $user, 'source_docs.customer_id');
+        $this->scope->applyRepoVisibility($q); // repos desabilitados não entram no rollup da empresa
         $rows = $q->select([
             'source_docs.customer_id',
             DB::raw('customers.name as name'),
@@ -98,11 +99,13 @@ class SourceDocTreeController extends Controller
         if (! $this->scope->canAccessCustomerId($request->user(), $customer)) {
             return response()->json(['message' => 'Empresa não encontrada.'], 404);
         }
+        $includeHidden = $request->boolean('include_hidden');
         $q = SourceDoc::query()
             ->where('source_docs.customer_id', $customer)
             ->leftJoin('source_doc_versions as cv', 'cv.id', '=', 'source_docs.current_version_id')
             ->groupBy('source_docs.repository', 'source_docs.source_repo_id', 'source_docs.branch', 'source_docs.owner');
         $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id'); // defesa em profundidade
+        $this->scope->applyRepoVisibility($q, 'source_docs', $includeHidden); // esconde desabilitados (salvo toggle)
         $rows = $q->select([
             'source_docs.repository', 'source_docs.source_repo_id', 'source_docs.branch', 'source_docs.owner',
             DB::raw('count(*) as fontes'),
@@ -110,6 +113,10 @@ class SourceDocTreeController extends Controller
             DB::raw("count(*) filter (where source_docs.analysis_status = 'partial') as parciais"),
             DB::raw('max(source_docs.updated_at) as ultima_atualizacao_acervo'),
         ])->orderBy('source_docs.repository')->get();
+
+        // Flag hidden por repo (só relevante quando include_hidden traz os desabilitados junto).
+        $hiddenSet = \App\Models\SourceDocRepoSetting::where('customer_id', $customer)->where('hidden', true)
+            ->pluck('repository')->flip();
 
         $data = $rows->map(fn ($r) => [
             'repository' => $r->repository,
@@ -121,6 +128,7 @@ class SourceDocTreeController extends Controller
             'parciais' => (int) $r->parciais,
             'cobertura_semantica' => (int) $r->fontes > 0 ? round(((int) $r->documentadas) / ((int) $r->fontes) * 100) : 0,
             'ultima_atualizacao_acervo' => $r->ultima_atualizacao_acervo, // "Última atualização do acervo" (NÃO sync do GitHub)
+            'hidden' => $hiddenSet->has($r->repository),
         ]);
 
         return response()->json(['data' => $data]);
@@ -149,6 +157,7 @@ class SourceDocTreeController extends Controller
             $q->where('source_docs.path', 'like', $this->escapeLike($prefix) . '/%');
         }
         $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id'); // defesa em profundidade
+        $this->scope->applyRepoVisibility($q, 'source_docs', $request->boolean('include_hidden'));
         $rows = $q->select([
             'source_docs.id', 'source_docs.path', 'source_docs.filename', 'source_docs.tipo', 'source_docs.lang',
             'source_docs.size_bytes', 'source_docs.analysis_status', 'source_docs.updated_at',
@@ -231,6 +240,7 @@ class SourceDocTreeController extends Controller
                 $q->where('source_docs.path', 'like', $this->escapeLike($prefix) . '/%');
             }
             $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id');
+            $this->scope->applyRepoVisibility($q, 'source_docs', $request->boolean('include_hidden'));
             return $q;
         };
 

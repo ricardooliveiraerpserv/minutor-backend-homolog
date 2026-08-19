@@ -114,6 +114,30 @@ class SourceDocCustomerScope
     }
 
     /**
+     * Esconde das consultas os repositórios DESABILITADOS na Central (source_doc_repo_settings.hidden).
+     * Chave = (customer_id, repository). NÃO mexe na ingestão (o repo continua sendo clonado/reprocessado);
+     * só some das telas. Passe $includeHidden=true (tela de gestão / toggle "Mostrar desabilitados").
+     * $alias = tabela/alias que expõe customer_id + repository (ex.: 'source_docs', 'd', 'dep').
+     *
+     * @template TBuilder of EloquentBuilder|QueryBuilder
+     * @param TBuilder $query
+     * @return TBuilder
+     */
+    public function applyRepoVisibility($query, string $alias = 'source_docs', bool $includeHidden = false)
+    {
+        if ($includeHidden) {
+            return $query;
+        }
+
+        return $query->whereNotExists(function ($sub) use ($alias) {
+            $sub->from('source_doc_repo_settings as rs')
+                ->whereColumn('rs.customer_id', "$alias.customer_id")
+                ->whereColumn('rs.repository', "$alias.repository")
+                ->where('rs.hidden', true);
+        });
+    }
+
+    /**
      * Limpa a memoização desta instância (útil se os vínculos mudarem no mesmo request).
      */
     public function flush(): void

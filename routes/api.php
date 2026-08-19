@@ -544,6 +544,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
             Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
+            Route::put('/source-docs/repos/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRepoSettings'])->middleware('permission.or.admin:source_docs.inventory');
             Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
             Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
             // F4 — inteligência agregada do acervo por Empresa/Repo/Diretório (patrimônio já produzido; IA=US$0).
@@ -1613,6 +1614,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
             Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
+            Route::put('/source-docs/repos/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRepoSettings'])->middleware('permission.or.admin:source_docs.inventory');
             Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
             Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
             // F4 — inteligência agregada do acervo por Empresa/Repo/Diretório (patrimônio já produzido; IA=US$0).
