@@ -129,11 +129,12 @@ class SourceDocCustomerAdminController extends Controller
         $q = SourceDocSourceRequest::query()
             ->leftJoin('customers', 'customers.id', '=', 'source_doc_source_requests.customer_id')
             ->leftJoin('users', 'users.id', '=', 'source_doc_source_requests.requested_by')
+            ->leftJoin('helpdesk_tickets as ht', 'ht.ticket_number', '=', 'source_doc_source_requests.ticket')
             ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_source_requests.status', $status))
             ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_doc_source_requests.customer_id', (int) $request->query('customer_id')))
             ->orderByDesc('source_doc_source_requests.created_at')
             ->limit(300)
-            ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name']);
+            ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name', 'ht.id as hd_ticket_id', 'ht.subject as hd_subject']);
 
         return response()->json(['data' => $q]);
     }
