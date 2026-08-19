@@ -104,7 +104,10 @@ class SourceDocCustomerAdminController extends Controller
             ->join('source_docs', 'source_docs.id', '=', 'source_doc_versions.source_doc_id')
             ->leftJoin('customers', 'customers.id', '=', 'source_docs.customer_id')
             ->where(fn ($w) => $w->whereNotNull('source_doc_versions.gmud_id')->orWhereNotNull('source_doc_versions.ticket_number'))
-            ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')));
+            ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')))
+            ->when($request->filled('q'), fn ($qq) => $qq->where('source_docs.filename', 'ilike', '%' . trim((string) $request->query('q')) . '%'))
+            ->when($request->filled('from'), fn ($qq) => $qq->whereDate('source_doc_versions.created_at', '>=', $request->query('from')))
+            ->when($request->filled('to'), fn ($qq) => $qq->whereDate('source_doc_versions.created_at', '<=', $request->query('to')));
         $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id');
         $rows = $q->orderByDesc('source_doc_versions.created_at')->limit(300)->get([
             'source_doc_versions.id', 'source_doc_versions.source_doc_id', 'source_doc_versions.ticket_number',
