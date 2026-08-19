@@ -30,29 +30,7 @@ class WorkflowMailer
             return false;
         }
 
-        $meta = (array) (config('workflows.workflows', [])[$key] ?? []);
-        $tpl  = $this->config->template($key);
-
-        $subject = WorkflowConfigService::render($tpl['subject'], $vars) ?: ($meta['label'] ?? $key);
-        $corpo   = WorkflowConfigService::render($tpl['body'], $vars);
-
-        // Tabela "dados" (rótulo => valor) a partir das variáveis declaradas no modelo.
-        $dados = [];
-        foreach (($tpl['variables'] ?? []) as $var => $desc) {
-            if (isset($vars[$var]) && $vars[$var] !== '') {
-                $dados[$desc] = $vars[$var];
-            }
-        }
-
-        $html = view('emails.workflow', [
-            'titulo'  => $meta['label'] ?? $key,
-            'eyebrow' => $meta['domain'] ?? 'Workflow',
-            'accent'  => $this->config->accent($key),
-            'corpo'   => $corpo,
-            'dados'   => $dados,
-            'cardUrl' => rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/pagamento-despesas',
-            'rodape'  => null,
-        ])->render();
+        ['subject' => $subject, 'html' => $html] = $this->renderHtml($key, $vars);
 
         try {
             $graphFrom = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')));
@@ -71,5 +49,37 @@ class WorkflowMailer
             Log::warning("Workflow [{$key}] falhou ao enviar", ['err' => $e->getMessage()]);
             return false;
         }
+    }
+
+    /**
+     * Renderiza EXATAMENTE o assunto/HTML que seriam enviados (mesmo layout do e-mail
+     * real), para exibir a prévia na tela. @return array{subject:string, html:string}
+     */
+    public function renderHtml(string $key, array $vars): array
+    {
+        $meta = (array) (config('workflows.workflows', [])[$key] ?? []);
+        $tpl  = $this->config->template($key);
+
+        $subject = WorkflowConfigService::render($tpl['subject'], $vars) ?: ($meta['label'] ?? $key);
+        $corpo   = WorkflowConfigService::render($tpl['body'], $vars);
+
+        $dados = [];
+        foreach (($tpl['variables'] ?? []) as $var => $desc) {
+            if (isset($vars[$var]) && $vars[$var] !== '') {
+                $dados[$desc] = $vars[$var];
+            }
+        }
+
+        $html = view('emails.workflow', [
+            'titulo'  => $meta['label'] ?? $key,
+            'eyebrow' => $meta['domain'] ?? 'Workflow',
+            'accent'  => $this->config->accent($key),
+            'corpo'   => $corpo,
+            'dados'   => $dados,
+            'cardUrl' => rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/pagamento-despesas',
+            'rodape'  => null,
+        ])->render();
+
+        return ['subject' => $subject, 'html' => $html];
     }
 }
