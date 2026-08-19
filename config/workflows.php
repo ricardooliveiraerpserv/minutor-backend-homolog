@@ -21,6 +21,7 @@ return [
     // Cor de destaque — uma por workflow, pra cada e-mail ser distinguível à primeira vista.
     'workflow_accents' => [
         'hire.new'                     => '#8B5CF6', // roxo (contratações)
+        'hire.first_contact'           => '#22D3EE', // ciano (primeiro contato)
         'contract.created'             => '#FBBF24', // amarelo
         'contract.project_generated'   => '#22C55E', // verde
         'project.coordinator_assigned' => '#A3E635', // lima
@@ -163,6 +164,18 @@ return [
         'hire.new' => [
             'subject'   => 'Nova contratação a providenciar — {nome}',
             'body'      => 'Foi cadastrada uma nova contratação: {nome} ({cargo}, {modalidade}). Primeiro contato: {primeiro_contato}. Início previsto: {inicio}. Providenciar a passagem/onboarding.',
+            'variables' => [
+                'nome'             => 'Nome do contratado',
+                'cargo'            => 'Cargo',
+                'modalidade'       => 'Modalidade',
+                'contato'          => 'Contato (telefone/e-mail)',
+                'primeiro_contato' => 'Data de primeiro contato',
+                'inicio'           => 'Data de início',
+            ],
+        ],
+        'hire.first_contact' => [
+            'subject'   => 'Fazer primeiro contato — {nome}',
+            'body'      => 'Lembrete: fazer o primeiro contato com {nome} ({cargo}). Data de primeiro contato: {primeiro_contato}. Contato: {contato}.',
             'variables' => [
                 'nome'             => 'Nome do contratado',
                 'cargo'            => 'Cargo',
@@ -388,9 +401,19 @@ return [
 
         // ───────────────────────── Contratações ─────────────────────────
         'hire.new' => [
-            'label'       => 'Nova contratação — avisar administrativo',
+            'label'       => 'Pendente de contratação — avisar administrativo',
             'domain'      => 'Contratações',
             'description' => 'Quando uma nova contratação é incluída pela rotina de Contratação/Onboarding, avisa o administrativo que há uma contratação a providenciar. Defina a recorrência abaixo para reenviar o aviso a cada N dias enquanto a contratação não for concluída (Finalizado/Pausados). 0 = só o aviso na inclusão.',
+            'recurrence'  => true,
+            'audiences'   => [
+                'administrativo' => 'to',
+                'diretor'        => 'off',
+            ],
+        ],
+        'hire.first_contact' => [
+            'label'       => 'Pendente de primeiro contato — avisar administrativo',
+            'domain'      => 'Contratações',
+            'description' => 'A partir da DATA DE PRIMEIRO CONTATO, lembra o administrativo de fazer o primeiro contato com o contratado. Reenvia a cada N dias enquanto o card seguir em "Aguardando assinatura" — PARA quando for movido para "Em andamento". 0 = só o aviso na data.',
             'recurrence'  => true,
             'audiences'   => [
                 'administrativo' => 'to',

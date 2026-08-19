@@ -4,20 +4,25 @@ namespace App\Services;
 
 use App\Models\AppNotification;
 use App\Models\SkillHireCard;
+use App\Workflows\WorkflowConfigService;
 use App\Workflows\WorkflowMailer;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Avisos de "Nova contratação" para o ADMINISTRATIVO.
+ * Avisos de contratação para o ADMINISTRATIVO — DOIS workflows:
  *
- * - onCreated(): ao cadastrar → e-mail (Central de Workflows `hire.new`) + pop-up in-app imediato.
- * - sweep(): rodado 1x/dia pelo command `contratacao:notify-administrativo` → mantém a ação
- *   fixada a partir da DATA DE PRIMEIRO CONTATO e vira ATRASO se passar da data, enquanto o card
- *   não estiver em Finalizado/Pausados.
+ *  - `hire.new` (Pendente de contratação): enviado na inclusão e reenviado a cada
+ *    N dias (recurrence_days) enquanto o card NÃO estiver em Finalizado/Pausados.
+ *  - `hire.first_contact` (Pendente de primeiro contato): a partir da data de primeiro
+ *    contato, reenviado a cada N dias enquanto o card seguir em "Aguardando assinatura".
+ *    PARA quando for movido para "Em andamento".
  *
- * A aba "Ações" do Meu Dia (ApprovalController::homeActions) usa a mesma regra de pendência
- * (contagem ao vivo). Aqui é o canal de PUSH (pop-up + e-mail).
+ * A recorrência real é dirigida pelo `recurrence_days` de cada workflow (Central),
+ * com a última data de envio guardada no próprio `form` do card (`_hire_new_at`,
+ * `_first_contact_at`) — sem migration.
+ *
+ * onCreated(): e-mail hire.new imediato + pop-up in-app. sweep(): rodado 1x/dia.
  */
 class HireNotifier
 {
@@ -26,17 +31,17 @@ class HireNotifier
 
     public const CTA_URL = '/competencias/contratacao';
 
-    /** Ao incluir uma contratação: dispara e-mail + pop-up imediato ao administrativo. */
+    /** Ao incluir uma contratação: e-mail (hire.new) + pop-up imediato ao administrativo. */
     public static function onCreated(SkillHireCard $card): void
     {
-        // E-mail via Central de Workflows (destinatários/recorrência configuráveis lá).
         try {
-            app(WorkflowMailer::class)->send('hire.new', ['actor' => $card->createdUser], self::mailVars($card));
+            if (app(WorkflowMailer::class)->send('hire.new', ['actor' => $card->createdUser], self::mailVars($card))) {
+                $card->update(['form' => array_merge(is_array($card->form) ? $card->form : [], ['_hire_new_at' => now()->toDateString()])]);
+            }
         } catch (\Throwable $e) {
             Log::warning('hire.new: e-mail falhou', ['card' => $card->id, 'err' => $e->getMessage()]);
         }
 
-        // Pop-up in-app imediato (o administrativo vê na hora que foi cadastrada).
         try {
             $pc = self::firstContactDate($card);
             $quando = $pc ? ' Primeiro contato: ' . $pc->format('d/m/Y') . '.' : '';
@@ -49,7 +54,7 @@ class HireNotifier
                 'cta_label'    => 'Abrir contratações',
                 'cta_url'      => self::CTA_URL,
                 'visible'      => true,
-                'send_email'   => false,   // o e-mail já sai pelo workflow acima
+                'send_email'   => false,
                 'requires_ack' => false,
                 'created_by'   => $card->created_by,
                 'resent_at'    => now(),
@@ -61,57 +66,73 @@ class HireNotifier
     }
 
     /**
-     * Varredura diária: cria/atualiza 1 pop-up agregado p/ o administrativo com as contratações
-     * cuja data de primeiro contato já chegou e que ainda estão pendentes; destaca as atrasadas.
-     *
-     * @return array{pending:int,overdue:int}
+     * Varredura diária: reenvia os dois e-mails conforme recorrência e mantém o
+     * pop-up/Meu Dia do administrativo. @return array{pending:int,overdue:int,mails:int}
      */
     public static function sweep(?Carbon $today = null): array
     {
-        $today = ($today ?: now())->startOfDay();
+        $today  = ($today ?: now())->startOfDay();
+        $cfg    = app(WorkflowConfigService::class);
+        $mailer = app(WorkflowMailer::class);
+        $rdNew  = (int) ($cfg->template('hire.new')['recurrence_days'] ?? 0);
+        $rdFc   = (int) ($cfg->template('hire.first_contact')['recurrence_days'] ?? 0);
 
+        $mails = 0;
+        foreach (SkillHireCard::whereIn('bucket', self::PENDING_BUCKETS)->get() as $card) {
+            $form = is_array($card->form) ? $card->form : [];
+            $changed = false;
+
+            // hire.new — reenvia a cada rdNew dias enquanto pendente (qualquer PENDING_BUCKET).
+            if ($rdNew > 0 && self::due($form['_hire_new_at'] ?? null, $rdNew, $today)) {
+                try {
+                    if ($mailer->send('hire.new', ['actor' => $card->createdUser], self::mailVars($card))) {
+                        $form['_hire_new_at'] = $today->toDateString(); $changed = true; $mails++;
+                    }
+                } catch (\Throwable $e) { Log::warning('hire.new recorrente falhou', ['card' => $card->id, 'err' => $e->getMessage()]); }
+            }
+
+            // hire.first_contact — SÓ enquanto "aguardando_assinatura" e a data já chegou.
+            // (para quando movido para "em_andamento"). rdFc=0 → envia 1x quando a data chega.
+            $fc = self::firstContactDate($card);
+            if ($card->bucket === 'aguardando_assinatura' && $fc && $fc->lte($today)) {
+                $last = $form['_first_contact_at'] ?? null;
+                if (! $last || ($rdFc > 0 && self::due($last, $rdFc, $today))) {
+                    try {
+                        if ($mailer->send('hire.first_contact', ['actor' => $card->createdUser], self::mailVars($card))) {
+                            $form['_first_contact_at'] = $today->toDateString(); $changed = true; $mails++;
+                        }
+                    } catch (\Throwable $e) { Log::warning('hire.first_contact falhou', ['card' => $card->id, 'err' => $e->getMessage()]); }
+                }
+            }
+
+            if ($changed) $card->update(['form' => $form]);
+        }
+
+        // Pop-up/Meu Dia agregado (contratações cuja data de primeiro contato já chegou).
         $due = self::pendingWithFirstContactDue($today)->get();
         $pending = $due->count();
         $overdue = $due->filter(fn ($c) => optional(self::firstContactDate($c))->lt($today))->count();
 
-        if ($pending === 0) {
-            return ['pending' => 0, 'overdue' => 0];
+        if ($pending > 0) {
+            $msg = $overdue > 0
+                ? "Você tem {$pending} contratação(ões) a providenciar, sendo {$overdue} EM ATRASO. Abra e conclua o quanto antes."
+                : "Você tem {$pending} contratação(ões) a providenciar hoje.";
+            $title = $overdue > 0 ? 'Contratações em atraso' : 'Contratações a providenciar';
+            $payload = ['title' => $title, 'message' => $msg, 'priority' => $overdue > 0 ? 'critical' : 'high',
+                'resent_at' => now(), 'expires_at' => $today->copy()->endOfDay()];
+
+            $existing = AppNotification::whereJsonContains('target_roles', 'administrativo')
+                ->where('cta_url', self::CTA_URL)->whereDate('created_at', $today->toDateString())->first();
+            if ($existing) {
+                $existing->update($payload);
+            } else {
+                AppNotification::create(array_merge($payload, ['type' => 'action', 'target_roles' => ['administrativo'],
+                    'cta_label' => 'Abrir contratações', 'cta_url' => self::CTA_URL, 'visible' => true,
+                    'send_email' => false, 'requires_ack' => false]));
+            }
         }
 
-        $msg = $overdue > 0
-            ? "Você tem {$pending} contratação(ões) a providenciar, sendo {$overdue} EM ATRASO. Abra e conclua o quanto antes."
-            : "Você tem {$pending} contratação(ões) a providenciar hoje.";
-        $title = $overdue > 0 ? 'Contratações em atraso' : 'Contratações a providenciar';
-
-        // 1 notificação por dia p/ o grupo administrativo (idempotente).
-        $existing = AppNotification::whereJsonContains('target_roles', 'administrativo')
-            ->where('cta_url', self::CTA_URL)
-            ->whereDate('created_at', $today->toDateString())
-            ->first();
-
-        $payload = [
-            'title'    => $title,
-            'message'  => $msg,
-            'priority' => $overdue > 0 ? 'critical' : 'high',
-            'resent_at' => now(),
-            'expires_at' => $today->copy()->endOfDay(),
-        ];
-
-        if ($existing) {
-            $existing->update($payload);
-        } else {
-            AppNotification::create(array_merge($payload, [
-                'type'         => 'action',
-                'target_roles' => ['administrativo'],
-                'cta_label'    => 'Abrir contratações',
-                'cta_url'      => self::CTA_URL,
-                'visible'      => true,
-                'send_email'   => false,
-                'requires_ack' => false,
-            ]));
-        }
-
-        return ['pending' => $pending, 'overdue' => $overdue];
+        return ['pending' => $pending, 'overdue' => $overdue, 'mails' => $mails];
     }
 
     /** Cards pendentes cuja data de primeiro contato já chegou (<= hoje). */
@@ -122,10 +143,18 @@ class HireNotifier
             ->whereRaw("(form->>'data_primeiro_contato')::date <= ?", [$today->toDateString()]);
     }
 
+    /** Envio devido? (nunca enviado, ou último envio + N dias já passou). */
+    private static function due(?string $last, int $days, Carbon $today): bool
+    {
+        if (! $last) return true;
+        try { return Carbon::parse($last)->startOfDay()->addDays($days)->lte($today); }
+        catch (\Throwable) { return true; }
+    }
+
     private static function firstContactDate(SkillHireCard $card): ?Carbon
     {
         $v = is_array($card->form) ? ($card->form['data_primeiro_contato'] ?? '') : '';
-        if (!$v) return null;
+        if (! $v) return null;
         try { return Carbon::parse($v)->startOfDay(); } catch (\Throwable) { return null; }
     }
 
@@ -134,12 +163,12 @@ class HireNotifier
         $form = is_array($card->form) ? $card->form : [];
         $fmt = fn ($d) => $d ? (Carbon::hasFormat($d, 'Y-m-d') ? Carbon::parse($d)->format('d/m/Y') : $d) : '';
         return [
-            'nome'            => $card->title,
-            'cargo'           => $card->cargo ?: '—',
-            'modalidade'      => SkillHireCard::MODALIDADES[$card->modalidade] ?? '—',
-            'contato'         => (string) ($form['contato'] ?? ''),
+            'nome'             => $card->title,
+            'cargo'            => $card->cargo ?: '—',
+            'modalidade'       => SkillHireCard::MODALIDADES[$card->modalidade] ?? '—',
+            'contato'          => (string) ($form['contato'] ?? ''),
             'primeiro_contato' => $fmt($form['data_primeiro_contato'] ?? ''),
-            'inicio'          => $fmt($form['start_date'] ?? ''),
+            'inicio'           => $fmt($form['start_date'] ?? ''),
         ];
     }
 }

@@ -160,6 +160,8 @@ class SkillHireController extends Controller
             'form.valor' => 'nullable|string|max:60',
             'form.start_date' => 'nullable|date',
             'form.data_primeiro_contato' => 'nullable|date',
+            'form._hire_new_at' => 'nullable|string|max:10',        // tracking de recorrência (interno)
+            'form._first_contact_at' => 'nullable|string|max:10',   // tracking de recorrência (interno)
             'form.tem_garantia' => 'nullable|in:sim,nao',
             'form.guaranteed_hours' => 'nullable|string|max:20',
             'form.empresa' => 'nullable|in:erpserv,bizify',
