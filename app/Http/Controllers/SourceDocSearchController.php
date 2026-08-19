@@ -140,6 +140,8 @@ class SourceDocSearchController extends Controller
                     default    => $x->whereRaw('lower(name) like ?', [$lq . '%']), // prefix
                 };
             })
+            // F5 — escopo por repositório (busca contextual "neste escopo").
+            ->when($request->filled('repository'), fn ($x) => $x->where('repository', (string) $request->query('repository')))
             ->when($request->filled('access'), function ($x) use ($request) {
                 foreach (explode(',', (string) $request->query('access')) as $a) {
                     $a = strtoupper(trim($a));

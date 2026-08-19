@@ -47,6 +47,7 @@ class SourceDocCatalogController extends Controller
             ])
             ->when($request->filled('customer_id'), fn ($x) => $x->where('source_docs.customer_id', (int) $request->query('customer_id')))
             ->when($request->filled('source_repo_id'), fn ($x) => $x->where('source_docs.source_repo_id', (int) $request->query('source_repo_id')))
+            ->when($request->filled('repository'), fn ($x) => $x->where('source_docs.repository', (string) $request->query('repository')))
             ->when($request->filled('analysis_status'), fn ($x) => $x->where('source_docs.analysis_status', (string) $request->query('analysis_status')))
             ->when($request->filled('lang'), fn ($x) => $x->where('source_docs.lang', (string) $request->query('lang')))
             ->when($request->filled('tipo'), fn ($x) => $x->where('source_docs.tipo', (string) $request->query('tipo')))
@@ -57,9 +58,15 @@ class SourceDocCatalogController extends Controller
                     case 'partial':   $x->whereNotNull('cv.semantic_json')->where('cv.analysis_status', '<>', 'completed'); break;
                 }
             })
-            ->when($q !== '', fn ($x) => $x->where(function ($w) use ($q) {
+            ->when($q !== '', fn ($x) => $x->where(function ($w) use ($q, $request) {
                 $w->where('source_docs.filename', 'ilike', "%{$q}%")
                     ->orWhere('source_docs.path', 'ilike', "%{$q}%");
+                // F5 — busca por CONHECIMENTO já documentado (objetivo/regras/processo/deps): texto do
+                // semantic_json. Rápido quando escopado (customer/repo/path); global detoasta mais (medido).
+                if ($request->query('in') === 'knowledge') {
+                    // ::jsonb::text normaliza escapes unicode (ç) → busca acentuada casa.
+                    $w->orWhereRaw('(cv.semantic_json is not null and cv.semantic_json::jsonb::text ilike ?)', ["%{$q}%"]);
+                }
             }))
             // F2 (Acervo): conteúdo de uma pasta (recursivo) via prefixo do path Git.
             ->when($request->filled('path_prefix'), fn ($x) => $x->where(
