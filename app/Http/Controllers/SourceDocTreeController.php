@@ -77,7 +77,19 @@ class SourceDocTreeController extends Controller
             $data = $data->concat($gitData);
         }
 
-        return response()->json(['data' => $data->values()]);
+        // Ajustes por empresa da Central (detentor de fonte + oculto). Oculto some da lista,
+        // salvo include_hidden=1 (tela de gestão). NÃO é o customers.active global.
+        $settings = \App\Models\SourceDocCustomerSetting::whereIn('customer_id', $data->pluck('customer_id')->all() ?: [0])
+            ->get()->keyBy('customer_id');
+        $includeHidden = $request->boolean('include_hidden');
+        $data = $data->map(function ($row) use ($settings) {
+            $s = $settings->get($row['customer_id']);
+            $row['own_source'] = (bool) ($s->own_source ?? false);
+            $row['hidden'] = (bool) ($s->hidden ?? false);
+            return $row;
+        })->filter(fn ($row) => $includeHidden || ! $row['hidden'])->values();
+
+        return response()->json(['data' => $data]);
     }
 
     /** GET /source-docs/tree/customers/{customer}/repos — L2: repos com fontes do cliente. */
