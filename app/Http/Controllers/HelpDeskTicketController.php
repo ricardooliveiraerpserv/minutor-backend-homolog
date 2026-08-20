@@ -215,16 +215,49 @@ class HelpDeskTicketController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        // 🔎 Instrumentação temporária (?debug=1): conta queries, tempo por query e tempo de cada fase
+        // → decide N+1 vs query pesada com DADO. Query normalizada (sem valores). Remover após diagnóstico.
+        $debug = $request->boolean('debug');
+        if ($debug) { \DB::flushQueryLog(); \DB::enableQueryLog(); }
+        $mark = fn () => (int) (hrtime(true) / 1e6); // ms
+        $t0 = $mark();
+
         $tickets = $this->filtered($request)->limit((int) $request->input('limit', 200))->get();
         // A lista/kanban NÃO usa o corpo do chamado — ocultar 'description' enxuga muito o payload
         // (o detalhe usa o endpoint show, que mantém tudo).
         $tickets->makeHidden(['description']);
+        $t1 = $mark();
         // Só quem JÁ pausou precisa dos eventos p/ reconstruir a pausa de SLA — a maioria nunca pausou
         // e recebe coleção vazia (pausa por status = 0). Corta a query de eventos e o cálculo por ticket.
         $events = $this->eventsByTicket($tickets->where('sla_ever_paused', true)->values());
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
+        $t2 = $mark();
         $cal = app(\App\Services\BusinessCalendarService::class);
-        return response()->json(['data' => $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true))]);
+        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true));
+        $t3 = $mark();
+
+        $payload = ['data' => $data];
+        if ($debug) {
+            $log = \DB::getQueryLog();
+            $byQ = [];
+            foreach ($log as $q) {
+                $k = preg_replace(['/\d+/', "/'[^']*'/", '/\s+/'], ['?', '?', ' '], $q['query']);
+                $byQ[$k]['n'] = ($byQ[$k]['n'] ?? 0) + 1;
+                $byQ[$k]['ms'] = round(($byQ[$k]['ms'] ?? 0) + $q['time'], 1);
+            }
+            uasort($byQ, fn ($a, $b) => $b['ms'] <=> $a['ms']);
+            $top = [];
+            foreach (array_slice($byQ, 0, 10, true) as $k => $v) $top[] = ['n' => $v['n'], 'ms' => $v['ms'], 'q' => mb_substr($k, 0, 110)];
+            $payload['_debug'] = [
+                'tickets'          => $tickets->count(),
+                'query_count'      => count($log),
+                'query_ms_total'   => round(array_sum(array_column($log, 'time')), 1),
+                'phase_ms'         => ['base_get' => $t1 - $t0, 'events_lastagent' => $t2 - $t1, 'decorate' => $t3 - $t2],
+                'total_handler_ms' => $t3 - $t0,
+                'top_queries'      => $top,
+            ];
+        }
+        return response()->json($payload);
     }
 
     /**
