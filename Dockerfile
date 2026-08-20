@@ -76,15 +76,17 @@ RUN printf 'server {\n\
 # pode levar ~40-60s no plano free; o default 30s do PHP cortava e dava 500).
 RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=256M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
 
-# PHP-FPM pool: o default da imagem é max_children=5 — muito apertado.
-# Backend recebe tráfego de usuários + webhooks Movidesk (que podem segurar
-# o worker por até ~5s no fetchTicket). Com 5 workers, qualquer pico ou
-# pequena rajada de webhooks empilha requests. Subindo pra 25.
+# PHP-FPM pool: default da imagem = max_children=5.
+# ⚠️ 2026-08-20: estava em 25, mas 25 × memory_limit 256M = teto ~6 GB de RAM —
+# num plano starter (~512 MB) qualquer pico (ex.: fila com 200 chamados + rajada)
+# estourava a memória → OOM → container morto → crash loop / 502. Reduzido p/ 8
+# (homolog tem poucos usuários; 8 processos é de sobra e o teto de RAM fica ~2 GB).
+# Se voltar a apertar, baixar também o memory_limit.
 RUN sed -i \
-      -e 's|^pm.max_children = 5$|pm.max_children = 25|' \
-      -e 's|^pm.start_servers = 2$|pm.start_servers = 5|' \
-      -e 's|^pm.min_spare_servers = 1$|pm.min_spare_servers = 3|' \
-      -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 10|' \
+      -e 's|^pm.max_children = 5$|pm.max_children = 8|' \
+      -e 's|^pm.start_servers = 2$|pm.start_servers = 2|' \
+      -e 's|^pm.min_spare_servers = 1$|pm.min_spare_servers = 1|' \
+      -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 4|' \
       /usr/local/etc/php-fpm.d/www.conf
 
 # Supervisor: nginx + php-fpm + workers de fila (sem serviço pago à parte).
