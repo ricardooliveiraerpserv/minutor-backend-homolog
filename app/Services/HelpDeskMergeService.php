@@ -133,9 +133,16 @@ class HelpDeskMergeService
                     $target->tags()->syncWithoutDetaching($src->tags()->pluck('helpdesk_tags.id')->all());
                 }
 
-                // 3) Marca a origem como mesclada (some das listagens) — guarda o status p/ restaurar no unmerge.
+                // 3) Marca a origem como mesclada (some das listagens) E a ENCERRA (status terminal
+                //    'fechado') — fica evidente que saiu de circulação. O status original vai no log
+                //    (meta.source_status_id) e é restaurado no unmerge.
                 $srcStatusId = $src->status_id;
+                $closedId = \App\Models\HelpDeskStatus::where('key', 'fechado')->value('id');
                 $src->merged_into_id = $target->id;
+                if ($closedId && (int) $src->status_id !== (int) $closedId) {
+                    HelpDeskTicketEvent::log($src->id, 'status_changed', ['from_value' => $srcStatusId, 'to_value' => $closedId]);
+                    $src->status_id = $closedId;
+                }
                 $src->last_activity_at = now();
                 $src->save();
 

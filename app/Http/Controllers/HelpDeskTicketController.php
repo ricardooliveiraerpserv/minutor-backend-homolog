@@ -929,6 +929,7 @@ class HelpDeskTicketController extends Controller
             'tags:id,name,color', 'watchers',
             'previousTicket:id,ticket_number,subject',                       // continuação de chamado encerrado
             'continuations:id,ticket_number,previous_ticket_id',            // chamado(s) abertos a partir DESTE
+            'mergedInto:id,ticket_number,subject',                          // destino da mescla (quando ESTE foi mesclado)
         ]);
         $events = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
         $data = $this->enrichTicketFlags($ticket, $this->decorate($ticket, $events), \Illuminate\Support\Facades\Auth::user());
