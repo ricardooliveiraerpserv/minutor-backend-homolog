@@ -63,6 +63,11 @@ class HelpDeskTicketController extends Controller
         $data['previous_ticket'] = optional($ticket->relationLoaded('previousTicket')
             ? $ticket->previousTicket
             : $ticket->previousTicket()->first())->only(['id', 'ticket_number', 'subject']) ?: null;
+        // Destino da mescla (quando ESTE foi mesclado e encerrado) → banner evidente "mesclado no #XXXX".
+        $data['merged_into_id'] = $ticket->merged_into_id;
+        $data['merged_into'] = $ticket->merged_into_id ? (optional($ticket->relationLoaded('mergedInto')
+            ? $ticket->mergedInto
+            : $ticket->mergedInto()->first())->only(['id', 'ticket_number', 'subject']) ?: null) : null;
         // O usuário LOGADO é o SOLICITANTE deste chamado? (mesmo agente/admin) → habilita Aceitar/Recusar
         // a solução no app. Casa por user_id OU por e-mail (chamado de origem e-mail não tem requester_user_id).
         $data['is_requester'] = (bool) ($user && (
