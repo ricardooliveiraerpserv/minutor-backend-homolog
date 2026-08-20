@@ -257,7 +257,11 @@ class HelpDeskSlaService
         $total = 0;
 
         // (a) Pausa por STATUS (event-sourced): tempo útil em status pausante.
-        $paused = $this->pausingKeysFor($t);
+        // ⚡ Só reconstrói dos eventos se o ticket JÁ pausou alguma vez (sla_ever_paused). Quem nunca
+        // entrou em status pausante tem 0 min aqui — pular evita 1 query de eventos POR TICKET (N+1 que
+        // custava ~3,5s na fila: cada card chamava listSummary→effectiveDue→este método sem $events).
+        // Mesma premissa do index(), que só carrega eventos em lote p/ os tickets sla_ever_paused=true.
+        $paused = $t->sla_ever_paused ? $this->pausingKeysFor($t) : [];
         if (!empty($paused)) {
             $events ??= $t->events()->where('event_type', 'status_changed')
                 ->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
