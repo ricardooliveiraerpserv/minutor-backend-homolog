@@ -171,4 +171,56 @@ class HireNotifier
             'inicio'           => $fmt($form['start_date'] ?? ''),
         ];
     }
+
+    /**
+     * MOVIMENTAÇÃO da contratação (mudança de situação/bucket) → avisa o SOLICITANTE
+     * (quem criou o card). E-mail via workflow `hire.movement` (audiência `autor` =
+     * $card->createdUser, configurável na Central) + pop-up in-app direto ao solicitante.
+     * Não faz nada se não houve mudança real ou se o card não tem solicitante.
+     */
+    public static function onMoved(SkillHireCard $card, ?string $from, string $to, ?string $movedBy = null): void
+    {
+        // BLINDADO: uma falha aqui NUNCA pode derrromper a movimentação (move/complete).
+        try {
+            // Solicitante = quem CRIOU o card (created_by). NÃO é created_user_id (esse é o
+            // usuário do CONTRATADO, gravado só na conclusão).
+            $solicitante = $card->created_by ? \App\Models\User::find($card->created_by) : null;
+            if ($from === $to || ! $solicitante) {
+                return;
+            }
+            $labels  = SkillHireCard::BUCKETS;
+            $deLbl   = $labels[$from] ?? ($from ?: '—');
+            $paraLbl = $labels[$to] ?? $to;
+            $vars = array_merge(self::mailVars($card), [
+                'de'   => $deLbl,
+                'para' => $paraLbl,
+                'por'  => $movedBy ?: '—',
+                'data' => now()->format('d/m/Y H:i'),
+            ]);
+
+            try {
+                app(WorkflowMailer::class)->send('hire.movement', ['actor' => $solicitante], $vars);
+            } catch (\Throwable $e) {
+                Log::warning('hire.movement: e-mail falhou', ['card' => $card->id, 'err' => $e->getMessage()]);
+            }
+
+            AppNotification::create([
+                'title'        => 'Contratação ' . $card->title . ': ' . $paraLbl,
+                'message'      => 'A contratação de ' . $card->title . ' foi movida de "' . $deLbl . '" para "' . $paraLbl . '"' . ($movedBy ? ' por ' . $movedBy : '') . '.',
+                'type'         => 'info',
+                'priority'     => 'normal',
+                'target_users' => [$card->created_by],
+                'cta_label'    => 'Abrir contratações',
+                'cta_url'      => self::CTA_URL,
+                'visible'      => true,
+                'send_email'   => false,
+                'requires_ack' => false,
+                'created_by'   => $card->created_by,
+                'resent_at'    => now(),
+                'expires_at'   => now()->addDays(7),
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('hire.movement: falhou', ['card' => $card->id ?? null, 'err' => $e->getMessage()]);
+        }
+    }
 }

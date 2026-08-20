@@ -22,6 +22,7 @@ return [
     'workflow_accents' => [
         'hire.new'                     => '#8B5CF6', // roxo (contratações)
         'hire.first_contact'           => '#22D3EE', // ciano (primeiro contato)
+        'hire.movement'                => '#A78BFA', // roxo claro (movimentação de contratação)
         'contract.created'             => '#FBBF24', // amarelo
         'contract.project_generated'   => '#22C55E', // verde
         'project.coordinator_assigned' => '#A3E635', // lima
@@ -185,6 +186,18 @@ return [
                 'contato'          => 'Contato (telefone/e-mail)',
                 'primeiro_contato' => 'Data de primeiro contato',
                 'inicio'           => 'Data de início',
+            ],
+        ],
+        'hire.movement' => [
+            'subject'   => 'Contratação {nome}: {de} → {para}',
+            'body'      => 'A contratação de {nome} ({cargo}) foi movida de "{de}" para "{para}" por {por} em {data}.',
+            'variables' => [
+                'nome'  => 'Nome do contratado',
+                'cargo' => 'Cargo',
+                'de'    => 'Situação anterior',
+                'para'  => 'Nova situação',
+                'por'   => 'Quem movimentou',
+                'data'  => 'Data/hora da movimentação',
             ],
         ],
         'expense.approved_pending_payment' => [
@@ -425,6 +438,15 @@ return [
             'audiences'   => [
                 'administrativo' => 'to',
                 'diretor'        => 'off',
+            ],
+        ],
+        'hire.movement' => [
+            'label'       => 'Contratação movimentada — avisar solicitante',
+            'domain'      => 'Contratações',
+            'description' => 'A cada MOVIMENTAÇÃO (mudança de situação: Aguardando assinatura → Em andamento → Finalizado/Pausados) de uma contratação, avisa o SOLICITANTE (quem criou a contratação) da nova situação. Aviso por evento (não recorrente).',
+            'audiences'   => [
+                'autor'          => 'to',
+                'administrativo' => 'off',
             ],
         ],
 

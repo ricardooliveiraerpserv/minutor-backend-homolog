@@ -198,7 +198,10 @@ class SkillHireController extends Controller
         if ($data['bucket'] === 'finalizado') {
             return $this->complete($id);
         }
+        $from = $card->bucket;
         $card->update(['bucket' => $data['bucket']]);
+        // Toda movimentação avisa o solicitante (workflow hire.movement + pop-up).
+        \App\Services\HireNotifier::onMoved($card, $from, $data['bucket'], $request->user()?->name);
 
         return response()->json($this->card($card->fresh('respondent', 'createdUser')));
     }
@@ -208,9 +211,11 @@ class SkillHireController extends Controller
     {
         $card = SkillHireCard::with('respondent')->findOrFail($id);
         $respondent = $card->respondent;
+        $from = $card->bucket;
 
         if ($card->created_user_id) {
             $card->update(['bucket' => 'finalizado', 'completed_at' => $card->completed_at ?? now()]);
+            \App\Services\HireNotifier::onMoved($card, $from, 'finalizado', auth()->user()?->name);
 
             return response()->json($this->card($card->fresh('respondent', 'createdUser')));
         }
@@ -314,6 +319,9 @@ class SkillHireController extends Controller
         Task::where('entity_type', 'skill_hire')->where('entity_id', $card->id)
             ->where('completed', false)
             ->update(['completed' => true, 'completed_at' => now(), 'completed_by' => auth()->id()]);
+
+        // Movimentação para Finalizado avisa o solicitante.
+        \App\Services\HireNotifier::onMoved($card, $from, 'finalizado', auth()->user()?->name);
 
         return response()->json($this->card($card->fresh('respondent', 'createdUser')));
     }
