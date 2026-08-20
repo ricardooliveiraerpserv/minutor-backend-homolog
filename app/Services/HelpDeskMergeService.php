@@ -102,6 +102,26 @@ class HelpDeskMergeService
                 HelpDeskTicketComment::where('ticket_id', $src->id)
                     ->update(['ticket_id' => $target->id]);
 
+                // 1b) CORPO/DESCRIÇÃO da origem → vira uma INTERAÇÃO no destino, na DATA original
+                // do chamado (entra na sequência cronológica da conversa). Sem isso, chamados cujo
+                // conteúdo está só na descrição inicial (sem comentários) perdiam o conteúdo na mescla.
+                // origin_ticket_id + channel='merge' permitem remover no desmesclar (idempotente).
+                if (filled($src->description)) {
+                    $desc = new HelpDeskTicketComment();
+                    $desc->ticket_id         = $target->id;
+                    $desc->origin_ticket_id  = $src->id;
+                    $desc->author_user_id    = $src->requester_user_id;
+                    $desc->author_contact_id = $src->customer_contact_id;
+                    $desc->body              = "<p><em>— Conteúdo do chamado {$src->ticket_number} (mesclado) —</em></p>" . $src->description;
+                    $desc->visibility        = 'customer';
+                    $desc->is_system         = false;
+                    $desc->channel           = 'merge';
+                    $desc->no_charge         = true;
+                    $desc->created_at        = $src->created_at;   // set direto = não é sobrescrito pelo Eloquent
+                    $desc->updated_at        = $src->created_at;
+                    $desc->save();
+                }
+
                 // 2) Opções (cada uma independente).
                 if ($opts['keep_cc']) {
                     $cc = $cc->merge((array) $src->cc_emails);
@@ -164,7 +184,11 @@ class HelpDeskMergeService
                 throw new HelpDeskMergeException('Este chamado já foi desmesclado por outra operação.');
             }
 
-            // 1) Interações que nasceram na ORIGEM voltam pra ela; as demais (origin = destino) ficam.
+            // 1) A descrição da origem foi INJETADA como interação (channel='merge') na mescla — a
+            //    origem ainda tem a descrição no próprio campo, então aqui só REMOVE a cópia (evita
+            //    duplicar no origem e acumular a cada re-merge). As demais interações voltam pra origem.
+            HelpDeskTicketComment::where('ticket_id', $target->id)->where('origin_ticket_id', $source->id)
+                ->where('channel', 'merge')->forceDelete();
             HelpDeskTicketComment::where('ticket_id', $target->id)->where('origin_ticket_id', $source->id)
                 ->update(['ticket_id' => $source->id]);
 
