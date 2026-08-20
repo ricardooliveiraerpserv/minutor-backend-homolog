@@ -24,9 +24,9 @@ RUN docker-php-ext-install \
 # OPcache: compila e cacheia bytecode PHP em memória
 RUN printf 'opcache.enable=1\n\
 opcache.enable_cli=1\n\
-opcache.memory_consumption=256\n\
-opcache.interned_strings_buffer=16\n\
-opcache.max_accelerated_files=20000\n\
+opcache.memory_consumption=80\n\
+opcache.interned_strings_buffer=8\n\
+opcache.max_accelerated_files=12000\n\
 opcache.revalidate_freq=0\n\
 opcache.validate_timestamps=0\n\
 opcache.save_comments=1\n\
@@ -74,19 +74,20 @@ RUN printf 'server {\n\
 
 # Limite de upload PHP + timeout de execução (render de documento via Gotenberg
 # pode levar ~40-60s no plano free; o default 30s do PHP cortava e dava 500).
-RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=256M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
+RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=192M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
 
 # PHP-FPM pool: default da imagem = max_children=5.
-# ⚠️ 2026-08-20: estava em 25, mas 25 × memory_limit 256M = teto ~6 GB de RAM —
-# num plano starter (~512 MB) qualquer pico (ex.: fila com 200 chamados + rajada)
-# estourava a memória → OOM → container morto → crash loop / 502. Reduzido p/ 8
-# (homolog tem poucos usuários; 8 processos é de sobra e o teto de RAM fica ~2 GB).
-# Se voltar a apertar, baixar também o memory_limit.
+# ⚠️ 2026-08-20: o limite REAL do container é 512Mi (evento oomKilled memoryLimit=512Mi),
+# NÃO os ~2 GB estimados. max_children=8 ainda estourava. Orçamento p/ 512Mi:
+#   opcache 80 + nginx 15 + fpm master 30 + 2 workers de fila ~2×90 + 4 fpm children ~4×60
+#   ≈ 470 MB de pico → cabe com folga. max_children=4 (homolog tem poucos usuários;
+#   dashboard dispara ~15 chamadas juntas, mas curtas). memory_limit baixado p/ 192M
+#   (uploads.ini) e opcache p/ 80M. Filas com --memory=96 reciclam antes de vazar.
 RUN sed -i \
-      -e 's|^pm.max_children = 5$|pm.max_children = 8|' \
+      -e 's|^pm.max_children = 5$|pm.max_children = 4|' \
       -e 's|^pm.start_servers = 2$|pm.start_servers = 2|' \
       -e 's|^pm.min_spare_servers = 1$|pm.min_spare_servers = 1|' \
-      -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 4|' \
+      -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 2|' \
       /usr/local/etc/php-fpm.d/www.conf
 
 # Supervisor: nginx + php-fpm + workers de fila (sem serviço pago à parte).
@@ -110,7 +111,7 @@ command=nginx -g "daemon off;"\n\
 autostart=true\n\
 autorestart=true\n\
 [program:helpdesk-worker]\n\
-command=php artisan queue:work database --queue=emails,default --sleep=3 --tries=5 --timeout=180 --max-time=3600\n\
+command=php artisan queue:work database --queue=emails,default --sleep=3 --tries=5 --timeout=180 --max-time=3600 --memory=96\n\
 directory=/var/www\n\
 autostart=true\n\
 autorestart=true\n\
@@ -122,7 +123,7 @@ stdout_logfile_maxbytes=0\n\
 stderr_logfile=/dev/stderr\n\
 stderr_logfile_maxbytes=0\n\
 [program:sourcedoc-worker]\n\
-command=php artisan queue:work database --queue=source-doc --tries=1 --timeout=310 --sleep=3 --max-time=3600\n\
+command=php artisan queue:work database --queue=source-doc --tries=1 --timeout=310 --sleep=3 --max-time=3600 --memory=128\n\
 directory=/var/www\n\
 autostart=true\n\
 autorestart=true\n\
