@@ -1697,6 +1697,48 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => $data, 'total' => $total, 'returned' => $comments->count()]);
     }
 
+    /**
+     * Solução (Detalhamento/GMUD/form dinâmico) PÚBLICA move o chamado p/ o status resolvido/definido.
+     * Usado ao ADICIONAR e ao EDITAR a solução — editar a solução também deve resolver o chamado.
+     * Não reabre chamado terminal; idempotente (não re-move se já está no status).
+     */
+    private function applySolutionAutoStatus(HelpDeskTicket $ticket, HelpDeskTicketComment $comment): void
+    {
+        if (!in_array($comment->form_kind, ['solution', 'gmud', 'dynamic'], true)
+            || $comment->visibility !== 'customer'
+            || optional($ticket->status)->is_terminal) {
+            return;
+        }
+        $newStatus = null;
+        // 1) form dinâmico → status configurado no próprio form
+        if ($comment->form_kind === 'dynamic' && is_array($comment->solution) && !empty($comment->solution['form_id'])) {
+            $sid = \Illuminate\Support\Facades\DB::table('helpdesk_forms')->where('id', (int) $comment->solution['form_id'])->value('status_id');
+            if ($sid) $newStatus = HelpDeskStatus::withoutGlobalScopes()->find($sid);
+        }
+        // 2) legado (ou form sem status): resolvido / solucao_gmud da empresa
+        if (!$newStatus) {
+            $resolvedKey = $comment->form_kind === 'gmud' ? 'solucao_gmud' : 'resolvido';
+            $newStatus = HelpDeskStatus::withoutGlobalScopes()
+                ->where('company_id', $ticket->company_id)
+                ->where('is_resolved', true)->where('is_terminal', false)
+                ->orderByRaw('case when key = ? then 0 else 1 end', [$resolvedKey])
+                ->first();
+        }
+        // Só move se ainda não estiver nesse status (evita re-disparo / eventos duplicados).
+        if ($newStatus && (int) $ticket->status_id !== (int) $newStatus->id) {
+            $old = $ticket->status;
+            $ticket->status_id = $newStatus->id;
+            if ($newStatus->is_resolved) $ticket->resolved_at = $ticket->resolved_at ?: now();
+            $ticket->last_activity_at = now();
+            $ticket->save();
+            if ($newStatus->is_resolved) {
+                HelpDeskTicketEvent::log($ticket->id, 'resolved', ['to_value' => $newStatus->label, 'meta' => ['via' => 'solution_auto']]);
+            }
+            HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $newStatus->key, 'meta' => ['via' => 'solution_auto']]);
+            $ticket->refresh();
+        }
+    }
+
     /** Edita o corpo E o tempo trabalhado de uma interação (gated por service.edit_actions). */
     public function updateComment(Request $request, HelpDeskTicket $ticket, HelpDeskTicketComment $comment, AttachmentService $svc): JsonResponse
     {
@@ -1747,6 +1789,10 @@ class HelpDeskTicketController extends Controller
             }
         }
         $comment->update($update);
+
+        // Editar a SOLUÇÃO também resolve o chamado (mesma regra do adicionar) — move p/ Resolvido/
+        // status do form. Idempotente e não reabre terminal.
+        $this->applySolutionAutoStatus($ticket, $comment);
 
         // Sincroniza o apontamento: se já existe vínculo, atualiza horas/data; se não existe
         // e agora é elegível (resposta ao cliente + integração + projeto), cria.
@@ -1912,38 +1958,7 @@ class HelpDeskTicketController extends Controller
         //     é resolvido e por isso corretamente NÃO gera botões).
         //   • legado solution/gmud → resolvido / solucao_gmud.
         // Confiável mesmo se o changeStatus do FE for pulado/engolido (classificação faltando etc.).
-        if (in_array($comment->form_kind, ['solution', 'gmud', 'dynamic'], true)
-            && $comment->visibility === 'customer'
-            && !optional($ticket->status)->is_terminal) {
-            $newStatus = null;
-            // 1) form dinâmico → status configurado no próprio form
-            if ($comment->form_kind === 'dynamic' && is_array($comment->solution) && !empty($comment->solution['form_id'])) {
-                $sid = \Illuminate\Support\Facades\DB::table('helpdesk_forms')->where('id', (int) $comment->solution['form_id'])->value('status_id');
-                if ($sid) $newStatus = HelpDeskStatus::withoutGlobalScopes()->find($sid);
-            }
-            // 2) legado (ou form sem status): resolvido / solucao_gmud da empresa
-            if (!$newStatus) {
-                $resolvedKey = $comment->form_kind === 'gmud' ? 'solucao_gmud' : 'resolvido';
-                $newStatus = HelpDeskStatus::withoutGlobalScopes()
-                    ->where('company_id', $ticket->company_id)
-                    ->where('is_resolved', true)->where('is_terminal', false)
-                    ->orderByRaw('case when key = ? then 0 else 1 end', [$resolvedKey])
-                    ->first();
-            }
-            // Só move se ainda não estiver nesse status (evita re-disparo / eventos duplicados).
-            if ($newStatus && (int) $ticket->status_id !== (int) $newStatus->id) {
-                $old = $ticket->status;
-                $ticket->status_id = $newStatus->id;
-                if ($newStatus->is_resolved) $ticket->resolved_at = $ticket->resolved_at ?: now();
-                $ticket->last_activity_at = now();
-                $ticket->save();
-                if ($newStatus->is_resolved) {
-                    HelpDeskTicketEvent::log($ticket->id, 'resolved', ['to_value' => $newStatus->label, 'meta' => ['via' => 'solution_auto']]);
-                }
-                HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $newStatus->key, 'meta' => ['via' => 'solution_auto']]);
-                $ticket->refresh();
-            }
-        }
+        $this->applySolutionAutoStatus($ticket, $comment);
 
         // Varredura de fonte da GMUD: ao resolver com GMUD, escaneia o(s) .zip da solução,
         // commita os fontes no repo do cliente e grava o relatório de auditoria + a flag.
