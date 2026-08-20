@@ -222,9 +222,20 @@ class HelpDeskTicketController extends Controller
         $mark = fn () => (int) (hrtime(true) / 1e6); // ms
         $t0 = $mark();
 
-        $tickets = $this->filtered($request)->limit((int) $request->input('limit', 200))->get();
-        // A lista/kanban NÃO usa o corpo do chamado — ocultar 'description' enxuga muito o payload
-        // (o detalhe usa o endpoint show, que mantém tudo).
+        // ⚡ NÃO trazer 'description' no SELECT da lista. É o corpo HTML do e-mail (dezenas de KB/ticket,
+        // TOASTed) — o makeHidden só esconde do JSON, mas o `select *` já LIA e TRANSFERIA o TOAST de
+        // todos os tickets pela Supabase: era a query de 5,8s (medida no _debug). Selecionar tudo MENOS
+        // description (e graph_thread_msg_id, id longo de thread não usado na lista) derruba p/ ~200ms.
+        static $listCols = null;
+        if ($listCols === null) {
+            $listCols = array_values(array_diff(
+                \Illuminate\Support\Facades\Schema::getColumnListing('helpdesk_tickets'),
+                ['description', 'graph_thread_msg_id']
+            ));
+        }
+        $sel = array_map(fn ($c) => "helpdesk_tickets.$c", $listCols);
+        $tickets = $this->filtered($request)->select($sel)->limit((int) $request->input('limit', 200))->get();
+        // A lista/kanban NÃO usa o corpo do chamado — mantém oculto do payload por garantia.
         $tickets->makeHidden(['description']);
         $t1 = $mark();
         // Só quem JÁ pausou precisa dos eventos p/ reconstruir a pausa de SLA — a maioria nunca pausou
