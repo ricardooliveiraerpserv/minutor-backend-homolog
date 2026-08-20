@@ -248,6 +248,9 @@ class HelpDeskTicketController extends Controller
             uasort($byQ, fn ($a, $b) => $b['ms'] <=> $a['ms']);
             $top = [];
             foreach (array_slice($byQ, 0, 10, true) as $k => $v) $top[] = ['n' => $v['n'], 'ms' => $v['ms'], 'q' => mb_substr($k, 0, 110)];
+            $oc = function_exists('opcache_get_status') ? @opcache_get_status(false) : null;
+            $cpuinfo = @file_get_contents('/proc/cpuinfo');
+            $quota = @file_get_contents('/sys/fs/cgroup/cpu.max'); // cgroup v2: "<quota> <period>"
             $payload['_debug'] = [
                 'tickets'          => $tickets->count(),
                 'query_count'      => count($log),
@@ -255,6 +258,14 @@ class HelpDeskTicketController extends Controller
                 'phase_ms'         => ['base_get' => $t1 - $t0, 'events_lastagent' => $t2 - $t1, 'decorate' => $t3 - $t2],
                 'total_handler_ms' => $t3 - $t0,
                 'top_queries'      => $top,
+                'runtime'          => [
+                    'php'            => PHP_VERSION,
+                    'opcache'        => $oc ? ['enabled' => (bool) ($oc['opcache_enabled'] ?? false), 'hit_rate' => round($oc['opcache_statistics']['opcache_hit_rate'] ?? 0, 1)] : 'n/a',
+                    'config_cached'  => app()->configurationIsCached(),
+                    'routes_cached'  => app()->routesAreCached(),
+                    'cpu_cores_seen' => $cpuinfo ? substr_count($cpuinfo, 'processor') : null,
+                    'cgroup_cpu_max' => $quota ? trim($quota) : null,
+                ],
             ];
         }
         return response()->json($payload);
