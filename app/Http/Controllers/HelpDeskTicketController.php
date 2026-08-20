@@ -1794,6 +1794,18 @@ class HelpDeskTicketController extends Controller
         // status do form. Idempotente e não reabre terminal.
         $this->applySolutionAutoStatus($ticket, $comment);
 
+        // Editar uma SOLUÇÃO pública → REENVIA ao cliente o chamado completo (solução + histórico),
+        // com aviso de que a solução foi ATUALIZADA (flag isSolutionUpdate no e-mail). Best-effort.
+        if (in_array($comment->form_kind, ['solution', 'gmud', 'dynamic'], true) && $comment->visibility === 'customer') {
+            try {
+                \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id, [], true)
+                    ->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+                HelpDeskTicketEvent::log($ticket->id, 'solution_edited', ['meta' => ['comment_id' => $comment->id, 'by' => $request->user()?->id]]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('HelpDesk: reenvio de solução editada falhou: ' . $e->getMessage());
+            }
+        }
+
         // Sincroniza o apontamento: se já existe vínculo, atualiza horas/data; se não existe
         // e agora é elegível (resposta ao cliente + integração + projeto), cria.
         $warning = null;

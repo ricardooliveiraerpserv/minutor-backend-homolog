@@ -30,7 +30,7 @@ class SendHelpDeskEmailJob implements ShouldQueue
     public int $tries = 5;
     public int $timeout = 180;
 
-    public function __construct(public int $ticketId, public int $commentId, public array $extraCc = [])
+    public function __construct(public int $ticketId, public int $commentId, public array $extraCc = [], public bool $isSolutionUpdate = false)
     {
     }
 
@@ -54,7 +54,7 @@ class SendHelpDeskEmailJob implements ShouldQueue
             return; // apagados no meio → nada a enviar
         }
 
-        [$sent, $reason] = HelpDeskReplyMailer::sendPublicComment($ticket, $comment, $this->extraCc);
+        [$sent, $reason] = HelpDeskReplyMailer::sendPublicComment($ticket, $comment, $this->extraCc, $this->isSolutionUpdate);
 
         if ($sent) {
             HelpDeskTicketEvent::log($ticket->id, 'email_sent', ['meta' => ['comment_id' => $comment->id]]);

@@ -23,7 +23,7 @@ class HelpDeskReplyMailer
      *
      * @return array{0: bool, 1: ?string}
      */
-    public static function sendPublicComment(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, array $extraCc = []): array
+    public static function sendPublicComment(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, array $extraCc = [], bool $isSolutionUpdate = false): array
     {
         // Só resposta pública feita por um AGENTE (usuário). Inbound (author_contact_id) não reenvia.
         if ($comment->visibility !== 'customer' || empty($comment->author_user_id)) {
@@ -46,7 +46,13 @@ class HelpDeskReplyMailer
         // bloqueado pela maioria dos clientes de e-mail — e o HTML é envelopado.
         // Anexa o HISTÓRICO da conversa (visível ao cliente) abaixo da nova resposta — "e-mail único"
         // com o fio inteiro (no espírito do portal do fornecedor). Exclui o próprio comentário atual.
+        // Aviso quando é REENVIO por EDIÇÃO da solução: deixa claro ao cliente que a solução foi
+        // atualizada (e não uma resposta nova). Vem no topo, antes dos botões Aceitar/Recusar.
+        $updateBanner = $isSolutionUpdate
+            ? '<div style="margin:0 0 16px;padding:12px 16px;border-radius:8px;background:#fef3c7;border:1px solid #fde68a;color:#92400e;font-weight:600;">🔄 A solução deste chamado foi <b>atualizada</b>. Segue abaixo a versão atualizada, com o histórico completo.</div>'
+            : '';
         $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
+            . $updateBanner
             . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar NO TOPO
             . (string) $comment->body
             . \App\Services\HelpDeskMailComposer::ticketLinkHtml($ticket)    // Link de acesso ao chamado (toda resposta)
