@@ -74,7 +74,11 @@ RUN printf 'server {\n\
 
 # Limite de upload PHP + timeout de execução (render de documento via Gotenberg
 # pode levar ~40-60s no plano free; o default 30s do PHP cortava e dava 500).
-RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=192M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
+# ⚠️ memory_limit é TETO POR REQUISIÇÃO, não RAM reservada — NÃO baixar p/ economizar
+# memória base (isso quem faz é opcache + max_children). Baixei p/ 192M por engano e
+# quebrou toda request autenticada do admin (carrega permissões/empresas/nav de tudo,
+# passa de 192M) → 500 fatal. 256M é o valor que funciona. A folga de RAM vem do opcache 80M.
+RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=256M\nmax_execution_time=120\nmax_input_time=120\n' > /usr/local/etc/php/conf.d/uploads.ini
 
 # PHP-FPM pool: default da imagem = max_children=5.
 # ⚠️ 2026-08-20: o limite REAL do container é 512Mi (evento oomKilled memoryLimit=512Mi),
