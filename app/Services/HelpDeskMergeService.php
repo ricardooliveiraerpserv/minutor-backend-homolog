@@ -143,6 +143,13 @@ class HelpDeskMergeService
                     HelpDeskTicketEvent::log($src->id, 'status_changed', ['from_value' => $srcStatusId, 'to_value' => $closedId]);
                     $src->status_id = $closedId;
                 }
+                // 3b) Classificação do origem = a do DESTINO (chamado que fica ativo). O mesclado passa a
+                //     refletir a triagem do destino. Guarda a original no log p/ restaurar no unmerge.
+                $srcClassification = $src->only(['category_id', 'service_id', 'priority', 'level']);
+                $src->category_id = $target->category_id;
+                $src->service_id  = $target->service_id;
+                $src->priority    = $target->priority;
+                $src->level       = $target->level;
                 $src->last_activity_at = now();
                 $src->save();
 
@@ -150,7 +157,8 @@ class HelpDeskMergeService
                 HelpDeskTicketMerge::create([
                     'action' => 'merge', 'target_ticket_id' => $target->id, 'source_ticket_id' => $src->id,
                     'target_number' => $target->ticket_number, 'source_number' => $src->ticket_number,
-                    'performed_by' => $user?->id, 'options' => $opts, 'meta' => ['source_status_id' => $srcStatusId],
+                    'performed_by' => $user?->id, 'options' => $opts,
+                    'meta' => ['source_status_id' => $srcStatusId, 'source_classification' => $srcClassification],
                 ]);
                 HelpDeskTicketEvent::log($target->id, 'merged', ['to_value' => $src->ticket_number, 'meta' => ['source_id' => $src->id, 'options' => $opts, 'by' => $user?->id]]);
                 HelpDeskTicketEvent::log($src->id, 'merged_into', ['to_value' => $target->ticket_number, 'meta' => ['target_id' => $target->id, 'by' => $user?->id]]);
@@ -212,6 +220,11 @@ class HelpDeskMergeService
 
             $source->merged_into_id = null;
             if ($status) $source->status_id = $status->id;
+            // Restaura a classificação original da origem (a mescla a tinha igualado à do destino).
+            $cls = (array) data_get($log, 'meta.source_classification', []);
+            foreach (['category_id', 'service_id', 'priority', 'level'] as $f) {
+                if (array_key_exists($f, $cls)) $source->{$f} = $cls[$f];
+            }
             $source->last_activity_at = now();
             $source->save();
 
