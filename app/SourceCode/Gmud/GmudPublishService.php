@@ -37,9 +37,10 @@ class GmudPublishService
 
     /**
      * @param array<int,string> $resolutions  file_id => git_path escolhido (só p/ ambíguos)
+     * @param array{classification?:?string, project_name?:?string} $meta  classificação/projeto (G3)
      * @return array{commit_sha:string, repo:string, branch:string, published:int, skipped:int, files:array}
      */
-    public function publish(GmudPackage $package, ?int $repoId, string $destFolder, array $resolutions, User $actor): array
+    public function publish(GmudPackage $package, ?int $repoId, string $destFolder, array $resolutions, User $actor, array $meta = []): array
     {
         if ($package->status === GmudPackage::STATUS_PUBLISHED) {
             throw new GmudPublishException('Este pacote já foi publicado.');
@@ -124,6 +125,8 @@ class GmudPublishService
                 'status'         => GmudPackage::STATUS_PUBLISHED,
                 'source_repo_id' => $repo->id,
                 'project_folder' => $destFolder ?: null,
+                'classification' => $meta['classification'] ?? $package->classification,
+                'project_name'   => $meta['project_name'] ?? $package->project_name,
             ]);
         });
 

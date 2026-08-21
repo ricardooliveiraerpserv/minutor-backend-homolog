@@ -96,6 +96,8 @@ class GmudPackageController extends Controller
             'repo_id'              => ['nullable', 'integer'],
             'resolutions'          => ['nullable', 'array'],
             'resolutions.*'        => ['string', 'max:1024'],
+            'classification'       => ['nullable', 'string', 'in:projeto,avulso'],
+            'project_name'         => ['nullable', 'string', 'max:255'],
         ]);
 
         // resolutions: { "<file_id>": "<git_path>" }
@@ -105,7 +107,10 @@ class GmudPackageController extends Controller
         }
 
         try {
-            $result = $publisher->publish($package, $data['repo_id'] ?? null, (string) ($data['dest_folder'] ?? ''), $resolutions, $request->user());
+            $result = $publisher->publish($package, $data['repo_id'] ?? null, (string) ($data['dest_folder'] ?? ''), $resolutions, $request->user(), [
+                'classification' => $data['classification'] ?? null,
+                'project_name'   => $data['project_name'] ?? null,
+            ]);
             return response()->json(['data' => $result], 200);
         } catch (GmudPublishException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
