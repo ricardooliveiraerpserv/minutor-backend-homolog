@@ -21,6 +21,7 @@ return [
     // Cor de destaque — uma por workflow, pra cada e-mail ser distinguível à primeira vista.
     'workflow_accents' => [
         'hire.new'                     => '#8B5CF6', // roxo (contratações)
+        'partner.new'                  => '#14B8A6', // teal (novo parceiro)
         'hire.first_contact'           => '#22D3EE', // ciano (primeiro contato)
         'hire.movement'                => '#A78BFA', // roxo claro (movimentação de contratação)
         'contract.created'             => '#FBBF24', // amarelo
@@ -174,6 +175,15 @@ return [
                 'contato'          => 'Contato (telefone/e-mail)',
                 'primeiro_contato' => 'Data de primeiro contato',
                 'inicio'           => 'Data de início',
+            ],
+        ],
+        'partner.new' => [
+            'subject'   => 'Novo parceiro a providenciar — {nome}',
+            'body'      => 'Foi cadastrado um novo parceiro: {nome} ({modalidade}). Contato: {contato}. Providenciar a assinatura do contrato e a documentação. Ao concluir o card, o parceiro é criado no cadastro de parceiros.',
+            'variables' => [
+                'nome'       => 'Nome do parceiro',
+                'modalidade' => 'Contrato (PJ/Cooperado/CLT)',
+                'contato'    => 'Contato (telefone/e-mail)',
             ],
         ],
         'hire.first_contact' => [
@@ -424,6 +434,16 @@ return [
             'label'       => 'Pendente de contratação — avisar administrativo',
             'domain'      => 'Contratações',
             'description' => 'Quando uma nova contratação é incluída pela rotina de Contratação/Onboarding, avisa o administrativo que há uma contratação a providenciar. Defina a recorrência abaixo para reenviar o aviso a cada N dias enquanto a contratação não for concluída (Finalizado/Pausados). 0 = só o aviso na inclusão.',
+            'recurrence'  => true,
+            'audiences'   => [
+                'administrativo' => 'to',
+                'diretor'        => 'off',
+            ],
+        ],
+        'partner.new' => [
+            'label'       => 'Novo parceiro — avisar administrativo',
+            'domain'      => 'Contratações',
+            'description' => 'Quando um novo parceiro é incluído pela rotina de Contratação (card de parceiro), avisa o administrativo que há um parceiro a providenciar (assinatura de contrato/documentação). Recorrência reenvia o aviso a cada N dias enquanto o card não for concluído (Finalizado/Pausados). 0 = só o aviso na inclusão.',
             'recurrence'  => true,
             'audiences'   => [
                 'administrativo' => 'to',

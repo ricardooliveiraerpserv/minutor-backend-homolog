@@ -31,23 +31,28 @@ class HireNotifier
 
     public const CTA_URL = '/competencias/contratacao';
 
-    /** Ao incluir uma contratação: e-mail (hire.new) + pop-up imediato ao administrativo. */
+    /** Ao incluir uma contratação/parceiro: e-mail (hire.new / partner.new) + pop-up imediato ao administrativo. */
     public static function onCreated(SkillHireCard $card): void
     {
+        $isPartner = (is_array($card->form) ? ($card->form['kind'] ?? 'person') : 'person') === 'partner';
+        $workflow  = $isPartner ? 'partner.new' : 'hire.new';
+
         try {
-            if (app(WorkflowMailer::class)->send('hire.new', ['actor' => $card->createdUser], self::mailVars($card))) {
+            if (app(WorkflowMailer::class)->send($workflow, ['actor' => $card->createdUser], self::mailVars($card))) {
                 $card->update(['form' => array_merge(is_array($card->form) ? $card->form : [], ['_hire_new_at' => now()->toDateString()])]);
             }
         } catch (\Throwable $e) {
-            Log::warning('hire.new: e-mail falhou', ['card' => $card->id, 'err' => $e->getMessage()]);
+            Log::warning($workflow . ': e-mail falhou', ['card' => $card->id, 'err' => $e->getMessage()]);
         }
 
         try {
             $pc = self::firstContactDate($card);
             $quando = $pc ? ' Primeiro contato: ' . $pc->format('d/m/Y') . '.' : '';
             AppNotification::create([
-                'title'        => 'Nova contratação: ' . $card->title,
-                'message'      => 'Nova contratação incluída — providenciar passagem/onboarding.' . $quando,
+                'title'        => ($isPartner ? 'Novo parceiro: ' : 'Nova contratação: ') . $card->title,
+                'message'      => $isPartner
+                    ? 'Novo parceiro incluído — providenciar assinatura do contrato e documentação.'
+                    : 'Nova contratação incluída — providenciar passagem/onboarding.' . $quando,
                 'type'         => 'action',
                 'priority'     => 'high',
                 'target_roles' => ['administrativo'],
