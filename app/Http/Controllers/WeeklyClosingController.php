@@ -88,7 +88,42 @@ class WeeklyClosingController extends Controller
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
 
-        return response()->json(['months' => $months, 'active_reopens' => $active->values()]);
+        // Encerramentos ESCOPADOS (por usuário e/ou projeto) — usuários/projetos bloqueados
+        // INDIVIDUALMENTE, que NÃO aparecem no status global do mês/semana. Era o que travava
+        // um consultor de forma invisível (ex.: mês fechado só p/ ele). Descontar os que já
+        // têm reabertura ativa (não bloqueiam mais). Janela = os meses exibidos no painel.
+        $minYm = $now->copy()->startOfMonth()->subMonths(3)->format('Y-m');
+        $rows = \App\Models\CompetenceClosure::query()
+            ->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
+            ->where('period_key', '>=', $minYm)
+            ->with('project:id,name')
+            ->orderBy('period_key')->limit(500)->get()
+            ->filter(function ($c) use ($svc) {
+                // Ainda bloqueia? (reabertura ativa do próprio escopo, ou do mês, libera)
+                return $c->period_kind === 'week'
+                    ? $svc->isWeekClosed($c->period_key, (int) ($c->project_id ?: 0), $c->user_id)
+                    : $svc->isMonthClosed($c->period_key . '-15', (int) ($c->project_id ?: 0), $c->user_id);
+            });
+        $uids = $rows->pluck('user_id')->merge($rows->pluck('closed_by'))->filter()->unique()->values();
+        $names = $uids->isEmpty() ? collect() : \App\Models\User::whereIn('id', $uids)->pluck('name', 'id');
+        $scopedClosures = $rows->map(fn ($c) => [
+            'id'             => $c->id,
+            'period_kind'    => $c->period_kind,
+            'period_key'     => $c->period_key,
+            'project_id'     => $c->project_id,
+            'project'        => $c->project?->name,
+            'user_id'        => $c->user_id,
+            'user'           => $c->user_id ? ($names[$c->user_id] ?? ('#' . $c->user_id)) : null,
+            'closed_by'      => $c->closed_by,
+            'closed_by_name' => $c->closed_by ? ($names[$c->closed_by] ?? null) : null,
+            'closed_at'      => optional($c->closed_at ?: $c->created_at)->toIso8601String(),
+        ])->values();
+
+        return response()->json([
+            'months'          => $months,
+            'active_reopens'  => $active->values(),
+            'scoped_closures' => $scopedClosures,
+        ]);
     }
 
     private function validateScope(Request $request): array
