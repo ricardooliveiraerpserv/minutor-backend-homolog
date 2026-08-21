@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 /** CRM — tarefa comercial / Próxima Ação. */
 class CrmTask extends Model
@@ -26,4 +27,6 @@ class CrmTask extends Model
     public function contract(): BelongsTo    { return $this->belongsTo(Contract::class, 'contract_id'); }
     public function project(): BelongsTo     { return $this->belongsTo(Project::class, 'project_id'); }
     public function responsavel(): BelongsTo { return $this->belongsTo(User::class, 'responsavel_id'); }
+    /** Múltiplos responsáveis pela tarefa (além do vendedor). responsavel_id = primário/legado. */
+    public function responsaveis(): BelongsToMany { return $this->belongsToMany(User::class, 'crm_task_responsaveis', 'crm_task_id', 'user_id')->withTimestamps(); }
 }

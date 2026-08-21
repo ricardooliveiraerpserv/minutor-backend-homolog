@@ -67,7 +67,7 @@ class CrmTaskController extends Controller
         ];
 
         $status = $request->input('status', 'abertas');
-        $query = $base()->with('responsavel:id,name', 'opportunity:id,title,customer_id', 'opportunity.customer:id,name', 'customer:id,name');
+        $query = $base()->with('responsavel:id,name', 'responsaveis:id,name', 'opportunity:id,title,customer_id', 'opportunity.customer:id,name', 'customer:id,name');
         match ($status) {
             'pendentes'  => $query->whereNull('concluida_at')->where(fn ($q) => $q->whereNull('data')->orWhere('data', '>=', $now)),
             'atrasadas'  => $query->whereNull('concluida_at')->whereNotNull('data')->where('data', '<', $now),
@@ -92,8 +92,9 @@ class CrmTaskController extends Controller
                 'situacao'    => $situacao,
                 'concluida'   => (bool) $t->concluida_at,
                 'notas'       => $t->notas,
-                'responsavel'    => $t->responsavel?->name,
-                'responsavel_id' => $t->responsavel_id,
+                'responsavel'     => $t->responsavel?->name,
+                'responsavel_id'  => $t->responsavel_id,
+                'responsaveis'    => $t->responsaveis->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values(),
                 'opportunity' => $t->opportunity ? ['id' => $t->opportunity->id, 'title' => $t->opportunity->title] : null,
                 'empresa'     => $t->opportunity?->customer?->name ?? $t->customer?->name,
             ];
@@ -119,20 +120,47 @@ class CrmTaskController extends Controller
             'categoria'      => 'nullable|in:' . implode(',', CrmTask::CATEGORIAS),
             'titulo'         => 'nullable|string|max:180',
             'objetivo'       => 'nullable|string|max:200',
-            'data'           => 'nullable|date',
-            'responsavel_id' => 'nullable|exists:users,id',
-            'prioridade'     => 'nullable|in:baixa,media,alta',
-            'notas'          => 'nullable|string',
+            'data'             => 'nullable|date',
+            'responsavel_id'   => 'nullable|exists:users,id',
+            'responsavel_ids'  => 'nullable|array',            // múltiplos responsáveis (além do vendedor)
+            'responsavel_ids.*' => 'integer|exists:users,id',
+            'prioridade'       => 'nullable|in:baixa,media,alta',
+            'notas'            => 'nullable|string',
         ]);
         // Fase 7: todo follow-up pertence a uma EMPRESA (deriva da oportunidade se não vier).
         if (empty($v['customer_id']) && !empty($v['opportunity_id'])) {
             $v['customer_id'] = CrmOpportunity::find($v['opportunity_id'])?->customer_id;
         }
         abort_unless(!empty($v['customer_id']), 422, 'Follow-up exige uma empresa (customer_id).');
+        // Responsável primário (responsavel_id) = 1º da lista múltipla, se veio a lista.
+        if ($request->has('responsavel_ids')) {
+            $v['responsavel_id'] = collect($v['responsavel_ids'] ?? [])->filter()->first() ?: ($v['responsavel_id'] ?? null);
+        }
+        unset($v['responsavel_ids']); // não é coluna
         $v['created_by_id'] = auth()->id();
         $task = CrmTask::create($v);
+        $this->syncResponsaveis($task, $request);
         if (!empty($v['opportunity_id'])) $this->recompute((int) $v['opportunity_id']);
-        return response()->json(['data' => $task->load('responsavel:id,name')], 201);
+        return response()->json(['data' => $task->load('responsavel:id,name', 'responsaveis:id,name')], 201);
+    }
+
+    /** Sincroniza os múltiplos responsáveis (pivot). Aceita `responsavel_ids` (múltiplo, form da
+     *  oportunidade) OU `responsavel_id` (single, tela de Tarefas) — mantém a pivot consistente nos dois. */
+    private function syncResponsaveis(CrmTask $task, Request $request): void
+    {
+        if ($request->has('responsavel_ids')) {
+            $ids = collect((array) $request->input('responsavel_ids'))->filter()->map(fn ($i) => (int) $i)->unique()->values();
+        } elseif ($request->has('responsavel_id')) {
+            $ids = collect([$request->input('responsavel_id')])->filter()->map(fn ($i) => (int) $i)->values();
+        } else {
+            return; // request parcial (só edita outros campos) não mexe
+        }
+        $task->responsaveis()->sync($ids->all());
+        $primary = $ids->first();
+        if ((int) $task->responsavel_id !== (int) $primary) {
+            $task->responsavel_id = $primary ?: null;
+            $task->save();
+        }
     }
 
     /** Conclui (ou reabre) uma tarefa. Ambos geram log na Timeline. */
@@ -158,16 +186,23 @@ class CrmTaskController extends Controller
             'objetivo'       => 'nullable|string|max:200',
             'data'           => 'nullable|date',
             'categoria'      => 'nullable|in:' . implode(',', CrmTask::CATEGORIAS),
-            'prioridade'     => 'nullable|in:baixa,media,alta',
-            'responsavel_id' => 'nullable|exists:users,id', // permite atribuir/trocar o responsável na edição
-            'notas'          => 'nullable|string',
+            'prioridade'      => 'nullable|in:baixa,media,alta',
+            'responsavel_id'  => 'nullable|exists:users,id', // permite atribuir/trocar o responsável na edição
+            'responsavel_ids' => 'nullable|array',            // múltiplos responsáveis
+            'responsavel_ids.*' => 'integer|exists:users,id',
+            'notas'           => 'nullable|string',
         ]);
+        if ($request->has('responsavel_ids')) {
+            $v['responsavel_id'] = collect($v['responsavel_ids'] ?? [])->filter()->first() ?: null;
+        }
+        unset($v['responsavel_ids']);
         $crmTask->update($v);
+        $this->syncResponsaveis($crmTask, $request);
         if ($crmTask->opportunity_id) {
             CrmOpportunityEvent::log($crmTask->opportunity_id, 'task_updated', ['to_value' => $crmTask->titulo ?: $crmTask->tipo]);
             $this->recompute($crmTask->opportunity_id);
         }
-        return response()->json(['data' => $crmTask->fresh()->load('responsavel:id,name')]);
+        return response()->json(['data' => $crmTask->fresh()->load('responsavel:id,name', 'responsaveis:id,name')]);
     }
 
     public function destroy(CrmTask $crmTask): JsonResponse

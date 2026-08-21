@@ -284,7 +284,7 @@ class CrmOpportunityController extends Controller
         }
         $opportunity->load(['customer:id,name,cgc', 'pipeline:id,name', 'stage', 'responsavel:id,name',
             'leadSource:id,name', 'contato:id,name,email,phone,whatsapp', 'lossReason:id,name', 'campaign:id,name',
-            'products', 'tasks.responsavel:id,name', 'events.triggeredBy:id,name', 'contract:id,status,project_code_preview']);
+            'products', 'tasks.responsavel:id,name', 'tasks.responsaveis:id,name', 'events.triggeredBy:id,name', 'contract:id,status,project_code_preview']);
         $health = app(\App\Services\OpportunityHealthService::class);
         $diasNaEtapa = $health->diasNaEtapa($opportunity);
         // Bloqueio por SLA: pergunta "o que está impedindo" a cada MÚLTIPLO do SLA da etapa (por etapa).
