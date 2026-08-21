@@ -92,7 +92,8 @@ class CrmTaskController extends Controller
                 'situacao'    => $situacao,
                 'concluida'   => (bool) $t->concluida_at,
                 'notas'       => $t->notas,
-                'responsavel' => $t->responsavel?->name,
+                'responsavel'    => $t->responsavel?->name,
+                'responsavel_id' => $t->responsavel_id,
                 'opportunity' => $t->opportunity ? ['id' => $t->opportunity->id, 'title' => $t->opportunity->title] : null,
                 'empresa'     => $t->opportunity?->customer?->name ?? $t->customer?->name,
             ];
