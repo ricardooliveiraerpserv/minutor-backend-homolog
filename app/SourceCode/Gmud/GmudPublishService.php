@@ -37,11 +37,13 @@ class GmudPublishService
 
     /**
      * @param array<int,string> $resolutions  file_id => git_path escolhido (só p/ ambíguos)
-     * @param array{classification?:?string, project_name?:?string} $meta  classificação/projeto (G3)
+     * @param array{classification?:?string, project_name?:?string, folders?:array<int,string>} $meta
+     *        folders = file_id => pasta específica (por-arquivo) p/ NOVOS; cai no $destFolder global se ausente.
      * @return array{commit_sha:string, repo:string, branch:string, published:int, skipped:int, files:array}
      */
     public function publish(GmudPackage $package, ?int $repoId, string $destFolder, array $resolutions, User $actor, array $meta = []): array
     {
+        $folders = $meta['folders'] ?? [];
         if ($package->status === GmudPackage::STATUS_PUBLISHED) {
             throw new GmudPublishException('Este pacote já foi publicado.');
         }
@@ -71,7 +73,7 @@ class GmudPublishService
         $destSeen = [];     // dest => file_id (anti-colisão)
         $skipped = 0;
         foreach ($package->files()->where('is_source', true)->get() as $f) {
-            [$action, $dest] = $this->resolveDestination($f, $destFolder, $repo, $resolutions);
+            [$action, $dest] = $this->resolveDestination($f, $destFolder, $repo, $resolutions, $folders);
             if ($action === GmudPackageFile::ACTION_SKIP) {
                 $skipped++;
                 $f->update(['action' => GmudPackageFile::ACTION_SKIP, 'dest_git_path' => null]);
@@ -149,8 +151,8 @@ class GmudPublishService
         ];
     }
 
-    /** Destino + ação de um arquivo, conforme a situação do matching. */
-    private function resolveDestination(GmudPackageFile $f, string $destFolder, ClientSourceRepo $repo, array $resolutions): array
+    /** Destino + ação de um arquivo, conforme a situação do matching. $folders = pasta por-arquivo (NOVOS). */
+    private function resolveDestination(GmudPackageFile $f, string $destFolder, ClientSourceRepo $repo, array $resolutions, array $folders = []): array
     {
         switch ($f->match_status) {
             case GmudPackageFile::MATCH_IDENTICAL:
@@ -167,9 +169,11 @@ class GmudPublishService
                 }
                 return [GmudPackageFile::ACTION_MODIFY, $chosen];
 
-            // new ou null (não encontrado / sem repo na análise): trata como NOVO → pasta escolhida.
+            // new ou null (não encontrado / sem repo na análise): trata como NOVO → pasta específica
+            // do arquivo (se o consultor vinculou uma), senão a pasta global escolhida.
             default:
-                $dest = $destFolder !== '' ? "{$destFolder}/{$f->filename}" : $f->filename;
+                $folder = array_key_exists($f->id, $folders) ? trim(str_replace('\\', '/', (string) $folders[$f->id]), '/') : $destFolder;
+                $dest = $folder !== '' ? "{$folder}/{$f->filename}" : $f->filename;
                 // Se o repo tem base_path e a pasta escolhida não o inclui, prefixa (mantém dentro da raiz autorizada).
                 $base = $repo->normalizedBasePath();
                 if ($base !== '' && ! str_starts_with($dest . '/', $base . '/')) {

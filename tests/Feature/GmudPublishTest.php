@@ -138,6 +138,25 @@ class GmudPublishTest extends TestCase
         $this->assertNotNull($byName['NOVO.prw']->published_blob_sha);
     }
 
+    public function test_per_file_folder_assignment_routes_each_new_source(): void
+    {
+        $fake = $this->fakeAuth([]); // nada existe → ambos NOVOS
+        [$pkg] = $this->analyzedPackage(['A.prw' => 'aaa', 'B.prw' => 'bbb'], [], $fake);
+        $aId = $pkg->files()->where('filename', 'A.prw')->value('id');
+        $bId = $pkg->files()->where('filename', 'B.prw')->value('id');
+
+        // cada fonte vinculado a uma pasta específica (por-arquivo)
+        app(GmudPublishService::class)->publish($pkg, null, '', [], $this->admin(), [
+            'folders' => [$aId => 'src/protheus', $bId => 'src/rd'],
+        ]);
+
+        $committed = array_keys($fake->lastCommit['files']);
+        sort($committed);
+        $this->assertSame(['src/protheus/A.prw', 'src/rd/B.prw'], $committed);
+        $this->assertSame('src/protheus/A.prw', $pkg->files()->where('id', $aId)->value('dest_git_path'));
+        $this->assertSame('src/rd/B.prw', $pkg->files()->where('id', $bId)->value('dest_git_path'));
+    }
+
     public function test_ambiguous_unresolved_blocks_without_commit(): void
     {
         $tree = ['src/AMBIG.prw' => 'a1', 'lib/AMBIG.prw' => 'a2'];
