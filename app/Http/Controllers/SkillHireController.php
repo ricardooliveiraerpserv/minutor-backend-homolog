@@ -90,10 +90,23 @@ class SkillHireController extends Controller
             'form.start_date'             => 'nullable|date',   // data de início
             'form.data_primeiro_contato'  => 'nullable|date',   // fixa a ação no Meu Dia do administrativo
             'form.observacao'         => 'nullable|string',
+            // Card de PARCEIRO (empresa/cooperativa): segue o mesmo fluxo; ao concluir cria um
+            // Partner no cadastro (não um usuário). Contrato = modalidade (pj/cooperado/clt).
+            'form.kind'               => 'nullable|in:person,partner',
+            'form.email'              => 'nullable|email|max:255',
+            'form.document'           => 'nullable|string|max:20',
+            'form.pricing_type'       => 'nullable|in:fixed,variable',
+            'form.hourly_rate'        => 'nullable|string|max:60',
+            'form.active'             => 'nullable|boolean',
         ]);
         // Mescla o script informado sobre o formulário padrão (mantém as demais chaves).
         $form = array_merge(SkillHireCard::defaultForm(null), $v['form'] ?? []);
         if (($form['incluir_whatsapp'] ?? '') !== 'sim') $form['whatsapp_date'] = '';
+        $isPartner = ($form['kind'] ?? 'person') === 'partner';
+        // Checklist próprio do parceiro (não usa o de onboarding de pessoa).
+        $checklistLabels = $isPartner
+            ? ['Assinatura do contrato', 'Documentação recebida (CNPJ/dados)', 'Cadastro do parceiro no sistema', 'Consultores/valores definidos']
+            : SkillHireCard::DEFAULT_CHECKLIST;
 
         $card = SkillHireCard::create([
             'respondent_id' => null,
@@ -102,7 +115,7 @@ class SkillHireController extends Controller
             'cargo'         => $v['cargo'] ?? null,
             'modalidade'    => $v['modalidade'] ?? null,
             'priority'      => 'alta',
-            'checklist'     => array_map(fn ($l) => ['label' => $l, 'done' => false], SkillHireCard::DEFAULT_CHECKLIST),
+            'checklist'     => array_map(fn ($l) => ['label' => $l, 'done' => false], $checklistLabels),
             'form'          => $form,
             'created_by'    => $request->user()?->id,
         ]);
@@ -117,8 +130,10 @@ class SkillHireController extends Controller
                 'user_id'     => $request->user()?->id,
                 'created_by'  => $request->user()?->id,
                 'assigned_to' => $jeniffer->id,
-                'title'       => 'Passagem de contratação: ' . trim($v['title']),
-                'description' => 'Nova contratação incluída pela rotina. Providenciar assinatura, recursos e onboarding.',
+                'title'       => ($isPartner ? 'Contratação de parceiro: ' : 'Passagem de contratação: ') . trim($v['title']),
+                'description' => $isPartner
+                    ? 'Novo parceiro incluído pela rotina. Providenciar assinatura do contrato e documentação; ao concluir, o parceiro é criado no cadastro.'
+                    : 'Nova contratação incluída pela rotina. Providenciar assinatura, recursos e onboarding.',
                 'due_date'    => now()->addDays(2)->toDateString(),
                 'completed'   => false,
                 'priority'    => 'alta',
@@ -212,6 +227,47 @@ class SkillHireController extends Controller
         $card = SkillHireCard::with('respondent')->findOrFail($id);
         $respondent = $card->respondent;
         $from = $card->bucket;
+
+        // Card de PARCEIRO: ao concluir cria o Partner no cadastro (fluxo oficial
+        // PartnerController@store), não um usuário. Idempotente via form.partner_id.
+        $form = is_array($card->form) ? $card->form : [];
+        if (($form['kind'] ?? 'person') === 'partner') {
+            if (! empty($form['partner_id'])) {
+                $card->update(['bucket' => 'finalizado', 'completed_at' => $card->completed_at ?? now()]);
+                \App\Services\HireNotifier::onMoved($card, $from, 'finalizado', auth()->user()?->name);
+
+                return response()->json($this->card($card->fresh('respondent', 'createdUser')));
+            }
+
+            $pricing = in_array($form['pricing_type'] ?? '', ['fixed', 'variable'], true) ? $form['pricing_type'] : 'fixed';
+            $payload = [
+                'name'          => $card->title,
+                'document'      => filled($form['document'] ?? null) ? $form['document'] : null,
+                'email'         => filled($form['email'] ?? null) ? strtolower(trim($form['email'])) : null,
+                'phone'         => filled($form['contato'] ?? null) ? $form['contato'] : null,
+                'active'        => (bool) ($form['active'] ?? true),
+                'pricing_type'  => $pricing,
+                'hourly_rate'   => $pricing === 'fixed' ? $this->parseMoney($form['hourly_rate'] ?? null) : null,
+                'contract_type' => in_array($card->modalidade, ['cooperado', 'clt', 'pj'], true) ? $card->modalidade : null,
+            ];
+            $req  = Request::create('/api/v1/partners', 'POST', $payload);
+            $resp = app(PartnerController::class)->store($req);
+            if ($resp->getStatusCode() !== 201) {
+                return response()->json([
+                    'error'  => 'Falha ao criar o parceiro no cadastro.',
+                    'detail' => $resp->getData(true),
+                ], 422);
+            }
+            $form['partner_id'] = $resp->getData(true)['id'] ?? null;
+            $card->update(['form' => $form, 'bucket' => 'finalizado', 'completed_at' => now()]);
+
+            Task::where('entity_type', 'skill_hire')->where('entity_id', $card->id)
+                ->where('completed', false)
+                ->update(['completed' => true, 'completed_at' => now(), 'completed_by' => auth()->id()]);
+            \App\Services\HireNotifier::onMoved($card, $from, 'finalizado', auth()->user()?->name);
+
+            return response()->json($this->card($card->fresh('respondent', 'createdUser')));
+        }
 
         if ($card->created_user_id) {
             $card->update(['bucket' => 'finalizado', 'completed_at' => $card->completed_at ?? now()]);
