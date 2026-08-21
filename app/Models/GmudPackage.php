@@ -26,12 +26,15 @@ class GmudPackage extends Model
         'received_at' => 'datetime',
     ];
 
-    /** Estados ativos em G0-G2. Os demais são reservados para G3+. */
     public const STATUS_RECEIVED   = 'received';
     public const STATUS_EXTRACTING = 'extracting';
     public const STATUS_ANALYZING  = 'analyzing';
     public const STATUS_ANALYZED   = 'analyzed';
     public const STATUS_FAILED     = 'failed';
+    // Publicação (G7): estados da gravação atômica no Git.
+    public const STATUS_PUBLISHING     = 'publishing';
+    public const STATUS_PUBLISHED      = 'published';
+    public const STATUS_PUBLISH_FAILED = 'publish_failed';
 
     public function ticket(): BelongsTo
     {

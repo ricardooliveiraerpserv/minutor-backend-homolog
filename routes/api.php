@@ -396,6 +396,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'store'])->whereNumber('ticket');
             Route::get('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'index'])->whereNumber('ticket');
             Route::get('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'show'])->whereNumber('package');
+            // G4/G7 — seletor de diretório (Git ao vivo) + PUBLICAÇÃO governada (1 commit atômico).
+            Route::get('/gmud/packages/{package}/dirs', [\App\Http\Controllers\GmudPackageController::class, 'dirs'])->whereNumber('package');
+            Route::post('/gmud/packages/{package}/publish', [\App\Http\Controllers\GmudPackageController::class, 'publish'])->whereNumber('package');
         });
         Route::get('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'index']);
         Route::put('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'update']);

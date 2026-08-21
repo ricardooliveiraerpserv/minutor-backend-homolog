@@ -36,6 +36,11 @@ class GmudPackageFile extends Model
     public const MATCH_AMBIGUOUS = 'ambiguous';
     public const MATCH_IDENTICAL = 'identical';
 
+    /** Ação de publicação (G7). */
+    public const ACTION_ADD    = 'add';
+    public const ACTION_MODIFY = 'modify';
+    public const ACTION_SKIP   = 'skip';
+
     public function package(): BelongsTo
     {
         return $this->belongsTo(GmudPackage::class, 'gmud_package_id');

@@ -158,6 +158,38 @@ class GmudZipExtractor
         return sha1('blob ' . strlen($content) . "\0" . $content);
     }
 
+    /**
+     * Conteúdo CRU dos arquivos pedidos (por path_in_zip). Usado só na PUBLICAÇÃO (G7) — o ZIP
+     * imutável é a fonte dos bytes; não guardamos conteúdo no banco. Reabre o ZIP em memória.
+     *
+     * @param array<int,string> $paths paths_in_zip desejados
+     * @return array<string,string> path_in_zip => conteúdo
+     */
+    public function contentsFor(string $bytes, array $paths): array
+    {
+        $want = array_flip($paths);
+        $tmp = tempnam(sys_get_temp_dir(), 'gmudpub');
+        file_put_contents($tmp, $bytes);
+        $out = [];
+        $zip = new \ZipArchive();
+        if ($zip->open($tmp) === true) {
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $stat = $zip->statIndex($i);
+                $name = (string) ($stat['name'] ?? '');
+                if ($name === '' || ! isset($want[$name])) {
+                    continue;
+                }
+                $content = $zip->getFromIndex($i);
+                if ($content !== false) {
+                    $out[$name] = $content;
+                }
+            }
+            $zip->close();
+        }
+        @unlink($tmp);
+        return $out;
+    }
+
     private function isAllowedExt(string $ext): bool
     {
         return in_array($ext, self::SOURCE_EXT, true) || in_array($ext, self::COMPANION_EXT, true);
