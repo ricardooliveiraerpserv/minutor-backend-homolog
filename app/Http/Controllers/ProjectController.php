@@ -3775,7 +3775,11 @@ class ProjectController extends Controller
             return response()->json(['message' => 'Acesso negado'], 403);
         }
 
+        // Só reaberturas AINDA vigentes: as com auto_close_at já vencido se auto-encerram
+        // às 23:59 do dia da abertura (bloqueio funcional já expira via activeMonthReopen);
+        // aqui elas somem da lista para não aparecerem como "reaberto" após vencer.
         $periods = \App\Models\ProjectOpenPeriod::whereNull('closed_at')
+            ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
             ->with(['project:id,code,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])
             ->orderBy('year_month')
             ->orderBy('project_id')

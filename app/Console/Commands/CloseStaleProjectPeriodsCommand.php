@@ -4,6 +4,7 @@ namespace App\Console\Commands;
 
 use App\Models\Holiday;
 use App\Models\ProjectOpenPeriod;
+use App\Models\WeekOpenPeriod;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
@@ -11,10 +12,12 @@ use Illuminate\Console\Command;
  * Fecha automaticamente os MESES ABERTOS de projetos (ProjectOpenPeriod, closed_at = null)
  * cuja competência é anterior à vigente.
  *
- * Regra (roda todo dia 06h):
+ * Regra (roda todo dia 06h + de hora em hora p/ as reaberturas vencidas):
  *  - Meses 2+ atrás (anteriores ao mês imediatamente anterior) → fecham SEMPRE.
  *  - Mês imediatamente anterior ao vigente → só fecha APÓS o 2º dia útil do mês vigente
  *    (carência: fica aberto até o 2º dia útil; a partir do 3º dia útil é encerrado).
+ *  - Reaberturas TEMPORÁRIAS (mês/semana) com auto_close_at vencido → encerram fisicamente
+ *    (carimba closed_at) para sumir das listas de "reaberto"; inclui o mês vigente.
  */
 class CloseStaleProjectPeriodsCommand extends Command
 {
@@ -39,10 +42,26 @@ class CloseStaleProjectPeriodsCommand extends Command
             ->where('year_month', '<', $cutoff)
             ->update(['closed_at' => now(), 'closed_by' => null]);
 
+        // Reaberturas TEMPORÁRIAS (mês ou semana) com auto_close_at já vencido: encerram
+        // fisicamente. São reaberturas com prazo (auto_close_at = 23:59 do dia da abertura);
+        // o bloqueio funcional já expira nessa hora (activeMonthReopen/activeWeekReopen
+        // filtram auto_close_at >= now), mas o closed_at precisa ser carimbado p/ a linha
+        // sumir das listas de "meses/semanas reabertos". Inclui o mês vigente (é reabertura
+        // com prazo, não fechamento definitivo do mês atual).
+        $expMonths = ProjectOpenPeriod::whereNull('closed_at')
+            ->whereNotNull('auto_close_at')
+            ->where('auto_close_at', '<', now())
+            ->update(['closed_at' => now(), 'closed_by' => null]);
+        $expWeeks = WeekOpenPeriod::whereNull('closed_at')
+            ->whereNotNull('auto_close_at')
+            ->where('auto_close_at', '<', now())
+            ->update(['closed_at' => now(), 'closed_by' => null]);
+
         $detalhe = $aposSegundoDiaUtil
             ? 'após o 2º dia útil — inclui o mês anterior'
             : "carência até o 2º dia útil ({$segundoDiaUtil->toDateString()}) — mês anterior {$previousYM} preservado";
-        $msg = "projects:close-stale-periods — {$closed} período(s) encerrado(s) (year_month < {$cutoff}; {$detalhe}).";
+        $msg = "projects:close-stale-periods — {$closed} período(s) encerrado(s) (year_month < {$cutoff}; {$detalhe})"
+            . "; reaberturas vencidas encerradas: {$expMonths} mês/meses + {$expWeeks} semana(s).";
 
         $this->info($msg);
         \Log::info($msg);

@@ -99,10 +99,18 @@ class WeeklyClosingController extends Controller
             ->with('project:id,name')
             ->orderBy('period_key')->limit(500)->get()
             ->filter(function ($c) use ($svc) {
-                // Ainda bloqueia? (reabertura ativa do próprio escopo, ou do mês, libera)
-                return $c->period_kind === 'week'
-                    ? $svc->isWeekClosed($c->period_key, (int) ($c->project_id ?: 0), $c->user_id)
-                    : $svc->isMonthClosed($c->period_key . '-15', (int) ($c->project_id ?: 0), $c->user_id);
+                // Só é RELEVANTE se o período ainda está GLOBALMENTE aberto (mês atual /
+                // semana aberta): se o mês/semana já fechou pra todos (auto-encerrou por
+                // prazo), o bloqueio individual não trava ninguém a mais → é ruído, oculta.
+                // E precisa AINDA bloquear o escopo (reabertura do próprio escopo libera).
+                if ($c->period_kind === 'week') {
+                    $global = $svc->weekStatusGlobal($svc->weekStart($c->period_key))['status'];
+                    return $global !== 'fechada'
+                        && $svc->isWeekClosed($c->period_key, (int) ($c->project_id ?: 0), $c->user_id);
+                }
+                $global = $svc->monthStatusGlobal($c->period_key)['status'];
+                return $global !== 'fechada'
+                    && $svc->isMonthClosed($c->period_key . '-15', (int) ($c->project_id ?: 0), $c->user_id);
             });
         $uids = $rows->pluck('user_id')->merge($rows->pluck('closed_by'))->filter()->unique()->values();
         $names = $uids->isEmpty() ? collect() : \App\Models\User::whereIn('id', $uids)->pluck('name', 'id');

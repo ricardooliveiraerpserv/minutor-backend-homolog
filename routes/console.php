@@ -51,6 +51,16 @@ Schedule::command('projects:close-stale-periods')
   ->description('Encerra meses abertos de projetos de competências anteriores (mês anterior só após o 2º dia útil)')
   ->withoutOverlapping();
 
+// De hora em hora: encerra fisicamente as reaberturas TEMPORÁRIAS (mês/semana) com
+// auto_close_at vencido — bloqueio "às 23:59 do dia da abertura". O bloqueio funcional já
+// expira exatamente às 23:59 (activeMonthReopen/activeWeekReopen), esta passada só carimba
+// closed_at p/ a linha sumir das listas de "reaberto" (idempotente c/ a rotina das 06h).
+Schedule::command('projects:close-stale-periods')
+  ->hourly()
+  ->name('projects-close-expired-reopens')
+  ->description('Encerra reaberturas temporárias (mês/semana) com auto_close_at vencido')
+  ->withoutOverlapping();
+
 // Inativa consultores/parceiros com 180 dias sem apontamento (reativa os auto-inativados que voltaram a apontar).
 Schedule::command('consultants:deactivate-stale')
   ->dailyAt('04:00')
