@@ -283,7 +283,9 @@ class AttachableEntitiesRegistry
             // ── HELPDESK_TICKET (anexos do chamado) ───────────────────────────
             'HELPDESK_TICKET' => [
                 'model' => HelpDeskTicket::class,
-                'categories' => ['attachment', 'image', 'evidence'],
+                // 'gmud_package' = ZIP recebido no wizard de Publicação Governada de Fontes (GMUD),
+                //   preservado imutável como pacote original (evidência) — nunca gera commit por si.
+                'categories' => ['attachment', 'image', 'evidence', 'gmud_package'],
                 'default_visibility' => 'internal',
                 'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
                     if ($internalStaff($user)) return true;

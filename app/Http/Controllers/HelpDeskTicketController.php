@@ -1972,14 +1972,17 @@ class HelpDeskTicketController extends Controller
         // Confiável mesmo se o changeStatus do FE for pulado/engolido (classificação faltando etc.).
         $this->applySolutionAutoStatus($ticket, $comment);
 
-        // Varredura de fonte da GMUD: ao resolver com GMUD, escaneia o(s) .zip da solução,
-        // commita os fontes no repo do cliente e grava o relatório de auditoria + a flag.
+        // GMUD — Publicação Governada de Fontes: o ZIP anexado à solução NÃO gera mais commit
+        // automático. Ele é RECEBIDO como pacote governado (evidência imutável) e enfileirado para
+        // extração/análise/matching. A publicação no Git é uma ação POSTERIOR, explícita e
+        // confirmada no wizard (G7 — ainda não implementada). "Upload ≠ publicação."
+        // GmudSourceProcessor (o antigo auto-commit) é preservado e reutilizado só em G7.
         // Best-effort: NUNCA derruba a gravação da solução.
         if ($comment->form_kind === 'gmud' || optional($ticket->status)->key === 'solucao_gmud') {
             try {
-                app(\App\SourceCode\GmudSourceProcessor::class)->process($ticket, $comment);
+                app(\App\SourceCode\Gmud\GmudPackageService::class)->receiveFromComment($ticket, $comment);
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('gmud_source.process_failed', [
+                \Illuminate\Support\Facades\Log::warning('gmud_package.receive_failed', [
                     'ticket'  => $ticket->id,
                     'comment' => $comment->id,
                     'error'   => $e->getMessage(),

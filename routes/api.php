@@ -390,6 +390,13 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/tickets/merge',          [\App\Http\Controllers\HelpDeskMergeController::class, 'merge']);
         Route::post('/help-desk/tickets/{target}/unmerge/{source}', [\App\Http\Controllers\HelpDeskMergeController::class, 'unmerge']);
         Route::get('/help-desk/tickets/{target}/merged', [\App\Http\Controllers\HelpDeskMergeController::class, 'mergedList']);
+        // GMUD — Publicação Governada de Fontes (wizard). Recebe ZIP (evidência) + análise/matching.
+        // SEM endpoint de publish (G7 depois). Gate interno ERPSERV.
+        Route::middleware('permission.or.admin:source_docs.gmud_publish')->group(function () {
+            Route::post('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'store'])->whereNumber('ticket');
+            Route::get('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'index'])->whereNumber('ticket');
+            Route::get('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'show'])->whereNumber('package');
+        });
         Route::get('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'index']);
         Route::put('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'update']);
         Route::get('/help-desk/portal/columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'portal']);
