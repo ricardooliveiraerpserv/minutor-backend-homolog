@@ -13,7 +13,7 @@ class SkillHireCard extends Model
 {
     /** Colunas do quadro (na ordem). */
     public const BUCKETS = [
-        'aguardando_assinatura' => 'Aguardando assinatura',
+        'aguardando_assinatura' => 'Aguardando contrato',
         'em_andamento' => 'Em andamento',
         'finalizado' => 'Finalizado',
         'pausado' => 'Pausados',

@@ -453,7 +453,7 @@ return [
         'hire.first_contact' => [
             'label'       => 'Pendente de primeiro contato — avisar administrativo',
             'domain'      => 'Contratações',
-            'description' => 'A partir da DATA DE PRIMEIRO CONTATO, lembra o administrativo de fazer o primeiro contato com o contratado. Reenvia a cada N dias enquanto o card seguir em "Aguardando assinatura" — PARA quando for movido para "Em andamento". 0 = só o aviso na data.',
+            'description' => 'A partir da DATA DE PRIMEIRO CONTATO, lembra o administrativo de fazer o primeiro contato com o contratado. Reenvia a cada N dias enquanto o card seguir em "Aguardando contrato" — PARA quando for movido para "Em andamento". 0 = só o aviso na data.',
             'recurrence'  => true,
             'audiences'   => [
                 'administrativo' => 'to',
@@ -463,7 +463,7 @@ return [
         'hire.movement' => [
             'label'       => 'Contratação movimentada — avisar solicitante',
             'domain'      => 'Contratações',
-            'description' => 'A cada MOVIMENTAÇÃO (mudança de situação: Aguardando assinatura → Em andamento → Finalizado/Pausados) de uma contratação, avisa o SOLICITANTE (quem criou a contratação) da nova situação. Aviso por evento (não recorrente).',
+            'description' => 'A cada MOVIMENTAÇÃO (mudança de situação: Aguardando contrato → Em andamento → Finalizado/Pausados) de uma contratação, avisa o SOLICITANTE (quem criou a contratação) da nova situação. Aviso por evento (não recorrente).',
             'audiences'   => [
                 'autor'          => 'to',
                 'administrativo' => 'off',

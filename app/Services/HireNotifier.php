@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Log;
  *  - `hire.new` (Pendente de contratação): enviado na inclusão e reenviado a cada
  *    N dias (recurrence_days) enquanto o card NÃO estiver em Finalizado/Pausados.
  *  - `hire.first_contact` (Pendente de primeiro contato): a partir da data de primeiro
- *    contato, reenviado a cada N dias enquanto o card seguir em "Aguardando assinatura".
+ *    contato, reenviado a cada N dias enquanto o card seguir em "Aguardando contrato".
  *    PARA quando for movido para "Em andamento".
  *
  * A recorrência real é dirigida pelo `recurrence_days` de cada workflow (Central),
