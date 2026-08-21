@@ -153,13 +153,14 @@ class CrmTaskController extends Controller
     public function update(Request $request, CrmTask $crmTask): JsonResponse
     {
         $v = $request->validate([
-            'tipo'       => 'sometimes|string|max:60',
-            'titulo'     => 'nullable|string|max:180',
-            'objetivo'   => 'nullable|string|max:200',
-            'data'       => 'nullable|date',
-            'categoria'  => 'nullable|in:' . implode(',', CrmTask::CATEGORIAS),
-            'prioridade' => 'nullable|in:baixa,media,alta',
-            'notas'      => 'nullable|string',
+            'tipo'           => 'sometimes|string|max:60',
+            'titulo'         => 'nullable|string|max:180',
+            'objetivo'       => 'nullable|string|max:200',
+            'data'           => 'nullable|date',
+            'categoria'      => 'nullable|in:' . implode(',', CrmTask::CATEGORIAS),
+            'prioridade'     => 'nullable|in:baixa,media,alta',
+            'responsavel_id' => 'nullable|exists:users,id', // permite atribuir/trocar o responsável na edição
+            'notas'          => 'nullable|string',
         ]);
         $crmTask->update($v);
         if ($crmTask->opportunity_id) {
