@@ -191,17 +191,59 @@ class SourceDocCustomerAdminController extends Controller
     public function listRequests(Request $request): JsonResponse
     {
         $status = (string) $request->query('status', 'open');
-        $q = SourceDocSourceRequest::query()
+        $customerId = $request->filled('customer_id') ? (int) $request->query('customer_id') : null;
+
+        // (A) Solicitações de PROVISIONAMENTO (source_doc_source_requests) — status open/provisioned/rejected.
+        $prov = SourceDocSourceRequest::query()
             ->leftJoin('customers', 'customers.id', '=', 'source_doc_source_requests.customer_id')
             ->leftJoin('users', 'users.id', '=', 'source_doc_source_requests.requested_by')
             ->leftJoin('helpdesk_tickets as ht', 'ht.ticket_number', '=', 'source_doc_source_requests.ticket')
             ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_source_requests.status', $status))
-            ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_doc_source_requests.customer_id', (int) $request->query('customer_id')))
+            ->when($customerId, fn ($qq) => $qq->where('source_doc_source_requests.customer_id', $customerId))
             ->orderByDesc('source_doc_source_requests.created_at')
             ->limit(300)
-            ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name', 'ht.id as hd_ticket_id', 'ht.subject as hd_subject']);
+            ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name', 'ht.id as hd_ticket_id', 'ht.subject as hd_subject'])
+            ->map(function ($r) {
+                $a = $r->toArray();
+                $a['kind'] = 'provisioning';
+                return $a;
+            });
 
-        return response()->json(['data' => $q]);
+        // (B) Pedidos de CÓDIGO-FONTE abertos pelos CHAMADOS (source_code_requests) — unificados na mesma lista.
+        //     Read-only aqui (o atendimento acontece no chamado): id negativo p/ não colidir e não permitir PATCH.
+        $mapStatus = fn ($s) => in_array($s, ['done', 'partial'], true) ? 'provisioned' : 'open';
+        $ticketReqs = \App\Models\SourceCodeRequest::query()
+            ->leftJoin('customers as c', 'c.id', '=', 'source_code_requests.client_id')
+            ->leftJoin('users as u', 'u.id', '=', 'source_code_requests.requested_by')
+            ->leftJoin('helpdesk_tickets as ht2', 'ht2.id', '=', 'source_code_requests.ticket_id')
+            ->when($customerId, fn ($qq) => $qq->where('source_code_requests.client_id', $customerId))
+            ->orderByDesc('source_code_requests.created_at')
+            ->limit(300)
+            ->get(['source_code_requests.*', 'c.name as customer_name', 'u.name as requester_name', 'ht2.ticket_number as ticket_number', 'ht2.subject as hd_subject'])
+            ->map(fn ($r) => [
+                'id'             => -1 * (int) $r->id,
+                'customer_id'    => $r->client_id,
+                'customer_name'  => $r->customer_name,
+                'repository'     => null,
+                'ticket'         => $r->ticket_number,
+                'priority'       => 'media',
+                'scope_type'     => 'source',
+                'paths'          => null,
+                'note'           => null,
+                'status'         => $mapStatus($r->status),
+                'raw_status'     => $r->status,
+                'requester_name' => $r->requester_name,
+                'hd_ticket_id'   => $r->ticket_id,
+                'hd_subject'     => $r->hd_subject,
+                'created_at'     => optional($r->created_at)->toIso8601String(),
+                'kind'           => 'ticket',
+            ])
+            ->filter(fn ($r) => $status === 'all' || $r['status'] === $status)
+            ->values();
+
+        $all = $prov->concat($ticketReqs)->sortByDesc('created_at')->values();
+
+        return response()->json(['data' => $all]);
     }
 
     /** PATCH /source-docs/source-requests/{id} {status} — atender / rejeitar / reabrir. */
