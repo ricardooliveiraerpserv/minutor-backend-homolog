@@ -69,6 +69,38 @@ class GmudPackageService
         return $this->makePackage($ticket, $att, $actor->id, 'upload');
     }
 
+    /**
+     * Garante o pacote do ÚLTIMO .zip anexado ao chamado (comentários GMUD/solução ou upload
+     * dedicado). Se já existe pacote p/ esse anexo, devolve; senão cria+enfileira. Usado ao abrir o
+     * pop-up após gravar/editar a GMUD, para SEMPRE refletir o zip mais recente (não um antigo).
+     */
+    public function ensureLatestForTicket(HelpDeskTicket $ticket): ?GmudPackage
+    {
+        $commentIds = $ticket->comments()->pluck('id')->all();
+
+        $zips = Attachment::query()
+            ->where(function ($q) use ($ticket, $commentIds) {
+                $q->where(function ($qq) use ($commentIds) {
+                    $qq->where('entity_type', 'HELPDESK_TICKET_COMMENT')->whereIn('entity_id', $commentIds ?: [-1]);
+                })->orWhere(function ($qq) use ($ticket) {
+                    $qq->where('entity_type', 'HELPDESK_TICKET')->where('entity_id', $ticket->id);
+                });
+            })
+            ->orderByDesc('id')->get()
+            ->filter(fn (Attachment $a) => $this->isZip($a));
+
+        $latest = $zips->first();
+        if (! $latest) {
+            return null;
+        }
+
+        $existing = GmudPackage::where('ticket_id', $ticket->id)->where('attachment_id', $latest->id)->first();
+        if ($existing) {
+            return $existing;
+        }
+        return $this->makePackage($ticket, $latest, $latest->uploaded_by, 'ensure');
+    }
+
     /** Cria a linha gmud_packages a partir de um Attachment imutável e enfileira o job. Sem commit. */
     private function makePackage(HelpDeskTicket $ticket, Attachment $att, ?int $userId, string $origin): GmudPackage
     {

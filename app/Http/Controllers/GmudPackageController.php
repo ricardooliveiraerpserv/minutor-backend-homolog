@@ -35,6 +35,13 @@ class GmudPackageController extends Controller
         return response()->json(['data' => $this->manifest($package)], 201);
     }
 
+    /** POST /help-desk/tickets/{ticket}/gmud/packages/ensure — garante o pacote do ÚLTIMO zip do chamado. */
+    public function ensure(HelpDeskTicket $ticket): JsonResponse
+    {
+        $package = $this->service->ensureLatestForTicket($ticket);
+        return response()->json(['data' => $package ? $this->manifest($package) : null]);
+    }
+
     /** GET /help-desk/tickets/{ticket}/gmud/packages — pacotes recebidos no chamado. */
     public function index(HelpDeskTicket $ticket): JsonResponse
     {

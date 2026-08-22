@@ -394,6 +394,7 @@ Route::prefix('v1')->group(function () {
         // SEM endpoint de publish (G7 depois). Gate interno ERPSERV.
         Route::middleware('permission.or.admin:source_docs.gmud_publish')->group(function () {
             Route::post('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'store'])->whereNumber('ticket');
+            Route::post('/help-desk/tickets/{ticket}/gmud/packages/ensure', [\App\Http\Controllers\GmudPackageController::class, 'ensure'])->whereNumber('ticket');
             Route::get('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'index'])->whereNumber('ticket');
             Route::get('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'show'])->whereNumber('package');
             // G4/G7 — seletor de diretório (Git ao vivo) + PUBLICAÇÃO governada (1 commit atômico).
