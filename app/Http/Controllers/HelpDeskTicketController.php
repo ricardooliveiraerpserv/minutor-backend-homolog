@@ -1978,7 +1978,9 @@ class HelpDeskTicketController extends Controller
         // confirmada no wizard (G7 — ainda não implementada). "Upload ≠ publicação."
         // GmudSourceProcessor (o antigo auto-commit) é preservado e reutilizado só em G7.
         // Best-effort: NUNCA derruba a gravação da solução.
-        if ($comment->form_kind === 'gmud' || optional($ticket->status)->key === 'solucao_gmud') {
+        // skip_gmud_package=1: a solução foi FINALIZADA a partir do wizard (o pacote já foi
+        // recebido/publicado lá) → não recriar/reanalisar aqui, evita pacote duplicado.
+        if (($comment->form_kind === 'gmud' || optional($ticket->status)->key === 'solucao_gmud') && ! $request->boolean('skip_gmud_package')) {
             try {
                 app(\App\SourceCode\Gmud\GmudPackageService::class)->receiveFromComment($ticket, $comment);
             } catch (\Throwable $e) {

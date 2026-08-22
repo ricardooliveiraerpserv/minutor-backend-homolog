@@ -84,6 +84,16 @@ class GmudPackageController extends Controller
         ]);
     }
 
+    /** DELETE /gmud/packages/{package} — descarta um pacote NÃO publicado (cancelamento do wizard). */
+    public function destroy(GmudPackage $package): JsonResponse
+    {
+        if ($package->status === GmudPackage::STATUS_PUBLISHED) {
+            return response()->json(['message' => 'Pacote já publicado não pode ser removido.'], 422);
+        }
+        $package->delete(); // cascade nos arquivos
+        return response()->json(['data' => true]);
+    }
+
     /** GET /gmud/packages/{package}/dirs — diretórios do repo p/ o seletor de pasta (Git ao vivo). */
     public function dirs(Request $request, GmudPackage $package, GmudPublishService $publisher): JsonResponse
     {
