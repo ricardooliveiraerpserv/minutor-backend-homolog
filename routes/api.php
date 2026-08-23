@@ -625,6 +625,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:source_docs.quality.view')->group(function () {
             Route::get('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
+            // Achados de uma análise (proxy ao A1 via external_job_id; strip de código sem view_git).
+            Route::get('/source-docs/{sourceDoc}/quality/{analysis}/findings', [\App\Http\Controllers\SourceDocQualityController::class, 'findings'])->whereNumber('sourceDoc')->whereNumber('analysis');
         });
         // run = gate ESTRITO (não auto-passa Coordenador; MVP = só Admin/quem tem a chave),
         // espelhando source_docs.reprocess — disparar análise consome o serviço externo.
@@ -1707,6 +1709,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:source_docs.quality.view')->group(function () {
             Route::get('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
+            // Achados de uma análise (proxy ao A1 via external_job_id; strip de código sem view_git).
+            Route::get('/source-docs/{sourceDoc}/quality/{analysis}/findings', [\App\Http\Controllers\SourceDocQualityController::class, 'findings'])->whereNumber('sourceDoc')->whereNumber('analysis');
         });
         // run = gate ESTRITO (não auto-passa Coordenador; MVP = só Admin/quem tem a chave),
         // espelhando source_docs.reprocess — disparar análise consome o serviço externo.

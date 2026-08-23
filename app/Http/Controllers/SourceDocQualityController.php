@@ -151,6 +151,73 @@ class SourceDocQualityController extends Controller
         return response()->json(['data' => $this->stateView($doc, $currentBlob, $record->fresh())], 202);
     }
 
+    /**
+     * Campos que PODEM revelar código-fonte. Removidos do payload quando o usuário não tem
+     * source_docs.view_git (a política de código-fonte é protegida NO BACKEND, não só no FE).
+     */
+    private const CODE_REVEALING_KEYS = [
+        'snippet', 'source', 'code', 'excerpt', 'context', 'line_content', 'content', 'example',
+    ];
+
+    /**
+     * GET /source-docs/{sourceDoc}/quality/{analysis}/findings
+     * Detalhe dos achados de UMA análise. Proxy server-to-server ao CodeAnalysis (A1) via
+     * external_job_id. Achados NÃO são persistidos no Postgres. Gating de código no backend.
+     */
+    public function findings(Request $request, int $sourceDoc, int $analysis): JsonResponse
+    {
+        $doc = $this->loadDoc($sourceDoc);
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+
+        // Anti-IDOR: a análise TEM de pertencer a esta fonte (senão 404, não vaza existência).
+        $rec = SourceDocQualityAnalysis::where('id', $analysis)
+            ->where('source_doc_id', $doc->id)->first();
+        if (! $rec) {
+            return response()->json(['message' => 'Análise não encontrada.'], 404);
+        }
+
+        $canViewCode = (bool) $request->user()?->hasAccess('source_docs.view_git');
+
+        // Sem job remoto ainda (queued/failed antes de criar) → sem achados a mostrar.
+        if (! $rec->external_job_id) {
+            return response()->json(['data' => [
+                'analysis_id' => $rec->id, 'external_job_id' => null, 'status' => $rec->status,
+                'view_git' => $canViewCode, 'findings' => [],
+            ]]);
+        }
+
+        try {
+            $remote = $this->service->getJob((string) $rec->external_job_id);
+        } catch (CodeAnalysisException $e) {
+            $status = $e->unavailable ? 503 : 502;
+            return response()->json(['message' => 'Não foi possível obter os achados.', 'error' => $e->errorCode], $status);
+        }
+
+        $findings = is_array($remote['findings'] ?? null) ? $remote['findings'] : [];
+        if (! $canViewCode) {
+            $findings = array_map(fn ($f) => $this->stripCode($f), $findings);
+        }
+
+        return response()->json(['data' => [
+            'analysis_id'     => $rec->id,
+            'external_job_id' => $rec->external_job_id,
+            'status'          => $remote['status'] ?? $rec->status,
+            'view_git'        => $canViewCode,
+            'findings'        => array_values($findings),
+        ]]);
+    }
+
+    /** Remove QUALQUER campo que possa revelar código; preserva só metadados seguros. */
+    private function stripCode(array $finding): array
+    {
+        foreach (self::CODE_REVEALING_KEYS as $k) {
+            unset($finding[$k]);
+        }
+        return $finding;
+    }
+
     /** GET /source-docs/{sourceDoc}/quality/history — análises da fonte (todas as versões). */
     public function history(Request $request, int $sourceDoc): JsonResponse
     {

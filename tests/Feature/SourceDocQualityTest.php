@@ -332,6 +332,84 @@ class SourceDocQualityTest extends TestCase
         $this->assertStringNotContainsString(self::CA_TOKEN, $res->getContent());
     }
 
+    // ── findings: gating de código por view_git + anti-IDOR ─────────────────
+
+    private function makeCompletedAnalysis(SourceDoc $doc, string $jobId = 'jobF'): SourceDocQualityAnalysis
+    {
+        return SourceDocQualityAnalysis::create([
+            'source_doc_id' => $doc->id, 'source_doc_version_id' => $doc->current_version_id,
+            'source_blob_sha' => 'blobF', 'status' => 'completed', 'external_job_id' => $jobId, 'score' => 80,
+        ]);
+    }
+
+    private function fakeFindings(): void
+    {
+        Http::fake(fn ($r) => Http::response(['job_id' => 'jobF', 'status' => 'completed', 'findings' => [[
+            'severity' => 'CRITICAL', 'category' => 'G2 - Performance', 'rule' => 'CA_LOOP',
+            'title' => 'Query em laço', 'description' => 'consulta dentro de laço', 'line' => 182, 'start_line' => 182,
+            'snippet' => 'SECRET_SNIPPET_CODE', 'source' => 'SECRET_SOURCE', 'content' => 'SECRET_CONTENT',
+        ]]], 200));
+    }
+
+    public function test_findings_with_view_git_includes_snippet(): void
+    {
+        $doc = $this->makeDoc();
+        $rec = $this->makeCompletedAnalysis($doc);
+        $this->fakeFindings();
+        $res = $this->actingAs($this->admin(), 'sanctum') // admin tem view_git via '*'
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality/{$rec->id}/findings")->assertOk();
+        $res->assertJsonPath('data.view_git', true)
+            ->assertJsonPath('data.findings.0.snippet', 'SECRET_SNIPPET_CODE')
+            ->assertJsonPath('data.findings.0.severity', 'CRITICAL')
+            ->assertJsonPath('data.findings.0.line', 182);
+    }
+
+    public function test_findings_without_view_git_strips_all_code(): void
+    {
+        $doc = $this->makeDoc();
+        $rec = $this->makeCompletedAnalysis($doc);
+        $this->fakeFindings();
+        $u = User::factory()->create([
+            'type' => 'consultor',
+            'extra_permissions' => ['source_docs.quality.view', 'source_docs.view_all_customers'],
+        ]); // tem quality.view + escopo global, NÃO tem view_git
+        $res = $this->actingAs($u, 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality/{$rec->id}/findings")->assertOk();
+        $res->assertJsonPath('data.view_git', false)
+            ->assertJsonPath('data.findings.0.severity', 'CRITICAL')   // metadado seguro preservado
+            ->assertJsonPath('data.findings.0.line', 182)
+            ->assertJsonMissingPath('data.findings.0.snippet')
+            ->assertJsonMissingPath('data.findings.0.source')
+            ->assertJsonMissingPath('data.findings.0.content');
+        // nenhum trecho de código no JSON, em nenhuma forma
+        $body = $res->getContent();
+        $this->assertStringNotContainsString('SECRET_SNIPPET_CODE', $body);
+        $this->assertStringNotContainsString('SECRET_SOURCE', $body);
+        $this->assertStringNotContainsString('SECRET_CONTENT', $body);
+    }
+
+    public function test_findings_idor_analysis_of_other_doc_404(): void
+    {
+        $docA = $this->makeDoc();
+        $docB = $this->makeDoc();
+        $recB = $this->makeCompletedAnalysis($docB, 'jobB');
+        // análise de B acessada via A → 404 (não vaza)
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$docA->id}/quality/{$recB->id}/findings")->assertNotFound();
+    }
+
+    public function test_findings_out_of_scope_404(): void
+    {
+        $custX = Customer::factory()->create();
+        $custY = Customer::factory()->create();
+        $doc = $this->makeDoc(customerId: $custX->id);
+        $rec = $this->makeCompletedAnalysis($doc);
+        $coord = User::factory()->create(['type' => 'coordenador']);
+        $custY->update(['executive_id' => $coord->id]);
+        $this->actingAs($coord, 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality/{$rec->id}/findings")->assertNotFound();
+    }
+
     // ── sem regressão nos endpoints atuais da Central (20) ───────────────────
 
     public function test_no_regression_on_catalog_show(): void

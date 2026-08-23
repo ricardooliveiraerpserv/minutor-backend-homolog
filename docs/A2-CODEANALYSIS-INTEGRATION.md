@@ -59,6 +59,19 @@ Dispara a análise da versão vigente (gate estrito = admin-only no MVP, como `r
 ### GET `/source-docs/{sourceDoc}/quality/history` — permissão `source_docs.quality.view`
 Lista as análises da fonte (todas as versões), com `stale` por item.
 
+### GET `/source-docs/{sourceDoc}/quality/{analysis}/findings` — permissão `source_docs.quality.view`
+Achados detalhados de UMA análise (adicionado p/ o A3). Proxy server-to-server ao A1 via `external_job_id`
+(`SourceDocQualityService::getJob`); **achados NÃO são persistidos** no Postgres. Regras:
+- **Escopo** (`canAccessDoc`) + **anti-IDOR**: a análise precisa pertencer a esta fonte, senão `404`.
+- **Gating de código no BACKEND:** sem `source_docs.view_git`, remove QUALQUER campo que revele código
+  (`snippet, source, code, excerpt, context, line_content, content, example`), preservando só metadados
+  seguros (severidade, categoria, regra, título, descrição, linha, count). Resposta traz `view_git: bool`.
+```json
+{ "data": { "analysis_id": 9, "external_job_id": "jobC", "status": "completed", "view_git": true,
+  "findings": [ { "severity": "CRITICAL", "category": "G2 - Performance", "rule": "CA_LOOP",
+    "title": "Query em laço", "description": "...", "line": 182, "snippet": "..." } ] } }
+```
+
 ## Segurança / server-to-server
 - `Http::withToken(config('services.codeanalysis.token'))` — o token **nunca** aparece na resposta nem em log (testado).
 - O CodeAnalysis roda em **rede privada**; o browser fala só com o Minutor. Autorização do usuário é 100% no Minutor.
