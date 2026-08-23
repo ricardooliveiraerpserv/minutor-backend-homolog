@@ -54,6 +54,15 @@ return [
         'meetings_model' => env('ANTHROPIC_MEETINGS_MODEL', 'claude-sonnet-5'),
     ],
 
+    // CodeAnalysis — serviço interno de Análise de Qualidade ADVPL/TLPP (A1). Chamado
+    // server-to-server pelo backend; nunca exposto ao browser. Token nunca é logado.
+    'codeanalysis' => [
+        'base_url' => env('CODEANALYSIS_BASE_URL', 'http://localhost:8080'),
+        'token'    => env('CODEANALYSIS_SERVICE_TOKEN'),
+        'timeout'  => (int) env('CODEANALYSIS_TIMEOUT', 120),
+        'enabled'  => filter_var(env('CODEANALYSIS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
     // Documentação de fonte (v2) — camada semântica. Provider trocável (governança: API comercial
     // server-side, sem Files/Batch/caching persistente; sanitização e payload mínimo no chamador).
     'source_doc' => [

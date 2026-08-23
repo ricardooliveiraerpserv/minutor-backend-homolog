@@ -143,6 +143,9 @@ class PermissionService
         // Central de Fontes (C3) — ações operacionais, uma permissão por ação.
         'source_docs.validate', 'source_docs.reprocess', 'source_docs.download',
         'source_docs.view_git', 'source_docs.view_diff',
+        // Central de Fontes — Análise de Qualidade (CodeAnalysis). view=consultar resultado;
+        // run=disparar nova análise (run NÃO implica acesso global; escopo por customer sempre vale).
+        'source_docs.quality.view', 'source_docs.quality.run',
         // Central de Fontes (C3.5) — inventário/cobertura do acervo (Admin/ops).
         'source_docs.inventory',
         // GMUD — Publicação Governada de Fontes (wizard). Recebe ZIP, extrai, casa com o acervo e
@@ -255,6 +258,8 @@ class PermissionService
             // reprocess fica SÓ p/ Admin no MVP (única ação que cria versão/consome IA).
             'source_docs.view', 'source_docs.validate', 'source_docs.download',
             'source_docs.view_git', 'source_docs.view_diff',
+            // Qualidade: coordenador CONSULTA; disparar (run) fica p/ Admin no MVP (consome serviço externo).
+            'source_docs.quality.view',
         ];
     }
 

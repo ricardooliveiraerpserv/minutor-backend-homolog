@@ -621,6 +621,16 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:source_docs.view_diff')->group(function () {
             Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
         });
+        // Análise de Qualidade (CodeAnalysis) — view=consultar estado/resultado; run=disparar análise.
+        Route::middleware('permission.or.admin:source_docs.quality.view')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
+        });
+        // run = gate ESTRITO (não auto-passa Coordenador; MVP = só Admin/quem tem a chave),
+        // espelhando source_docs.reprocess — disparar análise consome o serviço externo.
+        Route::middleware('permission:source_docs.quality.run')->group(function () {
+            Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1692,6 +1702,16 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission.or.admin:source_docs.view_diff')->group(function () {
             Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
+        });
+        // Análise de Qualidade (CodeAnalysis) — view=consultar estado/resultado; run=disparar análise.
+        Route::middleware('permission.or.admin:source_docs.quality.view')->group(function () {
+            Route::get('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
+        });
+        // run = gate ESTRITO (não auto-passa Coordenador; MVP = só Admin/quem tem a chave),
+        // espelhando source_docs.reprocess — disparar análise consome o serviço externo.
+        Route::middleware('permission:source_docs.quality.run')->group(function () {
+            Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

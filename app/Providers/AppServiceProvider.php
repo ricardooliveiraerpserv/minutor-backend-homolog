@@ -38,6 +38,13 @@ class AppServiceProvider extends ServiceProvider
         // compartilhada entre o middleware e o global scope BelongsToCompany.
         $this->app->scoped(\App\Services\CompanyContext::class);
 
+        // Cliente do serviço de Análise de Qualidade (CodeAnalysis). bind (não singleton)
+        // p/ ler config('services.codeanalysis.*') a cada resolução (facilita testes).
+        $this->app->bind(
+            \App\Services\SourceDocQualityService::class,
+            fn () => \App\Services\SourceDocQualityService::fromConfig(),
+        );
+
         // Solicitação de código-fonte: provedor SOMENTE-LEITURA. Provider OFICIAL = GitHub App.
         // Trocar a implementação (ex.: rotação futura) não afeta GitHubSourceService/Resolver/UI.
         // (GithubPatProvider segue no código como LEGADO, mas NÃO é bindado e não tem fallback.)
