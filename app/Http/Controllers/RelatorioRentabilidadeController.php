@@ -460,9 +460,13 @@ class RelatorioRentabilidadeController extends Controller
             $cnpj = $g['cnpj'];
             // Soma o recebido de TODOS os CNPJs do cliente (principal + secundários).
             $recebido = 0.0;
+            $receitaTotal = 0.0;
+            $emAberto = 0.0;
             foreach ($g['cnpjs'] as $cc) {
                 $usados[$cc] = true;
-                $recebido += (float) ($keruak[$cc]['receb'][$recebMonth] ?? 0);
+                $recebido     += (float) ($keruak[$cc]['receb'][$recebMonth] ?? 0);
+                $receitaTotal += (float) ($keruak[$cc]['receita_total'][$recebMonth] ?? 0);
+                $emAberto     += (float) ($keruak[$cc]['em_aberto'][$recebMonth] ?? 0);
             }
 
             $horas = round($g['horas'], 2);
@@ -480,7 +484,9 @@ class RelatorioRentabilidadeController extends Controller
                 'custo'           => $custo,
                 'margem'          => $margem,
                 'margem_pct'      => $receita > 0 ? round($margem / $receita * 100, 1) : null,
-                'recebido'        => round($recebido, 2),
+                'recebido'          => round($recebido, 2),
+                'receita_total'     => round($receitaTotal, 2),
+                'receita_em_aberto' => round($emAberto, 2),
                 'margem_real'     => $margemReal,
                 'margem_real_pct' => $recebido > 0 ? round($margemReal / $recebido * 100, 1) : null,
                 'no_minutor'      => true,
@@ -547,16 +553,20 @@ class RelatorioRentabilidadeController extends Controller
         foreach ($keruak as $cnpj => $info) {
             if (isset($usados[$cnpj])) continue;
             $recebido = (float) ($info['receb'][$recebMonth] ?? 0);
-            if ($recebido <= 0) continue;
+            $receitaTotal = (float) ($info['receita_total'][$recebMonth] ?? 0);
+            $emAberto = (float) ($info['em_aberto'][$recebMonth] ?? 0);
+            if ($recebido <= 0 && $receitaTotal <= 0) continue;
             $usados[$cnpj] = true;
 
             $match = $cnpjToCustomer[$cnpj] ?? null;
             if ($match) {
                 $cid = $match['customer_id'];
                 if (!isset($extraByCustomer[$cid])) {
-                    $extraByCustomer[$cid] = ['info' => $match, 'cnpj' => $cnpj, 'recebido' => 0.0];
+                    $extraByCustomer[$cid] = ['info' => $match, 'cnpj' => $cnpj, 'recebido' => 0.0, 'receita_total' => 0.0, 'em_aberto' => 0.0];
                 }
                 $extraByCustomer[$cid]['recebido'] += $recebido;
+                $extraByCustomer[$cid]['receita_total'] += $receitaTotal;
+                $extraByCustomer[$cid]['em_aberto'] += $emAberto;
                 continue;
             }
 
@@ -570,7 +580,9 @@ class RelatorioRentabilidadeController extends Controller
                 'custo'           => 0.0,
                 'margem'          => 0.0,
                 'margem_pct'      => null,
-                'recebido'        => round($recebido, 2),
+                'recebido'          => round($recebido, 2),
+                'receita_total'     => round($receitaTotal, 2),
+                'receita_em_aberto' => round($emAberto, 2),
                 'margem_real'     => round($recebido, 2),
                 'margem_real_pct' => 100.0,
                 'no_minutor'      => false,
@@ -591,7 +603,9 @@ class RelatorioRentabilidadeController extends Controller
                 'custo'           => 0.0,
                 'margem'          => 0.0,
                 'margem_pct'      => null,
-                'recebido'        => $recebido,
+                'recebido'          => $recebido,
+                'receita_total'     => round($e['receita_total'] ?? 0, 2),
+                'receita_em_aberto' => round($e['em_aberto'] ?? 0, 2),
                 'margem_real'     => $recebido,
                 'margem_real_pct' => $recebido > 0 ? 100.0 : null,
                 'no_minutor'      => true,
