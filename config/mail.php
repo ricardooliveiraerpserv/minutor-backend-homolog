@@ -16,6 +16,11 @@ return [
 
     'default' => env('MAIL_MAILER', 'log'),
 
+    // 🚫 Kill-switch de e-mail: quando true, NENHUM e-mail é enviado (bases de teste).
+    // Lido via config() p/ sobreviver ao config:cache. Bloqueia Laravel Mail (AppServiceProvider)
+    // e Microsoft Graph (GraphMailer::enabled).
+    'kill_switch' => filter_var(env('MAIL_KILL_SWITCH', false), FILTER_VALIDATE_BOOLEAN),
+
     /*
     |--------------------------------------------------------------------------
     | Mailer Configurations

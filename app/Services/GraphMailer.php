@@ -27,6 +27,11 @@ class GraphMailer
     /** true só quando as 3 credenciais estão preenchidas. */
     public static function enabled(): bool
     {
+        // 🚫 Kill-switch de e-mail (bases de teste): desliga o Graph mesmo com credenciais.
+        if (config('mail.kill_switch')) {
+            return false;
+        }
+
         $c = config('services.graph');
 
         return !empty($c['tenant_id'])

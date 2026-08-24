@@ -46,6 +46,16 @@ class AppServiceProvider extends ServiceProvider
     {
         Carbon::setLocale('pt_BR');
 
+        // 🚫 KILL-SWITCH DE E-MAIL (bases de teste): se mail.kill_switch = true, cancela
+        // QUALQUER envio via Laravel Mail (log/smtp/nfe/user_smtp). MessageSending é evento
+        // "halting": retornar false aborta o envio. Registrado ANTES do listener de debug.
+        if (config('mail.kill_switch')) {
+            Event::listen(MessageSending::class, function () {
+                \Log::warning('[MAIL_KILL_SWITCH] Envio de e-mail BLOQUEADO (base de testes).');
+                return false;
+            });
+        }
+
         // Registrar listeners de email para debug
         Event::listen(MessageSending::class, EmailSentListener::class);
         Event::listen(MessageSent::class, EmailSentListener::class);
