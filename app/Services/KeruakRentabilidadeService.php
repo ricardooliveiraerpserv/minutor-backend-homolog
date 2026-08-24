@@ -147,17 +147,14 @@ class KeruakRentabilidadeService
             }
             if (empty($out[$cnpj]['name'])) $out[$cnpj]['name'] = $name;
 
-            // A RECEBER (regra do negócio): TODO título com Valor Recebido = 0 é "a receber",
-            // independente de ter ou não mês de recebimento. "Em Aberto" é um SALDO ATUAL por
-            // cliente (não por mês) — soma flat por CNPJ.
-            $emAb = ($recebido <= 0 && $receitaTotal > 0) ? $receitaTotal : 0.0;
-            if ($emAb > 0) {
-                $out[$cnpj]['em_aberto'] = round($out[$cnpj]['em_aberto'] + $emAb, 2);
-            }
-
-            // Sem mês de recebimento = ainda não recebido: entra só no "a receber" (acima), não em
-            // receb/receita_total (que são indexados pelo mês de recebimento).
+            // A RECEBER = Recebido=0 E SEM mês de recebimento. ⚠️ Recebido=0 COM mês de recebimento
+            // = título BAIXADO/fechado com zero (ex.: Lubrisint) → NÃO é a receber. "Em Aberto" é
+            // um SALDO ATUAL por cliente (não por mês) — soma flat por CNPJ.
             if (!preg_match('/^(\d{2})-(\d{4})$/', $recebRaw, $mm)) {
+                $emAb = ($recebido <= 0 && $receitaTotal > 0) ? $receitaTotal : 0.0;
+                if ($emAb > 0) {
+                    $out[$cnpj]['em_aberto'] = round($out[$cnpj]['em_aberto'] + $emAb, 2);
+                }
                 $out[$cnpj]['titulos'][] = [
                     'emissao' => $emissao, 'recebimento' => null, 'valor' => round($recebido, 2),
                     'parcela' => round($parcela, 2), 'multa' => round($multa, 2),
@@ -178,7 +175,7 @@ class KeruakRentabilidadeService
                 'parcela'       => round($parcela, 2),
                 'multa'         => round($multa, 2),
                 'receita_total' => $receitaTotal,
-                'em_aberto'     => $emAb,
+                'em_aberto'     => 0.0,
                 'empresa'       => $empresa,
                 'observacao'    => $observacao,
             ];
