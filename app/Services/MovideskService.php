@@ -51,11 +51,11 @@ class MovideskService
     public function fetchTicket(int $ticketId): ?array
     {
         try {
-            // Timeout: a API do Movidesk degradou e tickets normais chegam a 13s+ nesta
-            // query (com $expand pesado). Com 5s TUDO estourava (cURL 28) e ia pra blacklist.
-            // 20s cobre a variação medida e ainda evita que um ticket travado segure o lote
-            // (o scheduler tem mutex; o slow-lane reprocessa o que passar disso).
-            $response = Http::timeout(20)->get("{$this->baseUrl()}/tickets", [
+            // Timeout+retry: a API do Movidesk é flaky — a MESMA query às vezes trava 20s+
+            // com 0 bytes (cURL 28), às vezes responde em 1-2s. retry(2) faz o flaky se
+            // autocurar (a 2ª tentativa costuma passar); timeout 12s corta o hang mais cedo.
+            // Se ainda falhar, cai no slow-lane / fila de retry (não segura o lote).
+            $response = Http::timeout(12)->retry(2, 500)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
                 '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',

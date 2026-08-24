@@ -82,7 +82,11 @@ Schedule::command('movidesk:sync')
   ->cron('*/5 * * * *')
   ->name('movidesk-sync')
   ->description('Sincroniza apontamentos do Movidesk via API')
-  ->withoutOverlapping(10)
+  // Lock de 30min: uma varredura com backlog + tickets flaky (timeouts) pode passar de
+  // 10min; com o lock antigo (10) o lock expirava e o próximo cron iniciava OUTRA em
+  // paralelo → overlaps acumulavam → concorrência hammerava a API do Movidesk (rate/flaky)
+  // → varreduras ainda mais longas. 30min evita o pile-up sem travar em caso de sweep lento.
+  ->withoutOverlapping(30)
   ->runInBackground();
 
 // Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
