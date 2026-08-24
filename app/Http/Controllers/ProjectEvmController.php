@@ -508,6 +508,7 @@ class ProjectEvmController extends Controller
         $status = $request->get('status');
         if ($status === 'active') $q->active();
         elseif ($status === 'open') $q->open();
+        elseif ($status === 'all') { /* todos os status, inclui encerrado/cancelado (chips dos Indicadores) */ }
         elseif ($status) $q->where('status', $status);
         else $q->open();
 
