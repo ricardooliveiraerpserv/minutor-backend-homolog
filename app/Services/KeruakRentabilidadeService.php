@@ -195,27 +195,38 @@ class KeruakRentabilidadeService
      * @param string[] $recebMonths  meses de recebimento YYYY-MM (vazio = todos)
      * @return array{titulos: array<int, array<string, mixed>>, total: float}
      */
-    public function titulos(array $cnpjs, array $recebMonths = [], bool $fresh = false): array
+    public function titulos(array $cnpjs, array $recebMonths = [], bool $fresh = false, string $mode = 'recebido'): array
     {
         $map = $this->recebido($fresh);
         $months = array_flip(array_filter($recebMonths));
+        $aberto = $mode === 'aberto'; // 'aberto' = títulos a receber (Recebido=0); senão = recebidos
 
         $titulos = [];
         $total = 0.0;
         foreach (array_unique(array_filter($cnpjs)) as $cnpj) {
             $cnpj = preg_replace('/\D/', '', (string) $cnpj);
             foreach (($map[$cnpj]['titulos'] ?? []) as $t) {
-                if ($months && !isset($months[$t['recebimento']])) {
-                    continue;
+                if ($aberto) {
+                    if ((float) ($t['em_aberto'] ?? 0) <= 0) {
+                        continue; // só os que estão a receber
+                    }
+                    $titulos[] = $t + ['cnpj' => $cnpj, 'cliente' => $map[$cnpj]['name'] ?? null];
+                    $total += (float) $t['em_aberto'];
+                } else {
+                    if ($months && !isset($months[$t['recebimento']])) {
+                        continue;
+                    }
+                    $titulos[] = $t + ['cnpj' => $cnpj, 'cliente' => $map[$cnpj]['name'] ?? null];
+                    $total += (float) $t['valor'];
                 }
-                $titulos[] = $t + ['cnpj' => $cnpj, 'cliente' => $map[$cnpj]['name'] ?? null];
-                $total += (float) $t['valor'];
             }
         }
 
-        // Mais recentes primeiro; dentro do mês, maior valor primeiro.
-        usort($titulos, function ($a, $b) {
-            return [$b['recebimento'], $b['valor']] <=> [$a['recebimento'], $a['valor']];
+        // Recebidos: mais recentes por recebimento. A receber: mais recentes por emissão.
+        usort($titulos, function ($a, $b) use ($aberto) {
+            return $aberto
+                ? [$b['emissao'], $b['em_aberto']] <=> [$a['emissao'], $a['em_aberto']]
+                : [$b['recebimento'], $b['valor']] <=> [$a['recebimento'], $a['valor']];
         });
 
         return ['titulos' => $titulos, 'total' => round($total, 2)];

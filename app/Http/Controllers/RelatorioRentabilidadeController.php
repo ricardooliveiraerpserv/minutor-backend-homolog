@@ -718,7 +718,7 @@ class RelatorioRentabilidadeController extends Controller
         }
 
         $result = app(\App\Services\KeruakRentabilidadeService::class)
-            ->titulos($cnpjs, $receb, $request->boolean('refresh'));
+            ->titulos($cnpjs, $receb, $request->boolean('refresh'), $request->query('mode', 'recebido'));
 
         return response()->json(['data' => $result]);
     }
