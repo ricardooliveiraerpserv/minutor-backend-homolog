@@ -125,7 +125,7 @@ class KeruakRentabilidadeService
         foreach ($rows[1] as $r) {
             preg_match_all('/<td>(.*?)<\/td>/s', $r, $c);
             $cells = $c[1] ?? [];
-            if (count($cells) < 7) {
+            if (count($cells) < 8) {
                 continue;
             }
             $name = trim(html_entity_decode(strip_tags($cells[0])));
@@ -133,13 +133,16 @@ class KeruakRentabilidadeService
             if (!$cnpj) {
                 continue;
             }
-            $parcela  = $money($cells[3]);
-            $recebido = $money($cells[4]);
-            $multa    = $money($cells[5]);
-            $recebRaw = trim(strip_tags($cells[6])); // "MM-YYYY" (VAZIO = título ainda NÃO recebido)
+            // Layout Keruak (11 cols): [3]Valor da Parcela · [4]Data Vencimento(DD-MM-YYYY) ·
+            // [5]Valor Recebido · [6]Valor da Multa · [7]Mês-Ano Recebimento · [8]Empresa · [9]Obs · [10]Desconto.
+            $parcela    = $money($cells[3]);
+            $vencimento = trim(strip_tags($cells[4] ?? '')); // "DD-MM-YYYY" (vencimento do título)
+            $recebido   = $money($cells[5]);
+            $multa      = $money($cells[6]);
+            $recebRaw   = trim(strip_tags($cells[7] ?? '')); // "MM-YYYY" (VAZIO = título ainda NÃO recebido)
             $receitaTotal = round($parcela + $multa, 2);
-            $empresa    = trim(html_entity_decode(strip_tags($cells[7] ?? '')));
-            $observacao = trim(html_entity_decode(strip_tags($cells[8] ?? '')));
+            $empresa    = trim(html_entity_decode(strip_tags($cells[8] ?? '')));
+            $observacao = trim(html_entity_decode(strip_tags($cells[9] ?? '')));
             $emissao = preg_match('/^(\d{2})-(\d{4})$/', trim(strip_tags($cells[2] ?? '')), $me) ? ($me[2] . '-' . $me[1]) : null;
 
             if (!isset($out[$cnpj])) {
@@ -156,7 +159,7 @@ class KeruakRentabilidadeService
                     $out[$cnpj]['em_aberto'] = round($out[$cnpj]['em_aberto'] + $emAb, 2);
                 }
                 $out[$cnpj]['titulos'][] = [
-                    'emissao' => $emissao, 'recebimento' => null, 'valor' => round($recebido, 2),
+                    'emissao' => $emissao, 'vencimento' => $vencimento, 'recebimento' => null, 'valor' => round($recebido, 2),
                     'parcela' => round($parcela, 2), 'multa' => round($multa, 2),
                     'receita_total' => $receitaTotal, 'em_aberto' => $emAb,
                     'empresa' => $empresa, 'observacao' => $observacao,
@@ -170,6 +173,7 @@ class KeruakRentabilidadeService
             // Detalhe por título — usado pelo drill-down. 'valor' = recebido (compat).
             $out[$cnpj]['titulos'][] = [
                 'emissao'       => $emissao,
+                'vencimento'    => $vencimento,
                 'recebimento'   => $ym,
                 'valor'         => round($recebido, 2),
                 'parcela'       => round($parcela, 2),
