@@ -26,7 +26,7 @@ class MovideskSyncCommand extends Command
     // 6h (~300 tickets) conclui em minutos. Seguro: se o sync ficar down >6h, o last_sync
     // (mais antigo) prevalece em resolveSince e pega o gap inteiro; adicionar timeAppointment
     // atualiza o lastUpdate do ticket → cai na janela recente mesmo assim.
-    private const MIN_LOOKBACK_HOURS = 6;
+    private const MIN_LOOKBACK_HOURS = 1;
 
     public function handle(MovideskService $service): int
     {
