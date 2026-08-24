@@ -63,6 +63,7 @@ class Project extends Model
         'condicao_pagamento',
         'observacoes_contrato',
         'observacoes_coordenador',
+        'nota_coordenador',
         'cobra_despesa_cliente',
         'limite_despesa',
         'permissoes_despesa',

@@ -3166,6 +3166,25 @@ class ProjectController extends Controller
         ]);
     }
 
+    /** Nota editável PELO coordenador (visão Visualizar). Admin ou coordenador; cliente não. */
+    public function updateNotaCoordenador(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if ($user?->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        $validated = $request->validate([
+            'nota_coordenador' => ['nullable', 'string'],
+        ]);
+        $project->nota_coordenador = $validated['nota_coordenador'] ?? null;
+        $project->save();
+
+        return response()->json([
+            'success' => true,
+            'nota_coordenador' => $project->nota_coordenador,
+        ]);
+    }
+
     /** Edição inline (tabela Demandas e Projetos): datas de prazo + percentual de entrega. Cliente não edita. */
     public function updateDelivery(Request $request, Project $project): JsonResponse
     {

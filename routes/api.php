@@ -748,6 +748,8 @@ Route::prefix('v1')->group(function () {
         // para que coordenadores também aloquem, sem projects.update global.
         Route::middleware('permission.or.admin:projects.assign_consultants')->group(function () {
             Route::patch('/projects/{project}/investment-allocation', [ProjectController::class, 'updateInvestmentAllocation'])->name('projects.investment-allocation');
+            // Nota editável do coordenador (coordenadores têm assign_consultants, sem projects.update global).
+            Route::patch('/projects/{project}/nota-coordenador', [ProjectController::class, 'updateNotaCoordenador'])->name('projects.nota-coordenador');
         });
 
         Route::middleware('permission.or.admin:projects.create')->group(function () {
