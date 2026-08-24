@@ -20,9 +20,13 @@ class MovideskSyncCommand extends Command
     // Overlap para compensar delays da API do Movidesk
     private const OVERLAP_MINUTES = 5;
 
-    // Janela mínima de busca (garante que nunca deixamos passar apontamentos
-    // mesmo que o last_sync tenha sido gravado após um sync sem importações)
-    private const MIN_LOOKBACK_HOURS = 48;
+    // Janela mínima de busca. 48h era PESADO DEMAIS: o Movidesk tem ~2.5k tickets/48h,
+    // e a varredura RE-FETCHA todos (heavy $expand + OCR de anexos) toda run → uma passada
+    // levava ~50min, nunca concluía dentro do lock (30min) → overlaps + timestamp congelado.
+    // 6h (~300 tickets) conclui em minutos. Seguro: se o sync ficar down >6h, o last_sync
+    // (mais antigo) prevalece em resolveSince e pega o gap inteiro; adicionar timeAppointment
+    // atualiza o lastUpdate do ticket → cai na janela recente mesmo assim.
+    private const MIN_LOOKBACK_HOURS = 6;
 
     public function handle(MovideskService $service): int
     {
@@ -109,7 +113,7 @@ class MovideskSyncCommand extends Command
             $fromLastSync  = Carbon::parse($lastSync)->subMinutes(self::OVERLAP_MINUTES);
             $minLookback   = now()->subHours(self::MIN_LOOKBACK_HOURS);
 
-            // Retorna o mais antigo dos dois (garante janela mínima de 48h)
+            // Retorna o mais antigo dos dois (garante a janela mínima; pega gaps de downtime)
             return $fromLastSync->lt($minLookback) ? $fromLastSync : $minLookback;
         }
 
