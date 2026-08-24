@@ -92,7 +92,7 @@ class KeruakRentabilidadeService
             $out = [];
             foreach ($data as $cnpj => $row) {
                 $key = preg_replace('/\D/', '', (string) ($row['cnpj'] ?? $cnpj));
-                $out[$key] = ['name' => $row['name'] ?? '', 'receb' => (array) ($row['receb'] ?? []), 'receita_total' => (array) ($row['receita_total'] ?? $row['receb'] ?? []), 'em_aberto' => (array) ($row['em_aberto'] ?? [])];
+                $out[$key] = ['name' => $row['name'] ?? '', 'receb' => (array) ($row['receb'] ?? []), 'receita_total' => (array) ($row['receita_total'] ?? $row['receb'] ?? []), 'em_aberto' => (float) ($row['em_aberto'] ?? 0)];
             }
             return $out;
         }
@@ -102,7 +102,7 @@ class KeruakRentabilidadeService
             if (!is_array($row)) continue;
             $key = preg_replace('/\D/', '', (string) ($row['cnpj'] ?? ''));
             if ($key === '') continue;
-            $out[$key] = ['name' => $row['name'] ?? '', 'receb' => (array) ($row['receb'] ?? []), 'receita_total' => (array) ($row['receita_total'] ?? $row['receb'] ?? []), 'em_aberto' => (array) ($row['em_aberto'] ?? [])];
+            $out[$key] = ['name' => $row['name'] ?? '', 'receb' => (array) ($row['receb'] ?? []), 'receita_total' => (array) ($row['receita_total'] ?? $row['receb'] ?? []), 'em_aberto' => (float) ($row['em_aberto'] ?? 0)];
         }
         return $out;
     }
@@ -136,27 +136,36 @@ class KeruakRentabilidadeService
             $parcela  = $money($cells[3]);
             $recebido = $money($cells[4]);
             $multa    = $money($cells[5]);
-            $recebRaw = trim(strip_tags($cells[6])); // "MM-YYYY"
+            $recebRaw = trim(strip_tags($cells[6])); // "MM-YYYY" (VAZIO = título ainda NÃO recebido)
+            $receitaTotal = round($parcela + $multa, 2);
+            $empresa    = trim(html_entity_decode(strip_tags($cells[7] ?? '')));
+            $observacao = trim(html_entity_decode(strip_tags($cells[8] ?? '')));
+            $emissao = preg_match('/^(\d{2})-(\d{4})$/', trim(strip_tags($cells[2] ?? '')), $me) ? ($me[2] . '-' . $me[1]) : null;
+
+            if (!isset($out[$cnpj])) {
+                $out[$cnpj] = ['name' => $name, 'receb' => [], 'receita_total' => [], 'em_aberto' => 0.0, 'titulos' => []];
+            }
+            if (empty($out[$cnpj]['name'])) $out[$cnpj]['name'] = $name;
+
+            // SEM mês de recebimento = título EM ABERTO (a receber): Recebido=0 e nada recebido ainda.
+            // ⚠️ Recebido=0 COM mês de recebimento = título baixado/fechado (NÃO é a receber).
+            // "Em Aberto" é um SALDO ATUAL por cliente (não por mês) — soma flat por CNPJ.
             if (!preg_match('/^(\d{2})-(\d{4})$/', $recebRaw, $mm)) {
+                if ($recebido <= 0 && $receitaTotal > 0) {
+                    $out[$cnpj]['em_aberto'] = round($out[$cnpj]['em_aberto'] + $receitaTotal, 2);
+                    $out[$cnpj]['titulos'][] = [
+                        'emissao' => $emissao, 'recebimento' => null, 'valor' => 0.0,
+                        'parcela' => round($parcela, 2), 'multa' => round($multa, 2),
+                        'receita_total' => $receitaTotal, 'em_aberto' => $receitaTotal,
+                        'empresa' => $empresa, 'observacao' => $observacao,
+                    ];
+                }
                 continue;
             }
             $ym = $mm[2] . '-' . $mm[1];
 
-            $receitaTotal = round($parcela + $multa, 2);
-            $emAberto     = $recebido <= 0 ? $receitaTotal : 0.0; // pago → deixa de ser aberto
-
-            // Emissão "MM-YYYY" -> "YYYY-MM" (col 2). Empresa (col 7) e Observação (col 8) opcionais.
-            $emissaoRaw = trim(strip_tags($cells[2] ?? ''));
-            $emissao = preg_match('/^(\d{2})-(\d{4})$/', $emissaoRaw, $me) ? ($me[2] . '-' . $me[1]) : null;
-            $empresa    = trim(html_entity_decode(strip_tags($cells[7] ?? '')));
-            $observacao = trim(html_entity_decode(strip_tags($cells[8] ?? '')));
-
-            if (!isset($out[$cnpj])) {
-                $out[$cnpj] = ['name' => $name, 'receb' => [], 'receita_total' => [], 'em_aberto' => [], 'titulos' => []];
-            }
             $out[$cnpj]['receb'][$ym]         = round(($out[$cnpj]['receb'][$ym] ?? 0) + $recebido, 2);
             $out[$cnpj]['receita_total'][$ym] = round(($out[$cnpj]['receita_total'][$ym] ?? 0) + $receitaTotal, 2);
-            $out[$cnpj]['em_aberto'][$ym]     = round(($out[$cnpj]['em_aberto'][$ym] ?? 0) + $emAberto, 2);
             // Detalhe por título — usado pelo drill-down. 'valor' = recebido (compat).
             $out[$cnpj]['titulos'][] = [
                 'emissao'       => $emissao,
@@ -165,7 +174,7 @@ class KeruakRentabilidadeService
                 'parcela'       => round($parcela, 2),
                 'multa'         => round($multa, 2),
                 'receita_total' => $receitaTotal,
-                'em_aberto'     => round($emAberto, 2),
+                'em_aberto'     => 0.0,
                 'empresa'       => $empresa,
                 'observacao'    => $observacao,
             ];

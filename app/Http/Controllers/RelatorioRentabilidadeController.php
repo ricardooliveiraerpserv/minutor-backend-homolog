@@ -466,7 +466,7 @@ class RelatorioRentabilidadeController extends Controller
                 $usados[$cc] = true;
                 $recebido     += (float) ($keruak[$cc]['receb'][$recebMonth] ?? 0);
                 $receitaTotal += (float) ($keruak[$cc]['receita_total'][$recebMonth] ?? 0);
-                $emAberto     += (float) ($keruak[$cc]['em_aberto'][$recebMonth] ?? 0);
+                $emAberto     += (float) ($keruak[$cc]['em_aberto'] ?? 0); // saldo atual (flat por CNPJ)
             }
 
             $horas = round($g['horas'], 2);
@@ -554,8 +554,8 @@ class RelatorioRentabilidadeController extends Controller
             if (isset($usados[$cnpj])) continue;
             $recebido = (float) ($info['receb'][$recebMonth] ?? 0);
             $receitaTotal = (float) ($info['receita_total'][$recebMonth] ?? 0);
-            $emAberto = (float) ($info['em_aberto'][$recebMonth] ?? 0);
-            if ($recebido <= 0 && $receitaTotal <= 0) continue;
+            $emAberto = (float) ($info['em_aberto'] ?? 0); // saldo atual (flat por CNPJ)
+            if ($recebido <= 0 && $receitaTotal <= 0 && $emAberto <= 0) continue;
             $usados[$cnpj] = true;
 
             $match = $cnpjToCustomer[$cnpj] ?? null;
