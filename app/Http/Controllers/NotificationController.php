@@ -125,10 +125,16 @@ class NotificationController extends Controller
             return !$viewed || ($n->requires_ack && !$acked);
         })->count();
 
+        // Apontamentos aguardando liberação (chegaram pela integração em competência
+        // já fechada) — sinaliza no menu "Atrasos (integração)". Mesmo conjunto da tela.
+        $atrasos = \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
+            ->whereNull('deleted_at')->count();
+
         return response()->json(['data' => [
             'pending_tasks'        => $pendingTasks,
             'overdue_tasks'        => $overdueTasks,
             'unread_notifications' => $unread,
+            'atrasos'              => $atrasos,
             'critical'             => $overdueTasks > 0,
         ]]);
     }
