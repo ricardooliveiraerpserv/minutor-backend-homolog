@@ -22,9 +22,15 @@ use Illuminate\Support\Facades\DB;
  */
 class ConsultantWorkloadController extends Controller
 {
-    /** Universo de projetos: só tipo "Projeto", em execução (sem encerrado/cancelado), não investimento. */
+    /** Universo de projetos: só tipo "Projeto", em execução (sem encerrado/cancelado), não investimento.
+     *  EXCEÇÃO: se `project_id` for passado (visão por projeto no cronograma), retorna só aquele
+     *  projeto SEM os filtros de tipo/status/investimento — o chamador já escolheu o projeto. */
     private function baseProjectQuery(Request $request)
     {
+        if ($pid = $request->get('project_id')) {
+            return Project::query()->where('id', $pid);
+        }
+
         $q = Project::query()
             ->whereHas('serviceType', fn ($s) => $s->whereRaw('LOWER(name) = ?', ['projeto']))
             ->where(fn ($x) => $x->whereNull('is_investimento_comercial')->orWhere('is_investimento_comercial', false));
@@ -33,7 +39,6 @@ class ConsultantWorkloadController extends Controller
         if ($request->get('status') !== 'all') {
             $q->whereNotIn('status', [Project::STATUS_FINISHED, Project::STATUS_CANCELLED]);
         }
-        if ($pid = $request->get('project_id')) $q->where('id', $pid);
         if ($cid = $request->get('customer_id')) $q->where('customer_id', $cid);
         if ($coordId = $request->get('coordinator_id')) {
             $q->whereHas('coordinators', fn ($c) => $c->where('users.id', $coordId));
