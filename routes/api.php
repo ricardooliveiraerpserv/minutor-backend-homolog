@@ -517,6 +517,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/delay-risk', [ProjectStageController::class, 'delayRisk'])->name('projects.delay-risk');
             Route::get('/projects/{project}/consolidated-team', [ProjectController::class, 'consolidatedTeam'])->name('projects.consolidated-team');
             Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
+            // Visões de gestão da equipe (consultores): alocação por consultor + apontamento semanal.
+            Route::get('/consultant-allocation', [\App\Http\Controllers\ConsultantWorkloadController::class, 'allocation'])->name('consultant.allocation');
+            Route::get('/weekly-timesheets', [\App\Http\Controllers\ConsultantWorkloadController::class, 'weekly'])->name('consultant.weekly');
             Route::get('/projects-portfolio', [\App\Http\Controllers\ProjectEvmController::class, 'portfolio'])->name('projects.portfolio');
             Route::get('/projects-portfolio/curve', [\App\Http\Controllers\ProjectEvmController::class, 'portfolioCurve'])->name('projects.portfolio.curve');
             Route::get('/projects/{project}/evm', [\App\Http\Controllers\ProjectEvmController::class, 'evm'])->name('projects.evm');
