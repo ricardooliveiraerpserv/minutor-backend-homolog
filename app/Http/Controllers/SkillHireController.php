@@ -198,7 +198,19 @@ class SkillHireController extends Controller
             'form.cidade' => 'nullable|string|max:100',
             'form.estado' => 'nullable|string|max:2',
             'form.observacao' => 'nullable|string',
+            // Card de PARCEIRO: campos editáveis no card (persistem no form e alimentam
+            // a criação do Partner ao concluir). Sem estas regras o validate os descarta.
+            'form.kind' => 'nullable|in:person,partner',
+            'form.document' => 'nullable|string|max:20',
+            'form.pricing_type' => 'nullable|in:fixed,variable',
+            'form.hourly_rate' => 'nullable|string|max:60',
+            'form.active' => 'nullable|boolean',
         ]);
+        // Mescla sobre o form existente (NÃO substitui): preserva chaves internas não
+        // enviadas — ex.: form.kind / form.partner_id — que senão seriam apagadas ao editar.
+        if (array_key_exists('form', $data)) {
+            $data['form'] = array_merge(is_array($card->form) ? $card->form : [], $data['form']);
+        }
         $card->fill($data)->save();
 
         return response()->json($this->card($card->fresh('respondent', 'createdUser')));
