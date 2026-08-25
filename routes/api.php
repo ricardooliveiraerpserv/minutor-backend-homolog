@@ -1150,6 +1150,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/projects/{project}/messages',           [ProjectMessageController::class, 'index'])->name('project-messages.index');
         Route::post('/projects/{project}/messages',          [ProjectMessageController::class, 'store'])->name('project-messages.store');
         Route::patch('/projects/{project}/messages/{message}', [ProjectMessageController::class, 'update'])->name('project-messages.update');
+        Route::post('/projects/{project}/messages/{message}/pin', [ProjectMessageController::class, 'togglePin'])->name('project-messages.pin');
         Route::post('/projects/{project}/messages/mark-read', [ProjectMessageController::class, 'markRead'])->name('project-messages.mark-read');
         // Participantes CONVIDADOS do Diário (libera usuário específico a ver/postar).
         Route::get('/projects/{project}/messages/participants',            [ProjectMessageController::class, 'participants'])->name('project-messages.participants');
