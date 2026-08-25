@@ -132,12 +132,17 @@ class SkillSurveyController extends Controller
         return response()->json($this->surveyDetail($survey->fresh('matrixVersion')));
     }
 
-    /** Grupos de colaboradores internos (categorias) elegíveis à campanha. */
+    /**
+     * Grupos de colaboradores internos (categorias) elegíveis à campanha.
+     * Parceiros são type=parceiro_admin; a flag `is_executive` separa o ADMIN do
+     * parceiro (true) do parceiro comum (false/null).
+     */
     private const CAMPAIGN_GROUPS = [
-        ['key' => 'consultor',   'label' => 'Consultores',            'types' => ['consultor']],
-        ['key' => 'coordenador', 'label' => 'Coordenadores',          'types' => ['coordenador']],
-        ['key' => 'parceiro',    'label' => 'Parceiros',              'types' => ['parceiro_admin']],
-        ['key' => 'admin',       'label' => 'Administrativo / Admin',  'types' => ['admin', 'administrativo']],
+        ['key' => 'consultor',      'label' => 'Consultores',            'types' => ['consultor']],
+        ['key' => 'coordenador',    'label' => 'Coordenadores',          'types' => ['coordenador']],
+        ['key' => 'parceiro',       'label' => 'Parceiros',              'types' => ['parceiro_admin'], 'is_executive' => false],
+        ['key' => 'parceiro_admin', 'label' => 'Parceiros admin',        'types' => ['parceiro_admin'], 'is_executive' => true],
+        ['key' => 'admin',          'label' => 'Administrativo / Admin',  'types' => ['admin', 'administrativo']],
     ];
 
     /** Destinatários possíveis da campanha, agrupados por categoria (para seleção). */
@@ -145,6 +150,11 @@ class SkillSurveyController extends Controller
     {
         $groups = collect(self::CAMPAIGN_GROUPS)->map(function ($g) {
             $users = User::whereIn('type', $g['types'])->where('enabled', true)
+                ->when(array_key_exists('is_executive', $g), function ($q) use ($g) {
+                    $g['is_executive']
+                        ? $q->where('is_executive', true)
+                        : $q->where(fn ($w) => $w->where('is_executive', false)->orWhereNull('is_executive'));
+                })
                 ->orderBy('name')->get(['id', 'name', 'email'])
                 ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])->values();
 
