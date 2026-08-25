@@ -112,6 +112,31 @@ class AttachmentController extends Controller
         });
     }
 
+    /** Fixar/desafixar um anexo (Documentos) — máx 2 por entidade (projeto/contrato). */
+    public function togglePin(Request $request, int $id): JsonResponse
+    {
+        $att = Attachment::findOrFail($id);
+
+        if ($att->pinned_at) {
+            $att->pinned_at = null;
+            $att->save();
+
+            return response()->json(['pinned' => false]);
+        }
+
+        $pinnedCount = Attachment::where('entity_type', $att->entity_type)
+            ->where('entity_id', $att->entity_id)
+            ->whereNotNull('pinned_at')->count();
+        if ($pinnedCount >= 2) {
+            return response()->json(['message' => 'Máximo de 2 itens fixados. Desafixe um antes de fixar outro.'], 422);
+        }
+
+        $att->pinned_at = now();
+        $att->save();
+
+        return response()->json(['pinned' => true]);
+    }
+
     public function destroy(Request $request, int $id): JsonResponse
     {
         return $this->safe(function () use ($id, $request) {

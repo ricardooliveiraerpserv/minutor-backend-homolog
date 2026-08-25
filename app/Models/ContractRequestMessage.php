@@ -8,7 +8,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ContractRequestMessage extends Model
 {
-    protected $fillable = ['contract_request_id', 'project_id', 'user_id', 'message', 'visibility'];
+    protected $fillable = ['contract_request_id', 'project_id', 'user_id', 'message', 'visibility', 'pinned_at'];
+
+    protected $casts = ['pinned_at' => 'datetime'];
 
     public function request(): BelongsTo
     {

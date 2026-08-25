@@ -1399,6 +1399,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{project}/comments',                  [\App\Http\Controllers\ProjectCommentController::class, 'store'])->name('project-comments.store');
         Route::get('/projects/{project}/comments/mentionable-users', [\App\Http\Controllers\ProjectCommentController::class, 'mentionableUsers'])->name('project-comments.mentionable-users');
         Route::get('/project-comments/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ProjectCommentController::class, 'downloadAttachment'])->name('project-comments.attachment-download');
+        Route::post('/req-comments/{message}/pin',                   [\App\Http\Controllers\ProjectCommentController::class, 'togglePin'])->name('req-comments.pin');
 
         // 💬 CHAT DE CONTRATOS
         Route::get('/contracts/{contract}/messages',              [\App\Http\Controllers\ContractMessageController::class, 'index'])->name('contract-messages.index');
@@ -1408,6 +1409,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-messages/notifications',            [\App\Http\Controllers\ContractMessageController::class, 'notifications'])->name('contract-messages.notifications');
         Route::get('/contract-messages/unread-contracts',         [\App\Http\Controllers\ContractMessageController::class, 'unreadContracts'])->name('contract-messages.unread-contracts');
         Route::get('/contract-messages/{message}/attachments/{attachment}/download', [\App\Http\Controllers\ContractMessageController::class, 'downloadAttachment'])->name('contract-messages.attachment-download');
+        Route::post('/contract-messages/{message}/pin',           [\App\Http\Controllers\ContractMessageController::class, 'togglePin'])->name('contract-messages.pin');
 
         // 🔔 SININHO DE MENÇÕES + CLIENTE (header) — Triagem
         Route::get('/me/mentions', [\App\Http\Controllers\MeController::class, 'mentions'])->name('me.mentions');
@@ -1678,6 +1680,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/attachments/{id}/download',     [\App\Http\Controllers\AttachmentController::class, 'download'])->name('attachments.download');
         Route::get('/attachments/{id}/url',          [\App\Http\Controllers\AttachmentController::class, 'signedUrl'])->name('attachments.signed-url');
         Route::delete('/attachments/{id}',           [\App\Http\Controllers\AttachmentController::class, 'destroy'])->name('attachments.destroy');
+        Route::post('/attachments/{id}/pin',         [\App\Http\Controllers\AttachmentController::class, 'togglePin'])->name('attachments.pin');
         Route::post('/attachments/{id}/restore',     [\App\Http\Controllers\AttachmentController::class, 'restore'])->name('attachments.restore');
     });
 
