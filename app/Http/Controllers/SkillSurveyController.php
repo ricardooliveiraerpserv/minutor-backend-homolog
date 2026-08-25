@@ -7,6 +7,8 @@ use App\Models\SkillSurveyInvite;
 use App\Models\User;
 use App\Services\SkillCampaignNotifier;
 use App\Services\SkillSurveyService;
+use App\Workflows\WorkflowConfigService;
+use App\Workflows\WorkflowMailer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -130,10 +132,54 @@ class SkillSurveyController extends Controller
         return response()->json($this->surveyDetail($survey->fresh('matrixVersion')));
     }
 
+    /** Grupos de colaboradores internos (categorias) elegíveis à campanha. */
+    private const CAMPAIGN_GROUPS = [
+        ['key' => 'consultor',   'label' => 'Consultores',            'types' => ['consultor']],
+        ['key' => 'coordenador', 'label' => 'Coordenadores',          'types' => ['coordenador']],
+        ['key' => 'parceiro',    'label' => 'Parceiros',              'types' => ['parceiro_admin']],
+        ['key' => 'admin',       'label' => 'Administrativo / Admin',  'types' => ['admin', 'administrativo']],
+    ];
+
+    /** Destinatários possíveis da campanha, agrupados por categoria (para seleção). */
+    public function campaignTargets(): JsonResponse
+    {
+        $groups = collect(self::CAMPAIGN_GROUPS)->map(function ($g) {
+            $users = User::whereIn('type', $g['types'])->where('enabled', true)
+                ->orderBy('name')->get(['id', 'name', 'email'])
+                ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])->values();
+
+            return ['key' => $g['key'], 'label' => $g['label'], 'count' => $users->count(), 'users' => $users];
+        });
+
+        return response()->json(['groups' => $groups]);
+    }
+
+    /** Prévia do e-mail da campanha (não envia). */
+    public function campaignPreview(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'title' => 'nullable|string|max:160',
+            'description' => 'nullable|string',
+            'deadline' => 'nullable|date',
+        ]);
+        $title = $data['title'] ?: ('Atualização de Competências — ' . now()->format('m/Y'));
+        $prazo = ! empty($data['deadline']) ? \Illuminate\Support\Carbon::parse($data['deadline'])->format('d/m/Y') : 'sem prazo';
+        $cta = rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/competencias/responder';
+
+        $r = app(WorkflowMailer::class)->renderHtml(
+            SkillCampaignNotifier::WORKFLOW,
+            ['titulo' => $title, 'prazo' => $prazo],
+            $cta,
+            $data['description'] ?? null,
+        );
+
+        return response()->json(['subject' => $r['subject'], 'html' => $r['html']]);
+    }
+
     /**
      * CAMPANHA de atualização de competências: cria a pesquisa interna com PRAZO,
-     * convida todos os consultores e dispara pop-up + e-mail (workflow) num passo.
-     * A cobrança recorrente de quem não preencher é feita pelo sweep diário.
+     * convida os colaboradores SELECIONADOS e dispara pop-up + e-mail (workflow)
+     * num passo. A recorrência de cobrança é definida aqui (Central de Workflows).
      */
     public function launchCampaign(Request $request): JsonResponse
     {
@@ -141,25 +187,19 @@ class SkillSurveyController extends Controller
             'title' => 'nullable|string|max:160',
             'description' => 'nullable|string',
             'deadline' => 'required|date|after_or_equal:today',
-            'groups' => 'array',
-            'groups.*' => 'in:consultor,coordenador,parceiro,admin',
+            'user_ids' => 'required|array|min:1',
+            'user_ids.*' => 'integer',
+            'recurrence_days' => 'nullable|integer|min:0|max:365',
         ]);
 
         $version = optional($this->service->activeVersion())->id;
         abort_if(! $version, 422, 'Nenhuma versão da matriz publicada.');
 
-        // Grupos de colaboradores internos → tipos de usuário.
-        $typeMap = [
-            'consultor'   => ['consultor'],
-            'coordenador' => ['coordenador'],
-            'parceiro'    => ['parceiro_admin'],
-            'admin'       => ['admin', 'administrativo'],
-        ];
-        $groups = ! empty($data['groups']) ? $data['groups'] : ['consultor', 'coordenador'];
-        $types = collect($groups)->flatMap(fn ($g) => $typeMap[$g] ?? [])->unique()->values()->all();
-
-        $userIds = User::whereIn('type', $types)->where('enabled', true)->pluck('id')->all();
-        abort_if(empty($userIds), 422, 'Nenhum destinatário ativo para os grupos selecionados.');
+        // Só colaboradores internos ATIVOS dos tipos elegíveis (evita convidar cliente etc.).
+        $eligible = ['consultor', 'coordenador', 'parceiro_admin', 'admin', 'administrativo'];
+        $userIds = User::whereIn('id', $data['user_ids'])->whereIn('type', $eligible)
+            ->where('enabled', true)->pluck('id')->all();
+        abort_if(empty($userIds), 422, 'Nenhum destinatário válido selecionado.');
 
         $survey = SkillSurvey::create([
             'type' => SkillSurvey::TYPE_INTERNAL,
@@ -175,6 +215,12 @@ class SkillSurveyController extends Controller
 
         // Convites sem o e-mail padrão — a campanha notifica por pop-up + workflow.
         $this->service->inviteInternalUsers($survey, $userIds, notify: false);
+
+        // Recorrência definida no modal → grava no template do workflow (Central).
+        if (array_key_exists('recurrence_days', $data) && $data['recurrence_days'] !== null) {
+            app(WorkflowConfigService::class)->setRecurrenceDays(SkillCampaignNotifier::WORKFLOW, (int) $data['recurrence_days']);
+        }
+
         $mails = SkillCampaignNotifier::onLaunch($survey, $request->user());
 
         return response()->json(array_merge($this->surveyDetail($survey->fresh('matrixVersion')), [

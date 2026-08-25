@@ -13,7 +13,7 @@
       <td style="padding:32px 40px 4px;background:#000000;">
         <div style="font-size:11px;letter-spacing:.22em;color:{{ $accent ?? '#22C55E' }};font-weight:800;text-transform:uppercase;">{{ $eyebrow }}</div>
         <h1 style="margin:8px 0 4px;color:#FFFFFF;font-size:23px;line-height:1.3;font-weight:800;">{{ $titulo }}</h1>
-        <p style="margin:8px 0 0;color:#D4D4D8;font-size:14px;line-height:1.55;">{{ $corpo }}</p>
+        <p style="margin:8px 0 0;color:#D4D4D8;font-size:14px;line-height:1.55;">{!! nl2br(e($corpo)) !!}</p>
       </td>
     </tr>
 

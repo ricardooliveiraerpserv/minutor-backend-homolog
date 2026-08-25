@@ -146,6 +146,18 @@ class WorkflowConfigService
      * @param array<string,string> $audiences audience => off|to|cc
      * @param array<int,array{email:string,channel:string}> $extraEmails
      */
+    /** Define só a recorrência (dias) de um workflow, sem tocar subject/body/audiências. */
+    public function setRecurrenceDays(string $key, int $days): void
+    {
+        $meta = ((array) config('workflows.workflows', []))[$key] ?? null;
+        if (! $meta || ! ($meta['recurrence'] ?? false)) {
+            return;
+        }
+        $row = WorkflowTemplate::firstOrNew(['workflow_key' => $key]);
+        $row->recurrence_days = max(0, $days);
+        $row->save();
+    }
+
     public function save(string $key, array $audiences, array $extraEmails, ?string $subject = null, ?string $body = null, ?int $recurrenceDays = null): void
     {
         $workflows = (array) config('workflows.workflows', []);

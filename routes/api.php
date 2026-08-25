@@ -1383,6 +1383,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/competencias/meta',                    [SkillSurveyController::class, 'meta']);
             Route::get('/competencias/surveys',                 [SkillSurveyController::class, 'index']);
             Route::post('/competencias/surveys',                [SkillSurveyController::class, 'store']);
+            Route::get('/competencias/campanhas/destinatarios', [SkillSurveyController::class, 'campaignTargets']);
+            Route::post('/competencias/campanhas/previa',       [SkillSurveyController::class, 'campaignPreview']);
             Route::post('/competencias/campanhas',              [SkillSurveyController::class, 'launchCampaign']);
             Route::get('/competencias/surveys/{id}',            [SkillSurveyController::class, 'show'])->whereNumber('id');
             Route::put('/competencias/surveys/{id}',            [SkillSurveyController::class, 'update'])->whereNumber('id');
