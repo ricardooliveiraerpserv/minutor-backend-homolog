@@ -8,9 +8,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ProjectMessage extends Model
 {
-    protected $fillable = ['project_id', 'user_id', 'message', 'priority', 'visibility', 'edited_at'];
+    protected $fillable = ['project_id', 'user_id', 'message', 'priority', 'visibility', 'edited_at', 'pinned_at'];
 
-    protected $casts = ['edited_at' => 'datetime'];
+    protected $casts = ['edited_at' => 'datetime', 'pinned_at' => 'datetime'];
 
     /** Janela de edição da própria última interação (horas). */
     public const EDIT_WINDOW_HOURS = 3;

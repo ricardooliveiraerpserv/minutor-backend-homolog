@@ -48,6 +48,41 @@ class ProjectMessageController extends Controller
         return response()->json($messages);
     }
 
+    /** Fixar/desafixar uma mensagem do Diário/Comentários do projeto — máx 2 por (projeto + visibilidade). */
+    public function togglePin(Request $request, Project $project, ProjectMessage $message): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        if (!$user->isAdmin() && !$this->userCanAccessProject($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        if ((int) $message->project_id !== (int) $project->id) {
+            return response()->json(['message' => 'Mensagem não encontrada'], 404);
+        }
+
+        if ($message->pinned_at) {
+            $message->pinned_at = null;
+            $message->save();
+
+            return response()->json(['pinned' => false]);
+        }
+
+        $pinnedCount = ProjectMessage::where('project_id', $project->id)
+            ->where('visibility', $message->visibility)
+            ->whereNotNull('pinned_at')->count();
+        if ($pinnedCount >= 2) {
+            return response()->json(['message' => 'Máximo de 2 itens fixados. Desafixe um antes de fixar outro.'], 422);
+        }
+
+        $message->pinned_at = now();
+        $message->save();
+
+        return response()->json(['pinned' => true]);
+    }
+
     public function store(Request $request, Project $project): JsonResponse
     {
         $user = $request->user();
