@@ -23,14 +23,14 @@ class WorkflowMailer
      * @param array  $ctx   Contexto p/ resolver audiências (contract, project, actor, ...).
      * @param array  $vars  Valores das variáveis do template (ex.: ['valor' => 'R$ 100,00']).
      */
-    public function send(string $key, array $ctx, array $vars, ?string $ctaUrl = null, ?string $bodyOverride = null): bool
+    public function send(string $key, array $ctx, array $vars, ?string $ctaUrl = null, ?string $bodyOverride = null, ?string $titleOverride = null): bool
     {
         $rcpt = $this->resolver->resolve($key, $ctx);
         if (empty($rcpt['to'])) {
             return false;
         }
 
-        ['subject' => $subject, 'html' => $html] = $this->renderHtml($key, $vars, $ctaUrl, $bodyOverride);
+        ['subject' => $subject, 'html' => $html] = $this->renderHtml($key, $vars, $ctaUrl, $bodyOverride, $titleOverride);
 
         try {
             $graphFrom = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')));
@@ -55,7 +55,7 @@ class WorkflowMailer
      * Renderiza EXATAMENTE o assunto/HTML que seriam enviados (mesmo layout do e-mail
      * real), para exibir a prévia na tela. @return array{subject:string, html:string}
      */
-    public function renderHtml(string $key, array $vars, ?string $ctaUrl = null, ?string $bodyOverride = null): array
+    public function renderHtml(string $key, array $vars, ?string $ctaUrl = null, ?string $bodyOverride = null, ?string $titleOverride = null): array
     {
         $meta = (array) (config('workflows.workflows', [])[$key] ?? []);
         $tpl  = $this->config->template($key);
@@ -71,7 +71,7 @@ class WorkflowMailer
         }
 
         $html = view('emails.workflow', [
-            'titulo'  => $meta['label'] ?? $key,
+            'titulo'  => ($titleOverride !== null && $titleOverride !== '') ? $titleOverride : ($meta['label'] ?? $key),
             'eyebrow' => $meta['domain'] ?? 'Workflow',
             'accent'  => $this->config->accent($key),
             'corpo'   => $corpo,

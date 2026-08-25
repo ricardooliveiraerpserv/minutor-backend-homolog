@@ -171,6 +171,7 @@ class SkillSurveyController extends Controller
             ['titulo' => $title, 'prazo' => $prazo],
             $cta,
             $data['description'] ?? null,
+            $title,
         );
 
         return response()->json(['subject' => $r['subject'], 'html' => $r['html']]);
