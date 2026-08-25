@@ -277,6 +277,13 @@ Schedule::command('contratacao:notify-administrativo')
   ->description('Avisa o administrativo sobre contratações a providenciar (por data de primeiro contato; atraso se passar)')
   ->withoutOverlapping();
 
+Schedule::command('competencias:notify-pendentes')
+  ->dailyAt('08:10')
+  ->timezone($alertTz)
+  ->name('competencias-notify-pendentes')
+  ->description('Cobra consultores pendentes nas campanhas de atualização de competências (recorrência da Central + prazo)')
+  ->withoutOverlapping();
+
 // Log de encerramentos (fechamento SEMANAL por prazo + auto-fechamento de reaberturas
 // semana/mês). Idempotente — só registra os eventos p/ acompanhamento; o bloqueio em si
 // é lazy (compara now vs prazo/auto_close_at) e não depende deste comando.

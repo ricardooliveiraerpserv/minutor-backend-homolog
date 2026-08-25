@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\SkillSurvey;
 use App\Models\SkillSurveyInvite;
 use App\Models\User;
+use App\Services\SkillCampaignNotifier;
 use App\Services\SkillSurveyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -129,6 +130,51 @@ class SkillSurveyController extends Controller
         return response()->json($this->surveyDetail($survey->fresh('matrixVersion')));
     }
 
+    /**
+     * CAMPANHA de atualização de competências: cria a pesquisa interna com PRAZO,
+     * convida todos os consultores e dispara pop-up + e-mail (workflow) num passo.
+     * A cobrança recorrente de quem não preencher é feita pelo sweep diário.
+     */
+    public function launchCampaign(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'title' => 'nullable|string|max:160',
+            'description' => 'nullable|string',
+            'deadline' => 'required|date|after_or_equal:today',
+            'target' => 'nullable|in:consultores,todos',
+        ]);
+
+        $version = optional($this->service->activeVersion())->id;
+        abort_if(! $version, 422, 'Nenhuma versão da matriz publicada.');
+
+        $roles = ($data['target'] ?? 'consultores') === 'todos'
+            ? ['admin', 'administrativo', 'coordenador', 'consultor']
+            : ['coordenador', 'consultor'];
+        $userIds = User::whereIn('type', $roles)->where('enabled', true)->pluck('id')->all();
+        abort_if(empty($userIds), 422, 'Nenhum destinatário ativo para a campanha.');
+
+        $survey = SkillSurvey::create([
+            'type' => SkillSurvey::TYPE_INTERNAL,
+            'title' => $data['title'] ?: ('Atualização de Competências — ' . now()->format('m/Y')),
+            'description' => $data['description'] ?: 'Revise e atualize suas competências. Se você evoluiu (novo curso, ferramenta ou projeto), reflita isso no seu perfil.',
+            'deadline' => $data['deadline'],
+            'matrix_version_id' => $version,
+            'allow_public' => false,
+            'status' => SkillSurvey::STATUS_OPEN,
+            'opened_at' => now(),
+            'created_by' => $request->user()->id,
+        ]);
+
+        // Convites sem o e-mail padrão — a campanha notifica por pop-up + workflow.
+        $this->service->inviteInternalUsers($survey, $userIds, notify: false);
+        $mails = SkillCampaignNotifier::onLaunch($survey, $request->user());
+
+        return response()->json(array_merge($this->surveyDetail($survey->fresh('matrixVersion')), [
+            'invited' => count($userIds),
+            'mails_sent' => $mails,
+        ]), 201);
+    }
+
     /** Convida colaboradores internos (user_ids específicos OU todos). */
     public function storeInvites(Request $request, int $id): JsonResponse
     {
@@ -184,23 +230,20 @@ class SkillSurveyController extends Controller
     }
 
     /**
-     * Registra um lembrete para um convite. NÃO dispara e-mail no ambiente de
-     * teste — grava a intenção e devolve o link individual para envio manual.
+     * Lembrete MANUAL de um convite: dispara pop-up + e-mail (workflow
+     * competencias.campanha) ao consultor e registra o lembrete.
      */
-    public function reminder(int $inviteId): JsonResponse
+    public function reminder(Request $request, int $inviteId): JsonResponse
     {
         $invite = SkillSurveyInvite::findOrFail($inviteId);
         abort_if($invite->status === SkillSurveyInvite::STATUS_SUBMITTED, 422, 'Convite já respondido.');
 
-        $invite->forceFill([
-            'reminder_count' => $invite->reminder_count + 1,
-            'last_reminder_at' => now(),
-            'status' => $invite->status === SkillSurveyInvite::STATUS_PENDING ? SkillSurveyInvite::STATUS_SENT : $invite->status,
-        ])->save();
+        $sent = SkillCampaignNotifier::remindOne($invite, $request->user());
 
         return response()->json([
             'id' => $invite->id,
-            'reminder_count' => $invite->reminder_count,
+            'reminder_count' => $invite->fresh()->reminder_count,
+            'email_sent' => $sent,
             'link' => $this->inviteLink($invite),
         ]);
     }

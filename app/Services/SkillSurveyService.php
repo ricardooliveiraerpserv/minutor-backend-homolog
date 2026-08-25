@@ -345,6 +345,14 @@ class SkillSurveyService
             'user_agent' => isset($meta['user_agent']) ? substr((string) $meta['user_agent'], 0, 255) : null,
         ]);
 
+        // Interno com histórico → pré-preenche com a última avaliação (experiência
+        // de ATUALIZAÇÃO tanto na auto-avaliação quanto em campanhas). Primeira vez
+        // (sem submissão anterior) começa em branco.
+        if ($respondent->type === SkillRespondent::TYPE_INTERNAL && $respondent->user_id) {
+            $this->prefillFromLastSubmission($submission);
+            $submission = $submission->fresh();
+        }
+
         if ($invite) {
             $invite->forceFill([
                 'status' => SkillSurveyInvite::STATUS_STARTED,
@@ -667,8 +675,12 @@ class SkillSurveyService
         }
     }
 
-    /** Cria convites para uma lista de colaboradores internos (idempotente). */
-    public function inviteInternalUsers(SkillSurvey $survey, array $userIds): int
+    /**
+     * Cria convites para uma lista de colaboradores internos (idempotente).
+     * $notify=false pula o e-mail da notificação padrão (campanhas notificam via
+     * SkillCampaignNotifier — pop-up + workflow da Central).
+     */
+    public function inviteInternalUsers(SkillSurvey $survey, array $userIds, bool $notify = true): int
     {
         $created = 0;
         foreach (array_unique($userIds) as $userId) {
@@ -690,7 +702,9 @@ class SkillSurveyService
             if ($invite->wasRecentlyCreated) {
                 $created++;
                 // Avisa o colaborador por e-mail com link direto para responder (assíncrono).
-                $user->notify(new \App\Notifications\SkillSurveyInviteNotification($survey));
+                if ($notify) {
+                    $user->notify(new \App\Notifications\SkillSurveyInviteNotification($survey));
+                }
             }
         }
 

@@ -24,6 +24,7 @@ return [
         'partner.new'                  => '#14B8A6', // teal (novo parceiro)
         'hire.first_contact'           => '#22D3EE', // ciano (primeiro contato)
         'hire.movement'                => '#A78BFA', // roxo claro (movimentação de contratação)
+        'competencias.campanha'        => '#0EA5E9', // azul (campanha de competências)
         'contract.created'             => '#FBBF24', // amarelo
         'contract.project_generated'   => '#22C55E', // verde
         'project.coordinator_assigned' => '#A3E635', // lima
@@ -160,6 +161,7 @@ return [
         'expense.pending_approval'     => ['project', 'actor'],
         'expense.adjustment'           => ['project', 'actor'],
         'expense.rejected'             => ['project', 'actor'],
+        'competencias.campanha'        => ['consultant', 'actor'],
     ],
 
     // Modelo de e-mail por workflow: título (assunto) + texto (corpo) + variáveis.
@@ -196,6 +198,14 @@ return [
                 'contato'          => 'Contato (telefone/e-mail)',
                 'primeiro_contato' => 'Data de primeiro contato',
                 'inicio'           => 'Data de início',
+            ],
+        ],
+        'competencias.campanha' => [
+            'subject'   => 'Atualize suas competências — {titulo}',
+            'body'      => 'Foi aberta a campanha "{titulo}" para atualização das suas competências. Se você evoluiu (novo curso, ferramenta ou projeto), reflita isso no seu perfil. Prazo para preencher: {prazo}. Acesse o Minutor › Minhas Competências.',
+            'variables' => [
+                'titulo' => 'Título da campanha',
+                'prazo'  => 'Prazo para preencher',
             ],
         ],
         'hire.movement' => [
@@ -458,6 +468,16 @@ return [
             'audiences'   => [
                 'administrativo' => 'to',
                 'diretor'        => 'off',
+            ],
+        ],
+        // ───────────────────────── Competências ─────────────────────────
+        'competencias.campanha' => [
+            'label'       => 'Campanha de competências — cobrar consultores',
+            'domain'      => 'Competências',
+            'description' => 'Ao abrir uma campanha de atualização de competências, avisa cada consultor (e-mail + pop-up) para atualizar seu perfil até o prazo. Defina a recorrência abaixo para RE-COBRAR a cada N dias quem ainda não preencheu, enquanto a campanha estiver aberta. 0 = só o aviso na abertura (mais o pop-up até o prazo).',
+            'recurrence'  => true,
+            'audiences'   => [
+                'consultor' => 'to',
             ],
         ],
         'hire.movement' => [
