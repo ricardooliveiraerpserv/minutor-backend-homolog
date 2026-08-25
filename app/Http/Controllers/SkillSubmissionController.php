@@ -52,8 +52,19 @@ class SkillSubmissionController extends Controller
         abort_if($survey->type !== SkillSurvey::TYPE_INTERNAL, 403, 'Pesquisa não é interna.');
         abort_if($survey->status !== SkillSurvey::STATUS_OPEN, 422, 'Pesquisa não está aberta.');
 
-        $invite = SkillSurveyInvite::where('survey_id', $survey->id)->where('user_id', $user->id)->first();
-        abort_if(! $invite, 403, 'Você não foi convidado para esta pesquisa.');
+        // Convite: se o colaborador interno tem o link mas não foi convidado
+        // explicitamente, cria o convite na hora (o link funciona p/ quem o recebe).
+        $respondent = $this->service->internalRespondent($user);
+        $invite = SkillSurveyInvite::firstOrCreate(
+            ['survey_id' => $survey->id, 'user_id' => $user->id],
+            [
+                'respondent_id' => $respondent->id,
+                'email' => $user->email ? mb_substr((string) $user->email, 0, 190) : null,
+                'name' => $user->name ? mb_substr((string) $user->name, 0, 160) : 'Colaborador',
+                'status' => SkillSurveyInvite::STATUS_OPENED,
+                'opened_at' => now(),
+            ]
+        );
 
         if (in_array($invite->status, [SkillSurveyInvite::STATUS_PENDING, SkillSurveyInvite::STATUS_SENT], true)) {
             $invite->forceFill(['status' => SkillSurveyInvite::STATUS_OPENED, 'opened_at' => $invite->opened_at ?? now(), 'last_access_at' => now()])->save();
