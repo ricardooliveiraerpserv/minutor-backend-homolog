@@ -212,6 +212,7 @@ class Attachment extends Model
             'client_approval' => 'aprovacao_cliente',
             'evidence'        => 'evidencia',
             'image'           => 'imagem',
+            'document'        => 'documento',
             'attachment'      => 'outro',
             default           => $this->category,
         };

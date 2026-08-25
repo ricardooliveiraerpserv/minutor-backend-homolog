@@ -46,6 +46,7 @@ class ContractController extends Controller
             'aprovacao_cliente'  => 'client_approval',
             'evidencia'          => 'evidence',
             'imagem'             => 'image',
+            'documento'          => 'document',
             'outro'              => 'attachment',
             default              => 'attachment',
         };
@@ -1237,7 +1238,8 @@ class ContractController extends Controller
     {
         $request->validate([
             'file' => 'required|file|max:20480|mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,jpg,jpeg,png,txt,csv,zip',
-            'type' => 'required|in:proposta,contrato,logo,aprovacao_cliente',
+            'type' => 'required|in:proposta,contrato,logo,aprovacao_cliente,documento',
+            'description' => 'nullable|string|max:500',
         ]);
 
         $file = $request->file('file');
@@ -1251,7 +1253,10 @@ class ContractController extends Controller
             'storage_path'  => $path,
             'original_name' => $file->getClientOriginalName(),
             'mime_type'     => $file->getMimeType() ?: 'application/octet-stream',
-            'metadata'      => ['legacy_type' => $request->input('type')],
+            'metadata'      => array_filter([
+                'legacy_type' => $request->input('type'),
+                'description'  => $request->filled('description') ? trim((string) $request->input('description')) : null,
+            ], fn ($v) => $v !== null),
         ]);
 
         // Subprojeto faturado: a proposta/aprovação do contrato também alimenta o APORTE

@@ -3446,6 +3446,7 @@ class ProjectController extends Controller
             'mime_type'     => $a->mime_type,
             'size'          => $a->size_bytes,
             'source'        => 'project',
+            'description'   => is_array($a->metadata) ? ($a->metadata['description'] ?? null) : null,
             'created_at'    => $a->created_at,
         ])->concat($contractAtts->map(fn ($a) => [
             'id'            => $a->id,
@@ -3454,6 +3455,7 @@ class ProjectController extends Controller
             'mime_type'     => $a->mime_type,
             'size'          => $a->size_bytes,
             'source'        => 'contract',
+            'description'   => is_array($a->metadata) ? ($a->metadata['description'] ?? null) : null,
             'created_at'    => $a->created_at,
         ]))->values();
 
