@@ -491,6 +491,15 @@ class UserController extends Controller
         try {
             $userData = $validator->validated();
 
+            // Rede de segurança multi-empresa: colaborador que LANÇA apontamento
+            // (consultor/coordenador/parceiro) precisa de empresa base — senão os
+            // apontamentos dele nascem órfãos e somem das telas. Se não veio no
+            // payload (ex.: form simples de Configurações), assume ERPSERV.
+            if (empty($userData['home_company_id'])
+                && in_array($userData['type'] ?? '', ['consultor', 'coordenador', 'parceiro_admin'], true)) {
+                $userData['home_company_id'] = \App\Models\Company::where('slug', 'erpserv')->value('id');
+            }
+
             // A1 (segurança): só ADMIN define papel/permissão. Um users.create não-admin
             // não pode criar um admin nem conceder permissões/flags de papel.
             if (!Auth::user()->isAdmin()) {

@@ -307,9 +307,12 @@ class SkillHireController extends Controller
             if ($perfil === 'coordenador' && in_array($form['coordinator_type'] ?? '', ['projetos', 'sustentacao'], true)) {
                 $payload['coordinator_type'] = $form['coordinator_type'];
             }
-            // Empresa base da folha (ERPSERV/Bizify) → is_bizify.
-            if (($form['empresa'] ?? '') === 'bizify') {
-                $payload['is_bizify'] = true;
+            // Empresa base (ERPSERV/Bizify) → home_company_id (UserController deriva is_bizify).
+            // Sem isso o usuário nasce SEM empresa e seus apontamentos ficam órfãos.
+            $empresaSlug = (($form['empresa'] ?? 'erpserv') === 'bizify') ? 'bizify' : 'erpserv';
+            $companyId = \App\Models\Company::where('slug', $empresaSlug)->value('id');
+            if ($companyId) {
+                $payload['home_company_id'] = $companyId;
             }
             // Modalidade → tipo de contrato; Cargo → cargo (signature.role).
             if (in_array($card->modalidade, ['pj', 'cooperado', 'clt'], true)) {
