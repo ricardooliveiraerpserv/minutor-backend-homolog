@@ -479,6 +479,7 @@ class RelatorioRentabilidadeController extends Controller
                 'cliente'         => $g['cliente'],
                 'executivo'       => $g['executivo'],
                 'cnpj'            => $cnpj,
+                'cnpjs'           => array_values($g['cnpjs']), // todos os CNPJs (primário+secundários) p/ o drill-down
                 'horas'           => $horas,
                 'receita'         => $receita,
                 'custo'           => $custo,
@@ -562,8 +563,9 @@ class RelatorioRentabilidadeController extends Controller
             if ($match) {
                 $cid = $match['customer_id'];
                 if (!isset($extraByCustomer[$cid])) {
-                    $extraByCustomer[$cid] = ['info' => $match, 'cnpj' => $cnpj, 'recebido' => 0.0, 'receita_total' => 0.0, 'em_aberto' => 0.0];
+                    $extraByCustomer[$cid] = ['info' => $match, 'cnpj' => $cnpj, 'cnpjs' => [], 'recebido' => 0.0, 'receita_total' => 0.0, 'em_aberto' => 0.0];
                 }
+                $extraByCustomer[$cid]['cnpjs'][] = $cnpj;
                 $extraByCustomer[$cid]['recebido'] += $recebido;
                 $extraByCustomer[$cid]['receita_total'] += $receitaTotal;
                 $extraByCustomer[$cid]['em_aberto'] += $emAberto;
@@ -575,6 +577,7 @@ class RelatorioRentabilidadeController extends Controller
                 'cliente'         => $info['name'] ?: '(fora do Minutor)',
                 'executivo'       => null,
                 'cnpj'            => $cnpj,
+                'cnpjs'           => [$cnpj],
                 'horas'           => 0.0,
                 'receita'         => 0.0,
                 'custo'           => 0.0,
@@ -598,6 +601,7 @@ class RelatorioRentabilidadeController extends Controller
                 'cliente'         => $e['info']['cliente'],
                 'executivo'       => $e['info']['executivo'],
                 'cnpj'            => $e['cnpj'],
+                'cnpjs'           => array_values(array_unique($e['cnpjs'] ?? [$e['cnpj']])),
                 'horas'           => 0.0,
                 'receita'         => 0.0,
                 'custo'           => 0.0,
