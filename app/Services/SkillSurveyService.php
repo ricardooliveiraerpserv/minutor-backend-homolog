@@ -33,11 +33,17 @@ class SkillSurveyService
      */
     public const CADASTRAL_SCHEMA = [
         'internal' => [
-            ['key' => 'name',   'label' => 'Nome',   'type' => 'text',  'readonly' => true],
-            ['key' => 'email',  'label' => 'E-mail', 'type' => 'email', 'readonly' => true],
-            ['key' => 'cargo',  'label' => 'Cargo',  'type' => 'text',  'readonly' => false],
-            ['key' => 'equipe', 'label' => 'Equipe', 'type' => 'text',  'readonly' => false],
-            ['key' => 'gestor', 'label' => 'Gestor', 'type' => 'text',  'readonly' => false],
+            ['key' => 'name',            'label' => 'Nome',              'type' => 'text',  'readonly' => true],
+            ['key' => 'email',           'label' => 'E-mail',            'type' => 'email', 'readonly' => true],
+            ['key' => 'cpf',             'label' => 'CPF',               'type' => 'text'],
+            ['key' => 'data_nascimento', 'label' => 'Data de nascimento', 'type' => 'date'],
+            ['key' => 'cep',             'label' => 'CEP',               'type' => 'cep'],
+            ['key' => 'logradouro',      'label' => 'Logradouro',        'type' => 'text'],
+            ['key' => 'numero',          'label' => 'Número',            'type' => 'text'],
+            ['key' => 'complemento',     'label' => 'Complemento',       'type' => 'text'],
+            ['key' => 'bairro',          'label' => 'Bairro',            'type' => 'text'],
+            ['key' => 'cidade',          'label' => 'Cidade',            'type' => 'text'],
+            ['key' => 'estado',          'label' => 'Estado (UF)',       'type' => 'text'],
         ],
         'partner' => [
             ['key' => 'empresa',         'label' => 'Empresa Parceira',    'type' => 'text',   'required' => true],
@@ -225,18 +231,88 @@ class SkillSurveyService
         );
     }
 
-    /** Dados cadastrais pré-preenchidos do colaborador. */
+    /** Dados cadastrais pré-preenchidos do colaborador (do próprio cadastro de usuário). */
     public function internalCadastral(User $user): array
     {
-        // public.users não tem coluna de cargo (só `type`); Cargo/Equipe/Gestor ficam
-        // editáveis no formulário (sem fonte confiável p/ pré-preencher na Fase 1).
+        $birth = $user->birth_date;
+        $birth = $birth instanceof \DateTimeInterface ? $birth->format('Y-m-d') : ($birth ? (string) $birth : null);
+
         return [
             'name' => $this->clean($user->name, 160),
             'email' => $this->clean($user->email, 190),
-            'cargo' => null,
-            'equipe' => null,
-            'gestor' => null,
+            'cpf' => $user->cpf,
+            'data_nascimento' => $birth,
+            'cep' => $user->cep,
+            'logradouro' => $user->address_street,
+            'numero' => $user->address_number,
+            'complemento' => $user->address_complement,
+            'bairro' => $user->neighborhood,
+            'cidade' => $user->city,
+            'estado' => $user->state,
         ];
+    }
+
+    /**
+     * Mapa campo do formulário (cadastral) → coluna do cadastro de usuário. Só os
+     * campos que persistem no `users`; os demais (gestor, etc.) ficam só na submissão.
+     */
+    public const USER_CADASTRAL_MAP = [
+        'cpf'             => 'cpf',
+        'data_nascimento' => 'birth_date',
+        'cep'             => 'cep',
+        'logradouro'      => 'address_street',
+        'numero'          => 'address_number',
+        'complemento'     => 'address_complement',
+        'bairro'          => 'neighborhood',
+        'cidade'          => 'city',
+        'estado'          => 'state',
+    ];
+
+    /**
+     * Grava os dados cadastrais informados na avaliação INTERNA no cadastro do
+     * usuário (CPF, data de nascimento, CEP e endereço). Só sobrescreve com valores
+     * preenchidos (não zera o que já existe).
+     */
+    protected function persistUserCadastral(SkillSubmission $submission): void
+    {
+        $respondent = $submission->respondent;
+        if (! $respondent || $respondent->type !== SkillRespondent::TYPE_INTERNAL || ! $respondent->user_id) {
+            return;
+        }
+        $cad = $submission->cadastral;
+        if (! is_array($cad) || empty($cad)) {
+            return;
+        }
+        $user = User::find($respondent->user_id);
+        if (! $user) {
+            return;
+        }
+
+        $update = [];
+        foreach (self::USER_CADASTRAL_MAP as $field => $col) {
+            if (! array_key_exists($field, $cad)) {
+                continue;
+            }
+            $val = $cad[$field];
+            if ($val === null || $val === '') {
+                continue;
+            }
+            if ($field === 'cpf' || $field === 'cep') {
+                $val = preg_replace('/\D+/', '', (string) $val);
+            }
+            if ($field === 'data_nascimento') {
+                try {
+                    $val = \Illuminate\Support\Carbon::parse((string) $val)->toDateString();
+                } catch (\Throwable) {
+                    continue;
+                }
+            }
+            $update[$col] = $val;
+        }
+
+        if ($update) {
+            $user->forceFill($update)->save();
+        }
     }
 
     /** Sanitiza o cadastral conforme o schema (phone/cep viram só dígitos). */
@@ -620,6 +696,7 @@ class SkillSurveyService
             }
 
             $this->deriveConsultantSkills($submission);
+            $this->persistUserCadastral($submission);
         });
 
         return $submission->fresh();

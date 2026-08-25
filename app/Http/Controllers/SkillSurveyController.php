@@ -141,17 +141,25 @@ class SkillSurveyController extends Controller
             'title' => 'nullable|string|max:160',
             'description' => 'nullable|string',
             'deadline' => 'required|date|after_or_equal:today',
-            'target' => 'nullable|in:consultores,todos',
+            'groups' => 'array',
+            'groups.*' => 'in:consultor,coordenador,parceiro,admin',
         ]);
 
         $version = optional($this->service->activeVersion())->id;
         abort_if(! $version, 422, 'Nenhuma versão da matriz publicada.');
 
-        $roles = ($data['target'] ?? 'consultores') === 'todos'
-            ? ['admin', 'administrativo', 'coordenador', 'consultor']
-            : ['coordenador', 'consultor'];
-        $userIds = User::whereIn('type', $roles)->where('enabled', true)->pluck('id')->all();
-        abort_if(empty($userIds), 422, 'Nenhum destinatário ativo para a campanha.');
+        // Grupos de colaboradores internos → tipos de usuário.
+        $typeMap = [
+            'consultor'   => ['consultor'],
+            'coordenador' => ['coordenador'],
+            'parceiro'    => ['parceiro_admin'],
+            'admin'       => ['admin', 'administrativo'],
+        ];
+        $groups = ! empty($data['groups']) ? $data['groups'] : ['consultor', 'coordenador'];
+        $types = collect($groups)->flatMap(fn ($g) => $typeMap[$g] ?? [])->unique()->values()->all();
+
+        $userIds = User::whereIn('type', $types)->where('enabled', true)->pluck('id')->all();
+        abort_if(empty($userIds), 422, 'Nenhum destinatário ativo para os grupos selecionados.');
 
         $survey = SkillSurvey::create([
             'type' => SkillSurvey::TYPE_INTERNAL,
