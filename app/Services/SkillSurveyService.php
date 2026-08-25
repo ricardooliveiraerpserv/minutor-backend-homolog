@@ -24,6 +24,9 @@ use Illuminate\Validation\ValidationException;
  */
 class SkillSurveyService
 {
+    /** Token estável da pesquisa PERENE de auto-avaliação (singleton). */
+    public const SELF_SURVEY_TOKEN = 'AUTOAVAL';
+
     /**
      * Schema dos campos cadastrais por tipo de pesquisa — o front usa para
      * renderizar os dados ANTES da matriz. A matriz é a mesma para todos.
@@ -352,6 +355,164 @@ class SkillSurveyService
         }
 
         return $submission;
+    }
+
+    /**
+     * Pesquisa PERENE de auto-avaliação (singleton). Sempre aberta e apontando
+     * para a versão ATIVA da matriz. É por ela que o colaborador atualiza as
+     * próprias competências a qualquer momento (fora de campanha).
+     */
+    public function selfAssessmentSurvey(): SkillSurvey
+    {
+        $version = $this->activeVersion();
+
+        $survey = SkillSurvey::firstOrCreate(
+            ['public_token' => self::SELF_SURVEY_TOKEN],
+            [
+                'type' => SkillSurvey::TYPE_INTERNAL,
+                'title' => 'Auto-avaliação de Competências',
+                'description' => 'Mantenha suas competências sempre atualizadas.',
+                'matrix_version_id' => $version?->id,
+                'status' => SkillSurvey::STATUS_OPEN,
+                'allow_public' => false,
+            ]
+        );
+
+        // Mantém a pesquisa sempre aberta e na versão ativa da matriz.
+        $dirty = false;
+        if ($version && $survey->matrix_version_id !== $version->id) {
+            $survey->matrix_version_id = $version->id;
+            $dirty = true;
+        }
+        if ($survey->status !== SkillSurvey::STATUS_OPEN) {
+            $survey->status = SkillSurvey::STATUS_OPEN;
+            $dirty = true;
+        }
+        if ($dirty) {
+            $survey->save();
+        }
+
+        return $survey->loadMissing('matrixVersion');
+    }
+
+    /**
+     * Abre a auto-avaliação para o colaborador atualizar as próprias competências.
+     * Retoma um rascunho em andamento; caso contrário cria uma NOVA submissão de
+     * atualização já pré-preenchida com o perfil atual (última submissão enviada),
+     * para o colaborador editar apenas o que mudou.
+     *
+     * @return array{0: SkillSurvey, 1: SkillSubmission, 2: SkillSurveyInvite}
+     */
+    public function openSelfUpdate(User $user, array $meta = []): array
+    {
+        $survey = $this->selfAssessmentSurvey();
+        abort_if(! $survey->matrix_version_id, 422, 'A matriz de competências ainda não foi publicada.');
+
+        $respondent = $this->internalRespondent($user);
+
+        $invite = SkillSurveyInvite::firstOrCreate(
+            ['survey_id' => $survey->id, 'user_id' => $user->id],
+            [
+                'respondent_id' => $respondent->id,
+                'email' => $this->clean($user->email, 190),
+                'name' => $this->clean($user->name, 160),
+                'status' => SkillSurveyInvite::STATUS_OPENED,
+                'opened_at' => now(),
+            ]
+        );
+
+        $latest = SkillSubmission::where('survey_id', $survey->id)
+            ->where('respondent_id', $respondent->id)
+            ->orderByDesc('id')
+            ->first();
+
+        // Rascunho em andamento → retoma.
+        if ($latest && ! $latest->isSubmitted()) {
+            $invite->forceFill(['last_access_at' => now(), 'submission_id' => $latest->id])->save();
+
+            return [$survey, $latest, $invite];
+        }
+
+        // Nova submissão de atualização, pré-preenchida com o perfil atual.
+        $submission = SkillSubmission::create([
+            'survey_id' => $survey->id,
+            'respondent_id' => $respondent->id,
+            'matrix_version_id' => $survey->matrix_version_id,
+            'invite_id' => $invite->id,
+            'status' => SkillSubmission::STATUS_IN_PROGRESS,
+            'cadastral' => null,
+            'progress' => ['current_step' => 0, 'answered' => 0],
+            'started_at' => now(),
+            'ip' => $meta['ip'] ?? null,
+            'user_agent' => isset($meta['user_agent']) ? substr((string) $meta['user_agent'], 0, 255) : null,
+        ]);
+
+        $this->prefillFromLastSubmission($submission);
+
+        $invite->forceFill([
+            'status' => SkillSurveyInvite::STATUS_STARTED,
+            'started_at' => $invite->started_at ?? now(),
+            'last_access_at' => now(),
+            'submission_id' => $submission->id,
+        ])->save();
+
+        return [$survey, $submission->fresh(), $invite];
+    }
+
+    /**
+     * Copia as respostas da última submissão ENVIADA do respondente para a nova
+     * submissão (casando por skill_id, robusto a mudança de versão de matriz), de
+     * modo que a atualização já venha com os níveis atuais preenchidos.
+     */
+    protected function prefillFromLastSubmission(SkillSubmission $submission): void
+    {
+        $prior = SkillSubmission::where('respondent_id', $submission->respondent_id)
+            ->where('status', SkillSubmission::STATUS_SUBMITTED)
+            ->where('id', '!=', $submission->id)
+            ->orderByDesc('submitted_at')
+            ->first();
+        if (! $prior) {
+            return;
+        }
+
+        // Reaproveita os dados cadastrais (cargo/equipe/gestor) da última avaliação.
+        if (! empty($prior->cadastral) && is_array($prior->cadastral)) {
+            $submission->cadastral = $prior->cadastral;
+            $submission->save();
+        }
+
+        $priorBySkill = SkillSubmissionAnswer::where('submission_id', $prior->id)
+            ->whereNotNull('skill_id')
+            ->whereNotNull('level_id')
+            ->get()
+            ->keyBy('skill_id');
+        if ($priorBySkill->isEmpty()) {
+            return;
+        }
+
+        $items = SkillMatrixVersionItem::where('matrix_version_id', $submission->matrix_version_id)->get();
+        foreach ($items as $it) {
+            $prev = $priorBySkill->get($it->skill_id);
+            if (! $prev) {
+                continue;
+            }
+            SkillSubmissionAnswer::updateOrCreate(
+                ['submission_id' => $submission->id, 'matrix_version_item_id' => $it->id],
+                [
+                    'skill_id' => $it->skill_id,
+                    'level_id' => $prev->level_id,
+                    'level_weight' => $prev->level_weight,
+                    'years_experience' => $prev->years_experience,
+                    'atuacao' => $prev->atuacao,
+                    'notes' => null,
+                ]
+            );
+        }
+
+        $answered = SkillSubmissionAnswer::where('submission_id', $submission->id)
+            ->whereNotNull('level_id')->count();
+        $submission->progress = array_merge($submission->progress ?? [], ['answered' => $answered]);
+        $submission->save();
     }
 
     /**

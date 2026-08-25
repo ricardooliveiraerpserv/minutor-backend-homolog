@@ -155,6 +155,112 @@ class SkillProfileController extends Controller
         ]);
     }
 
+    /**
+     * Histórico de evolução: DIFF entre cada avaliação enviada e a anterior
+     * (competências que subiram/desceram/entraram/saíram). Visível só ao admin
+     * (rota sob competencias.view). Casa por skill_id (robusto a versão de matriz).
+     */
+    public function diff(Request $request, int $id): JsonResponse
+    {
+        SkillRespondent::findOrFail($id);
+
+        $subs = SkillSubmission::query()
+            ->where('respondent_id', $id)
+            ->where('status', SkillSubmission::STATUS_SUBMITTED)
+            ->with(['survey:id,title', 'matrixVersion:id,number'])
+            ->orderBy('submitted_at')
+            ->orderBy('id')
+            ->get();
+
+        // Mapa skill_id → {name, category, level, weight} por submissão.
+        $bySub = [];
+        foreach ($subs as $s) {
+            $rows = DB::table('skill_submission_answers as a')
+                ->where('a.submission_id', $s->id)
+                ->join('skill_matrix_version_items as i', 'i.id', '=', 'a.matrix_version_item_id')
+                ->leftJoin('skill_levels as l', 'l.id', '=', 'a.level_id')
+                ->get(['a.skill_id', 'i.name', 'i.category', 'l.name as level', 'a.level_weight']);
+            $map = [];
+            foreach ($rows as $r) {
+                if ($r->skill_id === null) {
+                    continue;
+                }
+                $map[$r->skill_id] = [
+                    'name' => $r->name, 'category' => $r->category,
+                    'level' => $r->level, 'weight' => (int) $r->level_weight,
+                ];
+            }
+            $bySub[$s->id] = $map;
+        }
+
+        $dirRank = ['added' => 0, 'up' => 1, 'down' => 2, 'removed' => 3];
+        $transitions = [];
+        for ($i = 1; $i < $subs->count(); $i++) {
+            $curr = $subs[$i];
+            $prev = $subs[$i - 1];
+            $cMap = $bySub[$curr->id];
+            $pMap = $bySub[$prev->id];
+
+            $changes = [];
+            $skillIds = array_unique(array_merge(array_keys($cMap), array_keys($pMap)));
+            foreach ($skillIds as $sid) {
+                $c = $cMap[$sid] ?? null;
+                $p = $pMap[$sid] ?? null;
+                $cw = $c['weight'] ?? 0;
+                $pw = $p['weight'] ?? 0;
+                if ($cw === $pw) {
+                    continue;
+                }
+                $dir = $pw === 0 ? 'added' : ($cw === 0 ? 'removed' : ($cw > $pw ? 'up' : 'down'));
+                $changes[] = [
+                    'category' => $c['category'] ?? $p['category'] ?? null,
+                    'name' => $c['name'] ?? $p['name'] ?? null,
+                    'from_level' => $p['level'] ?? null,
+                    'from_weight' => $pw,
+                    'to_level' => $c['level'] ?? null,
+                    'to_weight' => $cw,
+                    'direction' => $dir,
+                ];
+            }
+
+            usort($changes, function ($a, $b) use ($dirRank) {
+                return [$dirRank[$a['direction']], $a['category'], $a['name']]
+                    <=> [$dirRank[$b['direction']], $b['category'], $b['name']];
+            });
+
+            $counts = array_count_values(array_column($changes, 'direction'));
+            $transitions[] = [
+                'submission_id' => $curr->id,
+                'submitted_at' => $curr->submitted_at,
+                'previous_submission_id' => $prev->id,
+                'previous_submitted_at' => $prev->submitted_at,
+                'survey' => $curr->survey?->title,
+                'matrix_version' => $curr->matrixVersion ? "v{$curr->matrixVersion->number}" : null,
+                'total_changes' => count($changes),
+                'added' => $counts['added'] ?? 0,
+                'upgraded' => $counts['up'] ?? 0,
+                'downgraded' => $counts['down'] ?? 0,
+                'removed' => $counts['removed'] ?? 0,
+                'changes' => $changes,
+            ];
+        }
+
+        // Mais recente primeiro.
+        $transitions = array_reverse($transitions);
+
+        $first = $subs->first();
+
+        return response()->json([
+            'baseline' => $first ? [
+                'submission_id' => $first->id,
+                'submitted_at' => $first->submitted_at,
+                'skills_count' => count(array_filter($bySub[$first->id] ?? [], fn ($x) => $x['weight'] > 0)),
+            ] : null,
+            'evaluations' => $subs->count(),
+            'transitions' => $transitions,
+        ]);
+    }
+
     /** Alteração de classificação EM MASSA (vários respondentes de uma vez). */
     public function bulkClassification(Request $request): JsonResponse
     {

@@ -27,7 +27,8 @@ class SkillSubmissionController extends Controller
 
         $invites = SkillSurveyInvite::query()
             ->where('user_id', $user->id)
-            ->whereHas('survey', fn ($q) => $q->where('type', SkillSurvey::TYPE_INTERNAL)->whereIn('status', ['open']))
+            ->whereHas('survey', fn ($q) => $q->where('type', SkillSurvey::TYPE_INTERNAL)->whereIn('status', ['open'])
+                ->where('public_token', '!=', SkillSurveyService::SELF_SURVEY_TOKEN))
             ->with('survey:id,title,description,status,deadline,type')
             ->get()
             ->map(fn ($i) => [
@@ -66,6 +67,23 @@ class SkillSubmissionController extends Controller
             'ip' => $request->ip(),
             'user_agent' => $request->userAgent(),
         ]);
+
+        return response()->json($this->submissionPayload($survey, $submission, $prefill, $invite));
+    }
+
+    /**
+     * Abre a AUTO-AVALIAÇÃO para o colaborador logado atualizar as próprias
+     * competências a qualquer momento (retoma rascunho ou cria nova submissão
+     * de atualização pré-preenchida com o perfil atual).
+     */
+    public function selfUpdate(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        [$survey, $submission, $invite] = $this->service->openSelfUpdate($user, [
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+        ]);
+        $prefill = $this->service->internalCadastral($user);
 
         return response()->json($this->submissionPayload($survey, $submission, $prefill, $invite));
     }

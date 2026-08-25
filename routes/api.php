@@ -1419,12 +1419,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/competencias/dashboard',                 [SkillDashboardController::class, 'summary']);
             Route::get('/competencias/profissionais',             [SkillProfileController::class, 'index']);
             Route::get('/competencias/profissionais/{id}',        [SkillProfileController::class, 'show'])->whereNumber('id');
+            Route::get('/competencias/profissionais/{id}/historico-diff', [SkillProfileController::class, 'diff'])->whereNumber('id');
             Route::get('/competencias/matriz/versions',           [SkillMatrixVersionController::class, 'versions']);
             Route::get('/competencias/matriz/skills',             [SkillMatrixVersionController::class, 'skills']);
         });
         // Responder a própria pesquisa (colaborador logado). Posse verificada na controller.
         Route::middleware('permission.or.admin:competencias.respond')->group(function () {
             Route::get('/competencias/minhas-pesquisas',                      [SkillSubmissionController::class, 'mine']);
+            Route::post('/competencias/auto-avaliacao',                       [SkillSubmissionController::class, 'selfUpdate']);
             Route::get('/competencias/meu-historico',                         [SkillSubmissionController::class, 'history']);
             Route::get('/competencias/surveys/{surveyId}/responder',          [SkillSubmissionController::class, 'open'])->whereNumber('surveyId');
             Route::patch('/competencias/submissions/{submissionId}/autosave', [SkillSubmissionController::class, 'autosave'])->whereNumber('submissionId');
