@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\SourceDoc;
 use App\Models\SourceDocActionLog;
 use App\Models\SourceDocQualityAnalysis;
+use App\Models\SourceDocQualityFinding;
 use App\SourceCode\Exceptions\CodeAnalysisException;
 use App\SourceCode\GithubAppAuth;
 use App\SourceCode\SourceDocCustomerScope;
@@ -14,6 +15,7 @@ use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Análise de Qualidade (CodeAnalysis) ↔ Central de Fontes — backend do Minutor (Gate A2).
@@ -180,33 +182,132 @@ class SourceDocQualityController extends Controller
 
         $canViewCode = (bool) $request->user()?->hasAccess('source_docs.view_git');
 
-        // Sem job remoto ainda (queued/failed antes de criar) → sem achados a mostrar.
-        if (! $rec->external_job_id) {
+        // P2: AUTORIDADE = Postgres. Achados persistidos sobrevivem a restart/deploy do CodeAnalysis.
+        $persisted = $rec->findings; // ordenados por position; NUNCA contêm código
+        if ($persisted->isNotEmpty()) {
+            $findings = $persisted->map(fn (SourceDocQualityFinding $f) => $this->findingView($f))->all();
+            // Snippet (code) só p/ view_git e SÓ sob demanda/ao vivo — jamais lido do banco.
+            if ($canViewCode) {
+                $findings = $this->enrichSnippets($rec, $findings);
+            }
             return response()->json(['data' => [
-                'analysis_id' => $rec->id, 'external_job_id' => null, 'status' => $rec->status,
-                'view_git' => $canViewCode, 'findings' => [],
+                'analysis_id'     => $rec->id,
+                'external_job_id' => $rec->external_job_id,
+                'status'          => $rec->status,
+                'view_git'        => $canViewCode,
+                'source'          => 'persisted',
+                'findings'        => array_values($findings),
             ]]);
         }
 
+        // Sem achados persistidos e sem job remoto → nada a mostrar (queued/failed antes de criar).
+        if (! $rec->external_job_id) {
+            return response()->json(['data' => [
+                'analysis_id' => $rec->id, 'external_job_id' => null, 'status' => $rec->status,
+                'view_git' => $canViewCode, 'source' => 'none', 'findings' => [],
+            ]]);
+        }
+
+        // Legado (análise concluída ANTES do P2) → busca ao vivo e migra oportunisticamente.
         try {
             $remote = $this->service->getJob((string) $rec->external_job_id);
         } catch (CodeAnalysisException $e) {
             $status = $e->unavailable ? 503 : 502;
             return response()->json(['message' => 'Não foi possível obter os achados.', 'error' => $e->errorCode], $status);
         }
-
-        $findings = is_array($remote['findings'] ?? null) ? $remote['findings'] : [];
-        if (! $canViewCode) {
-            $findings = array_map(fn ($f) => $this->stripCode($f), $findings);
+        if ($remote === null) {
+            // Job perdido (404) — reconcilia se estava inflight; não há achados persistidos.
+            $this->reconcileLostJob($rec);
+            return response()->json(['data' => [
+                'analysis_id' => $rec->id, 'external_job_id' => $rec->external_job_id,
+                'status' => $rec->fresh()->status, 'view_git' => $canViewCode, 'source' => 'none', 'findings' => [],
+            ]]);
         }
-
+        $raw = is_array($remote['findings'] ?? null) ? array_values($remote['findings']) : [];
+        if (($remote['status'] ?? null) === SourceDocQualityAnalysis::STATUS_COMPLETED
+            && $raw && $rec->findings()->doesntExist()) {
+            $this->persistFindings($rec, $raw); // migra o legado p/ o Postgres
+        }
+        $findings = $canViewCode ? $raw : array_map(fn ($f) => $this->stripCode($f), $raw);
         return response()->json(['data' => [
             'analysis_id'     => $rec->id,
             'external_job_id' => $rec->external_job_id,
             'status'          => $remote['status'] ?? $rec->status,
             'view_git'        => $canViewCode,
+            'source'          => 'remote',
             'findings'        => array_values($findings),
         ]]);
+    }
+
+    /** Achado persistido → shape que a UI consome (mesmas chaves do A1, SEM snippet). */
+    private function findingView(SourceDocQualityFinding $f): array
+    {
+        $base = [
+            'rule'              => $f->rule,
+            'severity'          => $f->severity,
+            'analyzer_severity' => $f->analyzer_severity,
+            'category'          => $f->category,
+            'title'             => $f->title,
+            'description'       => $f->description,
+            'recommendation'    => $f->recommendation,
+            'file'              => $f->file,
+            'line'              => $f->line,
+            'start_line'        => $f->start_line,
+            'col'               => $f->col,
+            'count'             => $f->occurrences,
+        ];
+        if (is_array($f->meta)) {
+            $base = array_merge($f->meta, $base); // extras não sensíveis (meta nunca tem código)
+        }
+        return $base;
+    }
+
+    /**
+     * Snippet (código) SÓ para view_git, best-effort AO VIVO do CodeAnalysis — nunca do banco.
+     * Se o CA estiver indisponível/reiniciado, os metadados já foram servidos; o trecho fica ausente.
+     * SUBITEM TÉCNICO (futuro): reconstruir o trecho a partir do source_blob_sha histórico (get-blob
+     * by-sha) para o snippet sobreviver a restart do CA — hoje NÃO existe no contrato GithubAppAuth,
+     * então não é implementado aqui e NADA de código é gravado no Postgres.
+     */
+    private function enrichSnippets(SourceDocQualityAnalysis $rec, array $findings): array
+    {
+        if (! $rec->external_job_id) {
+            return $findings;
+        }
+        try {
+            $remote = $this->service->getJob((string) $rec->external_job_id);
+        } catch (\Throwable) {
+            return $findings; // CA indisponível → sem snippet (metadados já entregues)
+        }
+        if (! is_array($remote) || ! is_array($remote['findings'] ?? null)) {
+            return $findings; // job perdido (404→null) ou sem findings → mantém metadados sem snippet
+        }
+        $raw = array_values($remote['findings']);
+        foreach ($findings as $i => $f) {
+            $snip = $raw[$i]['snippet'] ?? null; // alinhado por position (mesma ordem)
+            if (is_string($snip) && $snip !== '') {
+                $findings[$i]['snippet'] = $snip;
+            }
+        }
+        return $findings;
+    }
+
+    /**
+     * Reconciliação de job perdido (P2): análise inflight cujo job NÃO existe mais no CA (404
+     * definitivo, tipicamente restart do serviço efêmero) NÃO pode ficar eterna em queued/running.
+     * Vira failed com error_code='job_lost' — distinto de 'remote_failed' (analyzer realmente falhou)
+     * e de indisponibilidade transitória (5xx/timeout → mantém estado, tratado no chamador).
+     */
+    private function reconcileLostJob(SourceDocQualityAnalysis $rec): void
+    {
+        if ($rec->isInflight()) {
+            $rec->update([
+                'status'        => SourceDocQualityAnalysis::STATUS_FAILED,
+                'failed_at'     => now(),
+                'error_code'    => 'job_lost',
+                'error_message' => 'Job perdido no serviço de análise (reinício/expiração).',
+            ]);
+        }
     }
 
     /** Remove QUALQUER campo que possa revelar código; preserva só metadados seguros. */
@@ -266,11 +367,14 @@ class SourceDocQualityController extends Controller
         try {
             $remote = $this->service->getJob((string) $record->external_job_id);
         } catch (CodeAnalysisException) {
-            return; // indisponível agora — mantém o estado; não falseia como running eterno na UI
+            return; // indisponibilidade TRANSITÓRIA (5xx/timeout/conn) — mantém estado; não reconcilia
         }
-        if ($remote) {
-            $this->applyRemote($record, $remote);
+        if ($remote === null) {
+            // 404 DEFINITIVO: o job não existe mais no CA (restart do store efêmero) → não fica eterno.
+            $this->reconcileLostJob($record);
+            return;
         }
+        $this->applyRemote($record, $remote);
     }
 
     /** Mapeia a resposta do CodeAnalysis (A1) para o registro local. */
@@ -305,6 +409,73 @@ class SourceDocQualityController extends Controller
             $data['error_code']    = 'remote_failed';
         }
         $record->update($data);
+
+        // P2: ao concluir, persistir os achados no Postgres (autoridade histórica). getJob() já traz
+        // 'findings' quando completed. Idempotente: só grava se ainda não houver achados persistidos.
+        if ($status === SourceDocQualityAnalysis::STATUS_COMPLETED
+            && is_array($r['findings'] ?? null)
+            && $record->findings()->doesntExist()) {
+            $this->persistFindings($record, $r['findings']);
+        }
+    }
+
+    /**
+     * P2 — persiste os achados no Postgres SEM código-fonte (só metadados). Substitui de forma
+     * idempotente (delete+insert em transação). NUNCA grava snippet/código (CODE_REVEALING_KEYS).
+     *
+     * @param  array<int,array<string,mixed>>  $raw  achados crus do CodeAnalysis
+     */
+    private function persistFindings(SourceDocQualityAnalysis $record, array $raw): void
+    {
+        DB::transaction(function () use ($record, $raw) {
+            $record->findings()->delete();
+            $pos = 0;
+            foreach ($raw as $f) {
+                if (! is_array($f)) {
+                    continue;
+                }
+                // Metadados extras NÃO sensíveis → meta (removendo qualquer chave que revele código).
+                $meta = $f;
+                foreach (self::CODE_REVEALING_KEYS as $k) {
+                    unset($meta[$k]);
+                }
+                foreach (['rule', 'severity', 'analyzer_severity', 'category', 'title', 'description',
+                    'recommendation', 'file', 'line', 'start_line', 'col', 'column', 'count'] as $k) {
+                    unset($meta[$k]);
+                }
+
+                SourceDocQualityFinding::create([
+                    'source_doc_quality_analysis_id' => $record->id,
+                    'position'          => $pos++,
+                    'rule'              => $this->str($f['rule'] ?? null, 255),
+                    'severity'          => $this->str($f['severity'] ?? null, 16),
+                    'analyzer_severity' => $this->str($f['analyzer_severity'] ?? null, 32),
+                    'category'          => $this->str($f['category'] ?? null, 255),
+                    'title'             => $this->str($f['title'] ?? null, 255),
+                    'description'       => $f['description'] ?? null,
+                    'recommendation'    => $f['recommendation'] ?? null,
+                    'file'              => $this->str($f['file'] ?? null, 255),
+                    'line'              => $this->intOrNull($f['line'] ?? null),
+                    'start_line'        => $this->intOrNull($f['start_line'] ?? null),
+                    'col'               => $this->intOrNull($f['col'] ?? $f['column'] ?? null),
+                    'occurrences'       => $this->intOrNull($f['count'] ?? null),
+                    'meta'              => empty($meta) ? null : $meta,
+                ]);
+            }
+        });
+    }
+
+    private function str($v, int $max): ?string
+    {
+        if ($v === null || $v === '') {
+            return null;
+        }
+        return mb_substr((string) $v, 0, $max);
+    }
+
+    private function intOrNull($v): ?int
+    {
+        return (is_int($v) || (is_string($v) && $v !== '' && ctype_digit($v))) ? (int) $v : null;
     }
 
     /** Estado que a UI (A3) vai consumir. Deriva 'never_analyzed' e 'outdated' (stale). */

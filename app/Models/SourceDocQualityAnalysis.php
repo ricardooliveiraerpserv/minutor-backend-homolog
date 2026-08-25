@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Vínculo híbrido de uma Análise de Qualidade (CodeAnalysis) com uma VERSÃO de fonte da Central.
@@ -55,6 +56,13 @@ class SourceDocQualityAnalysis extends Model
     public function requestedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    /** Achados duráveis (P2) — autoridade histórica no Postgres, sem código-fonte. */
+    public function findings(): HasMany
+    {
+        return $this->hasMany(SourceDocQualityFinding::class, 'source_doc_quality_analysis_id')
+            ->orderBy('position');
     }
 
     public function isInflight(): bool

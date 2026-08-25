@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\SourceDoc;
 use App\Models\SourceDocActionLog;
 use App\Models\SourceDocQualityAnalysis;
+use App\Models\SourceDocQualityFinding;
 use App\Models\SourceDocVersion;
 use App\Models\User;
 use App\SourceCode\GithubAppAuth;
@@ -419,5 +420,105 @@ class SourceDocQualityTest extends TestCase
         $this->actingAs($this->admin(), 'sanctum')
             ->getJson("/api/v1/source-docs/{$doc->id}")->assertOk()
             ->assertJsonPath('data.id', $doc->id);
+    }
+
+    // ── P2: persistência durável dos findings + reconciliação (job_lost) ─────
+
+    /** Resposta completed do CA, com um finding que carrega snippet (código). */
+    private function caCompletedWithFinding(): array
+    {
+        return ['job_id' => 'jobP', 'status' => 'completed',
+            'engine' => ['name' => 'TOTVS', 'image' => 'img:latest', 'rules_version' => 'r1'],
+            'score' => 91, 'grade' => 'A', 'risk' => 'BAIXO',
+            'counts' => ['critical' => 0, 'warnings' => 0, 'recommendations' => 1, 'total' => 1],
+            'findings' => [[
+                'severity' => 'INFO', 'analyzer_severity' => 'INFO', 'category' => 'Outras',
+                'rule' => 'CA_X', 'title' => 'Regra X', 'description' => 'desc', 'recommendation' => 'rec',
+                'file' => 'F.prw', 'line' => 10, 'start_line' => 10, 'count' => 1,
+                'snippet' => 'SECRET_CODE_XYZ', 'source' => 'SECRET_SRC',
+            ]]];
+    }
+
+    public function test_findings_persisted_on_completion_and_survive_ca_restart(): void
+    {
+        $doc = $this->makeDoc('blobP');
+        $this->bindAuth($doc, 'blobP');
+        $this->fakeCa(['job_id' => 'jobP', 'status' => 'queued'], 202, $this->caCompletedWithFinding(), 200);
+
+        // dispara (queued) → poll (show) completa e PERSISTE os findings
+        $this->actingAs($this->admin(), 'sanctum')
+            ->postJson("/api/v1/source-docs/{$doc->id}/quality")->assertStatus(202);
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")
+            ->assertOk()->assertJsonPath('data.state', 'completed');
+
+        $rec = SourceDocQualityAnalysis::where('source_doc_id', $doc->id)->firstOrFail();
+        $this->assertDatabaseHas('source_doc_quality_findings', [
+            'source_doc_quality_analysis_id' => $rec->id, 'rule' => 'CA_X',
+            'severity' => 'INFO', 'line' => 10, 'category' => 'Outras',
+        ]);
+        // NENHUM código-fonte no banco (nem em coluna, nem no meta json)
+        $f = SourceDocQualityFinding::where('source_doc_quality_analysis_id', $rec->id)->firstOrFail();
+        $blob = json_encode($f->toArray());
+        $this->assertStringNotContainsString('SECRET_CODE_XYZ', $blob);
+        $this->assertStringNotContainsString('SECRET_SRC', $blob);
+
+        // Sobrevivência ao restart do CA: um usuário SEM view_git é servido 100% do Postgres
+        // (enrichSnippets é view_git-only → ZERO chamada ao CodeAnalysis). Prova que os findings
+        // não dependem do store efêmero e que código nunca vaza.
+        $noGit = User::factory()->create([
+            'type' => 'consultor',
+            'extra_permissions' => ['source_docs.quality.view', 'source_docs.view_all_customers'],
+        ]);
+        $res = $this->actingAs($noGit, 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality/{$rec->id}/findings")->assertOk();
+        $res->assertJsonPath('data.source', 'persisted')      // servido do Postgres
+            ->assertJsonPath('data.view_git', false)
+            ->assertJsonPath('data.findings.0.rule', 'CA_X')
+            ->assertJsonPath('data.findings.0.severity', 'INFO')
+            ->assertJsonPath('data.findings.0.line', 10);
+        // findings sobreviveram no Postgres; snippet (código) nunca aparece
+        $this->assertStringNotContainsString('SECRET_CODE_XYZ', $res->getContent());
+        $this->assertStringNotContainsString('SECRET_SRC', $res->getContent());
+    }
+
+    public function test_job_lost_reconciliation_marks_failed(): void
+    {
+        $doc = $this->makeDoc('blobR');
+        $this->bindAuth($doc, 'blobR');
+        $rec = SourceDocQualityAnalysis::create([
+            'source_doc_id' => $doc->id, 'source_doc_version_id' => $doc->current_version_id,
+            'source_blob_sha' => 'blobR', 'status' => 'running', 'external_job_id' => 'jobLost',
+        ]);
+        Http::fake(fn ($r) => Http::response(['message' => 'not found'], 404)); // job sumiu (restart do CA)
+
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")
+            ->assertOk()
+            ->assertJsonPath('data.state', 'failed')
+            ->assertJsonPath('data.analysis.error_code', 'job_lost');
+
+        $rec->refresh();
+        $this->assertSame('failed', $rec->status);
+        $this->assertSame('job_lost', $rec->error_code);
+        $this->assertNotNull($rec->failed_at);
+    }
+
+    public function test_transient_unavailable_does_not_reconcile(): void
+    {
+        $doc = $this->makeDoc('blobT');
+        $this->bindAuth($doc, 'blobT');
+        $rec = SourceDocQualityAnalysis::create([
+            'source_doc_id' => $doc->id, 'source_doc_version_id' => $doc->current_version_id,
+            'source_blob_sha' => 'blobT', 'status' => 'running', 'external_job_id' => 'jobT',
+        ]);
+        Http::fake(fn ($r) => Http::response(['message' => 'boom'], 503)); // indisponibilidade TRANSITÓRIA
+
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk();
+
+        $rec->refresh();
+        $this->assertSame('running', $rec->status); // NÃO vira job_lost por 5xx transitório
+        $this->assertNull($rec->error_code);
     }
 }
