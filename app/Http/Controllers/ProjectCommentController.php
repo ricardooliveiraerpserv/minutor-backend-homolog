@@ -46,6 +46,38 @@ class ProjectCommentController extends Controller
         return response()->json($msgs);
     }
 
+    /** Fixar/desafixar uma mensagem (Comentários/Diário) — máx 2 por escopo (projeto/req + visibilidade). */
+    public function togglePin(ContractRequestMessage $message): JsonResponse
+    {
+        $user = auth()->user();
+        $project = $message->project_id ? Project::find($message->project_id) : null;
+        if ($project && ! $this->authorize($user, $project)) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+
+        if ($message->pinned_at) {
+            $message->pinned_at = null;
+            $message->save();
+
+            return response()->json(['pinned' => false]);
+        }
+
+        $pinnedCount = ContractRequestMessage::query()
+            ->where('visibility', $message->visibility)
+            ->when($message->project_id, fn ($q) => $q->where('project_id', $message->project_id),
+                fn ($q) => $q->where('contract_request_id', $message->contract_request_id))
+            ->whereNotNull('pinned_at')
+            ->count();
+        if ($pinnedCount >= 2) {
+            return response()->json(['message' => 'Máximo de 2 itens fixados. Desafixe um antes de fixar outro.'], 422);
+        }
+
+        $message->pinned_at = now();
+        $message->save();
+
+        return response()->json(['pinned' => true]);
+    }
+
     public function store(Request $request, Project $project): JsonResponse
     {
         $user = auth()->user();

@@ -48,9 +48,11 @@ class Attachment extends Model
         'visibility',
         'uploaded_by',
         'metadata',
+        'pinned_at',
     ];
 
     protected $casts = [
+        'pinned_at'   => 'datetime',
         'entity_id'   => 'integer',
         'size_bytes'  => 'integer',
         'company_id'  => 'integer',

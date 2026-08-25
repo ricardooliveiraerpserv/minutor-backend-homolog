@@ -127,6 +127,29 @@ class ContractMessageController extends Controller
         return response()->json($msg, 201);
     }
 
+    /** Fixar/desafixar um comentário do contrato — máx 2 por (contrato + visibilidade). */
+    public function togglePin(ContractMessage $message): JsonResponse
+    {
+        if ($message->pinned_at) {
+            $message->pinned_at = null;
+            $message->save();
+
+            return response()->json(['pinned' => false]);
+        }
+
+        $pinnedCount = ContractMessage::where('contract_id', $message->contract_id)
+            ->where('visibility', $message->visibility)
+            ->whereNotNull('pinned_at')->count();
+        if ($pinnedCount >= 2) {
+            return response()->json(['message' => 'Máximo de 2 itens fixados. Desafixe um antes de fixar outro.'], 422);
+        }
+
+        $message->pinned_at = now();
+        $message->save();
+
+        return response()->json(['pinned' => true]);
+    }
+
     public function downloadAttachment(Request $request, ContractMessage $message, Attachment $attachment): mixed
     {
         $user = $request->user();
