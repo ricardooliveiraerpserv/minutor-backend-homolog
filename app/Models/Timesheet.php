@@ -122,6 +122,17 @@ class Timesheet extends Model
             $timesheet->calculateEffort();
         });
 
+        // Rede de segurança multi-empresa: apontamento criado em BACKGROUND
+        // (scheduler/queue/integração — sem empresa ativa no CompanyContext) nasceria
+        // com company_id NULL e sumiria da tela empresa-escopada (CompanyScope). Quando
+        // o BelongsToCompany não carimbou (sem empresa ativa), herda a empresa do PROJETO.
+        static::creating(function ($timesheet) {
+            if (empty($timesheet->company_id) && $timesheet->project_id) {
+                $timesheet->company_id = \App\Models\Project::withoutGlobalScopes()
+                    ->whereKey($timesheet->project_id)->value('company_id');
+            }
+        });
+
         // % de uplift do cliente DERIVADO da regra do contrato (denormaliza p/ a cobrança
         // ler sem join). Só recalcula quando muda projeto/data (ou é novo) — update de
         // status não mexe. É lado-cliente puro: consultor/parceiro NUNCA lê contract_client_pct.
