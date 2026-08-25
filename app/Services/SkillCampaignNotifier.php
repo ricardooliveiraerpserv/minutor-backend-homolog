@@ -30,6 +30,12 @@ class SkillCampaignNotifier
         return '/competencias/responder/' . $survey->id;
     }
 
+    /** URL ABSOLUTA do formulário de resposta (botão do e-mail). */
+    private static function emailCtaUrl(SkillSurvey $survey): string
+    {
+        return rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . self::ctaUrl($survey);
+    }
+
     /** Disparo inicial: e-mail (workflow) + pop-up a todos os convidados pendentes. */
     public static function onLaunch(SkillSurvey $survey, ?User $actor = null): int
     {
@@ -42,7 +48,7 @@ class SkillCampaignNotifier
         $mails = 0;
         foreach (User::whereIn('id', $userIds)->where('enabled', true)->get() as $u) {
             try {
-                if ($mailer->send(self::WORKFLOW, ['consultant' => $u, 'actor' => $actor], self::vars($survey))) {
+                if ($mailer->send(self::WORKFLOW, ['consultant' => $u, 'actor' => $actor], self::vars($survey), self::emailCtaUrl($survey))) {
                     $mails++;
                 }
             } catch (\Throwable $e) {
@@ -69,7 +75,7 @@ class SkillCampaignNotifier
         $sent = false;
         if ($user && $survey) {
             try {
-                $sent = app(WorkflowMailer::class)->send(self::WORKFLOW, ['consultant' => $user, 'actor' => $actor], self::vars($survey));
+                $sent = app(WorkflowMailer::class)->send(self::WORKFLOW, ['consultant' => $user, 'actor' => $actor], self::vars($survey), self::emailCtaUrl($survey));
             } catch (\Throwable $e) {
                 Log::warning('competencias.campanha: lembrete falhou', ['invite' => $invite->id, 'err' => $e->getMessage()]);
             }
@@ -121,7 +127,7 @@ class SkillCampaignNotifier
                 // Reenvio de e-mail só se a Central definiu recorrência (>0) e já venceu o ciclo.
                 if ($rd > 0 && self::due($inv->last_reminder_at ?? $inv->sent_at ?? $inv->created_at, $rd, $today)) {
                     try {
-                        if ($mailer->send(self::WORKFLOW, ['consultant' => $user], self::vars($survey))) {
+                        if ($mailer->send(self::WORKFLOW, ['consultant' => $user], self::vars($survey), self::emailCtaUrl($survey))) {
                             $mails++;
                         }
                     } catch (\Throwable $e) {

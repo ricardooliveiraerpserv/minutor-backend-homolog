@@ -23,14 +23,14 @@ class WorkflowMailer
      * @param array  $ctx   Contexto p/ resolver audiências (contract, project, actor, ...).
      * @param array  $vars  Valores das variáveis do template (ex.: ['valor' => 'R$ 100,00']).
      */
-    public function send(string $key, array $ctx, array $vars): bool
+    public function send(string $key, array $ctx, array $vars, ?string $ctaUrl = null): bool
     {
         $rcpt = $this->resolver->resolve($key, $ctx);
         if (empty($rcpt['to'])) {
             return false;
         }
 
-        ['subject' => $subject, 'html' => $html] = $this->renderHtml($key, $vars);
+        ['subject' => $subject, 'html' => $html] = $this->renderHtml($key, $vars, $ctaUrl);
 
         try {
             $graphFrom = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')));
@@ -55,7 +55,7 @@ class WorkflowMailer
      * Renderiza EXATAMENTE o assunto/HTML que seriam enviados (mesmo layout do e-mail
      * real), para exibir a prévia na tela. @return array{subject:string, html:string}
      */
-    public function renderHtml(string $key, array $vars): array
+    public function renderHtml(string $key, array $vars, ?string $ctaUrl = null): array
     {
         $meta = (array) (config('workflows.workflows', [])[$key] ?? []);
         $tpl  = $this->config->template($key);
@@ -76,7 +76,7 @@ class WorkflowMailer
             'accent'  => $this->config->accent($key),
             'corpo'   => $corpo,
             'dados'   => $dados,
-            'cardUrl' => rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/pagamento-despesas',
+            'cardUrl' => $ctaUrl ?: (rtrim((string) config('app.frontend_url', 'https://app.minutor.com.br'), '/') . '/pagamento-despesas'),
             'rodape'  => null,
         ])->render();
 
