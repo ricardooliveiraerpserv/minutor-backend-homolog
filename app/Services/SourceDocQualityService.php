@@ -121,51 +121,19 @@ class SourceDocQualityService
             throw CodeAnalysisException::unavailable('Serviço de qualidade desabilitado/não configurado.', 'disabled');
         }
 
-        // INSTRUMENTAÇÃO TEMPORÁRIA (diag CA-R1c) — só metadados; NUNCA token/código/body-completo.
-        $t0 = microtime(true);
         try {
             $res = $this->client()->get("{$this->baseUrl}/api/v1/analyses/{$jobId}");
         } catch (ConnectionException $e) {
-            Log::warning('[CA getJob DIAG] null', [
-                'category' => 'C_transport', 'job' => $jobId,
-                'error_class' => class_basename($e), 'error' => mb_substr($e->getMessage(), 0, 120),
-                'ms' => (int) round((microtime(true) - $t0) * 1000),
-            ]);
             throw CodeAnalysisException::unavailable('CodeAnalysis indisponível.', 'connection_error');
         }
-        $ms = (int) round((microtime(true) - $t0) * 1000);
-        $ct = (string) $res->header('Content-Type');
-        $len = strlen((string) $res->body());
 
         if ($res->status() === 404) {
-            Log::warning('[CA getJob DIAG] null', [
-                'category' => 'A_404', 'job' => $jobId, 'status' => 404,
-                'content_type' => $ct, 'body_len' => $len, 'ms' => $ms,
-            ]);
             return null;
         }
         if ($res->serverError()) {
-            Log::warning('[CA getJob DIAG] 5xx (throw transitório)', [
-                'category' => 'C_5xx', 'job' => $jobId, 'status' => $res->status(),
-                'content_type' => $ct, 'body_len' => $len, 'ms' => $ms,
-            ]);
             throw CodeAnalysisException::unavailable('CodeAnalysis retornou erro.', 'upstream_5xx', $res->status());
         }
         $body = $res->json();
-        if (! is_array($body)) {
-            // corpo não-JSON num 2xx/4xx-não-404 — o que hoje vira null (candidato à causa).
-            $raw = (string) $res->body();
-            $head = substr($raw, 0, 40);
-            Log::warning('[CA getJob DIAG] null', [
-                'category' => 'B_nonjson', 'job' => $jobId, 'status' => $res->status(),
-                'content_type' => $ct, 'body_len' => $len, 'json_parsed' => false,
-                'body_sha12' => substr(hash('sha256', $raw), 0, 12),
-                // getJob NUNCA retorna código-fonte (job view = status/engine); head só se for texto imprimível.
-                'head' => ctype_print($head) ? $head : '(binario)',
-                'ms' => $ms,
-            ]);
-            return null;
-        }
-        return $body;
+        return is_array($body) ? $body : null;
     }
 }
