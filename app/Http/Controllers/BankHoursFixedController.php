@@ -389,20 +389,28 @@ class BankHoursFixedController extends Controller
         // Calcular consumo do mês (apontamentos do mês especificado + projetos fechados com start_date no mês especificado)
         $monthConsumedHours = 0;
 
-        // Obter mês e ano dos parâmetros da requisição (ou usar mês atual se não fornecidos)
-        $month = $request->get('month');
-        $year = $request->get('year');
+        // Janela do card "Consumo do Mês/Período":
+        // 1) Se vier start_date + end_date (modo Período do dashboard), soma o INTERVALO
+        //    inteiro — antes só usava month/year e trazia um único mês (ou zerado quando
+        //    o fim do período caía num mês sem apontamentos).
+        // 2) Senão, cai no comportamento antigo por mês/ano (ou mês atual).
+        $startDateParam = $request->get('start_date');
+        $endDateParam   = $request->get('end_date');
 
-        if ($month && $year) {
-            // Usar mês e ano fornecidos
-            $targetDate = \Carbon\Carbon::create($year, $month, 1);
+        if ($startDateParam && $endDateParam) {
+            $monthStart = \Carbon\Carbon::parse($startDateParam)->format('Y-m-d');
+            $monthEnd   = \Carbon\Carbon::parse($endDateParam)->format('Y-m-d');
         } else {
-            // Usar mês atual
-            $targetDate = now();
-        }
+            $month = $request->get('month');
+            $year = $request->get('year');
 
-        $monthStart = $targetDate->copy()->startOfMonth()->format('Y-m-d');
-        $monthEnd = $targetDate->copy()->endOfMonth()->format('Y-m-d');
+            $targetDate = ($month && $year)
+                ? \Carbon\Carbon::create($year, $month, 1)
+                : now();
+
+            $monthStart = $targetDate->copy()->startOfMonth()->format('Y-m-d');
+            $monthEnd = $targetDate->copy()->endOfMonth()->format('Y-m-d');
+        }
 
         foreach ($parentProjects as $parentProject) {
             // Se há filtro por tipo de serviço, só incluir o projeto pai se ele tiver o tipo especificado
@@ -549,7 +557,7 @@ class BankHoursFixedController extends Controller
 
         foreach ($parentProjects as $parentProject) {
             $processProject = function ($proj, $stId, &$accum, &$accumMonth, $isChild = false)
-                use ($targetDate, $monthStart, $monthEnd) {
+                use ($monthStart, $monthEnd) {
                 if ($proj->service_type_id !== $stId) {
                     return;
                 }
