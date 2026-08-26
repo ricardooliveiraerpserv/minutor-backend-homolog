@@ -139,14 +139,11 @@ class SustentacaoController extends Controller
             ->count();
         $slaResponseRate = $slaRespTotal > 0 ? round(($slaRespOnTime / $slaRespTotal) * 100, 1) : null;
 
-        // SLA solution compliance
-        $slaSolTotal  = $this->tickets()->whereBetween('created_date', [$from, $to])
-            ->whereNotNull('sla_solution_date')->whereNotNull('resolved_in')->count();
-        $slaSolOnTime = $this->tickets()->whereBetween('created_date', [$from, $to])
-            ->whereNotNull('sla_solution_date')->whereNotNull('resolved_in')
-            ->whereColumn('resolved_in', '<=', 'sla_solution_date')
-            ->count();
-        $slaSolutionRate = $slaSolTotal > 0 ? round(($slaSolOnTime / $slaSolTotal) * 100, 1) : null;
+        // SLA solution compliance — REGRA CANÔNICA (resolved-anchor) via SustentacaoMetrics.
+        // Fase 1.5A: converge /kpis à mesma população do Status. (SLA de Resposta acima é
+        // conceito INDEPENDENTE e permanece inalterado.)
+        $slaSolution     = (new SustentacaoMetrics($this->activeCompanyId()))->slaSolution($from, $to);
+        $slaSolutionRate = $slaSolution['rate'];
 
         $openAtRisk = $this->applyOpen($this->tickets())
             ->whereNull('resolved_in')
@@ -166,6 +163,8 @@ class SustentacaoController extends Controller
             'closed_period'      => $closedPeriod,
             'sla_response_rate'  => $slaResponseRate,
             'sla_solution_rate'  => $slaSolutionRate,
+            'sla_solution_num'   => $slaSolution['num'],
+            'sla_solution_den'   => $slaSolution['den'],
             'open_at_risk'       => $openAtRisk,
             'avg_solution_time'  => $avgSolutionTime ? round($avgSolutionTime) : null,
             'period'             => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
@@ -231,14 +230,35 @@ class SustentacaoController extends Controller
         $this->authorize();
         [$from, $to] = $this->dateRange($request);
 
-        $byUrgency = $this->tickets()->selectRaw('urgencia')
+        // Fase 1.5A: SLA de SOLUÇÃO por prioridade converge à regra canônica (resolved-anchor,
+        // soma fecha com o SLA de Solução global). SLA de RESPOSTA (created-anchor) é conceito
+        // INDEPENDENTE e permanece — só é exibido com seu próprio contexto.
+        $m = new SustentacaoMetrics($this->activeCompanyId());
+
+        $responseByUrg = $this->tickets()
+            ->selectRaw('COALESCE(TRIM(urgencia), \'(sem)\') as urgencia')
             ->selectRaw('COUNT(*) as total')
             ->selectRaw('SUM(CASE WHEN sla_real_response_date IS NOT NULL AND sla_real_response_date <= sla_response_date THEN 1 ELSE 0 END) as on_time_response')
-            ->selectRaw('SUM(CASE WHEN resolved_in IS NOT NULL AND resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as on_time_solution')
             ->whereBetween('created_date', [$from, $to])
-            ->groupBy('urgencia')
-            ->orderByRaw("CASE urgencia WHEN 'Urgente' THEN 1 WHEN 'Alta' THEN 2 WHEN 'Normal' THEN 3 WHEN 'Baixa' THEN 4 ELSE 5 END")
-            ->get();
+            ->groupByRaw('COALESCE(TRIM(urgencia), \'(sem)\')')
+            ->get()->keyBy('urgencia');
+
+        $solByUrg = $m->slaSolutionByUrgency($from, $to);   // regra canônica
+
+        $order     = array_merge(SustentacaoMetrics::URGENCY_ORDER, ['(sem)']);
+        $byUrgency = collect($order)
+            ->filter(fn ($u) => $responseByUrg->has($u) || $solByUrg->has($u))
+            ->map(function ($u) use ($responseByUrg, $solByUrg) {
+                $r = $responseByUrg->get($u);
+                $s = $solByUrg->get($u);
+                return [
+                    'urgencia'         => $u,
+                    'total'            => (int) ($r->total ?? 0),            // criados (contexto Resposta)
+                    'on_time_response' => (int) ($r->on_time_response ?? 0),
+                    'sol_num'          => (int) ($s->num ?? 0),             // SLA Solução canônico
+                    'sol_den'          => (int) ($s->den ?? 0),
+                ];
+            })->values();
 
         $orgByNameSla       = $this->orgLookup();
         $orgByCustomerIdSla = MovideskOrganization::whereNotNull('customer_id')
@@ -391,6 +411,17 @@ class SustentacaoController extends Controller
             ->with('customer:id,name')
             ->orderByDesc('total_period')
             ->get();
+
+        // Fase 1.5A: SLA de Solução por cliente = população SLA APLICÁVEL daquele cliente
+        // (resolved-anchor canônico) — NÃO sla_ok/total_period. total_period segue como
+        // "tickets no período" (contexto), num coluna separada.
+        $slaByClient = (new SustentacaoMetrics($this->activeCompanyId()))->slaSolutionByClient($from, $to);
+        $byClient->transform(function ($c) use ($slaByClient) {
+            $s = $slaByClient->get($c->customer_id);
+            $c->sla_num = (int) ($s->num ?? 0);
+            $c->sla_den = (int) ($s->den ?? 0);
+            return $c;
+        });
 
         return response()->json([
             'by_client' => $byClient,
