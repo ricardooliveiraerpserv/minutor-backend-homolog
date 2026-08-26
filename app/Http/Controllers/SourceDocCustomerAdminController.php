@@ -194,12 +194,15 @@ class SourceDocCustomerAdminController extends Controller
         $customerId = $request->filled('customer_id') ? (int) $request->query('customer_id') : null;
 
         // (A) Solicitações de PROVISIONAMENTO (source_doc_source_requests) — status open/provisioned/rejected.
-        $prov = SourceDocSourceRequest::query()
+        $provQ = SourceDocSourceRequest::query()
             ->leftJoin('customers', 'customers.id', '=', 'source_doc_source_requests.customer_id')
             ->leftJoin('users', 'users.id', '=', 'source_doc_source_requests.requested_by')
             ->leftJoin('helpdesk_tickets as ht', 'ht.ticket_number', '=', 'source_doc_source_requests.ticket')
             ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_source_requests.status', $status))
-            ->when($customerId, fn ($qq) => $qq->where('source_doc_source_requests.customer_id', $customerId))
+            ->when($customerId, fn ($qq) => $qq->where('source_doc_source_requests.customer_id', $customerId));
+        // Anti-IDOR: só solicitações de empresas no escopo do usuário (deny-by-default; null customer só p/ global).
+        $this->scope->applyScope($provQ, $request->user(), 'source_doc_source_requests.customer_id');
+        $prov = $provQ
             ->orderByDesc('source_doc_source_requests.created_at')
             ->limit(300)
             ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name', 'ht.id as hd_ticket_id', 'ht.subject as hd_subject'])
@@ -212,11 +215,14 @@ class SourceDocCustomerAdminController extends Controller
         // (B) Pedidos de CÓDIGO-FONTE abertos pelos CHAMADOS (source_code_requests) — unificados na mesma lista.
         //     Read-only aqui (o atendimento acontece no chamado): id negativo p/ não colidir e não permitir PATCH.
         $mapStatus = fn ($s) => in_array($s, ['done', 'partial'], true) ? 'provisioned' : 'open';
-        $ticketReqs = \App\Models\SourceCodeRequest::query()
+        $ticketReqsQ = \App\Models\SourceCodeRequest::query()
             ->leftJoin('customers as c', 'c.id', '=', 'source_code_requests.client_id')
             ->leftJoin('users as u', 'u.id', '=', 'source_code_requests.requested_by')
             ->leftJoin('helpdesk_tickets as ht2', 'ht2.id', '=', 'source_code_requests.ticket_id')
-            ->when($customerId, fn ($qq) => $qq->where('source_code_requests.client_id', $customerId))
+            ->when($customerId, fn ($qq) => $qq->where('source_code_requests.client_id', $customerId));
+        // Anti-IDOR: mesmo escopo por cliente para os pedidos vindos de chamados.
+        $this->scope->applyScope($ticketReqsQ, $request->user(), 'source_code_requests.client_id');
+        $ticketReqs = $ticketReqsQ
             ->orderByDesc('source_code_requests.created_at')
             ->limit(300)
             ->get(['source_code_requests.*', 'c.name as customer_name', 'u.name as requester_name', 'ht2.ticket_number as ticket_number', 'ht2.subject as hd_subject'])
@@ -252,6 +258,10 @@ class SourceDocCustomerAdminController extends Controller
         $data = $request->validate(['status' => ['required', 'in:open,provisioned,rejected']]);
         $req = SourceDocSourceRequest::query()->find($id);
         if (! $req) {
+            return response()->json(['message' => 'Solicitação não encontrada.'], 404);
+        }
+        // Anti-IDOR: autoridade pela ENTIDADE REAL — só altera solicitação de empresa no escopo do usuário.
+        if (! $this->scope->canAccessCustomerId($request->user(), (int) $req->customer_id)) {
             return response()->json(['message' => 'Solicitação não encontrada.'], 404);
         }
         $req->status = $data['status'];

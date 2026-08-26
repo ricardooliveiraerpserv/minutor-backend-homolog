@@ -7,19 +7,21 @@ use App\Models\SourceDocActionLog;
 use App\Models\SourceDocCostApproval;
 use App\SourceCode\Cost\CostSettingsResolver;
 use App\SourceCode\Cost\SourceCostGovernor;
+use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Central de Fontes — Frente A. Fila "Aprovações de IA". INTERNO ERPSERV (gate de permissão nas rotas).
- * A decisão altera o estado de GOVERNANÇA (eleva teto / libera passo / encerra / rejeita); a re-execução
- * do passo é feita pelo fluxo normal de reprocess/topup, que então passa no governor. Tudo auditado.
+ * Central de Fontes — Frente A. Fila "Aprovações de IA". Gate de permissão nas rotas.
+ * Fase A: escopo por cliente aplicado via SourceDocCustomerScope (anti-IDOR — a autoridade do tenant
+ * vem da FONTE real da aprovação, revalidada no servidor; nunca do parâmetro do browser). Tudo auditado.
  */
 class SourceDocCostApprovalController extends Controller
 {
     public function __construct(
         private SourceCostGovernor $governor,
         private CostSettingsResolver $resolver,
+        private SourceDocCustomerScope $scope,
     ) {
     }
 
@@ -33,8 +35,12 @@ class SourceDocCostApprovalController extends Controller
             ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_cost_approvals.status', $status))
             ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')))
             ->when($request->filled('repository'), fn ($qq) => $qq->where('source_docs.repository', (string) $request->query('repository')))
-            ->when($request->filled('next_step'), fn ($qq) => $qq->where('source_doc_cost_approvals.next_step', (string) $request->query('next_step')))
-            ->orderByDesc('source_doc_cost_approvals.created_at')
+            ->when($request->filled('next_step'), fn ($qq) => $qq->where('source_doc_cost_approvals.next_step', (string) $request->query('next_step')));
+
+        // Anti-IDOR: a fila só mostra aprovações de fontes no escopo do usuário (deny-by-default).
+        $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id');
+
+        $rows = $q->orderByDesc('source_doc_cost_approvals.created_at')
             ->limit(200)
             ->get([
                 'source_doc_cost_approvals.*',
@@ -42,18 +48,22 @@ class SourceDocCostApprovalController extends Controller
                 'source_docs.customer_id', 'customers.name as customer_name',
             ]);
 
-        return response()->json(['data' => $q]);
+        return response()->json(['data' => $rows]);
     }
 
     /** GET /source-docs/cost-approvals/{id} — detalhe com config efetiva e origem. */
-    public function show(int $id): JsonResponse
+    public function show(int $id, Request $request): JsonResponse
     {
         $a = SourceDocCostApproval::query()->find($id);
         if (! $a) {
             return response()->json(['message' => 'Solicitação não encontrada.'], 404);
         }
         $doc = SourceDoc::with('customer:id,name', 'currentVersion:id')->find($a->source_doc_id);
-        $settings = $doc ? $this->resolver->for($doc)->toArray() : null;
+        // Anti-IDOR: não vaza aprovação de fonte fora do escopo do usuário (404 sem revelar existência).
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
+            return response()->json(['message' => 'Solicitação não encontrada.'], 404);
+        }
+        $settings = $this->resolver->for($doc)->toArray();
 
         return response()->json(['data' => [
             'approval' => $a,
@@ -68,7 +78,7 @@ class SourceDocCostApprovalController extends Controller
     /** POST /cost-approvals/{id}/approve-step — libera só o próximo passo. */
     public function approveStep(int $id, Request $request): JsonResponse
     {
-        return $this->guard($id, function (SourceDocCostApproval $a) use ($request) {
+        return $this->guard($id, $request, function (SourceDocCostApproval $a) use ($request) {
             $applied = $this->governor->approveStep($a, (int) $request->user()?->id);
             $this->audit($a, 'approve_step', $request->user()?->id, ['hard_limit_usd' => $applied]);
             return ['action' => 'approved_step', 'applied_limit_usd' => $applied];
@@ -79,7 +89,7 @@ class SourceDocCostApprovalController extends Controller
     public function approveLimit(int $id, Request $request): JsonResponse
     {
         $data = $request->validate(['new_limit_usd' => ['required', 'numeric', 'gt:0']]);
-        return $this->guard($id, function (SourceDocCostApproval $a) use ($request, $data) {
+        return $this->guard($id, $request, function (SourceDocCostApproval $a) use ($request, $data) {
             $applied = $this->governor->approveLimit($a, (float) $data['new_limit_usd'], (int) $request->user()?->id);
             $this->audit($a, 'approve_limit', $request->user()?->id, ['hard_limit_usd' => $applied]);
             return ['action' => 'approved_limit', 'applied_limit_usd' => $applied];
@@ -89,7 +99,7 @@ class SourceDocCostApprovalController extends Controller
     /** POST /cost-approvals/{id}/close-partial — encerra a fonte como parcial. */
     public function closePartial(int $id, Request $request): JsonResponse
     {
-        return $this->guard($id, function (SourceDocCostApproval $a) use ($request) {
+        return $this->guard($id, $request, function (SourceDocCostApproval $a) use ($request) {
             $this->governor->decide($a, 'closed_partial', (int) $request->user()?->id);
             $this->audit($a, 'close_partial', $request->user()?->id);
             return ['action' => 'closed_partial'];
@@ -99,18 +109,23 @@ class SourceDocCostApprovalController extends Controller
     /** POST /cost-approvals/{id}/reject — rejeita a solicitação. */
     public function reject(int $id, Request $request): JsonResponse
     {
-        return $this->guard($id, function (SourceDocCostApproval $a) use ($request) {
+        return $this->guard($id, $request, function (SourceDocCostApproval $a) use ($request) {
             $this->governor->decide($a, 'rejected', (int) $request->user()?->id);
             $this->audit($a, 'reject', $request->user()?->id);
             return ['action' => 'rejected'];
         });
     }
 
-    /** Carrega a solicitação, garante que está pendente e executa a decisão. */
-    private function guard(int $id, \Closure $fn): JsonResponse
+    /** Carrega a solicitação, valida o escopo (anti-IDOR pela FONTE real), garante pendência e executa a decisão. */
+    private function guard(int $id, Request $request, \Closure $fn): JsonResponse
     {
         $a = SourceDocCostApproval::query()->find($id);
         if (! $a) {
+            return response()->json(['message' => 'Solicitação não encontrada.'], 404);
+        }
+        // Anti-IDOR: só decide sobre aprovação cuja fonte está no escopo do usuário.
+        $doc = SourceDoc::find($a->source_doc_id);
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
             return response()->json(['message' => 'Solicitação não encontrada.'], 404);
         }
         if ($a->status !== SourceDocCostApproval::OPEN) {
