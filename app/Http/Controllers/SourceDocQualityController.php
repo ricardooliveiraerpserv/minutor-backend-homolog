@@ -447,7 +447,10 @@ class SourceDocQualityController extends Controller
         if ($status === SourceDocQualityAnalysis::STATUS_FAILED) {
             $data['failed_at']     = $this->ts($r['finished_at'] ?? null) ?? now();
             $data['error_message'] = mb_substr((string) ($r['error'] ?? 'Falha na análise.'), 0, 500);
-            $data['error_code']    = 'remote_failed';
+            // Código ESTRUTURADO vindo do CA (ex.: analyzer_timeout) — sem parsing de string. Fallback remote_failed.
+            $data['error_code']    = (is_string($r['error_code'] ?? null) && $r['error_code'] !== '')
+                ? $r['error_code']
+                : 'remote_failed';
         }
         $record->update($data);
 

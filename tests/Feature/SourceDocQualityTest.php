@@ -603,4 +603,50 @@ class SourceDocQualityTest extends TestCase
         $this->assertNull($rec->missing_since); // marcador limpo — job não estava perdido
         $this->assertNull($rec->error_code);
     }
+
+    // ── CA-R1b: mapeamento de error_code estruturado (analyzer_timeout) ──────
+
+    /** getJob failed + error_code=analyzer_timeout → BFF persiste analyzer_timeout (não remote_failed/job_lost). */
+    public function test_analyzer_timeout_maps_structured_error_code(): void
+    {
+        $doc = $this->makeDoc('bT'); $this->bindAuth($doc, 'bT');
+        $rec = $this->inflight($doc, 'bT', 'jT');
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), '/health')) return Http::response(['status' => 'ok'], 200);
+            if ($request->method() === 'GET') {
+                return Http::response([
+                    'job_id' => 'jT', 'status' => 'failed',
+                    'error' => 'Timeout: o analyzer excedeu CA_ANALYZER_TIMEOUT.',
+                    'error_code' => 'analyzer_timeout',
+                    'engine' => ['name' => 'TOTVS'],
+                ], 200);
+            }
+            return Http::response(['job_id' => 'jT', 'status' => 'queued'], 202);
+        });
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk()
+            ->assertJsonPath('data.state', 'failed')
+            ->assertJsonPath('data.analysis.error_code', 'analyzer_timeout');
+        $rec->refresh();
+        $this->assertSame('failed', $rec->status);
+        $this->assertSame('analyzer_timeout', $rec->error_code);
+    }
+
+    /** getJob failed SEM error_code → fallback remote_failed (compat). */
+    public function test_failed_without_error_code_maps_remote_failed(): void
+    {
+        $doc = $this->makeDoc('bF'); $this->bindAuth($doc, 'bF');
+        $rec = $this->inflight($doc, 'bF', 'jF');
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), '/health')) return Http::response(['status' => 'ok'], 200);
+            if ($request->method() === 'GET') {
+                return Http::response(['job_id' => 'jF', 'status' => 'failed', 'error' => 'boom', 'engine' => ['name' => 'TOTVS']], 200);
+            }
+            return Http::response(['job_id' => 'jF', 'status' => 'queued'], 202);
+        });
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk()
+            ->assertJsonPath('data.analysis.error_code', 'remote_failed');
+        $this->assertSame('remote_failed', $rec->fresh()->error_code);
+    }
 }
