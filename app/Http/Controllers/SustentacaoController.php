@@ -7,6 +7,7 @@ use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\MovideskTicket;
 use App\Services\MovideskService;
+use App\Support\SustentacaoMetrics;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -898,8 +899,79 @@ class SustentacaoController extends Controller
             'top_clients'           => $topClients,
             'by_category'           => $byCategory,
             'by_urgency'            => $byUrgency,
+            // Bloco CANÔNICO do "Status de Suporte" (regra única via SustentacaoMetrics).
+            // Aditivo: os campos legados acima seguem intocados (consumidos pela aba Indicadores).
+            'status'                => $this->buildStatusBlock($request, $from, $to),
             'period'                => ['from' => $from->toDateString(), 'to' => $to->toDateString()],
         ]);
+    }
+
+    /**
+     * Monta o payload canônico do "Status de Suporte" a partir de SustentacaoMetrics.
+     * compare=yoy → inclui `previous` (mesma janela −1 ano) e `variation` estruturados,
+     * calculados no BACKEND com a MESMA regra/filtros/escopo. Sem histórico → null (nunca 0).
+     *
+     * Relação dos conjuntos de estado (ver docblock de SustentacaoMetrics):
+     *   open_operational = new_in_attendance + stopped_internal  (stopped_internal ⊂ open_operational)
+     *   waiting_client   disjunto de open_operational
+     */
+    private function buildStatusBlock(Request $request, Carbon $from, Carbon $to): array
+    {
+        $m = new SustentacaoMetrics($this->activeCompanyId());
+
+        $window = fn(Carbon $f, Carbon $t) => [
+            'created'                 => $m->createdCount($f, $t),
+            'resolved'                => $m->resolvedCount($f, $t),
+            'sla'                     => $m->slaSolution($f, $t),          // {rate,num,den}
+            'resolution_median_hours' => $m->resolutionMedianHours($f, $t),
+            'hours'                   => $m->hours($f, $t),                // KPI oficial (sem AA nesta fase)
+        ];
+
+        $current  = $window($from, $to);
+        $previous = null;
+        $variation = null;
+
+        if ($request->query('compare') === 'yoy') {
+            $pf = $from->copy()->subYear();
+            $pt = $to->copy()->subYear();
+            $previous = $window($pf, $pt);
+
+            $pctVar = fn($cur, $prev) => ($prev !== null && $prev > 0) ? round(($cur - $prev) / $prev * 100, 1) : null;
+            $ppVar  = fn($cur, $prev) => ($cur !== null && $prev !== null) ? round($cur - $prev, 1) : null;
+
+            $variation = [
+                'created_pct'          => $pctVar($current['created'],  $previous['created']),
+                'resolved_pct'         => $pctVar($current['resolved'], $previous['resolved']),
+                'sla_pp'               => $ppVar($current['sla']['rate'], $previous['sla']['rate']),
+                'resolution_hours_abs' => $ppVar($current['resolution_median_hours'], $previous['resolution_median_hours']),
+                'resolution_pct'       => $pctVar($current['resolution_median_hours'], $previous['resolution_median_hours']),
+                // Horas: SEM AA nesta fase (não há baseline equivalente — histórico de horas começa em 2026).
+                'hours_pct'            => null,
+            ];
+        }
+
+        $groups = $m->openGroups();
+
+        return [
+            'current'   => $current,
+            'previous'  => $previous,   // null quando não solicitado compare=yoy
+            'variation' => $variation,  // null quando não solicitado compare=yoy
+            // ── Estado (snapshot atual, sem AA) ──
+            'state'     => array_merge($groups, [
+                'sla_breached_now' => $m->slaBreachedNow(),
+                'aging'            => $m->agingBuckets(),   // sobre open_operational
+            ]),
+            // ── Distribuições do período ──
+            'distribution' => [
+                'by_categoria'    => $m->byCategoria($from, $to),        // Tipo de Atendimento (≤6 → donut ok)
+                'by_servico'      => $m->byServicoTop($from, $to, 10),   // Módulo (Top-10 + Outros)
+                'sla_by_priority' => $m->slaByPriority($from, $to),
+            ],
+            // Densidade de esforço (bug Top-12 corrigido no helper): horas totais ÷ resolvidos.
+            'effort_per_resolved_hours' => $m->effortPerResolvedHours($from, $to),
+            // Horas por módulo/tipo PROIBIDO como oficial (cobertura ticket≈54%). Não expor distribuição de horas.
+            'hours_by_dimension_available' => false,
+        ];
     }
 
     public function debugProjectMap(): JsonResponse
