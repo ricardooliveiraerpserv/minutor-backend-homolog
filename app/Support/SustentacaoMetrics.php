@@ -221,10 +221,14 @@ class SustentacaoMetrics
         ];
     }
 
-    /** SLA por prioridade (mesma regra canônica resolved-anchor), na ordem de urgência. */
-    public function slaByPriority(Carbon $from, Carbon $to): array
+    /**
+     * SLA de Solução agrupado por urgência (regra canônica resolved-anchor),
+     * TODOS os buckets (inclui '(sem)'). A soma de num/den por urgência fecha
+     * EXATAMENTE com o SLA de Solução global. Keyed pelo rótulo de urgência.
+     */
+    public function slaSolutionByUrgency(Carbon $from, Carbon $to): \Illuminate\Support\Collection
     {
-        $rows = $this->tickets()
+        return $this->tickets()
             ->whereBetween('resolved_in', [$from, $to])
             ->whereNotNull('sla_solution_date')
             ->selectRaw('COALESCE(TRIM(urgencia), \'(sem)\') as urgencia')
@@ -233,7 +237,12 @@ class SustentacaoMetrics
             ->groupByRaw('COALESCE(TRIM(urgencia), \'(sem)\')')
             ->get()
             ->keyBy('urgencia');
+    }
 
+    /** SLA por prioridade (deriva de slaSolutionByUrgency), na ordem de urgência. */
+    public function slaByPriority(Carbon $from, Carbon $to): array
+    {
+        $rows = $this->slaSolutionByUrgency($from, $to);
         $out = [];
         foreach (self::URGENCY_ORDER as $u) {
             $r = $rows->get($u);
@@ -246,6 +255,26 @@ class SustentacaoMetrics
             ];
         }
         return $out;
+    }
+
+    /**
+     * SLA de Solução por cliente (regra canônica resolved-anchor): keyed por
+     * customer_id → {num, den}. Denominador = população SLA aplicável DAQUELE
+     * cliente (resolvidos no período com sla_solution_date), NÃO o total de
+     * tickets do período.
+     */
+    public function slaSolutionByClient(Carbon $from, Carbon $to): \Illuminate\Support\Collection
+    {
+        return $this->tickets()
+            ->whereBetween('resolved_in', [$from, $to])
+            ->whereNotNull('sla_solution_date')
+            ->whereNotNull('customer_id')
+            ->selectRaw('customer_id')
+            ->selectRaw('COUNT(*) as den')
+            ->selectRaw('SUM(CASE WHEN resolved_in <= sla_solution_date THEN 1 ELSE 0 END) as num')
+            ->groupBy('customer_id')
+            ->get()
+            ->keyBy('customer_id');
     }
 
     // ── Horas (timesheets de sustentação) ────────────────────────────────────
