@@ -40,6 +40,24 @@ class SourceDocQualityService
         return $this->enabled && $this->baseUrl !== '' && (string) $this->token !== '';
     }
 
+    /**
+     * Saúde/alcançabilidade do CodeAnalysis (GET /health, SEM token, timeout curto).
+     * Usado na reconciliação: um 404 de job só vira job_lost se o CA estiver comprovadamente saudável
+     * (restarting/unreachable/5xx/timeout ⇒ false ⇒ mantém o estado). NUNCA lança.
+     */
+    public function healthy(): bool
+    {
+        if (! $this->enabled()) {
+            return false;
+        }
+        try {
+            $res = Http::acceptJson()->connectTimeout(3)->timeout(5)->get("{$this->baseUrl}/health");
+            return $res->successful();
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
     private function client()
     {
         return Http::withToken((string) $this->token)

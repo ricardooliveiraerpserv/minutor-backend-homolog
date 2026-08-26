@@ -28,7 +28,7 @@ class SourceDocQualityAnalysis extends Model
         'score', 'grade', 'risk', 'n_critical', 'n_warnings', 'n_recommendations', 'n_findings',
         'engine', 'engine_version', 'rules_version',
         'requested_by', 'requested_at', 'started_at', 'completed_at', 'failed_at',
-        'error_code', 'error_message',
+        'error_code', 'error_message', 'missing_since',
     ];
 
     protected $casts = [
@@ -41,6 +41,7 @@ class SourceDocQualityAnalysis extends Model
         'started_at'        => 'datetime',
         'completed_at'      => 'datetime',
         'failed_at'         => 'datetime',
+        'missing_since'     => 'datetime',
     ];
 
     public function sourceDoc(): BelongsTo

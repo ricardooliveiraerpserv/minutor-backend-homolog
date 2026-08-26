@@ -482,43 +482,125 @@ class SourceDocQualityTest extends TestCase
         $this->assertStringNotContainsString('SECRET_SRC', $res->getContent());
     }
 
-    public function test_job_lost_reconciliation_marks_failed(): void
-    {
-        $doc = $this->makeDoc('blobR');
-        $this->bindAuth($doc, 'blobR');
-        $rec = SourceDocQualityAnalysis::create([
-            'source_doc_id' => $doc->id, 'source_doc_version_id' => $doc->current_version_id,
-            'source_blob_sha' => 'blobR', 'status' => 'running', 'external_job_id' => 'jobLost',
-        ]);
-        Http::fake(fn ($r) => Http::response(['message' => 'not found'], 404)); // job sumiu (restart do CA)
+    // ── reconciliação job_lost guardada (anti-404-prematuro) ────────────────
 
+    /** Fake: /health → $healthCode; GET job → $jobBody/$jobCode; POST create → 202. */
+    private function fakeHealthAndJob(int $healthCode, array $jobBody = ['message' => 'not found'], int $jobCode = 404): void
+    {
+        Http::fake(function ($request) use ($healthCode, $jobBody, $jobCode) {
+            if (str_contains($request->url(), '/health')) {
+                return Http::response(['status' => 'ok'], $healthCode);
+            }
+            if ($request->method() === 'GET') {
+                return Http::response($jobBody, $jobCode);
+            }
+            return Http::response(['job_id' => 'jobX', 'status' => 'queued'], 202);
+        });
+    }
+
+    private function inflight(SourceDoc $doc, string $blob, string $job): SourceDocQualityAnalysis
+    {
+        return SourceDocQualityAnalysis::create([
+            'source_doc_id' => $doc->id, 'source_doc_version_id' => $doc->current_version_id,
+            'source_blob_sha' => $blob, 'status' => 'running', 'external_job_id' => $job,
+        ]);
+    }
+
+    /** (1) 404 único com CA saudável → NÃO terminaliza; só marca missing_since. */
+    public function test_single_404_healthy_does_not_terminalize(): void
+    {
+        $doc = $this->makeDoc('b1'); $this->bindAuth($doc, 'b1');
+        $rec = $this->inflight($doc, 'b1', 'j1');
+        $this->fakeHealthAndJob(200, ['message' => 'not found'], 404);
         $this->actingAs($this->admin(), 'sanctum')
-            ->getJson("/api/v1/source-docs/{$doc->id}/quality")
-            ->assertOk()
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk()
+            ->assertJsonPath('data.state', 'running');
+        $rec->refresh();
+        $this->assertSame('running', $rec->status);
+        $this->assertNull($rec->error_code);
+        $this->assertNotNull($rec->missing_since); // 1ª ausência registrada, não confirmada
+    }
+
+    /** (2) 2º 404 confirmado + CA saudável + grace → job_lost. */
+    public function test_confirmed_absence_healthy_marks_job_lost(): void
+    {
+        $doc = $this->makeDoc('b2'); $this->bindAuth($doc, 'b2');
+        $rec = $this->inflight($doc, 'b2', 'j2');
+        $this->fakeHealthAndJob(200, ['message' => 'not found'], 404);
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk();
+        $this->assertNotNull($rec->fresh()->missing_since);
+        $this->assertSame('running', $rec->fresh()->status);
+
+        $this->travel(25)->seconds(); // passa a grace
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk()
             ->assertJsonPath('data.state', 'failed')
             ->assertJsonPath('data.analysis.error_code', 'job_lost');
-
         $rec->refresh();
         $this->assertSame('failed', $rec->status);
         $this->assertSame('job_lost', $rec->error_code);
-        $this->assertNotNull($rec->failed_at);
+        $this->assertNull($rec->missing_since);
+        $this->travelBack();
     }
 
-    public function test_transient_unavailable_does_not_reconcile(): void
+    /** (3) 404 com CA unhealthy → mantém estado (404 não confiável). */
+    public function test_404_unhealthy_ca_keeps_state(): void
     {
-        $doc = $this->makeDoc('blobT');
-        $this->bindAuth($doc, 'blobT');
-        $rec = SourceDocQualityAnalysis::create([
-            'source_doc_id' => $doc->id, 'source_doc_version_id' => $doc->current_version_id,
-            'source_blob_sha' => 'blobT', 'status' => 'running', 'external_job_id' => 'jobT',
-        ]);
-        Http::fake(fn ($r) => Http::response(['message' => 'boom'], 503)); // indisponibilidade TRANSITÓRIA
-
+        $doc = $this->makeDoc('b3'); $this->bindAuth($doc, 'b3');
+        $rec = $this->inflight($doc, 'b3', 'j3');
+        $this->fakeHealthAndJob(503, ['message' => 'not found'], 404);
         $this->actingAs($this->admin(), 'sanctum')
             ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk();
-
         $rec->refresh();
-        $this->assertSame('running', $rec->status); // NÃO vira job_lost por 5xx transitório
+        $this->assertSame('running', $rec->status);
+        $this->assertNull($rec->error_code);
+        $this->assertNull($rec->missing_since); // sem marcador (CA unhealthy)
+    }
+
+    /** (4) getJob 5xx (transitório) → mantém estado. */
+    public function test_transient_5xx_getjob_keeps_state(): void
+    {
+        $doc = $this->makeDoc('b4'); $this->bindAuth($doc, 'b4');
+        $rec = $this->inflight($doc, 'b4', 'j4');
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), '/health')) return Http::response(['status' => 'ok'], 200);
+            if ($request->method() === 'GET') return Http::response(['message' => 'boom'], 503);
+            return Http::response(['job_id' => 'jobX', 'status' => 'queued'], 202);
+        });
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk();
+        $rec->refresh();
+        $this->assertSame('running', $rec->status);
+        $this->assertNull($rec->error_code);
+    }
+
+    /** (5) job reaparece após ausência transitória → continua normalmente (marcador limpo). */
+    public function test_job_reappears_clears_missing(): void
+    {
+        $doc = $this->makeDoc('b5'); $this->bindAuth($doc, 'b5');
+        $rec = $this->inflight($doc, 'b5', 'j5');
+        // closure stateful: /health sempre 200; 1º getJob → 404 (ausência), demais → 200 running (voltou).
+        $getCalls = 0;
+        Http::fake(function ($request) use (&$getCalls) {
+            if (str_contains($request->url(), '/health')) return Http::response(['status' => 'ok'], 200);
+            if ($request->method() === 'GET') {
+                $getCalls++;
+                return $getCalls === 1
+                    ? Http::response(['message' => 'not found'], 404)
+                    : Http::response(['job_id' => 'j5', 'status' => 'running'], 200);
+            }
+            return Http::response(['job_id' => 'j5', 'status' => 'queued'], 202);
+        });
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk();
+        $this->assertNotNull($rec->fresh()->missing_since); // 1ª ausência
+
+        $this->actingAs($this->admin(), 'sanctum')
+            ->getJson("/api/v1/source-docs/{$doc->id}/quality")->assertOk(); // job voltou (getJob 200)
+        $rec->refresh();
+        $this->assertSame('running', $rec->status);
+        $this->assertNull($rec->missing_since); // marcador limpo — job não estava perdido
         $this->assertNull($rec->error_code);
     }
 }

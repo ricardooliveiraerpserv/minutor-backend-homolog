@@ -216,13 +216,14 @@ class SourceDocQualityController extends Controller
             return response()->json(['message' => 'Não foi possível obter os achados.', 'error' => $e->errorCode], $status);
         }
         if ($remote === null) {
-            // Job perdido (404) — reconcilia se estava inflight; não há achados persistidos.
-            $this->reconcileLostJob($rec);
+            // 404 — NÃO reconcilia de imediato (pode ser transitório); regra guardada decide.
+            $this->handleMissingJob($rec);
             return response()->json(['data' => [
                 'analysis_id' => $rec->id, 'external_job_id' => $rec->external_job_id,
                 'status' => $rec->fresh()->status, 'view_git' => $canViewCode, 'source' => 'none', 'findings' => [],
             ]]);
         }
+        $this->clearMissing($rec); // job encontrado → zera marcador de ausência
         $raw = is_array($remote['findings'] ?? null) ? array_values($remote['findings']) : [];
         if (($remote['status'] ?? null) === SourceDocQualityAnalysis::STATUS_COMPLETED
             && $raw && $rec->findings()->doesntExist()) {
@@ -292,11 +293,47 @@ class SourceDocQualityController extends Controller
         return $findings;
     }
 
+    /** Tolerância mínima (s) entre a 1ª e a 2ª ausência (404) confirmada, com CA saudável, antes de job_lost. */
+    private const JOB_LOST_GRACE_SECONDS = 20;
+
     /**
-     * Reconciliação de job perdido (P2): análise inflight cujo job NÃO existe mais no CA (404
-     * definitivo, tipicamente restart do serviço efêmero) NÃO pode ficar eterna em queued/running.
-     * Vira failed com error_code='job_lost' — distinto de 'remote_failed' (analyzer realmente falhou)
-     * e de indisponibilidade transitória (5xx/timeout → mantém estado, tratado no chamador).
+     * getJob retornou 404 numa análise inflight. NÃO marca job_lost de imediato — um 404 pode ser
+     * TRANSITÓRIO (restart/eviction/timeout do CA). Regra (sem sleep bloqueante; usa o polling do FE):
+     *   - CA unhealthy/inalcançável (health != 200) → mantém estado, limpa marcador.
+     *   - CA healthy + 1º 404 → registra missing_since, mantém estado (ausência NÃO confirmada).
+     *   - CA healthy + 404 posterior, com missing_since + grace decorrida → job_lost (ausência confirmada).
+     */
+    private function handleMissingJob(SourceDocQualityAnalysis $rec): void
+    {
+        if (! $rec->isInflight()) {
+            return; // já terminal
+        }
+        // Só considera 404 confiável se o CA estiver comprovadamente SAUDÁVEL agora.
+        if (! $this->service->healthy()) {
+            $this->clearMissing($rec); // restarting/unreachable/5xx/timeout → 404 não confiável
+            return;
+        }
+        if (! $rec->missing_since) {
+            $rec->update(['missing_since' => now()]); // 1ª ausência — aguarda 2ª confirmação
+            return;
+        }
+        if ($rec->missing_since->lte(now()->subSeconds(self::JOB_LOST_GRACE_SECONDS))) {
+            $this->reconcileLostJob($rec); // 2ª ausência confirmada + grace + CA saudável
+        }
+        // dentro da grace: mantém estado; a confirmação vem numa consulta posterior do polling
+    }
+
+    /** Zera o marcador de ausência (job reapareceu, ou indisponibilidade transitória). */
+    private function clearMissing(SourceDocQualityAnalysis $rec): void
+    {
+        if ($rec->missing_since) {
+            $rec->update(['missing_since' => null]);
+        }
+    }
+
+    /**
+     * Terminaliza como job_lost — SÓ chamado após ausência CONFIRMADA (2º 404, CA saudável, grace).
+     * Distinto de 'remote_failed' (analyzer realmente falhou) e de indisponibilidade transitória.
      */
     private function reconcileLostJob(SourceDocQualityAnalysis $rec): void
     {
@@ -305,7 +342,8 @@ class SourceDocQualityController extends Controller
                 'status'        => SourceDocQualityAnalysis::STATUS_FAILED,
                 'failed_at'     => now(),
                 'error_code'    => 'job_lost',
-                'error_message' => 'Job perdido no serviço de análise (reinício/expiração).',
+                'error_message' => 'Job perdido no serviço de análise (ausência confirmada com CA saudável).',
+                'missing_since' => null,
             ]);
         }
     }
@@ -367,13 +405,16 @@ class SourceDocQualityController extends Controller
         try {
             $remote = $this->service->getJob((string) $record->external_job_id);
         } catch (CodeAnalysisException) {
-            return; // indisponibilidade TRANSITÓRIA (5xx/timeout/conn) — mantém estado; não reconcilia
-        }
-        if ($remote === null) {
-            // 404 DEFINITIVO: o job não existe mais no CA (restart do store efêmero) → não fica eterno.
-            $this->reconcileLostJob($record);
+            // indisponibilidade TRANSITÓRIA (5xx/timeout/conn) — mantém estado; limpa ausência pendente
+            $this->clearMissing($record);
             return;
         }
+        if ($remote === null) {
+            // 404: NÃO reconcilia de imediato — pode ser transitório (restart/eviction). Ver handleMissingJob.
+            $this->handleMissingJob($record);
+            return;
+        }
+        $this->clearMissing($record); // job encontrado (reapareceu/normal) → zera marcador de ausência
         $this->applyRemote($record, $remote);
     }
 
