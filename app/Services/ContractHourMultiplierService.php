@@ -131,22 +131,30 @@ class ContractHourMultiplierService
      */
     public function recomputeContract(int $contractId): void
     {
-        $projectIds = $this->projectIdsOfContract($contractId);
-        if (!$projectIds) return;
+        // 🔒 Só o projeto RAIZ do contrato multiplica; FILHOS ficam SEMPRE no real
+        // (pedido do Ricardo 26/08). O `base` são apenas os apontamentos do projeto raiz.
+        $root = Contract::query()->whereKey($contractId)->value('project_id');
+        if (!$root) return;
+        $root = (int) $root;
 
-        // Projetos FECHADOS ficam de fora do multiplicador (nem excedente): pct sempre NULL.
-        $closed = $this->closedProjectIds($projectIds);
-        if ($closed) {
-            \App\Models\Timesheet::query()->whereIn('project_id', $closed)
+        // Limpa qualquer pct que os FILHOS/descendentes tenham herdado do modelo antigo.
+        $childIds = array_values(array_diff($this->projectIdsOfContract($contractId), [$root]));
+        if ($childIds) {
+            \App\Models\Timesheet::query()->whereIn('project_id', $childIds)
                 ->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
         }
-        $openIds = array_values(array_diff($projectIds, $closed));
-        if (!$openIds) return;
+
+        // Projeto raiz FECHADO fica de fora do multiplicador (nem excedente): pct NULL.
+        if ($this->closedProjectIds([$root])) {
+            \App\Models\Timesheet::query()->where('project_id', $root)
+                ->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
+            return;
+        }
 
         $rule = ContractHourMultiplier::query()
             ->where('contract_id', $contractId)->where('active', true)->first();
 
-        $base = \App\Models\Timesheet::query()->whereIn('project_id', $openIds);
+        $base = \App\Models\Timesheet::query()->where('project_id', $root);
 
         if (!$rule) {
             (clone $base)->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
@@ -178,17 +186,12 @@ class ContractHourMultiplierService
         if (array_key_exists($projectId, $this->projectContract)) {
             return $this->projectContract[$projectId];
         }
-        // On Demand aponta em projeto FILHO, mas o contrato (e a regra) fica no RAIZ.
-        // Sobe a cadeia parent_project_id até achar um contrato (teto de 10 níveis).
-        $pid = $projectId; $seen = [];
-        for ($i = 0; $i < 10 && $pid && !in_array($pid, $seen, true); $i++) {
-            $seen[] = $pid;
-            $cid = Contract::query()->where('project_id', $pid)->orderByDesc('id')->value('id');
-            if ($cid) {
-                return $this->projectContract[$projectId] = (int) $cid;
-            }
-            $pid = \App\Models\Project::query()->where('id', $pid)->value('parent_project_id');
-        }
-        return $this->projectContract[$projectId] = null;
+        // 🔒 Só o projeto RAIZ do contrato multiplica. Projetos FILHOS (subprojetos,
+        // On Demand etc.) NÃO herdam a regra — pedido do Ricardo (26/08): "os projetos
+        // filhos não podem ser impactados; o projeto pai multiplica só as horas apontadas
+        // do pai". Por isso NÃO sobe a cadeia parent_project_id: resolve APENAS o contrato
+        // cujo project_id É exatamente este projeto.
+        $cid = Contract::query()->where('project_id', $projectId)->orderByDesc('id')->value('id');
+        return $this->projectContract[$projectId] = $cid ? (int) $cid : null;
     }
 }
