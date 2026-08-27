@@ -3794,12 +3794,43 @@ class ProjectController extends Controller
             'project_id'    => $p->project_id,
             'project_code'  => $p->project?->code,
             'project_name'  => $p->project?->name,
+            'customer_id'   => $p->project?->customer_id,
             'cliente'       => $p->project?->customer?->name,
             'year_month'    => $p->year_month,
             'opened_by'     => $p->openedBy?->name,
             'created_at'    => $p->created_at,
             'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
         ]);
+
+        // Agrupamento por CLIENTE: quando TODOS os projetos abertos de um cliente estão com o
+        // mês reaberto (mesma competência), colapsa as N linhas numa só ("Cliente · todos"),
+        // carregando os ids de período para o Fechar em lote no FE. Subconjunto → lista individual.
+        $data = $data
+            ->groupBy(fn ($r) => ($r['customer_id'] ?? 'x') . '|' . $r['year_month'])
+            ->flatMap(function ($grp) {
+                $first = $grp->first();
+                $cid   = $first['customer_id'] ?? null;
+                if (!$cid || $grp->count() < 2) return $grp;
+                $openIds   = $grp->pluck('project_id')->filter()->unique();
+                $openCount = \App\Models\Project::where('customer_id', $cid)->open()->count();
+                if ($openIds->count() < $openCount) return $grp; // só colapsa se cobre TODOS
+                return collect([[
+                    'id'             => 'c' . $cid . '-' . $first['year_month'], // chave sintética (React)
+                    'all_projects'   => true,
+                    'period_ids'     => $grp->pluck('id')->values()->all(),
+                    'projects_count' => $openIds->count(),
+                    'project_id'     => null,
+                    'project_code'   => null,
+                    'project_name'   => null,
+                    'customer_id'    => $cid,
+                    'cliente'        => $first['cliente'],
+                    'year_month'     => $first['year_month'],
+                    'opened_by'      => $first['opened_by'],
+                    'created_at'     => $first['created_at'],
+                    'auto_close_at'  => $first['auto_close_at'],
+                ]]);
+            })
+            ->values();
 
         return response()->json(['data' => $data]);
     }
