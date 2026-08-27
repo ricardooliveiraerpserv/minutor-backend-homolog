@@ -330,6 +330,18 @@ class SkillSurveyController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    /** Remove VÁRIOS participantes de uma pesquisa/campanha (em massa / por categoria). */
+    public function removeInvitesBulk(Request $request, int $id): JsonResponse
+    {
+        $survey = SkillSurvey::findOrFail($id);
+        $data = $request->validate([
+            'invite_ids' => 'required|array|min:1',
+            'invite_ids.*' => 'integer',
+        ]);
+        $removed = $survey->invites()->whereIn('id', $data['invite_ids'])->delete();
+        return response()->json(['removed' => $removed]);
+    }
+
     /**
      * Exclui uma pesquisa/campanha. O FK é cascadeOnDelete: apaga convites, submissões
      * (rascunho E enviadas) e suas respostas. ⚠️ As respostas dessa pesquisa somem do
