@@ -3787,17 +3787,18 @@ class ProjectController extends Controller
             ->with(['project:id,code,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])
             ->orderBy('year_month')
             ->orderBy('project_id')
-            ->get(['id', 'project_id', 'year_month', 'opened_by', 'created_at']);
+            ->get(['id', 'project_id', 'year_month', 'opened_by', 'created_at', 'auto_close_at']);
 
         $data = $periods->map(fn ($p) => [
-            'id'           => $p->id,
-            'project_id'   => $p->project_id,
-            'project_code' => $p->project?->code,
-            'project_name' => $p->project?->name,
-            'cliente'      => $p->project?->customer?->name,
-            'year_month'   => $p->year_month,
-            'opened_by'    => $p->openedBy?->name,
-            'created_at'   => $p->created_at,
+            'id'            => $p->id,
+            'project_id'    => $p->project_id,
+            'project_code'  => $p->project?->code,
+            'project_name'  => $p->project?->name,
+            'cliente'       => $p->project?->customer?->name,
+            'year_month'    => $p->year_month,
+            'opened_by'     => $p->openedBy?->name,
+            'created_at'    => $p->created_at,
+            'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
         ]);
 
         return response()->json(['data' => $data]);
