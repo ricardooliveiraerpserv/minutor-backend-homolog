@@ -146,6 +146,9 @@ class PermissionService
         // Conector-3 — EXECUÇÃO de comandos assíncronos (não destrutivos: collect_inventory_now). Estrita
         // (admin via '*' + administrativo; NÃO coordenador/consultor). Categoria de risco reforçada.
         'prosight.operations.execute',
+        // Conector-4.1 — OPERAÇÃO DESTRUTIVA granular. NÃO herda operations.execute. Estritas.
+        'prosight.operations.start',   // criar/cancelar operação de start
+        'prosight.operations.approve', // maker-checker: aprovar/rejeitar/reconciliar
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -246,6 +249,9 @@ class PermissionService
             'prosight.operations.manage',
             // Conector-3 — executar comandos assíncronos não destrutivos (collect_inventory_now).
             'prosight.operations.execute',
+            // Conector-4.1 — operação destrutiva granular (start) + aprovação (maker-checker).
+            'prosight.operations.start',
+            'prosight.operations.approve',
         ];
     }
 

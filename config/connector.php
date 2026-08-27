@@ -43,4 +43,20 @@ return [
         // Retenção operacional (a auditoria durável fica em connector_events/timeline).
         'retention_days' => (int) env('CONNECTOR_CMD_RETENTION_DAYS', 60),
     ],
+
+    // Connector-4.1 — OPERAÇÕES destrutivas/controladas (classe de segurança separada). SÓ start nesta fase.
+    'operations' => [
+        // ALLOWLIST operacional inicial: SÓ 'start' (stop/restart NÃO existem, nem como opção oculta).
+        'types' => ['start'],
+        // Maker-checker OBRIGATÓRIO — inclusive homolog (só o gate controlado poderia relaxar).
+        'require_approval' => filter_var(env('CONNECTOR_OP_REQUIRE_APPROVAL', true), FILTER_VALIDATE_BOOLEAN),
+        // Transport lease: dispatchable→claim. Vence SEM claim → expired (único timeout auto-terminal seguro).
+        'transport_lease' => (int) env('CONNECTOR_OP_TRANSPORT_LEASE', 60),
+        // Frescor exigido do observado C-2 na pré-condição (segundos).
+        'observed_freshness' => (int) env('CONNECTOR_OP_OBSERVED_FRESHNESS', 120),
+        'start' => [
+            'operational_deadline' => (int) env('CONNECTOR_OP_START_DEADLINE', 120), // timeout OPERACIONAL
+            'reconcile_window'     => (int) env('CONNECTOR_OP_RECONCILE_WINDOW', 180),
+        ],
+    ],
 ];

@@ -126,6 +126,16 @@ Route::prefix('v1')->group(function () {
         ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.ack');
     Route::post('/connector/commands/{id}/result', [\App\Http\Controllers\ConnectorCommandController::class, 'result'])
         ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.result');
+    // Connector-4.1 — OPERAÇÕES (só start). Canal do agente (outbound-only, assinado). Claim single-shot
+    // (SEM retry); current recupera claim perdido; ack cruza a barreira; result(ok)→verifying (não sucesso).
+    Route::get('/connector/operations/next', [\App\Http\Controllers\ConnectorOperationController::class, 'next'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.next');
+    Route::get('/connector/operations/current', [\App\Http\Controllers\ConnectorOperationController::class, 'current'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.current');
+    Route::post('/connector/operations/{id}/ack', [\App\Http\Controllers\ConnectorOperationController::class, 'ack'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.ack');
+    Route::post('/connector/operations/{id}/result', [\App\Http\Controllers\ConnectorOperationController::class, 'result'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.result');
 
     // 🔗 PORTAL DE PROPOSTAS — acesso público por token (sem login). Throttle alto: o portal faz muito
     // tracking (página/seção/heartbeat) + polling; o token de 48 chars já é a barreira anti-brute-force.
@@ -696,6 +706,22 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:prosight.operations.execute')->group(function () {
             Route::post('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'create'])->whereNumber('environmentId');
             Route::post('/prosight/commands/{commandId}/cancel', [\App\Http\Controllers\ConnectorCommandController::class, 'cancel'])->whereNumber('commandId');
+        });
+        // Conector-4.1 — OPERAÇÕES (só start). Leitura read-only (perm view).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
+        });
+        // Criar/cancelar operação destrutiva — perm ESTRITA prosight.operations.start (NÃO herda execute).
+        Route::middleware('permission:prosight.operations.start')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
+        });
+        // Aprovar/rejeitar/reconciliar — perm ESTRITA prosight.operations.approve (maker-checker; capability distinta).
+        Route::middleware('permission:prosight.operations.approve')->group(function () {
+            Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
+            Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
+            Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1867,6 +1893,22 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:prosight.operations.execute')->group(function () {
             Route::post('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'create'])->whereNumber('environmentId');
             Route::post('/prosight/commands/{commandId}/cancel', [\App\Http\Controllers\ConnectorCommandController::class, 'cancel'])->whereNumber('commandId');
+        });
+        // Conector-4.1 — OPERAÇÕES (só start). Leitura read-only (perm view).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
+        });
+        // Criar/cancelar operação destrutiva — perm ESTRITA prosight.operations.start (NÃO herda execute).
+        Route::middleware('permission:prosight.operations.start')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
+        });
+        // Aprovar/rejeitar/reconciliar — perm ESTRITA prosight.operations.approve (maker-checker; capability distinta).
+        Route::middleware('permission:prosight.operations.approve')->group(function () {
+            Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
+            Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
+            Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
