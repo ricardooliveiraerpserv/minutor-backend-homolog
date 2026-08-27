@@ -347,7 +347,10 @@ class ProjectEvmController extends Controller
                 'done_count'   => $dset->count(),
                 'hours_done'   => $plannedDone,
                 'hours_actual' => $actual,
-                'efficiency'   => $actual > 0 ? round($plannedDone / $actual, 2) : null,
+                // Eficiência = planejadas-das-concluídas ÷ apontadas. Indefinida (null → "—" no
+                // front) quando NADA foi concluído (plannedDone=0) ou sem horas apontadas — senão
+                // um consultor que apontou mas não concluiu aparecia como "0.00×" (enganoso).
+                'efficiency'   => ($plannedDone > 0 && $actual > 0) ? round($plannedDone / $actual, 2) : null,
             ];
         })->sortByDesc('done_count')->values();
 
