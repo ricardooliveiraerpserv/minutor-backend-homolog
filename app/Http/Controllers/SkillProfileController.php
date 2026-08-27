@@ -341,6 +341,7 @@ class SkillProfileController extends Controller
             'estado'   => 'nullable|string|max:60',
             'linkedin' => 'nullable|string|max:255',
             'idiomas'  => 'nullable|string|max:255',
+            'valor'    => 'nullable|string|max:60',
         ]);
 
         $respondent->name  = trim($data['name']);
@@ -348,7 +349,7 @@ class SkillProfileController extends Controller
         $respondent->phone = filled($data['phone'] ?? null) ? trim($data['phone']) : null;
 
         $d = is_array($respondent->data) ? $respondent->data : [];
-        foreach (['empresa', 'cargo', 'cidade', 'estado', 'linkedin', 'idiomas'] as $k) {
+        foreach (['empresa', 'cargo', 'cidade', 'estado', 'linkedin', 'idiomas', 'valor'] as $k) {
             $d[$k] = filled($data[$k] ?? null) ? trim($data[$k]) : null;
         }
         $respondent->data = $d;
