@@ -283,6 +283,7 @@ class SkillSurveyController extends Controller
             ->get()
             ->map(fn ($i) => [
                 'id' => $i->id,
+                'respondent_id' => $i->respondent_id, // p/ abrir as competências do respondente
                 'name' => $i->name ?? $i->respondent?->name,
                 'email' => $i->email ?? $i->respondent?->email,
                 'status' => $i->status,
