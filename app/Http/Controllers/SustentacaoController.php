@@ -901,7 +901,9 @@ class SustentacaoController extends Controller
             ->whereNull('projects.deleted_at')
             ->whereNotNull('projects.customer_id')
             ->groupBy('projects.customer_id')
-            ->pluck(DB::raw('SUM(projects.sold_hours)'), 'projects.customer_id');
+            ->selectRaw('projects.customer_id, SUM(projects.sold_hours) as franchise_h')
+            ->get()
+            ->keyBy('customer_id');
 
         $totalUsedMin = $clientHours->sum('used_min');
 
@@ -911,7 +913,7 @@ class SustentacaoController extends Controller
 
         $topClients = $clientHours->map(function ($r) use ($mensalFranchise) {
             $usedH      = round($r->used_min / 60, 1);
-            $franchiseH = (float) ($mensalFranchise[$r->customer_id] ?? 0);
+            $franchiseH = (float) ($mensalFranchise->get($r->customer_id)?->franchise_h ?? 0);
             return [
                 'name'   => $r->customer_name,
                 'used_h' => $usedH,
