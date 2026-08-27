@@ -74,5 +74,9 @@ jobs:
             docker compose up -d --no-deps backend queue-worker scheduler
             # entrypoint do container ja roda migrate no start; este e reforco idempotente.
             docker exec minutor-backend php artisan migrate --force || true
+            # Limpa o cache herdado do volume bootstrap/cache ANTES de recachear — sem isto
+            # o route:cache engasga ("CompiledRouteCollection given") lendo o routes-v7.php
+            # antigo que o container recriado herda do volume, e o job fica vermelho.
+            docker exec minutor-backend php artisan optimize:clear || true
             docker exec minutor-backend php artisan optimize
             docker image prune -af || true
