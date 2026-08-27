@@ -58,8 +58,8 @@ class SkillSurveyController extends Controller
         $surveys = SkillSurvey::query()
             ->with('matrixVersion:id,number,label')
             ->withCount([
-                'invites',
-                'invites as submitted_count' => fn ($q) => $q->where('status', SkillSurveyInvite::STATUS_SUBMITTED),
+                'invites' => fn ($q) => $q->whereNull('disabled_at'),
+                'invites as submitted_count' => fn ($q) => $q->whereNull('disabled_at')->where('status', SkillSurveyInvite::STATUS_SUBMITTED),
                 'submissions as submissions_count' => fn ($q) => $q->where('status', 'submitted'),
             ])
             ->orderByDesc('id')
@@ -294,6 +294,7 @@ class SkillSurveyController extends Controller
                 'name' => $i->name ?? $i->respondent?->name,
                 'email' => $i->email ?? $i->respondent?->email,
                 'status' => $i->status,
+                'disabled' => $i->disabled_at !== null,
                 'last_access_at' => $i->last_access_at,
                 'submitted_at' => $i->submitted_at,
                 'reminder_count' => $i->reminder_count,
@@ -330,7 +331,10 @@ class SkillSurveyController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    /** Remove VÁRIOS participantes de uma pesquisa/campanha (em massa / por categoria). */
+    /**
+     * "Remove" VÁRIOS participantes = DESABILITA (soft) — não apaga, pode reabilitar.
+     * disabled_at = agora → fora das contagens/lembretes, mas mantido.
+     */
     public function removeInvitesBulk(Request $request, int $id): JsonResponse
     {
         $survey = SkillSurvey::findOrFail($id);
@@ -338,8 +342,22 @@ class SkillSurveyController extends Controller
             'invite_ids' => 'required|array|min:1',
             'invite_ids.*' => 'integer',
         ]);
-        $removed = $survey->invites()->whereIn('id', $data['invite_ids'])->delete();
+        $removed = $survey->invites()->whereIn('id', $data['invite_ids'])->whereNull('disabled_at')
+            ->update(['disabled_at' => now()]);
         return response()->json(['removed' => $removed]);
+    }
+
+    /** Reabilita (HABILITA) participantes desabilitados. */
+    public function enableInvitesBulk(Request $request, int $id): JsonResponse
+    {
+        $survey = SkillSurvey::findOrFail($id);
+        $data = $request->validate([
+            'invite_ids' => 'required|array|min:1',
+            'invite_ids.*' => 'integer',
+        ]);
+        $enabled = $survey->invites()->whereIn('id', $data['invite_ids'])->whereNotNull('disabled_at')
+            ->update(['disabled_at' => null]);
+        return response()->json(['enabled' => $enabled]);
     }
 
     /**
@@ -362,8 +380,8 @@ class SkillSurveyController extends Controller
 
     private function surveyCard(SkillSurvey $s): array
     {
-        $invited = $s->invites_count ?? $s->invites()->count();
-        $submitted = $s->submitted_count ?? $s->invites()->where('status', SkillSurveyInvite::STATUS_SUBMITTED)->count();
+        $invited = $s->invites_count ?? $s->invites()->whereNull('disabled_at')->count();
+        $submitted = $s->submitted_count ?? $s->invites()->whereNull('disabled_at')->where('status', SkillSurveyInvite::STATUS_SUBMITTED)->count();
         $pending = max(0, $invited - $submitted);
 
         return [

@@ -20,10 +20,11 @@ class SkillSurveyInvite extends Model
     protected $fillable = [
         'survey_id', 'respondent_id', 'user_id', 'email', 'name', 'token', 'status',
         'submission_id', 'sent_at', 'opened_at', 'started_at', 'submitted_at',
-        'last_access_at', 'reminder_count', 'last_reminder_at',
+        'last_access_at', 'reminder_count', 'last_reminder_at', 'disabled_at',
     ];
 
     protected $casts = [
+        'disabled_at' => 'datetime',
         'sent_at' => 'datetime',
         'opened_at' => 'datetime',
         'started_at' => 'datetime',

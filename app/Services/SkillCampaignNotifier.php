@@ -41,7 +41,7 @@ class SkillCampaignNotifier
     {
         $mailer = app(WorkflowMailer::class);
 
-        $invites = $survey->invites()->whereNotNull('user_id')
+        $invites = $survey->invites()->whereNull('disabled_at')->whereNotNull('user_id')
             ->where('status', '!=', SkillSurveyInvite::STATUS_SUBMITTED)->get();
         $userIds = $invites->pluck('user_id')->filter()->unique()->values()->all();
 
@@ -110,7 +110,7 @@ class SkillCampaignNotifier
         $mails = 0;
         $pendingTotal = 0;
         foreach ($campaigns as $survey) {
-            $pending = $survey->invites()->whereNotNull('user_id')
+            $pending = $survey->invites()->whereNull('disabled_at')->whereNotNull('user_id')
                 ->where('status', '!=', SkillSurveyInvite::STATUS_SUBMITTED)->get();
             if ($pending->isEmpty()) {
                 continue;
