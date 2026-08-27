@@ -18,15 +18,23 @@ class SkillRespondent extends Model
 
     public const TYPES = [self::TYPE_INTERNAL, self::TYPE_PARTNER, self::TYPE_CANDIDATE];
 
-    /** Classificação de negócio (editável). Black List = candidatos problemáticos. */
+    /** Classificação de negócio. Black List = candidatos problemáticos. */
     public const CLASSIFICATIONS = [
         'pre_candidato' => 'Pré-candidato',
         'candidato' => 'Candidato',
         'erpserv' => 'Interno',      // rótulo "Interno" (valor 'erpserv' mantido p/ não quebrar a lógica de contratação)
         'freelance' => 'Freelance',
+        'desligado' => 'Desligado',  // usuário desativado no cadastro
         'parceiro' => 'Parceiro',
         'blacklist' => 'Black List',
     ];
+
+    /**
+     * Classificações que o admin pode setar MANUALMENTE (dropdown/edição).
+     * As demais (Interno/Freelance/Desligado) vêm SEMPRE do cadastro de usuário
+     * (ver classificationFromUser) e não são editáveis.
+     */
+    public const MANUAL_CLASSIFICATIONS = ['pre_candidato', 'candidato', 'parceiro', 'blacklist'];
 
     protected $fillable = [
         'type', 'classification', 'user_id', 'partner_id', 'name', 'email', 'phone', 'data',
@@ -50,7 +58,8 @@ class SkillRespondent extends Model
      * Classificação + valor CONFORME O CADASTRO DE USUÁRIO (pedido do Ricardo 27/08):
      * quando o respondente já é um usuário, a classificação e o valor vêm do cadastro,
      * não do manual/auto-declarado.
-     *   parceiro_admin → Parceiro ; work_bond=freelance → Freelance ; senão → Interno.
+     *   desativado (enabled=false) → Desligado ; parceiro_admin → Parceiro ;
+     *   work_bond=freelance → Freelance ; senão → Interno.
      *   valor = valor-hora efetivo do usuário (parceiro fixed herda do parceiro).
      * Espera o $user já com `partner` carregado (p/ o effective_hourly_rate). null = sem usuário.
      *
@@ -60,7 +69,8 @@ class SkillRespondent extends Model
     {
         if (! $user) return null;
 
-        if ($user->type === 'parceiro_admin')     $c = 'parceiro';
+        if (! $user->enabled)                     $c = 'desligado'; // desativado no cadastro
+        elseif ($user->type === 'parceiro_admin') $c = 'parceiro';
         elseif ($user->work_bond === 'freelance') $c = 'freelance';
         else                                       $c = 'erpserv'; // Interno
 

@@ -157,7 +157,7 @@ class SkillProfileController extends Controller
             'filters' => [
                 'categories' => \App\Models\Skill::query()->select('category')->distinct()->orderBy('category')->pluck('category'),
                 'levels' => \App\Models\SkillLevel::orderBy('weight')->get(['id', 'name', 'weight']),
-                'classifications' => collect(SkillRespondent::CLASSIFICATIONS)->map(fn ($l, $v) => ['value' => $v, 'label' => $l])->values(),
+                'classifications' => collect(SkillRespondent::MANUAL_CLASSIFICATIONS)->map(fn ($v) => ['value' => $v, 'label' => SkillRespondent::CLASSIFICATIONS[$v]])->values(),
                 'partners' => \App\Models\Partner::orderBy('name')->get(['id', 'name'])->map(fn ($p) => ['value' => (string) $p->id, 'label' => $p->name]),
             ],
         ]);
@@ -275,7 +275,7 @@ class SkillProfileController extends Controller
         $data = $request->validate([
             'respondent_ids' => 'required|array|min:1',
             'respondent_ids.*' => 'integer',
-            'classification' => ['nullable', Rule::in(array_keys(SkillRespondent::CLASSIFICATIONS))],
+            'classification' => ['nullable', Rule::in(SkillRespondent::MANUAL_CLASSIFICATIONS)],
         ]);
         $updated = SkillRespondent::whereIn('id', $data['respondent_ids'])
             ->update(['classification' => $data['classification'] ?? null]);
@@ -288,7 +288,7 @@ class SkillProfileController extends Controller
     {
         $respondent = SkillRespondent::findOrFail($id);
         $data = $request->validate([
-            'classification' => ['nullable', Rule::in(array_keys(SkillRespondent::CLASSIFICATIONS))],
+            'classification' => ['nullable', Rule::in(SkillRespondent::MANUAL_CLASSIFICATIONS)],
             'partner_id' => 'nullable|exists:partners,id',
         ]);
         $respondent->classification = $data['classification'] ?? null;

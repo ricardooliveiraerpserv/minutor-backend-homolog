@@ -47,8 +47,9 @@ class SkillDashboardController extends Controller
             ->groupBy('respondent_id')
             ->pluck('id');
 
-        $classificationOptions = collect(SkillRespondent::CLASSIFICATIONS)
-            ->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values();
+        // Só as classificações MANUAIS no dropdown — Interno/Freelance/Desligado vêm do cadastro.
+        $classificationOptions = collect(SkillRespondent::MANUAL_CLASSIFICATIONS)
+            ->map(fn ($value) => ['value' => $value, 'label' => SkillRespondent::CLASSIFICATIONS[$value]])->values();
 
         return response()->json([
             'surveys' => $this->surveysBlock(),
@@ -153,7 +154,7 @@ class SkillDashboardController extends Controller
                 if ($userIds) $q->whereIn('id', $userIds);
                 if ($emails)  $q->orWhereRaw('lower(email) in (' . implode(',', array_fill(0, count($emails), '?')) . ')', $emails);
             })
-            ->get(['id', 'email', 'type', 'work_bond', 'hourly_rate', 'partner_id']);
+            ->get(['id', 'email', 'type', 'work_bond', 'hourly_rate', 'partner_id', 'enabled']);
 
         $byId = $users->keyBy('id');
         $byEmail = $users->keyBy(fn ($u) => mb_strtolower(trim((string) $u->email)));
