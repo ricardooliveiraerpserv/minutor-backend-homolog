@@ -24,6 +24,9 @@ return new class extends Migration
             if (! Schema::hasColumn('connector_environment_state', 'inventory_observed_at')) {
                 $t->timestamp('inventory_observed_at')->nullable(); // diagnóstico (relógio do agente na coleta)
             }
+            if (! Schema::hasColumn('connector_environment_state', 'observed_json')) {
+                $t->jsonb('observed_json')->nullable(); // estado corrente OBSERVADO (appservers/rest/rpo/collect_error) — sem secret/path
+            }
         });
         // Presença (last_seen_at) é INDEPENDENTE do inventário: se o inventário chegar antes do
         // heartbeat, a linha existe com last_seen_at NULL → presença = never_seen (não online por causa do inventário).
@@ -69,7 +72,7 @@ return new class extends Migration
         Schema::dropIfExists('connector_events');
         Schema::dropIfExists('connector_rpo_snapshots');
         Schema::table('connector_environment_state', function (Blueprint $t) {
-            foreach (['inventory_received_at', 'inventory_observed_at'] as $c) {
+            foreach (['inventory_received_at', 'inventory_observed_at', 'observed_json'] as $c) {
                 if (Schema::hasColumn('connector_environment_state', $c)) {
                     $t->dropColumn($c);
                 }
