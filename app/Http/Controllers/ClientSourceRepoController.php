@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Services\PermissionService;
 use App\SourceCode\Exceptions\SourceIntegrationException;
 use App\SourceCode\GitHubSourceService;
+use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -17,15 +18,26 @@ use Illuminate\Http\Request;
  */
 class ClientSourceRepoController extends Controller
 {
+    public function __construct(private SourceDocCustomerScope $scope)
+    {
+    }
+
     private function authorizeManage(Request $request): void
     {
         $perms = PermissionService::for($request->user());
         abort_unless(in_array('*', $perms, true) || in_array('source_code.manage', $perms, true), 403, 'Sem permissão para gerenciar fontes de código.');
     }
 
+    /** Anti-IDOR (Fase B): além da permissão global, exige ESCOPO no cliente do repo (autoridade pela entidade real). 404 sem vazar. */
+    private function assertScope(Request $request, ?int $customerId): void
+    {
+        abort_unless($customerId && $this->scope->canAccessCustomerId($request->user(), (int) $customerId), 404, 'Repositório não encontrado.');
+    }
+
     public function index(Request $request, Customer $customer): JsonResponse
     {
         $this->authorizeManage($request);
+        $this->assertScope($request, $customer->id);
         $rows = $customer->sourceRepos()->with(['creator:id,name', 'updater:id,name'])
             ->orderByDesc('active')->orderBy('tipo')->orderBy('repository')->get();
         return response()->json(['data' => $rows->map(fn ($r) => $this->serialize($r))]);
@@ -34,6 +46,7 @@ class ClientSourceRepoController extends Controller
     public function store(Request $request, Customer $customer): JsonResponse
     {
         $this->authorizeManage($request);
+        $this->assertScope($request, $customer->id);
         $v = $this->validated($request);
         $v['customer_id'] = $customer->id;
         $v['created_by'] = $request->user()->id;
@@ -45,6 +58,7 @@ class ClientSourceRepoController extends Controller
     public function update(Request $request, ClientSourceRepo $sourceRepo): JsonResponse
     {
         $this->authorizeManage($request);
+        $this->assertScope($request, $sourceRepo->customer_id);
         $v = $this->validated($request, false);
         $v['updated_by'] = $request->user()->id;
         $v['needs_review'] = false; // admin editou/confirmou o repo → deixa de estar pendente
@@ -56,6 +70,7 @@ class ClientSourceRepoController extends Controller
     public function verify(Request $request, ClientSourceRepo $sourceRepo): JsonResponse
     {
         $this->authorizeManage($request);
+        $this->assertScope($request, $sourceRepo->customer_id);
         $sourceRepo->update(['needs_review' => false, 'updated_by' => $request->user()->id]);
         return response()->json(['data' => $this->serialize($sourceRepo->fresh(['creator:id,name', 'updater:id,name']))]);
     }
@@ -64,6 +79,7 @@ class ClientSourceRepoController extends Controller
     public function destroy(Request $request, ClientSourceRepo $sourceRepo): JsonResponse
     {
         $this->authorizeManage($request);
+        $this->assertScope($request, $sourceRepo->customer_id);
         $sourceRepo->update(['active' => false, 'updated_by' => $request->user()->id]);
         return response()->json(['data' => $this->serialize($sourceRepo->fresh(['creator:id,name', 'updater:id,name']))]);
     }
@@ -72,6 +88,7 @@ class ClientSourceRepoController extends Controller
     public function test(Request $request, ClientSourceRepo $sourceRepo, GitHubSourceService $svc): JsonResponse
     {
         $this->authorizeManage($request);
+        $this->assertScope($request, $sourceRepo->customer_id);
         try {
             $info = $svc->testAccess($sourceRepo);
         } catch (SourceIntegrationException $e) {

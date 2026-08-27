@@ -6,6 +6,7 @@ use App\Models\ClientSourceRepo;
 use App\Models\SourceDoc;
 use App\Models\SourceRepoCoverage;
 use App\SourceCode\Exceptions\SourceIntegrationException;
+use App\SourceCode\Inventory\InventorySettingsResolver;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -28,12 +29,8 @@ class SourceDocInventory
         private GithubAppAuth $auth,
         private SourceDocPipeline $pipeline,
         private SourceDocIndexer $indexer,
+        private InventorySettingsResolver $inventorySettings,
     ) {
-    }
-
-    private function extensions(): array
-    {
-        return config('services.source_doc.inventory_extensions', ['prw', 'prx', 'prg', 'tlpp', 'tlp', 'aph']);
     }
 
     /** Varre 1 repo. $maxNew limita NOVOS documentados nesta execução (0 = usa config). */
@@ -51,7 +48,9 @@ class SourceDocInventory
             $tree = $this->auth->treeBlobShas($repo->owner, $repo->repository, $repo->branch); // 1 chamada
             $head = $this->auth->getBranchHeadSha($repo->owner, $repo->repository, $repo->branch);
             $base = $repo->normalizedBasePath();
-            $exts = $this->extensions();
+            // Fase B: allowlist resolvida por escopo (repo→customer→global→system_default), independente do custo.
+            // eligible() é o MESMO algoritmo; só a ORIGEM da lista muda. base_path segue de client_source_repos.
+            $exts = $this->inventorySettings->resolve($repo->customer_id, $repo->id)['extensions'];
             ksort($tree); // ordem determinística p/ cursor
 
             $github = count($tree);

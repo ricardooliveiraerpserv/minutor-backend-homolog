@@ -588,6 +588,12 @@ Route::prefix('v1')->group(function () {
             Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
             Route::delete('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'destroy']);
         });
+        // Fase B — allowlist de extensões de inventário por escopo (independente do custo de IA).
+        Route::middleware('permission.or.admin:source_docs.inventory')->group(function () {
+            Route::get('/source-docs/inventory-settings/resolve', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'resolve']);
+            Route::put('/source-docs/inventory-settings', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'update']);
+            Route::delete('/source-docs/inventory-settings', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'destroy']);
+        });
         Route::middleware('permission:source_docs.cost_approval.view')->group(function () {
             Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);
             Route::get('/source-docs/cost-approvals/{id}', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'show'])->whereNumber('id');
@@ -1671,6 +1677,12 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:source_docs.cost_settings.manage')->group(function () {
             Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
             Route::delete('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'destroy']);
+        });
+        // Fase B — allowlist de extensões de inventário por escopo (independente do custo de IA).
+        Route::middleware('permission.or.admin:source_docs.inventory')->group(function () {
+            Route::get('/source-docs/inventory-settings/resolve', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'resolve']);
+            Route::put('/source-docs/inventory-settings', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'update']);
+            Route::delete('/source-docs/inventory-settings', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'destroy']);
         });
         Route::middleware('permission:source_docs.cost_approval.view')->group(function () {
             Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);
