@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\KanbanBoard;
 use App\Models\KanbanCard;
 use App\Models\KanbanCardComment;
+use App\Models\KanbanCardFieldValue;
 use App\Models\KanbanChecklistItem;
 use App\Models\KanbanColumn;
+use App\Models\KanbanField;
 use App\Models\KanbanLabel;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -201,6 +203,53 @@ class ClientKanbanController extends Controller
         return response()->json(['deleted' => true]);
     }
 
+    // ─────────────────────── campos configuráveis (Fase 2) ───────────────────
+
+    private function field(int $id): KanbanField
+    {
+        return KanbanField::whereHas('board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+    }
+
+    public function storeField(Request $request, int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $data = $this->validateField($request, true);
+        $field = $board->fields()->create([
+            'name'          => $data['name'],
+            'type'          => $data['type'],
+            'required'      => $data['required'] ?? false,
+            'show_on_front' => $data['show_on_front'] ?? false,
+            'options'       => $data['options'] ?? null,
+            'default_value' => $data['default_value'] ?? null,
+            'position'      => (int) $board->fields()->max('position') + 1,
+        ]);
+        return response()->json($this->presentField($field), 201);
+    }
+
+    public function updateField(Request $request, int $id): JsonResponse
+    {
+        $field = $this->field($id);
+        $field->update($this->validateField($request, false));
+        return response()->json($this->presentField($field->fresh()));
+    }
+
+    public function destroyField(int $id): JsonResponse
+    {
+        $this->field($id)->delete();
+        return response()->json(['deleted' => true]);
+    }
+
+    public function reorderFields(Request $request, int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $order = $request->validate(['order' => 'required|array', 'order.*' => 'integer'])['order'];
+        $valid = $board->fields()->pluck('id')->all();
+        foreach ($order as $pos => $fid) {
+            if (in_array((int) $fid, $valid, true)) KanbanField::where('id', $fid)->update(['position' => $pos]);
+        }
+        return response()->json(['ok' => true]);
+    }
+
     // ──────────────────────────────── cards ──────────────────────────────────
 
     public function storeCard(Request $request, int $columnId): JsonResponse
@@ -223,6 +272,9 @@ class ClientKanbanController extends Controller
         if (array_key_exists('label_ids', $data)) {
             $card->labels()->sync($this->scopeLabelIds($col->board_id, $data['label_ids'] ?? []));
         }
+        if (array_key_exists('field_values', $data)) {
+            $this->saveFieldValues($card, $data['field_values'] ?? []);
+        }
 
         return response()->json($this->cardFull($card->fresh()), 201);
     }
@@ -236,9 +288,12 @@ class ClientKanbanController extends Controller
     {
         $card = $this->card($id);
         $data = $this->validateCard($request, $card->board_id, false);
-        $card->fill(collect($data)->except('label_ids')->all())->save();
+        $card->fill(collect($data)->except(['label_ids', 'field_values'])->all())->save();
         if (array_key_exists('label_ids', $data)) {
             $card->labels()->sync($this->scopeLabelIds($card->board_id, $data['label_ids'] ?? []));
+        }
+        if (array_key_exists('field_values', $data)) {
+            $this->saveFieldValues($card, $data['field_values'] ?? []);
         }
         return response()->json($this->cardFull($card->fresh()));
     }
@@ -348,6 +403,7 @@ class ClientKanbanController extends Controller
             'priority'            => 'nullable|in:' . implode(',', self::PRIORITIES),
             'label_ids'           => 'nullable|array',
             'label_ids.*'         => 'integer',
+            'field_values'        => 'nullable|array',
         ]);
     }
 
@@ -358,16 +414,64 @@ class ClientKanbanController extends Controller
         return KanbanLabel::where('board_id', $boardId)->whereIn('id', $ids)->pluck('id')->all();
     }
 
+    private function validateField(Request $request, bool $creating): array
+    {
+        return $request->validate([
+            'name'          => ($creating ? 'required' : 'sometimes|required') . '|string|max:80',
+            'type'          => ($creating ? 'required' : 'sometimes|required') . '|in:' . implode(',', KanbanField::TYPES),
+            'required'      => 'sometimes|boolean',
+            'show_on_front' => 'sometimes|boolean',
+            'options'       => 'nullable|array',
+            'options.*'     => 'string|max:120',
+            'default_value' => 'nullable|string|max:500',
+        ]);
+    }
+
+    private function presentField(KanbanField $f): array
+    {
+        return [
+            'id' => $f->id, 'name' => $f->name, 'type' => $f->type,
+            'required' => (bool) $f->required, 'show_on_front' => (bool) $f->show_on_front,
+            'options' => $f->options ?? [], 'default_value' => $f->default_value, 'position' => $f->position,
+        ];
+    }
+
+    /** Grava os valores dos campos do card. value=array (multiselect) vira JSON; vazio remove. */
+    private function saveFieldValues(KanbanCard $card, array $values): void
+    {
+        $valid = KanbanField::where('board_id', $card->board_id)->pluck('id')->all();
+        foreach ($values as $fieldId => $val) {
+            $fieldId = (int) $fieldId;
+            if (!in_array($fieldId, $valid, true)) continue;
+            $stored = is_array($val) ? json_encode(array_values($val)) : (($val === null || $val === '') ? null : (string) $val);
+            if ($stored === null) {
+                KanbanCardFieldValue::where('card_id', $card->id)->where('field_id', $fieldId)->delete();
+            } else {
+                KanbanCardFieldValue::updateOrCreate(['card_id' => $card->id, 'field_id' => $fieldId], ['value' => $stored]);
+            }
+        }
+    }
+
+    /** Mapa field_id => valor bruto (string; multiselect fica JSON — o front decodifica pelo tipo). */
+    private function fieldValuesMap(KanbanCard $card): array
+    {
+        $vals = $card->relationLoaded('fieldValues') ? $card->fieldValues : $card->fieldValues()->get();
+        $out = [];
+        foreach ($vals as $v) $out[(string) $v->field_id] = $v->value;
+        return $out;
+    }
+
     private function boardFull(KanbanBoard $board): array
     {
         $board->load([
-            'columns.cards' => fn ($q) => $q->with(['responsible:id,name', 'labels', 'checklistItems'])->withCount('comments'),
-            'labels',
+            'columns.cards' => fn ($q) => $q->with(['responsible:id,name', 'labels', 'checklistItems', 'fieldValues'])->withCount('comments'),
+            'labels', 'fields',
         ]);
         return [
             'id' => $board->id, 'name' => $board->name, 'description' => $board->description,
             'color' => $board->color,
             'labels' => $board->labels->map(fn ($l) => ['id' => $l->id, 'name' => $l->name, 'color' => $l->color])->values(),
+            'fields' => $board->fields->map(fn (KanbanField $f) => $this->presentField($f))->values(),
             'columns' => $board->columns->map(fn (KanbanColumn $c) => [
                 'id' => $c->id, 'name' => $c->name, 'color' => $c->color, 'position' => $c->position,
                 'cards' => $c->cards->map(fn (KanbanCard $card) => $this->cardSummary($card))->values(),
@@ -390,12 +494,13 @@ class ClientKanbanController extends Controller
             'checklist_total' => $checklist->count(),
             'checklist_done' => $checklist->where('is_done', true)->count(),
             'comments_count' => $card->comments_count ?? 0,
+            'field_values' => $this->fieldValuesMap($card),
         ];
     }
 
     private function cardFull(KanbanCard $card): array
     {
-        $card->load(['responsible:id,name', 'labels', 'checklistItems', 'comments.user:id,name', 'attachments']);
+        $card->load(['responsible:id,name', 'labels', 'checklistItems', 'comments.user:id,name', 'attachments', 'fieldValues']);
         return array_merge($this->cardSummary($card), [
             'description' => $card->description,
             'checklist' => $card->checklistItems->map(fn ($i) => ['id' => $i->id, 'text' => $i->text, 'is_done' => (bool) $i->is_done])->values(),

@@ -1088,6 +1088,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/boards/{board}/labels', [$c, 'storeLabel'])->name('labels.store');
             Route::put('/labels/{label}', [$c, 'updateLabel'])->name('labels.update');
             Route::delete('/labels/{label}', [$c, 'destroyLabel'])->name('labels.destroy');
+            // Campos configuráveis (Fase 2)
+            Route::post('/boards/{board}/fields', [$c, 'storeField'])->name('fields.store');
+            Route::post('/boards/{board}/fields/reorder', [$c, 'reorderFields'])->name('fields.reorder');
+            Route::put('/fields/{field}', [$c, 'updateField'])->name('fields.update');
+            Route::delete('/fields/{field}', [$c, 'destroyField'])->name('fields.destroy');
             // Cards
             Route::post('/columns/{column}/cards', [$c, 'storeCard'])->name('cards.store');
             Route::get('/cards/{card}', [$c, 'showCard'])->name('cards.show');
