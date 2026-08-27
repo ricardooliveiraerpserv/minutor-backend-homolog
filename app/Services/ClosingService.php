@@ -191,8 +191,13 @@ class ClosingService
             ->whereNull('closed_at')->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))->first();
         $closure = CompetenceClosure::where('period_kind', 'week')->where('period_key', $ws)->whereNull('project_id')->whereNull('user_id')->exists();
 
-        $active = $reopen ?: $monthReopen;
-        $status = $active ? 'reaberta' : (($past || $closure) ? 'fechada' : 'aberta');
+        // A reabertura só tem efeito sobre a semana JÁ fechada (prazo vencido ou encerramento).
+        // A semana VIGENTE/FUTURA está naturalmente aberta até o PRAZO NATURAL (weekDeadline) —
+        // uma reabertura de mês/semana não a antecipa para o auto-close de hoje (alinha o display
+        // ao enforcement de isWeekClosed, que só fecha quando o prazo vence).
+        $effectivelyClosed = $past || $closure;
+        $active = $effectivelyClosed ? ($reopen ?: $monthReopen) : null;
+        $status = $active ? 'reaberta' : ($effectivelyClosed ? 'fechada' : 'aberta');
         return ['status' => $status, 'auto_close_at' => optional($active?->auto_close_at)->toIso8601String(), 'deadline' => $deadline->toIso8601String()];
     }
 
@@ -206,8 +211,12 @@ class ClosingService
             ->whereNull('closed_at')->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))->first();
         $closure  = CompetenceClosure::where('period_kind', 'month')->where('period_key', $ym)->whereNull('project_id')->whereNull('user_id')->exists();
 
-        $status = $reopen ? 'reaberta' : (($past || $this->adminMonthClosed($ym) || $closure) ? 'fechada' : 'aberta');
-        return ['status' => $status, 'auto_close_at' => optional($reopen?->auto_close_at)->toIso8601String(), 'deadline' => $deadline->toIso8601String()];
+        // Idem semana: a reabertura só reflete no display quando o mês está efetivamente fechado
+        // (prazo vencido / encerramento manual). Mês vigente/futuro = 'aberta' no prazo natural.
+        $effectivelyClosed = $past || $this->adminMonthClosed($ym) || $closure;
+        $active = $effectivelyClosed ? $reopen : null;
+        $status = $active ? 'reaberta' : ($effectivelyClosed ? 'fechada' : 'aberta');
+        return ['status' => $status, 'auto_close_at' => optional($active?->auto_close_at)->toIso8601String(), 'deadline' => $deadline->toIso8601String()];
     }
 
     // ── Reabertura / Encerramento ─────────────────────────────────────────────
