@@ -66,8 +66,19 @@ class ConnectorInventoryProcessor
                     if ((bool) ($o['up'] ?? false) !== (bool) ($a['up'] ?? false)) {
                         $emit('process_changed', $ref, ($a['up'] ?? false) ? 'ok' : 'fail', "Processo {$a['name']} " . (($a['up'] ?? false) ? 'up' : 'down'), ['up' => (bool) ($a['up'] ?? false)]);
                     }
-                    if (($o['version'] ?? null) !== ($a['version'] ?? null) || ($o['build'] ?? null) !== ($a['build'] ?? null) || ($o['patch'] ?? null) !== ($a['patch'] ?? null)) {
-                        $emit('version_changed', $ref, 'info', "Versão de {$a['name']}", ['from' => "{$o['version']}·{$o['build']}·{$o['patch']}", 'to' => "{$a['version']}·{$a['build']}·{$a['patch']}"]);
+                    // version/build/patch AUSENTES são opcionais: NÃO derrubam a coleta e NÃO geram
+                    // version_changed falso. Só emite quando há INFORMAÇÃO COMPARÁVEL SUFICIENTE — i.e.,
+                    // o mesmo campo presente (não-null) nos DOIS lados e realmente diferente. Ausência
+                    // ≠ mudança (não inventa valor, não persiste "unknown"). Interpolação null-safe.
+                    $vbp = ['version', 'build', 'patch'];
+                    $realDiff = false;
+                    foreach ($vbp as $f) {
+                        $ov = $o[$f] ?? null; $av = $a[$f] ?? null;
+                        if ($ov !== null && $av !== null && $ov !== $av) { $realDiff = true; }
+                    }
+                    if ($realDiff) {
+                        $fmt = fn ($x) => implode('·', array_map(fn ($f) => $x[$f] ?? '—', $vbp));
+                        $emit('version_changed', $ref, 'info', "Versão de {$a['name']}", ['from' => $fmt($o), 'to' => $fmt($a)]);
                     }
                     // uptime muda a cada coleta e NÃO gera evento (ignorado de propósito).
                 }
