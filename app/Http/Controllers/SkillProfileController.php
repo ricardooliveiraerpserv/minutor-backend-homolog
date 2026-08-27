@@ -323,6 +323,40 @@ class SkillProfileController extends Controller
         return response()->json(['id' => $respondent->id, 'valor' => $d['valor']]);
     }
 
+    /**
+     * Edita as INFORMAÇÕES CADASTRAIS do respondente (candidato) — NÃO as competências.
+     * Nome/e-mail/telefone (colunas) + empresa/cargo/cidade/estado/linkedin/idiomas (data JSON).
+     * As competências vêm das submissões e não são editáveis por aqui.
+     */
+    public function updateInfo(Request $request, int $id): JsonResponse
+    {
+        $respondent = SkillRespondent::findOrFail($id);
+        $data = $request->validate([
+            'name'     => 'required|string|max:160',
+            'email'    => 'nullable|email|max:190',
+            'phone'    => 'nullable|string|max:40',
+            'empresa'  => 'nullable|string|max:160',
+            'cargo'    => 'nullable|string|max:160',
+            'cidade'   => 'nullable|string|max:120',
+            'estado'   => 'nullable|string|max:60',
+            'linkedin' => 'nullable|string|max:255',
+            'idiomas'  => 'nullable|string|max:255',
+        ]);
+
+        $respondent->name  = trim($data['name']);
+        $respondent->email = filled($data['email'] ?? null) ? trim($data['email']) : null;
+        $respondent->phone = filled($data['phone'] ?? null) ? trim($data['phone']) : null;
+
+        $d = is_array($respondent->data) ? $respondent->data : [];
+        foreach (['empresa', 'cargo', 'cidade', 'estado', 'linkedin', 'idiomas'] as $k) {
+            $d[$k] = filled($data[$k] ?? null) ? trim($data[$k]) : null;
+        }
+        $respondent->data = $d;
+        $respondent->save();
+
+        return response()->json(['ok' => true]);
+    }
+
     /** Exclui um respondente e todo o seu histórico (submissões, respostas, convites). */
     public function destroy(int $id): JsonResponse
     {

@@ -1405,6 +1405,7 @@ Route::prefix('v1')->group(function () {
             Route::put('/competencias/profissionais/classification/bulk', [SkillProfileController::class, 'bulkClassification']);
             Route::put('/competencias/profissionais/{id}/classification', [SkillProfileController::class, 'updateClassification'])->whereNumber('id');
             Route::put('/competencias/profissionais/{id}/valor',          [SkillProfileController::class, 'updateValor'])->whereNumber('id');
+            Route::put('/competencias/profissionais/{id}/info',           [SkillProfileController::class, 'updateInfo'])->whereNumber('id');
             Route::delete('/competencias/profissionais/bulk',  [SkillProfileController::class, 'bulkDestroy']);
             Route::delete('/competencias/profissionais/{id}',  [SkillProfileController::class, 'destroy'])->whereNumber('id');
             // Kanban de Contratação/Onboarding
