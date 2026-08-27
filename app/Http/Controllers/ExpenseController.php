@@ -578,6 +578,13 @@ class ExpenseController extends Controller
         $expenseData['expense_type']   = $expenseData['expense_type']   ?? 'reimbursement';
         $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
 
+        // Empresa (multi-empresa) = a do PROJETO. Sem isto, quem cria sem contexto de
+        // empresa (ex.: parceiro com current_company_id NULL) gerava company_id NULL e a
+        // despesa sumia da visão admin (CompanyScope filtra por company_id). Bug do Wesley.
+        if (!empty($project->company_id)) {
+            $expenseData['company_id'] = $project->company_id;
+        }
+
         // Upload do comprovante se fornecido — guardado pra registrar APÓS o create
         // (precisamos do expense->id pra entity_id da camada Attachment).
         $newReceiptInfo = null;
