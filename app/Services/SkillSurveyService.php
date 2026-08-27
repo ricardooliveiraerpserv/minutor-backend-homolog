@@ -459,6 +459,7 @@ class SkillSurveyService
                 'matrix_version_id' => $version?->id,
                 'status' => SkillSurvey::STATUS_OPEN,
                 'allow_public' => false,
+                'is_campaign' => true, // é o fluxo de auto-atualização → aba "Campanhas".
             ]
         );
 

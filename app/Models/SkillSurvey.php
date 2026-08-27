@@ -24,11 +24,13 @@ class SkillSurvey extends Model
     protected $fillable = [
         'type', 'title', 'description', 'matrix_version_id', 'public_token',
         'status', 'deadline', 'allow_public', 'created_by', 'opened_at', 'closed_at',
+        'is_campaign',
     ];
 
     protected $casts = [
         'deadline' => 'date',
         'allow_public' => 'boolean',
+        'is_campaign' => 'boolean',
         'opened_at' => 'datetime',
         'closed_at' => 'datetime',
     ];

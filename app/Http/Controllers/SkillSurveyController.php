@@ -219,6 +219,7 @@ class SkillSurveyController extends Controller
             'deadline' => $data['deadline'],
             'matrix_version_id' => $version,
             'allow_public' => false,
+            'is_campaign' => true, // separa das Pesquisas/Formulários na aba "Campanhas".
             'status' => SkillSurvey::STATUS_OPEN,
             'opened_at' => now(),
             'created_by' => $request->user()->id,
@@ -327,6 +328,7 @@ class SkillSurveyController extends Controller
             'title' => $s->title,
             'description' => $s->description,
             'status' => $s->status,
+            'is_campaign' => (bool) $s->is_campaign,
             'deadline' => optional($s->deadline)->toDateString(),
             'public_token' => $s->public_token,
             'public_link' => $this->publicLink($s),
