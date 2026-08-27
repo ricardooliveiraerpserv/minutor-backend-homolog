@@ -268,7 +268,7 @@ class ConnectorAgentController extends Controller
         // Com estado (agente ativo OU revogado): deriva. Revogado sem novos heartbeats → envelhece p/ offline.
         $d = $this->deriver->derive($state?->last_seen_at, $state?->agent_reported_status, $state?->clock_offset_s, $state?->last_error);
 
-        return ['environment_id' => $envId, 'has_agent' => true, 'observed' => [
+        return ['environment_id' => $envId, 'has_agent' => $hasAgent, 'observed' => [
             'status'                => $d['status'], // never_seen|online|stale|offline|degraded
             'since_s'               => $d['since_s'],
             'last_seen_at'          => $state?->last_seen_at?->toIso8601String(),

@@ -163,25 +163,20 @@ class ConnectorPresenceTest extends TestCase
         $this->assertNull($p['observed']); // "sem agente conectado", não offline
     }
 
-    public function test_revoked_persists_and_state_ages_to_offline(): void
+    public function test_revoked_has_no_agent_and_ages_to_offline(): void
     {
-        // (has_agent=false após revogação é provado no gate LIVE — requests separados; o harness de
-        //  teste tem quirk de visibilidade cross-request p/ connector_agents. Aqui provo: revogação
-        //  PERSISTE (identidade preservada) + o estado envelhece p/ offline pelo tempo.)
         $env = $this->makeEnv($this->custA);
         [$agentId, $sk] = $this->enrollAgent($env, $this->custA);
         $this->heartbeat($agentId, $sk, ['observed_at' => time()])->assertOk();
         ConnectorEnvironmentState::where('environment_id', $env)->update(['last_seen_at' => now()->subSeconds(400)]);
 
         $this->actingAs($this->admin(), 'sanctum')->deleteJson("/api/v1/prosight/connector/agents/{$agentId}")->assertOk();
-        $agent = ConnectorAgent::where('agent_id', $agentId)->first();
-        $this->assertNotNull($agent);              // identidade preservada
-        $this->assertNotNull($agent->revoked_at);  // revogada
-        $this->assertSame(0, ConnectorAgent::where('environment_id', $env)->whereNull('revoked_at')->count());
-        // o estado observado envelhece para offline pelo tempo (autoridade last_seen_at):
-        $state = ConnectorEnvironmentState::where('environment_id', $env)->first();
-        $d = app(\App\Connector\PresenceDeriver::class)->derive($state->last_seen_at, null, null, null);
-        $this->assertSame('offline', $d['status']);
+        // identidade preservada + revogada (não apaga auditoria):
+        $this->assertNotNull(ConnectorAgent::where('agent_id', $agentId)->first()?->revoked_at);
+        // presença: sem agente ATIVO, e o estado envelheceu para offline por ausência de heartbeats.
+        $p = $this->presence($env);
+        $this->assertFalse($p['has_agent']);
+        $this->assertSame('offline', $p['observed']['status']);
     }
 
     public function test_error_is_sanitized(): void
