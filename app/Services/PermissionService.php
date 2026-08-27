@@ -138,6 +138,9 @@ class PermissionService
         // Prosight C3 — Ambientes: projeção READ-ONLY segura do Cofre por customer_id.
         // NÃO concede acesso ao Cofre/reveal/secrets; só a projeção allowlist. Cliente externo NÃO recebe.
         'prosight.environments.view',
+        // Conector-0 — gestão da IDENTIDADE do agente (emitir enrollment token / revogar). Interno/infra.
+        // NÃO é operação (start/stop/compile/RPO); essas terão prosight.operations.execute (fases futuras).
+        'prosight.operations.manage',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -232,6 +235,8 @@ class PermissionService
             'environments.use',
             // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
             'prosight.environments.view',
+            // Conector — gestão da identidade do agente (enrollment/revogação). Infra interna.
+            'prosight.operations.manage',
         ];
     }
 

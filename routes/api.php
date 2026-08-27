@@ -105,6 +105,14 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:120,1')
         ->name('webhooks.clicksign');
 
+    // 🔌 CONECTOR PROTHEUS (Connector-0) — canal do AGENTE on-prem (sem sessão; outbound-only).
+    // enroll: auth por TOKEN de uso único no body. whoami: auth por ASSINATURA Ed25519 (middleware
+    // connector.agent) — endpoint MÍNIMO de prova do canal (sem heartbeat/estado/comando).
+    Route::post('/connector/enroll', [\App\Http\Controllers\ConnectorAgentController::class, 'enroll'])
+        ->middleware('throttle:10,1')->name('connector.enroll');
+    Route::get('/connector/whoami', [\App\Http\Controllers\ConnectorAgentController::class, 'whoami'])
+        ->middleware(['throttle:60,1', 'connector.agent'])->name('connector.whoami');
+
     // 🔗 PORTAL DE PROPOSTAS — acesso público por token (sem login). Throttle alto: o portal faz muito
     // tracking (página/seção/heartbeat) + polling; o token de 48 chars já é a barreira anti-brute-force.
     Route::middleware('throttle:300,1')->group(function () {
@@ -650,6 +658,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
             // C4 — configuração cadastral de UM ambiente (read-only; anti-IDOR por environment_id → 404).
             Route::get('/prosight/environments/{environmentId}/configuration', [\App\Http\Controllers\ProsightEnvironmentController::class, 'configuration'])->whereNumber('environmentId');
+        });
+        // Conector-0 — gestão da IDENTIDADE do agente (emitir enrollment token, status da identidade,
+        // revogar). Permissão própria prosight.operations.manage (infra interna; NÃO é operação).
+        Route::middleware('permission:prosight.operations.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
+            Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1752,6 +1767,13 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
             // C4 — configuração cadastral de UM ambiente (read-only; anti-IDOR por environment_id → 404).
             Route::get('/prosight/environments/{environmentId}/configuration', [\App\Http\Controllers\ProsightEnvironmentController::class, 'configuration'])->whereNumber('environmentId');
+        });
+        // Conector-0 — gestão da IDENTIDADE do agente (emitir enrollment token, status da identidade,
+        // revogar). Permissão própria prosight.operations.manage (infra interna; NÃO é operação).
+        Route::middleware('permission:prosight.operations.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
+            Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

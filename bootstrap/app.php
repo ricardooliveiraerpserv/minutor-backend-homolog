@@ -43,6 +43,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'screen.action'       => \App\Http\Middleware\ScreenActionAccess::class,
             'company.context'     => \App\Http\Middleware\ResolveActiveCompany::class,
             'cliente.module'      => \App\Http\Middleware\EnsureClienteModule::class,
+            // Conector-0 — assinatura Ed25519 do agente (AGENT-V1) + replay + revogação.
+            'connector.agent'     => \App\Http\Middleware\VerifyAgentSignature::class,
         ]);
 
         // Guest em rota /api não tem pra onde redirecionar: devolvendo null aqui, o
