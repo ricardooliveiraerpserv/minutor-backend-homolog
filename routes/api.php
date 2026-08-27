@@ -1393,9 +1393,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/competencias/campanhas',              [SkillSurveyController::class, 'launchCampaign']);
             Route::get('/competencias/surveys/{id}',            [SkillSurveyController::class, 'show'])->whereNumber('id');
             Route::put('/competencias/surveys/{id}',            [SkillSurveyController::class, 'update'])->whereNumber('id');
+            Route::delete('/competencias/surveys/{id}',         [SkillSurveyController::class, 'destroy'])->whereNumber('id');
             Route::post('/competencias/surveys/{id}/invites',   [SkillSurveyController::class, 'storeInvites'])->whereNumber('id');
             Route::get('/competencias/surveys/{id}/invites',    [SkillSurveyController::class, 'invites'])->whereNumber('id');
             Route::post('/competencias/invites/{id}/reminder',  [SkillSurveyController::class, 'reminder'])->whereNumber('id');
+            Route::delete('/competencias/invites/{id}',         [SkillSurveyController::class, 'removeInvite'])->whereNumber('id');
             // Matriz — escrita (competências + publicar versão)
             Route::post('/competencias/matriz/skills',          [SkillMatrixVersionController::class, 'storeSkill']);
             Route::put('/competencias/matriz/skills/{id}',      [SkillMatrixVersionController::class, 'updateSkill'])->whereNumber('id');

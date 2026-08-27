@@ -138,7 +138,8 @@ class SkillSurveyController extends Controller
      * parceiro (true) do parceiro comum (false/null).
      */
     private const CAMPAIGN_GROUPS = [
-        ['key' => 'consultor',      'label' => 'Consultores',            'types' => ['consultor']],
+        ['key' => 'consultor_interno',   'label' => 'Consultores Internos',   'types' => ['consultor'], 'work_bond' => 'fixo'],
+        ['key' => 'consultor_freelance', 'label' => 'Consultores Freelance',  'types' => ['consultor'], 'work_bond' => 'freelance'],
         ['key' => 'coordenador',    'label' => 'Coordenadores',          'types' => ['coordenador']],
         ['key' => 'parceiro',       'label' => 'Parceiros',              'types' => ['parceiro_admin'], 'is_executive' => false],
         ['key' => 'parceiro_admin', 'label' => 'Parceiros admin',        'types' => ['parceiro_admin'], 'is_executive' => true],
@@ -154,6 +155,12 @@ class SkillSurveyController extends Controller
                     $g['is_executive']
                         ? $q->where('is_executive', true)
                         : $q->where(fn ($w) => $w->where('is_executive', false)->orWhereNull('is_executive'));
+                })
+                ->when(array_key_exists('work_bond', $g), function ($q) use ($g) {
+                    // Consultor sem vínculo definido conta como INTERNO (padrão).
+                    $g['work_bond'] === 'freelance'
+                        ? $q->where('work_bond', 'freelance')
+                        : $q->where(fn ($w) => $w->where('work_bond', 'fixo')->orWhereNull('work_bond'));
                 })
                 ->orderBy('name')->get(['id', 'name', 'email'])
                 ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])->values();
@@ -313,6 +320,30 @@ class SkillSurveyController extends Controller
             'email_sent' => $sent,
             'link' => $this->inviteLink($invite),
         ]);
+    }
+
+    /** Remove UM participante (convite) de uma pesquisa/campanha. */
+    public function removeInvite(int $inviteId): JsonResponse
+    {
+        $invite = SkillSurveyInvite::findOrFail($inviteId);
+        $invite->delete();
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Exclui uma pesquisa/campanha. O FK é cascadeOnDelete: apaga convites, submissões
+     * (rascunho E enviadas) e suas respostas. ⚠️ As respostas dessa pesquisa somem do
+     * histórico — o FE avisa antes. A auto-avaliação perene (AUTOAVAL) não pode ser excluída.
+     */
+    public function destroy(int $id): JsonResponse
+    {
+        $survey = SkillSurvey::findOrFail($id);
+        abort_if($survey->public_token === \App\Services\SkillSurveyService::SELF_SURVEY_TOKEN, 422,
+            'A auto-avaliação perene não pode ser excluída.');
+
+        $survey->delete(); // cascade: invites + submissions + answers
+
+        return response()->json(['deleted' => 1]);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
