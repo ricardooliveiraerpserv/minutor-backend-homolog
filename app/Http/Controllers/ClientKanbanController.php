@@ -324,7 +324,12 @@ class ClientKanbanController extends Controller
 
     public function assignableUsers(): JsonResponse
     {
+        // Só usuários REAIS do cliente logado — mesmo filtro do "Ver como" (impersonation):
+        // type=cliente + enabled=true + customer_id. Sem isso apareciam ~94 registros
+        // importados/desabilitados (ex.: Competências) que não são logins do cliente.
         $users = User::where('customer_id', $this->customerId())
+            ->where('type', 'cliente')
+            ->where('enabled', true)
             ->orderBy('name')->get(['id', 'name'])
             ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name]);
         return response()->json(['items' => $users]);
