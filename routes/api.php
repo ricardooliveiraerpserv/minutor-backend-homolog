@@ -557,6 +557,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/stages/{stage}/deliveries', [StageDeliveryController::class, 'index'])->name('deliveries.index');
             Route::get('/deliveries/{delivery}', [StageDeliveryController::class, 'show'])->name('deliveries.show');
             Route::get('/deliveries/{delivery}/events', [DeliveryEventController::class, 'index'])->name('deliveries.events');
+            // Diário da Atividade (interno — cliente barrado pelo block.cliente do grupo)
+            Route::get('/deliveries/{delivery}/diary', [\App\Http\Controllers\DeliveryDiaryController::class, 'index'])->name('deliveries.diary.index');
+            Route::post('/deliveries/{delivery}/diary', [\App\Http\Controllers\DeliveryDiaryController::class, 'store'])->name('deliveries.diary.store');
+            Route::delete('/delivery-diary/{entry}', [\App\Http\Controllers\DeliveryDiaryController::class, 'destroy'])->name('deliveries.diary.destroy');
             Route::get('/stages/{stage}/allocations', [StageAllocationController::class, 'index'])->name('stages.allocations.index');
             Route::get('/stages/{stage}/aportes', [StageHourAporteController::class, 'index'])->name('stages.aportes.index');
             // Comentário operacional (Pilar 3) — write permitido para qualquer um que possa ver (consultor alocado, coord, admin)

@@ -7,6 +7,7 @@ use App\Attachments\Exceptions\InvalidCategoryException;
 use App\Attachments\Exceptions\InvalidMimeTypeException;
 use App\Attachments\Exceptions\UnknownEntityTypeException;
 use App\Models\Contract;
+use App\Models\DeliveryDiaryEntry;
 use App\Models\ContractMessage;
 use App\Models\ContractRequestMessage;
 use App\Models\Expense;
@@ -139,6 +140,19 @@ class AttachableEntitiesRegistry
                 'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
                 'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','xlsx','docx','txt'],
                 'max_size_mb' => 10,
+            ],
+
+            // ── DELIVERY_DIARY_ENTRY (Diário da Atividade) ────────────────────
+            // Interno: consultor/coordenador/admin/administrativo. Cliente NÃO (as
+            // rotas do diário já ficam em block.cliente; aqui reforça no anexo).
+            'DELIVERY_DIARY_ENTRY' => [
+                'model' => DeliveryDiaryEntry::class,
+                'categories' => ['attachment'],
+                'default_visibility' => 'internal',
+                'permission_check' => fn (User $user) => $internalStaff($user),
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','docx','doc','xlsx','xls','csv','txt','png','jpg','jpeg','webp','gif'],
+                'max_size_mb' => 25,
             ],
 
             // ── CONTRACT ──────────────────────────────────────────────────────
