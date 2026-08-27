@@ -5058,6 +5058,109 @@ class ProjectController extends Controller
         ]);
     }
 
+    /** Campo primário alterado numa atividade → [label, old, new] p/ resumo executivo. */
+    private function primaryChangedField(array $simulate, array $orig): array
+    {
+        if (array_key_exists('hours_planned', $simulate)) {
+            return ['Horas planejadas', $orig['hours'] . 'h', $simulate['hours_planned'] . 'h'];
+        }
+        if (array_key_exists('due_date', $simulate)) {
+            return ['Data de entrega', $orig['due'] ?? '—', $simulate['due_date'] ?? '—'];
+        }
+        if (array_key_exists('planned_start_at', $simulate)) {
+            return ['Data de início', $orig['start'] ?? '—', $simulate['planned_start_at'] ?? '—'];
+        }
+        if (array_key_exists('depends_on_delivery_id', $simulate)) {
+            $oldT = $orig['pred_id'] ? (\App\Models\StageDelivery::find($orig['pred_id'])?->title ?? '?') : 'sem predecessor';
+            $newT = $simulate['depends_on_delivery_id'] ? (\App\Models\StageDelivery::find($simulate['depends_on_delivery_id'])?->title ?? '?') : 'sem predecessor';
+            return ['Predecessora', $oldT, $newT];
+        }
+        return [null, null, null];
+    }
+
+    /** Campo primário alterado numa etapa → [label, old, new]. */
+    private function primaryChangedStageField(array $simulate, array $orig): array
+    {
+        if (array_key_exists('hours_planned', $simulate)) {
+            return ['Horas da etapa', $orig['hours'] . 'h', $simulate['hours_planned'] . 'h'];
+        }
+        if (array_key_exists('expected_end_date', $simulate)) {
+            return ['Data de fim', $orig['end'] ?? '—', $simulate['expected_end_date'] ?? '—'];
+        }
+        if (array_key_exists('stage_start_at', $simulate)) {
+            return ['Data de início', $orig['start'] ?? '—', $simulate['stage_start_at'] ?? '—'];
+        }
+        return [null, null, null];
+    }
+
+    /**
+     * Impacto por etapa: dadas as sugestões {id, suggested_start/end} das atividades
+     * que se moveram, agrupa por etapa e calcula o prazo atual (min/max das deliveries
+     * de cada etapa hoje) vs o novo (aplicando as sugestões). Fase 10.1+.
+     */
+    private function buildAffectedStages(array $suggestions): array
+    {
+        if (empty($suggestions)) return [];
+        $suggById = [];
+        foreach ($suggestions as $s) {
+            if (!empty($s['id'])) $suggById[(int) $s['id']] = $s;
+        }
+        $stageIds = \App\Models\StageDelivery::whereIn('id', array_keys($suggById))
+            ->pluck('stage_id')->unique()->values()->all();
+
+        $out = [];
+        foreach ($stageIds as $sid) {
+            $stage = \App\Models\ProjectStage::find($sid);
+            if (!$stage) continue;
+            $deliveries = \App\Models\StageDelivery::where('stage_id', $sid)
+                ->where('client_involved', false)
+                ->whereNotNull('planned_start_at')->whereNotNull('due_date')
+                ->get(['id', 'planned_start_at', 'due_date']);
+
+            $curStart = $curEnd = $newStart = $newEnd = null;
+            foreach ($deliveries as $d) {
+                $cs = $d->planned_start_at->toDateString();
+                $ce = $d->due_date->toDateString();
+                $ns = isset($suggById[$d->id]) ? ($suggById[$d->id]['suggested_start'] ?? $cs) : $cs;
+                $ne = isset($suggById[$d->id]) ? ($suggById[$d->id]['suggested_end'] ?? $ce) : $ce;
+                if ($curStart === null || $cs < $curStart) $curStart = $cs;
+                if ($curEnd === null   || $ce > $curEnd)   $curEnd = $ce;
+                if ($newStart === null || $ns < $newStart) $newStart = $ns;
+                if ($newEnd === null   || $ne > $newEnd)   $newEnd = $ne;
+            }
+            $out[] = [
+                'stage_id'      => $sid,
+                'name'          => $stage->name,
+                'current_start' => $curStart,
+                'current_end'   => $curEnd,
+                'new_start'     => $newStart,
+                'new_end'       => $newEnd,
+                'days_diff'     => $this->datesDiff($curEnd, $newEnd),
+            ];
+        }
+        return $out;
+    }
+
+    /** Maior due_date / expected_end_date do projeto operacional. Fase 10.1. */
+    private function projectScheduleMaxEnd(Project $project): ?string
+    {
+        $maxStage = $project->stages()->max('expected_end_date');
+        $maxDeliv = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->max('due_date');
+        $max = null;
+        foreach ([$maxStage, $maxDeliv] as $d) {
+            if ($d && (!$max || $d > $max)) $max = $d;
+        }
+        return $max instanceof \Carbon\Carbon ? $max->toDateString() : (is_string($max) ? substr($max, 0, 10) : null);
+    }
+
+    /** Diferença em dias (positivo = atraso, negativo = adiantamento). Fase 10.1. */
+    private function datesDiff(?string $current, ?string $new): int
+    {
+        if (!$current || !$new) return 0;
+        return \Carbon\Carbon::parse($current)->diffInDays(\Carbon\Carbon::parse($new), false);
+    }
+
     public function consolidatedTeam(Project $project): JsonResponse
     {
         $project->loadMissing('serviceType');
