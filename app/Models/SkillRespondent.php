@@ -22,7 +22,8 @@ class SkillRespondent extends Model
     public const CLASSIFICATIONS = [
         'pre_candidato' => 'Pré-candidato',
         'candidato' => 'Candidato',
-        'erpserv' => 'ERPSERV',
+        'erpserv' => 'Interno',      // rótulo "Interno" (valor 'erpserv' mantido p/ não quebrar a lógica de contratação)
+        'freelance' => 'Freelance',
         'parceiro' => 'Parceiro',
         'blacklist' => 'Black List',
     ];
