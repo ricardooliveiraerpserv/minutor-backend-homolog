@@ -23,8 +23,10 @@ use Illuminate\Support\Facades\DB;
  */
 class ConnectorInventoryProcessor
 {
-    public function __construct(private ConnectorCommandService $commands)
-    {
+    public function __construct(
+        private ConnectorCommandService $commands,
+        private ConnectorOperationService $operations,
+    ) {
     }
 
     /** @return array{applied:bool, events:int, snapshots:int} */
@@ -144,6 +146,11 @@ class ConnectorInventoryProcessor
             $trigger = $inv['trigger'] ?? null;
             if (is_array($trigger) && ($trigger['type'] ?? null) === 'command' && ! empty($trigger['command_id'])) {
                 $this->commands->markInventoryApplied($agent, (int) $trigger['command_id'], $receivedAt);
+            }
+            // C4.3 — coleta de reconciliação CORRELACIONADA a uma operação (restart): grava a autoridade
+            // do desfecho (up/piid do alvo) na operação. Escopo/estado verificados no service.
+            if (is_array($trigger) && ($trigger['type'] ?? null) === 'operation' && ! empty($trigger['operation_id'])) {
+                $this->operations->recordReconcileObservation($agent, (int) $trigger['operation_id'], $newApps->all(), $receivedAt);
             }
 
             return ['applied' => true, 'events' => $events, 'snapshots' => $snapshots];

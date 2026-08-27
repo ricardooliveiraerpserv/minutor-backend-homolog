@@ -46,8 +46,8 @@ return [
 
     // Connector-4.x — OPERAÇÕES destrutivas/controladas (classe de segurança separada).
     'operations' => [
-        // ALLOWLIST operacional: start (C4.1) + stop (C4.2). restart/compile/patch/RPO NÃO existem.
-        'types' => ['start', 'stop'],
+        // ALLOWLIST operacional: start (C4.1) + stop (C4.2) + restart (C4.3). compile/patch/RPO NÃO existem.
+        'types' => ['start', 'stop', 'restart'],
         // Maker-checker OBRIGATÓRIO — inclusive homolog (só o gate controlado poderia relaxar).
         'require_approval' => filter_var(env('CONNECTOR_OP_REQUIRE_APPROVAL', true), FILTER_VALIDATE_BOOLEAN),
         // Transport lease: dispatchable→claim. Vence SEM claim → expired (único timeout auto-terminal seguro).
@@ -74,6 +74,21 @@ return [
                 'days'     => array_map('intval', array_filter(explode(',', (string) env('CONNECTOR_OP_STOP_WINDOW_DAYS', '0,1,2,3,4,5,6')), 'strlen')), // 0=Dom..6=Sáb
                 'start'    => env('CONNECTOR_OP_STOP_WINDOW_START', '00:00'),
                 'end'      => env('CONNECTOR_OP_STOP_WINDOW_END', '23:59'),
+            ],
+        ],
+        // C4.3 — restart: down transiente → up(B). MESMOS gates do stop (último AppServer/janela/presença
+        // online, revalidados no dispatch). Timeouts MAIORES (cobre down+startup). Sucesso FORTE = up(B),
+        // B≠A, evidenciado por coleta de reconciliação CORRELACIONADA (trigger.operation_id).
+        'restart' => [
+            'operational_deadline' => (int) env('CONNECTOR_OP_RESTART_DEADLINE', 300),
+            'reconcile_window'     => (int) env('CONNECTOR_OP_RESTART_RECONCILE_WINDOW', 300),
+            'min_other_up' => (int) env('CONNECTOR_OP_RESTART_MIN_OTHER_UP', 1),
+            'window' => [
+                'enabled'  => filter_var(env('CONNECTOR_OP_RESTART_WINDOW_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+                'timezone' => env('CONNECTOR_OP_RESTART_WINDOW_TZ', 'America/Sao_Paulo'),
+                'days'     => array_map('intval', array_filter(explode(',', (string) env('CONNECTOR_OP_RESTART_WINDOW_DAYS', '0,1,2,3,4,5,6')), 'strlen')),
+                'start'    => env('CONNECTOR_OP_RESTART_WINDOW_START', '00:00'),
+                'end'      => env('CONNECTOR_OP_RESTART_WINDOW_END', '23:59'),
             ],
         ],
     ],

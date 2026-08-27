@@ -301,8 +301,9 @@ class ConnectorAgentController extends Controller
             // Connector-3 — CAUSALIDADE (aditivo, opcional, sanitizado): por que este inventário subiu.
             // command → dispara correlação FORTE com o comando (nunca por ordem temporal). SEM claim_token.
             'trigger'                => 'nullable|array',
-            'trigger.type'           => 'nullable|in:scheduled,on_change,command',
+            'trigger.type'           => 'nullable|in:scheduled,on_change,command,operation',
             'trigger.command_id'     => 'nullable|integer',
+            'trigger.operation_id'   => 'nullable|integer', // C4.3 — coleta de reconciliação correlacionada
         ]);
         // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
         if (isset($data['collect_error'])) {

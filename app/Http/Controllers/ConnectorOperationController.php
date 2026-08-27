@@ -96,7 +96,7 @@ class ConnectorOperationController extends Controller
             'reason'             => 'required|string|max:300',
             'emergency_override' => 'nullable|boolean',
         ]);
-        $permByType = ['start' => 'prosight.operations.start', 'stop' => 'prosight.operations.stop'];
+        $permByType = ['start' => 'prosight.operations.start', 'stop' => 'prosight.operations.stop', 'restart' => 'prosight.operations.restart'];
         $need = $permByType[$data['op_type']] ?? null;
         if ($need === null) {
             return response()->json(['error' => 'op_type_not_allowed'], 422);
@@ -104,7 +104,8 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), $need)) {
             return response()->json(['error' => 'forbidden'], 403); // perm granular por tipo (não herda execute)
         }
-        $hasOverride = $this->hasPerm($request->user(), 'prosight.operations.stop.override');
+        $overridePerm = ['stop' => 'prosight.operations.stop.override', 'restart' => 'prosight.operations.restart.override'][$data['op_type']] ?? null;
+        $hasOverride = $overridePerm !== null && $this->hasPerm($request->user(), $overridePerm);
         $r = $this->ops->create((int) $env->id, (int) $env->customer_id, $data['appserver_ref'], $data['op_type'], $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride);
         if (! $r['ok']) {
             $code = match ($r['error']) {
@@ -137,8 +138,10 @@ class ConnectorOperationController extends Controller
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
         }
+        $overridePerm = ['stop' => 'prosight.operations.stop.override', 'restart' => 'prosight.operations.restart.override'][$op->op_type] ?? null;
+        $hasOverride = $overridePerm !== null && $this->hasPerm($request->user(), $overridePerm);
         $r = $action === 'approve'
-            ? $this->ops->approve($op, $request->user()->id, $this->hasPerm($request->user(), 'prosight.operations.stop.override'))
+            ? $this->ops->approve($op, $request->user()->id, $hasOverride)
             : $this->ops->reject($op, $request->user()->id);
         if (! $r['ok']) {
             $code = match ($r['error']) {
@@ -160,7 +163,7 @@ class ConnectorOperationController extends Controller
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
         }
-        $need = ['start' => 'prosight.operations.start', 'stop' => 'prosight.operations.stop'][$op->op_type] ?? null;
+        $need = ['start' => 'prosight.operations.start', 'stop' => 'prosight.operations.stop', 'restart' => 'prosight.operations.restart'][$op->op_type] ?? null;
         if ($need && ! $this->hasPerm($request->user(), $need)) {
             return response()->json(['error' => 'forbidden'], 403);
         }

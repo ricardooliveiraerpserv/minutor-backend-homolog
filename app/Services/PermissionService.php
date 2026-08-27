@@ -152,6 +152,9 @@ class PermissionService
         // Conector-4.2 — stop (indisponibilidade deliberada). Permissão própria + override dedicado.
         'prosight.operations.stop',          // criar/cancelar operação de stop
         'prosight.operations.stop.override', // emergency_override (janela fechada / último AppServer) — maker E checker
+        // Conector-4.3 — restart (down transiente → up(B)). MESMOS gates do stop; permissão + override próprios.
+        'prosight.operations.restart',
+        'prosight.operations.restart.override',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -258,6 +261,9 @@ class PermissionService
             // Conector-4.2 — stop + override de emergência.
             'prosight.operations.stop',
             'prosight.operations.stop.override',
+            // Conector-4.3 — restart + override.
+            'prosight.operations.restart',
+            'prosight.operations.restart.override',
         ];
     }
 
