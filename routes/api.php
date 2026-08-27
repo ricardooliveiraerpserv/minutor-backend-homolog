@@ -549,6 +549,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
             // C3.5 — cobertura do acervo (leitura)
             Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+            // C1 — Atividade & Auditoria: read-model transversal (7 fontes, escopado, keyset). Facetas de
+            // custo/campanha só p/ quem tem a permissão do domínio; operacoes fica pendente do conector.
+            Route::get('/source-docs/activity', [\App\Http\Controllers\SourceDocActivityController::class, 'activity']);
             // F2 — Acervo: árvore lazy Empresa → Repositório → Diretório Git → Fonte (leitura, escopado).
             Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
             // Central de Fontes — admin por empresa (detentor/ocultar) + solicitações de fonte.
@@ -1639,6 +1642,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
             // C3.5 — cobertura do acervo (leitura)
             Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+            // C1 — Atividade & Auditoria: read-model transversal (7 fontes, escopado, keyset). Facetas de
+            // custo/campanha só p/ quem tem a permissão do domínio; operacoes fica pendente do conector.
+            Route::get('/source-docs/activity', [\App\Http\Controllers\SourceDocActivityController::class, 'activity']);
             // F2 — Acervo: árvore lazy Empresa → Repositório → Diretório Git → Fonte (leitura, escopado).
             Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
             // Central de Fontes — admin por empresa (detentor/ocultar) + solicitações de fonte.
