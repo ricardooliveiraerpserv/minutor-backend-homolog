@@ -4800,8 +4800,27 @@ class ProjectController extends Controller
         // (mover/concluir/criar entrega). Antes o card só olhava timesheets → uma conclusão ou
         // mudança de status recente ficava invisível e mostrava um apontamento antigo como "última".
         $lastMovement = null;
+        $recentActivity = [];
         if (!$isConsultorScoped) {
             $allStageIds = $project->stages()->pluck('id')->all();
+            // Feed "Atividade recente" (aba Indicadores): últimos eventos do cronograma
+            // (criar/mover/concluir atividade, envolver cliente, aprovação…). Mesmo shape do
+            // last_movement (sem timesheet) → o front mapeia kind → texto/ícone.
+            if (!empty($allStageIds)) {
+                $recentActivity = \App\Models\StageActivityEvent::query()
+                    ->whereIn('stage_id', $allStageIds)->with('actor:id,name')
+                    ->orderByDesc('created_at')->orderByDesc('id')->limit(8)->get()
+                    ->map(function ($e) {
+                        $p = $e->payload ?? [];
+                        return [
+                            'kind'  => $e->type,
+                            'user'  => optional($e->actor)->name,
+                            'at'    => optional($e->created_at)->toIso8601String(),
+                            'title' => $p['title'] ?? null,
+                            'to'    => $p['to'] ?? null,
+                        ];
+                    })->values()->all();
+            }
             $ev = !empty($allStageIds) ? \App\Models\StageActivityEvent::query()
                 ->whereIn('stage_id', $allStageIds)->with('actor:id,name')
                 ->orderByDesc('created_at')->orderByDesc('id')->first() : null;
@@ -4830,6 +4849,7 @@ class ProjectController extends Controller
         return response()->json([
             'is_operational' => true,
             'last_movement'  => $lastMovement,
+            'recent_activity' => $recentActivity,
             'project_window' => [
                 'start' => $minDate?->toDateString(),
                 'end'   => $maxDate?->toDateString(),
