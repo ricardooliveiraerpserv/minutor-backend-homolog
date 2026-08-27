@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\KanbanBoard;
 use App\Models\KanbanCard;
 use App\Models\KanbanCardComment;
+use App\Models\KanbanCardEvent;
 use App\Models\KanbanCardFieldValue;
 use App\Models\KanbanChecklistItem;
 use App\Models\KanbanColumn;
@@ -34,26 +35,44 @@ class ClientKanbanController extends Controller
         return (int) $cid;
     }
 
+    /**
+     * Escopo de acesso ao quadro (Fase 4): do customer logado E acessível ao usuário —
+     * criador, OU quadro sem membros definidos (aberto a todos do cliente), OU o usuário
+     * é membro. Reusado em boards/colunas/cards/etc. via where()/whereHas('board').
+     */
+    private function boardAccessScope(): \Closure
+    {
+        $uid = (int) Auth::id();
+        $cid = $this->customerId();
+        return function ($q) use ($uid, $cid) {
+            $q->where('customer_id', $cid)->where(function ($qq) use ($uid) {
+                $qq->where('created_by_user_id', $uid)
+                   ->orWhereDoesntHave('members')
+                   ->orWhereHas('members', fn ($m) => $m->where('users.id', $uid));
+            });
+        };
+    }
+
     private function board(int $id): KanbanBoard
     {
-        return KanbanBoard::where('customer_id', $this->customerId())->findOrFail($id);
+        return KanbanBoard::where($this->boardAccessScope())->findOrFail($id);
     }
 
     private function column(int $id): KanbanColumn
     {
-        return KanbanColumn::whereHas('board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+        return KanbanColumn::whereHas('board', $this->boardAccessScope())->findOrFail($id);
     }
 
     private function card(int $id): KanbanCard
     {
-        return KanbanCard::whereHas('board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+        return KanbanCard::whereHas('board', $this->boardAccessScope())->findOrFail($id);
     }
 
     // ─────────────────────────────── boards ──────────────────────────────────
 
     public function index(): JsonResponse
     {
-        $boards = KanbanBoard::where('customer_id', $this->customerId())
+        $boards = KanbanBoard::where($this->boardAccessScope())
             ->withCount(['columns', 'cards'])
             ->orderBy('position')->orderBy('id')
             ->get()
@@ -192,14 +211,14 @@ class ClientKanbanController extends Controller
 
     public function updateLabel(Request $request, int $id): JsonResponse
     {
-        $label = KanbanLabel::whereHas('board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+        $label = KanbanLabel::whereHas('board', $this->boardAccessScope())->findOrFail($id);
         $label->update($request->validate(['name' => 'sometimes|required|string|max:60', 'color' => 'nullable|string|max:9']));
         return response()->json($label->fresh());
     }
 
     public function destroyLabel(int $id): JsonResponse
     {
-        KanbanLabel::whereHas('board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id)->delete();
+        KanbanLabel::whereHas('board', $this->boardAccessScope())->findOrFail($id)->delete();
         return response()->json(['deleted' => true]);
     }
 
@@ -207,7 +226,7 @@ class ClientKanbanController extends Controller
 
     private function field(int $id): KanbanField
     {
-        return KanbanField::whereHas('board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+        return KanbanField::whereHas('board', $this->boardAccessScope())->findOrFail($id);
     }
 
     public function storeField(Request $request, int $boardId): JsonResponse
@@ -275,6 +294,10 @@ class ClientKanbanController extends Controller
         if (array_key_exists('field_values', $data)) {
             $this->saveFieldValues($card, $data['field_values'] ?? []);
         }
+        if (array_key_exists('member_ids', $data)) {
+            $card->members()->sync($this->scopeCustomerUserIds($data['member_ids'] ?? []));
+        }
+        $this->logEvent($card, 'created', ['to_column_id' => $col->id]);
 
         return response()->json($this->cardFull($card->fresh()), 201);
     }
@@ -288,19 +311,25 @@ class ClientKanbanController extends Controller
     {
         $card = $this->card($id);
         $data = $this->validateCard($request, $card->board_id, false);
-        $card->fill(collect($data)->except(['label_ids', 'field_values'])->all())->save();
+        $card->fill(collect($data)->except(['label_ids', 'field_values', 'member_ids'])->all())->save();
         if (array_key_exists('label_ids', $data)) {
             $card->labels()->sync($this->scopeLabelIds($card->board_id, $data['label_ids'] ?? []));
         }
         if (array_key_exists('field_values', $data)) {
             $this->saveFieldValues($card, $data['field_values'] ?? []);
         }
+        if (array_key_exists('member_ids', $data)) {
+            $card->members()->sync($this->scopeCustomerUserIds($data['member_ids'] ?? []));
+        }
+        $this->logEvent($card, 'updated');
         return response()->json($this->cardFull($card->fresh()));
     }
 
     public function destroyCard(int $id): JsonResponse
     {
-        $this->card($id)->delete();
+        $card = $this->card($id);
+        $this->logEvent($card, 'deleted', ['from_column_id' => $card->column_id]);
+        $card->delete();
         return response()->json(['deleted' => true]);
     }
 
@@ -317,12 +346,16 @@ class ClientKanbanController extends Controller
             return response()->json(['message' => 'Coluna de outro quadro.'], 422);
         }
 
+        $origCol = (int) $card->column_id;
         $newPos = $data['position'] ?? ((int) KanbanCard::where('column_id', $col->id)->max('position') + 1);
         DB::transaction(function () use ($card, $col, $newPos) {
             // Abre espaço na coluna de destino.
             KanbanCard::where('column_id', $col->id)->where('position', '>=', $newPos)->increment('position');
             $card->update(['column_id' => $col->id, 'position' => $newPos]);
         });
+        if ($origCol !== (int) $col->id) {
+            $this->logEvent($card, 'moved', ['from_column_id' => $origCol, 'to_column_id' => $col->id]);
+        }
 
         return response()->json(['ok' => true]);
     }
@@ -342,7 +375,7 @@ class ClientKanbanController extends Controller
 
     public function updateChecklistItem(Request $request, int $id): JsonResponse
     {
-        $item = KanbanChecklistItem::whereHas('card.board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+        $item = KanbanChecklistItem::whereHas('card.board', $this->boardAccessScope())->findOrFail($id);
         $item->update($request->validate([
             'text'    => 'sometimes|required|string|max:300',
             'is_done' => 'sometimes|boolean',
@@ -352,7 +385,7 @@ class ClientKanbanController extends Controller
 
     public function destroyChecklistItem(int $id): JsonResponse
     {
-        KanbanChecklistItem::whereHas('card.board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id)->delete();
+        KanbanChecklistItem::whereHas('card.board', $this->boardAccessScope())->findOrFail($id)->delete();
         return response()->json(['deleted' => true]);
     }
 
@@ -364,15 +397,143 @@ class ClientKanbanController extends Controller
         $data = $request->validate(['body' => 'required|string|max:5000']);
         $comment = $card->comments()->create(['user_id' => Auth::id(), 'body' => $data['body']]);
         $comment->load('user:id,name');
+        $this->logEvent($card, 'comment');
         return response()->json($this->presentComment($comment), 201);
     }
 
     public function destroyComment(int $id): JsonResponse
     {
-        $comment = KanbanCardComment::whereHas('card.board', fn ($q) => $q->where('customer_id', $this->customerId()))->findOrFail($id);
+        $comment = KanbanCardComment::whereHas('card.board', $this->boardAccessScope())->findOrFail($id);
         abort_unless((int) $comment->user_id === (int) Auth::id() || Auth::user()->isAdmin(), 403, 'Sem permissão.');
         $comment->delete();
         return response()->json(['deleted' => true]);
+    }
+
+    // ──────────────────── auditoria / histórico (Fase 4) ─────────────────────
+
+    private function logEvent(KanbanCard $card, string $type, array $extra = []): void
+    {
+        KanbanCardEvent::create(array_merge([
+            'board_id'   => $card->board_id,
+            'card_id'    => $card->id,
+            'user_id'    => Auth::id(),
+            'type'       => $type,
+            'card_title' => $card->title,
+            'created_at' => now(),
+        ], $extra));
+    }
+
+    /** Histórico de um card. */
+    public function cardHistory(int $id): JsonResponse
+    {
+        $card = $this->card($id);
+        $events = KanbanCardEvent::where('card_id', $card->id)
+            ->with('user:id,name')->orderByDesc('created_at')->orderByDesc('id')->limit(100)->get()
+            ->map(fn ($e) => $this->presentEvent($e));
+        return response()->json(['items' => $events]);
+    }
+
+    private function presentEvent(KanbanCardEvent $e): array
+    {
+        return [
+            'id' => $e->id, 'type' => $e->type,
+            'card_title' => $e->card_title,
+            'from_column_id' => $e->from_column_id, 'to_column_id' => $e->to_column_id,
+            'meta' => $e->meta,
+            'at' => optional($e->created_at)->toIso8601String(),
+            'user' => $e->user ? ['id' => $e->user->id, 'name' => $e->user->name] : null,
+        ];
+    }
+
+    // ──────────────────── membros do quadro / participantes ──────────────────
+
+    /** Lista membros do quadro (vazio = todos os usuários do cliente têm acesso). */
+    public function boardMembers(int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $ids = $board->members()->pluck('users.id')->all();
+        return response()->json(['user_ids' => $ids]);
+    }
+
+    /** Define os membros do quadro (lista de user_ids do próprio cliente). */
+    public function setBoardMembers(Request $request, int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $ids = $request->validate(['user_ids' => 'array', 'user_ids.*' => 'integer'])['user_ids'] ?? [];
+        // Só usuários REAIS do cliente (mesmo filtro do responsável).
+        $valid = User::where('customer_id', $this->customerId())->where('type', 'cliente')->where('enabled', true)
+            ->whereIn('id', $ids)->pluck('id')->all();
+        $board->members()->sync($valid);
+        return response()->json(['user_ids' => $valid]);
+    }
+
+    // ─────────────────────────────── relatório ───────────────────────────────
+
+    public function report(int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $board->load(['columns', 'columns.cards' => fn ($q) => $q->with('responsible:id,name')]);
+        $today = now()->startOfDay();
+
+        $byColumn = [];
+        $byResponsible = [];
+        $total = 0; $overdue = 0; $doneCount = 0;
+        // Considera a ÚLTIMA coluna (maior position) como "concluído" pra métricas simples.
+        $lastColId = $board->columns->sortByDesc('position')->first()?->id;
+
+        foreach ($board->columns as $col) {
+            $cards = $col->cards;
+            $byColumn[] = ['column_id' => $col->id, 'name' => $col->name, 'color' => $col->color, 'count' => $cards->count()];
+            foreach ($cards as $card) {
+                $total++;
+                if ($col->id === $lastColId) $doneCount++;
+                if ($col->id !== $lastColId && $card->due_date && $card->due_date->lt($today)) $overdue++;
+                if ($card->responsible) {
+                    $rid = $card->responsible->id;
+                    $byResponsible[$rid] = $byResponsible[$rid] ?? ['user_id' => $rid, 'name' => $card->responsible->name, 'count' => 0];
+                    $byResponsible[$rid]['count']++;
+                }
+            }
+        }
+
+        // Tempo médio por coluna (dias) a partir dos eventos de movimentação.
+        $avgDays = $this->avgTimePerColumn($board->id);
+
+        return response()->json([
+            'totals' => ['cards' => $total, 'done' => $doneCount, 'overdue' => $overdue, 'open' => $total - $doneCount],
+            'by_column' => $byColumn,
+            'by_responsible' => array_values(collect($byResponsible)->sortByDesc('count')->all()),
+            'avg_days_per_column' => $avgDays,
+        ]);
+    }
+
+    /** Tempo médio (dias) que os cards passaram em cada coluna, via eventos created/moved. */
+    private function avgTimePerColumn(int $boardId): array
+    {
+        $events = KanbanCardEvent::where('board_id', $boardId)
+            ->whereIn('type', ['created', 'moved'])
+            ->orderBy('card_id')->orderBy('created_at')->orderBy('id')
+            ->get(['card_id', 'type', 'from_column_id', 'to_column_id', 'created_at']);
+
+        $sum = []; $cnt = [];  // column_id => total seconds / n
+        $byCard = $events->groupBy('card_id');
+        foreach ($byCard as $evs) {
+            $prevCol = null; $prevAt = null;
+            foreach ($evs as $e) {
+                $col = $e->type === 'created' ? $e->to_column_id : $e->from_column_id;
+                if ($prevCol !== null && $prevAt !== null && $e->created_at) {
+                    $secs = $e->created_at->getTimestamp() - $prevAt->getTimestamp();
+                    if ($secs > 0) { $sum[$prevCol] = ($sum[$prevCol] ?? 0) + $secs; $cnt[$prevCol] = ($cnt[$prevCol] ?? 0) + 1; }
+                }
+                $prevCol = $e->type === 'created' ? $e->to_column_id : $e->to_column_id;
+                $prevAt = $e->created_at;
+            }
+        }
+        $out = [];
+        foreach ($sum as $colId => $s) {
+            $out[] = ['column_id' => (int) $colId, 'avg_days' => round($s / max(1, $cnt[$colId]) / 86400, 1)];
+        }
+        return $out;
     }
 
     // ─────────────────────────── usuários atribuíveis ────────────────────────
@@ -404,6 +565,8 @@ class ClientKanbanController extends Controller
             'label_ids'           => 'nullable|array',
             'label_ids.*'         => 'integer',
             'field_values'        => 'nullable|array',
+            'member_ids'          => 'nullable|array',
+            'member_ids.*'        => 'integer',
         ]);
     }
 
@@ -412,6 +575,14 @@ class ClientKanbanController extends Controller
     {
         if (empty($ids)) return [];
         return KanbanLabel::where('board_id', $boardId)->whereIn('id', $ids)->pluck('id')->all();
+    }
+
+    /** Só usuários reais do cliente logado (participantes/membros). */
+    private function scopeCustomerUserIds(array $ids): array
+    {
+        if (empty($ids)) return [];
+        return User::where('customer_id', $this->customerId())->where('type', 'cliente')->where('enabled', true)
+            ->whereIn('id', $ids)->pluck('id')->all();
     }
 
     private function validateField(Request $request, bool $creating): array
@@ -500,9 +671,10 @@ class ClientKanbanController extends Controller
 
     private function cardFull(KanbanCard $card): array
     {
-        $card->load(['responsible:id,name', 'labels', 'checklistItems', 'comments.user:id,name', 'attachments', 'fieldValues']);
+        $card->load(['responsible:id,name', 'labels', 'checklistItems', 'comments.user:id,name', 'attachments', 'fieldValues', 'members:id,name']);
         return array_merge($this->cardSummary($card), [
             'description' => $card->description,
+            'members' => $card->members->map(fn ($u) => ['id' => $u->id, 'name' => $u->name])->values(),
             'checklist' => $card->checklistItems->map(fn ($i) => ['id' => $i->id, 'text' => $i->text, 'is_done' => (bool) $i->is_done])->values(),
             'comments' => $card->comments->map(fn ($c) => $this->presentComment($c))->values(),
             'attachments' => $card->attachments->map(fn ($a) => ['id' => $a->id, 'name' => $a->original_name, 'mime' => $a->mime_type])->values(),

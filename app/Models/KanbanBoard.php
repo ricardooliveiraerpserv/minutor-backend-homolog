@@ -21,4 +21,9 @@ class KanbanBoard extends Model
     public function labels(): HasMany { return $this->hasMany(KanbanLabel::class, 'board_id')->orderBy('id'); }
     public function fields(): HasMany { return $this->hasMany(KanbanField::class, 'board_id')->orderBy('position')->orderBy('id'); }
     public function cards(): HasMany { return $this->hasMany(KanbanCard::class, 'board_id'); }
+    public function events(): HasMany { return $this->hasMany(KanbanCardEvent::class, 'board_id'); }
+    public function members(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'kanban_board_members', 'board_id', 'user_id');
+    }
 }

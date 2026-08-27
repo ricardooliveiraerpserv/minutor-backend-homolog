@@ -30,6 +30,7 @@ class KanbanCard extends Model
     public function checklistItems(): HasMany { return $this->hasMany(KanbanChecklistItem::class, 'card_id')->orderBy('position')->orderBy('id'); }
     public function comments(): HasMany { return $this->hasMany(KanbanCardComment::class, 'card_id')->orderByDesc('created_at'); }
     public function fieldValues(): HasMany { return $this->hasMany(KanbanCardFieldValue::class, 'card_id'); }
+    public function members(): BelongsToMany { return $this->belongsToMany(User::class, 'kanban_card_members', 'card_id', 'user_id'); }
 
     /** Anexos do card (infra FASE 11). */
     public function attachments(): HasMany

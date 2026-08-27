@@ -1106,6 +1106,11 @@ Route::prefix('v1')->group(function () {
             // Comentários
             Route::post('/cards/{card}/comments', [$c, 'storeComment'])->name('comments.store');
             Route::delete('/comments/{comment}', [$c, 'destroyComment'])->name('comments.destroy');
+            // Fase 4: histórico, membros do quadro, relatório
+            Route::get('/cards/{card}/history', [$c, 'cardHistory'])->name('cards.history');
+            Route::get('/boards/{board}/members', [$c, 'boardMembers'])->name('boards.members');
+            Route::put('/boards/{board}/members', [$c, 'setBoardMembers'])->name('boards.members.set');
+            Route::get('/boards/{board}/report', [$c, 'report'])->name('boards.report');
         });
 
         // 🤝 Cliente envolvido em atividade pontual (acesso contextual, ADR 0009 appendix)
