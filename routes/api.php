@@ -1075,6 +1075,8 @@ Route::prefix('v1')->group(function () {
             Route::middleware('permission.or.admin:contracts.manage')->group(function () {
                 Route::get('/contract-hour-multipliers',                  [\App\Http\Controllers\ContractHourMultiplierController::class, 'index']);
                 Route::get('/contract-hour-multipliers/contracts',        [\App\Http\Controllers\ContractHourMultiplierController::class, 'contracts']);
+                Route::get('/contract-hour-multipliers/faixas',           [\App\Http\Controllers\ContractHourMultiplierController::class, 'faixas']);
+                Route::post('/contract-hour-multipliers/sync',            [\App\Http\Controllers\ContractHourMultiplierController::class, 'sync']);
                 Route::post('/contract-hour-multipliers',                 [\App\Http\Controllers\ContractHourMultiplierController::class, 'store']);
                 Route::put('/contract-hour-multipliers/{multiplier}',     [\App\Http\Controllers\ContractHourMultiplierController::class, 'update']);
                 Route::delete('/contract-hour-multipliers/{multiplier}',  [\App\Http\Controllers\ContractHourMultiplierController::class, 'destroy']);

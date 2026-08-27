@@ -151,33 +151,27 @@ class ContractHourMultiplierService
             return;
         }
 
-        $rule = ContractHourMultiplier::query()
-            ->where('contract_id', $contractId)->where('active', true)->first();
-
+        // N FAIXAS por contrato (pedido do Ricardo 27/08): cada faixa ativa tem seu
+        // próprio período [start,end] e sua própria alíquota. As faixas NÃO se sobrepõem
+        // (garantido na validação do controller), então cada apontamento cai em NO MÁXIMO
+        // uma faixa. Datas fora de qualquer faixa (buracos) ficam no REAL (pct NULL).
         $base = \App\Models\Timesheet::query()->where('project_id', $root);
 
-        if (!$rule) {
-            (clone $base)->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
-            return;
+        // Zera tudo do raiz e reaplica faixa a faixa (assim buracos ficam NULL sozinhos).
+        (clone $base)->whereNotNull('contract_client_pct')->update(['contract_client_pct' => null]);
+
+        $rules = ContractHourMultiplier::query()
+            ->where('contract_id', $contractId)->where('active', true)
+            ->get(['percent', 'start_date', 'end_date']);
+
+        foreach ($rules as $rule) {
+            $start = $rule->start_date?->format('Y-m-d');
+            $end   = $rule->end_date?->format('Y-m-d');
+            (clone $base)
+                ->when($start, fn ($q) => $q->whereDate('date', '>=', $start))
+                ->when($end,   fn ($q) => $q->whereDate('date', '<=', $end))
+                ->update(['contract_client_pct' => (float) $rule->percent]);
         }
-
-        $start = $rule->start_date?->format('Y-m-d');
-        $end   = $rule->end_date?->format('Y-m-d');
-
-        // Dentro da vigência → percent.
-        (clone $base)
-            ->when($start, fn ($q) => $q->whereDate('date', '>=', $start))
-            ->when($end,   fn ($q) => $q->whereDate('date', '<=', $end))
-            ->update(['contract_client_pct' => (float) $rule->percent]);
-
-        // Fora da vigência → limpa (regra pode ter mudado de período).
-        (clone $base)
-            ->where(function ($q) use ($start, $end) {
-                if ($start) $q->orWhereDate('date', '<', $start);
-                if ($end)   $q->orWhereDate('date', '>', $end);
-            })
-            ->whereNotNull('contract_client_pct')
-            ->update(['contract_client_pct' => null]);
     }
 
     public function contractIdOfProject(?int $projectId): ?int
