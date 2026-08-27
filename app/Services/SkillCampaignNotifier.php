@@ -186,6 +186,29 @@ class SkillCampaignNotifier
         }
     }
 
+    /**
+     * Remove os user_ids das notificações in-app (Central) desta campanha — usado ao
+     * DESABILITAR participantes: eles param de ver o pop-up "Atualize suas competências".
+     * A Central filtra por whereJsonContains(target_users, id); tirar o id de lá some com ela.
+     * Se a notificação ficar sem ninguém, é apagada.
+     */
+    public static function removeFromPopups(SkillSurvey $survey, array $userIds): void
+    {
+        $userIds = array_values(array_filter(array_map('intval', $userIds)));
+        if (empty($userIds)) {
+            return;
+        }
+        $cta = self::ctaUrl($survey);
+        AppNotification::where('cta_url', $cta)->get()->each(function ($n) use ($userIds) {
+            $targets = is_array($n->target_users) ? $n->target_users : [];
+            $new = array_values(array_diff(array_map('intval', $targets), $userIds));
+            if (count($new) === count($targets)) {
+                return;
+            }
+            empty($new) ? $n->delete() : $n->update(['target_users' => $new]);
+        });
+    }
+
     private static function vars(SkillSurvey $survey): array
     {
         return [

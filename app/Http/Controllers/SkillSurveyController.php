@@ -344,8 +344,16 @@ class SkillSurveyController extends Controller
             'invite_ids' => 'required|array|min:1',
             'invite_ids.*' => 'integer',
         ]);
+        // Guarda os user_ids ANTES de desabilitar (p/ limpar a Central de Notificações).
+        $userIds = $survey->invites()->whereIn('id', $data['invite_ids'])
+            ->whereNotNull('user_id')->pluck('user_id')->all();
+
         $removed = $survey->invites()->whereIn('id', $data['invite_ids'])->whereNull('disabled_at')
             ->update(['disabled_at' => now()]);
+
+        // Some com o pop-up da campanha p/ os desabilitados (e o workflow/lembrete já os pula).
+        \App\Services\SkillCampaignNotifier::removeFromPopups($survey, $userIds);
+
         return response()->json(['removed' => $removed]);
     }
 
@@ -372,6 +380,9 @@ class SkillSurveyController extends Controller
         $survey = SkillSurvey::findOrFail($id);
         abort_if($survey->public_token === \App\Services\SkillSurveyService::SELF_SURVEY_TOKEN, 422,
             'A auto-avaliação perene não pode ser excluída.');
+
+        // Some com os pop-ups desta campanha na Central (senão ficam órfãos apontando p/ pesquisa morta).
+        \App\Models\AppNotification::where('cta_url', \App\Services\SkillCampaignNotifier::ctaUrl($survey))->delete();
 
         $survey->delete(); // cascade: invites + submissions + answers
 
