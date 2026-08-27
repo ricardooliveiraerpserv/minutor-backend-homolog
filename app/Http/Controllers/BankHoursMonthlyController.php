@@ -442,22 +442,31 @@ class BankHoursMonthlyController extends Controller
                         continue;
                     }
 
-                    // Verificar se o projeto filho é do tipo "Fechado"
-                    $isClosedContract = $childProject->contractType &&
-                                        strtolower(trim($childProject->contractType->name)) === 'fechado';
+                    // 🔒 Classificação do filho = MESMA regra canônica de Project::managementBreakdown()
+                    // (senão o saldo deste dashboard diverge da Gestão de Contratos — bug do saldo
+                    // AGRO AMAZONIA: filho "Banco de Horas Fixo" comprometia 602h de bloco, mas aqui
+                    // só o literal 'fechado' virava bloco contratado; o BH-Fixo caía no apontado →
+                    // 109,76h de saldo inflado). Regra: Fechado/BH-Fixo → bloco CONTRATADO
+                    // (getTotalAvailableHours); On Demand → apontado + inicial; Projeto/BH-Mensal → IGNORA.
+                    if (!$childProject->contractType) continue;
+                    $childCode = (string) ($childProject->contractType->code ?? '');
+                    $childName = strtolower(trim($childProject->contractType->name));
+                    $isClosedContract = $childCode === 'closed'      || $childName === 'fechado';
+                    $isBhFixoChild    = $childCode === 'fixed_hours' || $childName === 'banco de horas fixo';
+                    $isOnDemandChild  = $childCode === 'on_demand'   || $childName === 'on demand';
 
-                    if ($isClosedContract) {
-                        // Para projetos fechados: usar total de horas disponíveis (inclui aportes novos + fallback legado)
-                        $childTotalHours = $childProject->getTotalAvailableHours();
-                        $consumedHours += $childTotalHours;
-                    } else {
-                        // Para outros tipos: usar horas apontadas normalmente (excluindo rejeitados)
+                    if ($isClosedContract || $isBhFixoChild) {
+                        // Fechado / BH-Fixo: bloco de horas CONTRATADO (vendidas + aportes), comprometido.
+                        $consumedHours += (float) $childProject->getTotalAvailableHours();
+                    } elseif ($isOnDemandChild) {
+                        // On Demand: consome pelo apontado (+ consumo inicial).
                         $childLoggedMinutes = $childProject->timesheets()
                             ->whereIn('status', ['approved', 'pending'])
                             ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0;
                         $childLoggedHours = round($childLoggedMinutes / 60, 2);
                         $consumedHours += $childLoggedHours + (float) ($childProject->initial_hours_consumed ?? 0);
                     }
+                    // else: filho Projeto / BH-Mensal — IGNORADO (idêntico à Gestão de Contratos).
                 }
             }
         }
