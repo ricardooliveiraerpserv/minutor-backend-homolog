@@ -860,6 +860,9 @@ class SustentacaoController extends Controller
             ")->first();
 
         // 7. Financeiro por cliente
+        // CONSUMIDO por cliente (apontamentos do período, sustentação) — SEM fan-out
+        // (só SUM de effort_minutes; a antiga SUM(sold_hours*60) multiplicava a franquia
+        // pelo nº de apontamentos → 914 mil h). Ver auditoria 2026-08-27.
         $clientHours = DB::table('timesheets')
             ->join('projects',      'projects.id',      '=', 'timesheets.project_id')
             ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
@@ -872,29 +875,59 @@ class SustentacaoController extends Controller
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->select(
+                'customers.id as customer_id',
                 'customers.name as customer_name',
-                DB::raw('SUM(timesheets.effort_minutes) as used_min'),
-                DB::raw('SUM(projects.sold_hours * 60) as sold_min')
+                DB::raw('SUM(timesheets.effort_minutes) as used_min')
             )
-            ->groupBy('customers.name', 'customers.id')
+            ->groupBy('customers.id', 'customers.name')
             ->orderByDesc(DB::raw('SUM(timesheets.effort_minutes)'))
-            ->limit(12)
+            ->limit(15)
             ->get();
 
+        // CONTRATADO (franquia MENSAL) por cliente = SUM(sold_hours) dos projetos de
+        // sustentação do tipo "Banco de Horas Mensal", UMA VEZ por projeto (sem join de
+        // timesheets → sem fan-out). Só BH Mensal tem quota mensal semanticamente comparável
+        // ao consumo do mês; BH Fixo/Fechado (franquia integral do contrato), On Demand/Cloud/
+        // SaaS (sem franquia) → sem denominador mensal válido → "—" (nunca 0h).
+        $mensalFranchise = DB::table('projects')
+            ->join('service_types',  'service_types.id',  '=', 'projects.service_type_id')
+            ->join('contract_types', 'contract_types.id', '=', 'projects.contract_type_id')
+            ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
+            ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
+                                 ->orWhere('service_types.name', 'ilike', '%sustenta%')
+                                 ->orWhere(fn($s) => $s->where('projects.is_investimento_comercial', true)
+                                                       ->where('projects.categoria_interna', 'Suporte')))
+            ->where('contract_types.name', 'Banco de Horas Mensal')
+            ->whereNull('projects.deleted_at')
+            ->whereNotNull('projects.customer_id')
+            ->groupBy('projects.customer_id')
+            ->pluck(DB::raw('SUM(projects.sold_hours)'), 'projects.customer_id');
+
         $totalUsedMin = $clientHours->sum('used_min');
-        $totalSoldMin = $clientHours->sum('sold_min');
-        $pctConsumed  = $totalSoldMin > 0 ? round($totalUsedMin / $totalSoldMin * 100, 1) : null;
 
         $resolvedCount  = $this->tickets()->whereBetween('resolved_in', [$from, $to])->count();
         $hoursPerTicket = ($resolvedCount > 0 && $totalUsedMin > 0)
             ? round(($totalUsedMin / 60) / $resolvedCount, 2) : null;
 
-        $topClients = $clientHours->map(fn($r) => [
-            'name'   => $r->customer_name,
-            'used_h' => round($r->used_min / 60, 1),
-            'sold_h' => round($r->sold_min / 60, 1),
-            'pct'    => $r->sold_min > 0 ? round($r->used_min / $r->sold_min * 100, 1) : null,
-        ])->values();
+        $topClients = $clientHours->map(function ($r) use ($mensalFranchise) {
+            $usedH      = round($r->used_min / 60, 1);
+            $franchiseH = (float) ($mensalFranchise[$r->customer_id] ?? 0);
+            return [
+                'name'   => $r->customer_name,
+                'used_h' => $usedH,
+                'sold_h' => $franchiseH > 0 ? round($franchiseH, 1) : null,   // franquia MENSAL (BH Mensal) ou null → "—"
+                'pct'    => $franchiseH > 0 ? round($usedH / $franchiseH * 100, 1) : null,
+            ];
+        })
+        ->sortByDesc(fn($c) => $c['pct'] ?? -1)   // % consumo desc; clientes sem franquia ("—") por último
+        ->values();
+
+        // % global consolidado só faz sentido dentro do MESMO tipo (BH Mensal): consumido dos
+        // clientes com franquia ÷ franquia mensal total. Mistura de tipos não tem significado.
+        $mensalUsedH  = $topClients->whereNotNull('sold_h')->sum('used_h');
+        $mensalSoldH  = $topClients->whereNotNull('sold_h')->sum('sold_h');
+        $pctConsumed  = $mensalSoldH > 0 ? round($mensalUsedH / $mensalSoldH * 100, 1) : null;
+        $totalSoldMin = $mensalSoldH * 60;
 
         // 8. Distribuição
         $byCategory = $this->tickets()->whereBetween('created_date', [$from, $to])
