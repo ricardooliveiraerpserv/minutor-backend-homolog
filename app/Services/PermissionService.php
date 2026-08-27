@@ -135,6 +135,9 @@ class PermissionService
         'vault.use', 'vault.audit.view',
         // Cofre de Ambientes (infra Protheus; só equipe interna)
         'environments.use', 'environments.admin', 'environments.audit.view',
+        // Prosight C3 — Ambientes: projeção READ-ONLY segura do Cofre por customer_id.
+        // NÃO concede acesso ao Cofre/reveal/secrets; só a projeção allowlist. Cliente externo NÃO recebe.
+        'prosight.environments.view',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -227,6 +230,8 @@ class PermissionService
             'vault.use',
             // Cofre de Ambientes
             'environments.use',
+            // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
+            'prosight.environments.view',
         ];
     }
 
@@ -254,6 +259,8 @@ class PermissionService
             // Cofre de Senhas
             'vault.use',
             'environments.use',
+            // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
+            'prosight.environments.view',
             // Central de Fontes (C1/C3) — coordenador vê o catálogo e usa ações NÃO-destrutivas.
             // reprocess fica SÓ p/ Admin no MVP (única ação que cria versão/consome IA).
             'source_docs.view', 'source_docs.validate', 'source_docs.download',
@@ -284,6 +291,8 @@ class PermissionService
             // Cofre de Senhas
             'vault.use',
             'environments.use',
+            // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
+            'prosight.environments.view',
         ];
     }
 

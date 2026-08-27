@@ -642,6 +642,13 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:source_docs.quality.run')->group(function () {
             Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
         });
+
+        // Prosight C3 — Ambientes: projeção READ-ONLY segura do Cofre Env* por customer_id.
+        // Permissão PRÓPRIA (não concede acesso ao Cofre/reveal); empresa obrigatória; escopo revalidado
+        // no controller. NÃO expõe secrets/credenciais/host/porta/URL/inventory (allowlist).
+        Route::middleware('permission.or.admin:prosight.environments.view')->group(function () {
+            Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1734,6 +1741,13 @@ Route::prefix('v1')->group(function () {
         // espelhando source_docs.reprocess — disparar análise consome o serviço externo.
         Route::middleware('permission:source_docs.quality.run')->group(function () {
             Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
+        });
+
+        // Prosight C3 — Ambientes: projeção READ-ONLY segura do Cofre Env* por customer_id.
+        // Permissão PRÓPRIA (não concede acesso ao Cofre/reveal); empresa obrigatória; escopo revalidado
+        // no controller. NÃO expõe secrets/credenciais/host/porta/URL/inventory (allowlist).
+        Route::middleware('permission.or.admin:prosight.environments.view')->group(function () {
+            Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
