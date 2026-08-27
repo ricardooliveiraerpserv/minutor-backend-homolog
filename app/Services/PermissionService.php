@@ -141,6 +141,8 @@ class PermissionService
         // Conector-0 — gestão da IDENTIDADE do agente (emitir enrollment token / revogar). Interno/infra.
         // NÃO é operação (start/stop/compile/RPO); essas terão prosight.operations.execute (fases futuras).
         'prosight.operations.manage',
+        // Conector-1 — observabilidade: ver PRESENÇA (estado observado) do ambiente. Read-only, escopada.
+        'prosight.operations.view',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -235,6 +237,8 @@ class PermissionService
             'environments.use',
             // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
             'prosight.environments.view',
+            // Prosight — Presença (Conector): observabilidade read-only do estado observado
+            'prosight.operations.view',
             // Conector — gestão da identidade do agente (enrollment/revogação). Infra interna.
             'prosight.operations.manage',
         ];
@@ -266,6 +270,8 @@ class PermissionService
             'environments.use',
             // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
             'prosight.environments.view',
+            // Prosight — Presença (Conector): observabilidade read-only do estado observado
+            'prosight.operations.view',
             // Central de Fontes (C1/C3) — coordenador vê o catálogo e usa ações NÃO-destrutivas.
             // reprocess fica SÓ p/ Admin no MVP (única ação que cria versão/consome IA).
             'source_docs.view', 'source_docs.validate', 'source_docs.download',
@@ -298,6 +304,8 @@ class PermissionService
             'environments.use',
             // Prosight — Ambientes (projeção segura read-only, escopada por cliente)
             'prosight.environments.view',
+            // Prosight — Presença (Conector): observabilidade read-only do estado observado
+            'prosight.operations.view',
         ];
     }
 

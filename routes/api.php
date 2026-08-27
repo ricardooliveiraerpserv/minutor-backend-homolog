@@ -112,6 +112,9 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:10,1')->name('connector.enroll');
     Route::get('/connector/whoami', [\App\Http\Controllers\ConnectorAgentController::class, 'whoami'])
         ->middleware(['throttle:60,1', 'connector.agent'])->name('connector.whoami');
+    // Connector-1 — heartbeat (assinado). SÓ presença/saúde do canal; sem AppServer/RPO.
+    Route::post('/connector/heartbeat', [\App\Http\Controllers\ConnectorAgentController::class, 'heartbeat'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.heartbeat');
 
     // 🔗 PORTAL DE PROPOSTAS — acesso público por token (sem login). Throttle alto: o portal faz muito
     // tracking (página/seção/heartbeat) + polling; o token de 48 chars já é a barreira anti-brute-force.
@@ -665,6 +668,12 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
             Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+        });
+        // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
+        // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presenceBulk']);
+            Route::get('/prosight/environments/{environmentId}/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presence'])->whereNumber('environmentId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1774,6 +1783,12 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
             Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+        });
+        // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
+        // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presenceBulk']);
+            Route::get('/prosight/environments/{environmentId}/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presence'])->whereNumber('environmentId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
