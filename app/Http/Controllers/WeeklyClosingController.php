@@ -71,22 +71,56 @@ class WeeklyClosingController extends Controller
         $active = collect();
         WeekOpenPeriod::whereNull('closed_at')->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->with(['project:id,name', 'openedBy:id,name'])->orderByDesc('week_start')->limit(100)->get()
+            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])->orderByDesc('week_start')->limit(100)->get()
             ->each(fn ($p) => $active->push([
                 'period_kind' => 'week', 'period_key' => Carbon::parse($p->week_start)->toDateString(),
                 'project_id' => $p->project_id, 'project' => $p->project?->name,
+                'customer_id' => $p->project?->customer_id, 'customer' => $p->project?->customer?->name,
                 'user_id' => $p->user_id, 'user' => $p->openedBy?->name,
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
         ProjectOpenPeriod::whereNull('closed_at')->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->with(['project:id,name', 'openedBy:id,name'])->orderByDesc('year_month')->limit(100)->get()
+            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])->orderByDesc('year_month')->limit(100)->get()
             ->each(fn ($p) => $active->push([
                 'period_kind' => 'month', 'period_key' => $p->year_month,
                 'project_id' => $p->project_id, 'project' => $p->project?->name,
+                'customer_id' => $p->project?->customer_id, 'customer' => $p->project?->customer?->name,
                 'user_id' => $p->user_id, 'user' => $p->openedBy?->name,
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
+
+        // Agrupamento por CLIENTE: quando a reabertura cobre TODOS os projetos abertos de um
+        // cliente (reabertura escopada por customer_id — vide scopeTargets), colapsa as N linhas
+        // de projeto em UMA só ("Cliente · projetos = todos"). Só agrupa entradas de projeto
+        // (project_id != null) sem escopo de usuário, com mesmo (período, auto_close). As demais
+        // (usuário-escopadas, ou subconjunto de projetos) seguem listadas individualmente.
+        $active = $active
+            ->groupBy(fn ($r) => $r['period_kind'] . '|' . $r['period_key'] . '|' . ($r['customer_id'] ?? 'x')
+                . '|' . ($r['user_id'] ?? 'x') . '|' . ($r['auto_close_at'] ?? 'x'))
+            ->flatMap(function ($grp) {
+                $first = $grp->first();
+                $cid   = $first['customer_id'] ?? null;
+                // Agrupável só se: tem cliente, sem escopo de usuário, e >1 projeto na mesma reabertura.
+                if (!$cid || $first['user_id'] || $grp->count() < 2) return $grp;
+                $reopenedIds = $grp->pluck('project_id')->filter()->unique();
+                $openCount   = \App\Models\Project::where('customer_id', $cid)->open()->count();
+                // Só colapsa quando cobre TODOS os projetos abertos do cliente.
+                if ($reopenedIds->count() < $openCount) return $grp;
+                return collect([[
+                    'period_kind'  => $first['period_kind'],
+                    'period_key'   => $first['period_key'],
+                    'project_id'   => null,
+                    'project'      => null,
+                    'customer_id'  => $cid,
+                    'customer'     => $first['customer'],
+                    'all_projects' => true,
+                    'projects_count' => $reopenedIds->count(),
+                    'user_id'      => null,
+                    'user'         => $first['user'],
+                    'auto_close_at' => $first['auto_close_at'],
+                ]]);
+            });
 
         // Encerramentos ESCOPADOS (por usuário e/ou projeto) — usuários/projetos bloqueados
         // INDIVIDUALMENTE, que NÃO aparecem no status global do mês/semana. Era o que travava
