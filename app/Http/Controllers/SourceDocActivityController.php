@@ -73,6 +73,8 @@ class SourceDocActivityController extends Controller
         $capInventario = $isAdmin; // Inventário Git×RPO é admin-only (igual ao nav/FE)
         $canCost = $isAdmin || $can('source_docs.cost_approval.view');
         $canCampaign = $isAdmin || $can('source_docs.semantic_campaign');
+        // Conector-2 — a família operacoes agora tem dados reais (connector_events), observabilidade.
+        $capOperacoes = $isAdmin || $can('prosight.operations.view') || $can('operacoes_protheus.view');
 
         $rows = [];
 
@@ -107,6 +109,11 @@ class SourceDocActivityController extends Controller
             $rows = array_merge($rows, $this->fetchCoverage($user, $customerId, $from, $to, $outcome, $cursor, $fetch));
         }
 
+        // ── (8) operacoes — transições do Conector (connector_events), Connector-2. Sem ator.
+        if ($wants('operacoes') && $capOperacoes && $actorId === null) {
+            $rows = array_merge($rows, $this->fetchConnectorEvents($user, $customerId, $from, $to, $outcome, $cursor, $fetch));
+        }
+
         // ── Merge k-way + keyset. Ordem global: (occurred desc, familyRank asc, nativeId desc).
         usort($rows, fn ($a, $b) => $this->cmpDesc($a, $b));
 
@@ -127,12 +134,59 @@ class SourceDocActivityController extends Controller
 
         $items = array_map(fn ($r) => ['family' => $r['family'], 'kind' => $r['kind'], 'native' => $r['native']], $page);
 
+        // operacoes fica "pendente do conector" SÓ enquanto não há transição real observada no escopo.
+        $pending = ($capOperacoes && $this->hasConnectorEvents($user, $customerId)) ? [] : ['operacoes'];
+
         return response()->json(['data' => [
             'items' => $items,
             'next_cursor' => $nextCursor,
-            'pending_families' => ['operacoes'], // Bloco B / Trilha Conector — nunca preenchido com fixture
+            'pending_families' => $pending,
             'mode' => 'live',
         ]]);
+    }
+
+    /** Existe alguma transição do Conector no escopo do usuário? (operacoes deixou de estar pendente) */
+    private function hasConnectorEvents($user, ?int $cid): bool
+    {
+        $q = DB::table('connector_events')
+            ->join('env_environments', 'env_environments.id', '=', 'connector_events.environment_id')
+            ->when($cid !== null, fn ($x) => $x->where('env_environments.customer_id', $cid));
+        $this->scope->applyScope($q, $user, 'env_environments.customer_id');
+
+        return $q->exists();
+    }
+
+    /** (8) Transições do Conector (connector_events) → família operacoes. Escopo via env_environments.customer_id. */
+    private function fetchConnectorEvents($user, ?int $cid, ?string $from, ?string $to, ?string $outcome, ?array $cursor, int $n): array
+    {
+        $col = 'connector_events.occurred_at';
+        $q = DB::table('connector_events')
+            ->join('env_environments', 'env_environments.id', '=', 'connector_events.environment_id')
+            ->leftJoin('customers', 'customers.id', '=', 'env_environments.customer_id')
+            ->when($cid !== null, fn ($x) => $x->where('env_environments.customer_id', $cid))
+            ->when($from, fn ($x) => $x->whereDate($col, '>=', $from))
+            ->when($to, fn ($x) => $x->whereDate($col, '<=', $to))
+            ->when($cursor, fn ($x) => $x->where($col, '<=', $cursor['t']));
+        if ($outcome !== null) {
+            if (! in_array($outcome, ['ok', 'fail', 'info'], true)) {
+                return [];
+            }
+            $q->where('connector_events.outcome', $outcome);
+        }
+        $this->scope->applyScope($q, $user, 'env_environments.customer_id');
+
+        return $q->orderByDesc($col)->limit($n)->get([
+            'connector_events.id', 'connector_events.environment_id', 'connector_events.appserver_ref',
+            'connector_events.event_type', 'connector_events.outcome', 'connector_events.detail',
+            'connector_events.meta', 'connector_events.occurred_at',
+            'env_environments.name as environment_name', 'env_environments.customer_id', 'customers.name as customer_name',
+        ])->map(fn ($r) => $this->norm('operacoes', 'connector-event', (int) $r->id, $r->occurred_at, [
+            'id' => (int) $r->id, 'environment_id' => (int) $r->environment_id, 'environment_name' => $r->environment_name,
+            'customer_id' => $r->customer_id !== null ? (int) $r->customer_id : null, 'customer_name' => $r->customer_name,
+            'appserver_ref' => $r->appserver_ref, 'event_type' => $r->event_type, 'outcome' => $r->outcome,
+            'detail' => $r->detail, 'meta' => $r->meta ? json_decode($r->meta, true) : null,
+            'occurred_at' => $this->iso($r->occurred_at),
+        ]))->all();
     }
 
     // ── Fontes ────────────────────────────────────────────────────────────────

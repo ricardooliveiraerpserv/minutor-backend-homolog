@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Connector\ConnectorIdentity;
+use App\Connector\ConnectorInventoryProcessor;
 use App\Connector\PresenceDeriver;
 use App\Models\ConnectorAgent;
 use App\Models\ConnectorEnrollmentToken;
@@ -28,6 +29,7 @@ class ConnectorAgentController extends Controller
         private ConnectorIdentity $identity,
         private SourceDocCustomerScope $scope,
         private PresenceDeriver $deriver,
+        private ConnectorInventoryProcessor $inventory,
     ) {
     }
 
@@ -255,6 +257,86 @@ class ConnectorAgentController extends Controller
         $data = $envIds->map(fn ($id) => $this->presenceRow((int) $id, $active->has($id), $states->get($id)))->values()->all();
 
         return response()->json(['data' => ['customer_id' => $customerId, 'environments' => $data]]);
+    }
+
+    // ── Connector-2: inventário (agente) + observado (sessão) ─────────────────
+
+    /**
+     * POST /connector/inventory — inventário Protheus OBSERVADO (read-only). Corpo ALLOWLIST:
+     * só campos derivados/sanitizados (nunca INI/path/secret/bytes de RPO; rpo.hash = sha256 hex).
+     * Frescor do inventário é INDEPENDENTE da presença (não toca last_seen_at).
+     */
+    public function inventory(Request $request): JsonResponse
+    {
+        /** @var ConnectorAgent $agent */
+        $agent = $request->attributes->get('connector_agent');
+
+        $data = $request->validate([
+            'observed_at'            => 'nullable|integer',
+            'appservers'             => 'nullable|array|max:50',
+            'appservers.*.ref'       => 'required|uuid',
+            'appservers.*.name'      => 'required|string|max:120',
+            'appservers.*.up'        => 'boolean',
+            'appservers.*.version'   => 'nullable|string|max:60',
+            'appservers.*.build'     => 'nullable|string|max:60',
+            'appservers.*.patch'     => 'nullable|string|max:60',
+            'appservers.*.uptime_s'  => 'nullable|integer|min:0',
+            'rest'                   => 'nullable|array|max:50',
+            'rest.*.name'            => 'required|string|max:120',
+            'rest.*.healthy'         => 'boolean',
+            'rest.*.status_code'     => 'nullable|integer',
+            'rest.*.latency_ms'      => 'nullable|integer|min:0',
+            'rpo'                    => 'nullable|array|max:100',
+            'rpo.*.appserver_ref'    => 'required|uuid',
+            'rpo.*.hash'             => 'required|string|size:64|regex:/^[0-9a-f]{64}$/', // sha256 hex (não path)
+            'rpo.*.version'          => 'nullable|string|max:60',
+            'rpo.*.size'             => 'nullable|integer|min:0',
+            'rpo.*.mtime'            => 'nullable|integer',
+            'collect_error'          => 'nullable|string|max:200',
+        ]);
+        // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
+        if (isset($data['collect_error'])) {
+            $data['collect_error'] = $this->sanitizeError((string) $data['collect_error']);
+        }
+
+        $r = $this->inventory->process($agent, $data, now());
+
+        return response()->json(['ok' => true, 'applied' => $r['applied'], 'server_time' => now()->timestamp]);
+    }
+
+    /** GET /prosight/environments/{environmentId}/observed — inventário observado + divergência cadastral. */
+    public function observed(Request $request, int $environmentId): JsonResponse
+    {
+        $env = EnvEnvironment::query()->whereKey($environmentId)->first(['id', 'customer_id']);
+        if (! $env || ! $this->scope->canAccessCustomerId($request->user(), (int) $env->customer_id)) {
+            return response()->json(['message' => 'Ambiente não encontrado.'], 404);
+        }
+        $state = ConnectorEnvironmentState::where('environment_id', $env->id)->first();
+        $obs = $state?->observed_json ?? null;
+        $hasInv = $state?->inventory_received_at !== null;
+        $staleS = $state?->inventory_received_at ? max(0, now()->getTimestamp() - $state->inventory_received_at->getTimestamp()) : null;
+
+        // Divergência CADASTRAL (Env*) × OBSERVADO (Conector) — por nome; nunca reconcilia.
+        $cad = DB::table('env_appservers')->where('environment_id', $env->id)->whereNull('deleted_at')
+            ->get(['name', 'version', 'build', 'patch'])->keyBy('name');
+        $divergence = [];
+        foreach ($obs['appservers'] ?? [] as $a) {
+            $c = $cad->get($a['name'] ?? null);
+            if (! $c) { continue; }
+            foreach (['version', 'build', 'patch'] as $f) {
+                if (($c->$f ?? null) !== ($a[$f] ?? null)) {
+                    $divergence[] = ['appserver' => $a['name'], 'field' => $f, 'cadastral' => $c->$f, 'observed' => $a[$f] ?? null];
+                }
+            }
+        }
+
+        return response()->json(['data' => [
+            'environment_id' => (int) $env->id,
+            'has_inventory'  => $hasInv,
+            'stale_s'        => $staleS, // frescor do INVENTÁRIO (independente da presença)
+            'inventory'      => $obs,
+            'divergence'     => $divergence,
+        ]]);
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────

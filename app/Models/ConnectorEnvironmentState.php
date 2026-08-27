@@ -17,10 +17,15 @@ class ConnectorEnvironmentState extends Model
     protected $fillable = [
         'environment_id', 'agent_id', 'last_seen_at', 'last_observed_at', 'clock_offset_s',
         'agent_uptime_s', 'agent_reported_status', 'last_error',
+        // Connector-2 — inventário observado (frescor separado da presença C-1).
+        'observed_json', 'inventory_received_at', 'inventory_observed_at',
     ];
 
     protected $casts = [
-        'last_seen_at'     => 'datetime',
-        'last_observed_at' => 'datetime',
+        'last_seen_at'          => 'datetime',
+        'last_observed_at'      => 'datetime',
+        'observed_json'         => 'array',
+        'inventory_received_at' => 'datetime',
+        'inventory_observed_at' => 'datetime',
     ];
 }
