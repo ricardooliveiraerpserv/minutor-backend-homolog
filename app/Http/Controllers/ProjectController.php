@@ -295,6 +295,24 @@ class ProjectController extends Controller
                             $a->where('user_id', $targetUserId);
                         });
                     });
+
+                    // Split Ativos/Encerrados pela CONCLUSÃO DAS ATIVIDADES DELE (não pelo status do
+                    // projeto): se todas as atividades do consultor estão concluídas, o projeto é
+                    // "encerrado" pra ele. Cancelados/finalizados vão sempre pra Encerrados.
+                    if ($status === 'closed') {
+                        $query->where(function ($q) use ($targetUserId) {
+                            $q->where(function ($qq) use ($targetUserId) {
+                                $qq->whereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId))
+                                   ->whereDoesntHave('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId)->where('status', '!=', 'done'));
+                            })->orWhereIn('status', ['cancelled', 'finished']);
+                        });
+                    } else { // 'open' (padrão de Meus Projetos): ainda NÃO concluído pra ele
+                        $query->whereNotIn('status', ['cancelled', 'finished'])
+                              ->where(function ($q) use ($targetUserId) {
+                                  $q->whereDoesntHave('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId))
+                                    ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId)->where('status', '!=', 'done'));
+                              });
+                    }
                 } else {
                     $query->where(function ($q) use ($targetUserId) {
                         $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
@@ -375,10 +393,13 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro por status — hierárquico (WITH RECURSIVE) para status específicos
+        // Filtro por status — hierárquico (WITH RECURSIVE) para status específicos.
+        // No modo activity_allocated (Meus Projetos) o split Ativos/Encerrados já foi feito
+        // acima pela conclusão das atividades DO consultor — não aplicar o filtro por status
+        // do projeto aqui (senão status=closed viraria "status do projeto = closed" = vazio).
         $nodeStateMap = collect(); // id => node_state ('ACTIVE' | 'DISABLED')
 
-        if ($status) {
+        if ($status && !$request->boolean('activity_allocated')) {
             if ($status === 'open') {
                 $query->open(); // Scope: exclui apenas cancelled e finished (permite paused)
             } elseif ($status === 'active') {
@@ -728,7 +749,7 @@ class ProjectController extends Controller
         // do cronograma dele). CONSUMIDAS = SUM(effort_minutes) dos apontamentos dele (exclui
         // rejeitado/ajuste). Saldo = disp − cons (no front). Anti-N+1 (2 queries agregadas).
         $activityAllocatedMode = $myProjectsUserId && !empty($projectIds);
-        $myAllocMap = []; $myConsumedMap = [];
+        $myAllocMap = []; $myConsumedMap = []; $myDoneMap = [];
         if ($activityAllocatedMode) {
             $myAllocMap = \App\Models\StageDelivery::query()
                 ->join('project_stages', 'project_stages.id', '=', 'stage_deliveries.stage_id')
@@ -745,9 +766,17 @@ class ProjectController extends Controller
                 ->groupBy('project_id')
                 ->selectRaw('project_id as pid, COALESCE(SUM(effort_minutes), 0) as m')
                 ->pluck('m', 'pid')->toArray();
+            // Total e concluídas das atividades DELE por projeto → my_all_done (todas concluídas).
+            $myDoneMap = \App\Models\StageDelivery::query()
+                ->join('project_stages', 'project_stages.id', '=', 'stage_deliveries.stage_id')
+                ->where('stage_deliveries.responsible_user_id', $myProjectsUserId)
+                ->whereIn('project_stages.project_id', $projectIds)
+                ->groupBy('project_stages.project_id')
+                ->selectRaw("project_stages.project_id as pid, COUNT(*) as total, SUM(CASE WHEN stage_deliveries.status = 'done' THEN 1 ELSE 0 END) as done")
+                ->get()->keyBy('pid');
         }
 
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap, $activityAllocatedMode, $myAllocMap, $myConsumedMap) {
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap, $activityAllocatedMode, $myAllocMap, $myConsumedMap, $myDoneMap) {
             $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
@@ -756,6 +785,10 @@ class ProjectController extends Controller
             if ($activityAllocatedMode) {
                 $project->my_allocated_hours = round((float) ($myAllocMap[$project->id] ?? 0), 2);
                 $project->my_consumed_hours  = round((float) ($myConsumedMap[$project->id] ?? 0) / 60, 2);
+                // Encerrado PRA ELE = tem atividade dele e todas concluídas → o front esconde
+                // Disponibilizadas/Saldo e mostra só Apontadas.
+                $row = $myDoneMap[$project->id] ?? null;
+                $project->my_all_done = $row && (int) $row->total > 0 && (int) $row->total === (int) $row->done;
             }
 
             if ($gestaoMode) {
