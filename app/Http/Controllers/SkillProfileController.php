@@ -115,19 +115,27 @@ class SkillProfileController extends Controller
 
         $data = is_array($respondent->data) ? $respondent->data : (json_decode($respondent->data ?? '[]', true) ?: []);
 
+        // Classificação + valor CONFORME O CADASTRO quando o respondente já é usuário.
+        $cadUser = $respondent->user_id
+            ? \App\Models\User::with('partner:id,pricing_type,hourly_rate')->find($respondent->user_id)
+            : ($respondent->email ? \App\Models\User::with('partner:id,pricing_type,hourly_rate')->whereRaw('lower(email) = ?', [mb_strtolower(trim($respondent->email))])->first() : null);
+        $cad = SkillRespondent::classificationFromUser($cadUser);
+        $classification = $cad['classification'] ?? $respondent->classification;
+
         return response()->json([
             'respondent' => [
                 'id' => $respondent->id,
                 'name' => $respondent->name,
                 'type' => $respondent->type,
-                'classification' => $respondent->classification,
-                'classification_label' => $respondent->classification ? (SkillRespondent::CLASSIFICATIONS[$respondent->classification] ?? $respondent->classification) : null,
-                'blacklist' => $respondent->classification === 'blacklist',
+                'classification' => $classification,
+                'classification_label' => $cad['label'] ?? ($respondent->classification ? (SkillRespondent::CLASSIFICATIONS[$respondent->classification] ?? $respondent->classification) : null),
+                'blacklist' => $classification === 'blacklist',
+                'from_cadastro' => $cad !== null,
                 'partner_id' => $respondent->partner_id ? (string) $respondent->partner_id : '',
                 'partner_name' => $respondent->partner?->name,
                 'email' => $respondent->email,
                 'phone' => $respondent->phone,
-                'valor' => $data['valor'] ?? null,
+                'valor' => $cad['valor'] ?? ($data['valor'] ?? null),
                 'empresa' => $data['empresa'] ?? null,
                 'cargo' => $data['cargo'] ?? null,
                 'cidade' => $data['cidade'] ?? null,

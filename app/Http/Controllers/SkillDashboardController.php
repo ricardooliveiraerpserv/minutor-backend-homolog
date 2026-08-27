@@ -95,39 +95,80 @@ class SkillDashboardController extends Controller
                         ->when($modules, fn ($x) => $x->orWhereIn('i.name', $modules));
                 }))
                 ->when(! empty($levelWeights), fn ($qq) => $qq->whereIn('a.level_weight', $levelWeights), fn ($qq) => $qq->where('a.level_weight', '>=', 1))
-                ->groupBy('r.id', 'r.name', 'r.type', 'r.classification', 'r.partner_id', 'pt.name', DB::raw('r.data::text'), 's.submitted_at')
-                ->select('r.id', 'r.name', 'r.type', 'r.classification', 'r.partner_id', DB::raw('pt.name as partner_name'), DB::raw('r.data::text as data'), 's.submitted_at',
+                ->groupBy('r.id', 'r.name', 'r.type', 'r.classification', 'r.partner_id', 'r.user_id', 'r.email', 'pt.name', DB::raw('r.data::text'), 's.submitted_at')
+                ->select('r.id', 'r.name', 'r.type', 'r.classification', 'r.partner_id', 'r.user_id', 'r.email', DB::raw('pt.name as partner_name'), DB::raw('r.data::text as data'), 's.submitted_at',
                     DB::raw('max(a.level_weight) as top_weight'),
                     DB::raw('count(distinct a.skill_id) as matches'));
         } else {
-            $q->select('r.id', 'r.name', 'r.type', 'r.classification', 'r.partner_id', DB::raw('pt.name as partner_name'), 'r.data', 's.submitted_at',
+            $q->select('r.id', 'r.name', 'r.type', 'r.classification', 'r.partner_id', 'r.user_id', 'r.email', DB::raw('pt.name as partner_name'), 'r.data', 's.submitted_at',
                 DB::raw('cast(null as integer) as top_weight'),
                 DB::raw('cast(null as integer) as matches'));
         }
 
         $classLabels = SkillRespondent::CLASSIFICATIONS;
 
-        return $q->orderByDesc('s.submitted_at')->limit(500)->get()->map(function ($x) use ($levelNames, $classLabels) {
+        $rows = $q->orderByDesc('s.submitted_at')->limit(500)->get();
+        $cadMap = $this->cadastroMap($rows); // respondent_id → {classification,label,valor}
+
+        return $rows->map(function ($x) use ($levelNames, $classLabels, $cadMap) {
             $data = json_decode($x->data ?? '{}', true) ?: [];
             $tw = $x->top_weight !== null ? (int) $x->top_weight : null;
+            $cad = $cadMap[$x->id] ?? null;
+            $classification = $cad['classification'] ?? $x->classification;
 
             return [
                 'id' => $x->id,
                 'name' => $x->name,
                 'type' => $x->type,
-                'classification' => $x->classification,
-                'classification_label' => $x->classification ? ($classLabels[$x->classification] ?? $x->classification) : null,
-                'blacklist' => $x->classification === 'blacklist',
+                'classification' => $classification,
+                'classification_label' => $cad['label'] ?? ($x->classification ? ($classLabels[$x->classification] ?? $x->classification) : null),
+                'blacklist' => $classification === 'blacklist',
+                'from_cadastro' => $cad !== null,
                 'partner_id' => $x->partner_id ? (string) $x->partner_id : '',
                 'partner_name' => $x->partner_name,
                 'empresa' => $data['empresa'] ?? null,
-                'valor' => $data['valor'] ?? null,
+                'valor' => $cad['valor'] ?? ($data['valor'] ?? null),
                 'last_at' => $x->submitted_at,
                 'top_weight' => $tw,
                 'top_level' => $tw !== null ? ($levelNames[$tw] ?? null) : null,
                 'matches' => $x->matches !== null ? (int) $x->matches : null,
             ];
         })->all();
+    }
+
+    /**
+     * Mapa respondent_id → info do CADASTRO (classificação + valor reais do usuário),
+     * quando o respondente já é usuário (por user_id ou e-mail). Batch: 1 query de users.
+     * As linhas precisam expor ->id, ->user_id e ->email.
+     */
+    private function cadastroMap($rows): array
+    {
+        $userIds = $rows->pluck('user_id')->filter()->unique()->values()->all();
+        $emails  = $rows->pluck('email')->filter()->map(fn ($e) => mb_strtolower(trim($e)))->unique()->values()->all();
+        if (empty($userIds) && empty($emails)) return [];
+
+        $users = \App\Models\User::query()
+            ->with('partner:id,pricing_type,hourly_rate')
+            ->where(function ($q) use ($userIds, $emails) {
+                if ($userIds) $q->whereIn('id', $userIds);
+                if ($emails)  $q->orWhereRaw('lower(email) in (' . implode(',', array_fill(0, count($emails), '?')) . ')', $emails);
+            })
+            ->get(['id', 'email', 'type', 'work_bond', 'hourly_rate', 'partner_id']);
+
+        $byId = $users->keyBy('id');
+        $byEmail = $users->keyBy(fn ($u) => mb_strtolower(trim((string) $u->email)));
+
+        $out = [];
+        foreach ($rows as $r) {
+            $rid = $r->id ?? $r->respondent_id ?? null;
+            if (! $rid || isset($out[$rid])) continue;
+            $user = ($r->user_id && $byId->has($r->user_id))
+                ? $byId[$r->user_id]
+                : ($r->email ? ($byEmail[mb_strtolower(trim($r->email))] ?? null) : null);
+            $info = SkillRespondent::classificationFromUser($user);
+            if ($info) $out[$rid] = $info;
+        }
+        return $out;
     }
 
     /**
@@ -154,17 +195,23 @@ class SkillDashboardController extends Controller
             ->when(! empty($levelWeights), fn ($q) => $q->whereIn('a.level_weight', $levelWeights), fn ($q) => $q->where('a.level_weight', '>=', 1))
             ->orderBy('r.name')->orderBy('i.category')->orderByDesc('a.level_weight')->orderBy('i.name')
             ->limit(4000)
-            ->get(['r.id as respondent_id', 'r.name', 'r.classification', 'r.data', 'i.name as module', 'i.category', 'l.name as level', 'a.level_weight'])
-            ->map(function ($x) use ($classLabels) {
+            ->get(['r.id as respondent_id', 'r.user_id', 'r.email', 'r.name', 'r.classification', 'r.data', 'i.name as module', 'i.category', 'l.name as level', 'a.level_weight']);
+
+        $cadMap = $this->cadastroMap($rows);
+
+        return $rows->map(function ($x) use ($classLabels, $cadMap) {
                 $data = json_decode($x->data ?? '{}', true) ?: [];
+                $cad = $cadMap[$x->respondent_id] ?? null;
+                $classification = $cad['classification'] ?? $x->classification;
 
                 return [
                     'respondent_id' => $x->respondent_id,
                     'name' => $x->name,
-                    'classification' => $x->classification,
-                    'classification_label' => $x->classification ? ($classLabels[$x->classification] ?? $x->classification) : null,
-                    'blacklist' => $x->classification === 'blacklist',
-                    'valor' => $data['valor'] ?? null,
+                    'classification' => $classification,
+                    'classification_label' => $cad['label'] ?? ($x->classification ? ($classLabels[$x->classification] ?? $x->classification) : null),
+                    'blacklist' => $classification === 'blacklist',
+                    'from_cadastro' => $cad !== null,
+                    'valor' => $cad['valor'] ?? ($data['valor'] ?? null),
                     'module' => $x->module,
                     'category' => $x->category,
                     'level' => $x->level,

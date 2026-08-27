@@ -46,6 +46,36 @@ class SkillRespondent extends Model
         return $this->belongsTo(Partner::class);
     }
 
+    /**
+     * Classificação + valor CONFORME O CADASTRO DE USUÁRIO (pedido do Ricardo 27/08):
+     * quando o respondente já é um usuário, a classificação e o valor vêm do cadastro,
+     * não do manual/auto-declarado.
+     *   parceiro_admin → Parceiro ; work_bond=freelance → Freelance ; senão → Interno.
+     *   valor = valor-hora efetivo do usuário (parceiro fixed herda do parceiro).
+     * Espera o $user já com `partner` carregado (p/ o effective_hourly_rate). null = sem usuário.
+     *
+     * @return array{classification:string,label:?string,valor:?string}|null
+     */
+    public static function classificationFromUser(?User $user): ?array
+    {
+        if (! $user) return null;
+
+        if ($user->type === 'parceiro_admin')     $c = 'parceiro';
+        elseif ($user->work_bond === 'freelance') $c = 'freelance';
+        else                                       $c = 'erpserv'; // Interno
+
+        $rate = $user->effective_hourly_rate; // string decimal | null
+        $valor = ($rate !== null && $rate !== '')
+            ? 'R$ ' . number_format((float) $rate, 2, ',', '.')
+            : null;
+
+        return [
+            'classification' => $c,
+            'label' => self::CLASSIFICATIONS[$c] ?? null,
+            'valor' => $valor,
+        ];
+    }
+
     public function submissions(): HasMany
     {
         return $this->hasMany(SkillSubmission::class, 'respondent_id');
