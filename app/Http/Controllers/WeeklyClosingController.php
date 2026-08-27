@@ -140,8 +140,23 @@ class WeeklyClosingController extends Controller
             'period_kind' => 'required|in:week,month',
             'period_key'  => 'required|string|max:20',
             'project_id'  => 'nullable|integer|exists:projects,id',
+            'customer_id' => 'nullable|integer|exists:customers,id',
             'user_id'     => 'nullable|integer|exists:users,id',
         ]);
+    }
+
+    /**
+     * Alvos do escopo: projeto específico → [id]; CLIENTE (sem projeto) → todos os projetos
+     * ABERTOS daquele cliente (mesmo scope `open()` do dropdown); nenhum → [null] = global.
+     */
+    private function scopeTargets(array $v): array
+    {
+        if (!empty($v['project_id']))  return [(int) $v['project_id']];
+        if (!empty($v['customer_id'])) {
+            return \App\Models\Project::query()->where('customer_id', (int) $v['customer_id'])
+                ->open()->pluck('id')->map(fn ($i) => (int) $i)->all();
+        }
+        return [null]; // global
     }
 
     public function reopen(Request $request): JsonResponse
@@ -149,10 +164,14 @@ class WeeklyClosingController extends Controller
         $this->gate($request);
         $v   = $this->validateScope($request);
         $svc = app(ClosingService::class);
-        if ($v['period_kind'] === 'week') {
-            $svc->reopenWeek($svc->weekStart($v['period_key']), $v['project_id'] ?? null, $v['user_id'] ?? null, $request->user());
-        } else {
-            $svc->reopenMonth($v['period_key'], $v['project_id'] ?? null, $v['user_id'] ?? null, $request->user());
+        $targets = $this->scopeTargets($v);
+        if (empty($targets)) return response()->json(['message' => 'Nenhum projeto aberto para o cliente selecionado.'], 422);
+        foreach ($targets as $pid) {
+            if ($v['period_kind'] === 'week') {
+                $svc->reopenWeek($svc->weekStart($v['period_key']), $pid, $v['user_id'] ?? null, $request->user());
+            } else {
+                $svc->reopenMonth($v['period_key'], $pid, $v['user_id'] ?? null, $request->user());
+            }
         }
         return response()->json(['message' => 'Período reaberto até as 23:59 de hoje.'], 201);
     }
@@ -162,10 +181,14 @@ class WeeklyClosingController extends Controller
         $this->gate($request);
         $v   = $this->validateScope($request);
         $svc = app(ClosingService::class);
-        if ($v['period_kind'] === 'week') {
-            $svc->closeWeek($svc->weekStart($v['period_key']), $v['project_id'] ?? null, $v['user_id'] ?? null, $request->user());
-        } else {
-            $svc->closeMonth($v['period_key'], $v['project_id'] ?? null, $v['user_id'] ?? null, $request->user());
+        $targets = $this->scopeTargets($v);
+        if (empty($targets)) return response()->json(['message' => 'Nenhum projeto aberto para o cliente selecionado.'], 422);
+        foreach ($targets as $pid) {
+            if ($v['period_kind'] === 'week') {
+                $svc->closeWeek($svc->weekStart($v['period_key']), $pid, $v['user_id'] ?? null, $request->user());
+            } else {
+                $svc->closeMonth($v['period_key'], $pid, $v['user_id'] ?? null, $request->user());
+            }
         }
         return response()->json(['message' => 'Período encerrado.']);
     }
