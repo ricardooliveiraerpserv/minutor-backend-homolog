@@ -25,4 +25,22 @@ return [
     'presence_online'    => (int) env('CONNECTOR_PRESENCE_ONLINE', 75),   // Δ ≤ 75s → online
     'presence_offline'   => (int) env('CONNECTOR_PRESENCE_OFFLINE', 300), // Δ > 300s → offline; entre = stale
     'clock_offset_warn'  => (int) env('CONNECTOR_CLOCK_OFFSET_WARN', 120), // |offset| acima → degraded/diagnóstico
+
+    // Connector-3 — comandos assíncronos NÃO destrutivos (agente = worker; long-poll outbound-only).
+    'commands' => [
+        // ALLOWLIST de tipos aceitos NESTA FASE. NADA de start/stop/restart/compile/patch/promote/rollback.
+        'types' => ['collect_inventory_now'],
+        // LEASE do claim: janela p/ o agente executar+reportar. Curto p/ collect (rápido/idempotente).
+        'claim_lease' => (int) env('CONNECTOR_CMD_LEASE', 15),
+        // TTL DURO: queued nunca reivindicado expira (não executa horas depois).
+        'ttl' => (int) env('CONNECTOR_CMD_TTL', 120),
+        // attempts incrementa NO CLAIM; max_attempts=2 = um único retry controlado.
+        'max_attempts' => (int) env('CONNECTOR_CMD_MAX_ATTEMPTS', 2),
+        // Long-poll: hold do GET /connector/commands/next. CONFIGURÁVEL ATÉ 0 (short-poll) sem mudar contrato.
+        'longpoll_hold' => (int) env('CONNECTOR_CMD_LONGPOLL_HOLD', 25),
+        // Debounce/coalescing de solicitações sem idempotency_key explícita (evita tempestade de coletas).
+        'debounce' => (int) env('CONNECTOR_CMD_DEBOUNCE', 30),
+        // Retenção operacional (a auditoria durável fica em connector_events/timeline).
+        'retention_days' => (int) env('CONNECTOR_CMD_RETENTION_DAYS', 60),
+    ],
 ];

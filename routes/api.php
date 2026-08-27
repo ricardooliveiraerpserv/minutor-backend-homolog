@@ -118,6 +118,14 @@ Route::prefix('v1')->group(function () {
     // Connector-2 — inventário Protheus OBSERVADO (assinado; read-only; separado do heartbeat).
     Route::post('/connector/inventory', [\App\Http\Controllers\ConnectorAgentController::class, 'inventory'])
         ->middleware(['throttle:60,1', 'connector.agent'])->name('connector.inventory');
+    // Connector-3 — comandos assíncronos NÃO destrutivos. Canal OUTBOUND-ONLY do agente: long-poll
+    // (claim atômico), ack, result. Escopo = registro do agente (nunca do payload). Sem execução síncrona.
+    Route::get('/connector/commands/next', [\App\Http\Controllers\ConnectorCommandController::class, 'next'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.next');
+    Route::post('/connector/commands/{id}/ack', [\App\Http\Controllers\ConnectorCommandController::class, 'ack'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.ack');
+    Route::post('/connector/commands/{id}/result', [\App\Http\Controllers\ConnectorCommandController::class, 'result'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.result');
 
     // 🔗 PORTAL DE PROPOSTAS — acesso público por token (sem login). Throttle alto: o portal faz muito
     // tracking (página/seção/heartbeat) + polling; o token de 48 chars já é a barreira anti-brute-force.
@@ -679,6 +687,15 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presence'])->whereNumber('environmentId');
             // Connector-2 — inventário OBSERVADO (Protheus) + divergência cadastral × observado (read-only).
             Route::get('/prosight/environments/{environmentId}/observed', [\App\Http\Controllers\ConnectorAgentController::class, 'observed'])->whereNumber('environmentId');
+            // Connector-3 — LISTAR/VER comandos (read-only; perm operations.view). Anti-IDOR 404.
+            Route::get('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/commands/{commandId}', [\App\Http\Controllers\ConnectorCommandController::class, 'show'])->whereNumber('commandId');
+        });
+        // Conector-3 — EXECUÇÃO de comandos assíncronos não destrutivos. Permissão ESTRITA
+        // prosight.operations.execute (admin via '*' + administrativo; NÃO coordenador). Só allowlist.
+        Route::middleware('permission:prosight.operations.execute')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/commands/{commandId}/cancel', [\App\Http\Controllers\ConnectorCommandController::class, 'cancel'])->whereNumber('commandId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1831,6 +1848,15 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presence'])->whereNumber('environmentId');
             // Connector-2 — inventário OBSERVADO (Protheus) + divergência cadastral × observado (read-only).
             Route::get('/prosight/environments/{environmentId}/observed', [\App\Http\Controllers\ConnectorAgentController::class, 'observed'])->whereNumber('environmentId');
+            // Connector-3 — LISTAR/VER comandos (read-only; perm operations.view). Anti-IDOR 404.
+            Route::get('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/commands/{commandId}', [\App\Http\Controllers\ConnectorCommandController::class, 'show'])->whereNumber('commandId');
+        });
+        // Conector-3 — EXECUÇÃO de comandos assíncronos não destrutivos. Permissão ESTRITA
+        // prosight.operations.execute (admin via '*' + administrativo; NÃO coordenador). Só allowlist.
+        Route::middleware('permission:prosight.operations.execute')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/commands/{commandId}/cancel', [\App\Http\Controllers\ConnectorCommandController::class, 'cancel'])->whereNumber('commandId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

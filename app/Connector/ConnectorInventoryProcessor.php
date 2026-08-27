@@ -9,6 +9,9 @@ use App\Models\ConnectorRpoSnapshot;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
+/* Connector-3 injeta APENAS a correlação causal (comando→inventário); o pipeline de inventário
+ * (diff/eventos/RPO) permanece EXATAMENTE o C-2 homologado — sem segunda lógica de inventário. */
+
 /**
  * Conector-2 — processa um INVENTÁRIO observado (read-only). Regras:
  *  - AUTORIDADE de frescor = received_at (backend). observed_at (agente) só ORDENA/diagnostica.
@@ -20,6 +23,10 @@ use Illuminate\Support\Facades\DB;
  */
 class ConnectorInventoryProcessor
 {
+    public function __construct(private ConnectorCommandService $commands)
+    {
+    }
+
     /** @return array{applied:bool, events:int, snapshots:int} */
     public function process(ConnectorAgent $agent, array $inv, Carbon $receivedAt): array
     {
@@ -119,6 +126,14 @@ class ConnectorInventoryProcessor
                     'inventory_observed_at' => $observedAt,
                 ]
             );
+
+            // Connector-3 — CORRELAÇÃO FORTE (aditivo): se este inventário foi disparado por um comando
+            // (trigger.type=command), vincula ao comando SÓ se for do mesmo ambiente/agente e em voo.
+            // Nunca por ordem temporal; command_id de outro ambiente/agente não correlaciona.
+            $trigger = $inv['trigger'] ?? null;
+            if (is_array($trigger) && ($trigger['type'] ?? null) === 'command' && ! empty($trigger['command_id'])) {
+                $this->commands->markInventoryApplied($agent, (int) $trigger['command_id'], $receivedAt);
+            }
 
             return ['applied' => true, 'events' => $events, 'snapshots' => $snapshots];
         });

@@ -143,6 +143,9 @@ class PermissionService
         'prosight.operations.manage',
         // Conector-1 — observabilidade: ver PRESENÇA (estado observado) do ambiente. Read-only, escopada.
         'prosight.operations.view',
+        // Conector-3 — EXECUÇÃO de comandos assíncronos (não destrutivos: collect_inventory_now). Estrita
+        // (admin via '*' + administrativo; NÃO coordenador/consultor). Categoria de risco reforçada.
+        'prosight.operations.execute',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -241,6 +244,8 @@ class PermissionService
             'prosight.operations.view',
             // Conector — gestão da identidade do agente (enrollment/revogação). Infra interna.
             'prosight.operations.manage',
+            // Conector-3 — executar comandos assíncronos não destrutivos (collect_inventory_now).
+            'prosight.operations.execute',
         ];
     }
 

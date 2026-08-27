@@ -293,6 +293,11 @@ class ConnectorAgentController extends Controller
             'rpo.*.size'             => 'nullable|integer|min:0',
             'rpo.*.mtime'            => 'nullable|integer',
             'collect_error'          => 'nullable|string|max:200',
+            // Connector-3 — CAUSALIDADE (aditivo, opcional, sanitizado): por que este inventário subiu.
+            // command → dispara correlação FORTE com o comando (nunca por ordem temporal). SEM claim_token.
+            'trigger'                => 'nullable|array',
+            'trigger.type'           => 'nullable|in:scheduled,on_change,command',
+            'trigger.command_id'     => 'nullable|integer',
         ]);
         // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
         if (isset($data['collect_error'])) {

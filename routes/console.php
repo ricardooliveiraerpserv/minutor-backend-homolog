@@ -356,3 +356,16 @@ Schedule::command('source-doc:inventory --incremental')
   ->hourly()
   ->name('source-doc-inventory-incremental')
   ->description('Cataloga fontes novos dos repos ativos (determinístico, sem IA)');
+
+// Conector-3 — reaper de comandos assíncronos (leases perdidos → re-enfileira/expira; TTL vencido).
+// Foreground (padrão homolog: background do scheduler não completa). Rápido/idempotente. O caminho
+// quente já faz reaper LAZY no long-poll/list, então isto é só backstop.
+Schedule::command('connector:reap-commands')
+  ->everyMinute()
+  ->name('connector-reap-commands')
+  ->description('Reaper de comandos do Conector (leases perdidos / TTL vencido)');
+
+Schedule::command('connector:prune-commands')
+  ->dailyAt('03:20')
+  ->name('connector-prune-commands')
+  ->description('Poda comandos terminais do Conector além da retenção');
