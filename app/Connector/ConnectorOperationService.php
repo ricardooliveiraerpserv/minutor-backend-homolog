@@ -388,7 +388,10 @@ class ConnectorOperationService
     public function recordReconcileObservation(ConnectorAgent $agent, int $opId, array $appserversByRef, \Illuminate\Support\Carbon $receivedAt): bool
     {
         $row = ConnectorOperation::whereKey($opId)->lockForUpdate()->first();
-        if (! $row || (int) $row->environment_id !== (int) $agent->environment_id || $row->claimed_by_agent_id !== $agent->agent_id) {
+        // Escopo por AMBIENTE (não por agent_id): após restart do Conector o novo agente tem outra
+        // identidade mas é o mesmo conector do ambiente (1 ativo/ambiente) — a coleta de reconciliação
+        // que ele sobe após recuperar por /current deve valer. O binding é operation_id + ambiente.
+        if (! $row || (int) $row->environment_id !== (int) $agent->environment_id) {
             return false;
         }
         if (! in_array($row->status, ['claimed', 'execution_committed', 'executing', 'verifying', 'indeterminate', 'reconciling'], true)) {

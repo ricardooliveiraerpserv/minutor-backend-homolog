@@ -318,6 +318,10 @@ class ConnectorOperationRestartTest extends TestCase
         $this->assertSame($eid, $cur['execution_id']);
         if (empty($journal[$cur['execution_id']]['committed'])) { $exec($cur['execution_id']); }
         $this->assertSame(1, $journal[$eid]['effect']);
+        // A coleta de reconciliação do NOVO agente (pós-restart do Conector) correlaciona por AMBIENTE.
+        $this->observeCorr($a2, $sk2, $id, true, $this->instB, true); // restart ocorreu 1x → up(B)
+        $this->forcePast($id, 'operational_deadline_at'); $this->show($id);
+        $this->assertSame('reconciled_success', $this->reconcile($id)['status']);
     }
 
     public function test_expired_only_when_never_claimed(): void
