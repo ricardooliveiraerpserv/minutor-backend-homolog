@@ -221,4 +221,62 @@ class ProsightEnvironmentTest extends TestCase
         $this->assertSame('Em manutenção', $labels['Homolog']['status']['label']);
         $this->assertSame('Status técnico indisponível', $labels['Dev']['status']['label']);
     }
+
+    // ── C4 — Configuração de Ambiente ─────────────────────────────────────────
+
+    private function hitConfig(User $u, int $envId, ?int $cid): \Illuminate\Testing\TestResponse
+    {
+        $qs = $cid !== null ? "?customer_id={$cid}" : '';
+        return $this->actingAs($u, 'sanctum')->getJson("/api/v1/prosight/environments/{$envId}/configuration{$qs}");
+    }
+
+    public function test_config_requires_company(): void
+    {
+        $env = $this->seedEnvironment($this->custA, 'Produção', 'prod', 'online');
+        $admin = User::factory()->create(['type' => 'admin']);
+        $this->hitConfig($admin, $env, null)->assertStatus(422);
+    }
+
+    public function test_config_anti_idor_returns_404_not_403(): void
+    {
+        $envA = $this->seedEnvironment($this->custA, 'Produção', 'prod', 'online');
+        $envB = $this->seedEnvironment($this->custB, 'Prod B', 'prod', 'online', false);
+        $coordA = $this->internal(['prosight.environments.view'], $this->custA);
+        // ambiente de B com customer_id=A (mismatch) → 404
+        $this->hitConfig($coordA, $envB, $this->custA->id)->assertStatus(404);
+        // ambiente de B com customer_id=B, mas coordA sem escopo em B → 404 (não revela existência)
+        $this->hitConfig($coordA, $envB, $this->custB->id)->assertStatus(404);
+        // deep-link cross-customer: env de A com contexto B → 404
+        $this->hitConfig($coordA, $envA, $this->custB->id)->assertStatus(404);
+        // legítimo: env de A com A → 200
+        $this->hitConfig($coordA, $envA, $this->custA->id)->assertOk();
+    }
+
+    public function test_config_external_denied(): void
+    {
+        $env = $this->seedEnvironment($this->custA, 'Produção', 'prod', 'online', false);
+        $ext = User::factory()->create(['type' => 'cliente', 'customer_id' => $this->custA->id, 'extra_permissions' => []]);
+        $this->hitConfig($ext, $env, $this->custA->id)->assertStatus(403);
+    }
+
+    public function test_config_payload_allowlist_and_no_secrets(): void
+    {
+        $env = $this->seedEnvironment($this->custA, 'Produção', 'prod', 'online');
+        $admin = User::factory()->create(['type' => 'admin']);
+        $body = $this->hitConfig($admin, $env, $this->custA->id)->assertOk()->json();
+
+        $this->assertNoSecrets($body);
+        $d = $body['data'];
+        $this->assertSame('Produção', $d['environment']['name']);
+        $this->assertSame('ativo', $d['environment']['status']['code']);
+        $this->assertSame('Ativo (cadastral)', $d['environment']['status']['label']);
+        $this->assertSame(['name' => 'APP01', 'version' => '12.1.2410', 'build' => '9999', 'patch' => '12'], $d['appservers'][0]);
+        $this->assertSame([['engine' => 'sqlserver', 'always_on_cadastrado' => false]], $d['databases']);
+        $this->assertSame([['label' => 'Portal', 'kind' => 'portal']], $d['links']); // rdp excluído; sem URL
+        // backend NÃO retorna pending_capabilities (FE rotula), nem live/health, nem backup.
+        $this->assertArrayNotHasKey('pending_capabilities', $d);
+        $this->assertArrayNotHasKey('live', $d['environment']);
+        $this->assertArrayNotHasKey('backup_cadastrado', $d['databases'][0]);
+        $this->assertArrayNotHasKey('backup_info', $d['databases'][0]);
+    }
 }

@@ -76,4 +76,38 @@ class ProsightEnvironmentController extends Controller
 
         return response()->json(['data' => ['customer_id' => $customerId, 'environments' => $data]]);
     }
+
+    /**
+     * C4 — GET /prosight/environments/{environment_id}/configuration?customer_id=<id>
+     * Detalhe cadastral de UM ambiente. Empresa E ambiente obrigatórios. Anti-IDOR por environment_id:
+     * ambiente inexistente, de outro cliente OU fora do escopo → 404 (não revela existência).
+     */
+    public function configuration(Request $request, int $environmentId): JsonResponse
+    {
+        $user = $request->user();
+
+        if (! $request->filled('customer_id')) {
+            return response()->json(['message' => 'Selecione uma empresa e um ambiente.'], 422);
+        }
+        $customerId = (int) $request->query('customer_id');
+
+        $env = EnvEnvironment::query()->whereKey($environmentId)
+            ->first(['id', 'customer_id', 'name', 'type', 'status', 'responsible_user_id', 'updated_at']);
+
+        // 404 sem revelar: não existe, ou não pertence ao cliente selecionado, ou fora do escopo do usuário.
+        if (! $env || (int) $env->customer_id !== $customerId || ! $this->scope->canAccessCustomerId($user, (int) $env->customer_id)) {
+            return response()->json(['message' => 'Ambiente não encontrado.'], 404);
+        }
+
+        // Filhos — SOMENTE colunas allowlist. always_on é config cadastrada (não estado live).
+        $apps = DB::table('env_appservers')->where('environment_id', $env->id)->whereNull('deleted_at')
+            ->orderBy('name')->get(['name', 'version', 'build', 'patch']);
+        $dbs = DB::table('env_databases')->where('environment_id', $env->id)->whereNull('deleted_at')
+            ->get(['engine', 'always_on']);
+        $links = DB::table('env_links')->where('environment_id', $env->id)
+            ->whereIn('kind', SafeEnvironmentSerializer::ALLOWED_LINK_KINDS)->get(['label', 'kind']);
+        $responsibleName = $env->responsible_user_id ? User::whereKey($env->responsible_user_id)->value('name') : null;
+
+        return response()->json(['data' => $this->serializer->serializeConfig($env, $apps, $dbs, $links, $responsibleName)]);
+    }
 }

@@ -86,4 +86,35 @@ class SafeEnvironmentSerializer
             'live'        => ['health' => 'aguardando_conector', 'rpo' => 'aguardando_conector'],
         ];
     }
+
+    /**
+     * C4 — detalhe cadastral de UM ambiente (Configuração). Mesma fronteira allowlist do serialize().
+     * NÃO inclui: pending_capabilities (a UI rotula "Aguardando Conector" estaticamente — o Env NÃO
+     * conhece estado live), backup_info, host/porta/path/URL/secret. always_on é CONFIG CADASTRADA
+     * (não estado AlwaysOn ao vivo) — a UI rotula assim.
+     */
+    public function serializeConfig(object $env, Collection $appservers, Collection $databases, Collection $links, ?string $responsibleName): array
+    {
+        [$statusCode, $statusLabel] = self::STATUS_MAP[$env->status] ?? self::STATUS_MAP['unknown'];
+
+        return [
+            'environment' => [
+                'id'          => (int) $env->id,
+                'customer_id' => (int) $env->customer_id,
+                'name'        => $env->name,
+                'type'        => $env->type,
+                'status'      => ['code' => $statusCode, 'label' => $statusLabel, 'note' => self::STATUS_NOTE],
+                'responsible_name' => $responsibleName,
+                'updated_at'  => $env->updated_at ? (string) $env->updated_at : null,
+            ],
+            'appservers'  => $appservers->map(fn ($a) => [
+                'name' => $a->name, 'version' => $a->version, 'build' => $a->build, 'patch' => $a->patch,
+            ])->values()->all(),
+            // engine + always_on (config CADASTRADA, não estado live). Sem server/instance/database/username/secret.
+            'databases'   => $databases->map(fn ($d) => [
+                'engine' => $d->engine, 'always_on_cadastrado' => (bool) $d->always_on,
+            ])->values()->all(),
+            'links'       => $links->map(fn ($l) => ['label' => $l->label, 'kind' => $l->kind])->values()->all(),
+        ];
+    }
 }

@@ -648,6 +648,8 @@ Route::prefix('v1')->group(function () {
         // no controller. NÃO expõe secrets/credenciais/host/porta/URL/inventory (allowlist).
         Route::middleware('permission.or.admin:prosight.environments.view')->group(function () {
             Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
+            // C4 — configuração cadastral de UM ambiente (read-only; anti-IDOR por environment_id → 404).
+            Route::get('/prosight/environments/{environmentId}/configuration', [\App\Http\Controllers\ProsightEnvironmentController::class, 'configuration'])->whereNumber('environmentId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -1748,6 +1750,8 @@ Route::prefix('v1')->group(function () {
         // no controller. NÃO expõe secrets/credenciais/host/porta/URL/inventory (allowlist).
         Route::middleware('permission.or.admin:prosight.environments.view')->group(function () {
             Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
+            // C4 — configuração cadastral de UM ambiente (read-only; anti-IDOR por environment_id → 404).
+            Route::get('/prosight/environments/{environmentId}/configuration', [\App\Http\Controllers\ProsightEnvironmentController::class, 'configuration'])->whereNumber('environmentId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
