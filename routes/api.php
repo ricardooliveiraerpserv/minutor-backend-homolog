@@ -1046,6 +1046,41 @@ Route::prefix('v1')->group(function () {
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
 
+        // 📋 KANBAN DO CLIENTE (Fase 1) — tudo escopado ao customer_id do usuário logado.
+        Route::prefix('client/kanban')->name('client.kanban.')->group(function () {
+            $c = \App\Http\Controllers\ClientKanbanController::class;
+            Route::get('/assignable-users', [$c, 'assignableUsers'])->name('assignable-users');
+            // Quadros
+            Route::get('/boards', [$c, 'index'])->name('boards.index');
+            Route::post('/boards', [$c, 'storeBoard'])->name('boards.store');
+            Route::get('/boards/{board}', [$c, 'showBoard'])->name('boards.show');
+            Route::put('/boards/{board}', [$c, 'updateBoard'])->name('boards.update');
+            Route::delete('/boards/{board}', [$c, 'destroyBoard'])->name('boards.destroy');
+            Route::post('/boards/{board}/duplicate', [$c, 'duplicateBoard'])->name('boards.duplicate');
+            // Colunas
+            Route::post('/boards/{board}/columns', [$c, 'storeColumn'])->name('columns.store');
+            Route::post('/boards/{board}/columns/reorder', [$c, 'reorderColumns'])->name('columns.reorder');
+            Route::put('/columns/{column}', [$c, 'updateColumn'])->name('columns.update');
+            Route::delete('/columns/{column}', [$c, 'destroyColumn'])->name('columns.destroy');
+            // Etiquetas
+            Route::post('/boards/{board}/labels', [$c, 'storeLabel'])->name('labels.store');
+            Route::put('/labels/{label}', [$c, 'updateLabel'])->name('labels.update');
+            Route::delete('/labels/{label}', [$c, 'destroyLabel'])->name('labels.destroy');
+            // Cards
+            Route::post('/columns/{column}/cards', [$c, 'storeCard'])->name('cards.store');
+            Route::get('/cards/{card}', [$c, 'showCard'])->name('cards.show');
+            Route::put('/cards/{card}', [$c, 'updateCard'])->name('cards.update');
+            Route::delete('/cards/{card}', [$c, 'destroyCard'])->name('cards.destroy');
+            Route::post('/cards/{card}/move', [$c, 'moveCard'])->name('cards.move');
+            // Checklist
+            Route::post('/cards/{card}/checklist', [$c, 'storeChecklistItem'])->name('checklist.store');
+            Route::put('/checklist/{item}', [$c, 'updateChecklistItem'])->name('checklist.update');
+            Route::delete('/checklist/{item}', [$c, 'destroyChecklistItem'])->name('checklist.destroy');
+            // Comentários
+            Route::post('/cards/{card}/comments', [$c, 'storeComment'])->name('comments.store');
+            Route::delete('/comments/{comment}', [$c, 'destroyComment'])->name('comments.destroy');
+        });
+
         // 🤝 Cliente envolvido em atividade pontual (acesso contextual, ADR 0009 appendix)
         Route::get('/client/activities', [ClientActivityController::class, 'index'])->name('client.activities.index');
         Route::get('/client/activities/{delivery}', [ClientActivityController::class, 'show'])->name('client.activities.show');
