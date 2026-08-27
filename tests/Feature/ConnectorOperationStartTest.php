@@ -130,7 +130,8 @@ class ConnectorOperationStartTest extends TestCase
     {
         $env = $this->makeEnv($this->custA); [$ag, $sk] = $this->enrollAgent($env);
         $this->pushInventory($ag, $sk, false);
-        foreach (['stop', 'restart', 'compile', 'patch', 'promote', 'rollback'] as $t) {
+        // stop passou a existir no C4.2 (allowlist); os demais destrutivos seguem bloqueados na porta.
+        foreach (['restart', 'compile', 'patch', 'promote', 'rollback'] as $t) {
             $this->createOp($this->admin(), $env, ['op_type' => $t])->assertStatus(422)->assertJsonPath('error', 'op_type_not_allowed');
         }
         $this->assertSame(0, ConnectorOperation::where('environment_id', $env)->count());

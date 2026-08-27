@@ -712,11 +712,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
             Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
         });
-        // Criar/cancelar operação destrutiva — perm ESTRITA prosight.operations.start (NÃO herda execute).
-        Route::middleware('permission:prosight.operations.start')->group(function () {
-            Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
-            Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
-        });
+        // Criar/cancelar operação destrutiva — permissão GRANULAR POR TIPO (operations.start | operations.stop)
+        // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
+        Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
+        Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
         // Aprovar/rejeitar/reconciliar — perm ESTRITA prosight.operations.approve (maker-checker; capability distinta).
         Route::middleware('permission:prosight.operations.approve')->group(function () {
             Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
@@ -1899,11 +1898,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
             Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
         });
-        // Criar/cancelar operação destrutiva — perm ESTRITA prosight.operations.start (NÃO herda execute).
-        Route::middleware('permission:prosight.operations.start')->group(function () {
-            Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
-            Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
-        });
+        // Criar/cancelar operação destrutiva — permissão GRANULAR POR TIPO (operations.start | operations.stop)
+        // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
+        Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
+        Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
         // Aprovar/rejeitar/reconciliar — perm ESTRITA prosight.operations.approve (maker-checker; capability distinta).
         Route::middleware('permission:prosight.operations.approve')->group(function () {
             Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');

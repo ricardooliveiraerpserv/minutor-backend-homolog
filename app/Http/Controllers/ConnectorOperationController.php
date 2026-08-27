@@ -79,7 +79,11 @@ class ConnectorOperationController extends Controller
 
     // ── ADMIN (sessão + escopo) ───────────────────────────────────────────────
 
-    /** POST /prosight/environments/{environmentId}/operations {op_type, appserver_ref, reason} — perm start. */
+    /**
+     * POST /prosight/environments/{environmentId}/operations {op_type, appserver_ref, reason, emergency_override?}
+     * Permissão POR TIPO (operations.start | operations.stop), enforce no controller. emergency_override
+     * (janela fechada / último AppServer) exige operations.stop.override. Anti-IDOR 404.
+     */
     public function create(Request $request, int $environmentId): JsonResponse
     {
         $env = EnvEnvironment::query()->whereKey($environmentId)->first(['id', 'customer_id']);
@@ -87,13 +91,27 @@ class ConnectorOperationController extends Controller
             return response()->json(['message' => 'Ambiente não encontrado.'], 404);
         }
         $data = $request->validate([
-            'op_type'        => 'required|string|max:12',
-            'appserver_ref'  => 'required|uuid',
-            'reason'         => 'required|string|max:300',
+            'op_type'            => 'required|string|max:12',
+            'appserver_ref'      => 'required|uuid',
+            'reason'             => 'required|string|max:300',
+            'emergency_override' => 'nullable|boolean',
         ]);
-        $r = $this->ops->create((int) $env->id, (int) $env->customer_id, $data['appserver_ref'], $data['op_type'], $request->user()->id, $data['reason']);
+        $permByType = ['start' => 'prosight.operations.start', 'stop' => 'prosight.operations.stop'];
+        $need = $permByType[$data['op_type']] ?? null;
+        if ($need === null) {
+            return response()->json(['error' => 'op_type_not_allowed'], 422);
+        }
+        if (! $this->hasPerm($request->user(), $need)) {
+            return response()->json(['error' => 'forbidden'], 403); // perm granular por tipo (não herda execute)
+        }
+        $hasOverride = $this->hasPerm($request->user(), 'prosight.operations.stop.override');
+        $r = $this->ops->create((int) $env->id, (int) $env->customer_id, $data['appserver_ref'], $data['op_type'], $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride);
         if (! $r['ok']) {
-            $code = $r['error'] === 'op_type_not_allowed' ? 422 : ($r['error'] === 'operation_in_flight' ? 409 : 422);
+            $code = match ($r['error']) {
+                'operation_in_flight' => 409,
+                'override_permission_required' => 403,
+                default => 422,
+            };
 
             return response()->json(['error' => $r['error']], $code);
         }
@@ -119,9 +137,15 @@ class ConnectorOperationController extends Controller
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
         }
-        $r = $action === 'approve' ? $this->ops->approve($op, $request->user()->id) : $this->ops->reject($op, $request->user()->id);
+        $r = $action === 'approve'
+            ? $this->ops->approve($op, $request->user()->id, $this->hasPerm($request->user(), 'prosight.operations.stop.override'))
+            : $this->ops->reject($op, $request->user()->id);
         if (! $r['ok']) {
-            $code = $r['error'] === 'maker_cannot_approve' ? 422 : 409;
+            $code = match ($r['error']) {
+                'maker_cannot_approve' => 422,
+                'override_permission_required' => 403,
+                default => 409,
+            };
 
             return response()->json(['error' => $r['error']], $code);
         }
@@ -129,12 +153,16 @@ class ConnectorOperationController extends Controller
         return response()->json(['data' => $this->adminView($r['op'])]);
     }
 
-    /** POST /prosight/operations/{id}/cancel — perm start (maker cancela antes do claim). */
+    /** POST /prosight/operations/{id}/cancel — perm POR TIPO (start|stop); maker cancela antes do claim. */
     public function cancel(Request $request, int $id): JsonResponse
     {
         $op = $this->scopedOperation($request, $id);
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
+        }
+        $need = ['start' => 'prosight.operations.start', 'stop' => 'prosight.operations.stop'][$op->op_type] ?? null;
+        if ($need && ! $this->hasPerm($request->user(), $need)) {
+            return response()->json(['error' => 'forbidden'], 403);
         }
         $r = $this->ops->cancel($op);
         if (! $r['ok']) {
@@ -182,6 +210,14 @@ class ConnectorOperationController extends Controller
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
+    /** Permissão do usuário (admin via '*'). Enforce granular por tipo/override no controller. */
+    private function hasPerm($user, string $key): bool
+    {
+        $perms = \App\Services\PermissionService::for($user);
+
+        return in_array('*', $perms, true) || in_array($key, $perms, true);
+    }
+
     private function agentOperation(ConnectorAgent $agent, int $id): ?ConnectorOperation
     {
         $op = ConnectorOperation::whereKey($id)->first();
@@ -218,6 +254,9 @@ class ConnectorOperationController extends Controller
             'requested_by' => $o->requested_by, 'approved_by' => $o->approved_by, 'reason' => $o->reason,
             'agent_result' => $o->agent_result, 'agent_result_phase' => $o->agent_result_phase,
             'reconciliation_state' => $o->reconciliation_state, 'outcome_authority' => $o->outcome_authority,
+            'precondition_kind' => $o->precondition_kind,
+            'emergency_override' => (bool) ($o->precondition_snapshot['emergency_override'] ?? false),
+            'override_reasons' => $o->precondition_snapshot['override_reasons'] ?? [],
             'precondition_snapshot' => $o->precondition_snapshot, 'postimage_snapshot' => $o->postimage_snapshot,
             'claimed_at' => $o->claimed_at?->toIso8601String(), 'execution_committed_at' => $o->execution_committed_at?->toIso8601String(),
             'operational_deadline_at' => $o->operational_deadline_at?->toIso8601String(),

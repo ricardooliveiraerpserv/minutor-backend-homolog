@@ -149,6 +149,9 @@ class PermissionService
         // Conector-4.1 — OPERAÇÃO DESTRUTIVA granular. NÃO herda operations.execute. Estritas.
         'prosight.operations.start',   // criar/cancelar operação de start
         'prosight.operations.approve', // maker-checker: aprovar/rejeitar/reconciliar
+        // Conector-4.2 — stop (indisponibilidade deliberada). Permissão própria + override dedicado.
+        'prosight.operations.stop',          // criar/cancelar operação de stop
+        'prosight.operations.stop.override', // emergency_override (janela fechada / último AppServer) — maker E checker
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -252,6 +255,9 @@ class PermissionService
             // Conector-4.1 — operação destrutiva granular (start) + aprovação (maker-checker).
             'prosight.operations.start',
             'prosight.operations.approve',
+            // Conector-4.2 — stop + override de emergência.
+            'prosight.operations.stop',
+            'prosight.operations.stop.override',
         ];
     }
 

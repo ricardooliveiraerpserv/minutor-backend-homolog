@@ -44,10 +44,10 @@ return [
         'retention_days' => (int) env('CONNECTOR_CMD_RETENTION_DAYS', 60),
     ],
 
-    // Connector-4.1 — OPERAÇÕES destrutivas/controladas (classe de segurança separada). SÓ start nesta fase.
+    // Connector-4.x — OPERAÇÕES destrutivas/controladas (classe de segurança separada).
     'operations' => [
-        // ALLOWLIST operacional inicial: SÓ 'start' (stop/restart NÃO existem, nem como opção oculta).
-        'types' => ['start'],
+        // ALLOWLIST operacional: start (C4.1) + stop (C4.2). restart/compile/patch/RPO NÃO existem.
+        'types' => ['start', 'stop'],
         // Maker-checker OBRIGATÓRIO — inclusive homolog (só o gate controlado poderia relaxar).
         'require_approval' => filter_var(env('CONNECTOR_OP_REQUIRE_APPROVAL', true), FILTER_VALIDATE_BOOLEAN),
         // Transport lease: dispatchable→claim. Vence SEM claim → expired (único timeout auto-terminal seguro).
@@ -57,6 +57,24 @@ return [
         'start' => [
             'operational_deadline' => (int) env('CONNECTOR_OP_START_DEADLINE', 120), // timeout OPERACIONAL
             'reconcile_window'     => (int) env('CONNECTOR_OP_RECONCILE_WINDOW', 180),
+        ],
+        // C4.2 — stop: indisponibilidade DELIBERADA. Gates próprios (janela obrigatória, presença online
+        // estrita, proteção do ÚLTIMO AppServer up), revalidados no dispatch.
+        'stop' => [
+            'operational_deadline' => (int) env('CONNECTOR_OP_STOP_DEADLINE', 120),
+            'reconcile_window'     => (int) env('CONNECTOR_OP_STOP_RECONCILE_WINDOW', 180),
+            // Proteção do último AppServer: exige ≥ min_other_up AppServers UP (além do alvo) na MESMA
+            // observação fresca. min_other_up=1 (primeiro release). Bloqueio salvo emergency_override.
+            'min_other_up' => (int) env('CONNECTOR_OP_STOP_MIN_OTHER_UP', 1),
+            // Janela de manutenção OBRIGATÓRIA (política em CONFIG, sem tabela). Calculada server-side e
+            // GRAVADA na operação (não depende de config mutável depois p/ explicar autorização antiga).
+            'window' => [
+                'enabled'  => filter_var(env('CONNECTOR_OP_STOP_WINDOW_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+                'timezone' => env('CONNECTOR_OP_STOP_WINDOW_TZ', 'America/Sao_Paulo'),
+                'days'     => array_map('intval', array_filter(explode(',', (string) env('CONNECTOR_OP_STOP_WINDOW_DAYS', '0,1,2,3,4,5,6')), 'strlen')), // 0=Dom..6=Sáb
+                'start'    => env('CONNECTOR_OP_STOP_WINDOW_START', '00:00'),
+                'end'      => env('CONNECTOR_OP_STOP_WINDOW_END', '23:59'),
+            ],
         ],
     ],
 ];

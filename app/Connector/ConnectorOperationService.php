@@ -7,21 +7,95 @@ use App\Models\ConnectorEnvironmentState;
 use App\Models\ConnectorEvent;
 use App\Models\ConnectorOperation;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * Connector-4.1 — orquestração de OPERAÇÕES (só 'start' nesta fase). Classe de segurança separada:
+ * Connector-4.x — orquestração de OPERAÇÕES destrutivas (start C4.1, stop C4.2). Classe separada:
  *  - SEM retry destrutivo: nada de requeue/reclaim; 'expired' só p/ dispatchable NUNCA reivindicado.
  *  - a partir de 'claimed' → timeout/perda/dúvida (mesmo sem ACK de execution_committed) = 'indeterminate'.
  *  - execution_id imutável (nasce com a operação); autoridade final do desfecho = C-2 observado.
+ *  - stop: indisponibilidade DELIBERADA → gates próprios (janela obrigatória, presença ONLINE estrita,
+ *    proteção do ÚLTIMO AppServer up) REVALIDADOS no dispatch; noop só após a janela de reconciliação.
  * Toda transição alimenta connector_events (família operacoes da timeline C1). Sem secret/path/PID.
  */
 class ConnectorOperationService
 {
+    public function __construct(private PresenceDeriver $deriver)
+    {
+    }
+
     private function cfg(string $k, $d = null)
     {
         return config("connector.operations.$k", $d);
+    }
+
+    /** Status de presença do agente do ambiente (Conector-1). 'online' estrito é exigido p/ stop. */
+    private function presenceStatus(int $envId): string
+    {
+        $hasAgent = ConnectorAgent::where('environment_id', $envId)->whereNull('revoked_at')->exists();
+        $row = ConnectorEnvironmentState::where('environment_id', $envId)->first();
+        if (! $hasAgent || ! $row) {
+            return 'never_seen';
+        }
+
+        return $this->deriver->derive($row->last_seen_at, $row->agent_reported_status, $row->clock_offset_s, $row->last_error)['status'];
+    }
+
+    /** Decisão de janela de manutenção (política em CONFIG; calculada server-side; snapshot gravado na op). */
+    private function windowDecision(): array
+    {
+        $w = (array) $this->cfg('stop.window', []);
+        if (! (bool) ($w['enabled'] ?? false)) {
+            return ['in_window' => true, 'policy' => ['enabled' => false]];
+        }
+        $tz = $w['timezone'] ?? 'UTC';
+        $now = Carbon::now($tz);
+        $inDay = in_array((int) $now->dayOfWeek, (array) ($w['days'] ?? []), true);
+        $hm = $now->format('H:i');
+        $inTime = ((string) ($w['start'] ?? '00:00')) <= $hm && $hm <= ((string) ($w['end'] ?? '23:59'));
+
+        return ['in_window' => $inDay && $inTime, 'policy' => ['enabled' => true, 'timezone' => $tz, 'days' => (array) ($w['days'] ?? []), 'start' => $w['start'] ?? null, 'end' => $w['end'] ?? null]];
+    }
+
+    /**
+     * Avalia os gates de segurança do STOP contra uma observação FRESCA (mesma foto): pré-condição up(A),
+     * capability (piid), presença ONLINE, último AppServer, janela. Retorna erro DURO (bloqueio absoluto)
+     * e/ou violações que podem ser liberadas por emergency_override.
+     */
+    private function stopViolations(int $envId, array $obs, string $ref): array
+    {
+        $target = $obs['appservers'][$ref] ?? null;
+        if (! $target) {
+            return ['blocked_error' => 'appserver_not_observed'];
+        }
+        if (($target['up'] ?? false) !== true) {
+            return ['blocked_error' => 'precondition_failed_appserver_down']; // nada a parar
+        }
+        $A = $target['process_instance_id'] ?? null;
+        if (empty($A)) {
+            return ['blocked_error' => 'process_instance_capability_required']; // up sem piid → não reconciliável
+        }
+        if ($this->presenceStatus($envId) !== 'online') {
+            return ['blocked_error' => 'agent_not_online']; // precisa vivo p/ executar E reconciliar
+        }
+        // Último AppServer: conta OUTROS up na MESMA observação fresca (não mistura fotos).
+        $otherUp = 0;
+        foreach ($obs['appservers'] as $r => $a) {
+            if ($r !== $ref && ($a['up'] ?? false) === true) { $otherUp++; }
+        }
+        $win = $this->windowDecision();
+
+        return [
+            'blocked_error'   => null,
+            'A'               => $A,
+            'other_up'        => $otherUp,
+            'violates_last'   => $otherUp < (int) $this->cfg('stop.min_other_up', 1),
+            'violates_window' => ! $win['in_window'],
+            'window_policy'   => $win['policy'],
+            'in_window'       => $win['in_window'],
+        ];
     }
 
     private function emit(int $envId, ?string $ref, string $type, string $outcome, ?string $detail, array $meta): void
@@ -58,10 +132,10 @@ class ConnectorOperationService
      * Gera execution_id imutável e a pré-imagem. Maker-checker: nasce pending_approval (require_approval).
      * @return array{ok:bool, error?:string, op?:ConnectorOperation}
      */
-    public function create(int $envId, ?int $customerId, string $ref, string $opType, int $requester, string $reason): array
+    public function create(int $envId, ?int $customerId, string $ref, string $opType, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false): array
     {
         if (! in_array($opType, (array) $this->cfg('types', []), true)) {
-            return ['ok' => false, 'error' => 'op_type_not_allowed']; // stop/restart/etc → bloqueado na porta
+            return ['ok' => false, 'error' => 'op_type_not_allowed']; // restart/compile/patch/etc → bloqueado na porta
         }
         $obs = $this->observedState($envId);
         if (! $obs) {
@@ -77,31 +151,61 @@ class ConnectorOperationService
         if (! $target) {
             return ['ok' => false, 'error' => 'appserver_not_observed'];
         }
-        // Pré-condição do start: alvo DOWN. Se up → negar ANTES de criar/dispatch.
-        if ($opType === 'start' && ($target['up'] ?? false) === true) {
-            return ['ok' => false, 'error' => 'precondition_failed_appserver_up'];
+
+        $precondKind = $opType === 'start' ? 'down' : 'up';
+        $snapshot = ['observed_at' => $obs['received_at']->toIso8601String()];
+        $overrideUsed = false;
+
+        if ($opType === 'start') {
+            // Pré-condição do start: alvo DOWN.
+            if (($target['up'] ?? false) === true) {
+                return ['ok' => false, 'error' => 'precondition_failed_appserver_up'];
+            }
+            $snapshot += ['up' => false, 'process_instance_id' => $target['process_instance_id'] ?? null];
+        } else { // stop — gates de segurança próprios
+            $v = $this->stopViolations($envId, $obs, $ref);
+            if ($v['blocked_error'] !== null) {
+                return ['ok' => false, 'error' => $v['blocked_error']];
+            }
+            $needsOverride = $v['violates_last'] || $v['violates_window'];
+            if ($needsOverride) {
+                if (! $emergencyOverride) {
+                    return ['ok' => false, 'error' => $v['violates_last'] ? 'last_appserver_stop_blocked' : 'maintenance_window_closed'];
+                }
+                if (! $hasOverridePerm) {
+                    return ['ok' => false, 'error' => 'override_permission_required']; // maker precisa de stop.override
+                }
+            }
+            $overrideUsed = $needsOverride;
+            $snapshot += [
+                'up' => true, 'process_instance_id' => $v['A'], 'other_up_count' => $v['other_up'],
+                'window' => $v['window_policy'], 'in_window' => $v['in_window'], 'emergency_override' => $overrideUsed,
+                'override_reasons' => array_values(array_filter([$v['violates_last'] ? 'last_appserver' : null, $v['violates_window'] ? 'window' : null])),
+            ];
         }
 
         $requireApproval = (bool) $this->cfg('require_approval', true);
         try {
-            // Savepoint: a violação do índice único parcial (1 viva/appserver_ref E /env) reverte SÓ este
-            // INSERT (não aborta a transação externa em teste) e é traduzida em 409 operation_in_flight.
+            // Savepoint: a violação do índice único parcial (1 viva/appserver_ref E /env) reverte SÓ este INSERT.
             $op = DB::transaction(fn () => ConnectorOperation::create([
                 'environment_id' => $envId, 'appserver_ref' => $ref, 'customer_id' => $customerId,
                 'op_type' => $opType, 'status' => $requireApproval ? 'pending_approval' : 'dispatchable',
                 'execution_id' => (string) Str::uuid(),                 // IMUTÁVEL, 1 por operação
                 'requested_by' => $requester, 'reason' => mb_substr($reason, 0, 300),
                 'approval_state' => $requireApproval ? 'pending' : 'not_required',
-                'precondition_kind' => 'down',
-                'precondition_snapshot' => ['up' => (bool) ($target['up'] ?? false), 'process_instance_id' => $target['process_instance_id'] ?? null, 'observed_at' => $obs['received_at']->toIso8601String()],
+                'precondition_kind' => $precondKind,
+                'precondition_snapshot' => $snapshot,
                 'dispatchable_at' => $requireApproval ? null : now(),
                 'transport_lease_expires_at' => $requireApproval ? null : now()->addSeconds((int) $this->cfg('transport_lease', 60)),
             ]));
         } catch (UniqueConstraintViolationException) {
-            // 1 viva por appserver_ref E por environment_id.
-            return ['ok' => false, 'error' => 'operation_in_flight'];
+            return ['ok' => false, 'error' => 'operation_in_flight']; // 1 viva por appserver_ref E por environment_id
         }
         $this->emit($envId, $ref, 'operation_requested', 'info', "Operação {$opType} solicitada", ['op_type' => $opType, 'operation_id' => $op->id, 'execution_id' => substr($op->execution_id, 0, 8)]);
+        if ($overrideUsed) {
+            // Override APARECE na timeline (nunca escondido só em reason).
+            $this->emit($envId, $ref, 'operation_emergency_override', 'info', 'Emergency override de proteção', ['operation_id' => $op->id, 'reasons' => $snapshot['override_reasons']]);
+        }
         if (! $requireApproval) {
             $this->emit($envId, $ref, 'operation_dispatched', 'info', 'Operação liberada p/ o agente', ['operation_id' => $op->id]);
         }
@@ -109,16 +213,24 @@ class ConnectorOperationService
         return ['ok' => true, 'op' => $op];
     }
 
-    /** Aprova (maker-checker: approver ≠ requester). pending_approval → dispatchable. */
-    public function approve(ConnectorOperation $op, int $approver): array
+    /**
+     * Aprova (maker-checker: approver ≠ requester). pending_approval → dispatchable. Se a operação foi
+     * criada com emergency_override (viola último AppServer/janela), o CHECKER também precisa de
+     * operations.stop.override — impede que um operador com override crie a exceção e a faça aprovar por
+     * alguém sem autoridade equivalente.
+     */
+    public function approve(ConnectorOperation $op, int $approver, bool $hasOverridePerm = false): array
     {
-        return DB::transaction(function () use ($op, $approver) {
+        return DB::transaction(function () use ($op, $approver, $hasOverridePerm) {
             $row = ConnectorOperation::whereKey($op->id)->lockForUpdate()->first();
             if (! $row || $row->status !== 'pending_approval') {
                 return ['ok' => false, 'error' => 'not_pending_approval'];
             }
             if ((int) $row->requested_by === $approver) {
                 return ['ok' => false, 'error' => 'maker_cannot_approve']; // requested_by ≠ approved_by
+            }
+            if (($row->precondition_snapshot['emergency_override'] ?? false) === true && ! $hasOverridePerm) {
+                return ['ok' => false, 'error' => 'override_permission_required']; // checker também precisa do override
             }
             $row->update([
                 'status' => 'dispatchable', 'approval_state' => 'approved', 'approved_by' => $approver, 'approved_at' => now(),
@@ -171,28 +283,60 @@ class ConnectorOperationService
     public function claimNext(ConnectorAgent $agent): ?ConnectorOperation
     {
         $envId = (int) $agent->environment_id;
-        $deadline = (int) config('connector.operations.start.operational_deadline', 120);
-        // Timestamps do relógio da APLICAÇÃO (não SQL now()): consistentes com received_at do inventário
-        // e corretos sob transação (SQL now() congela no início da transação).
-        $now = now(); $nowStr = $now->toDateTimeString(); $deadlineStr = $now->copy()->addSeconds($deadline)->toDateTimeString();
-        $row = DB::selectOne(
-            "UPDATE connector_operations SET
-                status='claimed', claimed_by_agent_id=?, claimed_at=?, operational_deadline_at=?, updated_at=?
-             WHERE id = (
-                SELECT id FROM connector_operations
-                 WHERE environment_id=? AND status='dispatchable'
-                   AND (transport_lease_expires_at IS NULL OR transport_lease_expires_at > ?)
-                 ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
-             RETURNING id",
-            [$agent->agent_id, $nowStr, $deadlineStr, $nowStr, $envId, $nowStr]
-        );
-        if (! $row) {
-            return null;
-        }
-        $op = ConnectorOperation::find($row->id);
-        $this->emit($envId, $op->appserver_ref, 'operation_claimed', 'info', 'Operação reivindicada pelo agente', ['operation_id' => $op->id, 'execution_id' => substr($op->execution_id, 0, 8)]);
 
-        return $op;
+        return DB::transaction(function () use ($agent, $envId) {
+            $now = now();
+            // Trava a próxima op dispatchable do ambiente (lease de transporte ainda válido). lockForUpdate
+            // serializa polls concorrentes; com 1 agente ativo/ambiente, o 2º vê status≠dispatchable.
+            $row = ConnectorOperation::where('environment_id', $envId)->where('status', 'dispatchable')
+                ->where(fn ($q) => $q->whereNull('transport_lease_expires_at')->orWhere('transport_lease_expires_at', '>', $now))
+                ->orderBy('created_at')->lockForUpdate()->first();
+            if (! $row) {
+                return null;
+            }
+            // REVALIDAÇÃO no dispatch (topologia pode ter mudado desde a aprovação): stop revalida
+            // pré-condição up(A), capability, presença ONLINE, último AppServer e janela contra a
+            // observação FRESCA. Se violar (sem override autorizado da op) → NÃO entrega; bloqueia.
+            if ($row->op_type === 'stop') {
+                $err = $this->revalidateStopForDispatch($row);
+                if ($err !== null) {
+                    $row->update(['status' => 'canceled', 'agent_result_detail' => $err]); // terminal seguro: nada executou
+                    $this->emit($envId, $row->appserver_ref, 'operation_dispatch_blocked', 'fail', 'Dispatch bloqueado na revalidação', ['operation_id' => $row->id, 'reason' => $err]);
+
+                    return null;
+                }
+            }
+            $deadline = (int) config("connector.operations.{$row->op_type}.operational_deadline", 120);
+            $row->update([
+                'status' => 'claimed', 'claimed_by_agent_id' => $agent->agent_id, 'claimed_at' => $now,
+                'operational_deadline_at' => $now->copy()->addSeconds($deadline),
+            ]);
+            $this->emit($envId, $row->appserver_ref, 'operation_claimed', 'info', 'Operação reivindicada pelo agente', ['operation_id' => $row->id, 'execution_id' => substr($row->execution_id, 0, 8)]);
+
+            return $row->fresh();
+        });
+    }
+
+    /** Revalida os gates do STOP no dispatch. Retorna o erro de bloqueio ou null se pode entregar. */
+    private function revalidateStopForDispatch(ConnectorOperation $op): ?string
+    {
+        $obs = $this->observedState((int) $op->environment_id);
+        if (! $obs || $obs['stale_s'] > (int) $this->cfg('observed_freshness', 120)) {
+            return 'observation_stale'; // fotografia incompleta/velha → fail-closed
+        }
+        $v = $this->stopViolations((int) $op->environment_id, $obs, $op->appserver_ref);
+        if ($v['blocked_error'] !== null) {
+            return $v['blocked_error']; // ex.: agent_not_online, precondition_failed_appserver_down
+        }
+        $overrideAuthorized = ($op->precondition_snapshot['emergency_override'] ?? false) === true;
+        if ($v['violates_last'] && ! $overrideAuthorized) {
+            return 'last_appserver_stop_blocked'; // ex.: outro AppServer caiu entre aprovação e dispatch
+        }
+        if ($v['violates_window'] && ! $overrideAuthorized) {
+            return 'maintenance_window_closed';
+        }
+
+        return null;
     }
 
     /**
@@ -311,39 +455,60 @@ class ConnectorOperationService
             $obs = $this->observedState((int) $r->environment_id);
             $floor = $r->execution_committed_at ?? $r->claimed_at;
             $post = $obs['appservers'][$r->appserver_ref] ?? null;
-            // Causalidade: a pós-observação não pode ser ANTERIOR à operação. Timestamps têm precisão de
-            // segundo → gte (mesmo segundo conta). Para start, a evidência forte do desfecho é a TRANSIÇÃO
-            // de estado observada (pré-imagem down → pós up(B)); o timestamp só barra observação pré-operação.
-            $causal = $obs && $floor && $obs['received_at']->gte($floor);
+            // Causalidade: a pós-observação não pode ser ANTERIOR à operação (timestamps precisão de segundo
+            // → gte). A evidência FORTE do desfecho é a TRANSIÇÃO de estado observada.
+            $causal = (bool) ($obs && $floor && $obs['received_at']->gte($floor));
+            $rw = (int) $this->cfg("{$r->op_type}.reconcile_window", 180);
+            $windowElapsed = $floor && now()->getTimestamp() >= ($floor->getTimestamp() + $rw);
+            $up = $post !== null ? (bool) ($post['up'] ?? false) : null;
+            $piid = $post['process_instance_id'] ?? null;
 
             $set = fn ($status, $recon, $detail, $auth = 'observed') => $r->update([
                 'status' => $status, 'reconciliation_state' => $recon, 'reconciled_at' => now(),
                 'outcome_authority' => $auth, 'postimage_snapshot' => $post,
             ]);
+            $out = fn ($status, $recon, $type, $outcome, $detail, $meta = []) => [$set($status, $recon, $detail), $this->emit((int) $r->environment_id, $r->appserver_ref, $type, $outcome, $detail, ['operation_id' => $r->id] + $meta)];
 
-            if (! $causal || $post === null) {
-                $set('unresolved', 'unresolved', 'sem observação causal conclusiva');
-                $this->emit((int) $r->environment_id, $r->appserver_ref, 'operation_unresolved', 'fail', 'Sem observação C-2 conclusiva', ['operation_id' => $r->id]);
+            if ($r->op_type === 'start') {
+                // C4.1 CONGELADO (imediato): up+piid→success; down→noop|contradicted; senão unresolved.
+                if (! $causal || $post === null) {
+                    $out('unresolved', 'unresolved', 'operation_unresolved', 'fail', 'Sem observação C-2 conclusiva');
+                } elseif ($up && ! empty($piid)) {
+                    $out('reconciled_success', 'success', 'operation_reconciled_success', 'ok', 'C-2 confirma up(B)', ['process_instance_id' => substr((string) $piid, 0, 8)]);
+                } elseif ($up === false) {
+                    $fromVerifying
+                        ? $out('contradicted', 'contradicted', 'operation_contradicted', 'fail', 'Agente ok × C-2 down')
+                        : $out('reconciled_noop', 'noop', 'operation_reconciled_noop', 'info', 'C-2 confirma que continuou down');
+                } else {
+                    $out('unresolved', 'unresolved', 'operation_unresolved', 'fail', 'up sem process_instance_id');
+                }
 
                 return $r->fresh();
             }
-            $up = (bool) ($post['up'] ?? false);
-            $piid = $post['process_instance_id'] ?? null;
-            if ($up && ! empty($piid)) {
-                $set('reconciled_success', 'success', 'pós-imagem up com process_instance_id');
-                $this->emit((int) $r->environment_id, $r->appserver_ref, 'operation_reconciled_success', 'ok', 'C-2 confirma up(B)', ['operation_id' => $r->id, 'process_instance_id' => substr((string) $piid, 0, 8)]);
-            } elseif (! $up) {
+
+            // ── stop ──: sucesso = down; up(A)=noop SÓ após a janela (stop pode estar em andamento) ou
+            // contradicted (verifying); up(B)=contradicted (nova incarnação ≠ parada); up-sem-piid/sem-obs
+            // = unresolved SÓ após a janela. Antes da janela, casos inconclusivos PERMANECEM reconciling.
+            $A = $r->precondition_snapshot['process_instance_id'] ?? null;
+            if (! $causal || $post === null) {
+                if (! $windowElapsed) { return $r->fresh(); } // aguarda observação dentro da janela
+                $out('unresolved', 'unresolved', 'operation_unresolved', 'fail', 'Sem observação C-2 conclusiva na janela');
+            } elseif ($up === false) {
+                $out('reconciled_success', 'success', 'operation_reconciled_success', 'ok', 'C-2 confirma up(A)→down');
+            } elseif (! empty($piid) && $piid !== $A) {
+                // Voltou como NOVA incarnação → houve restart/crash-restart, não parada. Ambíguo → humano.
+                $out('contradicted', 'contradicted', 'operation_contradicted', 'fail', 'C-2 up(B≠A): mudança de instância, não parada', ['from' => substr((string) $A, 0, 8), 'to' => substr((string) $piid, 0, 8)]);
+            } elseif (! empty($piid) && $piid === $A) {
                 if ($fromVerifying) {
-                    $set('contradicted', 'contradicted', 'agente reportou ok mas C-2 observa down');
-                    $this->emit((int) $r->environment_id, $r->appserver_ref, 'operation_contradicted', 'fail', 'Agente ok × C-2 down', ['operation_id' => $r->id]);
+                    $out('contradicted', 'contradicted', 'operation_contradicted', 'fail', 'Agente ok × C-2 ainda up(A)');
+                } elseif ($windowElapsed) {
+                    $out('reconciled_noop', 'noop', 'operation_reconciled_noop', 'info', 'C-2 up(A) durante toda a janela — não parou');
                 } else {
-                    $set('reconciled_noop', 'noop', 'pós-imagem down — não executou');
-                    $this->emit((int) $r->environment_id, $r->appserver_ref, 'operation_reconciled_noop', 'info', 'C-2 confirma que continuou down', ['operation_id' => $r->id]);
+                    return $r->fresh(); // up(A) cedo: stop pode estar em andamento → permanece reconciling
                 }
-            } else {
-                // up sem process_instance_id → observabilidade insuficiente (não confirma incarnação).
-                $set('unresolved', 'unresolved', 'up sem process_instance_id');
-                $this->emit((int) $r->environment_id, $r->appserver_ref, 'operation_unresolved', 'fail', 'up sem process_instance_id', ['operation_id' => $r->id]);
+            } else { // up sem piid
+                if (! $windowElapsed) { return $r->fresh(); }
+                $out('unresolved', 'unresolved', 'operation_unresolved', 'fail', 'up sem process_instance_id na janela');
             }
 
             return $r->fresh();
