@@ -281,6 +281,11 @@ class ConnectorAgentController extends Controller
             'appservers.*.build'     => 'nullable|string|max:60',
             'appservers.*.patch'     => 'nullable|string|max:60',
             'appservers.*.uptime_s'  => 'nullable|integer|min:0',
+            // C4.0 — IDENTIDADE DE INCARNAÇÃO do processo (aditivo, opcional). Opaco (sem PID/host/path/
+            // start_epoch/boot_id/local_key — só o token derivado). Estável por incarnação; muda no RESTART
+            // do AppServer; NÃO muda quando só o Conector reinicia (chave local do agente é persistente).
+            // Será a AUTORIDADE de reconciliação do C-4 (start/stop/restart). Aqui só coleta+armazena.
+            'appservers.*.process_instance_id' => 'nullable|string|max:64|regex:/^[A-Za-z0-9_-]{16,64}$/',
             'rest'                   => 'nullable|array|max:50',
             'rest.*.name'            => 'required|string|max:120',
             'rest.*.healthy'         => 'boolean',
@@ -335,12 +340,19 @@ class ConnectorAgentController extends Controller
             }
         }
 
+        // C4.0 — capability: TODOS os AppServers observados reportam process_instance_id? O C-4 exigirá
+        // esta capability p/ operar (sem ela, observabilidade insuficiente → operação destrutiva bloqueada).
+        $apps = $obs['appservers'] ?? [];
+        $hasInstanceCap = $hasInv && count($apps) > 0
+            && collect($apps)->every(fn ($a) => ! empty($a['process_instance_id']));
+
         return response()->json(['data' => [
-            'environment_id' => (int) $env->id,
-            'has_inventory'  => $hasInv,
-            'stale_s'        => $staleS, // frescor do INVENTÁRIO (independente da presença)
-            'inventory'      => $obs,
-            'divergence'     => $divergence,
+            'environment_id'              => (int) $env->id,
+            'has_inventory'               => $hasInv,
+            'stale_s'                     => $staleS, // frescor do INVENTÁRIO (independente da presença)
+            'inventory'                   => $obs,
+            'divergence'                  => $divergence,
+            'process_instance_capability' => $hasInstanceCap, // C-4 gate: só opera com o sinal presente
         ]]);
     }
 
