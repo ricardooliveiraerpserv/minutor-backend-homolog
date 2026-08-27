@@ -261,6 +261,33 @@ class ConnectorOperationService
         });
     }
 
+    /**
+     * Resolução HUMANA de contradicted/unresolved (ciclo fecha em terminal; autoridade=human). O sistema
+     * NUNCA infere sozinho o desfecho ambíguo — um humano decide success|noop|failed. Mapeia p/ os terminais
+     * existentes (sem novo estado/índice). Congelamento do alvo só termina aqui.
+     */
+    public function resolve(ConnectorOperation $op, int $resolver, string $resolution): array
+    {
+        $map = ['success' => 'reconciled_success', 'noop' => 'reconciled_noop', 'failed' => 'failed'];
+        if (! isset($map[$resolution])) {
+            return ['ok' => false, 'error' => 'invalid_resolution'];
+        }
+
+        return DB::transaction(function () use ($op, $resolver, $resolution, $map) {
+            $row = ConnectorOperation::whereKey($op->id)->lockForUpdate()->first();
+            if (! $row || ! in_array($row->status, ['contradicted', 'unresolved'], true)) {
+                return ['ok' => false, 'error' => 'not_resolvable']; // só resolve ambiguidade pendente de humano
+            }
+            $row->update([
+                'status' => $map[$resolution], 'outcome_authority' => 'human', 'resolved_by' => $resolver, 'reconciled_at' => now(),
+                'reconciliation_state' => $resolution === 'failed' ? 'contradicted' : $resolution,
+            ]);
+            $this->emit((int) $row->environment_id, $row->appserver_ref, 'operation_resolved', 'info', "Resolvido por humano: {$resolution}", ['operation_id' => $row->id, 'resolution' => $resolution]);
+
+            return ['ok' => true, 'op' => $row->fresh()];
+        });
+    }
+
     /** Cancela ANTES do claim (requested/pending_approval/approved/dispatchable) → canceled (≠ rejected). */
     public function cancel(ConnectorOperation $op): array
     {

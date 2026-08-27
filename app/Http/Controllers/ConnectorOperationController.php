@@ -208,6 +208,22 @@ class ConnectorOperationController extends Controller
         return response()->json(['data' => $this->adminView($op)]);
     }
 
+    /** POST /prosight/operations/{id}/resolve {resolution} — resolução HUMANA de contradicted/unresolved. */
+    public function resolve(Request $request, int $id): JsonResponse
+    {
+        $op = $this->scopedOperation($request, $id);
+        if (! $op) {
+            return response()->json(['message' => 'Operação não encontrada.'], 404);
+        }
+        $data = $request->validate(['resolution' => 'required|in:success,noop,failed']);
+        $r = $this->ops->resolve($op, $request->user()->id, $data['resolution']);
+        if (! $r['ok']) {
+            return response()->json(['error' => $r['error']], $r['error'] === 'invalid_resolution' ? 422 : 409);
+        }
+
+        return response()->json(['data' => $this->adminView($r['op'])]);
+    }
+
     // ── helpers ────────────────────────────────────────────────────────────────
 
     /** Permissão do usuário (admin via '*'). Enforce granular por tipo/override no controller. */

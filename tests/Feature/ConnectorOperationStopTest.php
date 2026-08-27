@@ -299,6 +299,23 @@ class ConnectorOperationStopTest extends TestCase
         $this->assertSame('expired', $this->show($id)['status']);
     }
 
+    public function test_contradicted_resolved_by_human(): void
+    {
+        $env = $this->makeEnv($this->custA); [$a, $sk] = $this->enrollAgent($env);
+        $this->observe($a, $sk, true, $this->instA, true);
+        [$id, $eid] = $this->claimStop($env, $a, $sk);
+        $this->forcePast($id, 'operational_deadline_at');
+        $this->observe($a, $sk, true, $this->instB, true); // up(B) → contradicted (não-terminal, congela)
+        $this->assertSame('contradicted', $this->reconcile($id)['status']);
+        // enquanto contradicted, o alvo/ambiente fica congelado (1 viva) — nova op → 409
+        $this->createStop($this->admin(), $env)->assertStatus(409);
+        // resolução HUMANA → terminal; libera o ambiente
+        $out = $this->actingAs($this->userWith(['prosight.operations.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/resolve", ['resolution' => 'failed']);
+        $out->assertOk()->assertJsonPath('data.status', 'failed')->assertJsonPath('data.outcome_authority', 'human');
+        $this->observe($a, $sk, true, $this->instA, true);
+        $this->createStop($this->admin(), $env)->assertStatus(201); // ambiente livre
+    }
+
     public function test_concurrency_one_live_per_environment(): void
     {
         $env = $this->makeEnv($this->custA); [$a, $sk] = $this->enrollAgent($env);
