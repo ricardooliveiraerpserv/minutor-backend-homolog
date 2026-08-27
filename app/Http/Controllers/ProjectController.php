@@ -259,6 +259,11 @@ class ProjectController extends Controller
 
         $query = Project::with($withRelations);
 
+        // "Meus Projetos" (activity_allocated): id do consultor cujas horas próprias a lista deve
+        // mostrar (disponibilizadas/apontadas/saldo DELE, não os totais do projeto). Preenchido só
+        // quando o alvo é um consultor não-admin no modo activity_allocated.
+        $myProjectsUserId = null;
+
         // Filtrar apenas projetos onde o usuário é consultor (exceto para Administrators)
         if ($consultantOnly === 'true') {
             $currentUser = $request->user();
@@ -278,6 +283,8 @@ class ProjectController extends Controller
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
                 if ($request->boolean('activity_allocated')) {
+                    // Mostra as horas DESTE consultor por projeto (não os totais).
+                    $myProjectsUserId = $targetUserId;
                     // "Meus Projetos": SÓ projetos onde o consultor está ALOCADO no cronograma —
                     // responsável por alguma atividade OU alocado em alguma etapa. Estar só na
                     // equipe do projeto (project_consultants) NÃO basta.
@@ -596,7 +603,7 @@ class ProjectController extends Controller
         $gestaoMonths = $gestaoMonthsRaw
             ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
             : [];
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths, $myProjectsUserId) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -716,10 +723,40 @@ class ProjectController extends Controller
             ->flip()
             ->toArray();
 
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap) {
+        // "Meus Projetos" (consultor): a lista mostra as horas DO CONSULTOR — não os totais do projeto.
+        // DISPONIBILIZADAS = SUM(hours_planned) das ATIVIDADES onde ele é responsável (= coluna HORAS
+        // do cronograma dele). CONSUMIDAS = SUM(effort_minutes) dos apontamentos dele (exclui
+        // rejeitado/ajuste). Saldo = disp − cons (no front). Anti-N+1 (2 queries agregadas).
+        $activityAllocatedMode = $myProjectsUserId && !empty($projectIds);
+        $myAllocMap = []; $myConsumedMap = [];
+        if ($activityAllocatedMode) {
+            $myAllocMap = \App\Models\StageDelivery::query()
+                ->join('project_stages', 'project_stages.id', '=', 'stage_deliveries.stage_id')
+                ->where('stage_deliveries.responsible_user_id', $myProjectsUserId)
+                ->whereIn('project_stages.project_id', $projectIds)
+                ->groupBy('project_stages.project_id')
+                ->selectRaw('project_stages.project_id as pid, COALESCE(SUM(stage_deliveries.hours_planned), 0) as h')
+                ->pluck('h', 'pid')->toArray();
+            $myConsumedMap = \App\Models\Timesheet::query()
+                ->whereIn('project_id', $projectIds)
+                ->where('user_id', $myProjectsUserId)
+                ->whereNull('deleted_at')
+                ->whereNotIn('status', [\App\Models\Timesheet::STATUS_ADJUSTMENT_REQUESTED, \App\Models\Timesheet::STATUS_REJECTED])
+                ->groupBy('project_id')
+                ->selectRaw('project_id as pid, COALESCE(SUM(effort_minutes), 0) as m')
+                ->pluck('m', 'pid')->toArray();
+        }
+
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap, $activityAllocatedMode, $myAllocMap, $myConsumedMap) {
             $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
+
+            // Meus Projetos (consultor): horas do PRÓPRIO consultor, não do projeto todo.
+            if ($activityAllocatedMode) {
+                $project->my_allocated_hours = round((float) ($myAllocMap[$project->id] ?? 0), 2);
+                $project->my_consumed_hours  = round((float) ($myConsumedMap[$project->id] ?? 0) / 60, 2);
+            }
 
             if ($gestaoMode) {
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
