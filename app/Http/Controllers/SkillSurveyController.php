@@ -285,7 +285,7 @@ class SkillSurveyController extends Controller
     {
         $survey = SkillSurvey::findOrFail($id);
         $invites = $survey->invites()
-            ->with('respondent:id,name,email')
+            ->with(['respondent:id,name,email', 'user:id,enabled'])
             ->orderBy('name')
             ->get()
             ->map(fn ($i) => [
@@ -295,6 +295,8 @@ class SkillSurveyController extends Controller
                 'email' => $i->email ?? $i->respondent?->email,
                 'status' => $i->status,
                 'disabled' => $i->disabled_at !== null,
+                'user_inactive' => $i->user !== null && ! $i->user->enabled, // usuário desativado no cadastro
+
                 'last_access_at' => $i->last_access_at,
                 'submitted_at' => $i->submitted_at,
                 'reminder_count' => $i->reminder_count,
