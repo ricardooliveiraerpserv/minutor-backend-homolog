@@ -1686,7 +1686,9 @@ class FechamentoClienteController extends Controller
             'project_id' => 'nullable|integer', // filtro de contrato (projeto pai)
             'anexos'     => 'nullable|array',
             'anexos.*'   => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
-            'incluir_comprovantes' => 'nullable|boolean', // anexar os comprovantes das despesas do período
+            'incluir_comprovantes' => 'nullable|boolean', // legado: anexar TODOS os comprovantes do período
+            'comprovante_expense_ids'   => 'nullable|array', // seleção explícita de quais despesas anexar comprovante
+            'comprovante_expense_ids.*' => 'integer',
         ], [
             'emails.required' => 'Informe ao menos um e-mail de destino antes de enviar.',
             'emails.array'    => 'Lista de e-mails inválida.',
@@ -1775,9 +1777,19 @@ class FechamentoClienteController extends Controller
         // ORIGINAIS no disco public → vão em $receiptPaths, que NUNCA é apagado na limpeza
         // (só o $extraPaths, que são cópias temporárias, é removido).
         $receiptPaths = [];
-        if ($mode === 'despesa' && $request->boolean('incluir_comprovantes')) {
-            $expenseIds = collect($this->despesasData((int) $customer->id, $yearMonth, $yearMonth))
-                ->where('has_receipt', true)->pluck('id')->all();
+        if ($mode === 'despesa') {
+            // Despesas do período que TÊM comprovante (universo permitido).
+            $allowed = collect($this->despesasData((int) $customer->id, $yearMonth, $yearMonth))
+                ->where('has_receipt', true)->pluck('id');
+            // Seleção explícita de comprovantes (novo) OU todos (flag legado incluir_comprovantes).
+            $selected = $request->input('comprovante_expense_ids');
+            if (is_array($selected) && count($selected)) {
+                $expenseIds = $allowed->intersect(array_map('intval', $selected))->values()->all();
+            } elseif ($request->boolean('incluir_comprovantes')) {
+                $expenseIds = $allowed->values()->all();
+            } else {
+                $expenseIds = [];
+            }
             if ($expenseIds) {
                 $atts = \App\Models\Attachment::query()
                     ->where('entity_type', 'EXPENSE')->whereIn('entity_id', $expenseIds)
