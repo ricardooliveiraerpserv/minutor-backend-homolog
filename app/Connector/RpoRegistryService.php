@@ -165,6 +165,28 @@ class RpoRegistryService
         return ['consistent' => $consistent, 'fresh' => (bool) $fresh, 'all_observed' => $allObserved, 'hash' => $consistent ? array_key_first($hashes) : null, 'per_appserver' => $per];
     }
 
+    /**
+     * C5.2 — prova de UNIDADE FÍSICA ÚNICA: todos os AppServers do target reportam o MESMO publish_unit_id
+     * (opaco, declarado pelo agente na observação de RPO). Se divergirem (APP01→U1, APP02→U2) o target NÃO é
+     * uma única unidade de publicação → não promovível na v1. publish_unit_id ausente → não consistente.
+     */
+    public function publishUnitConsistency(RpoTarget $target): array
+    {
+        $obs = $this->observed((int) $target->environment_id);
+        $refs = $target->appservers()->pluck('appserver_ref')->all();
+        $per = [];
+        $units = [];
+        $allPresent = ! empty($refs);
+        foreach ($refs as $r) {
+            $u = $obs['rpo'][$r]['publish_unit_id'] ?? null;
+            $per[] = ['appserver_ref' => $r, 'publish_unit_id' => $u];
+            if ($u === null || $u === '') { $allPresent = false; } else { $units[$u] = true; }
+        }
+        $consistent = $allPresent && count($units) === 1;
+
+        return ['consistent' => $consistent, 'publish_unit_id' => $consistent ? array_key_first($units) : null, 'per_appserver' => $per];
+    }
+
     /** Confirma o target (exige consistência observacional). pending_confirmation → confirmed. */
     public function confirmTarget(RpoTarget $target, int $userId): array
     {

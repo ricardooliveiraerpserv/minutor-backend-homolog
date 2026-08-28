@@ -716,13 +716,15 @@ Route::prefix('v1')->group(function () {
         // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
         Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
         Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
-        // Aprovar/rejeitar/reconciliar — perm ESTRITA prosight.operations.approve (maker-checker; capability distinta).
-        Route::middleware('permission:prosight.operations.approve')->group(function () {
-            Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
-            Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
-            Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
-            Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
-        });
+        // Aprovar/rejeitar/reconciliar/resolver — perm POR TIPO no CONTROLLER: lifecycle=operations.approve,
+        // rpo_promote=operations.rpo.approve (N-of-M). Middleware estático não distingue op_type.
+        Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
+        // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). Cria operação rpo_promote a partir do target.
+        // Perm prosight.operations.rpo.promote enforce no CONTROLLER. Anti-IDOR 404 por customer_id.
+        Route::post('/prosight/rpo/targets/{id}/promote', [\App\Http\Controllers\ConnectorOperationController::class, 'promote'])->whereNumber('id');
         // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
@@ -1923,13 +1925,15 @@ Route::prefix('v1')->group(function () {
         // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
         Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
         Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
-        // Aprovar/rejeitar/reconciliar — perm ESTRITA prosight.operations.approve (maker-checker; capability distinta).
-        Route::middleware('permission:prosight.operations.approve')->group(function () {
-            Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
-            Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
-            Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
-            Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
-        });
+        // Aprovar/rejeitar/reconciliar/resolver — perm POR TIPO no CONTROLLER: lifecycle=operations.approve,
+        // rpo_promote=operations.rpo.approve (N-of-M). Middleware estático não distingue op_type.
+        Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
+        // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). Cria operação rpo_promote a partir do target.
+        // Perm prosight.operations.rpo.promote enforce no CONTROLLER. Anti-IDOR 404 por customer_id.
+        Route::post('/prosight/rpo/targets/{id}/promote', [\App\Http\Controllers\ConnectorOperationController::class, 'promote'])->whereNumber('id');
         // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');

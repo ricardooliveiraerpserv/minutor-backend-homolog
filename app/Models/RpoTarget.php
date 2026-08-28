@@ -9,7 +9,7 @@ class RpoTarget extends Model
 {
     protected $table = 'rpo_targets';
     protected $guarded = ['id'];
-    protected $casts = ['confirmed_at' => 'datetime'];
+    protected $casts = ['confirmed_at' => 'datetime', 'last_successfully_published' => 'array'];
 
     public function appservers()
     {

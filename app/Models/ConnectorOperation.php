@@ -23,6 +23,7 @@ class ConnectorOperation extends Model
         'claimed_at'                 => 'datetime',
         'execution_committed_at'     => 'datetime',
         'executing_at'               => 'datetime',
+        'effect_started_at'          => 'datetime',
         'operational_deadline_at'    => 'datetime',
         'agent_result_at'            => 'datetime',
         'reconciled_at'              => 'datetime',

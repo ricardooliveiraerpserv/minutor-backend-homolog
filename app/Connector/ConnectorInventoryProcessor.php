@@ -134,7 +134,7 @@ class ConnectorInventoryProcessor
             $rpoCap = null;
             foreach ($inv['capabilities'] ?? [] as $c) {
                 if (($c['name'] ?? null) === 'rpo_publish') {
-                    $rpoCap = ['name' => 'rpo_publish', 'adapter' => $c['adapter'] ?? null, 'contract_version' => $c['contract_version'] ?? null, 'operations' => array_values(array_filter((array) ($c['operations'] ?? []), 'is_string'))];
+                    $rpoCap = ['name' => 'rpo_publish', 'adapter' => $c['adapter'] ?? null, 'contract_version' => $c['contract_version'] ?? null, 'operations' => array_values(array_filter((array) ($c['operations'] ?? []), 'is_string')), 'activation_mode' => $c['activation_mode'] ?? null];
                 }
             }
 
@@ -156,10 +156,11 @@ class ConnectorInventoryProcessor
             if (is_array($trigger) && ($trigger['type'] ?? null) === 'command' && ! empty($trigger['command_id'])) {
                 $this->commands->markInventoryApplied($agent, (int) $trigger['command_id'], $receivedAt);
             }
-            // C4.3 — coleta de reconciliação CORRELACIONADA a uma operação (restart): grava a autoridade
-            // do desfecho (up/piid do alvo) na operação. Escopo/estado verificados no service.
+            // C4.3/C5.2 — coleta de reconciliação CORRELACIONADA a uma operação: grava a autoridade do desfecho
+            // na operação. restart usa up/piid do alvo; rpo_promote usa hash/up/publish_unit de TODOS os membros
+            // do target (rpo map). Escopo/estado verificados no service.
             if (is_array($trigger) && ($trigger['type'] ?? null) === 'operation' && ! empty($trigger['operation_id'])) {
-                $this->operations->recordReconcileObservation($agent, (int) $trigger['operation_id'], $newApps->all(), $receivedAt);
+                $this->operations->recordReconcileObservation($agent, (int) $trigger['operation_id'], $newApps->all(), $newRpo->all(), $receivedAt);
             }
 
             return ['applied' => true, 'events' => $events, 'snapshots' => $snapshots];

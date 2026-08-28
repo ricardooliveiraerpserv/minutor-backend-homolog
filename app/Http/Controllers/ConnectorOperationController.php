@@ -6,6 +6,8 @@ use App\Connector\ConnectorOperationService;
 use App\Models\ConnectorAgent;
 use App\Models\ConnectorOperation;
 use App\Models\EnvEnvironment;
+use App\Models\RpoArtifact;
+use App\Models\RpoTarget;
 use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -43,16 +45,23 @@ class ConnectorOperationController extends Controller
         return $op ? response()->json(['data' => $this->agentView($op)]) : response()->json(null, 204);
     }
 
-    /** POST /connector/operations/{id}/ack {execution_id} — barreira claimed→execution_committed. */
+    /**
+     * POST /connector/operations/{id}/ack {execution_id, phase?} — DOIS marcadores de journal:
+     * phase=execution_committed (barreira, default) e phase=effect_started (efeito potencialmente iniciado;
+     * só evidência/diagnóstico — nunca base de retry).
+     */
     public function ack(Request $request, int $id): JsonResponse
     {
         $agent = $request->attributes->get('connector_agent');
-        $data = $request->validate(['execution_id' => 'required|uuid']);
+        $data = $request->validate([
+            'execution_id' => 'required|uuid',
+            'phase'        => 'nullable|in:execution_committed,effect_started',
+        ]);
         $op = $this->agentOperation($agent, $id);
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
         }
-        $r = $this->ops->ack($agent, $op, $data['execution_id']);
+        $r = $this->ops->ack($agent, $op, $data['execution_id'], $data['phase'] ?? 'execution_committed');
 
         return response()->json(['ok' => $r['ok']], $r['ok'] ? 200 : 409);
     }
@@ -120,16 +129,50 @@ class ConnectorOperationController extends Controller
         return response()->json(['data' => $this->adminView($r['op'])], 201);
     }
 
-    /** POST /prosight/operations/{id}/approve — perm approve, requester ≠ approver. */
+    /**
+     * POST /prosight/rpo/targets/{id}/promote {to_artifact_id, reason} — C5.2: cria operação rpo_promote
+     * (SÓ hot). Perm prosight.operations.rpo.promote. Escopo por customer_id (anti-IDOR 404). ZERO bytes/path.
+     */
+    public function promote(Request $request, int $id): JsonResponse
+    {
+        $target = RpoTarget::find($id);
+        if (! $target || ! $this->scope->canAccessCustomerId($request->user(), (int) $target->customer_id)) {
+            return response()->json(['message' => 'Target não encontrado.'], 404);
+        }
+        if (! $this->hasPerm($request->user(), 'prosight.operations.rpo.promote')) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+        $data = $request->validate(['to_artifact_id' => 'required|integer', 'reason' => 'required|string|max:300']);
+        $to = RpoArtifact::find((int) $data['to_artifact_id']);
+        if (! $to || ! $this->scope->canAccessCustomerId($request->user(), (int) $to->customer_id)) {
+            return response()->json(['message' => 'Artefato não encontrado.'], 404);
+        }
+        $r = $this->ops->createRpoPromote($target, $to, $request->user()->id, $data['reason']);
+        if (! $r['ok']) {
+            $code = $r['error'] === 'operation_in_flight' ? 409 : 422;
+
+            return response()->json(['error' => $r['error'], 'reasons' => $r['reasons'] ?? null] + array_filter(['activation_mode' => $r['activation_mode'] ?? null]), $code);
+        }
+
+        return response()->json(['data' => $this->adminView($r['op'])], 201);
+    }
+
+    /** POST /prosight/operations/{id}/approve — perm por tipo, requester ≠ approver. */
     public function approve(Request $request, int $id): JsonResponse
     {
         return $this->decide($request, $id, 'approve');
     }
 
-    /** POST /prosight/operations/{id}/reject — perm approve. */
+    /** POST /prosight/operations/{id}/reject — perm por tipo. */
     public function reject(Request $request, int $id): JsonResponse
     {
         return $this->decide($request, $id, 'reject');
+    }
+
+    /** Perm de aprovação POR TIPO: rpo_promote → operations.rpo.approve; lifecycle → operations.approve. */
+    private function approvePermFor(ConnectorOperation $op): string
+    {
+        return $op->op_type === 'rpo_promote' ? 'prosight.operations.rpo.approve' : 'prosight.operations.approve';
     }
 
     private function decide(Request $request, int $id, string $action): JsonResponse
@@ -137,6 +180,9 @@ class ConnectorOperationController extends Controller
         $op = $this->scopedOperation($request, $id);
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
+        }
+        if (! $this->hasPerm($request->user(), $this->approvePermFor($op))) {
+            return response()->json(['error' => 'forbidden'], 403); // maker-checker: capability de aprovação por tipo
         }
         $overridePerm = ['stop' => 'prosight.operations.stop.override', 'restart' => 'prosight.operations.restart.override'][$op->op_type] ?? null;
         $hasOverride = $overridePerm !== null && $this->hasPerm($request->user(), $overridePerm);
@@ -206,6 +252,9 @@ class ConnectorOperationController extends Controller
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
         }
+        if (! $this->hasPerm($request->user(), $this->approvePermFor($op))) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
         $op = $this->ops->reconcile($op);
 
         return response()->json(['data' => $this->adminView($op)]);
@@ -217,6 +266,9 @@ class ConnectorOperationController extends Controller
         $op = $this->scopedOperation($request, $id);
         if (! $op) {
             return response()->json(['message' => 'Operação não encontrada.'], 404);
+        }
+        if (! $this->hasPerm($request->user(), $this->approvePermFor($op))) {
+            return response()->json(['error' => 'forbidden'], 403);
         }
         $data = $request->validate(['resolution' => 'required|in:success,noop,failed']);
         $r = $this->ops->resolve($op, $request->user()->id, $data['resolution']);
@@ -251,10 +303,15 @@ class ConnectorOperationController extends Controller
         return ($op && $this->scope->canAccessCustomerId($request->user(), (int) $op->customer_id)) ? $op : null;
     }
 
-    /** Ao agente: só o necessário p/ executar. INCLUI execution_id. Sem path/PID/segredo. */
+    /**
+     * Ao agente: só o necessário p/ executar. INCLUI execution_id. Sem path/PID/segredo/bytes. Para
+     * rpo_promote inclui a IDENTIDADE do artefato (artifact_id + sha256) + activation_mode + publish_unit +
+     * membros — o agente RESOLVE os bytes localmente (fonte on-prem) e RECOMPUTA o SHA-256 antes da barreira.
+     * O Minutor NUNCA envia bytes nem path.
+     */
     private function agentView(ConnectorOperation $o): array
     {
-        return [
+        $view = [
             'operation_id'            => $o->id,
             'op_type'                 => $o->op_type,
             'appserver_ref'           => $o->appserver_ref,
@@ -262,6 +319,20 @@ class ConnectorOperationController extends Controller
             'operational_deadline_at' => $o->operational_deadline_at?->toIso8601String(),
             'server_time'             => now()->timestamp,
         ];
+        if ($o->op_type === 'rpo_promote') {
+            $s = $o->precondition_snapshot ?? [];
+            $view['rpo'] = [
+                'target_id'       => $o->rpo_target_id,
+                'to_artifact_id'  => $s['to_artifact_id'] ?? null,
+                'to_hash'         => $s['to_hash'] ?? null,   // sha256 esperado — agente RECOMPUTA localmente
+                'from_hash'       => $s['from_hash'] ?? null, // pré-condição local: active_rpo_hash == from_hash
+                'activation_mode' => $s['activation_mode'] ?? null,
+                'publish_unit_id' => $s['publish_unit_id'] ?? null,
+                'members'         => $s['members'] ?? [],
+            ];
+        }
+
+        return $view;
     }
 
     /** À sessão: estado completo p/ auditoria. NÃO expõe execution_id como capability (só prefixo em meta). */
@@ -273,11 +344,14 @@ class ConnectorOperationController extends Controller
             'requested_by' => $o->requested_by, 'approved_by' => $o->approved_by, 'reason' => $o->reason,
             'agent_result' => $o->agent_result, 'agent_result_phase' => $o->agent_result_phase,
             'reconciliation_state' => $o->reconciliation_state, 'outcome_authority' => $o->outcome_authority,
-            'precondition_kind' => $o->precondition_kind,
+            'precondition_kind' => $o->precondition_kind, 'rpo_target_id' => $o->rpo_target_id,
             'emergency_override' => (bool) ($o->precondition_snapshot['emergency_override'] ?? false),
             'override_reasons' => $o->precondition_snapshot['override_reasons'] ?? [],
+            'approvals_count' => is_array($o->precondition_snapshot['approvals'] ?? null) ? count($o->precondition_snapshot['approvals']) : null,
+            'required_approvals' => $o->precondition_snapshot['required_approvals'] ?? null,
             'precondition_snapshot' => $o->precondition_snapshot, 'postimage_snapshot' => $o->postimage_snapshot,
             'claimed_at' => $o->claimed_at?->toIso8601String(), 'execution_committed_at' => $o->execution_committed_at?->toIso8601String(),
+            'effect_started_at' => $o->effect_started_at?->toIso8601String(),
             'operational_deadline_at' => $o->operational_deadline_at?->toIso8601String(),
             'reconciled_at' => $o->reconciled_at?->toIso8601String(), 'created_at' => $o->created_at?->toIso8601String(),
         ];

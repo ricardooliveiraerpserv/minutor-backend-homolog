@@ -297,6 +297,9 @@ class ConnectorAgentController extends Controller
             'rpo.*.version'          => 'nullable|string|max:60',
             'rpo.*.size'             => 'nullable|integer|min:0',
             'rpo.*.mtime'            => 'nullable|integer',
+            // C5.2 — publish_unit_id: identificador OPACO da unidade física de publicação (prova de unidade
+            // única no target). NUNCA path/filesystem (regex opaco). Todos os membros do target devem coincidir.
+            'rpo.*.publish_unit_id'  => 'nullable|string|max:80|regex:/^[A-Za-z0-9_.:-]{1,80}$/',
             'collect_error'          => 'nullable|string|max:200',
             // Connector-3 — CAUSALIDADE (aditivo, opcional, sanitizado): por que este inventário subiu.
             // command → dispara correlação FORTE com o comando (nunca por ordem temporal). SEM claim_token.
@@ -312,6 +315,9 @@ class ConnectorAgentController extends Controller
             'capabilities.*.contract_version'  => 'nullable|integer',
             'capabilities.*.operations'        => 'nullable|array|max:10',
             'capabilities.*.operations.*'      => 'string|max:20',
+            // C5.2 — activation_mode é PROPRIEDADE da capability (não escolha do operador). Só 'hot' é
+            // executável nesta fase; ausente/desconhecido → fail-closed (não promovível).
+            'capabilities.*.activation_mode'   => 'nullable|in:hot,requires_restart,requires_stop_start',
         ]);
         // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
         if (isset($data['collect_error'])) {

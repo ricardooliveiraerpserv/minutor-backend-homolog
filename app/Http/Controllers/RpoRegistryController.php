@@ -205,6 +205,8 @@ class RpoRegistryController extends Controller
         return ['id' => $t->id, 'environment_id' => (int) $t->environment_id, 'name' => $t->name, 'status' => $t->status,
             'appserver_refs' => $t->appservers()->pluck('appserver_ref')->all(), 'consistency' => $c,
             'last_known_good' => $lkg ? ['artifact_id' => $lkg->rpo_artifact_id, 'hash' => $lkg->hash, 'qualified_at' => $lkg->qualified_at?->toIso8601String()] : null,
+            // C5.2 — publicação tecnicamente confirmada (≠ known_good; known_good exige qualificação humana).
+            'last_successfully_published' => $t->last_successfully_published,
             'confirmed_by' => $t->confirmed_by, 'confirmed_at' => $t->confirmed_at?->toIso8601String()];
     }
 

@@ -46,8 +46,9 @@ return [
 
     // Connector-4.x — OPERAÇÕES destrutivas/controladas (classe de segurança separada).
     'operations' => [
-        // ALLOWLIST operacional: start (C4.1) + stop (C4.2) + restart (C4.3). compile/patch/RPO NÃO existem.
-        'types' => ['start', 'stop', 'restart'],
+        // ALLOWLIST operacional: start (C4.1) + stop (C4.2) + restart (C4.3) + rpo_promote (C5.2, SÓ hot).
+        // compile/patch/rpo_rollback NÃO existem. rpo_promote é baseado em TARGET (não appserver_ref único).
+        'types' => ['start', 'stop', 'restart', 'rpo_promote'],
         // Maker-checker OBRIGATÓRIO — inclusive homolog (só o gate controlado poderia relaxar).
         'require_approval' => filter_var(env('CONNECTOR_OP_REQUIRE_APPROVAL', true), FILTER_VALIDATE_BOOLEAN),
         // Transport lease: dispatchable→claim. Vence SEM claim → expired (único timeout auto-terminal seguro).
@@ -83,11 +84,22 @@ return [
             'supported_capabilities' => [
                 ['name' => 'rpo_publish', 'contract_version' => 1],
             ],
-            // Política N-of-M de aprovação (snapshot gravado no preview/operação futura). Sem entidade nesta fase.
+            // Política N-of-M de aprovação (snapshot gravado na operação). prod=2, homolog/default=1.
             'required_approvals' => [
                 'prod' => (int) env('CONNECTOR_RPO_APPROVALS_PROD', 2),
                 'default' => (int) env('CONNECTOR_RPO_APPROVALS_DEFAULT', 1),
             ],
+            // C5.2 — activation modes EXECUTÁVEIS nesta fase: SÓ 'hot' (sem outage deliberado; sem C4 interno,
+            // sem last-AppServer/janela). requires_restart/requires_stop_start ficam para C5.2b (bloqueados aqui).
+            'executable_activation_modes' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_RPO_EXEC_ACTIVATION_MODES', 'hot'))), 'strlen')),
+        ],
+
+        // C5.2 — rpo_promote (SÓ activation_mode=hot). Timeouts cobrem resolve/validate/stage/apply/observe.
+        // hot NÃO para AppServer → sem proteção de último-AppServer e sem janela obrigatória (N-of-M + presença
+        // ONLINE + capability + publish_unit + target consistente governam). Reconciliação = target INTEIRO.
+        'rpo_promote' => [
+            'operational_deadline' => (int) env('CONNECTOR_OP_RPO_DEADLINE', 180),
+            'reconcile_window'     => (int) env('CONNECTOR_OP_RPO_RECONCILE_WINDOW', 300),
         ],
 
         // C4.3 — restart: down transiente → up(B). MESMOS gates do stop (último AppServer/janela/presença

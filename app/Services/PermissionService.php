@@ -158,6 +158,9 @@ class PermissionService
         // Conector-5.1 — fundação de publicação de RPO (registro/target = manage; qualificar known_good = qualify).
         'prosight.operations.rpo.manage',
         'prosight.operations.rpo.qualify',
+        // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). promote=criar/cancelar; approve=maker-checker N-of-M.
+        'prosight.operations.rpo.promote',
+        'prosight.operations.rpo.approve',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -270,6 +273,9 @@ class PermissionService
             // Conector-5.1 — fundação de publicação de RPO (registro/target/qualificação).
             'prosight.operations.rpo.manage',
             'prosight.operations.rpo.qualify',
+            // Conector-5.2 — publicação governada de RPO (hot): promover + aprovar (N-of-M).
+            'prosight.operations.rpo.promote',
+            'prosight.operations.rpo.approve',
         ];
     }
 
