@@ -262,6 +262,15 @@ class Contract extends Model
     }
 
     /**
+     * E-mails avulsos (destinatários adicionais) do alerta de consumo de horas.
+     * Não são contatos — só destinatário extra do alerta deste contrato.
+     */
+    public function alertExtraEmails(): HasMany
+    {
+        return $this->hasMany(ContractAlertExtraEmail::class);
+    }
+
+    /**
      * Anexos do contrato — FASE 11.7 (PR 7b): polimórficos via tabela `attachments`.
      */
     public function attachments(): HasMany
