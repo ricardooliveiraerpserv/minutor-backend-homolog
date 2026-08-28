@@ -345,7 +345,10 @@ class HelpDeskTriggerEngine
         try {
             \App\Models\HelpDeskTicketComment::firstOrCreate(
                 ['idempotency_key' => $idem],
-                ['ticket_id' => $ticket->id, 'body' => $body, 'visibility' => $visibility, 'is_system' => true, 'channel' => 'email'],
+                // is_system=false de propósito: o front renderiza comentário de sistema com stripTags
+                // (texto puro, sem negrito/parágrafos); como interação normal com corpo HTML, ele passa
+                // pelo sanitizeEmail/EmailFrame e mantém <p>/<b>. channel='system' identifica a origem.
+                ['ticket_id' => $ticket->id, 'body' => $body, 'visibility' => $visibility, 'is_system' => false, 'channel' => 'system'],
             );
         } catch (\Throwable $e) {
             Log::warning('HD gatilho: falha ao gravar interação no chamado: ' . $e->getMessage());
