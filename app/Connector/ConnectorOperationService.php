@@ -227,7 +227,7 @@ class ConnectorOperationService
      * from_hash (central) + to_hash congelados. N-of-M por tipo de ambiente (prod=2). Nasce pending_approval.
      * hot NÃO tem last-AppServer/janela (sem outage deliberado). ZERO bytes/path.
      */
-    public function createRpoPromote(RpoTarget $target, RpoArtifact $to, int $requester, string $reason): array
+    public function createRpoPromote(RpoTarget $target, RpoArtifact $to, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false): array
     {
         $envId = (int) $target->environment_id;
         $prev = $this->rpo->preview($target, $to, false);
@@ -237,7 +237,7 @@ class ConnectorOperationService
         $mode = $prev['capability']['declared']['activation_mode'] ?? null;
         $execModes = (array) $this->cfg('rpo.executable_activation_modes', ['hot']);
         if (! in_array($mode, $execModes, true)) {
-            return ['ok' => false, 'error' => 'activation_mode_not_executable', 'activation_mode' => $mode]; // v1 só hot
+            return ['ok' => false, 'error' => 'activation_mode_not_executable', 'activation_mode' => $mode];
         }
         $pu = $this->rpo->publishUnitConsistency($target);
         if (! $pu['consistent']) {
@@ -264,6 +264,19 @@ class ConnectorOperationService
             'compatibility_snapshot' => $to->compatibility,
             'required_approvals' => $required, 'approvals' => [],
         ];
+
+        // ── C5.2b: requires_restart (SÓ rolling). Gates ADICIONAIS (não tocam o caminho hot). ──
+        if ($mode === 'requires_restart') {
+            $rr = $this->rrGate($envId, $c, $refs, $prev['capability']['declared'] ?? [], $emergencyOverride, $hasOverridePerm);
+            if (! ($rr['ok'] ?? false)) {
+                return ['ok' => false, 'error' => $rr['error'], 'reasons' => $rr['reasons'] ?? null];
+            }
+            $snapshot['restart_strategy'] = $rr['restart_strategy'];   // rolling (congelado)
+            $snapshot['member_piid'] = $rr['member_piid'];             // P1 por membro (prova de restart)
+            $snapshot['window'] = $rr['window'];
+            $snapshot['emergency_override'] = $rr['emergency_override'];
+            $snapshot['override_reasons'] = $rr['override_reasons'];
+        }
         try {
             $op = DB::transaction(fn () => ConnectorOperation::create([
                 'environment_id' => $envId, 'appserver_ref' => null, 'customer_id' => $target->customer_id,
@@ -276,13 +289,88 @@ class ConnectorOperationService
         } catch (UniqueConstraintViolationException) {
             return ['ok' => false, 'error' => 'operation_in_flight']; // 1 operação viva por ambiente
         }
-        $this->emit($envId, null, 'operation_requested', 'info', 'Publicação de RPO (hot) solicitada', [
+        $this->emit($envId, null, 'operation_requested', 'info', "Publicação de RPO ({$mode}) solicitada", [
             'op_type' => 'rpo_promote', 'operation_id' => $op->id, 'execution_id' => substr($op->execution_id, 0, 8),
             'target_id' => $target->id, 'from' => substr((string) $fromHash, 0, 12), 'to' => substr($to->hash, 0, 12),
-            'required_approvals' => $required,
+            'required_approvals' => $required, 'activation_mode' => $mode, 'restart_strategy' => $snapshot['restart_strategy'] ?? null,
         ]);
+        if (($snapshot['emergency_override'] ?? false) === true) {
+            $this->emit($envId, null, 'operation_emergency_override', 'info', 'Override de last-AppServer (requires_restart)', ['operation_id' => $op->id, 'reasons' => $snapshot['override_reasons'] ?? []]);
+        }
 
         return ['ok' => true, 'op' => $op];
+    }
+
+    /**
+     * C5.2b — gate ADICIONAL do requires_restart (rolling). Fail-closed: (1) restart_strategy declarada e
+     * EXECUTÁVEL (só rolling; ausente/simultaneous → bloqueia — ausência NUNCA vira simultaneous); (2) todos
+     * os membros up COM process_instance_id (P1) — sem P1 não há prova de restart; (3) last-AppServer por
+     * TOPOLOGIA DE DISPONIBILIDADE (publish_unit ≠ availability): target de 1 membro → outage inevitável →
+     * override; multi-membro rolling preserva ≥ min_available up; (4) JANELA obrigatória.
+     */
+    private function rrGate(int $envId, array $consistency, array $refs, array $declaredCap, bool $emergencyOverride, bool $hasOverridePerm): array
+    {
+        $strategy = $declaredCap['restart_strategy'] ?? null;
+        $execStrat = (array) $this->cfg('rpo.executable_restart_strategies', ['rolling']);
+        if ($strategy === null || ! in_array($strategy, $execStrat, true)) {
+            return ['ok' => false, 'error' => 'restart_strategy_not_executable', 'reasons' => [$strategy === null ? 'restart_strategy_absent' : "strategy_{$strategy}_blocked"]];
+        }
+        // P1 por membro (todos up + piid).
+        $obs = $this->observedState($envId);
+        $memberPiid = [];
+        foreach ($refs as $ref) {
+            $app = $obs['appservers'][$ref] ?? null;
+            if (! $app || ($app['up'] ?? false) !== true || empty($app['process_instance_id'])) {
+                return ['ok' => false, 'error' => 'process_instance_capability_required'];
+            }
+            $memberPiid[$ref] = $app['process_instance_id'];
+        }
+        // last-AppServer por disponibilidade: rolling precisa de ≥ min_available OUTROS membros up por etapa;
+        // com N membros rolando 1 por vez, N-1 ficam up. Single-member (N<min_available+1) → outage → override.
+        $minAvail = (int) $this->cfg('rpo_promote.requires_restart.min_available', 1);
+        $violatesLast = count($refs) < ($minAvail + 1);
+        $win = $this->rrWindow();
+        $violatesWindow = ! $win['in_window'];
+        $needsOverride = $violatesLast || $violatesWindow;
+        $used = false;
+        if ($needsOverride) {
+            if (! $emergencyOverride) {
+                return ['ok' => false, 'error' => $violatesLast ? 'last_appserver_restart_blocked' : 'maintenance_window_closed'];
+            }
+            if (! $hasOverridePerm) {
+                return ['ok' => false, 'error' => 'override_permission_required'];
+            }
+            $used = true;
+        }
+
+        return ['ok' => true, 'restart_strategy' => $strategy, 'member_piid' => $memberPiid, 'window' => $win['policy'],
+            'emergency_override' => $used, 'override_reasons' => array_values(array_filter([$violatesLast ? 'last_appserver' : null, $violatesWindow ? 'window' : null]))];
+    }
+
+    /** Janela de manutenção do requires_restart (config própria; server-side; snapshot gravado na op). */
+    private function rrWindow(): array
+    {
+        $w = (array) $this->cfg('rpo_promote.requires_restart.window', []);
+        if (! (bool) ($w['enabled'] ?? false)) {
+            return ['in_window' => true, 'policy' => ['enabled' => false]];
+        }
+        $tz = $w['timezone'] ?? 'UTC';
+        $now = Carbon::now($tz);
+        $inDay = in_array((int) $now->dayOfWeek, (array) ($w['days'] ?? []), true);
+        $hm = $now->format('H:i');
+        $inTime = ((string) ($w['start'] ?? '00:00')) <= $hm && $hm <= ((string) ($w['end'] ?? '23:59'));
+
+        return ['in_window' => $inDay && $inTime, 'policy' => ['enabled' => true, 'timezone' => $tz, 'days' => (array) ($w['days'] ?? []), 'start' => $w['start'] ?? null, 'end' => $w['end'] ?? null]];
+    }
+
+    /** Timeout do rpo_promote ciente do activation_mode: requires_restart usa os timeouts MAIORES (outage+rolling). */
+    private function rpoTimeout(ConnectorOperation $op, string $key, int $default): int
+    {
+        if ($op->op_type === 'rpo_promote' && (($op->precondition_snapshot['activation_mode'] ?? null) === 'requires_restart')) {
+            return (int) $this->cfg("rpo_promote.requires_restart.$key", $default);
+        }
+
+        return $default;
     }
 
     /** Revalida os gates do rpo_promote no dispatch (topologia/capability podem ter mudado). Erro ou null. */
@@ -326,6 +414,36 @@ class ConnectorOperationService
         }
         if ($to->hash === ($c['hash'] ?? null)) {
             return 'from_equals_to'; // já publicado (backend não sabia) → reconcile nunca reaplica
+        }
+        // ── C5.2b: revalidação ADICIONAL do requires_restart no dispatch ──
+        if (($s['activation_mode'] ?? null) === 'requires_restart') {
+            $strategy = $cap['declared']['restart_strategy'] ?? null;
+            $execStrat = (array) $this->cfg('rpo.executable_restart_strategies', ['rolling']);
+            if ($strategy !== ($s['restart_strategy'] ?? null)) {
+                return 'restart_strategy_changed'; // mudou após aprovação → bloqueia
+            }
+            if ($strategy === null || ! in_array($strategy, $execStrat, true)) {
+                return 'restart_strategy_not_executable';
+            }
+            // janela + last-AppServer revalidados (salvo override autorizado da op)
+            $overrideAuthorized = ($s['emergency_override'] ?? false) === true;
+            if (! $overrideAuthorized) {
+                $minAvail = (int) $this->cfg('rpo_promote.requires_restart.min_available', 1);
+                if (count((array) ($s['members'] ?? [])) < ($minAvail + 1)) {
+                    return 'last_appserver_restart_blocked';
+                }
+                if (! $this->rrWindow()['in_window']) {
+                    return 'maintenance_window_closed';
+                }
+            }
+            // todos os membros ainda up com piid (senão não há prova de restart)
+            $obs = $this->observedState((int) $op->environment_id);
+            foreach ((array) ($s['members'] ?? []) as $ref) {
+                $app = $obs['appservers'][$ref] ?? null;
+                if (! $app || ($app['up'] ?? false) !== true || empty($app['process_instance_id'])) {
+                    return 'process_instance_capability_required';
+                }
+            }
         }
 
         return null;
@@ -619,7 +737,7 @@ class ConnectorOperationService
 
                 return null;
             }
-            $deadline = (int) config("connector.operations.{$row->op_type}.operational_deadline", 120);
+            $deadline = $this->rpoTimeout($row, 'operational_deadline', (int) config("connector.operations.{$row->op_type}.operational_deadline", 120));
             $row->update([
                 'status' => 'claimed', 'claimed_by_agent_id' => $agent->agent_id, 'claimed_at' => $now,
                 'operational_deadline_at' => $now->copy()->addSeconds($deadline),
@@ -694,6 +812,7 @@ class ConnectorOperationService
                     'rpo_hash' => $rp['hash'] ?? null,
                     'up' => (bool) ($a['up'] ?? false),
                     'publish_unit_id' => $rp['publish_unit_id'] ?? null,
+                    'process_instance_id' => $a['process_instance_id'] ?? null, // C5.2b: prova de restart (P2)
                 ];
             }
             $row->update(['postimage_snapshot' => ['kind' => 'rpo_promote', 'members' => $obs, 'received_at' => $receivedAt->toIso8601String(), 'correlated' => true]]);
@@ -726,12 +845,26 @@ class ConnectorOperationService
             if (! $row || (int) $row->environment_id !== (int) $agent->environment_id || $row->execution_id !== $executionId) {
                 return ['ok' => false, 'error' => 'invalid'];
             }
-            if ($phase === 'effect_started') {
+            // C5.2b — marcadores de efeito. Genérico effect_started (hot) + especializados publish/restart.
+            // effect_started = publish_effect_started || restart_effect_started (o primeiro seta effect_started_at).
+            if (in_array($phase, ['effect_started', 'publish_effect_started', 'restart_effect_started'], true)) {
+                if ($phase === 'restart_effect_started') {
+                    // restart exige que a publicação já tenha começado (executing) — ordem publish→restart.
+                    if ($row->status !== 'executing' || $row->publish_effect_started_at === null) {
+                        return ['ok' => false, 'error' => 'publish_not_started'];
+                    }
+                    $row->update(['restart_effect_started_at' => now()]);
+                    $this->emit((int) $row->environment_id, null, 'operation_restart_effect_started', 'info', 'Restart potencialmente iniciado (processo pode ter sido reiniciado)', ['operation_id' => $row->id]);
+
+                    return ['ok' => true, 'op' => $row->fresh()];
+                }
                 if ($row->status !== 'execution_committed') {
                     return ['ok' => false, 'error' => 'not_committed']; // effect_started exige a barreira antes
                 }
-                $row->update(['status' => 'executing', 'executing_at' => $row->executing_at ?? now(), 'effect_started_at' => now()]);
-                $this->emit((int) $row->environment_id, $row->appserver_ref, 'operation_effect_started', 'info', 'Efeito potencialmente iniciado (região de mutação do RPO)', ['operation_id' => $row->id]);
+                $upd = ['status' => 'executing', 'executing_at' => $row->executing_at ?? now(), 'effect_started_at' => now()];
+                if ($phase === 'publish_effect_started') { $upd['publish_effect_started_at'] = now(); }
+                $row->update($upd);
+                $this->emit((int) $row->environment_id, $row->appserver_ref, 'operation_effect_started', 'info', 'Efeito potencialmente iniciado (região de mutação do RPO)', ['operation_id' => $row->id, 'phase' => $phase]);
 
                 return ['ok' => true, 'op' => $row->fresh()];
             }
@@ -841,7 +974,7 @@ class ConnectorOperationService
             // Causalidade: a pós-observação não pode ser ANTERIOR à operação (timestamps precisão de segundo
             // → gte). A evidência FORTE do desfecho é a TRANSIÇÃO de estado observada.
             $causal = (bool) ($obs && $floor && $obs['received_at']->gte($floor));
-            $rw = (int) $this->cfg("{$r->op_type}.reconcile_window", 180);
+            $rw = $this->rpoTimeout($r, 'reconcile_window', (int) $this->cfg("{$r->op_type}.reconcile_window", 180));
             $windowElapsed = $floor && now()->getTimestamp() >= ($floor->getTimestamp() + $rw);
             $up = $post !== null ? (bool) ($post['up'] ?? false) : null;
             $piid = $post['process_instance_id'] ?? null;
@@ -945,6 +1078,46 @@ class ConnectorOperationService
 
                     return $r->fresh();
                 }
+
+                // ── C5.2b: requires_restart (rolling) ── sucesso NÃO é só to_hash: exige DUPLA transição causal
+                // por membro (RPO=B E process_instance_id P2≠P1 E up). Avalia RPO primeiro (partial/contradicted),
+                // ATIVAÇÃO depois. Tolerância rolling: dentro da janela, B+P1/down = em progresso → reconciling;
+                // janela vence com algum P1/down (RPO já B) → recovery_failed (publicado, NÃO ativo; nunca noop).
+                if (($r->precondition_snapshot['activation_mode'] ?? 'hot') === 'requires_restart') {
+                    $n = count($members);
+                    $memberPiid = (array) ($r->precondition_snapshot['member_piid'] ?? []); // P1 por membro
+                    if ($otherCount > 0) { // hash inesperado (≠from,≠to)
+                        $outR('contradicted', 'contradicted', 'operation_contradicted', 'fail', 'C-2: hash inesperado no target (≠from,≠to)');
+                    } elseif ($toCount === $n) { // publicação OK (RPO=B em todos) → avaliar ATIVAÇÃO (restart)
+                        $allRestarted = true;
+                        foreach ($members as $ref) {
+                            $m = $obsM[$ref]; $p2 = $m['process_instance_id'] ?? null; $p1 = $memberPiid[$ref] ?? null;
+                            if (! (($m['up'] ?? false) === true && ! empty($p2) && $p2 !== $p1)) { $allRestarted = false; }
+                        }
+                        if ($allRestarted) { // TODOS os membros reiniciaram (P2≠P1) e up → sucesso FORTE
+                            $setR('reconciled_success', 'success');
+                            RpoTarget::whereKey($r->rpo_target_id)->update(['last_successfully_published' => ['artifact_id' => $r->precondition_snapshot['to_artifact_id'] ?? null, 'hash' => $toHash, 'at' => now()->toIso8601String()]]);
+                            $this->emit((int) $r->environment_id, null, 'operation_reconciled_success', 'ok', 'C-2 confirma RPO=B + restart (P2≠P1) em todo o target (requires_restart)', ['operation_id' => $r->id, 'to' => substr((string) $toHash, 0, 12)]);
+                        } else { // B publicado mas restart incompleto (P1 persistente ou down em algum membro)
+                            if (! $windowElapsed) { return $r->fresh(); } // tolerância rolling: em progresso → aguarda
+                            $outR('contradicted', 'recovery_failed', 'operation_recovery_failed', 'fail', 'RPO=B publicado, mas restart NÃO completou em todo o target na janela (P1 persistente/down) — publicado, não ativo');
+                        }
+                    } elseif ($fromCount === $n) { // publicação não ocorreu (todos em from=A)
+                        if ($fromVerifying) {
+                            $outR('contradicted', 'contradicted', 'operation_contradicted', 'fail', 'Agente ok × RPO inalterado (from) em todo o target');
+                        } elseif ($windowElapsed) {
+                            $outR('reconciled_noop', 'noop', 'operation_reconciled_noop', 'info', 'C-2: target permaneceu em from na janela — publicação não ocorreu');
+                        } else {
+                            return $r->fresh();
+                        }
+                    } else { // mistura from/to numa unidade física ÚNICA → observação inconsistente (NÃO inferir copy parcial)
+                        if (! $windowElapsed) { return $r->fresh(); }
+                        $outR('contradicted', 'partial_apply', 'operation_partial_apply', 'fail', 'Observação inconsistente do target após publicação de unidade física indivisível (uns from, uns to)');
+                    }
+
+                    return $r->fresh();
+                }
+
                 $n = count($members);
                 if ($otherCount > 0) { // hash inesperado (≠from,≠to) em algum membro → contradição
                     $outR('contradicted', 'contradicted', 'operation_contradicted', 'fail', 'C-2: hash inesperado no target (≠from,≠to)');

@@ -134,7 +134,7 @@ class ConnectorInventoryProcessor
             $rpoCap = null;
             foreach ($inv['capabilities'] ?? [] as $c) {
                 if (($c['name'] ?? null) === 'rpo_publish') {
-                    $rpoCap = ['name' => 'rpo_publish', 'adapter' => $c['adapter'] ?? null, 'contract_version' => $c['contract_version'] ?? null, 'operations' => array_values(array_filter((array) ($c['operations'] ?? []), 'is_string')), 'activation_mode' => $c['activation_mode'] ?? null];
+                    $rpoCap = ['name' => 'rpo_publish', 'adapter' => $c['adapter'] ?? null, 'contract_version' => $c['contract_version'] ?? null, 'operations' => array_values(array_filter((array) ($c['operations'] ?? []), 'is_string')), 'activation_mode' => $c['activation_mode'] ?? null, 'restart_strategy' => $c['restart_strategy'] ?? null];
                 }
             }
 

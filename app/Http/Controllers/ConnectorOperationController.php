@@ -56,7 +56,8 @@ class ConnectorOperationController extends Controller
         $agent = $request->attributes->get('connector_agent');
         $data = $request->validate([
             'execution_id' => 'required|uuid',
-            'phase'        => 'nullable|in:execution_committed,effect_started',
+            // C5.2b — publish_effect_started / restart_effect_started especializados (requires_restart).
+            'phase'        => 'nullable|in:execution_committed,effect_started,publish_effect_started,restart_effect_started',
         ]);
         $op = $this->agentOperation($agent, $id);
         if (! $op) {
@@ -143,16 +144,22 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), 'prosight.operations.rpo.promote')) {
             return response()->json(['error' => 'forbidden'], 403);
         }
-        $data = $request->validate(['to_artifact_id' => 'required|integer', 'reason' => 'required|string|max:300']);
+        $data = $request->validate(['to_artifact_id' => 'required|integer', 'reason' => 'required|string|max:300', 'emergency_override' => 'nullable|boolean']);
         $to = RpoArtifact::find((int) $data['to_artifact_id']);
         if (! $to || ! $this->scope->canAccessCustomerId($request->user(), (int) $to->customer_id)) {
             return response()->json(['message' => 'Artefato não encontrado.'], 404);
         }
-        $r = $this->ops->createRpoPromote($target, $to, $request->user()->id, $data['reason']);
+        // C5.2b — override do last-AppServer (requires_restart single-member) exige rpo.override no MAKER.
+        $hasOverride = $this->hasPerm($request->user(), 'prosight.operations.rpo.override');
+        $r = $this->ops->createRpoPromote($target, $to, $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride);
         if (! $r['ok']) {
-            $code = $r['error'] === 'operation_in_flight' ? 409 : 422;
+            $code = match ($r['error']) {
+                'operation_in_flight' => 409,
+                'override_permission_required' => 403,
+                default => 422,
+            };
 
-            return response()->json(['error' => $r['error'], 'reasons' => $r['reasons'] ?? null] + array_filter(['activation_mode' => $r['activation_mode'] ?? null]), $code);
+            return response()->json(['error' => $r['error'], 'reasons' => $r['reasons'] ?? null] + array_filter(['activation_mode' => $r['activation_mode'] ?? null, 'restart_strategy' => $r['restart_strategy'] ?? null]), $code);
         }
 
         return response()->json(['data' => $this->adminView($r['op'])], 201);
@@ -215,6 +222,12 @@ class ConnectorOperationController extends Controller
         }
         if (! $this->hasPerm($request->user(), $this->approvePermFor($op))) {
             return response()->json(['error' => 'forbidden'], 403); // maker-checker: capability de aprovação por tipo
+        }
+        // C5.2b — se a operação usou emergency_override (last-AppServer requires_restart), o CHECKER também
+        // precisa de rpo.override (maker E checker) — impede aprovar exceção por quem não tem autoridade.
+        if ($action === 'approve' && $op->op_type === 'rpo_promote' && ($op->precondition_snapshot['emergency_override'] ?? false) === true
+            && ! $this->hasPerm($request->user(), 'prosight.operations.rpo.override')) {
+            return response()->json(['error' => 'override_permission_required'], 403);
         }
         $overridePerm = ['stop' => 'prosight.operations.stop.override', 'restart' => 'prosight.operations.restart.override'][$op->op_type] ?? null;
         $hasOverride = $overridePerm !== null && $this->hasPerm($request->user(), $overridePerm);
@@ -359,13 +372,21 @@ class ConnectorOperationController extends Controller
             ],
             'qualification' => $isRpo ? ($s['qualification'] ?? null) : null, // só rollback (autoridade nomeada)
             'target' => $isRpo ? ['target_id' => $o->rpo_target_id, 'members' => $s['members'] ?? [], 'publish_unit_id' => $s['publish_unit_id'] ?? null] : ['appserver_ref' => $o->appserver_ref],
-            'capability' => $isRpo ? ['activation_mode' => $s['activation_mode'] ?? null] : null,
+            'capability' => $isRpo ? ['activation_mode' => $s['activation_mode'] ?? null, 'restart_strategy' => $s['restart_strategy'] ?? null] : null,
             'transition' => ['from_hash' => $s['from_hash'] ?? null, 'to_hash' => $s['to_hash'] ?? null, 'to_artifact_id' => $s['to_artifact_id'] ?? null],
+            // C5.2b — evidência de restart: P1 congelado (pré) e P2 observado (pós) por membro; success exige P2≠P1.
+            'restart' => (($s['activation_mode'] ?? null) === 'requires_restart') ? [
+                'strategy' => $s['restart_strategy'] ?? null,
+                'member_from_piid' => $s['member_piid'] ?? null, // P1 por membro
+                'member_to_piid' => collect(($post['members'] ?? []))->map(fn ($m) => $m['process_instance_id'] ?? null)->all(), // P2 observado
+            ] : null,
             'execution' => [
                 'execution_id' => $o->execution_id,
                 'claimed_at' => $o->claimed_at?->toIso8601String(),
                 'execution_committed_at' => $o->execution_committed_at?->toIso8601String(),
                 'effect_started_at' => $o->effect_started_at?->toIso8601String(),
+                'publish_effect_started_at' => $o->publish_effect_started_at?->toIso8601String(),
+                'restart_effect_started_at' => $o->restart_effect_started_at?->toIso8601String(),
             ],
             'correlated_collection' => $correlated,
             'decision' => [
@@ -441,6 +462,12 @@ class ConnectorOperationController extends Controller
                 'publish_unit_id' => $s['publish_unit_id'] ?? null,
                 'members'         => $s['members'] ?? [],
             ];
+            // C5.2b — requires_restart: o agente precisa da estratégia (rolling) e da pré-imagem P1 por membro
+            // (para orquestrar o rolling com readiness local e journalizar publish/restart). Sem bytes/path.
+            if (($s['activation_mode'] ?? null) === 'requires_restart') {
+                $view['rpo']['restart_strategy'] = $s['restart_strategy'] ?? null;
+                $view['rpo']['member_from_piid'] = $s['member_piid'] ?? [];
+            }
         }
 
         return $view;
@@ -464,6 +491,10 @@ class ConnectorOperationController extends Controller
             'precondition_snapshot' => $o->precondition_snapshot, 'postimage_snapshot' => $o->postimage_snapshot,
             'claimed_at' => $o->claimed_at?->toIso8601String(), 'execution_committed_at' => $o->execution_committed_at?->toIso8601String(),
             'effect_started_at' => $o->effect_started_at?->toIso8601String(),
+            'publish_effect_started_at' => $o->publish_effect_started_at?->toIso8601String(),
+            'restart_effect_started_at' => $o->restart_effect_started_at?->toIso8601String(),
+            'activation_mode' => $o->precondition_snapshot['activation_mode'] ?? null,
+            'restart_strategy' => $o->precondition_snapshot['restart_strategy'] ?? null,
             'operational_deadline_at' => $o->operational_deadline_at?->toIso8601String(),
             'reconciled_at' => $o->reconciled_at?->toIso8601String(), 'created_at' => $o->created_at?->toIso8601String(),
         ];

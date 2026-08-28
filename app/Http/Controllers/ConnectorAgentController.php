@@ -318,6 +318,9 @@ class ConnectorAgentController extends Controller
             // C5.2 — activation_mode é PROPRIEDADE da capability (não escolha do operador). Só 'hot' é
             // executável nesta fase; ausente/desconhecido → fail-closed (não promovível).
             'capabilities.*.activation_mode'   => 'nullable|in:hot,requires_restart,requires_stop_start',
+            // C5.2b — restart_strategy (só relevante p/ requires_restart). AUSENTE nunca vira simultaneous
+            // (fail-closed no gate). Só 'rolling' é executável nesta versão.
+            'capabilities.*.restart_strategy'  => 'nullable|in:rolling,simultaneous',
         ]);
         // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
         if (isset($data['collect_error'])) {

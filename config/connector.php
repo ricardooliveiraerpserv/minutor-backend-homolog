@@ -89,9 +89,12 @@ return [
                 'prod' => (int) env('CONNECTOR_RPO_APPROVALS_PROD', 2),
                 'default' => (int) env('CONNECTOR_RPO_APPROVALS_DEFAULT', 1),
             ],
-            // C5.2 — activation modes EXECUTÁVEIS nesta fase: SÓ 'hot' (sem outage deliberado; sem C4 interno,
-            // sem last-AppServer/janela). requires_restart/requires_stop_start ficam para C5.2b (bloqueados aqui).
-            'executable_activation_modes' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_RPO_EXEC_ACTIVATION_MODES', 'hot'))), 'strlen')),
+            // C5.2/C5.2b — activation modes EXECUTÁVEIS: 'hot' (C5.2) + 'requires_restart' (C5.2b, SÓ rolling).
+            // requires_stop_start permanece FORA. Fail-closed: modo fora desta lista → não executável.
+            'executable_activation_modes' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_RPO_EXEC_ACTIVATION_MODES', 'hot,requires_restart'))), 'strlen')),
+            // C5.2b — restart_strategy EXECUTÁVEL: SÓ 'rolling' (simultaneous BLOQUEADO nesta versão).
+            // AUSÊNCIA de strategy NUNCA seleciona simultaneous: fica FORA desta allowlist → não executável.
+            'executable_restart_strategies' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_RPO_EXEC_RESTART_STRATEGIES', 'rolling'))), 'strlen')),
         ],
 
         // C5.2 — rpo_promote (SÓ activation_mode=hot). Timeouts cobrem resolve/validate/stage/apply/observe.
@@ -100,6 +103,24 @@ return [
         'rpo_promote' => [
             'operational_deadline' => (int) env('CONNECTOR_OP_RPO_DEADLINE', 180),
             'reconcile_window'     => (int) env('CONNECTOR_OP_RPO_RECONCILE_WINDOW', 300),
+            // C5.2b — requires_restart tem OUTAGE (o restart derruba processos) → timeouts MAIORES (publish +
+            // rolling de N membros) + JANELA de manutenção OBRIGATÓRIA + presença online + last-AppServer.
+            // Distinto do hot (que não tem window/last-AppServer). Só ativo quando activation_mode=requires_restart.
+            'requires_restart' => [
+                'operational_deadline' => (int) env('CONNECTOR_OP_RPO_RR_DEADLINE', 600),
+                'reconcile_window'     => (int) env('CONNECTOR_OP_RPO_RR_RECONCILE_WINDOW', 600),
+                // Rolling exige ≥ min_available membros observados up durante cada etapa (topologia de
+                // DISPONIBILIDADE, distinta da unidade física de publicação). Target de 1 membro → outage
+                // inevitável → last-AppServer bloqueia sem override.
+                'min_available' => (int) env('CONNECTOR_OP_RPO_RR_MIN_AVAILABLE', 1),
+                'window' => [
+                    'enabled'  => filter_var(env('CONNECTOR_OP_RPO_RR_WINDOW_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+                    'timezone' => env('CONNECTOR_OP_RPO_RR_WINDOW_TZ', 'America/Sao_Paulo'),
+                    'days'     => array_map('intval', array_filter(explode(',', (string) env('CONNECTOR_OP_RPO_RR_WINDOW_DAYS', '0,1,2,3,4,5,6')), 'strlen')),
+                    'start'    => env('CONNECTOR_OP_RPO_RR_WINDOW_START', '00:00'),
+                    'end'      => env('CONNECTOR_OP_RPO_RR_WINDOW_END', '23:59'),
+                ],
+            ],
         ],
         // C5.3 — rpo_rollback (SÓ hot): MESMA transição física hot from→to do promote; muda a AUTORIDADE do
         // destino (qualificação known_good CONTEXTUAL válida, nomeada por qualification_id). Reusa timeouts.

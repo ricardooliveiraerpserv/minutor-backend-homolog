@@ -164,6 +164,9 @@ class PermissionService
         // Conector-5.3 — rollback GOVERNADO de RPO (SÓ hot). Granularidade PRÓPRIA (NÃO herda de promote);
         // aprovação compartilha rpo.approve. Recuperação p/ known_good contextual válido (qualification_id).
         'prosight.operations.rpo.rollback',
+        // Conector-5.2b — override do last-AppServer p/ requires_restart (target de 1 membro = outage inevitável).
+        // Exigido do MAKER E do CHECKER (como stop/restart.override). Sem ele, single-member requires_restart bloqueia.
+        'prosight.operations.rpo.override',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -281,6 +284,8 @@ class PermissionService
             'prosight.operations.rpo.approve',
             // Conector-5.3 — rollback governado de RPO (hot): permissão própria.
             'prosight.operations.rpo.rollback',
+            // Conector-5.2b — override do last-AppServer (requires_restart single-member).
+            'prosight.operations.rpo.override',
         ];
     }
 
