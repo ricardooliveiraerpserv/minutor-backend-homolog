@@ -611,7 +611,13 @@ class TimesheetController extends Controller
                 $effortExpr = $inflate
                     ? 'effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'
                     : 'effort_minutes';
-                $totalEffortMinutes = (int) round((clone $query)->sum(\Illuminate\Support\Facades\DB::raw($effortExpr)));
+                $totalQ = (clone $query);
+                if ($hideClientPct) {
+                    // Consultor/parceiro: atraso ainda NÃO liberado não conta nas horas dele
+                    // (igual pagamento/banco). Some do total; a linha continua visível na lista.
+                    $totalQ->where(fn ($q) => $q->whereNull('late_approved_at')->orWhere('consultant_released', true));
+                }
+                $totalEffortMinutes = (int) round($totalQ->sum(\Illuminate\Support\Facades\DB::raw($effortExpr)));
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;
 
