@@ -176,6 +176,14 @@ class PermissionService
         'prosight.compile.request',
         'prosight.compile.view',
         'prosight.compile.handoff',
+        // PATCH — produção governada de artefato (base RPO + .ptm = candidato); Patch NÃO publica (C5 publica).
+        // PRODUZIR ≠ APROVAR ≠ PUBLICAR: maker-checker NÃO obrigatório p/ produzir candidate. Domínio próprio.
+        // view=ver inputs/requests/execuções/candidatos; request=criar input/request; execute=executar (P2);
+        // register=entregar candidate ao registry C5 (register é autoridade C5).
+        'prosight.operations.patch.view',
+        'prosight.operations.patch.request',
+        'prosight.operations.patch.execute',
+        'prosight.operations.patch.register',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',

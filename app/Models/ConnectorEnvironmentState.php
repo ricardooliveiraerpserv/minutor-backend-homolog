@@ -23,6 +23,8 @@ class ConnectorEnvironmentState extends Model
         'rpo_capability',
         // C6 — capability de compilação declarada pelo agente (aditiva; NÃO mistura com rpo_capability).
         'compile_capability',
+        // PATCH — capability de patch declarada pelo agente (física declarada; aditiva).
+        'patch_capability',
     ];
 
     protected $casts = [
@@ -33,5 +35,6 @@ class ConnectorEnvironmentState extends Model
         'inventory_observed_at' => 'datetime',
         'rpo_capability'        => 'array',
         'compile_capability'    => 'array',
+        'patch_capability'      => 'array',
     ];
 }

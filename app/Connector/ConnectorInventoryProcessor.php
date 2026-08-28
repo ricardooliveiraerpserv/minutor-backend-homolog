@@ -157,6 +157,21 @@ class ConnectorInventoryProcessor
                     ];
                 }
             }
+            // PATCH — capability de patch declarada pelo agente (aditiva; física DECLARADA aqui, não inferida).
+            $patchCap = null;
+            foreach ($inv['capabilities'] ?? [] as $c) {
+                if (($c['name'] ?? null) === 'rpo_patch') {
+                    $patchCap = [
+                        'name' => 'rpo_patch',
+                        'adapter' => $c['adapter'] ?? null,
+                        'contract_version' => $c['contract_version'] ?? null,
+                        'workspace_units' => array_values(array_filter((array) ($c['workspace_units'] ?? []), 'is_string')),
+                        'requirements' => is_array($c['requirements'] ?? null) ? $c['requirements'] : null, // requires_stop/exclusive/restart/defrag
+                        'supported_strategy' => $c['supported_strategy'] ?? null,
+                        'compatible_release' => $c['compatible_release'] ?? null,
+                    ];
+                }
+            }
 
             ConnectorEnvironmentState::updateOrCreate(
                 ['environment_id' => $envId],
@@ -167,6 +182,7 @@ class ConnectorInventoryProcessor
                     'inventory_observed_at' => $observedAt,
                     'rpo_capability'        => $rpoCap,
                     'compile_capability'    => $compileCap,
+                    'patch_capability'      => $patchCap,
                 ]
             );
 

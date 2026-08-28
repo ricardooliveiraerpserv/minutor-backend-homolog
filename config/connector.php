@@ -170,4 +170,21 @@ return [
         'operational_deadline' => (int) env('CONNECTOR_COMPILE_DEADLINE', 600),
         'transport_lease' => (int) env('CONNECTOR_COMPILE_LEASE', 60),
     ],
+
+    // PATCH — produção GOVERNADA de artefato (base RPO + .ptm = candidato). Patch NÃO publica RPO (C5 publica).
+    // Capability PRÓPRIA (rpo_patch), NÃO mistura com compile/rpo_publish. Três modos SEM fallback silencioso.
+    'patch' => [
+        'supported_capabilities' => [
+            ['name' => 'rpo_patch', 'contract_version' => 1],
+        ],
+        // Modos EXECUTÁVEIS. Homolog usa 'simulated'. 'live' pode ser solicitado, mas o LivePatchAdapter bloqueia
+        // enquanto live_ready=false E não houver fonte física de .ptm homologada (sem fake).
+        'executable_modes' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_PATCH_EXEC_MODES', 'simulated,live'))), 'strlen')),
+        'allow_fixture' => filter_var(env('CONNECTOR_PATCH_ALLOW_FIXTURE', false), FILTER_VALIDATE_BOOLEAN),
+        // live SÓ pronto após validação física (adapter TOTVS real + fonte .ptm). Default false → unavailable.
+        'live_ready' => filter_var(env('CONNECTOR_PATCH_LIVE_READY', false), FILTER_VALIDATE_BOOLEAN),
+        // Física DECLARADA pela capability (não inferida do legado): a UI não escolhe stop/exclusive/restart/defrag.
+        'operational_deadline' => (int) env('CONNECTOR_PATCH_DEADLINE', 600),
+        'transport_lease' => (int) env('CONNECTOR_PATCH_LEASE', 60),
+    ],
 ];

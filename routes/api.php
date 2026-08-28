@@ -784,6 +784,17 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
             Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
         });
+        // PATCH P1 — produção GOVERNADA de artefato (base RPO + .ptm = candidato). NÃO publica/promove/registra em P1.
+        Route::middleware('permission.or.admin:prosight.operations.patch.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/patch/availability', [\App\Http\Controllers\PatchController::class, 'availability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'inputs'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'requests'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.patch.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'createRequest'])->whereNumber('environmentId');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -2037,6 +2048,17 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
             Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
             Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
+        });
+        // PATCH P1 — produção GOVERNADA de artefato (base RPO + .ptm = candidato). NÃO publica/promove/registra em P1.
+        Route::middleware('permission.or.admin:prosight.operations.patch.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/patch/availability', [\App\Http\Controllers\PatchController::class, 'availability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'inputs'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'requests'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.patch.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'createRequest'])->whereNumber('environmentId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
