@@ -1204,8 +1204,8 @@ class ExpenseController extends Controller
         $user = Auth::user();
         $expense = Expense::findOrFail($id);
 
-        // Permissão: dono, admin ou coordenador do projeto
-        if (!$user->isAdmin() && $expense->user_id !== $user->id) {
+        // Permissão: dono, admin, administrativo (fechamento) ou coordenador do projeto
+        if (!$user->isAdmin() && !$user->isAdministrativo() && $expense->user_id !== $user->id) {
             if (!$expense->canBeApprovedBy($user)) {
                 return response()->json(['message' => 'Sem permissão'], 403);
             }

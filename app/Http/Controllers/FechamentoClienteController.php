@@ -880,7 +880,7 @@ class FechamentoClienteController extends Controller
         // Fechamento do cliente lista as despesas a cobrar (charge_client) APROVADAS.
         // Pendente/ajuste/rejeitado ficam de fora (a despesa só entra no fechamento depois
         // de aprovada). is_paid (reembolso ao consultor) é controle interno e não filtra aqui.
-        return Expense::with([
+        $expenses = Expense::with([
             'user:id,name',
             'project:id,name,code',
             'category:id,name',
@@ -891,7 +891,17 @@ class FechamentoClienteController extends Controller
             ->whereHas('project', fn ($q) => $q->where('customer_id', $customerId)->where('is_investimento_comercial', false))
             ->orderBy('expense_date')
             ->orderBy('id')
-            ->get()
+            ->get();
+
+        // Quais despesas têm comprovante (anexo category=receipt) — batch, sem N+1.
+        $withReceipt = \App\Models\Attachment::query()
+            ->where('entity_type', 'EXPENSE')
+            ->whereIn('entity_id', $expenses->pluck('id')->all() ?: [0])
+            ->where('category', 'receipt')
+            ->whereNull('deleted_at')
+            ->pluck('entity_id')->unique()->flip();
+
+        return $expenses
             ->map(fn ($e) => [
                 'id'          => $e->id,
                 'data'        => $e->expense_date->format('Y-m-d'),
@@ -900,6 +910,7 @@ class FechamentoClienteController extends Controller
                 'colaborador' => $e->user?->name ?? '—',
                 'projeto'     => $e->project?->name ?? '—',
                 'valor'       => (float) $e->amount + $surcharge,
+                'has_receipt' => $withReceipt->has($e->id),
             ])
             ->toArray();
     }
@@ -1675,6 +1686,7 @@ class FechamentoClienteController extends Controller
             'project_id' => 'nullable|integer', // filtro de contrato (projeto pai)
             'anexos'     => 'nullable|array',
             'anexos.*'   => 'file|max:10240', // até 10 MB cada (Graph soma anexos ~3 MB no total)
+            'incluir_comprovantes' => 'nullable|boolean', // anexar os comprovantes das despesas do período
         ], [
             'emails.required' => 'Informe ao menos um e-mail de destino antes de enviar.',
             'emails.array'    => 'Lista de e-mails inválida.',
@@ -1759,12 +1771,31 @@ class FechamentoClienteController extends Controller
             $extraPaths[] = $dir . '/' . $name;
         }
 
-        // Limite de envio: via Graph os anexos (PDF + XLSX + extras) somam até ~3 MB.
+        // COMPROVANTES das despesas do período (opcional, só modo despesa). São os arquivos
+        // ORIGINAIS no disco public → vão em $receiptPaths, que NUNCA é apagado na limpeza
+        // (só o $extraPaths, que são cópias temporárias, é removido).
+        $receiptPaths = [];
+        if ($mode === 'despesa' && $request->boolean('incluir_comprovantes')) {
+            $expenseIds = collect($this->despesasData((int) $customer->id, $yearMonth, $yearMonth))
+                ->where('has_receipt', true)->pluck('id')->all();
+            if ($expenseIds) {
+                $atts = \App\Models\Attachment::query()
+                    ->where('entity_type', 'EXPENSE')->whereIn('entity_id', $expenseIds)
+                    ->where('category', 'receipt')->whereNull('deleted_at')
+                    ->orderBy('entity_id')->orderBy('id')->get();
+                foreach ($atts as $att) {
+                    $abs = \Illuminate\Support\Facades\Storage::disk('public')->path($att->storage_path);
+                    if (is_file($abs)) { $receiptPaths[] = $abs; }
+                }
+            }
+        }
+
+        // Limite de envio: via Graph os anexos (PDF + XLSX + extras + comprovantes) somam até ~3 MB.
         // Bloqueia ANTES de enviar — não deixa passar do limite.
         if (\App\Services\GraphMailer::enabled()) {
             $totalBytes = (is_file($files['pdf_full'])  ? (int) filesize($files['pdf_full'])  : 0)
                         + (is_file($files['xlsx_full']) ? (int) filesize($files['xlsx_full']) : 0);
-            foreach ($extraPaths as $p) {
+            foreach (array_merge($extraPaths, $receiptPaths) as $p) {
                 $totalBytes += is_file($p) ? (int) filesize($p) : 0;
             }
             if ($totalBytes > \App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
@@ -1773,7 +1804,7 @@ class FechamentoClienteController extends Controller
                 $totMb = number_format($totalBytes / 1048576, 1, ',', '.');
                 return response()->json([
                     'success' => false,
-                    'message' => "Anexos excedem o limite de envio: {$totMb} MB de {$maxMb} MB (inclui o relatório PDF e a planilha). Remova ou reduza os anexos extras.",
+                    'message' => "Anexos excedem o limite de envio: {$totMb} MB de {$maxMb} MB (inclui relatório PDF, planilha e comprovantes). Reduza os anexos extras ou desmarque os comprovantes.",
                 ], 422);
             }
         }
@@ -1809,7 +1840,7 @@ class FechamentoClienteController extends Controller
                 fromAddress:     $mc['from_address'],
                 fromName:        $mc['from_name'],
                 mode:            $mode,
-                extraAttachments: $extraPaths,
+                extraAttachments: array_merge($extraPaths, $receiptPaths),
             );
 
             // Microsoft Graph (Send As do remetente) quando configurado; senão, SMTP/NF-e atual.
@@ -1820,7 +1851,7 @@ class FechamentoClienteController extends Controller
                     $cc,
                     $subject,
                     $mailable->render(),
-                    array_merge([$files['pdf_full'], $files['xlsx_full']], $extraPaths),
+                    array_merge([$files['pdf_full'], $files['xlsx_full']], $extraPaths, $receiptPaths),
                 );
             } else {
                 Mail::mailer($mc['mailer'])->to($to)->cc($cc)->send($mailable);
@@ -1832,7 +1863,7 @@ class FechamentoClienteController extends Controller
 
             Log::info('Fechamento de cliente enviado por e-mail', [
                 'cliente' => $customer->id, 'remetente' => $sender->id,
-                'to' => $to, 'cc' => $cc, 'total' => $totalValue, 'anexos_extras' => count($extraPaths),
+                'to' => $to, 'cc' => $cc, 'total' => $totalValue, 'anexos_extras' => count($extraPaths), 'comprovantes' => count($receiptPaths),
             ]);
             foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
         } catch (\Throwable $e) {

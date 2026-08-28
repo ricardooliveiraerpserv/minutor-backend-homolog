@@ -201,6 +201,8 @@ class GraphMailer
         return match ($ext) {
             'pdf'  => 'application/pdf',
             'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png'  => 'image/png',
             default => 'application/octet-stream',
         };
     }
