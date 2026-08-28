@@ -9,7 +9,7 @@ class ConnectorWorkspaceLock extends Model
 {
     protected $table = 'connector_workspace_locks';
     protected $guarded = ['id'];
-    protected $casts = ['acquired_at' => 'datetime', 'released_at' => 'datetime'];
+    protected $casts = ['acquired_at' => 'datetime', 'released_at' => 'datetime', 'lease_expires_at' => 'datetime', 'reconcile_required' => 'boolean'];
 
     public const ST_ACTIVE = 'active';
     public const ST_RELEASED = 'released';

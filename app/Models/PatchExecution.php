@@ -29,4 +29,15 @@ class PatchExecution extends Model
     public const ST_INDETERMINATE = 'indeterminate';
     public const ST_CONTRADICTED = 'contradicted';
     public const ST_CANCELLED = 'cancelled';
+
+    /** Estados finais: execução encerrada. (INDETERMINATE é final p/ a execução, mas SEGURA o workspace — reconcile_required no lock.) */
+    public const TERMINAL = [
+        self::ST_CANDIDATE, self::ST_FAILED, self::ST_PARTIAL,
+        self::ST_INDETERMINATE, self::ST_CONTRADICTED, self::ST_CANCELLED,
+    ];
+
+    public function items()
+    {
+        return $this->hasMany(PatchExecutionItem::class, 'patch_execution_id')->orderBy('batch_order');
+    }
 }

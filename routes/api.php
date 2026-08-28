@@ -137,6 +137,14 @@ Route::prefix('v1')->group(function () {
     Route::post('/connector/operations/{id}/result', [\App\Http\Controllers\ConnectorOperationController::class, 'result'])
         ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.result');
 
+    // PATCH P2 — execução governada (agente): claim single-shot + ACK de marcadores + result causal. SIMULADO.
+    Route::get('/connector/patch-executions/next', [\App\Http\Controllers\PatchController::class, 'next'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.next');
+    Route::post('/connector/patch-executions/{id}/ack', [\App\Http\Controllers\PatchController::class, 'ack'])
+        ->whereNumber('id')->middleware(['throttle:240,1', 'connector.agent'])->name('connector.patch.ack');
+    Route::post('/connector/patch-executions/{id}/result', [\App\Http\Controllers\PatchController::class, 'result'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.result');
+
     // 🔗 PORTAL DE PROPOSTAS — acesso público por token (sem login). Throttle alto: o portal faz muito
     // tracking (página/seção/heartbeat) + polling; o token de 48 chars já é a barreira anti-brute-force.
     Route::middleware('throttle:300,1')->group(function () {
@@ -790,10 +798,18 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'inputs'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'requests'])->whereNumber('environmentId');
             Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
+            // PATCH P2 — visualizar execução (marcadores + itens). SIMULADO explícito nos labels.
+            Route::get('/prosight/patch/executions/{id}', [\App\Http\Controllers\PatchController::class, 'showExecution'])->whereNumber('id');
         });
         Route::middleware('permission:prosight.operations.patch.request')->group(function () {
             Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
             Route::post('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'createRequest'])->whereNumber('environmentId');
+        });
+        // PATCH P2 — EXECUÇÃO governada (dispatch/reconcile). Perm PRÓPRIA patch.execute (não herda request). SIMULADO.
+        Route::middleware('permission:prosight.operations.patch.execute')->group(function () {
+            Route::post('/prosight/patch/requests/{id}/execute', [\App\Http\Controllers\PatchController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/reconcile', [\App\Http\Controllers\PatchController::class, 'reconcile'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/resolve', [\App\Http\Controllers\PatchController::class, 'resolve'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -2055,10 +2071,18 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'inputs'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'requests'])->whereNumber('environmentId');
             Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
+            // PATCH P2 — visualizar execução (marcadores + itens). SIMULADO explícito nos labels.
+            Route::get('/prosight/patch/executions/{id}', [\App\Http\Controllers\PatchController::class, 'showExecution'])->whereNumber('id');
         });
         Route::middleware('permission:prosight.operations.patch.request')->group(function () {
             Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
             Route::post('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'createRequest'])->whereNumber('environmentId');
+        });
+        // PATCH P2 — EXECUÇÃO governada (dispatch/reconcile). Perm PRÓPRIA patch.execute (não herda request). SIMULADO.
+        Route::middleware('permission:prosight.operations.patch.execute')->group(function () {
+            Route::post('/prosight/patch/requests/{id}/execute', [\App\Http\Controllers\PatchController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/reconcile', [\App\Http\Controllers\PatchController::class, 'reconcile'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/resolve', [\App\Http\Controllers\PatchController::class, 'resolve'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
