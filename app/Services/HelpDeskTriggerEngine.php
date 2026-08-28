@@ -374,7 +374,8 @@ class HelpDeskTriggerEngine
         return match ($target) {
             'responsavel' => optional($ticket->assignee)->email,
             'cliente'     => self::clientEmail($ticket),
-            'requester'   => optional($ticket->requester)->email,
+            // Solicitante: usuário vinculado OU a coluna requester_email (chamados por e-mail não têm user).
+            'requester'   => optional($ticket->requester)->email ?: ($ticket->requester_email ?: null),
             default       => null,
         };
     }
@@ -383,7 +384,8 @@ class HelpDeskTriggerEngine
     {
         if ($email = optional($ticket->contact)->email) return $email;
         $led = HelpDeskIngestedEmail::where('ticket_id', $ticket->id)->whereNotNull('from_email')->orderBy('id')->first();
-        return $led?->from_email ?? optional($ticket->requester)->email;
+        // Fallback final: e-mail do solicitante (relação) OU a coluna requester_email (nunca "sem destinatário").
+        return $led?->from_email ?: (optional($ticket->requester)->email ?: ($ticket->requester_email ?: null));
     }
 
     private static function senderAccount(?int $id, HelpDeskTicket $ticket): ?HelpDeskEmailAccount
