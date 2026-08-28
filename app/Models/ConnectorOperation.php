@@ -17,6 +17,7 @@ class ConnectorOperation extends Model
     protected $casts = [
         'precondition_snapshot'      => 'array',
         'postimage_snapshot'         => 'array',
+        'resolution'                 => 'array',
         'approved_at'                => 'datetime',
         'dispatchable_at'            => 'datetime',
         'transport_lease_expires_at' => 'datetime',

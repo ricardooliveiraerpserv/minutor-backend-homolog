@@ -711,6 +711,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
             Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
+            // C5.4 — auditoria PONTA-A-PONTA read-only (reconstrução + timeline correlacionada). Perm view.
+            Route::get('/prosight/operations/{id}/audit', [\App\Http\Controllers\ConnectorOperationController::class, 'audit'])->whereNumber('id');
         });
         // Criar/cancelar operação destrutiva — permissão GRANULAR POR TIPO (operations.start | operations.stop)
         // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
@@ -1925,6 +1927,8 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
             Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
+            // C5.4 — auditoria PONTA-A-PONTA read-only (reconstrução + timeline correlacionada). Perm view.
+            Route::get('/prosight/operations/{id}/audit', [\App\Http\Controllers\ConnectorOperationController::class, 'audit'])->whereNumber('id');
         });
         // Criar/cancelar operação destrutiva — permissão GRANULAR POR TIPO (operations.start | operations.stop)
         // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).

@@ -535,27 +535,35 @@ class ConnectorOperationService
     }
 
     /**
-     * Resolução HUMANA de contradicted/unresolved (ciclo fecha em terminal; autoridade=human). O sistema
-     * NUNCA infere sozinho o desfecho ambíguo — um humano decide success|noop|failed. Mapeia p/ os terminais
-     * existentes (sem novo estado/índice). Congelamento do alvo só termina aqui.
+     * C5.4 — Resolução HUMANA GOVERNADA de um incidente (contradicted/partial_apply/recovery_failed/unresolved).
+     * FECHA o incidente e remove a trava — NÃO reescreve o passado para "success" (autoridade física = C-2;
+     * disposition ∈ {failed, noop}, SEM success). PRESERVA a evidência observada (reconciliation_state NÃO é
+     * sobrescrito). Exige reason. Grava `resolution` first-class {disposition, reason, resolved_by, at,
+     * before:{status,reconciliation_state,outcome_authority}} — evidência anterior intacta. Emite timeline.
      */
-    public function resolve(ConnectorOperation $op, int $resolver, string $resolution): array
+    public function resolve(ConnectorOperation $op, int $resolver, string $disposition, string $reason): array
     {
-        $map = ['success' => 'reconciled_success', 'noop' => 'reconciled_noop', 'failed' => 'failed'];
-        if (! isset($map[$resolution])) {
+        $map = ['noop' => 'reconciled_noop', 'failed' => 'failed']; // SEM 'success' (nunca reescreve p/ sucesso)
+        if (! isset($map[$disposition])) {
             return ['ok' => false, 'error' => 'invalid_resolution'];
         }
+        if (trim($reason) === '') {
+            return ['ok' => false, 'error' => 'reason_required'];
+        }
 
-        return DB::transaction(function () use ($op, $resolver, $resolution, $map) {
+        return DB::transaction(function () use ($op, $resolver, $disposition, $reason, $map) {
             $row = ConnectorOperation::whereKey($op->id)->lockForUpdate()->first();
+            // status='contradicted' cobre também partial_apply/recovery_failed (reconciliation_state); 'unresolved'.
             if (! $row || ! in_array($row->status, ['contradicted', 'unresolved'], true)) {
                 return ['ok' => false, 'error' => 'not_resolvable']; // só resolve ambiguidade pendente de humano
             }
+            $before = ['status' => $row->status, 'reconciliation_state' => $row->reconciliation_state, 'outcome_authority' => $row->outcome_authority];
             $row->update([
-                'status' => $map[$resolution], 'outcome_authority' => 'human', 'resolved_by' => $resolver, 'reconciled_at' => now(),
-                'reconciliation_state' => $resolution === 'failed' ? 'contradicted' : $resolution,
+                'status' => $map[$disposition], 'outcome_authority' => 'human', 'resolved_by' => $resolver, 'reconciled_at' => now(),
+                // reconciliation_state PRESERVADO (evidência observada não é alterada retroativamente).
+                'resolution' => ['disposition' => $disposition, 'reason' => mb_substr($reason, 0, 300), 'resolved_by' => $resolver, 'at' => now()->toIso8601String(), 'before' => $before],
             ]);
-            $this->emit((int) $row->environment_id, $row->appserver_ref, 'operation_resolved', 'info', "Resolvido por humano: {$resolution}", ['operation_id' => $row->id, 'resolution' => $resolution]);
+            $this->emit((int) $row->environment_id, $row->appserver_ref, 'operation_resolved', 'info', "Incidente resolvido por humano: {$disposition}", ['operation_id' => $row->id, 'disposition' => $disposition, 'resolved_by' => $resolver, 'reason' => mb_substr($reason, 0, 200), 'preserved_reconciliation_state' => $before['reconciliation_state']]);
 
             return ['ok' => true, 'op' => $row->fresh()];
         });

@@ -302,13 +302,92 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), $this->approvePermFor($op))) {
             return response()->json(['error' => 'forbidden'], 403);
         }
-        $data = $request->validate(['resolution' => 'required|in:success,noop,failed']);
-        $r = $this->ops->resolve($op, $request->user()->id, $data['resolution']);
+        // C5.4 — disposition SEM 'success' (autoridade física = C-2); reason OBRIGATÓRIO (governança/auditoria).
+        $data = $request->validate(['resolution' => 'required|in:noop,failed', 'reason' => 'required|string|max:300']);
+        $r = $this->ops->resolve($op, $request->user()->id, $data['resolution'], $data['reason']);
         if (! $r['ok']) {
-            return response()->json(['error' => $r['error']], $r['error'] === 'invalid_resolution' ? 422 : 409);
+            $code = in_array($r['error'], ['invalid_resolution', 'reason_required'], true) ? 422 : 409;
+
+            return response()->json(['error' => $r['error']], $code);
         }
 
         return response()->json(['data' => $this->adminView($r['op'])]);
+    }
+
+    /**
+     * GET /prosight/operations/{id}/audit — C5.4: reconstrução PONTA-A-PONTA read-only de uma operação (perm
+     * view). Encadeia requester→aprovações→qualificação/artefato→target/membros→capability→from/to→claim→
+     * execution_id→execution_committed→effect_started→coleta correlacionada→observado→decisão→resolução humana,
+     * junto da timeline de connector_events correlacionados. SEM path/credencial/bytes de RPO (só hashes/ids).
+     */
+    public function audit(Request $request, int $id): JsonResponse
+    {
+        $op = $this->scopedOperation($request, $id);
+        if (! $op) {
+            return response()->json(['message' => 'Operação não encontrada.'], 404);
+        }
+        if (! $this->hasPerm($request->user(), 'prosight.operations.view')) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+        $op = $this->ops->reap($op); // materializa deadlines antes de auditar
+        $events = \App\Models\ConnectorEvent::where('environment_id', $op->environment_id)
+            ->where('meta->operation_id', $op->id)->orderBy('occurred_at')->orderBy('id')->get()
+            ->map(fn ($e) => ['at' => $e->occurred_at?->toIso8601String(), 'event' => $e->event_type, 'outcome' => $e->outcome, 'detail' => $this->sanitize((string) ($e->detail ?? '')), 'meta' => $this->sanitizeMeta((array) $e->meta)])->all();
+
+        return response()->json(['data' => ['operation' => $this->adminView($op), 'chain' => $this->auditChain($op), 'timeline' => $events]]);
+    }
+
+    /** Cadeia reconstruída (autoridade humana p/ known_good; C-2 p/ resultado físico). Só ids/hashes. */
+    private function auditChain(ConnectorOperation $o): array
+    {
+        $s = $o->precondition_snapshot ?? [];
+        $post = $o->postimage_snapshot ?? [];
+        $isRpo = in_array($o->op_type, ['rpo_promote', 'rpo_rollback'], true);
+        $correlated = is_array($post) && ($post['kind'] ?? null) !== null ? [
+            'received_at' => $post['received_at'] ?? null, 'correlated' => (bool) ($post['correlated'] ?? false),
+            'members' => $post['members'] ?? null, // {ref: {rpo_hash, up, publish_unit_id}} ou up/piid (lifecycle)
+        ] : ($post ?: null);
+
+        return [
+            'op_type' => $o->op_type, 'kind' => $s['kind'] ?? null,
+            'requester' => (int) $o->requested_by,
+            'authority_model' => 'known_good=humano · resultado físico=C-2 observado · at-most-once (sem 2ª ação após ambiguidade)',
+            'approvals' => [
+                'required' => $s['required_approvals'] ?? null,
+                'recorded' => $s['approvals'] ?? [],
+                'last_approved_by' => $o->approved_by, 'approval_state' => $o->approval_state,
+            ],
+            'qualification' => $isRpo ? ($s['qualification'] ?? null) : null, // só rollback (autoridade nomeada)
+            'target' => $isRpo ? ['target_id' => $o->rpo_target_id, 'members' => $s['members'] ?? [], 'publish_unit_id' => $s['publish_unit_id'] ?? null] : ['appserver_ref' => $o->appserver_ref],
+            'capability' => $isRpo ? ['activation_mode' => $s['activation_mode'] ?? null] : null,
+            'transition' => ['from_hash' => $s['from_hash'] ?? null, 'to_hash' => $s['to_hash'] ?? null, 'to_artifact_id' => $s['to_artifact_id'] ?? null],
+            'execution' => [
+                'execution_id' => $o->execution_id,
+                'claimed_at' => $o->claimed_at?->toIso8601String(),
+                'execution_committed_at' => $o->execution_committed_at?->toIso8601String(),
+                'effect_started_at' => $o->effect_started_at?->toIso8601String(),
+            ],
+            'correlated_collection' => $correlated,
+            'decision' => [
+                'status' => $o->status, 'reconciliation_state' => $o->reconciliation_state,
+                'outcome_authority' => $o->outcome_authority, 'reconciled_at' => $o->reconciled_at?->toIso8601String(),
+            ],
+            'human_resolution' => $o->outcome_authority === 'human' ? ['resolved_by' => $o->resolved_by, 'at' => $o->reconciled_at?->toIso8601String()] : null,
+        ];
+    }
+
+    /** Meta de evento sanitizada (allowlist de chaves seguras — nunca path/cred/bytes). */
+    private function sanitizeMeta(array $meta): array
+    {
+        $allow = ['operation_id', 'execution_id', 'op_type', 'reason', 'reasons', 'approved_by', 'count', 'required', 'target_id', 'qualification_id', 'from', 'to', 'process_instance_id', 'reasons', 'override_reasons'];
+        $out = [];
+        foreach ($meta as $k => $v) {
+            if (in_array($k, $allow, true) && (is_scalar($v) || is_array($v))) {
+                $out[$k] = is_string($v) ? $this->sanitize($v) : $v;
+            }
+        }
+
+        return $out;
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
@@ -376,6 +455,7 @@ class ConnectorOperationController extends Controller
             'requested_by' => $o->requested_by, 'approved_by' => $o->approved_by, 'reason' => $o->reason,
             'agent_result' => $o->agent_result, 'agent_result_phase' => $o->agent_result_phase,
             'reconciliation_state' => $o->reconciliation_state, 'outcome_authority' => $o->outcome_authority,
+            'resolution' => $o->resolution, 'resolved_by' => $o->resolved_by,
             'precondition_kind' => $o->precondition_kind, 'rpo_target_id' => $o->rpo_target_id,
             'emergency_override' => (bool) ($o->precondition_snapshot['emergency_override'] ?? false),
             'override_reasons' => $o->precondition_snapshot['override_reasons'] ?? [],

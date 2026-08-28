@@ -158,7 +158,7 @@ class ConnectorOperationRpoPromoteTest extends TestCase
     private function approve(int $id): \Illuminate\Testing\TestResponse { return $this->actingAs($this->userWith(['prosight.operations.rpo.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/approve"); }
     private function approveAs(int $id, User $u): \Illuminate\Testing\TestResponse { return $this->actingAs($u, 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/approve"); }
     private function reconcile(int $id): array { return $this->actingAs($this->userWith(['prosight.operations.rpo.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/reconcile")->json('data'); }
-    private function resolve(int $id, string $r): \Illuminate\Testing\TestResponse { return $this->actingAs($this->userWith(['prosight.operations.rpo.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/resolve", ['resolution' => $r]); }
+    private function resolve(int $id, string $r): \Illuminate\Testing\TestResponse { return $this->actingAs($this->userWith(['prosight.operations.rpo.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/resolve", ['resolution' => $r, 'reason' => 'incidente tratado no gate']); }
     private function show(int $id): array { return $this->actingAs($this->admin(), 'sanctum')->getJson("/api/v1/prosight/operations/{$id}")->json('data'); }
     private function forcePast(int $id, string $col, int $s = 5): void { ConnectorOperation::whereKey($id)->update([$col => now()->subSeconds($s)]); }
     private function blockReason(int $env): ?string { return optional(ConnectorEvent::where('environment_id', $env)->where('event_type', 'operation_dispatch_blocked')->latest('id')->first())->meta['reason'] ?? null; }

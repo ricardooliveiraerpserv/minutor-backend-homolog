@@ -310,7 +310,7 @@ class ConnectorOperationStopTest extends TestCase
         // enquanto contradicted, o alvo/ambiente fica congelado (1 viva) — nova op → 409
         $this->createStop($this->admin(), $env)->assertStatus(409);
         // resolução HUMANA → terminal; libera o ambiente
-        $out = $this->actingAs($this->userWith(['prosight.operations.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/resolve", ['resolution' => 'failed']);
+        $out = $this->actingAs($this->userWith(['prosight.operations.approve']), 'sanctum')->postJson("/api/v1/prosight/operations/{$id}/resolve", ['resolution' => 'failed', 'reason' => 'incidente reconhecido']);
         $out->assertOk()->assertJsonPath('data.status', 'failed')->assertJsonPath('data.outcome_authority', 'human');
         $this->observe($a, $sk, true, $this->instA, true);
         $this->createStop($this->admin(), $env)->assertStatus(201); // ambiente livre
