@@ -90,10 +90,10 @@ class RelatorioRentabilidadeController extends Controller
         foreach ($timesheets as $ts) {
             if (!$ts->project) continue;
             $key = $ts->user_id . ':' . $ts->project_id;
-            // Horas do lado CLIENTE (receita + exibição) = com uplift do contrato.
-            // Horas REAIS = pro CUSTO do consultor (o acréscimo tem custo ZERO).
+            // Rentabilidade NÃO reflete o multiplicador de horas (uplift do contrato): usa
+            // horas REAIS em horas/receita/custo. O uplift vale só no faturamento/fechamento.
             $horasReal = round($ts->effort_minutes / 60, 4);
-            $horas     = round($ts->billableMinutes() / 60, 4);
+            $horas     = $horasReal;
             $rateProj = $aporteRate[$ts->project_id] ?? (float) ($ts->project->hourly_rate ?? 0);
             $meta     = $costMeta($ts->user);
             $rateCons = $meta['eff'];
@@ -348,9 +348,9 @@ class RelatorioRentabilidadeController extends Controller
             if (!$proj->customer) continue;
             $cid = $proj->customer_id;
             $ensureCustomer($cid, $proj);
-            // Exibição + receita = horas COM uplift; custo = horas REAIS (acréscimo custo zero).
+            // Rentabilidade NÃO reflete o multiplicador de horas: horas/receita/custo no REAL.
             $horasReal = round($ts->effort_minutes / 60, 4);
-            $horas = round($ts->billableMinutes() / 60, 4);
+            $horas = $horasReal;
             $rateCons = $costRate($ts->user);
             $byCustomer[$cid]['horas']   += $horas;
             $byCustomer[$cid]['receita'] += $horas * (float) ($proj->hourly_rate ?? 0);
