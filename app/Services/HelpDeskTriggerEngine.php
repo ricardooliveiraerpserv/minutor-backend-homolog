@@ -298,16 +298,17 @@ class HelpDeskTriggerEngine
             $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
             // Corpo LEGÍVEL p/ registrar no chamado (sem o layout institucional/cids que não renderizam no histórico).
+            // Parágrafos <p> (o front do chamado renderiza <p>/<b> com espaçamento; estilos inline são removidos).
             $readParts = [];
-            if (trim((string) ($params['notification_title'] ?? '')) !== '')    $readParts[] = '<strong>' . e(self::render((string) $params['notification_title'], $ticket)) . '</strong>';
-            if (trim((string) ($params['notification_subtitle'] ?? '')) !== '') $readParts[] = e(self::render((string) $params['notification_subtitle'], $ticket));
-            if (trim((string) ($params['message'] ?? '')) !== '')               $readParts[] = nl2br(self::render((string) $params['message'], $ticket));
-            $readable = implode('<br><br>', $readParts);
+            if (trim((string) ($params['notification_title'] ?? '')) !== '')    $readParts[] = '<p><b>' . e(self::render((string) $params['notification_title'], $ticket)) . '</b></p>';
+            if (trim((string) ($params['notification_subtitle'] ?? '')) !== '') $readParts[] = '<p>' . e(self::render((string) $params['notification_subtitle'], $ticket)) . '</p>';
+            if (trim((string) ($params['message'] ?? '')) !== '')               $readParts[] = self::textToHtmlParagraphs(self::render((string) $params['message'], $ticket));
+            $readable = implode('', $readParts);
         } else {
-            $body = nl2br(self::render((string) ($params['body'] ?? ''), $ticket));
-            $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . $body . '</div>';
+            $rendered = self::render((string) ($params['body'] ?? ''), $ticket);
+            $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . nl2br($rendered) . '</div>';
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
-            $readable = $body;
+            $readable = self::textToHtmlParagraphs($rendered);
         }
         // Registra o e-mail enviado por gatilho como INTERAÇÃO no chamado (histórico completo, com o CORPO),
         // além do evento "email_sent". Assim o texto exato enviado aparece no chamado (não só um log de linha).
@@ -317,14 +318,28 @@ class HelpDeskTriggerEngine
         self::logEmailSent($ticket, $to, $cc, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
     }
 
+    /** Texto plano (com \n) → parágrafos <p> (quebra dupla = parágrafo; simples = <br>). Escapa HTML. */
+    private static function textToHtmlParagraphs(string $text): string
+    {
+        $text = trim($text);
+        if ($text === '') return '';
+        $out = '';
+        foreach (preg_split('/\n\s*\n/', $text) as $p) {
+            $p = trim($p);
+            if ($p === '') continue;
+            $out .= '<p>' . nl2br(e($p)) . '</p>';
+        }
+        return $out;
+    }
+
     /** Grava o e-mail enviado por um gatilho como interação (comentário) no chamado. */
     private static function recordTriggerInteraction(HelpDeskTicket $ticket, array $params, array $to, string $bodyHtml, ?string $triggerName): void
     {
         $toList     = (array) ($params['to'] ?? []);
         $visibility = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'customer' : 'internal';
-        $prefix     = $visibility === 'customer' ? 'E-mail automático enviado ao cliente' : 'Aviso automático enviado ao responsável';
+        $prefix     = $visibility === 'customer' ? '📧 E-mail enviado ao cliente' : '🔔 Aviso enviado ao responsável';
         if ($triggerName) $prefix .= ' — ' . $triggerName;
-        $body = '<p style="margin:0 0 8px;font-size:12px;color:#6b7280">' . e($prefix) . ' (' . e(implode(', ', $to)) . ')</p>' . $bodyHtml;
+        $body = '<p><b>' . e($prefix) . '</b></p>' . $bodyHtml;
         // Dedup: mesmo gatilho + mesmo corpo + mesmos destinatários = uma interação só (evita duplicar em reprocessos).
         $idem = 'trg-mail:' . $ticket->id . ':' . md5(($triggerName ?? '') . '|' . $bodyHtml . '|' . implode(',', $to));
         try {
