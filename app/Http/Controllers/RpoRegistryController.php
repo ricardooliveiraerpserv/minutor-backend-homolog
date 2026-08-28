@@ -188,6 +188,22 @@ class RpoRegistryController extends Controller
         return response()->json(['data' => $this->rpo->preview($t, $to, (bool) ($data['is_rollback'] ?? false))]);
     }
 
+    /**
+     * POST /prosight/rpo/targets/{id}/rollback-preview {qualification_id} — C5.3 preview INFORMATIVO do
+     * rollback (regra de domínio projetada): selecionada + last_known_good + demais known_good válidas.
+     * Read-only, ZERO efeito. A criação REAVALIA a regra transacionalmente (não confia neste preview).
+     */
+    public function rollbackPreview(Request $r, int $id): JsonResponse
+    {
+        $t = $this->target($r, $id);
+        if (! $t) { return response()->json(['message' => 'Target não encontrado.'], 404); }
+        $data = $r->validate(['qualification_id' => 'required|integer']);
+        $q = RpoQualification::find((int) $data['qualification_id']);
+        if (! $q || (int) $q->rpo_target_id !== (int) $t->id) { return response()->json(['message' => 'Qualificação não encontrada.'], 404); }
+
+        return response()->json(['data' => $this->rpo->rollbackPreview($t, $q)]);
+    }
+
     // ── views ─────────────────────────────────────────────────────────────────
     private function artifactView(RpoArtifact $a): array
     {

@@ -8,6 +8,7 @@ use App\Models\ConnectorEvent;
 use App\Models\ConnectorOperation;
 use App\Models\EnvEnvironment;
 use App\Models\RpoArtifact;
+use App\Models\RpoQualification;
 use App\Models\RpoTarget;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -331,14 +332,120 @@ class ConnectorOperationService
     }
 
     /**
+     * C5.3 — cria uma operação rpo_rollback (SÓ hot): recuperação DELIBERADA para uma QUALIFICAÇÃO known_good
+     * CONTEXTUAL válida, NOMEADA (qualification_id). Mesma transição física hot from→to do promote; muda a
+     * AUTORIDADE do destino. REAVALIA a regra de domínio (evaluateRollback) TRANSACIONALMENTE com o estado
+     * corrente — NÃO confia no preview (evita TOCTOU consulta↔criação). from_hash = observado atual. Congela
+     * na operação: qualification_id (autoridade nominal) + artifact_id + to_hash + contexto + from_hash +
+     * capability/publish_unit/activation snapshot. ZERO bytes/path.
+     */
+    public function createRpoRollback(RpoTarget $target, RpoQualification $q, int $requester, string $reason): array
+    {
+        $envId = (int) $target->environment_id;
+        $ev = $this->rpo->evaluateRollback($target, $q); // reavaliação AUTORITATIVA (não o preview)
+        if (! $ev['eligible']) {
+            $err = in_array('already_at_rollback_target', $ev['reasons'], true) ? 'already_at_rollback_target' : 'rollback_ineligible';
+
+            return ['ok' => false, 'error' => $err, 'reasons' => $ev['reasons']];
+        }
+        if ($this->presenceStatus($envId) !== 'online') {
+            return ['ok' => false, 'error' => 'agent_not_online'];
+        }
+        $c = $ev['target_consistency'];
+        $memberFrom = [];
+        foreach (($c['per_appserver'] ?? []) as $m) { $memberFrom[$m['appserver_ref']] = $m['rpo_hash']; }
+        $refs = array_keys($memberFrom);
+        $env = EnvEnvironment::query()->whereKey($envId)->first(['type']);
+        $policy = (array) $this->cfg('rpo.required_approvals', []);
+        $required = (int) ($policy[$env->type ?? 'default'] ?? $policy['default'] ?? 1);
+
+        $snapshot = [
+            'kind' => 'rpo_rollback',
+            'observed_at' => now()->toIso8601String(),
+            'from_hash' => $ev['from_hash'], 'to_artifact_id' => $ev['to_artifact_id'], 'to_hash' => $ev['to_hash'],
+            'qualification_id' => $ev['qualification_id'], 'qualification' => $ev['qualification'], // autoridade nominal + metadados
+            'activation_mode' => $ev['activation_mode'], 'publish_unit_id' => $ev['publish_unit_id'],
+            'members' => $refs, 'member_from' => $memberFrom,
+            'required_approvals' => $required, 'approvals' => [],
+        ];
+        try {
+            $op = DB::transaction(fn () => ConnectorOperation::create([
+                'environment_id' => $envId, 'appserver_ref' => null, 'customer_id' => $target->customer_id,
+                'rpo_target_id' => $target->id, 'op_type' => 'rpo_rollback', 'status' => 'pending_approval',
+                'execution_id' => (string) Str::uuid(),
+                'requested_by' => $requester, 'reason' => mb_substr($reason, 0, 300),
+                'approval_state' => 'pending', 'precondition_kind' => 'rpo',
+                'precondition_snapshot' => $snapshot,
+            ]));
+        } catch (UniqueConstraintViolationException) {
+            return ['ok' => false, 'error' => 'operation_in_flight'];
+        }
+        $this->emit($envId, null, 'operation_requested', 'info', 'Rollback de RPO (hot) solicitado', [
+            'op_type' => 'rpo_rollback', 'operation_id' => $op->id, 'execution_id' => substr($op->execution_id, 0, 8),
+            'target_id' => $target->id, 'qualification_id' => $ev['qualification_id'],
+            'from' => substr((string) $ev['from_hash'], 0, 12), 'to' => substr((string) $ev['to_hash'], 0, 12),
+            'required_approvals' => $required,
+        ]);
+
+        return ['ok' => true, 'op' => $op];
+    }
+
+    /**
+     * Revalida o rollback no dispatch (topologia/qualificação podem ter mudado). A MESMA qualification_id
+     * precisa continuar válida — NÃO substitui automaticamente por outra qualificação equivalente do mesmo
+     * artifact/hash (Q1 revogada, Q2→mesmo A: exige NOVA operação/aprovação). from_hash/publish_unit/activation
+     * comparados ao snapshot congelado. Retorna erro de bloqueio ou null.
+     */
+    private function revalidateRpoRollbackForDispatch(ConnectorOperation $op): ?string
+    {
+        $s = $op->precondition_snapshot ?? [];
+        $target = RpoTarget::find($op->rpo_target_id);
+        $q = RpoQualification::find($s['qualification_id'] ?? 0); // a MESMA qualificação nomeada (sem substituição)
+        if (! $target || ! $q) {
+            return 'target_or_qualification_missing';
+        }
+        $ev = $this->rpo->evaluateRollback($target, $q);
+        if (! $ev['eligible']) {
+            // qualification_revoked / target_not_consistent / already_at_rollback_target / activation / publish_unit...
+            return in_array('already_at_rollback_target', $ev['reasons'], true) ? 'already_at_rollback_target' : $ev['reasons'][0];
+        }
+        // from_hash observado precisa continuar == congelado (RPO ativo mudou desde a aprovação → nova avaliação).
+        if (($ev['from_hash'] ?? null) !== ($s['from_hash'] ?? null)) {
+            return 'from_hash_diverged';
+        }
+        if (($ev['publish_unit_id'] ?? null) !== ($s['publish_unit_id'] ?? null)) {
+            return 'publish_unit_changed';
+        }
+        if (($ev['activation_mode'] ?? null) !== ($s['activation_mode'] ?? null)) {
+            return 'activation_mode_changed';
+        }
+        if ($this->presenceStatus((int) $op->environment_id) !== 'online') {
+            return 'agent_not_online';
+        }
+
+        return null;
+    }
+
+    /** C5.3 — a qualificação nomeada ainda é válida? (gate na barreira: revogação até execution_committed). */
+    private function rollbackQualificationValid(ConnectorOperation $op): bool
+    {
+        $s = $op->precondition_snapshot ?? [];
+        $q = RpoQualification::find($s['qualification_id'] ?? 0);
+
+        return $q !== null && $q->revoked_at === null
+            && (int) $q->rpo_target_id === (int) $op->rpo_target_id
+            && (int) $q->environment_id === (int) $op->environment_id;
+    }
+
+    /**
      * Aprova (maker-checker: approver ≠ requester). pending_approval → dispatchable. Se a operação foi
      * criada com emergency_override (viola último AppServer/janela), o CHECKER também precisa de
      * operations.stop.override — impede que um operador com override crie a exceção e a faça aprovar por
-     * alguém sem autoridade equivalente. rpo_promote usa N-of-M (acumula aprovadores distintos ≠ requester).
+     * alguém sem autoridade equivalente. rpo_* usam N-of-M (acumula aprovadores distintos ≠ requester).
      */
     public function approve(ConnectorOperation $op, int $approver, bool $hasOverridePerm = false): array
     {
-        if ($op->op_type === 'rpo_promote') {
+        if (in_array($op->op_type, ['rpo_promote', 'rpo_rollback'], true)) {
             return $this->approveNofM($op, $approver);
         }
 
@@ -495,6 +602,8 @@ class ConnectorOperationService
                 $err = $this->revalidateDestructiveForDispatch($row);
             } elseif ($row->op_type === 'rpo_promote') {
                 $err = $this->revalidateRpoPromoteForDispatch($row);
+            } elseif ($row->op_type === 'rpo_rollback') {
+                $err = $this->revalidateRpoRollbackForDispatch($row);
             }
             if ($err !== null) {
                 $row->update(['status' => 'canceled', 'agent_result_detail' => $err]); // terminal seguro: nada executou
@@ -566,8 +675,8 @@ class ConnectorOperationService
         if (! in_array($row->status, ['claimed', 'execution_committed', 'executing', 'verifying', 'indeterminate', 'reconciling'], true)) {
             return false;
         }
-        if ($row->op_type === 'rpo_promote') {
-            // C5.2 — o TARGET INTEIRO é a autoridade: hash/up/publish_unit de TODOS os membros esperados.
+        if (in_array($row->op_type, ['rpo_promote', 'rpo_rollback'], true)) {
+            // C5.2/C5.3 — o TARGET INTEIRO é a autoridade: hash/up/publish_unit de TODOS os membros esperados.
             $members = (array) ($row->precondition_snapshot['members'] ?? []);
             $obs = [];
             foreach ($members as $ref) {
@@ -620,6 +729,14 @@ class ConnectorOperationService
             }
             if ($row->status !== 'claimed') {
                 return ['ok' => false, 'error' => 'not_claimed'];
+            }
+            // C5.3 — a validade da qualificação é gate ATÉ a barreira. Se a qualificação nomeada foi revogada
+            // entre o claim e o commit, a barreira NÃO é cruzada (agente não aplica → efeito 0). DEPOIS de
+            // cruzada, revogação posterior NÃO interfere (sem dependência central pós-barreira; at-most-once).
+            if ($row->op_type === 'rpo_rollback' && ! $this->rollbackQualificationValid($row)) {
+                $this->emit((int) $row->environment_id, null, 'operation_barrier_blocked', 'fail', 'Barreira bloqueada: qualificação revogada antes do commit', ['operation_id' => $row->id, 'reason' => 'qualification_revoked']);
+
+                return ['ok' => false, 'error' => 'qualification_revoked'];
             }
             $row->update(['status' => 'execution_committed', 'execution_committed_at' => now()]);
             $this->emit((int) $row->environment_id, $row->appserver_ref, 'operation_execution_committed', 'info', 'Barreira de execução cruzada', ['operation_id' => $row->id]);
@@ -784,10 +901,12 @@ class ConnectorOperationService
                 return $r->fresh();
             }
 
-            if ($r->op_type === 'rpo_promote') {
-                // ── rpo_promote (hot) ──: autoridade = coleta CORRELACIONADA (trigger.operation_id) do TARGET
-                // INTEIRO gravada em postimage_snapshot (NÃO o observed_json periódico). Sucesso EXCLUSIVO:
-                // TODOS os membros em to_hash + disponíveis (hot espera up), received_at ≥ execution_committed_at.
+            if (in_array($r->op_type, ['rpo_promote', 'rpo_rollback'], true)) {
+                // ── rpo_promote/rpo_rollback (hot) ──: MESMA física. Autoridade = coleta CORRELACIONADA
+                // (trigger.operation_id) do TARGET INTEIRO gravada em postimage_snapshot (NÃO o observed_json
+                // periódico). Sucesso EXCLUSIVO: TODOS em to_hash + disponíveis (hot espera up), causal. O
+                // sucesso do rollback grava last_successfully_published (=A) e NÃO cria nova qualificação
+                // known_good (a existente, que autorizou o rollback, permanece a autoridade — intocada).
                 $fromHash = $r->precondition_snapshot['from_hash'] ?? null;
                 $toHash = $r->precondition_snapshot['to_hash'] ?? null;
                 $members = (array) ($r->precondition_snapshot['members'] ?? []);

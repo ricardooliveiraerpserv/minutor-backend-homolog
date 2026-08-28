@@ -725,6 +725,9 @@ Route::prefix('v1')->group(function () {
         // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). Cria operação rpo_promote a partir do target.
         // Perm prosight.operations.rpo.promote enforce no CONTROLLER. Anti-IDOR 404 por customer_id.
         Route::post('/prosight/rpo/targets/{id}/promote', [\App\Http\Controllers\ConnectorOperationController::class, 'promote'])->whereNumber('id');
+        // Conector-5.3 — rollback GOVERNADO de RPO (SÓ hot). Cria operação rpo_rollback p/ known_good nomeada.
+        // Perm PRÓPRIA prosight.operations.rpo.rollback enforce no CONTROLLER (NÃO herda de promote). Anti-IDOR.
+        Route::post('/prosight/rpo/targets/{id}/rollback', [\App\Http\Controllers\ConnectorOperationController::class, 'rollback'])->whereNumber('id');
         // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
@@ -733,6 +736,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
             Route::get('/prosight/rpo/targets/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showTarget'])->whereNumber('id');
             Route::get('/prosight/rpo/targets/{id}/qualifications', [\App\Http\Controllers\RpoRegistryController::class, 'qualifications'])->whereNumber('id');
+            // C5.3 — preview INFORMATIVO do rollback (read-only; NÃO cria operação). POST só p/ carregar qualification_id.
+            Route::post('/prosight/rpo/targets/{id}/rollback-preview', [\App\Http\Controllers\RpoRegistryController::class, 'rollbackPreview'])->whereNumber('id');
         });
         Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
             Route::post('/prosight/environments/{environmentId}/rpo/artifacts/register', [\App\Http\Controllers\RpoRegistryController::class, 'register'])->whereNumber('environmentId');
@@ -1934,6 +1939,9 @@ Route::prefix('v1')->group(function () {
         // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). Cria operação rpo_promote a partir do target.
         // Perm prosight.operations.rpo.promote enforce no CONTROLLER. Anti-IDOR 404 por customer_id.
         Route::post('/prosight/rpo/targets/{id}/promote', [\App\Http\Controllers\ConnectorOperationController::class, 'promote'])->whereNumber('id');
+        // Conector-5.3 — rollback GOVERNADO de RPO (SÓ hot). Cria operação rpo_rollback p/ known_good nomeada.
+        // Perm PRÓPRIA prosight.operations.rpo.rollback enforce no CONTROLLER (NÃO herda de promote). Anti-IDOR.
+        Route::post('/prosight/rpo/targets/{id}/rollback', [\App\Http\Controllers\ConnectorOperationController::class, 'rollback'])->whereNumber('id');
         // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
@@ -1942,6 +1950,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
             Route::get('/prosight/rpo/targets/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showTarget'])->whereNumber('id');
             Route::get('/prosight/rpo/targets/{id}/qualifications', [\App\Http\Controllers\RpoRegistryController::class, 'qualifications'])->whereNumber('id');
+            // C5.3 — preview INFORMATIVO do rollback (read-only; NÃO cria operação). POST só p/ carregar qualification_id.
+            Route::post('/prosight/rpo/targets/{id}/rollback-preview', [\App\Http\Controllers\RpoRegistryController::class, 'rollbackPreview'])->whereNumber('id');
         });
         Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
             Route::post('/prosight/environments/{environmentId}/rpo/artifacts/register', [\App\Http\Controllers\RpoRegistryController::class, 'register'])->whereNumber('environmentId');

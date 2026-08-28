@@ -161,6 +161,9 @@ class PermissionService
         // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). promote=criar/cancelar; approve=maker-checker N-of-M.
         'prosight.operations.rpo.promote',
         'prosight.operations.rpo.approve',
+        // Conector-5.3 — rollback GOVERNADO de RPO (SÓ hot). Granularidade PRÓPRIA (NÃO herda de promote);
+        // aprovação compartilha rpo.approve. Recuperação p/ known_good contextual válido (qualification_id).
+        'prosight.operations.rpo.rollback',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -276,6 +279,8 @@ class PermissionService
             // Conector-5.2 — publicação governada de RPO (hot): promover + aprovar (N-of-M).
             'prosight.operations.rpo.promote',
             'prosight.operations.rpo.approve',
+            // Conector-5.3 — rollback governado de RPO (hot): permissão própria.
+            'prosight.operations.rpo.rollback',
         ];
     }
 

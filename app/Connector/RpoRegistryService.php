@@ -293,4 +293,88 @@ class RpoRegistryService
             'note' => 'Preview read-only — NÃO cria operação, execution_id ou efeito. Publicação é C5.2+.',
         ];
     }
+
+    /**
+     * C5.3 — REGRA DE DOMÍNIO ÚNICA do rollback (usada por preview [informar] E por createRollback/dispatch
+     * [autorizar], reavaliada com o estado CORRENTE em cada barreira — nunca confia no snapshot da consulta).
+     * Destino = uma QUALIFICAÇÃO known_good CONTEXTUAL, NOMEADA (qualification_id) — não "última", não outro
+     * env/target, não "registered qualquer". from_hash = OBSERVADO ATUAL (mundo), não a operação de promote.
+     * already_at_rollback_target é por HASH EFETIVO (observed == qualif.hash), mesmo com artifact_id distinto.
+     */
+    public function evaluateRollback(RpoTarget $target, RpoQualification $q): array
+    {
+        $reasons = [];
+        // Contexto: a qualificação precisa ser DESTE target E environment (não de outro contexto).
+        if ((int) $q->rpo_target_id !== (int) $target->id || (int) $q->environment_id !== (int) $target->environment_id) {
+            $reasons[] = 'qualification_wrong_context';
+        }
+        // Qualificação válida (não revogada) — autoridade que PERMITE o rollback.
+        if ($q->revoked_at !== null) {
+            $reasons[] = 'qualification_revoked';
+        }
+        // Target confirmado + consistente (from_hash observado).
+        if ($target->status !== 'confirmed') { $reasons[] = 'target_not_confirmed'; }
+        $c = $this->targetConsistency($target);
+        if (! $c['consistent']) { $reasons[] = 'target_not_consistent'; }
+        $fromHash = $c['hash'];
+        $toHash = $q->hash; // hash IMUTÁVEL da qualificação (identidade física do destino de recuperação)
+        // Já no destino — decisão pelo HASH efetivo, não pelo artifact_id (código PRÓPRIO, não from_equals_to).
+        if ($fromHash !== null && $fromHash === $toHash) { $reasons[] = 'already_at_rollback_target'; }
+        // Compatibilidade do artefato qualificado × versões observadas dos AppServers do target.
+        $art = RpoArtifact::find($q->rpo_artifact_id);
+        $obs = $this->observed((int) $target->environment_id);
+        $compatVersions = (array) ($art->compatibility['appserver_versions'] ?? []);
+        $refs = $target->appservers()->pluck('appserver_ref')->all();
+        $incompat = [];
+        foreach ($refs as $r) {
+            $v = $obs['appservers'][$r]['version'] ?? null;
+            if ($v !== null && ! empty($compatVersions) && ! in_array($v, $compatVersions, true)) { $incompat[] = ['appserver_ref' => $r, 'version' => $v]; }
+        }
+        if (! empty($incompat)) { $reasons[] = 'incompatible_appserver_version'; }
+        // Capability disponível + activation_mode EXECUTÁVEL (hot). fail-closed.
+        $cap = $this->capability((int) $target->environment_id);
+        if (! $cap['available']) { $reasons[] = 'publish_capability_unavailable'; }
+        $mode = $cap['declared']['activation_mode'] ?? null;
+        $execModes = (array) config('connector.operations.rpo.executable_activation_modes', ['hot']);
+        if (! in_array($mode, $execModes, true)) { $reasons[] = 'activation_mode_not_executable'; }
+        // Unidade física ÚNICA.
+        $pu = $this->publishUnitConsistency($target);
+        if (! $pu['consistent']) { $reasons[] = 'publish_unit_inconsistent'; }
+
+        return [
+            'eligible' => empty($reasons), 'reasons' => $reasons,
+            'from_hash' => $fromHash, 'to_hash' => $toHash, 'to_artifact_id' => (int) $q->rpo_artifact_id,
+            'qualification_id' => (int) $q->id, 'activation_mode' => $mode,
+            'publish_unit_id' => $pu['publish_unit_id'], 'publish_unit' => $pu,
+            'target_consistency' => $c, 'capability' => $cap, 'incompatibilities' => $incompat,
+            'qualification' => ['id' => $q->id, 'artifact_id' => $q->rpo_artifact_id, 'hash' => $q->hash, 'reason' => $q->reason, 'qualified_by' => $q->qualified_by, 'qualified_at' => $q->qualified_at?->toIso8601String()],
+        ];
+    }
+
+    /**
+     * PREVIEW read-only do rollback (projeção INFORMATIVA da regra de domínio): a qualificação selecionada +
+     * last_known_good (se diferente) + demais qualificações válidas do contexto (para a decisão humana ser
+     * inequívoca). Só a SELECIONADA entra na autoridade da operação. NÃO cria operação/execution_id/efeito.
+     */
+    public function rollbackPreview(RpoTarget $target, RpoQualification $q): array
+    {
+        $ev = $this->evaluateRollback($target, $q);
+        $lkg = $this->lastKnownGood($target);
+        $others = RpoQualification::where('rpo_target_id', $target->id)->whereNull('revoked_at')
+            ->where('id', '!=', $q->id)->orderByDesc('qualified_at')->orderByDesc('id')->limit(20)->get()
+            ->map(fn ($x) => ['qualification_id' => $x->id, 'artifact_id' => $x->rpo_artifact_id, 'hash' => $x->hash, 'reason' => $x->reason, 'qualified_at' => $x->qualified_at?->toIso8601String()])->all();
+
+        return [
+            'kind' => 'rpo_rollback',
+            'target_id' => $target->id, 'selected' => $ev['qualification'],
+            'from' => $ev['from_hash'] ? ['hash' => $ev['from_hash']] : null,
+            'to' => ['artifact_id' => $ev['to_artifact_id'], 'hash' => $ev['to_hash']],
+            'last_known_good' => $lkg && (int) $lkg->id !== (int) $q->id ? ['qualification_id' => $lkg->id, 'artifact_id' => $lkg->rpo_artifact_id, 'hash' => $lkg->hash] : null,
+            'other_valid_known_good' => $others, // INFORMATIVO — não entra na autoridade; surgir novo não invalida
+            'target_consistency' => $ev['target_consistency'], 'capability' => $ev['capability'],
+            'incompatibilities' => $ev['incompatibilities'],
+            'eligible' => $ev['eligible'], 'reasons' => $ev['reasons'],
+            'note' => 'Preview read-only — informa; a criação REAVALIA a regra transacionalmente. NÃO cria operação.',
+        ];
+    }
 }

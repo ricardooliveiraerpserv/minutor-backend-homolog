@@ -7,6 +7,7 @@ use App\Models\ConnectorAgent;
 use App\Models\ConnectorOperation;
 use App\Models\EnvEnvironment;
 use App\Models\RpoArtifact;
+use App\Models\RpoQualification;
 use App\Models\RpoTarget;
 use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
@@ -157,6 +158,37 @@ class ConnectorOperationController extends Controller
         return response()->json(['data' => $this->adminView($r['op'])], 201);
     }
 
+    /**
+     * POST /prosight/rpo/targets/{id}/rollback {qualification_id, reason} — C5.3: rollback GOVERNADO (SÓ hot)
+     * para uma qualificação known_good CONTEXTUAL válida (autoridade NOMEADA por qualification_id — o backend
+     * resolve qualification_id → artifact_id → hash e valida contexto). Perm PRÓPRIA rpo.rollback (NÃO herda
+     * de promote). Escopo por customer_id (anti-IDOR 404). ZERO bytes/path.
+     */
+    public function rollback(Request $request, int $id): JsonResponse
+    {
+        $target = RpoTarget::find($id);
+        if (! $target || ! $this->scope->canAccessCustomerId($request->user(), (int) $target->customer_id)) {
+            return response()->json(['message' => 'Target não encontrado.'], 404);
+        }
+        if (! $this->hasPerm($request->user(), 'prosight.operations.rpo.rollback')) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+        $data = $request->validate(['qualification_id' => 'required|integer', 'reason' => 'required|string|max:300']);
+        // Autoridade NOMINAL: a qualificação precisa ser DESTE target (contexto validado no service também).
+        $q = RpoQualification::find((int) $data['qualification_id']);
+        if (! $q || (int) $q->rpo_target_id !== (int) $target->id) {
+            return response()->json(['message' => 'Qualificação não encontrada.'], 404);
+        }
+        $r = $this->ops->createRpoRollback($target, $q, $request->user()->id, $data['reason']);
+        if (! $r['ok']) {
+            $code = $r['error'] === 'operation_in_flight' ? 409 : 422;
+
+            return response()->json(['error' => $r['error'], 'reasons' => $r['reasons'] ?? null], $code);
+        }
+
+        return response()->json(['data' => $this->adminView($r['op'])], 201);
+    }
+
     /** POST /prosight/operations/{id}/approve — perm por tipo, requester ≠ approver. */
     public function approve(Request $request, int $id): JsonResponse
     {
@@ -169,10 +201,10 @@ class ConnectorOperationController extends Controller
         return $this->decide($request, $id, 'reject');
     }
 
-    /** Perm de aprovação POR TIPO: rpo_promote → operations.rpo.approve; lifecycle → operations.approve. */
+    /** Perm de aprovação POR TIPO: rpo_promote/rpo_rollback → operations.rpo.approve; lifecycle → operations.approve. */
     private function approvePermFor(ConnectorOperation $op): string
     {
-        return $op->op_type === 'rpo_promote' ? 'prosight.operations.rpo.approve' : 'prosight.operations.approve';
+        return in_array($op->op_type, ['rpo_promote', 'rpo_rollback'], true) ? 'prosight.operations.rpo.approve' : 'prosight.operations.approve';
     }
 
     private function decide(Request $request, int $id, string $action): JsonResponse
@@ -319,7 +351,7 @@ class ConnectorOperationController extends Controller
             'operational_deadline_at' => $o->operational_deadline_at?->toIso8601String(),
             'server_time'             => now()->timestamp,
         ];
-        if ($o->op_type === 'rpo_promote') {
+        if (in_array($o->op_type, ['rpo_promote', 'rpo_rollback'], true)) {
             $s = $o->precondition_snapshot ?? [];
             $view['rpo'] = [
                 'target_id'       => $o->rpo_target_id,

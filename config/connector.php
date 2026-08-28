@@ -46,9 +46,9 @@ return [
 
     // Connector-4.x — OPERAÇÕES destrutivas/controladas (classe de segurança separada).
     'operations' => [
-        // ALLOWLIST operacional: start (C4.1) + stop (C4.2) + restart (C4.3) + rpo_promote (C5.2, SÓ hot).
-        // compile/patch/rpo_rollback NÃO existem. rpo_promote é baseado em TARGET (não appserver_ref único).
-        'types' => ['start', 'stop', 'restart', 'rpo_promote'],
+        // ALLOWLIST operacional: start (C4.1) + stop (C4.2) + restart (C4.3) + rpo_promote (C5.2, SÓ hot) +
+        // rpo_rollback (C5.3, SÓ hot). compile/patch NÃO existem. rpo_* são baseados em TARGET (não appserver único).
+        'types' => ['start', 'stop', 'restart', 'rpo_promote', 'rpo_rollback'],
         // Maker-checker OBRIGATÓRIO — inclusive homolog (só o gate controlado poderia relaxar).
         'require_approval' => filter_var(env('CONNECTOR_OP_REQUIRE_APPROVAL', true), FILTER_VALIDATE_BOOLEAN),
         // Transport lease: dispatchable→claim. Vence SEM claim → expired (único timeout auto-terminal seguro).
@@ -98,6 +98,12 @@ return [
         // hot NÃO para AppServer → sem proteção de último-AppServer e sem janela obrigatória (N-of-M + presença
         // ONLINE + capability + publish_unit + target consistente governam). Reconciliação = target INTEIRO.
         'rpo_promote' => [
+            'operational_deadline' => (int) env('CONNECTOR_OP_RPO_DEADLINE', 180),
+            'reconcile_window'     => (int) env('CONNECTOR_OP_RPO_RECONCILE_WINDOW', 300),
+        ],
+        // C5.3 — rpo_rollback (SÓ hot): MESMA transição física hot from→to do promote; muda a AUTORIDADE do
+        // destino (qualificação known_good CONTEXTUAL válida, nomeada por qualification_id). Reusa timeouts.
+        'rpo_rollback' => [
             'operational_deadline' => (int) env('CONNECTOR_OP_RPO_DEADLINE', 180),
             'reconcile_window'     => (int) env('CONNECTOR_OP_RPO_RECONCILE_WINDOW', 300),
         ],
