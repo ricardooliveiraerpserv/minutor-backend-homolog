@@ -597,7 +597,13 @@ class TimesheetController extends Controller
         // Resposta PO-UI (com cache Redis de 60s por usuário + filtros)
         try {
             $result = $this->cachedList($request, 'timesheets', function () use ($query, $perPage, $page, $hideClientPct) {
-                $totalEffortMinutes = (int) (clone $query)->sum('effort_minutes');
+                $totalQ = (clone $query);
+                if ($hideClientPct) {
+                    // Consultor/parceiro: atraso ainda NÃO liberado não conta nas horas dele
+                    // (igual pagamento/banco). Some do total; a linha continua visível na lista.
+                    $totalQ->where(fn ($q) => $q->whereNull('late_approved_at')->orWhere('consultant_released', true));
+                }
+                $totalEffortMinutes = (int) $totalQ->sum('effort_minutes');
                 $totalHours   = intdiv($totalEffortMinutes, 60);
                 $totalMinutes = $totalEffortMinutes % 60;
 
