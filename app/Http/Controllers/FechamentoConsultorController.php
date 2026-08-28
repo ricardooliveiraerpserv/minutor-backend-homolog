@@ -117,6 +117,7 @@ class FechamentoConsultorController extends Controller
             ->where('timesheets.user_id', $userId)
             ->whereBetween('timesheets.date', [$from, $to])
             ->whereNotIn('timesheets.status', $excludeStatuses)
+            ->where('timesheets.consultant_released', true) // atraso não liberado fica fora do pagamento
             ->where('timesheets.is_billable_only', false)
             ->where('timesheets.is_internal_action', false)
             ->whereNull('timesheets.deleted_at')
@@ -174,6 +175,7 @@ class FechamentoConsultorController extends Controller
 
         $minutesList = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
+            ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
@@ -183,6 +185,7 @@ class FechamentoConsultorController extends Controller
 
         $extraTimesheets = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
+            ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
@@ -1435,6 +1438,7 @@ class FechamentoConsultorController extends Controller
 
         $hoursByUser = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
+            ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
@@ -1446,6 +1450,7 @@ class FechamentoConsultorController extends Controller
         // Per-timesheet extras (consultant_extra_pct) — only where set
         $extraTimesheetsByUser = Timesheet::whereBetween('date', [$from, $to])
             ->whereNotIn('status', $excludeStatuses)
+            ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)

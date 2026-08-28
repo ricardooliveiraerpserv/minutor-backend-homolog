@@ -43,6 +43,14 @@ Schedule::command('crm:snapshot-saude')
   ->name('crm-snapshot-saude')
   ->withoutOverlapping();
 
+// Atrasos — lembrete no fechamento: apontamentos de atraso ainda não liberados p/ o
+// consultor (não entram no pagamento/banco). O comando só age na janela de fechamento.
+Schedule::command('timesheets:remind-consultant-release')
+  ->dailyAt('08:15')
+  ->timezone('America/Sao_Paulo')
+  ->name('timesheets-remind-consultant-release')
+  ->withoutOverlapping();
+
 // CRM — snapshot semanal do forecast (tendência/slippage). Segunda 06:00.
 Schedule::command('crm:forecast-snapshot')
   ->weeklyOn(1, '06:00')

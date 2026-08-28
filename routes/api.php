@@ -1515,6 +1515,7 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:hours.approve')->group(function () {
             Route::post('/timesheets/{timesheet}/approve', [TimesheetController::class, 'approve'])->name('timesheets.approve');
             Route::post('/timesheets/{timesheet}/aprovar-atraso', [TimesheetController::class, 'aprovarAtraso'])->name('timesheets.aprovar-atraso');
+            Route::post('/timesheets/{timesheet}/liberar-consultor', [TimesheetController::class, 'liberarConsultor'])->name('timesheets.liberar-consultor');
             Route::post('/timesheets/{timesheet}/release', [TimesheetController::class, 'release'])->name('timesheets.release');
             Route::post('/timesheets/{timesheet}/reverse-release', [TimesheetController::class, 'reverseRelease'])->name('timesheets.reverse-release');
         });

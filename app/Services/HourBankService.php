@@ -94,7 +94,8 @@ class HourBankService
             ->whereMonth('date', $month)
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
-            ->whereIn('status', ['approved', 'pending']);
+            ->whereIn('status', ['approved', 'pending'])
+            ->where('consultant_released', true); // atraso não liberado p/ consultor fica fora do banco de horas
 
         if ($startDate) {
             $sd = Carbon::parse($startDate);
@@ -126,6 +127,7 @@ class HourBankService
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
             ->whereIn('status', ['approved', 'pending'])
+            ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do banco de horas
             ->whereNotNull('start_time')
             ->whereNotNull('end_time')
             ->whereColumn('end_time', '>', 'start_time');
