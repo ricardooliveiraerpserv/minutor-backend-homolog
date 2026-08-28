@@ -15,7 +15,8 @@ class PartnerController extends Controller
     /** GET /partners */
     public function index(Request $request): JsonResponse
     {
-        $query = Partner::query();
+        // folhaUser = responsável pelos recebimentos (nome exposto p/ o cadastro de usuário).
+        $query = Partner::query()->with('folhaUser:id,name');
 
         if ($request->filled('search')) {
             $query->where('name', 'like', '%' . $request->get('search') . '%');
