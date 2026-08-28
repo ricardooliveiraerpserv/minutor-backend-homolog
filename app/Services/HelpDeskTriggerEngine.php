@@ -306,9 +306,12 @@ class HelpDeskTriggerEngine
             $readable = implode('', $readParts);
         } else {
             $rendered = self::render((string) ($params['body'] ?? ''), $ticket);
-            $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . nl2br($rendered) . '</div>';
+            // Corpo já em HTML (tags <p>/<b>/<a>…) passa direto; texto puro vira <br> (e-mail) / parágrafos (interação).
+            $isHtml = self::looksHtml($rendered);
+            $inner  = $isHtml ? $rendered : nl2br($rendered);
+            $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . $inner . '</div>';
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
-            $readable = self::textToHtmlParagraphs($rendered);
+            $readable = $isHtml ? $rendered : self::textToHtmlParagraphs($rendered);
         }
         // Registra o e-mail enviado por gatilho como INTERAÇÃO no chamado (histórico completo, com o CORPO),
         // além do evento "email_sent". Assim o texto exato enviado aparece no chamado (não só um log de linha).
@@ -316,6 +319,12 @@ class HelpDeskTriggerEngine
             self::recordTriggerInteraction($ticket, $params, $to, (string) $readable, $triggerName);
         }
         self::logEmailSent($ticket, $to, $cc, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
+    }
+
+    /** Detecta se o texto já contém marcação HTML (para não escapar/duplicar quebras). */
+    private static function looksHtml(string $s): bool
+    {
+        return (bool) preg_match('/<(p|br|div|span|b|strong|i|em|u|a|ul|ol|li)\b[^>]*>/i', $s);
     }
 
     /** Texto plano (com \n) → parágrafos <p> (quebra dupla = parágrafo; simples = <br>). Escapa HTML. */
