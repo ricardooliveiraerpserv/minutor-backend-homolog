@@ -194,6 +194,10 @@ class ContractHoursAlertController extends Controller
             'contacts.*.recebe_alerta_consumo'  => 'required|boolean',
             'add_customer_contacts'             => 'nullable|array',
             'add_customer_contacts.*'           => 'integer',
+            'new_contacts'                      => 'nullable|array',
+            'new_contacts.*.name'               => 'required|string',
+            'new_contacts.*.email'              => 'required|email',
+            'new_contacts.*.cargo'              => 'nullable|string',
             'extra_emails'                      => 'nullable|array',
             'extra_emails.*'                    => 'email',
         ]);
@@ -235,6 +239,27 @@ class ContractHoursAlertController extends Controller
                     ]);
                     $existing[$norm] = true;
                 });
+        }
+
+        // 2b) Cadastrar NOVO contato do contrato (nome + e-mail) → contract_contacts (recebe=true).
+        //     Dedup por e-mail normalizado contra os já existentes (inclusive os importados acima).
+        if (!empty($data['new_contacts'])) {
+            $existing = array_flip(
+                ContractContact::where('contract_id', $contract->id)
+                    ->pluck('email')->filter()->map(fn ($e) => mb_strtolower(trim($e)))->all()
+            );
+            foreach ($data['new_contacts'] as $nc) {
+                $norm = mb_strtolower(trim((string) ($nc['email'] ?? '')));
+                if ($norm === '' || isset($existing[$norm])) continue;
+                ContractContact::create([
+                    'contract_id'           => $contract->id,
+                    'name'                  => $nc['name'],
+                    'cargo'                 => $nc['cargo'] ?? null,
+                    'email'                 => $nc['email'],
+                    'recebe_alerta_consumo' => true,
+                ]);
+                $existing[$norm] = true;
+            }
         }
 
         // 3) Sincronizar e-mails avulsos (destinatário adicional; NÃO vira contato).
