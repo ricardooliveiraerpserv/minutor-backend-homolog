@@ -145,4 +145,29 @@ return [
             ],
         ],
     ],
+
+    // Connector-6 (C6) — COMPILE. Capability PRÓPRIA e ADITIVA (source_compile), NÃO mistura com rpo_publish
+    // (C5). Compile produz ARTEFATO; NÃO publica RPO. Nenhum caminho compile→publish automático. Três modos
+    // explícitos (fixture|simulated|live) SEM fallback silencioso entre eles.
+    'compile' => [
+        // Allowlist de capabilities de COMPILAÇÃO suportadas (name + contract_version). Versão desconhecida →
+        // capability INDISPONÍVEL (fail-closed).
+        'supported_capabilities' => [
+            ['name' => 'source_compile', 'contract_version' => 1],
+        ],
+        // Linguagens suportadas pelo contrato.
+        'supported_languages' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_COMPILE_LANGS', 'advpl,tlpp'))), 'strlen')),
+        // Modos EXECUTÁVEIS. Fail-closed: modo fora desta lista → não executável. Homolog usa 'simulated'.
+        // 'live' pode ser solicitado, mas o LiveCompileAdapter bloqueia enquanto live_ready=false (sem fake).
+        'executable_modes' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_COMPILE_EXEC_MODES', 'simulated,live'))), 'strlen')),
+        // fixture SÓ habilitado explicitamente (dev/test) — NUNCA em homolog/prod por fallback.
+        'allow_fixture' => filter_var(env('CONNECTOR_COMPILE_ALLOW_FIXTURE', false), FILTER_VALIDATE_BOOLEAN),
+        // live SÓ pronto após validação física comprovada (protocolo C6.1 on-prem). Default false → unavailable.
+        'live_ready' => filter_var(env('CONNECTOR_COMPILE_LIVE_READY', false), FILTER_VALIDATE_BOOLEAN),
+        // Knob de teste/gate do SimulatedCompileAdapter: succeeded|failed|timed_out|unknown. NUNCA afeta live.
+        'simulated_outcome' => env('CONNECTOR_COMPILE_SIMULATED_OUTCOME', 'succeeded'),
+        // Timeout OPERACIONAL da execução (cobre resolve+compile). Transport lease p/ o modo live (claim).
+        'operational_deadline' => (int) env('CONNECTOR_COMPILE_DEADLINE', 600),
+        'transport_lease' => (int) env('CONNECTOR_COMPILE_LEASE', 60),
+    ],
 ];

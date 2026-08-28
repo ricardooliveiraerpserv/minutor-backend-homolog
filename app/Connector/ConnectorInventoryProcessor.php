@@ -137,6 +137,24 @@ class ConnectorInventoryProcessor
                     $rpoCap = ['name' => 'rpo_publish', 'adapter' => $c['adapter'] ?? null, 'contract_version' => $c['contract_version'] ?? null, 'operations' => array_values(array_filter((array) ($c['operations'] ?? []), 'is_string')), 'activation_mode' => $c['activation_mode'] ?? null, 'restart_strategy' => $c['restart_strategy'] ?? null];
                 }
             }
+            // C6 — capability de COMPILAÇÃO declarada pelo agente (só persistida/exibida; NÃO invocável enquanto
+            // live_ready=false). ADITIVA; NÃO mistura com rpo_publish. Nenhum secret/path (allowlist de campos).
+            $compileCap = null;
+            foreach ($inv['capabilities'] ?? [] as $c) {
+                if (($c['name'] ?? null) === 'source_compile') {
+                    $compileCap = [
+                        'name' => 'source_compile',
+                        'adapter' => $c['adapter'] ?? null,
+                        'contract_version' => $c['contract_version'] ?? null,
+                        'supported_languages' => array_values(array_filter((array) ($c['supported_languages'] ?? []), 'is_string')),
+                        'supported_targets' => array_values(array_filter((array) ($c['supported_targets'] ?? []), 'is_string')),
+                        'execution_mode' => $c['execution_mode'] ?? null,
+                        'compiler_metadata' => is_array($c['compiler_metadata'] ?? null) ? $c['compiler_metadata'] : null,
+                        'isolation_supported' => (bool) ($c['isolation_supported'] ?? false),
+                        'diagnostics_supported' => (bool) ($c['diagnostics_supported'] ?? false),
+                    ];
+                }
+            }
 
             ConnectorEnvironmentState::updateOrCreate(
                 ['environment_id' => $envId],
@@ -146,6 +164,7 @@ class ConnectorInventoryProcessor
                     'inventory_received_at' => $receivedAt,
                     'inventory_observed_at' => $observedAt,
                     'rpo_capability'        => $rpoCap,
+                    'compile_capability'    => $compileCap,
                 ]
             );
 

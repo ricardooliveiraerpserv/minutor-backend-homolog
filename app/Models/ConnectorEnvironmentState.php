@@ -21,6 +21,8 @@ class ConnectorEnvironmentState extends Model
         'observed_json', 'inventory_received_at', 'inventory_observed_at',
         // Connector-5.1 — capability de publicação declarada pelo agente.
         'rpo_capability',
+        // C6 — capability de compilação declarada pelo agente (aditiva; NÃO mistura com rpo_capability).
+        'compile_capability',
     ];
 
     protected $casts = [
@@ -30,5 +32,6 @@ class ConnectorEnvironmentState extends Model
         'inventory_received_at' => 'datetime',
         'inventory_observed_at' => 'datetime',
         'rpo_capability'        => 'array',
+        'compile_capability'    => 'array',
     ];
 }

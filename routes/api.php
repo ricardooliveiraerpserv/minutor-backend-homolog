@@ -752,6 +752,21 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/rpo/targets/{id}/qualify', [\App\Http\Controllers\RpoRegistryController::class, 'qualify'])->whereNumber('id');
             Route::post('/prosight/rpo/qualifications/{id}/revoke', [\App\Http\Controllers\RpoRegistryController::class, 'revokeQualification'])->whereNumber('id');
         });
+        // ── Connector-6 (C6) — COMPILE. Produz ARTEFATO candidato; NENHUMA rota publica/promove RPO. ──
+        Route::middleware('permission.or.admin:prosight.compile.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/compile/capability', [\App\Http\Controllers\CompileController::class, 'capability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/compile/requests/{id}', [\App\Http\Controllers\CompileController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.compile.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/compile/requests/{id}/execute', [\App\Http\Controllers\CompileController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/compile/requests/{id}/cancel', [\App\Http\Controllers\CompileController::class, 'cancel'])->whereNumber('id');
+        });
+        // C6.7 — handoff GOVERNADO do artifact candidate ao registry C5 (register). C6 NÃO promove.
+        Route::middleware('permission:prosight.compile.handoff')->group(function () {
+            Route::post('/prosight/compile/candidates/{id}/handoff', [\App\Http\Controllers\CompileController::class, 'handoff'])->whereNumber('id');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1972,6 +1987,21 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:prosight.operations.rpo.qualify')->group(function () {
             Route::post('/prosight/rpo/targets/{id}/qualify', [\App\Http\Controllers\RpoRegistryController::class, 'qualify'])->whereNumber('id');
             Route::post('/prosight/rpo/qualifications/{id}/revoke', [\App\Http\Controllers\RpoRegistryController::class, 'revokeQualification'])->whereNumber('id');
+        });
+        // ── Connector-6 (C6) — COMPILE. Produz ARTEFATO candidato; NENHUMA rota publica/promove RPO. ──
+        Route::middleware('permission.or.admin:prosight.compile.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/compile/capability', [\App\Http\Controllers\CompileController::class, 'capability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/compile/requests/{id}', [\App\Http\Controllers\CompileController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.compile.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/compile/requests/{id}/execute', [\App\Http\Controllers\CompileController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/compile/requests/{id}/cancel', [\App\Http\Controllers\CompileController::class, 'cancel'])->whereNumber('id');
+        });
+        // C6.7 — handoff GOVERNADO do artifact candidate ao registry C5 (register). C6 NÃO promove.
+        Route::middleware('permission:prosight.compile.handoff')->group(function () {
+            Route::post('/prosight/compile/candidates/{id}/handoff', [\App\Http\Controllers\CompileController::class, 'handoff'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
