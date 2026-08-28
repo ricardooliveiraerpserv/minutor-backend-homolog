@@ -180,15 +180,21 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), 'prosight.operations.rpo.rollback')) {
             return response()->json(['error' => 'forbidden'], 403);
         }
-        $data = $request->validate(['qualification_id' => 'required|integer', 'reason' => 'required|string|max:300']);
+        $data = $request->validate(['qualification_id' => 'required|integer', 'reason' => 'required|string|max:300', 'emergency_override' => 'nullable|boolean']);
         // Autoridade NOMINAL: a qualificação precisa ser DESTE target (contexto validado no service também).
         $q = RpoQualification::find((int) $data['qualification_id']);
         if (! $q || (int) $q->rpo_target_id !== (int) $target->id) {
             return response()->json(['message' => 'Qualificação não encontrada.'], 404);
         }
-        $r = $this->ops->createRpoRollback($target, $q, $request->user()->id, $data['reason']);
+        // C5.3b — override do last-AppServer (rollback requires_restart single-member) exige rpo.override no MAKER.
+        $hasOverride = $this->hasPerm($request->user(), 'prosight.operations.rpo.override');
+        $r = $this->ops->createRpoRollback($target, $q, $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride);
         if (! $r['ok']) {
-            $code = $r['error'] === 'operation_in_flight' ? 409 : 422;
+            $code = match ($r['error']) {
+                'operation_in_flight' => 409,
+                'override_permission_required' => 403,
+                default => 422,
+            };
 
             return response()->json(['error' => $r['error'], 'reasons' => $r['reasons'] ?? null], $code);
         }
@@ -223,9 +229,9 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), $this->approvePermFor($op))) {
             return response()->json(['error' => 'forbidden'], 403); // maker-checker: capability de aprovação por tipo
         }
-        // C5.2b — se a operação usou emergency_override (last-AppServer requires_restart), o CHECKER também
-        // precisa de rpo.override (maker E checker) — impede aprovar exceção por quem não tem autoridade.
-        if ($action === 'approve' && $op->op_type === 'rpo_promote' && ($op->precondition_snapshot['emergency_override'] ?? false) === true
+        // C5.2b/C5.3b — se a operação de RPO usou emergency_override (last-AppServer requires_restart), o CHECKER
+        // também precisa de rpo.override (maker E checker) — impede aprovar exceção por quem não tem autoridade.
+        if ($action === 'approve' && in_array($op->op_type, ['rpo_promote', 'rpo_rollback'], true) && ($op->precondition_snapshot['emergency_override'] ?? false) === true
             && ! $this->hasPerm($request->user(), 'prosight.operations.rpo.override')) {
             return response()->json(['error' => 'override_permission_required'], 403);
         }

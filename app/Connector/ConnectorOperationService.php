@@ -363,6 +363,48 @@ class ConnectorOperationService
         return ['in_window' => $inDay && $inTime, 'policy' => ['enabled' => true, 'timezone' => $tz, 'days' => (array) ($w['days'] ?? []), 'start' => $w['start'] ?? null, 'end' => $w['end'] ?? null]];
     }
 
+    /**
+     * C5.2b/C5.3b — revalidação de dispatch ESPECÍFICA de requires_restart (compartilhada promote+rollback).
+     * Pressupõe que hash/publish_unit/activation_mode/presença já foram checados pelo chamador. Verifica:
+     * strategy inalterada+executável; janela+last-AppServer (salvo override); e — OBRIGATÓRIO — que CADA membro
+     * continua no MESMO process_instance_id congelado (restart externo mantém hash mas muda a pré-imagem causal →
+     * process_instance_diverged). NÃO atualiza silenciosamente P_cur (invalidaria o snapshot aprovado).
+     */
+    private function rrDispatchChecks(ConnectorOperation $op, array $s, array $declaredCap): ?string
+    {
+        $strategy = $declaredCap['restart_strategy'] ?? null;
+        $execStrat = (array) $this->cfg('rpo.executable_restart_strategies', ['rolling']);
+        if ($strategy !== ($s['restart_strategy'] ?? null)) {
+            return 'restart_strategy_changed';
+        }
+        if ($strategy === null || ! in_array($strategy, $execStrat, true)) {
+            return 'restart_strategy_not_executable';
+        }
+        $overrideAuthorized = ($s['emergency_override'] ?? false) === true;
+        if (! $overrideAuthorized) {
+            $minAvail = (int) $this->cfg('rpo_promote.requires_restart.min_available', 1);
+            if (count((array) ($s['members'] ?? [])) < ($minAvail + 1)) {
+                return 'last_appserver_restart_blocked';
+            }
+            if (! $this->rrWindow()['in_window']) {
+                return 'maintenance_window_closed';
+            }
+        }
+        $obs = $this->observedState((int) $op->environment_id);
+        $memberPiid = (array) ($s['member_piid'] ?? []);
+        foreach ((array) ($s['members'] ?? []) as $ref) {
+            $app = $obs['appservers'][$ref] ?? null;
+            if (! $app || ($app['up'] ?? false) !== true || empty($app['process_instance_id'])) {
+                return 'process_instance_capability_required';
+            }
+            if (($app['process_instance_id'] ?? null) !== ($memberPiid[$ref] ?? null)) {
+                return 'process_instance_diverged'; // restart externo entre aprovação e dispatch → pré-imagem inválida
+            }
+        }
+
+        return null;
+    }
+
     /** Timeout do rpo_promote ciente do activation_mode: requires_restart usa os timeouts MAIORES (outage+rolling). */
     private function rpoTimeout(ConnectorOperation $op, string $key, int $default): int
     {
@@ -415,35 +457,10 @@ class ConnectorOperationService
         if ($to->hash === ($c['hash'] ?? null)) {
             return 'from_equals_to'; // já publicado (backend não sabia) → reconcile nunca reaplica
         }
-        // ── C5.2b: revalidação ADICIONAL do requires_restart no dispatch ──
+        // ── C5.2b: revalidação ADICIONAL do requires_restart no dispatch (inclui P_cur por membro) ──
         if (($s['activation_mode'] ?? null) === 'requires_restart') {
-            $strategy = $cap['declared']['restart_strategy'] ?? null;
-            $execStrat = (array) $this->cfg('rpo.executable_restart_strategies', ['rolling']);
-            if ($strategy !== ($s['restart_strategy'] ?? null)) {
-                return 'restart_strategy_changed'; // mudou após aprovação → bloqueia
-            }
-            if ($strategy === null || ! in_array($strategy, $execStrat, true)) {
-                return 'restart_strategy_not_executable';
-            }
-            // janela + last-AppServer revalidados (salvo override autorizado da op)
-            $overrideAuthorized = ($s['emergency_override'] ?? false) === true;
-            if (! $overrideAuthorized) {
-                $minAvail = (int) $this->cfg('rpo_promote.requires_restart.min_available', 1);
-                if (count((array) ($s['members'] ?? [])) < ($minAvail + 1)) {
-                    return 'last_appserver_restart_blocked';
-                }
-                if (! $this->rrWindow()['in_window']) {
-                    return 'maintenance_window_closed';
-                }
-            }
-            // todos os membros ainda up com piid (senão não há prova de restart)
-            $obs = $this->observedState((int) $op->environment_id);
-            foreach ((array) ($s['members'] ?? []) as $ref) {
-                $app = $obs['appservers'][$ref] ?? null;
-                if (! $app || ($app['up'] ?? false) !== true || empty($app['process_instance_id'])) {
-                    return 'process_instance_capability_required';
-                }
-            }
+            $err = $this->rrDispatchChecks($op, $s, $cap['declared'] ?? []);
+            if ($err !== null) { return $err; }
         }
 
         return null;
@@ -457,7 +474,7 @@ class ConnectorOperationService
      * na operação: qualification_id (autoridade nominal) + artifact_id + to_hash + contexto + from_hash +
      * capability/publish_unit/activation snapshot. ZERO bytes/path.
      */
-    public function createRpoRollback(RpoTarget $target, RpoQualification $q, int $requester, string $reason): array
+    public function createRpoRollback(RpoTarget $target, RpoQualification $q, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false): array
     {
         $envId = (int) $target->environment_id;
         $ev = $this->rpo->evaluateRollback($target, $q); // reavaliação AUTORITATIVA (não o preview)
@@ -476,16 +493,33 @@ class ConnectorOperationService
         $env = EnvEnvironment::query()->whereKey($envId)->first(['type']);
         $policy = (array) $this->cfg('rpo.required_approvals', []);
         $required = (int) ($policy[$env->type ?? 'default'] ?? $policy['default'] ?? 1);
+        $mode = $ev['activation_mode'] ?? null;
 
         $snapshot = [
             'kind' => 'rpo_rollback',
             'observed_at' => now()->toIso8601String(),
             'from_hash' => $ev['from_hash'], 'to_artifact_id' => $ev['to_artifact_id'], 'to_hash' => $ev['to_hash'],
             'qualification_id' => $ev['qualification_id'], 'qualification' => $ev['qualification'], // autoridade nominal + metadados
-            'activation_mode' => $ev['activation_mode'], 'publish_unit_id' => $ev['publish_unit_id'],
+            'activation_mode' => $mode, 'publish_unit_id' => $ev['publish_unit_id'],
             'members' => $refs, 'member_from' => $memberFrom,
             'required_approvals' => $required, 'approvals' => [],
         ];
+
+        // ── C5.3b: rollback num target requires_restart É requires_restart (A também precisa reiniciar). ──
+        // Reusa o rrGate do C5.2b: strategy=rolling fail-closed, P_cur (das incarnações servindo B agora)
+        // por membro, last-AppServer por disponibilidade, janela. Física idêntica; muda só autoridade/destino.
+        if ($mode === 'requires_restart') {
+            $cap = $this->rpo->capability($envId);
+            $rr = $this->rrGate($envId, $c, $refs, $cap['declared'] ?? [], $emergencyOverride, $hasOverridePerm);
+            if (! ($rr['ok'] ?? false)) {
+                return ['ok' => false, 'error' => $rr['error'], 'reasons' => $rr['reasons'] ?? null];
+            }
+            $snapshot['restart_strategy'] = $rr['restart_strategy'];
+            $snapshot['member_piid'] = $rr['member_piid'];  // P_cur (incarnação atual servindo B) por membro
+            $snapshot['window'] = $rr['window'];
+            $snapshot['emergency_override'] = $rr['emergency_override'];
+            $snapshot['override_reasons'] = $rr['override_reasons'];
+        }
         try {
             $op = DB::transaction(fn () => ConnectorOperation::create([
                 'environment_id' => $envId, 'appserver_ref' => null, 'customer_id' => $target->customer_id,
@@ -498,12 +532,15 @@ class ConnectorOperationService
         } catch (UniqueConstraintViolationException) {
             return ['ok' => false, 'error' => 'operation_in_flight'];
         }
-        $this->emit($envId, null, 'operation_requested', 'info', 'Rollback de RPO (hot) solicitado', [
+        $this->emit($envId, null, 'operation_requested', 'info', "Rollback de RPO ({$mode}) solicitado", [
             'op_type' => 'rpo_rollback', 'operation_id' => $op->id, 'execution_id' => substr($op->execution_id, 0, 8),
             'target_id' => $target->id, 'qualification_id' => $ev['qualification_id'],
             'from' => substr((string) $ev['from_hash'], 0, 12), 'to' => substr((string) $ev['to_hash'], 0, 12),
-            'required_approvals' => $required,
+            'required_approvals' => $required, 'activation_mode' => $mode, 'restart_strategy' => $snapshot['restart_strategy'] ?? null,
         ]);
+        if (($snapshot['emergency_override'] ?? false) === true) {
+            $this->emit($envId, null, 'operation_emergency_override', 'info', 'Override de last-AppServer (rollback requires_restart)', ['operation_id' => $op->id, 'reasons' => $snapshot['override_reasons'] ?? []]);
+        }
 
         return ['ok' => true, 'op' => $op];
     }
@@ -539,6 +576,13 @@ class ConnectorOperationService
         }
         if ($this->presenceStatus((int) $op->environment_id) !== 'online') {
             return 'agent_not_online';
+        }
+        // ── C5.3b: rollback requires_restart — mesmas checagens do promote (strategy/window/last-AppServer +
+        // P_cur por membro). from_hash(=B observado) já revalidado acima. ──
+        if (($s['activation_mode'] ?? null) === 'requires_restart') {
+            $cap = $this->rpo->capability((int) $op->environment_id);
+            $err = $this->rrDispatchChecks($op, $s, $cap['declared'] ?? []);
+            if ($err !== null) { return $err; }
         }
 
         return null;
