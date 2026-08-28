@@ -1224,17 +1224,14 @@ class ExpenseController extends Controller
         }
 
         try {
+            // Assinatura correta do service: downloadStream(Attachment, User, ?Request) → StreamedResponse.
+            // (Antes chamava $service->downloadStream($user, $att->id) — args trocados → TypeError → 503.)
             $service = app(\App\Attachments\AttachmentService::class);
-            $stream  = $service->downloadStream($user, $att->id);
-
-            return response()->stream(function () use ($stream) {
-                while (!feof($stream)) { echo fread($stream, 8192); }
-                fclose($stream);
-            }, 200, [
-                'Content-Type'        => $att->mime_type ?: 'application/octet-stream',
-                'Content-Disposition' => 'inline; filename="' . addslashes($att->original_name ?: basename($att->storage_path)) . '"',
-                'Cache-Control'       => 'no-cache',
-            ]);
+            $stream  = $service->downloadStream($att, $user, $request);
+            $stream->headers->set('Content-Type', $att->mime_type ?: 'application/octet-stream');
+            $stream->headers->set('Content-Disposition', 'inline; filename="' . addslashes($att->original_name ?: basename($att->storage_path)) . '"');
+            $stream->headers->set('Cache-Control', 'no-cache');
+            return $stream;
         } catch (\Throwable $e) {
             \Log::error('Erro ao servir comprovante de despesa', [
                 'expense_id'   => $id,
