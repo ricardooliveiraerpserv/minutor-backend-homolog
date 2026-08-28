@@ -775,6 +775,15 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
             Route::post('/prosight/environments/{environmentId}/rpo/topology/confirm', [\App\Http\Controllers\RpoTopologyController::class, 'confirm'])->whereNumber('environmentId');
         });
+        // ENV-HUB — jornada operacional por ambiente (orquestra Connector/AppServers/RPO; NÃO duplica; NÃO promove).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operational-status', [\App\Http\Controllers\EnvironmentHubController::class, 'status'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/appservers/reconciliation', [\App\Http\Controllers\EnvironmentHubController::class, 'reconciliation'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
+            Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -2019,6 +2028,15 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
             Route::post('/prosight/environments/{environmentId}/rpo/topology/confirm', [\App\Http\Controllers\RpoTopologyController::class, 'confirm'])->whereNumber('environmentId');
+        });
+        // ENV-HUB — jornada operacional por ambiente (orquestra Connector/AppServers/RPO; NÃO duplica; NÃO promove).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operational-status', [\App\Http\Controllers\EnvironmentHubController::class, 'status'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/appservers/reconciliation', [\App\Http\Controllers\EnvironmentHubController::class, 'reconciliation'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
+            Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

@@ -167,6 +167,9 @@ class PermissionService
         // Conector-5.2b — override do last-AppServer p/ requires_restart (target de 1 membro = outage inevitável).
         // Exigido do MAKER E do CHECKER (como stop/restart.override). Sem ele, single-member requires_restart bloqueia.
         'prosight.operations.rpo.override',
+        // ENV-HUB — afirmar que um AppServer OBSERVADO (appserver_ref) corresponde a um AppServer CADASTRAL
+        // (env_appserver). Autoridade PRÓPRIA (distinta de gerenciar Connector): vincular/supersede. Nunca auto.
+        'prosight.operations.appserver.bind',
         // Connector-6 (C6) — COMPILE (produz ARTEFATO; NÃO publica RPO). Granularidade PRÓPRIA e ADITIVA;
         // NÃO herda operations.execute nem as permissões de RPO. request=solicitar/cancelar compilação;
         // view=ver requests/execuções/diagnóstico/artefato; handoff=enviar artifact candidate ao registry C5.
