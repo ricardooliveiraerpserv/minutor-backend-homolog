@@ -405,10 +405,11 @@ class ConnectorOperationService
         return null;
     }
 
-    /** Timeout do rpo_promote ciente do activation_mode: requires_restart usa os timeouts MAIORES (outage+rolling). */
+    /** Timeout de rpo_promote/rpo_rollback ciente do activation_mode: requires_restart usa os timeouts MAIORES
+     * (outage + rolling), sob a MESMA config rpo_promote.requires_restart (compartilhada promote+rollback). */
     private function rpoTimeout(ConnectorOperation $op, string $key, int $default): int
     {
-        if ($op->op_type === 'rpo_promote' && (($op->precondition_snapshot['activation_mode'] ?? null) === 'requires_restart')) {
+        if (in_array($op->op_type, ['rpo_promote', 'rpo_rollback'], true) && (($op->precondition_snapshot['activation_mode'] ?? null) === 'requires_restart')) {
             return (int) $this->cfg("rpo_promote.requires_restart.$key", $default);
         }
 
