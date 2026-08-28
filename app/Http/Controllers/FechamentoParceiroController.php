@@ -21,6 +21,19 @@ class FechamentoParceiroController extends Controller
 {
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
+    /** Recebedor da apuração: admin designado (folha_user_id) OU o admin executivo. */
+    private function recebedorParceiro(Partner $partner): ?array
+    {
+        if ($partner->folha_user_id) {
+            $u = \App\Models\User::find($partner->folha_user_id, ['id', 'name']);
+            if ($u) return ['id' => $u->id, 'name' => $u->name, 'designado' => true];
+        }
+        $u = \App\Models\User::where('partner_id', $partner->id)
+            ->where('type', 'parceiro_admin')->where('is_executive', true)
+            ->orderBy('id')->first(['id', 'name']);
+        return $u ? ['id' => $u->id, 'name' => $u->name, 'designado' => false] : null;
+    }
+
     private function period(string $yearMonth): array
     {
         $from = "{$yearMonth}-01";
@@ -94,7 +107,25 @@ class FechamentoParceiroController extends Controller
 
         $partners = Partner::whereRaw('"active" = true')
             ->orderBy('name')
-            ->get(['id', 'name', 'pricing_type', 'hourly_rate', 'contract_type']);
+            ->get(['id', 'name', 'pricing_type', 'hourly_rate', 'contract_type', 'folha_user_id']);
+
+        // Recebedor da apuração: o admin designado (folha_user_id) OU, se não houver, o
+        // admin executivo. admins_count sinaliza ao front quando há +1 admin sem designação.
+        $partnerIds = $partners->pluck('id')->all();
+        $admins = \App\Models\User::where('type', 'parceiro_admin')->where('is_executive', true)
+            ->whereIn('partner_id', $partnerIds)->orderBy('id')
+            ->get(['id', 'name', 'partner_id'])->groupBy('partner_id');
+        $folhaUsers = \App\Models\User::whereIn('id', $partners->pluck('folha_user_id')->filter()->unique()->all())
+            ->get(['id', 'name'])->keyBy('id');
+        $recebedorOf = function ($partner) use ($admins, $folhaUsers) {
+            if ($partner->folha_user_id && $folhaUsers->has($partner->folha_user_id)) {
+                $u = $folhaUsers[$partner->folha_user_id];
+                return ['id' => $u->id, 'name' => $u->name, 'designado' => true];
+            }
+            $a = $admins->get($partner->id);
+            if ($a && $a->count()) { $u = $a->first(); return ['id' => $u->id, 'name' => $u->name, 'designado' => false]; }
+            return null;
+        };
 
         $fechamentos = $yearMonth
             ? FechamentoParceiro::where('year_month', $yearMonth)
@@ -121,7 +152,7 @@ class FechamentoParceiroController extends Controller
                 ->get()->keyBy('partner_id')
             : collect();
 
-        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap, $notasMap, $ajustesMap, $yearMonth) {
+        $data = $partners->map(function ($partner) use ($fechamentos, $envioMap, $notasMap, $ajustesMap, $yearMonth, $admins, $recebedorOf) {
             $f = $fechamentos->get($partner->id);
 
             $ajuste       = $ajustesMap->get($partner->id);
@@ -166,6 +197,8 @@ class FechamentoParceiroController extends Controller
                 'partner_id'     => $partner->id,
                 'nome'           => $partner->name,
                 'contract_type'  => $partner->contract_type,
+                'recebedor'      => $recebedorOf($partner),
+                'admins_count'   => optional($admins->get($partner->id))->count() ?? 0,
                 'notas'          => $partner->contract_type === 'pj'
                     ? (optional($notasMap->get($partner->id))->toRowPayload() ?? \App\Models\FechamentoNota::emptyRowPayload())
                     : null,
@@ -587,8 +620,11 @@ class FechamentoParceiroController extends Controller
         $logoFile    = public_path('logo-erpserv.png');
         $logoDataUri = is_file($logoFile) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile)) : '';
 
+        $recebedor = $this->recebedorParceiro($partner);
+
         return [
             'parceiroName'     => $partner->name,
+            'recebedorName'    => $recebedor['name'] ?? null,
             'periodo'          => $periodo,
             'logoDataUri'      => $logoDataUri,
             'mode'             => $mode,
