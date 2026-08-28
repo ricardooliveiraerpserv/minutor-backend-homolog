@@ -297,12 +297,44 @@ class HelpDeskTriggerEngine
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
             $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
+            // Corpo LEGÍVEL p/ registrar no chamado (sem o layout institucional/cids que não renderizam no histórico).
+            $readParts = [];
+            if (trim((string) ($params['notification_title'] ?? '')) !== '')    $readParts[] = '<strong>' . e(self::render((string) $params['notification_title'], $ticket)) . '</strong>';
+            if (trim((string) ($params['notification_subtitle'] ?? '')) !== '') $readParts[] = e(self::render((string) $params['notification_subtitle'], $ticket));
+            if (trim((string) ($params['message'] ?? '')) !== '')               $readParts[] = nl2br(self::render((string) $params['message'], $ticket));
+            $readable = implode('<br><br>', $readParts);
         } else {
             $body = nl2br(self::render((string) ($params['body'] ?? ''), $ticket));
             $html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;line-height:1.5">' . $body . '</div>';
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
+            $readable = $body;
+        }
+        // Registra o e-mail enviado por gatilho como INTERAÇÃO no chamado (histórico completo, com o CORPO),
+        // além do evento "email_sent". Assim o texto exato enviado aparece no chamado (não só um log de linha).
+        if (($ok ?? false) && trim(strip_tags((string) ($readable ?? ''))) !== '') {
+            self::recordTriggerInteraction($ticket, $params, $to, (string) $readable, $triggerName);
         }
         self::logEmailSent($ticket, $to, $cc, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
+    }
+
+    /** Grava o e-mail enviado por um gatilho como interação (comentário) no chamado. */
+    private static function recordTriggerInteraction(HelpDeskTicket $ticket, array $params, array $to, string $bodyHtml, ?string $triggerName): void
+    {
+        $toList     = (array) ($params['to'] ?? []);
+        $visibility = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'customer' : 'internal';
+        $prefix     = $visibility === 'customer' ? 'E-mail automático enviado ao cliente' : 'Aviso automático enviado ao responsável';
+        if ($triggerName) $prefix .= ' — ' . $triggerName;
+        $body = '<p style="margin:0 0 8px;font-size:12px;color:#6b7280">' . e($prefix) . ' (' . e(implode(', ', $to)) . ')</p>' . $bodyHtml;
+        // Dedup: mesmo gatilho + mesmo corpo + mesmos destinatários = uma interação só (evita duplicar em reprocessos).
+        $idem = 'trg-mail:' . $ticket->id . ':' . md5(($triggerName ?? '') . '|' . $bodyHtml . '|' . implode(',', $to));
+        try {
+            \App\Models\HelpDeskTicketComment::firstOrCreate(
+                ['idempotency_key' => $idem],
+                ['ticket_id' => $ticket->id, 'body' => $body, 'visibility' => $visibility, 'is_system' => true, 'channel' => 'email'],
+            );
+        } catch (\Throwable $e) {
+            Log::warning('HD gatilho: falha ao gravar interação no chamado: ' . $e->getMessage());
+        }
     }
 
     /** Resolve um destinatário simbólico em e-mail. Aceita também e-mail fixo (contém @). */
