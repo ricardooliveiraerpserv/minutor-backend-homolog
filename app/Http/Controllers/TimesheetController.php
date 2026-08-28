@@ -730,6 +730,9 @@ class TimesheetController extends Controller
                         $ts->makeHidden(['client_extra_pct']);
                     }
                     $arr = $ts->toArray();
+                    // Atraso aprovado p/ cliente mas ainda NÃO liberado p/ o consultor: some no
+                    // pagamento/banco e a lista mostra "Em atraso — fale com o coordenador".
+                    $arr['consultant_pending_release'] = !is_null($ts->late_approved_at) && !$ts->consultant_released;
                     // Perfis de gestão (não-consultor): TEMPO e FIM já vêm INFLADOS pelo multiplicador
                     // do contrato. Consultor/parceiro (hideClientPct) continuam no REAL.
                     if (!$hideClientPct) {
@@ -2192,7 +2195,19 @@ class TimesheetController extends Controller
      */
     public function atrasos(Request $request): JsonResponse
     {
-        $query = Timesheet::with([
+        // 3 abas: pendente (cliente, status=late) | consultor (aprovado p/ cliente, aguardando
+        // liberação do consultor) | concluidos (já liberado). late_approved_at marca o que passou
+        // pela aprovação de atraso; consultant_released é o portão do pagamento/banco do consultor.
+        $tab = $request->query('tab', 'pendente');
+        $base = fn () => Timesheet::query()->whereNull('deleted_at');
+        $applyTab = function ($q) use ($tab) {
+            if ($tab === 'consultor')  return $q->whereNotNull('late_approved_at')->where('consultant_released', false);
+            if ($tab === 'concluidos') return $q->whereNotNull('late_approved_at')->where('consultant_released', true);
+            return $q->where('status', Timesheet::STATUS_LATE); // pendente
+        };
+
+        $query = $applyTab($base())
+            ->with([
                 'user:id,name', 'customer:id,name',
                 'project:id,name,code,customer_id,kanban_coordinator_override_id',
                 'project.coordinators:id,name',
@@ -2200,8 +2215,6 @@ class TimesheetController extends Controller
                 'project.customer:id,name,executive_id',
                 'project.customer.executive:id,name',
             ])
-            ->where('status', Timesheet::STATUS_LATE)
-            ->whereNull('deleted_at')
             ->orderBy('date');
 
         if ($request->filled('year_month')) {
@@ -2231,10 +2244,19 @@ class TimesheetController extends Controller
                 'effort_minutes' => (int) $t->effort_minutes,
                 'observacao'     => $t->observation,
                 'date_locked'    => (bool) $t->date_locked,
+                'consultant_released'    => (bool) $t->consultant_released,
+                'late_approved_at'       => optional($t->late_approved_at)->toISOString(),
+                'consultant_released_at' => optional($t->consultant_released_at)->toISOString(),
             ];
         });
 
-        return response()->json(['data' => $rows]);
+        $counts = [
+            'pendente'   => $base()->where('status', Timesheet::STATUS_LATE)->count(),
+            'consultor'  => $base()->whereNotNull('late_approved_at')->where('consultant_released', false)->count(),
+            'concluidos' => $base()->whereNotNull('late_approved_at')->where('consultant_released', true)->count(),
+        ];
+
+        return response()->json(['data' => $rows, 'counts' => $counts]);
     }
 
     /**
@@ -2260,20 +2282,63 @@ class TimesheetController extends Controller
             $timesheet->date_locked = true;
         }
 
-        $timesheet->status = Timesheet::STATUS_PENDING;
+        // Estágio 1: aprovado p/ o CLIENTE (status=pending → entra em faturamento/consumo),
+        // mas ainda NÃO para o consultor — precisa da liberação (estágio 2). Marca o portão.
+        $timesheet->status                 = Timesheet::STATUS_PENDING;
+        $timesheet->consultant_released    = false;
+        $timesheet->late_approved_at       = now();
+        $timesheet->consultant_released_at = null;
+        $timesheet->consultant_released_by = null;
         $timesheet->save();
 
         $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
         $this->invalidateListCache('timesheets');
         $timesheet->load(['user', 'customer', 'project']);
 
+        // Avisa o consultor UMA vez: apontamento em atraso conta p/ o cliente mas ainda não
+        // para o pagamento dele — precisa o coordenador liberar.
+        $timesheet->notifyConsultorAtrasoPendente();
+
         return response()->json([
             'success' => true,
             'data'    => $timesheet,
             'message' => $action === 'change_date'
-                ? 'Atraso aprovado com a nova data de inclusão.'
-                : 'Atraso aprovado — entrou no período.',
+                ? 'Atraso aprovado com a nova data de digitação. Aguardando liberação das horas do consultor.'
+                : 'Atraso aprovado (entrou no período do cliente). Aguardando liberação das horas do consultor.',
         ]);
+    }
+
+    /**
+     * Estágio 2: libera as horas do consultor (pagamento + banco). Admin OU coordenador do
+     * projeto. A partir daqui o apontamento entra no fechamento de pagamento e no banco de horas.
+     */
+    public function liberarConsultor(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+        $timesheet = Timesheet::with('project.coordinators')->find($id);
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+        if (is_null($timesheet->late_approved_at)) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não está aguardando liberação.'], 422);
+        }
+
+        $isAdmin = $user->isAdmin() || $user->isAdministrativo();
+        $isCoord = $timesheet->project
+            && $timesheet->project->coordinators->contains('id', $user->id);
+        if (!$isAdmin && !$isCoord) {
+            return response()->json(['success' => false, 'message' => 'Apenas admin ou o coordenador do projeto pode liberar as horas do consultor.'], 403);
+        }
+
+        if (!$timesheet->consultant_released) {
+            $timesheet->consultant_released    = true;
+            $timesheet->consultant_released_at = now();
+            $timesheet->consultant_released_by = $user->id;
+            $timesheet->save();
+            $this->invalidateListCache('timesheets');
+        }
+
+        return response()->json(['success' => true, 'message' => 'Horas do consultor liberadas — passam a contar no pagamento e no banco de horas.']);
     }
 
     /**

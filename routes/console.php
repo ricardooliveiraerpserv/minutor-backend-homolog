@@ -43,6 +43,14 @@ Schedule::command('projects:ensure-monthly-update')
   ->name('ensure-monthly-accumulated-hours-update')
   ->description('Verifica se accumulated_sold_hours foi atualizado no mês atual');
 
+// Atrasos — lembrete no fechamento: apontamentos de atraso ainda não liberados p/ o
+// consultor (não entram no pagamento/banco). O comando só age na janela de fechamento.
+Schedule::command('timesheets:remind-consultant-release')
+  ->dailyAt('08:15')
+  ->timezone('America/Sao_Paulo')
+  ->name('timesheets-remind-consultant-release')
+  ->withoutOverlapping();
+
 // Encerra os MESES ABERTOS (ProjectOpenPeriod) de competências anteriores à vigente, às 06h.
 // Mês imediatamente anterior só fecha APÓS o 2º dia útil (carência); meses mais antigos sempre.
 Schedule::command('projects:close-stale-periods')

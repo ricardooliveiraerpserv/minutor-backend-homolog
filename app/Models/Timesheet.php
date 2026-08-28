@@ -71,6 +71,10 @@ class Timesheet extends Model
         'reviewed_at',
         'manual_project_edit',
         'date_locked',
+        'consultant_released',
+        'late_approved_at',
+        'consultant_released_at',
+        'consultant_released_by',
     ];
 
     /**
@@ -84,6 +88,9 @@ class Timesheet extends Model
         'is_internal_action'  => 'boolean',
         'manual_project_edit' => 'boolean',
         'date_locked'         => 'boolean',
+        'consultant_released'    => 'boolean',
+        'late_approved_at'       => 'datetime',
+        'consultant_released_at' => 'datetime',
         'client_extra_pct'    => 'decimal:2',
         'contract_client_pct' => 'decimal:2', // derivado da regra do contrato (mantido pelo serviço)
         'consultant_extra_pct'=> 'decimal:2',
@@ -688,6 +695,65 @@ class Timesheet extends Model
 
         // Sem re-abrir: mexer em `resent_at`/reads é papel do lembrete recorrente.
         $existing ? $existing->forceFill($attrs)->save() : \App\Models\AppNotification::create($attrs);
+    }
+
+    /**
+     * Avisa o CONSULTOR (dono) que o apontamento em atraso conta p/ o cliente mas ainda NÃO
+     * para o pagamento dele — precisa o coordenador liberar. Notificação (sino) + e-mail
+     * (workflow), UMA vez por lote pendente. O lembrete no fechamento fica no comando agendado.
+     */
+    public function notifyConsultorAtrasoPendente(): void
+    {
+        $owner = $this->user;
+        if (!$owner) return;
+
+        $dia   = $this->date ? $this->date->format('d/m/Y') : '';
+        $total = static::where('user_id', $owner->id)
+            ->whereNotNull('late_approved_at')->where('consultant_released', false)
+            ->whereNull('deleted_at')->count();
+
+        $message = $total > 1
+            ? "Você tem {$total} apontamentos em atraso que ainda NÃO estão sendo contabilizados no seu pagamento. Fale com o seu coordenador para liberar as horas."
+            : "Seu apontamento de {$dia} entrou em atraso e ainda NÃO está sendo contabilizado no seu pagamento. Fale com o seu coordenador para liberar as horas.";
+
+        // Pop-up in-app (um por consultor; reaproveita o aviso vivo).
+        try {
+            $url   = '/timesheets?consultor_atraso=1';
+            $attrs = [
+                'title'        => 'Apontamento em atraso — não contabilizado',
+                'message'      => $message,
+                'type'         => 'action',
+                'priority'     => 'high',
+                'target_users' => [$owner->id],
+                'cta_label'    => 'Ver apontamentos',
+                'cta_url'      => $url,
+                'send_email'   => false,
+                'visible'      => true,
+                'created_by'   => $owner->id,
+                'expires_at'   => now()->addDays(30),
+            ];
+            $existing = \App\Models\AppNotification::where('type', 'action')
+                ->where('cta_url', $url)->where('visible', true)
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->whereJsonContains('target_users', $owner->id)->orderByDesc('id')->get()
+                ->first(fn ($n) => array_map('intval', $n->target_users ?? []) === [$owner->id]);
+            $existing ? $existing->forceFill($attrs)->save() : \App\Models\AppNotification::create($attrs);
+        } catch (\Throwable $e) {
+            \Log::warning('notifyConsultorAtrasoPendente: pop-up falhou', ['timesheet_id' => $this->id, 'error' => $e->getMessage()]);
+        }
+
+        // E-mail (workflow) ao consultor — só na 1ª pendência do lote (evita spam).
+        if ($owner->email && $total <= 1) {
+            try {
+                app(\App\Workflows\WorkflowMailer::class)->send(
+                    'timesheet.atraso_consultor',
+                    ['consultant' => $owner, 'project' => $this->project, 'actor' => $owner],
+                    ['data' => $dia, 'projeto' => $this->project?->name ?? '—'],
+                );
+            } catch (\Throwable $e) {
+                \Log::warning('notifyConsultorAtrasoPendente: e-mail falhou', ['timesheet_id' => $this->id, 'error' => $e->getMessage()]);
+            }
+        }
     }
 
     /**

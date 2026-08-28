@@ -58,6 +58,7 @@ return [
         'fechamento.diretoria'         => '#FDBA74', // pêssego
         'timesheet.rejected'           => '#FB7185', // rosa (rejeitado)
         'timesheet.adjustment'         => '#F97316', // laranja (ajuste)
+        'timesheet.atraso_consultor'   => '#F59E0B', // âmbar (atraso não liberado p/ consultor)
         'timesheet.pending_approval'             => '#38BDF8', // azul (aprovar projetos)
         'timesheet.pending_approval.sustentacao' => '#0EA5E9', // azul escuro (aprovar sustentação)
         'expense.pending_approval'     => '#F59E0B', // âmbar (aprovar despesa)
@@ -156,6 +157,7 @@ return [
         'fechamento.diretoria'         => ['actor'],
         'timesheet.rejected'           => ['project', 'actor'],
         'timesheet.adjustment'         => ['project', 'actor'],
+        'timesheet.atraso_consultor'   => ['consultant', 'project', 'actor'],
         'timesheet.pending_approval'             => ['project', 'actor'],
         'timesheet.pending_approval.sustentacao' => ['project', 'actor'],
         'expense.pending_approval'     => ['project', 'actor'],
@@ -408,6 +410,11 @@ return [
             'subject'   => 'Apontamento — ajuste solicitado',
             'body'      => 'Seu apontamento de {data} precisa de ajuste. {motivo}',
             'variables' => ['data' => 'Data do apontamento', 'motivo' => 'Motivo/observação'],
+        ],
+        'timesheet.atraso_consultor' => [
+            'subject'   => 'Apontamento em atraso não contabilizado',
+            'body'      => 'Seu apontamento de {data} no projeto {projeto} entrou em atraso e ainda NÃO está sendo contabilizado no seu pagamento nem no seu banco de horas. Fale com o seu coordenador para liberar as horas.',
+            'variables' => ['data' => 'Data do apontamento', 'projeto' => 'Projeto'],
         ],
         'timesheet.pending_approval' => [
             'subject'   => 'Apontamentos aguardando sua aprovação',
@@ -805,6 +812,15 @@ return [
             'domain'      => 'Apontamento',
             'description' => 'Quando um apontamento é rejeitado. O dono do apontamento (quem o criou) sempre recebe automaticamente — aqui você só adiciona papéis em cópia (ex.: coordenador).',
             'audiences'   => [
+                'coordenador' => 'off',
+            ],
+        ],
+        'timesheet.atraso_consultor' => [
+            'label'       => 'Apontamento em atraso — não liberado p/ consultor',
+            'domain'      => 'Apontamento',
+            'description' => 'Avisa o consultor que um apontamento em atraso conta para o cliente mas ainda não para o pagamento/banco de horas dele — precisa o coordenador liberar. O consultor sempre recebe; adicione o coordenador em cópia se quiser.',
+            'audiences'   => [
+                'consultor'   => 'to',
                 'coordenador' => 'off',
             ],
         ],
