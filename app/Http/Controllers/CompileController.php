@@ -156,7 +156,7 @@ class CompileController extends Controller
         return response()->json(['data' => [
             'ok' => true, 'rpo_artifact_id' => $res['rpo_artifact_id'] ?? null,
             'candidate' => $this->candidateView($cand->fresh()),
-            'message' => 'Artefato registrado no C5 para qualificação. Não publicado — publicação segue no C5.',
+            'message' => 'Artefato registrado. A qualificação e eventual publicação são realizadas no fluxo de RPO.',
         ]]);
     }
 
