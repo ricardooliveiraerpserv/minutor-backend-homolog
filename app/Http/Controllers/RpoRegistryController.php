@@ -75,6 +75,7 @@ class RpoRegistryController extends Controller
             'hash' => 'required|string|size:64', 'version' => 'nullable|string|max:60',
             'provenance' => 'required|string|max:300', 'compatibility' => 'required|array',
             'compatibility.appserver_versions' => 'nullable|array', 'source_identity' => 'nullable|string|max:200',
+            'classification' => 'nullable|in:test,demo,operational', // C5-FINAL metadata (não gateia)
         ]);
         $res = $this->rpo->register((int) $env->id, (int) $env->customer_id, $data, $r->user()->id);
         if (! $res['ok']) { return response()->json(['error' => $res['error']], 422); }
@@ -106,8 +107,8 @@ class RpoRegistryController extends Controller
     {
         $env = $this->env($r, $environmentId);
         if (! $env) { return response()->json(['message' => 'Ambiente não encontrado.'], 404); }
-        $data = $r->validate(['name' => 'required|string|max:120', 'appserver_refs' => 'required|array|min:1', 'appserver_refs.*' => 'required|uuid']);
-        $res = $this->rpo->createTarget((int) $env->id, (int) $env->customer_id, $data['name'], $data['appserver_refs'], $r->user()->id);
+        $data = $r->validate(['name' => 'required|string|max:120', 'appserver_refs' => 'required|array|min:1', 'appserver_refs.*' => 'required|uuid', 'classification' => 'nullable|in:test,demo,operational']);
+        $res = $this->rpo->createTarget((int) $env->id, (int) $env->customer_id, $data['name'], $data['appserver_refs'], $r->user()->id, $data['classification'] ?? null);
         if (! $res['ok']) { return response()->json(['error' => $res['error']], $res['error'] === 'appserver_already_in_target' ? 409 : 422); }
 
         return response()->json(['data' => $this->targetView($res['target'])], 201);
@@ -145,10 +146,10 @@ class RpoRegistryController extends Controller
     {
         $t = $this->target($r, $id);
         if (! $t) { return response()->json(['message' => 'Target não encontrado.'], 404); }
-        $data = $r->validate(['artifact_id' => 'required|integer', 'reason' => 'required|string|max:300']);
+        $data = $r->validate(['artifact_id' => 'required|integer', 'reason' => 'required|string|max:300', 'classification' => 'nullable|in:test,demo,operational']);
         $art = $this->artifact($r, (int) $data['artifact_id']);
         if (! $art) { return response()->json(['message' => 'Artefato não encontrado.'], 404); }
-        $res = $this->rpo->qualify($t, $art, $data['reason'], $r->user()->id);
+        $res = $this->rpo->qualify($t, $art, $data['reason'], $r->user()->id, $data['classification'] ?? null);
         if (! $res['ok']) { return response()->json(['error' => $res['error']], 422); }
 
         return response()->json(['data' => $this->qualView($res['qualification'])], 201);
@@ -210,6 +211,7 @@ class RpoRegistryController extends Controller
         return ['id' => $a->id, 'hash' => $a->hash, 'version' => $a->version, 'provenance' => $a->provenance,
             'compatibility' => $a->compatibility, 'source_identity' => $a->source_identity, 'status' => $a->status,
             'revision' => (int) $a->revision, 'supersedes_id' => $a->supersedes_id, 'superseded_by_id' => $a->superseded_by_id,
+            'classification' => $a->classification,
             'registered_by' => $a->registered_by, 'registered_at' => $a->registered_at?->toIso8601String()];
     }
 
@@ -219,6 +221,7 @@ class RpoRegistryController extends Controller
         $lkg = $this->rpo->lastKnownGood($t);
 
         return ['id' => $t->id, 'environment_id' => (int) $t->environment_id, 'name' => $t->name, 'status' => $t->status,
+            'classification' => $t->classification,
             'appserver_refs' => $t->appservers()->pluck('appserver_ref')->all(), 'consistency' => $c,
             'last_known_good' => $lkg ? ['artifact_id' => $lkg->rpo_artifact_id, 'hash' => $lkg->hash, 'qualified_at' => $lkg->qualified_at?->toIso8601String()] : null,
             // C5.2 — publicação tecnicamente confirmada (≠ known_good; known_good exige qualificação humana).
@@ -229,7 +232,7 @@ class RpoRegistryController extends Controller
     private function qualView(RpoQualification $q): array
     {
         return ['id' => $q->id, 'rpo_artifact_id' => $q->rpo_artifact_id, 'rpo_target_id' => $q->rpo_target_id,
-            'hash' => $q->hash, 'reason' => $q->reason, 'qualified_by' => $q->qualified_by,
+            'hash' => $q->hash, 'reason' => $q->reason, 'qualified_by' => $q->qualified_by, 'classification' => $q->classification,
             'qualified_at' => $q->qualified_at?->toIso8601String(), 'revoked_at' => $q->revoked_at?->toIso8601String()];
     }
 }

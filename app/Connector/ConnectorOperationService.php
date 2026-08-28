@@ -227,7 +227,7 @@ class ConnectorOperationService
      * from_hash (central) + to_hash congelados. N-of-M por tipo de ambiente (prod=2). Nasce pending_approval.
      * hot NÃO tem last-AppServer/janela (sem outage deliberado). ZERO bytes/path.
      */
-    public function createRpoPromote(RpoTarget $target, RpoArtifact $to, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false): array
+    public function createRpoPromote(RpoTarget $target, RpoArtifact $to, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false, ?string $classification = null): array
     {
         $envId = (int) $target->environment_id;
         $prev = $this->rpo->preview($target, $to, false);
@@ -284,7 +284,7 @@ class ConnectorOperationService
                 'execution_id' => (string) Str::uuid(),
                 'requested_by' => $requester, 'reason' => mb_substr($reason, 0, 300),
                 'approval_state' => 'pending', 'precondition_kind' => 'rpo',
-                'precondition_snapshot' => $snapshot,
+                'precondition_snapshot' => $snapshot, 'classification' => $classification,
             ]));
         } catch (UniqueConstraintViolationException) {
             return ['ok' => false, 'error' => 'operation_in_flight']; // 1 operação viva por ambiente
@@ -475,7 +475,7 @@ class ConnectorOperationService
      * na operação: qualification_id (autoridade nominal) + artifact_id + to_hash + contexto + from_hash +
      * capability/publish_unit/activation snapshot. ZERO bytes/path.
      */
-    public function createRpoRollback(RpoTarget $target, RpoQualification $q, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false): array
+    public function createRpoRollback(RpoTarget $target, RpoQualification $q, int $requester, string $reason, bool $emergencyOverride = false, bool $hasOverridePerm = false, ?string $classification = null): array
     {
         $envId = (int) $target->environment_id;
         $ev = $this->rpo->evaluateRollback($target, $q); // reavaliação AUTORITATIVA (não o preview)
@@ -528,7 +528,7 @@ class ConnectorOperationService
                 'execution_id' => (string) Str::uuid(),
                 'requested_by' => $requester, 'reason' => mb_substr($reason, 0, 300),
                 'approval_state' => 'pending', 'precondition_kind' => 'rpo',
-                'precondition_snapshot' => $snapshot,
+                'precondition_snapshot' => $snapshot, 'classification' => $classification,
             ]));
         } catch (UniqueConstraintViolationException) {
             return ['ok' => false, 'error' => 'operation_in_flight'];

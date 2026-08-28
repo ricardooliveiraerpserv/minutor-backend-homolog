@@ -144,14 +144,14 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), 'prosight.operations.rpo.promote')) {
             return response()->json(['error' => 'forbidden'], 403);
         }
-        $data = $request->validate(['to_artifact_id' => 'required|integer', 'reason' => 'required|string|max:300', 'emergency_override' => 'nullable|boolean']);
+        $data = $request->validate(['to_artifact_id' => 'required|integer', 'reason' => 'required|string|max:300', 'emergency_override' => 'nullable|boolean', 'classification' => 'nullable|in:test,demo,operational']);
         $to = RpoArtifact::find((int) $data['to_artifact_id']);
         if (! $to || ! $this->scope->canAccessCustomerId($request->user(), (int) $to->customer_id)) {
             return response()->json(['message' => 'Artefato não encontrado.'], 404);
         }
         // C5.2b — override do last-AppServer (requires_restart single-member) exige rpo.override no MAKER.
         $hasOverride = $this->hasPerm($request->user(), 'prosight.operations.rpo.override');
-        $r = $this->ops->createRpoPromote($target, $to, $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride);
+        $r = $this->ops->createRpoPromote($target, $to, $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride, $data['classification'] ?? null);
         if (! $r['ok']) {
             $code = match ($r['error']) {
                 'operation_in_flight' => 409,
@@ -180,7 +180,7 @@ class ConnectorOperationController extends Controller
         if (! $this->hasPerm($request->user(), 'prosight.operations.rpo.rollback')) {
             return response()->json(['error' => 'forbidden'], 403);
         }
-        $data = $request->validate(['qualification_id' => 'required|integer', 'reason' => 'required|string|max:300', 'emergency_override' => 'nullable|boolean']);
+        $data = $request->validate(['qualification_id' => 'required|integer', 'reason' => 'required|string|max:300', 'emergency_override' => 'nullable|boolean', 'classification' => 'nullable|in:test,demo,operational']);
         // Autoridade NOMINAL: a qualificação precisa ser DESTE target (contexto validado no service também).
         $q = RpoQualification::find((int) $data['qualification_id']);
         if (! $q || (int) $q->rpo_target_id !== (int) $target->id) {
@@ -188,7 +188,7 @@ class ConnectorOperationController extends Controller
         }
         // C5.3b — override do last-AppServer (rollback requires_restart single-member) exige rpo.override no MAKER.
         $hasOverride = $this->hasPerm($request->user(), 'prosight.operations.rpo.override');
-        $r = $this->ops->createRpoRollback($target, $q, $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride);
+        $r = $this->ops->createRpoRollback($target, $q, $request->user()->id, $data['reason'], (bool) ($data['emergency_override'] ?? false), $hasOverride, $data['classification'] ?? null);
         if (! $r['ok']) {
             $code = match ($r['error']) {
                 'operation_in_flight' => 409,
@@ -489,7 +489,7 @@ class ConnectorOperationController extends Controller
             'agent_result' => $o->agent_result, 'agent_result_phase' => $o->agent_result_phase,
             'reconciliation_state' => $o->reconciliation_state, 'outcome_authority' => $o->outcome_authority,
             'resolution' => $o->resolution, 'resolved_by' => $o->resolved_by,
-            'precondition_kind' => $o->precondition_kind, 'rpo_target_id' => $o->rpo_target_id,
+            'precondition_kind' => $o->precondition_kind, 'rpo_target_id' => $o->rpo_target_id, 'classification' => $o->classification,
             'emergency_override' => (bool) ($o->precondition_snapshot['emergency_override'] ?? false),
             'override_reasons' => $o->precondition_snapshot['override_reasons'] ?? [],
             'approvals_count' => is_array($o->precondition_snapshot['approvals'] ?? null) ? count($o->precondition_snapshot['approvals']) : null,

@@ -86,6 +86,7 @@ class RpoRegistryService
             'provenance' => mb_substr($data['provenance'], 0, 300), 'compatibility' => $data['compatibility'],
             'source_identity' => isset($data['source_identity']) ? mb_substr($data['source_identity'], 0, 200) : null,
             'status' => 'registered', 'revision' => 1, 'registered_by' => $userId, 'registered_at' => now(),
+            'classification' => $data['classification'] ?? null, // C5-FINAL metadata (não gateia nada)
         ]);
         $this->emit($envId, 'artifact_registered', 'Artefato registrado', ['artifact_id' => $art->id, 'hash' => substr($art->hash, 0, 12), 'revision' => 1]);
 
@@ -118,7 +119,7 @@ class RpoRegistryService
     }
 
     /** Cria um target lógico (cadastral). 1 appserver_ref em no máx. 1 target ativo por ambiente. */
-    public function createTarget(int $envId, ?int $customerId, string $name, array $appserverRefs, int $userId): array
+    public function createTarget(int $envId, ?int $customerId, string $name, array $appserverRefs, int $userId, ?string $classification = null): array
     {
         $refs = array_values(array_unique(array_filter($appserverRefs)));
         if (empty($refs)) {
@@ -130,8 +131,8 @@ class RpoRegistryService
             }
         }
         try {
-            $target = DB::transaction(function () use ($envId, $customerId, $name, $refs, $userId) {
-                $t = RpoTarget::create(['environment_id' => $envId, 'customer_id' => $customerId, 'name' => mb_substr($name, 0, 120), 'status' => 'pending_confirmation', 'created_by' => $userId]);
+            $target = DB::transaction(function () use ($envId, $customerId, $name, $refs, $userId, $classification) {
+                $t = RpoTarget::create(['environment_id' => $envId, 'customer_id' => $customerId, 'name' => mb_substr($name, 0, 120), 'status' => 'pending_confirmation', 'created_by' => $userId, 'classification' => $classification]);
                 foreach ($refs as $r) {
                     RpoTargetAppserver::create(['rpo_target_id' => $t->id, 'environment_id' => $envId, 'appserver_ref' => $r, 'created_at' => now()]);
                 }
@@ -201,7 +202,7 @@ class RpoRegistryService
     }
 
     /** Qualifica um artefato REGISTERED como known_good CONTEXTUAL (artifact × target). Histórico preservado. */
-    public function qualify(RpoTarget $target, RpoArtifact $artifact, string $reason, int $userId): array
+    public function qualify(RpoTarget $target, RpoArtifact $artifact, string $reason, int $userId, ?string $classification = null): array
     {
         if ($artifact->status !== 'registered' || $artifact->superseded_by_id !== null) {
             return ['ok' => false, 'error' => 'artifact_not_registered'];
@@ -215,6 +216,7 @@ class RpoRegistryService
         $q = RpoQualification::create([
             'rpo_artifact_id' => $artifact->id, 'rpo_target_id' => $target->id, 'environment_id' => $target->environment_id,
             'hash' => $artifact->hash, 'qualified_by' => $userId, 'reason' => mb_substr($reason, 0, 300), 'qualified_at' => now(),
+            'classification' => $classification,
         ]);
         $this->emit((int) $target->environment_id, 'artifact_qualified_known_good', 'Artefato qualificado known_good', ['artifact_id' => $artifact->id, 'target_id' => $target->id, 'hash' => substr($artifact->hash, 0, 12)]);
 
