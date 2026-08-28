@@ -187,6 +187,15 @@ class Contract extends Model
         return $this->hasMany(ContractContact::class);
     }
 
+    /**
+     * E-mails avulsos (destinatários adicionais) do alerta de consumo de horas.
+     * Não são contatos — só destinatário extra do alerta deste contrato.
+     */
+    public function alertExtraEmails(): HasMany
+    {
+        return $this->hasMany(ContractAlertExtraEmail::class);
+    }
+
     public function items(): HasMany
     {
         return $this->hasMany(\App\Models\ContractItem::class);

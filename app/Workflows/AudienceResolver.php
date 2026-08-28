@@ -82,10 +82,14 @@ class AudienceResolver
         if (!$contract) {
             return [];
         }
-        $contract->loadMissing('contacts');
+        $contract->loadMissing(['contacts', 'alertExtraEmails']);
+        // Contatos do contrato marcados para receber + e-mails avulsos do contrato.
+        // A dedup final por e-mail normalizado (contra outros contatos e o executivo)
+        // acontece no WorkflowRecipientResolver::norm() — aqui só juntamos as fontes.
         return $contract->contacts
             ->where('recebe_alerta_consumo', true)
             ->pluck('email')
+            ->merge($contract->alertExtraEmails->pluck('email'))
             ->filter()
             ->all();
     }

@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Contract;
+use App\Models\ContractAlertExtraEmail;
 use App\Models\ContractContact;
 use App\Models\ContractHoursAlert;
+use App\Models\CustomerContact;
 use App\Models\Project;
 use App\Services\ContractHoursConsumptionAlertService;
 use Illuminate\Http\JsonResponse;
@@ -126,8 +128,10 @@ class ContractHoursAlertController extends Controller
         }
 
         $contacts = [];
+        $extraEmails = [];
+        $customerContacts = [];
         if ($contract) {
-            $contract->loadMissing('contacts');
+            $contract->loadMissing(['contacts', 'alertExtraEmails']);
             $contacts = $contract->contacts->map(fn ($c) => [
                 'id'    => $c->id,
                 'name'  => $c->name,
@@ -135,15 +139,36 @@ class ContractHoursAlertController extends Controller
                 'cargo' => $c->cargo,
                 'recebe_alerta_consumo' => (bool) $c->recebe_alerta_consumo,
             ])->values();
+
+            // E-mails avulsos (destinatários adicionais deste contrato).
+            $extraEmails = $contract->alertExtraEmails
+                ->map(fn ($x) => ['id' => $x->id, 'email' => $x->email])
+                ->values();
+
+            // Contatos do CLIENTE disponíveis para importar (copiar): os que têm e-mail e
+            // ainda NÃO estão no contrato (dedup por e-mail normalizado). Fonte = registro
+            // de contatos do cliente, que agrega os contatos de todos os projetos dele.
+            if ($contract->customer_id) {
+                $onContract = $contract->contacts
+                    ->pluck('email')->filter()
+                    ->map(fn ($e) => mb_strtolower(trim($e)))->flip();
+                $customerContacts = CustomerContact::where('customer_id', $contract->customer_id)
+                    ->whereNotNull('email')->orderBy('name')->get()
+                    ->filter(fn ($cc) => $cc->email && !$onContract->has(mb_strtolower(trim($cc->email))))
+                    ->map(fn ($cc) => ['id' => $cc->id, 'name' => $cc->name, 'email' => $cc->email, 'cargo' => $cc->cargo])
+                    ->values();
+            }
         }
 
         return [
-            'enabled'     => $this->service->isEnabled(),
-            'contract_id' => $contract->id ?? null,
-            'current'     => $current,
-            'preview'     => $preview,
-            'contacts'    => $contacts,
-            'alerts'      => $alerts,
+            'enabled'           => $this->service->isEnabled(),
+            'contract_id'       => $contract->id ?? null,
+            'current'           => $current,
+            'preview'           => $preview,
+            'contacts'          => $contacts,
+            'extra_emails'      => $extraEmails,
+            'customer_contacts' => $customerContacts,
+            'alerts'            => $alerts,
         ];
     }
 
@@ -164,19 +189,74 @@ class ContractHoursAlertController extends Controller
     private function doSetContacts(Contract $contract, Request $request): array
     {
         $data = $request->validate([
-            'contacts'                          => 'required|array',
+            'contacts'                          => 'nullable|array',
             'contacts.*.id'                     => 'required|integer',
             'contacts.*.recebe_alerta_consumo'  => 'required|boolean',
+            'add_customer_contacts'             => 'nullable|array',
+            'add_customer_contacts.*'           => 'integer',
+            'extra_emails'                      => 'nullable|array',
+            'extra_emails.*'                    => 'email',
         ]);
 
-        $map = collect($data['contacts'])->pluck('recebe_alerta_consumo', 'id');
-        ContractContact::where('contract_id', $contract->id)
-            ->whereIn('id', $map->keys())
-            ->get()
-            ->each(function (ContractContact $c) use ($map) {
-                $c->recebe_alerta_consumo = (bool) $map[$c->id];
-                $c->save();
-            });
+        // 1) Toggle da flag nos contatos JÁ existentes do contrato (comportamento original).
+        if (!empty($data['contacts'])) {
+            $map = collect($data['contacts'])->pluck('recebe_alerta_consumo', 'id');
+            ContractContact::where('contract_id', $contract->id)
+                ->whereIn('id', $map->keys())
+                ->get()
+                ->each(function (ContractContact $c) use ($map) {
+                    $c->recebe_alerta_consumo = (bool) $map[$c->id];
+                    $c->save();
+                });
+        }
+
+        // 2) Importar contatos do CLIENTE → COPIAR snapshot para contract_contacts (recebe=true).
+        //    Anti-IDOR: só contatos do MESMO customer do contrato (ids de outro cliente são
+        //    ignorados). Dedup por e-mail normalizado contra os contatos já do contrato.
+        //    A cópia é dona do contrato: mudanças no contato global do cliente não a afetam.
+        if (!empty($data['add_customer_contacts']) && $contract->customer_id) {
+            $existing = array_flip(
+                ContractContact::where('contract_id', $contract->id)
+                    ->pluck('email')->filter()->map(fn ($e) => mb_strtolower(trim($e)))->all()
+            );
+            CustomerContact::where('customer_id', $contract->customer_id)
+                ->whereIn('id', $data['add_customer_contacts'])
+                ->get()
+                ->each(function (CustomerContact $cc) use ($contract, &$existing) {
+                    $norm = mb_strtolower(trim((string) $cc->email));
+                    if ($norm === '' || isset($existing[$norm])) return; // sem e-mail ou já existe
+                    ContractContact::create([
+                        'contract_id'           => $contract->id,
+                        'name'                  => $cc->name,
+                        'cargo'                 => $cc->cargo,
+                        'email'                 => $cc->email,
+                        'phone'                 => $cc->phone,
+                        'recebe_alerta_consumo' => true,
+                    ]);
+                    $existing[$norm] = true;
+                });
+        }
+
+        // 3) Sincronizar e-mails avulsos (destinatário adicional; NÃO vira contato).
+        //    Presença da chave = substituição total: cria os novos, remove os que saíram.
+        if (array_key_exists('extra_emails', $data)) {
+            $wanted = collect($data['extra_emails'] ?? [])
+                ->map(fn ($e) => ['raw' => trim((string) $e), 'norm' => mb_strtolower(trim((string) $e))])
+                ->filter(fn ($e) => $e['norm'] !== '')
+                ->unique('norm')->values();
+            $wantedNorms = $wanted->pluck('norm')->all();
+
+            $del = ContractAlertExtraEmail::where('contract_id', $contract->id);
+            if (!empty($wantedNorms)) $del->whereNotIn('normalized_email', $wantedNorms);
+            $del->delete();
+
+            foreach ($wanted as $e) {
+                ContractAlertExtraEmail::firstOrCreate(
+                    ['contract_id' => $contract->id, 'normalized_email' => $e['norm']],
+                    ['email' => $e['raw']]
+                );
+            }
+        }
 
         return $this->payloadFor($contract->project_id, $contract->fresh());
     }
