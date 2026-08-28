@@ -39,13 +39,29 @@ class HelpDeskTriggerController extends Controller
     {
         $v = $request->validate($this->rules(true));
         $v['created_by_id'] = $request->user()?->id;
-        return response()->json(['data' => HelpDeskTrigger::create($v)->fresh('createdBy:id,name')], 201);
+        $trigger = HelpDeskTrigger::create($v);
+        $this->sweepIfIdleEnabled($trigger);
+        return response()->json(['data' => $trigger->fresh('createdBy:id,name')], 201);
     }
 
     public function update(Request $request, HelpDeskTrigger $trigger): JsonResponse
     {
+        $wasEnabled = (bool) $trigger->enabled;
         $trigger->update($request->validate($this->rules(false)));
+        // Varredura ao ATIVAR (habilitar) um gatilho de inatividade — aplica na hora:
+        // dependendo do prazo, envia o comunicado ou encerra os chamados já parados.
+        if (!$wasEnabled && $trigger->enabled) {
+            $this->sweepIfIdleEnabled($trigger);
+        }
         return response()->json(['data' => $trigger->fresh('createdBy:id,name')]);
+    }
+
+    /** Roda a varredura de gatilhos idle na hora (só se o gatilho for idle e estiver ativo). */
+    private function sweepIfIdleEnabled(HelpDeskTrigger $trigger): void
+    {
+        if ($trigger->enabled && $trigger->event === 'idle_in_status') {
+            try { \Artisan::call('help-desk:run-idle-triggers'); } catch (\Throwable $e) {}
+        }
     }
 
     public function destroy(HelpDeskTrigger $trigger): JsonResponse

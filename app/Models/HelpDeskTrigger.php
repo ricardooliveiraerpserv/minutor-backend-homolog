@@ -78,7 +78,8 @@ class HelpDeskTrigger extends Model
             ['key' => 'comment_by',              'label' => 'Interação feita por',        'type' => 'enum',   'source' => 'commentBy',      'operators' => ['eq', 'neq']],
             ['key' => 'visibility',              'label' => 'Visibilidade da interação',  'type' => 'enum',   'source' => 'visibilities',   'operators' => ['eq', 'neq']],
             ['key' => 'is_continuation',         'label' => 'É continuação (de chamado encerrado)', 'type' => 'bool', 'operators' => ['is_true', 'is_false']],
-            ['key' => 'idle_hours',              'label' => 'Tempo parado (horas)',       'type' => 'number', 'operators' => ['gte', 'lte']],
+            ['key' => 'idle_hours',              'label' => 'Tempo parado (horas corridas)', 'type' => 'number', 'operators' => ['gte', 'lte']],
+            ['key' => 'idle_business_hours',     'label' => 'Tempo parado (horas úteis)',    'type' => 'number', 'operators' => ['gte', 'lte']],
         ];
     }
 

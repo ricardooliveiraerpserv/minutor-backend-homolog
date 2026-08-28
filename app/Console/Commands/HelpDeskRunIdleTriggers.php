@@ -26,8 +26,9 @@ class HelpDeskRunIdleTriggers extends Command
         }
 
         // Menor limiar (em horas) entre os gatilhos → limita a busca de candidatos.
+        // Prefiltro por horas CORRIDAS (superconjunto seguro: horas úteis ⊆ corridas).
         $minHours = $triggers->flatMap(fn ($t) => collect($t->conditions ?? [])
-            ->where('field', 'idle_hours')->pluck('value'))->map(fn ($v) => (int) $v)->filter()->min() ?? 24;
+            ->whereIn('field', ['idle_hours', 'idle_business_hours'])->pluck('value'))->map(fn ($v) => (int) $v)->filter()->min() ?? 24;
 
         $candidates = HelpDeskTicket::query()
             ->whereNotNull('last_activity_at')

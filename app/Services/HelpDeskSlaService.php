@@ -115,6 +115,24 @@ class HelpDeskSlaService
      * Calendário de horas úteis do ticket (da política aplicável): [windows, holidays, tz].
      * Política sem business_hours → windows vazio → o relógio soma horas CORRIDAS (retrocompat).
      */
+    /** Expediente padrão (Mon-Fri 09-12/13-18 = 8h) p/ ticket sem política com business_hours. */
+    private const DEFAULT_WINDOWS = [
+        1 => [[540, 720], [780, 1080]], 2 => [[540, 720], [780, 1080]], 3 => [[540, 720], [780, 1080]],
+        4 => [[540, 720], [780, 1080]], 5 => [[540, 720], [780, 1080]], 6 => [], 7 => [],
+    ];
+
+    /**
+     * Minutos ÚTEIS decorridos de $from até agora, pelo calendário (expediente+feriados) da
+     * política do ticket. Se a política não tem business_hours, usa o expediente padrão
+     * (NÃO cai em horas corridas) — para os gatilhos de inatividade respeitarem horas úteis.
+     */
+    public function businessMinutesSince(HelpDeskTicket $t, \Carbon\CarbonInterface $from): int
+    {
+        $cal     = $this->calendarFor($t);
+        $windows = !empty($cal['windows']) ? $cal['windows'] : self::DEFAULT_WINDOWS;
+        return $this->clock->businessMinutesBetween($from, now(), $windows, $cal['holidays'], $cal['tz']);
+    }
+
     private function calendarFor(HelpDeskTicket $t): array
     {
         // Chaveia por POLÍTICA (não por ticket): tickets que compartilham a mesma política

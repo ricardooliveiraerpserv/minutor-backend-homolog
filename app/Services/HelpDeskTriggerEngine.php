@@ -145,6 +145,11 @@ class HelpDeskTriggerEngine
             'comment_by'       => $context['comment_by'] ?? null,
             'visibility'       => $context['visibility'] ?? null, // interação: 'customer' (pública) | 'internal'
             'idle_hours'       => $ticket->last_activity_at ? abs(now()->diffInHours($ticket->last_activity_at)) : 0,
+            // Horas ÚTEIS paradas (expediente da política SLA + feriados). Usado nos gatilhos
+            // de aviso/encerramento por inatividade que devem respeitar dias/horas úteis.
+            'idle_business_hours' => $ticket->last_activity_at
+                ? round(app(\App\Services\HelpDeskSlaService::class)->businessMinutesSince($ticket, $ticket->last_activity_at) / 60, 2)
+                : 0,
             default            => null,
         };
 
@@ -347,10 +352,13 @@ class HelpDeskTriggerEngine
     {
         $frontend  = rtrim((string) config('app.frontend_url', config('app.url')), '/');
         $clientName = optional($ticket->contact)->name ?? optional($ticket->requester)->name ?? optional($ticket->customer)->name;
+        $firstName  = $clientName ? (preg_split('/\s+/', trim((string) $clientName))[0] ?? '') : '';
         $created   = $ticket->created_at ? $ticket->created_at->format('d/m/Y H:i') : '';
 
         $map = [
             '{ticket.id}'                      => (string) $ticket->id,
+            '{ticket.requester.firstName}'     => (string) $firstName,
+            '{ticket.requester.firstname}'     => (string) $firstName,
             '{ticket.number}'                  => (string) $ticket->ticket_number,
             '{ticket.protocol}'                => (string) $ticket->ticket_number,
             '{ticket.subject}'                 => (string) $ticket->subject,

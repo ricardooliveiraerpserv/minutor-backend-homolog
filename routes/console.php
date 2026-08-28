@@ -322,6 +322,16 @@ Schedule::command('help-desk:run-scheduled-reopens')
   ->withoutOverlapping(10)
   ->runInBackground();
 
+// Gatilhos por tempo parado (aviso de encerramento 24h úteis / auto-encerrar 70h úteis).
+// ⚠️ Homolog não roda o scheduler em background — o disparo real vem de um Render Cron Job
+// chamando `php artisan help-desk:run-idle-triggers`. Esta entrada vale onde o scheduler roda.
+Schedule::command('help-desk:run-idle-triggers')
+  ->hourly()
+  ->name('help-desk-run-idle-triggers')
+  ->description('Dispara gatilhos por tempo parado (aviso/auto-encerramento por inatividade)')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
 // Central de Fontes (C2) — mantém o read-model de busca em dia por RECONCILIAÇÃO de staleness
 // (indexed_version_id/blob × versão vigente). DESACOPLADO do motor/pipeline (sem observer):
 // uma falha aqui NUNCA afeta a GMUD/documentação. Idempotente, em lote, sem execuções concorrentes.
