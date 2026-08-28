@@ -141,7 +141,7 @@ class SkillDashboardController extends Controller
         }
         $classLabels = SkillRespondent::CLASSIFICATIONS;
 
-        return DB::table('skill_submissions as s')
+        $rows = DB::table('skill_submissions as s')
             ->whereIn('s.id', $latestIds)
             ->join('skill_respondents as r', 'r.id', '=', 's.respondent_id')
             ->join('skill_submission_answers as a', 'a.submission_id', '=', 's.id')
