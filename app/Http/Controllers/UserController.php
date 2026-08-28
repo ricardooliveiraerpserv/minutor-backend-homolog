@@ -356,6 +356,23 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Responsável pelos recebimentos do parceiro (partners.folha_user_id):
+     *  - Auto-designa o PRIMEIRO admin executivo (parceiro sem recebedor definido).
+     *  - Troca para este admin quando o front confirma (set_as_partner_receiver=true) —
+     *    ação sensível (double-confirm no front).
+     */
+    private function syncPartnerReceiver(?User $user, bool $forceSet): void
+    {
+        if (!$user || $user->type !== 'parceiro_admin' || !$user->is_executive || !$user->partner_id) return;
+        $partner = Partner::find($user->partner_id);
+        if (!$partner) return;
+        if (($forceSet || empty($partner->folha_user_id)) && (int) $partner->folha_user_id !== (int) $user->id) {
+            $partner->folha_user_id = $user->id;
+            $partner->save();
+        }
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -492,6 +509,9 @@ class UserController extends Controller
             if (!empty($dashboardTypes)) {
                 $user->syncDashboardTypes($dashboardTypes);
             }
+
+            // Responsável pelos recebimentos do parceiro (auto-designa o 1º admin; troca se confirmado).
+            $this->syncPartnerReceiver($user->fresh(), $request->boolean('set_as_partner_receiver'));
 
             DB::commit();
 
@@ -824,6 +844,9 @@ class UserController extends Controller
             if (!is_null($dashboardTypes)) {
                 $user->syncDashboardTypes($dashboardTypes);
             }
+
+            // Responsável pelos recebimentos do parceiro (auto-designa o 1º admin; troca se confirmado).
+            $this->syncPartnerReceiver($user->fresh(), $request->boolean('set_as_partner_receiver'));
 
             DB::commit();
 
