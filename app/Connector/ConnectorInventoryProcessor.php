@@ -130,6 +130,14 @@ class ConnectorInventoryProcessor
             ];
             // NÃO toca last_seen_at (presença C-1 é INDEPENDENTE do inventário C-2). Se a linha ainda
             // não existe (inventário antes do 1º heartbeat), last_seen_at fica NULL → presença never_seen.
+            // C5.1 — capability de publicação declarada pelo agente (só persistida/exibida; NÃO invocável).
+            $rpoCap = null;
+            foreach ($inv['capabilities'] ?? [] as $c) {
+                if (($c['name'] ?? null) === 'rpo_publish') {
+                    $rpoCap = ['name' => 'rpo_publish', 'adapter' => $c['adapter'] ?? null, 'contract_version' => $c['contract_version'] ?? null, 'operations' => array_values(array_filter((array) ($c['operations'] ?? []), 'is_string'))];
+                }
+            }
+
             ConnectorEnvironmentState::updateOrCreate(
                 ['environment_id' => $envId],
                 [
@@ -137,6 +145,7 @@ class ConnectorInventoryProcessor
                     'observed_json'         => $observedJson,
                     'inventory_received_at' => $receivedAt,
                     'inventory_observed_at' => $observedAt,
+                    'rpo_capability'        => $rpoCap,
                 ]
             );
 

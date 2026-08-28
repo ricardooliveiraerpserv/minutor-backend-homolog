@@ -76,6 +76,20 @@ return [
                 'end'      => env('CONNECTOR_OP_STOP_WINDOW_END', '23:59'),
             ],
         ],
+        // C5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO execução).
+        'rpo' => [
+            // Allowlist de capabilities de publicação SUPORTADAS (name + contract_version). Versão desconhecida
+            // → capability INDISPONÍVEL (fail-closed). Nenhum código C5.1 invoca a capability.
+            'supported_capabilities' => [
+                ['name' => 'rpo_publish', 'contract_version' => 1],
+            ],
+            // Política N-of-M de aprovação (snapshot gravado no preview/operação futura). Sem entidade nesta fase.
+            'required_approvals' => [
+                'prod' => (int) env('CONNECTOR_RPO_APPROVALS_PROD', 2),
+                'default' => (int) env('CONNECTOR_RPO_APPROVALS_DEFAULT', 1),
+            ],
+        ],
+
         // C4.3 — restart: down transiente → up(B). MESMOS gates do stop (último AppServer/janela/presença
         // online, revalidados no dispatch). Timeouts MAIORES (cobre down+startup). Sucesso FORTE = up(B),
         // B≠A, evidenciado por coleta de reconciliação CORRELACIONADA (trigger.operation_id).

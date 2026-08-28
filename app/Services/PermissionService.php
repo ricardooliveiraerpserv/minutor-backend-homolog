@@ -155,6 +155,9 @@ class PermissionService
         // Conector-4.3 — restart (down transiente → up(B)). MESMOS gates do stop; permissão + override próprios.
         'prosight.operations.restart',
         'prosight.operations.restart.override',
+        // Conector-5.1 — fundação de publicação de RPO (registro/target = manage; qualificar known_good = qualify).
+        'prosight.operations.rpo.manage',
+        'prosight.operations.rpo.qualify',
         // Solicitação de código-fonte (Help Desk) — configurável por perfil/usuário/grupo.
         // manage=cadastrar fontes Git do cliente · request=solicitar fonte · reindex=atualizar índice.
         'source_code.manage', 'source_code.request', 'source_code.reindex',
@@ -264,6 +267,9 @@ class PermissionService
             // Conector-4.3 — restart + override.
             'prosight.operations.restart',
             'prosight.operations.restart.override',
+            // Conector-5.1 — fundação de publicação de RPO (registro/target/qualificação).
+            'prosight.operations.rpo.manage',
+            'prosight.operations.rpo.qualify',
         ];
     }
 

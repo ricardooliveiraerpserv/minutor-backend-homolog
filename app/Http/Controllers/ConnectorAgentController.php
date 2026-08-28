@@ -304,6 +304,14 @@ class ConnectorAgentController extends Controller
             'trigger.type'           => 'nullable|in:scheduled,on_change,command,operation',
             'trigger.command_id'     => 'nullable|integer',
             'trigger.operation_id'   => 'nullable|integer', // C4.3 — coleta de reconciliação correlacionada
+            // C5.1 — capability declarativa/versionada (persistida/exibida; NÃO invocável). adapter é OPACO
+            // (nunca executável/path). Allowlist de (name+contract_version) decide disponibilidade (fail-closed).
+            'capabilities'                     => 'nullable|array|max:10',
+            'capabilities.*.name'              => 'required|string|max:40',
+            'capabilities.*.adapter'           => 'nullable|string|max:60|regex:/^[A-Za-z0-9_.-]{1,60}$/',
+            'capabilities.*.contract_version'  => 'nullable|integer',
+            'capabilities.*.operations'        => 'nullable|array|max:10',
+            'capabilities.*.operations.*'      => 'string|max:20',
         ]);
         // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
         if (isset($data['collect_error'])) {

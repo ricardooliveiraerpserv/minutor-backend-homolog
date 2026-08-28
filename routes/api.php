@@ -723,6 +723,26 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
             Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
         });
+        // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/rpo/artifacts', [\App\Http\Controllers\RpoRegistryController::class, 'artifacts'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/artifacts/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showArtifact'])->whereNumber('id');
+            Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/targets/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showTarget'])->whereNumber('id');
+            Route::get('/prosight/rpo/targets/{id}/qualifications', [\App\Http\Controllers\RpoRegistryController::class, 'qualifications'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/artifacts/register', [\App\Http\Controllers\RpoRegistryController::class, 'register'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/artifacts/{id}/revise', [\App\Http\Controllers\RpoRegistryController::class, 'revise'])->whereNumber('id');
+            Route::post('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'createTarget'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/targets/{id}/confirm', [\App\Http\Controllers\RpoRegistryController::class, 'confirmTarget'])->whereNumber('id');
+            Route::post('/prosight/rpo/targets/{id}/preview', [\App\Http\Controllers\RpoRegistryController::class, 'preview'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.qualify')->group(function () {
+            Route::post('/prosight/rpo/targets/{id}/qualify', [\App\Http\Controllers\RpoRegistryController::class, 'qualify'])->whereNumber('id');
+            Route::post('/prosight/rpo/qualifications/{id}/revoke', [\App\Http\Controllers\RpoRegistryController::class, 'revokeQualification'])->whereNumber('id');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -1909,6 +1929,26 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
             Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
             Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
+        });
+        // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/rpo/artifacts', [\App\Http\Controllers\RpoRegistryController::class, 'artifacts'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/artifacts/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showArtifact'])->whereNumber('id');
+            Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/targets/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showTarget'])->whereNumber('id');
+            Route::get('/prosight/rpo/targets/{id}/qualifications', [\App\Http\Controllers\RpoRegistryController::class, 'qualifications'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/artifacts/register', [\App\Http\Controllers\RpoRegistryController::class, 'register'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/artifacts/{id}/revise', [\App\Http\Controllers\RpoRegistryController::class, 'revise'])->whereNumber('id');
+            Route::post('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'createTarget'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/targets/{id}/confirm', [\App\Http\Controllers\RpoRegistryController::class, 'confirmTarget'])->whereNumber('id');
+            Route::post('/prosight/rpo/targets/{id}/preview', [\App\Http\Controllers\RpoRegistryController::class, 'preview'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.qualify')->group(function () {
+            Route::post('/prosight/rpo/targets/{id}/qualify', [\App\Http\Controllers\RpoRegistryController::class, 'qualify'])->whereNumber('id');
+            Route::post('/prosight/rpo/qualifications/{id}/revoke', [\App\Http\Controllers\RpoRegistryController::class, 'revokeQualification'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

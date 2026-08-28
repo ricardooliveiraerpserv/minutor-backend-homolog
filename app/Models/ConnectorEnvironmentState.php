@@ -19,6 +19,8 @@ class ConnectorEnvironmentState extends Model
         'agent_uptime_s', 'agent_reported_status', 'last_error',
         // Connector-2 — inventário observado (frescor separado da presença C-1).
         'observed_json', 'inventory_received_at', 'inventory_observed_at',
+        // Connector-5.1 — capability de publicação declarada pelo agente.
+        'rpo_capability',
     ];
 
     protected $casts = [
@@ -27,5 +29,6 @@ class ConnectorEnvironmentState extends Model
         'observed_json'         => 'array',
         'inventory_received_at' => 'datetime',
         'inventory_observed_at' => 'datetime',
+        'rpo_capability'        => 'array',
     ];
 }
