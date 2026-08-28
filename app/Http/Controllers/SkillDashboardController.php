@@ -147,6 +147,7 @@ class SkillDashboardController extends Controller
             ->join('skill_submission_answers as a', 'a.submission_id', '=', 's.id')
             ->join('skill_matrix_version_items as i', 'i.id', '=', 'a.matrix_version_item_id')
             ->join('skill_levels as l', 'l.id', '=', 'a.level_id')
+            ->leftJoin('partners as pt', 'pt.id', '=', 'r.partner_id')
             ->where(function ($w) use ($categories, $modules) {
                 $w->when($categories, fn ($x) => $x->whereIn('i.category', $categories))
                     ->when($modules, fn ($x) => $x->orWhereIn('i.name', $modules));
@@ -154,7 +155,7 @@ class SkillDashboardController extends Controller
             ->when(! empty($levelWeights), fn ($q) => $q->whereIn('a.level_weight', $levelWeights), fn ($q) => $q->where('a.level_weight', '>=', 1))
             ->orderBy('r.name')->orderBy('i.category')->orderByDesc('a.level_weight')->orderBy('i.name')
             ->limit(4000)
-            ->get(['r.id as respondent_id', 'r.name', 'r.classification', 'r.data', 'i.name as module', 'i.category', 'l.name as level', 'a.level_weight'])
+            ->get(['r.id as respondent_id', 'r.name', 'r.classification', 'r.data', 'r.partner_id', DB::raw('pt.name as partner_name'), 'i.name as module', 'i.category', 'l.name as level', 'a.level_weight'])
             ->map(function ($x) use ($classLabels) {
                 $data = json_decode($x->data ?? '{}', true) ?: [];
 
@@ -165,6 +166,8 @@ class SkillDashboardController extends Controller
                     'classification_label' => $x->classification ? ($classLabels[$x->classification] ?? $x->classification) : null,
                     'blacklist' => $x->classification === 'blacklist',
                     'valor' => $data['valor'] ?? null,
+                    'partner_id' => $x->partner_id ? (string) $x->partner_id : '',
+                    'partner_name' => $x->partner_name,
                     'module' => $x->module,
                     'category' => $x->category,
                     'level' => $x->level,
