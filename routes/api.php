@@ -767,6 +767,14 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission:prosight.compile.handoff')->group(function () {
             Route::post('/prosight/compile/candidates/{id}/handoff', [\App\Http\Controllers\CompileController::class, 'handoff'])->whereNumber('id');
         });
+        // RPO-DISCOVERY (C5.0) — topologia detectada → sugestões → confirmação GOVERNADA (delega ao C5.1).
+        // NENHUMA rota promove/publica RPO nem auto-altera membership. Confirmação = ação de gestão (rpo.manage).
+        Route::middleware('permission.or.admin:prosight.operations.rpo.manage')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/topology', [\App\Http\Controllers\RpoTopologyController::class, 'show'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/topology/confirm', [\App\Http\Controllers\RpoTopologyController::class, 'confirm'])->whereNumber('environmentId');
+        });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
         // 🤝 CRM — Fase 1B (Pipeline & Oportunidades)
@@ -2003,6 +2011,14 @@ Route::prefix('v1')->group(function () {
         // C6.7 — handoff GOVERNADO do artifact candidate ao registry C5 (register). C6 NÃO promove.
         Route::middleware('permission:prosight.compile.handoff')->group(function () {
             Route::post('/prosight/compile/candidates/{id}/handoff', [\App\Http\Controllers\CompileController::class, 'handoff'])->whereNumber('id');
+        });
+        // RPO-DISCOVERY (C5.0) — topologia detectada → sugestões → confirmação GOVERNADA (delega ao C5.1).
+        // NENHUMA rota promove/publica RPO nem auto-altera membership. Confirmação = ação de gestão (rpo.manage).
+        Route::middleware('permission.or.admin:prosight.operations.rpo.manage')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/topology', [\App\Http\Controllers\RpoTopologyController::class, 'show'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/topology/confirm', [\App\Http\Controllers\RpoTopologyController::class, 'confirm'])->whereNumber('environmentId');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 

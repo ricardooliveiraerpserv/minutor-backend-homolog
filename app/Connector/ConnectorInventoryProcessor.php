@@ -6,8 +6,10 @@ use App\Models\ConnectorAgent;
 use App\Models\ConnectorEnvironmentState;
 use App\Models\ConnectorEvent;
 use App\Models\ConnectorRpoSnapshot;
+use App\Models\RpoTopologyObservation;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /* Connector-3 injeta APENAS a correlação causal (comando→inventário); o pipeline de inventário
  * (diff/eventos/RPO) permanece EXATAMENTE o C-2 homologado — sem segunda lógica de inventário. */
@@ -182,7 +184,77 @@ class ConnectorInventoryProcessor
                 $this->operations->recordReconcileObservation($agent, (int) $trigger['operation_id'], $newApps->all(), $newRpo->all(), $receivedAt);
             }
 
+            // RPO-DISCOVERY D1 — persiste a observação de topologia (se presente). Dentro da transação
+            // (lock do state serializa por ambiente → topology_revision monotônica segura).
+            $this->persistTopology($envId, $agent, $inv, $newApps, $newRpo, $receivedAt, $observedAt);
+
             return ['applied' => true, 'events' => $events, 'snapshots' => $snapshots];
         });
+    }
+
+    /**
+     * RPO-DISCOVERY D1 — constrói e persiste a observação de topologia a partir do bloco `topology`
+     * (metadados: role/environment/service) JOINado com rpo (publish_unit_id/hash — FONTE ÚNICA) e
+     * appservers (up/piid). Sanitização defensiva (denylist); fingerprint canônico; revisão pelo BACKEND.
+     */
+    private function persistTopology(int $envId, ConnectorAgent $agent, array $inv, $newApps, $newRpo, Carbon $receivedAt, Carbon $observedAt): void
+    {
+        $topo = $inv['topology'] ?? null;
+        if (! is_array($topo) || empty($topo['members']) || ! is_array($topo['members'])) {
+            return;
+        }
+        $members = [];
+        foreach ($topo['members'] as $m) {
+            $ref = $m['appserver_ref'] ?? null;
+            if (! $ref) { continue; }
+            $rpo = $newRpo->get($ref);
+            $app = $newApps->get($ref);
+            $role = in_array($m['role'] ?? null, ['compiler', 'slave', 'exclusive'], true) ? $m['role'] : 'unknown';
+            $roleSrc = in_array($m['role_source'] ?? null, ['observed', 'configured', 'inferred'], true) ? $m['role_source'] : 'unknown';
+            $members[] = [
+                'appserver_ref' => (string) $ref,
+                'environment_name' => $this->safeTopo($m['environment_name'] ?? null),
+                'role' => $role,
+                'role_source' => $roleSrc,
+                'publish_unit_id' => is_array($rpo) ? ($rpo['publish_unit_id'] ?? null) : null, // FONTE ÚNICA = bloco rpo
+                'rpo_hash' => is_array($rpo) ? ($rpo['hash'] ?? null) : null,
+                'up' => is_array($app) ? (bool) ($app['up'] ?? false) : false,
+                'process_instance_id' => is_array($app) ? ($app['process_instance_id'] ?? null) : null,
+                'service_name' => $this->safeTopo($m['service_name'] ?? null),
+            ];
+        }
+        if (! $members) { return; }
+        // Conjunto canônico ordenado → fingerprint estável (qualquer mudança de membership/unidade/papel muda).
+        usort($members, fn ($a, $b) => strcmp($a['appserver_ref'], $b['appserver_ref']));
+        $canon = array_map(fn ($x) => implode('|', [$x['appserver_ref'], (string) $x['publish_unit_id'], $x['role'], $x['role_source'], (string) $x['environment_name']]), $members);
+        $fingerprint = hash('sha256', implode("\n", $canon));
+
+        // Revisão monotônica por ambiente — atribuída pelo BACKEND (o agente não controla a sequência).
+        $rev = ((int) RpoTopologyObservation::where('environment_id', $envId)->max('topology_revision')) + 1;
+        $agentObservedAt = isset($topo['observed_at']) ? Carbon::createFromTimestamp((int) $topo['observed_at']) : $observedAt;
+
+        RpoTopologyObservation::create([
+            'observation_id' => isset($topo['observation_id']) ? mb_substr((string) $topo['observation_id'], 0, 64) : (string) Str::uuid(),
+            'environment_id' => $envId,
+            'agent_id' => $agent->agent_id,
+            'agent_observed_at' => $agentObservedAt,
+            'backend_received_at' => $receivedAt, // AUTORIDADE de freshness (server-side)
+            'topology_revision' => $rev,
+            'topology_fingerprint' => $fingerprint,
+            'members' => $members,
+        ]);
+        ConnectorEvent::create([
+            'environment_id' => $envId, 'appserver_ref' => null, 'event_type' => 'rpo_topology_observed',
+            'outcome' => 'info', 'detail' => 'Topologia RPO observada', 'occurred_at' => $receivedAt,
+            'meta' => ['revision' => $rev, 'members' => count($members), 'fingerprint' => substr($fingerprint, 0, 12)],
+        ]);
+    }
+
+    /** Denylist defensiva: nada de path/backslash/travessia atravessa, mesmo que o regex tenha deixado passar. */
+    private function safeTopo(?string $s): ?string
+    {
+        if ($s === null || $s === '') { return null; }
+        if (preg_match('#[/\\\\]|\.\.#', $s)) { return null; }
+        return mb_substr($s, 0, 80);
     }
 }

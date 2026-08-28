@@ -321,6 +321,18 @@ class ConnectorAgentController extends Controller
             // C5.2b — restart_strategy (só relevante p/ requires_restart). AUSENTE nunca vira simultaneous
             // (fail-closed no gate). Só 'rolling' é executável nesta versão.
             'capabilities.*.restart_strategy'  => 'nullable|in:rolling,simultaneous',
+            // RPO-DISCOVERY D1 — TOPOLOGIA observada (aditiva/opcional). SÓ metadados de topologia; o
+            // publish_unit_id já vem em rpo.* (FONTE ÚNICA) e activation_mode só na capability (NÃO aqui).
+            // validate()=allowlist descarta path/INI/SpecialKey/etc; os regexes proíbem '/'\ '\\' (sem path).
+            'topology'                            => 'nullable|array',
+            'topology.observation_id'             => 'nullable|string|max:64|regex:/^[A-Za-z0-9._:-]{1,64}$/',
+            'topology.observed_at'                => 'nullable|integer',
+            'topology.members'                    => 'nullable|array|max:100',
+            'topology.members.*.appserver_ref'    => 'required|uuid',
+            'topology.members.*.environment_name' => 'nullable|string|max:60|regex:/^[A-Za-z0-9_.:\- ]{0,60}$/',
+            'topology.members.*.role'             => 'nullable|in:compiler,slave,exclusive,unknown',
+            'topology.members.*.role_source'      => 'nullable|in:observed,configured,inferred,unknown',
+            'topology.members.*.service_name'     => 'nullable|string|max:80|regex:/^[A-Za-z0-9_.:\- ]{0,80}$/',
         ]);
         // validate() já é ALLOWLIST (campos extras — path/ini/etc — são descartados). Sanitiza o erro livre.
         if (isset($data['collect_error'])) {
