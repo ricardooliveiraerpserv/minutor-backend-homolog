@@ -46,7 +46,7 @@
     @endif
     <div class="brand-sub">Minutor — Controle de horas e contratos</div>
     <div class="doc-title">Fechamento de Parceiro</div>
-    <div class="doc-meta">{{ $parceiroName }} &nbsp;·&nbsp; Período: {{ $periodo }}</div>
+    <div class="doc-meta">{{ $parceiroName }} &nbsp;·&nbsp; Período: {{ $periodo }}@if(!empty($recebedorName)) &nbsp;·&nbsp; Recebedor: {{ $recebedorName }}@endif</div>
   </div>
 
   <table class="summary">
