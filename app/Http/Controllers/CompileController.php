@@ -74,6 +74,7 @@ class CompileController extends Controller
             'source_blob_sha' => 'required|string|size:64',
             'language' => 'required|string|max:20',
             'target' => 'nullable|string|max:80',
+            'workspace_unit_id' => 'nullable|string|max:80|regex:/^[A-Za-z0-9_.:-]{1,80}$/', // opaco; participa do lock físico
             'execution_mode' => 'required|in:fixture,simulated,live',
             'classification' => 'nullable|in:test,demo,operational',
         ]);

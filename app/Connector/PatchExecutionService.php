@@ -20,7 +20,7 @@ use App\Connector\RpoRegistryService;
  */
 class PatchExecutionService
 {
-    public function __construct(private RpoRegistryService $rpo)
+    public function __construct(private RpoRegistryService $rpo, private WorkspaceLockService $locks)
     {
     }
 
@@ -32,50 +32,16 @@ class PatchExecutionService
             'outcome' => 'info', 'detail' => $detail, 'meta' => $meta, 'occurred_at' => now()]);
     }
 
-    // ── FENCING: adquire o lock do workspace. Só 1 execução MUTÁVEL ativa por workspace (cross-producer). ──
-    // Lease expirado PRÉ-efeito → reapável (novo fence). Mid-efeito → indeterminate (segura; exige reconcile).
+    // ── Lock cross-producer delegado ao WorkspaceLockService (mesma tabela/semântica que o Compile). ──
     private function acquireLock(int $envId, string $workspaceUnit, string $executionId): array
     {
-        return DB::transaction(function () use ($envId, $workspaceUnit, $executionId) {
-            $active = ConnectorWorkspaceLock::where('environment_id', $envId)->where('workspace_unit_id', $workspaceUnit)
-                ->where('status', ConnectorWorkspaceLock::ST_ACTIVE)->lockForUpdate()->first();
-            $now = now();
-            if ($active) {
-                if ($active->reconcile_required) {
-                    return ['ok' => false, 'error' => 'workspace_indeterminate']; // execução anterior indeterminada segura o workspace
-                }
-                if ($active->lease_expires_at && $active->lease_expires_at->gt($now)) {
-                    return ['ok' => false, 'error' => 'workspace_busy']; // detentor vivo (lease válida)
-                }
-                // lease expirada: só reapável se NÃO cruzou o barrier (pré-efeito). Mid-efeito → indeterminate (segura).
-                $holder = PatchExecution::where('execution_id', $active->execution_ref)->first();
-                if ($holder && $holder->patch_effect_started_at && ! in_array($holder->status, PatchExecution::TERMINAL, true)) {
-                    $active->update(['reconcile_required' => true]); // efeito iniciado + lease morta → segura o workspace
-                    return ['ok' => false, 'error' => 'workspace_indeterminate'];
-                }
-                $active->update(['status' => ConnectorWorkspaceLock::ST_RELEASED, 'released_at' => $now]); // reap pré-efeito
-            }
-            $maxFence = (int) ConnectorWorkspaceLock::where('environment_id', $envId)->where('workspace_unit_id', $workspaceUnit)->max('fence_token');
-            try {
-                $lock = ConnectorWorkspaceLock::create([
-                    'environment_id' => $envId, 'workspace_unit_id' => $workspaceUnit, 'producer' => ConnectorWorkspaceLock::PRODUCER_PATCH,
-                    'execution_ref' => $executionId, 'status' => ConnectorWorkspaceLock::ST_ACTIVE, 'fence_token' => $maxFence + 1,
-                    'acquired_at' => $now, 'lease_expires_at' => $now->copy()->addSeconds($this->lease()),
-                ]);
-            } catch (\Illuminate\Database\QueryException $e) {
-                return ['ok' => false, 'error' => 'workspace_busy']; // corrida: índice parcial UNIQUE ACTIVE fail-closed
-            }
-            return ['ok' => true, 'lock' => $lock];
-        });
+        return $this->locks->acquire($envId, $workspaceUnit, $executionId, ConnectorWorkspaceLock::PRODUCER_PATCH, $this->lease());
     }
 
-    /** Só o detentor ATUAL da autoridade (fence == lock ativo + lease válido) atravessa o barrier. */
+    /** Só o detentor ATUAL da autoridade (owner + fence == lock ativo + lease válido) atravessa o barrier. */
     private function fenceValid(PatchExecution $ex): bool
     {
-        $lock = ConnectorWorkspaceLock::where('environment_id', $this->envIdOf($ex))->where('workspace_unit_id', $ex->workspace_unit_id)
-            ->where('status', ConnectorWorkspaceLock::ST_ACTIVE)->first();
-        return $lock && (int) $lock->fence_token === (int) $ex->fence_token
-            && $lock->lease_expires_at && $lock->lease_expires_at->gt(now());
+        return $this->locks->validateFence($this->envIdOf($ex), (string) $ex->workspace_unit_id, (string) $ex->execution_id, (int) $ex->fence_token);
     }
 
     private function envIdOf(PatchExecution $ex): int
@@ -85,16 +51,12 @@ class PatchExecutionService
 
     private function extendLease(PatchExecution $ex): void
     {
-        ConnectorWorkspaceLock::whereKey($ex->lock_id)->where('status', ConnectorWorkspaceLock::ST_ACTIVE)
-            ->update(['lease_expires_at' => now()->addSeconds($this->lease())]);
+        $this->locks->extendLease($ex->lock_id, $this->lease());
     }
 
     private function releaseLock(PatchExecution $ex, bool $reconcileRequired = false): void
     {
-        ConnectorWorkspaceLock::whereKey($ex->lock_id)->where('status', ConnectorWorkspaceLock::ST_ACTIVE)
-            ->update($reconcileRequired
-                ? ['reconcile_required' => true]
-                : ['status' => ConnectorWorkspaceLock::ST_RELEASED, 'released_at' => now()]);
+        $this->locks->release($ex->lock_id, $reconcileRequired);
     }
 
     // ── DISPATCH: adquire lock fenced + cria execução com IMMUTABLE PIN + itens. execution_committed. ──
@@ -146,7 +108,7 @@ class PatchExecutionService
                 if (! $this->fenceValid($ex)) { return ['ok' => false, 'error' => 'fenced_out', 'status' => 409]; }
                 if (! $ex->base_verified_at) { return ['ok' => false, 'error' => 'base_not_verified', 'status' => 409]; }
                 $ex->update(['status' => PatchExecution::ST_PATCH_EFFECT_STARTED, 'patch_effect_started_at' => now()]);
-                $this->extendLease($ex);
+                $this->locks->markBarrier($ex->lock_id, $this->lease()); // barrier_crossed p/ indeterminate cross-producer
                 break;
             case 'patch_item_started':
                 if (! $ex->patch_effect_started_at) { return ['ok' => false, 'error' => 'barrier_not_crossed', 'status' => 409]; }

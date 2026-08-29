@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Connector\PatchExecutionService;
 use App\Connector\PatchService;
+use App\Connector\PhysicalReadinessService;
 use App\Models\EnvEnvironment;
 use App\Models\PatchArtifactCandidate;
 use App\Models\PatchExecution;
@@ -69,6 +70,14 @@ class PatchController extends Controller
         $env = $this->env($r, $environmentId);
         if (! $env) { return response()->json(['message' => 'Ambiente não encontrado.'], 404); }
         return response()->json(['data' => $this->svc->availability($env)]);
+    }
+
+    // GET /prosight/environments/{environmentId}/physical-readiness (READ-ONLY; nunca habilita live) — CP-PREPHYSICAL
+    public function physicalReadiness(Request $r, int $environmentId): JsonResponse
+    {
+        $env = $this->env($r, $environmentId);
+        if (! $env) { return response()->json(['message' => 'Ambiente não encontrado.'], 404); }
+        return response()->json(['data' => app(PhysicalReadinessService::class)->readiness($env)]);
     }
 
     // GET /prosight/environments/{environmentId}/patch/inputs

@@ -741,6 +741,8 @@ Route::prefix('v1')->group(function () {
         // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
+            // CP-PREPHYSICAL — read-model de prontidão física (diagnóstico; NUNCA habilita live).
+            Route::get('/prosight/environments/{environmentId}/physical-readiness', [\App\Http\Controllers\PatchController::class, 'physicalReadiness'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/rpo/artifacts', [\App\Http\Controllers\RpoRegistryController::class, 'artifacts'])->whereNumber('environmentId');
             Route::get('/prosight/rpo/artifacts/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showArtifact'])->whereNumber('id');
             Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
@@ -2021,6 +2023,8 @@ Route::prefix('v1')->group(function () {
         // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
         Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
+            // CP-PREPHYSICAL — read-model de prontidão física (diagnóstico; NUNCA habilita live).
+            Route::get('/prosight/environments/{environmentId}/physical-readiness', [\App\Http\Controllers\PatchController::class, 'physicalReadiness'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/rpo/artifacts', [\App\Http\Controllers\RpoRegistryController::class, 'artifacts'])->whereNumber('environmentId');
             Route::get('/prosight/rpo/artifacts/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showArtifact'])->whereNumber('id');
             Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');

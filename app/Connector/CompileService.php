@@ -11,6 +11,7 @@ use App\Models\CompileContext;
 use App\Models\CompileExecution;
 use App\Models\CompileRequest;
 use App\Models\ConnectorEvent;
+use App\Models\ConnectorWorkspaceLock;
 use App\Models\EnvEnvironment;
 use App\SourceCode\SourceRepoResolver;
 use Illuminate\Support\Facades\DB;
@@ -27,8 +28,11 @@ class CompileService
     public function __construct(
         private SourceRepoResolver $repos,
         private RpoRegistryService $rpo,
+        private WorkspaceLockService $locks,
     ) {
     }
+
+    private function compileLease(): int { return (int) config('connector.compile.transport_lease', 120); }
 
     // ── Timeline C1 (mesma projeção; sem segunda timeline) ─────────────────────
     private function emit(int $envId, string $type, ?string $detail, array $meta): void
@@ -118,6 +122,7 @@ class CompileService
                 'repository' => $data['repository'], 'branch' => $data['branch'], 'source_path' => $data['source_path'],
                 'source_commit_sha' => $data['source_commit_sha'] ?? null, 'source_blob_sha' => $data['source_blob_sha'],
                 'language' => strtolower((string) $data['language']), 'target' => $data['target'] ?? null,
+                'workspace_unit_id' => $data['workspace_unit_id'] ?? null, // OPACO; presente => participa do lock físico
                 'execution_mode' => $mode, 'classification' => $data['classification'] ?? null,
                 'status' => CompileRequest::ST_OPEN, 'correlation_id' => (string) Str::uuid(),
                 'requested_by' => $userId, 'requested_at' => now(),
@@ -163,12 +168,37 @@ class CompileService
             return ['ok' => false, 'blocked' => true, 'error' => $reason, 'execution' => $exec->fresh()];
         }
 
+        // CP-PREPHYSICAL — se a request tem workspace físico, Compile participa do MESMO lock cross-producer do
+        // Patch (exclusão mútua Compile↔Patch). workspace_unit_id ausente (compile source-only legado) → sem lock.
+        if ($req->workspace_unit_id) {
+            $acq = $this->locks->acquire((int) $req->environment_id, $req->workspace_unit_id, $exec->execution_id, ConnectorWorkspaceLock::PRODUCER_COMPILE, $this->compileLease());
+            if (! ($acq['ok'] ?? false)) {
+                $exec->update(['status' => CompileExecution::ST_FAILED, 'outcome' => CompileExecution::ST_FAILED, 'error' => $acq['error'], 'finished_at' => now()]);
+                $req->update(['status' => CompileRequest::ST_FAILED]);
+                $this->emit((int) $req->environment_id, 'compile.failed', 'Compilação bloqueada (workspace indisponível)', ['request_id' => $req->id, 'execution_id' => $exec->execution_id, 'reason' => $acq['error']]);
+                return ['ok' => false, 'blocked' => true, 'error' => $acq['error'], 'execution' => $exec->fresh()];
+            }
+            $exec->update(['workspace_unit_id' => $req->workspace_unit_id, 'fence_token' => $acq['lock']->fence_token, 'lock_id' => $acq['lock']->id]);
+        }
+
         // Disponível → roda a máquina. fixture/simulated: inline. (live dispatcharia ao agente — não exercido enquanto unavailable.)
         $req->update(['status' => CompileRequest::ST_EXECUTING]);
         $exec->update(['status' => CompileExecution::ST_CLAIMED, 'claimed_at' => now()]);
         $this->emit((int) $req->environment_id, 'compile.claimed', null, ['request_id' => $req->id, 'execution_id' => $exec->execution_id, 'mode' => $req->execution_mode]);
         $exec->update(['status' => CompileExecution::ST_RUNNING, 'started_at' => now()]);
         $this->emit((int) $req->environment_id, 'compile.started', null, ['request_id' => $req->id, 'execution_id' => $exec->execution_id]);
+
+        // EFFECT BARRIER — só o detentor ATUAL da autoridade sobre o workspace atravessa (fencing). Compile não
+        // pode continuar fisicamente depois de perder o workspace (old owner/fence → fenced_out).
+        if ($exec->lock_id) {
+            if (! $this->locks->validateFence((int) $req->environment_id, (string) $req->workspace_unit_id, (string) $exec->execution_id, (int) $exec->fence_token)) {
+                $exec->update(['status' => CompileExecution::ST_FAILED, 'outcome' => CompileExecution::ST_FAILED, 'error' => 'fenced_out', 'finished_at' => now()]);
+                $req->update(['status' => CompileRequest::ST_FAILED]);
+                $this->emit((int) $req->environment_id, 'compile.failed', 'Compilação abortada (autoridade do workspace perdida)', ['request_id' => $req->id, 'execution_id' => $exec->execution_id, 'reason' => 'fenced_out']);
+                return ['ok' => false, 'error' => 'fenced_out', 'execution' => $exec->fresh()];
+            }
+            $this->locks->markBarrier($exec->lock_id, $this->compileLease()); // barrier_crossed (indeterminate cross-producer)
+        }
 
         $out = $adapter->compile($req, $exec);
         $outcome = (string) ($out['outcome'] ?? CompileExecution::ST_UNKNOWN);
@@ -198,6 +228,7 @@ class CompileService
                 $exec->update(['status' => CompileExecution::ST_UNKNOWN, 'outcome' => CompileExecution::ST_UNKNOWN, 'error' => 'succeeded_without_artifact']);
                 $req->update(['status' => CompileRequest::ST_FAILED]);
                 $this->emit((int) $req->environment_id, 'compile.unknown', null, ['request_id' => $req->id, 'execution_id' => $exec->execution_id, 'reason' => 'succeeded_without_artifact']);
+                $this->locks->release($exec->lock_id); // terminal → libera workspace
                 return ['ok' => false, 'error' => 'succeeded_without_artifact', 'execution' => $exec->fresh()];
             }
             $cand = ArtifactCandidate::create([
@@ -219,12 +250,14 @@ class CompileService
                 'request_id' => $req->id, 'execution_id' => $exec->execution_id, 'candidate_id' => $cand->id,
                 'digest' => substr((string) $art['digest'], 0, 12), 'unit' => $cand->artifact_unit, 'mode' => $req->execution_mode,
             ]);
+            $this->locks->release($exec->lock_id); // terminal (candidate) → libera workspace
             return ['ok' => true, 'execution' => $exec->fresh(), 'candidate' => $cand];
         }
 
         // failed | timed_out | unknown → NENHUM artifact.
         $req->update(['status' => CompileRequest::ST_FAILED]);
         $this->emit((int) $req->environment_id, 'compile.' . $outcome, null, ['request_id' => $req->id, 'execution_id' => $exec->execution_id, 'reason' => $out['error'] ?? $outcome]);
+        $this->locks->release($exec->lock_id); // terminal → libera workspace
         return ['ok' => true, 'execution' => $exec->fresh(), 'candidate' => null, 'outcome' => $outcome];
     }
 

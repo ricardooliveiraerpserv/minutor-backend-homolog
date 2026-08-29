@@ -173,6 +173,13 @@ return [
 
     // PATCH — produção GOVERNADA de artefato (base RPO + .ptm = candidato). Patch NÃO publica RPO (C5 publica).
     // Capability PRÓPRIA (rpo_patch), NÃO mistura com compile/rpo_publish. Três modos SEM fallback silencioso.
+    // CP-PREPHYSICAL — contrato de preparação de base física (seed/re-seed). live_ready=false → unavailable
+    // enquanto não houver adapter TOTVS homologado. NUNCA habilitar por passar simulated.
+    'base_seed' => [
+        'executable_modes' => array_values(array_filter(array_map('trim', explode(',', (string) env('CONNECTOR_BASE_SEED_EXEC_MODES', 'simulated'))), 'strlen')),
+        'live_ready' => filter_var(env('CONNECTOR_BASE_SEED_LIVE_READY', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
     'patch' => [
         'supported_capabilities' => [
             ['name' => 'rpo_patch', 'contract_version' => 1],
