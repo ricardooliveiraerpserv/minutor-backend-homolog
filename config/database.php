@@ -18,6 +18,11 @@ return [
 
     'default' => env('DB_CONNECTION', 'sqlite'),
 
+    // PATCH P3 — bancos EXPLICITAMENTE descartáveis onde reset destrutivo (migrate:fresh/refresh/db:wipe) é
+    // permitido durante testes. Default só ':memory:' (fail-closed). NÃO listar bases-fixtura compartilhadas
+    // (ex.: minutor_c1test) — protege contra reset acidental por conexão repontada. Ver guard em AppServiceProvider.
+    'disposable_test_databases' => array_values(array_filter(array_map('trim', explode(',', (string) env('DISPOSABLE_TEST_DATABASES', ':memory:'))), 'strlen')),
+
     /*
     |--------------------------------------------------------------------------
     | Database Connections

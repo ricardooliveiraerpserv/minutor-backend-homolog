@@ -10,6 +10,7 @@ use App\Models\PatchExecutionItem;
 use App\Models\PatchRequest;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use App\Connector\RpoRegistryService;
 
 /**
  * PATCH P2 — máquina GOVERNADA de execução (fixture/simulated; Live unavailable). Prova a SEMÂNTICA, não a
@@ -19,6 +20,10 @@ use Illuminate\Support\Str;
  */
 class PatchExecutionService
 {
+    public function __construct(private RpoRegistryService $rpo)
+    {
+    }
+
     private function lease(): int { return (int) config('connector.patch.transport_lease', 120); }
 
     private function emit(int $envId, string $type, ?string $detail, array $meta): void
@@ -243,6 +248,52 @@ class PatchExecutionService
         $this->releaseLock($ex); // agora sim devolve a autoridade sobre o workspace
         $this->emit($this->envIdOf($ex), 'patch.resolved', 'Indeterminado resolvido pelo operador (SIMULADO)', ['execution_id' => $ex->execution_id]);
         return ['ok' => true, 'execution' => $ex->fresh()];
+    }
+
+    // ── P3 — HANDOFF GOVERNADO ao registry C5. Espelha o C6: quem REGISTRA é o RpoRegistryService (autoridade C5). ──
+    //    Só candidate TERMINAL válido. failed/partial/indeterminate/contradicted → nunca chegam aqui (sem candidate row).
+    //    Idempotente (lockForUpdate + guard REGISTERED). NÃO qualifica/promove/publica. Boundary: termina em C5 REGISTERED.
+    public function handoff(PatchArtifactCandidate $cand, int $userId): array
+    {
+        return DB::transaction(function () use ($cand, $userId) {
+            $cand = PatchArtifactCandidate::whereKey($cand->id)->lockForUpdate()->first();
+            if ($cand->handoff_status === PatchArtifactCandidate::HANDOFF_REGISTERED) {
+                return ['ok' => false, 'error' => 'already_registered', 'status' => 409, 'rpo_artifact_id' => $cand->rpo_artifact_id];
+            }
+            // A execução ligada precisa estar em ST_CANDIDATE (só candidate terminal válido registra).
+            $ex = PatchExecution::find($cand->patch_execution_id);
+            if (! $ex || $ex->status !== PatchExecution::ST_CANDIDATE) {
+                return ['ok' => false, 'error' => 'candidate_not_registerable', 'status' => 409];
+            }
+            // Proveniência COMPACTA (≤300, zero bytes/path/PTM). Estrutura completa fica na candidate (imutável, linkada).
+            $p = $cand->provenance ?? [];
+            $prov = 'PATCH-SIM producer=patch exec=' . substr((string) ($p['execution_id'] ?? ''), 0, 12)
+                . ' base=' . substr((string) $cand->base_rpo_digest, 0, 12)
+                . ' batch=' . substr((string) $cand->batch_digest, 0, 12)
+                . ' cap=' . mb_substr((string) $cand->capability_adapter_version, 0, 40) . ' simulated=1';
+            $compat = ['source' => 'patch', 'producer' => 'patch', 'simulated' => true, 'appserver_versions' => []];
+
+            // Marca intenção (auditável) ANTES do C5.
+            $cand->update(['handoff_status' => PatchArtifactCandidate::HANDOFF_REQUESTED]);
+            $this->emit((int) $cand->environment_id, 'patch.handoff_requested', 'Artefato Patch enviado ao registry C5 (SIMULADO)', [
+                'candidate_id' => $cand->id, 'digest' => substr((string) $cand->candidate_digest, 0, 12), 'execution_id' => $p['execution_id'] ?? null,
+            ]);
+
+            // Autoridade do C5: register no RpoRegistryService. NUNCA promove/qualifica.
+            $res = $this->rpo->register((int) $cand->environment_id, $cand->customer_id, [
+                'hash' => $cand->candidate_digest, 'version' => null,
+                'provenance' => $prov, 'compatibility' => $compat,
+                'classification' => $cand->classification, 'source_identity' => null, // NUNCA path/bytes
+            ], $userId);
+            if (! ($res['ok'] ?? false)) {
+                return ['ok' => false, 'error' => $res['error'] ?? 'register_failed', 'status' => 422]; // fica 'requested' (tentável)
+            }
+            $cand->update(['handoff_status' => PatchArtifactCandidate::HANDOFF_REGISTERED, 'rpo_artifact_id' => $res['artifact']->id]);
+            $this->emit((int) $cand->environment_id, 'patch.registered_c5', 'Artefato Patch registrado no C5 — ainda não qualificado (SIMULADO)', [
+                'candidate_id' => $cand->id, 'rpo_artifact_id' => $res['artifact']->id,
+            ]);
+            return ['ok' => true, 'rpo_artifact_id' => $res['artifact']->id, 'candidate' => $cand->fresh()];
+        });
     }
 
     private function recRet(int $env, PatchExecution $ex, string $outcome): array

@@ -211,6 +211,71 @@ class PatchController extends Controller
         ]]);
     }
 
+    // ── P3 — CANDIDATE + HANDOFF ao C5. Boundary: termina em C5 REGISTERED (nunca qualifica/promove/publica). ──
+
+    private function candFor(Request $r, int $id): ?PatchArtifactCandidate
+    {
+        $c = PatchArtifactCandidate::find($id);
+        return ($c && $this->scope->canAccessCustomerId($r->user(), (int) $c->customer_id)) ? $c : null;
+    }
+
+    // GET /prosight/environments/{environmentId}/patch/candidates  (perm patch.view)
+    public function candidates(Request $r, int $environmentId): JsonResponse
+    {
+        $env = $this->env($r, $environmentId);
+        if (! $env) { return response()->json(['message' => 'Ambiente não encontrado.'], 404); }
+        $rows = PatchArtifactCandidate::where('environment_id', $env->id)->orderByDesc('id')->limit(200)->get()
+            ->map(fn ($c) => $this->candidateView($c))->all();
+        return response()->json(['data' => ['candidates' => $rows]]);
+    }
+
+    // GET /prosight/patch/candidates/{id}  (perm patch.view)
+    public function showCandidate(Request $r, int $id): JsonResponse
+    {
+        $c = $this->candFor($r, $id);
+        if (! $c) { return response()->json(['message' => 'Candidato não encontrado.'], 404); }
+        return response()->json(['data' => ['candidate' => $this->candidateView($c, true)]]);
+    }
+
+    // POST /prosight/patch/candidates/{id}/handoff  (perm patch.register) — ação EXPLÍCITA "Registrar no C5"
+    public function handoff(Request $r, int $id): JsonResponse
+    {
+        $c = $this->candFor($r, $id);
+        if (! $c) { return response()->json(['message' => 'Candidato não encontrado.'], 404); }
+        if (! $this->hasPerm($r->user(), 'prosight.operations.patch.register')) {
+            return response()->json(['error' => 'forbidden'], 403);
+        }
+        $res = $this->exec->handoff($c, (int) $r->user()->id);
+        if (! ($res['ok'] ?? false)) {
+            return response()->json(['error' => $res['error'], 'rpo_artifact_id' => $res['rpo_artifact_id'] ?? null, 'message' => $this->msg($res['error'])], (int) ($res['status'] ?? 422));
+        }
+        return response()->json(['data' => ['candidate' => $this->candidateView($res['candidate'], true), 'rpo_artifact_id' => $res['rpo_artifact_id']]]);
+    }
+
+    /** View do candidate com labels HONESTOS: SIMULADO; candidato≠registrado≠qualificado≠publicado. */
+    private function candidateView(PatchArtifactCandidate $c, bool $full = false): array
+    {
+        $registered = $c->handoff_status === PatchArtifactCandidate::HANDOFF_REGISTERED;
+        $simulated = (bool) ($c->provenance['simulated'] ?? true);
+        $sfx = $simulated ? ' (SIMULADO)' : '';
+        $view = [
+            'id' => $c->id, 'patch_execution_id' => $c->patch_execution_id, 'environment_id' => $c->environment_id,
+            'candidate_digest' => $c->candidate_digest, 'base_rpo_digest' => $c->base_rpo_digest, 'batch_digest' => $c->batch_digest,
+            'classification' => $c->classification, 'handoff_status' => $c->handoff_status, 'is_simulated' => $simulated,
+            // Estados honestos: registrado no C5 NÃO é qualificado NEM publicado.
+            'is_registered' => $registered, 'is_qualified' => false, 'is_published' => false,
+            'rpo_artifact_id' => $c->rpo_artifact_id,
+            // Navegação (não executa operação): FE abre o artefato no C5/Operações RPO.
+            'c5_artifact_nav' => $registered && $c->rpo_artifact_id ? "/prosight/rpo/artifacts/{$c->rpo_artifact_id}" : null,
+            'label' => $registered
+                ? 'Registrado no C5 — ainda não qualificado' . $sfx
+                : 'Artefato candidato' . $sfx . ' — ainda não registrado',
+            'note' => 'Patch aplicado ao workspace ≠ Patch publicado em produção.',
+        ];
+        if ($full) { $view['provenance'] = $c->provenance; } // proveniência IMUTÁVEL (execution/base/batch/itens/simulated)
+        return $view;
+    }
+
     // ── AGENTE (connector.agent) — claim/ack/result. Em P2 o "agente" é o harness simulado. ──
 
     // GET /connector/patch-executions/next — claim single-shot da execução CLAIMED do ambiente do agente.
@@ -274,6 +339,9 @@ class PatchController extends Controller
             'fence_token' => (int) $x->fence_token, 'candidate_digest' => $x->candidate_digest,
             'applied_items' => $x->applied_items, 'reconciliation_state' => $x->reconciliation_state,
             'is_simulated' => $simulated,
+            // P3 — link para o candidate produzido (jornada execução→candidato→registrar no C5).
+            'candidate_id' => $x->status === PatchExecution::ST_CANDIDATE
+                ? PatchArtifactCandidate::where('patch_execution_id', $x->id)->value('id') : null,
             'markers' => [
                 'execution_committed' => (bool) $x->execution_committed_at, 'base_verified' => (bool) $x->base_verified_at,
                 'patch_effect_started' => (bool) $x->patch_effect_started_at, 'patch_effect_committed' => (bool) $x->patch_effect_committed_at,
@@ -333,6 +401,9 @@ class PatchController extends Controller
             'workspace_busy' => 'Workspace ocupado por outra execução mutável (lock ativo).',
             'workspace_indeterminate' => 'Workspace retido por execução indeterminada — reconciliação/re-seed obrigatórios.',
             'live_unavailable' => 'Execução real de patch ainda não disponível (aguardando conector TOTVS).',
+            'already_registered' => 'Artefato já registrado no C5.',
+            'candidate_not_registerable' => 'Só um artefato candidato válido pode ser registrado no C5.',
+            'register_failed', 'provenance_and_compatibility_required', 'invalid_hash' => 'Falha ao registrar no C5.',
             default => 'Não foi possível processar o patch.',
         };
     }

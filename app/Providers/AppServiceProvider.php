@@ -76,6 +76,21 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(MessageSending::class, EmailSentListener::class);
         Event::listen(MessageSent::class, EmailSentListener::class);
 
+        // PATCH P3 — GUARD de isolamento de testes: impede reset DESTRUTIVO (migrate:fresh/refresh/db:wipe) contra
+        // conexão NÃO classificada como descartável durante testes. O incidente minutor_c1test veio de um teste
+        // RefreshDatabase disparando migrate:fresh numa conexão repontada dinamicamente por putenv. Guard fail-closed:
+        // só permite banco em database.disposable_test_databases (default ':memory:'). Fora de teste, não interfere.
+        Event::listen(\Illuminate\Console\Events\CommandStarting::class, function ($event) {
+            if (! $this->app->runningUnitTests()) { return; }
+            if (! in_array($event->command, ['migrate:fresh', 'migrate:refresh', 'db:wipe'], true)) { return; }
+            $conn = ($event->input->hasOption('database') ? $event->input->getOption('database') : null) ?: config('database.default');
+            $db = (string) config("database.connections.{$conn}.database");
+            $disposable = (array) config('database.disposable_test_databases', [':memory:']);
+            if ($db !== ':memory:' && ! in_array($db, $disposable, true)) {
+                throw new \RuntimeException("Reset destrutivo ({$event->command}) BLOQUEADO: banco '{$db}' (conexão '{$conn}') não é descartável. Adicione-o a DISPOSABLE_TEST_DATABASES apenas se for realmente descartável. [PATCH P3 test-isolation guard]");
+            }
+        });
+
         // Snapshot em tempo real — reage à criação de eventos de contrato
         Event::listen(ContractEventCreated::class, ContractEventListener::class);
 

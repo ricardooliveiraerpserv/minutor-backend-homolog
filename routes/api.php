@@ -800,6 +800,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
             // PATCH P2 — visualizar execução (marcadores + itens). SIMULADO explícito nos labels.
             Route::get('/prosight/patch/executions/{id}', [\App\Http\Controllers\PatchController::class, 'showExecution'])->whereNumber('id');
+            // PATCH P3 — candidatos (jornada execução→candidato→registrar no C5). Read-only.
+            Route::get('/prosight/environments/{environmentId}/patch/candidates', [\App\Http\Controllers\PatchController::class, 'candidates'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/candidates/{id}', [\App\Http\Controllers\PatchController::class, 'showCandidate'])->whereNumber('id');
         });
         Route::middleware('permission:prosight.operations.patch.request')->group(function () {
             Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
@@ -810,6 +813,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/patch/requests/{id}/execute', [\App\Http\Controllers\PatchController::class, 'execute'])->whereNumber('id');
             Route::post('/prosight/patch/executions/{id}/reconcile', [\App\Http\Controllers\PatchController::class, 'reconcile'])->whereNumber('id');
             Route::post('/prosight/patch/executions/{id}/resolve', [\App\Http\Controllers\PatchController::class, 'resolve'])->whereNumber('id');
+        });
+        // PATCH P3 — HANDOFF ao C5 (ação EXPLÍCITA). Perm PRÓPRIA patch.register (não herda execute). Boundary=C5 REGISTERED.
+        Route::middleware('permission:prosight.operations.patch.register')->group(function () {
+            Route::post('/prosight/patch/candidates/{id}/handoff', [\App\Http\Controllers\PatchController::class, 'handoff'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
@@ -2073,6 +2080,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
             // PATCH P2 — visualizar execução (marcadores + itens). SIMULADO explícito nos labels.
             Route::get('/prosight/patch/executions/{id}', [\App\Http\Controllers\PatchController::class, 'showExecution'])->whereNumber('id');
+            // PATCH P3 — candidatos (jornada execução→candidato→registrar no C5). Read-only.
+            Route::get('/prosight/environments/{environmentId}/patch/candidates', [\App\Http\Controllers\PatchController::class, 'candidates'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/candidates/{id}', [\App\Http\Controllers\PatchController::class, 'showCandidate'])->whereNumber('id');
         });
         Route::middleware('permission:prosight.operations.patch.request')->group(function () {
             Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
@@ -2083,6 +2093,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/patch/requests/{id}/execute', [\App\Http\Controllers\PatchController::class, 'execute'])->whereNumber('id');
             Route::post('/prosight/patch/executions/{id}/reconcile', [\App\Http\Controllers\PatchController::class, 'reconcile'])->whereNumber('id');
             Route::post('/prosight/patch/executions/{id}/resolve', [\App\Http\Controllers\PatchController::class, 'resolve'])->whereNumber('id');
+        });
+        // PATCH P3 — HANDOFF ao C5 (ação EXPLÍCITA). Perm PRÓPRIA patch.register (não herda execute). Boundary=C5 REGISTERED.
+        Route::middleware('permission:prosight.operations.patch.register')->group(function () {
+            Route::post('/prosight/patch/candidates/{id}/handoff', [\App\Http\Controllers\PatchController::class, 'handoff'])->whereNumber('id');
         });
         Route::put('/customers/{customer}/crm', [\App\Http\Controllers\CustomerCrmController::class, 'update']);
 
