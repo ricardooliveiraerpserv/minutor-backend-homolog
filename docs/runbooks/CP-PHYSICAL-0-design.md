@@ -225,3 +225,49 @@ Entrar em P0 exige resolver os 6 blockers do §11 — nenhum deles é executado 
 
 **DESIGN ONLY concluído. STOP.** Não iniciar P0–P7. Não implementar/habilitar Live adapters. Não tocar produção.
 Não promover/qualificar. Próxima ação só com aval explícito, e começando por P0 (no-effect) após os blockers.
+
+---
+
+## §13 P0 Entry Gate (checklist para AUTORIZAR P0 — no-effect)
+
+> P0 **não** exige base-seed implementado (isso é P2). P0 exige infraestrutura suficiente para **provar que
+> estamos olhando o ambiente certo**. Objetivo de P0 (congelado): **provar identidade e isolamento ANTES de provar
+> transformação** — observar/correlacionar Minutor → Connector → TOTVS → AppServer/compiler → `workspace_unit_id`
+> → RPO observed digest, demonstrando que nenhum passo depende de enviar path/INI/PID/command/RPO bytes/credentials
+> ao Minutor. Primeira execução 100% no-effect.
+
+```
+[ ] 3 PATs comprometidos REVOGADOS (SECURITY-HOTFIX PAT)          ← ADMINISTRATIVE (bloqueia P0)
+[ ] autenticação Git segura substituta configurada (GitHub App/SSH min-scope)
+[ ] ambiente TOTVS dedicado identificado
+[ ] ambiente confirmado HOMOLOG/TEST, NUNCA produção
+[ ] Connector real enrolado e online
+[ ] versão/release/patch TOTVS observados
+[ ] AppServer/compiler físico identificado pelo Connector
+[ ] workspace_unit_id real e opaco observado
+[ ] workspace confirmado NÃO ser RPO ativo de produção
+[ ] RPO-base de teste conhecido
+[ ] recovery owner definido
+[ ] backup/re-seed possível EM PRINCÍPIO (implementação = P2)
+[ ] capability permanece physical_ready=false
+[ ] LiveCompileAdapter unavailable
+[ ] LivePatchAdapter unavailable
+```
+
+**Para montar/autorizar P0, o operador traz:** o estado de `GET /prosight/environments/{env}/physical-readiness`
+(deve manter `physical_ready=false`, `live_ready=false`, agora com `connector_ready`/`workspace_ready` refletindo o
+ambiente real) + a identificação **sanitizada** do ambiente/Connector/workspace (identidades opacas + digests; sem
+path/INI/host/credential).
+
+## §14 GATE físico do Compile source-only (governança — enforce em C6-PHYSICAL)
+
+Hoje: *Compile source-only (sem `workspace_unit_id`) → sem lock* — aceitável **enquanto** a execução NÃO modifica um
+RPO/workspace físico compartilhado (simulated/live-unavailable não modificam nada).
+
+**Regra congelada (enforce quando o LiveCompileAdapter compilar contra RPO físico):**
+
+> **Nenhum Compile FÍSICO que possa modificar RPO pode atravessar o effect barrier sem `workspace_unit_id` + lock +
+> fence válidos.** Para o caminho live, `workspace_unit_id` deixa de ser opcional e a ausência dele é `blocked`
+> (nunca "sem lock"). Isso impede que o caminho legado source-only vire uma exceção que contorne a governança de
+> exclusão física. (O caminho source-only permanece válido apenas para execuções comprovadamente sem efeito em RPO
+> físico compartilhado.)
