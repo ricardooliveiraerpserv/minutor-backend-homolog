@@ -331,6 +331,9 @@ class PatchController extends Controller
     private function agentView(PatchExecution $x): array
     {
         return [
+            // 'id' numérico: o agente outbound precisa dele para montar /patch-executions/{id}/ack|result
+            // (a rota usa o id numérico; execution_id/uuid é a autoridade de binding no corpo). Aditivo.
+            'id' => $x->id,
             'execution_id' => $x->execution_id, 'workspace_unit_id' => $x->workspace_unit_id,
             'execution_mode' => $x->execution_mode, 'fence_token' => (int) $x->fence_token,
             'base_rpo_hash' => $x->base_rpo_hash, 'batch_digest' => $x->batch_digest,
