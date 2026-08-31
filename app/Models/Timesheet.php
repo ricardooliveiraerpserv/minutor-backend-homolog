@@ -54,6 +54,7 @@ class Timesheet extends Model
         'customer_id',
         'project_id',
         'real_project_id',
+        'rateio_source_timesheet_id',
         'date',
         'start_time',
         'end_time',

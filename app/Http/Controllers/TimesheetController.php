@@ -894,6 +894,9 @@ class TimesheetController extends Controller
         $rules = [
             'project_id' => 'required|exists:projects,id',
             'real_project_id' => 'nullable|integer|exists:projects,id',
+            'distribution' => 'nullable|array',
+            'distribution.*.target_project_id' => 'required|integer|exists:projects,id',
+            'distribution.*.minutes' => 'required|numeric|min:0',
             'date' => 'required|date|before_or_equal:today',
             'start_time' => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i',
             'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
@@ -1236,6 +1239,11 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
+            // Rateio de horas: projeto-servidor (is_rateio) distribui as horas para os destinos.
+            if ($project->is_rateio) {
+                app(\App\Services\RateioHoursService::class)->sync($timesheet, $request->input('distribution'));
+            }
+
             // FASE 11.7 — Attachment persiste 100% na camada Attachment.
             if ($newAttachmentInfo !== null) {
                 $this->registerTimesheetAttachment($timesheet, $newAttachmentInfo);
@@ -1475,6 +1483,9 @@ class TimesheetController extends Controller
             'customer_id' => 'sometimes|exists:customers,id',
             'project_id' => 'sometimes|exists:projects,id',
             'real_project_id' => 'nullable|integer|exists:projects,id',
+            'distribution' => 'nullable|array',
+            'distribution.*.target_project_id' => 'required|integer|exists:projects,id',
+            'distribution.*.minutes' => 'required|numeric|min:0',
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
@@ -1924,6 +1935,12 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
+            // Rateio de horas: re-sincroniza os filhos (mudou horas/data/status/distribuição).
+            $timesheet->loadMissing('project');
+            if ($timesheet->project && $timesheet->project->is_rateio) {
+                app(\App\Services\RateioHoursService::class)->sync($timesheet, $request->input('distribution'));
+            }
+
             // FASE 11.7 — Attachment persiste 100% na camada Attachment.
             if (isset($newAttachmentInfoUpd) && $newAttachmentInfoUpd !== null) {
                 $this->registerTimesheetAttachment($timesheet->fresh(), $newAttachmentInfoUpd);
@@ -2062,6 +2079,9 @@ class TimesheetController extends Controller
 
         // FASE 11.7 — soft-delete attachment(s) ANTES do timesheet sumir.
         $this->softDeleteTimesheetAttachments($timesheet);
+
+        // Rateio de horas: apaga os filhos de distribuição junto com o pai.
+        app(\App\Services\RateioHoursService::class)->clear($timesheet);
 
         $timesheet->delete();
         $this->resolveStaleConflicts($tsUserId, $tsDate);

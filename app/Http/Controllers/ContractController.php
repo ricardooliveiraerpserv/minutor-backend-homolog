@@ -325,6 +325,7 @@ class ContractController extends Controller
             ->whereNull('parent_project_id')
             // Buckets internos de investimento (Comercial/Suporte/Projeto) não entram.
             ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+            ->where(fn ($q) => $q->where('is_rateio', false)->orWhereNull('is_rateio'))
             ->whereHas('contractType', fn ($q) => $q->whereIn('code', array_keys($allowedByCode)))
             ->with('contractType:id,name,code')
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->get('customer_id')))
@@ -1412,6 +1413,7 @@ class ContractController extends Controller
         ])
         // Investimento (comercial/interno + lead-projeto) NÃO gera card no pipeline — mora em "Investimento Interno".
         ->where(fn ($iq) => $iq->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+        ->where(fn ($iq) => $iq->where('is_rateio', false)->orWhereNull('is_rateio'))
         ->where(function ($q) use ($demandProjectIds) {
             $q->where(function ($inner) {
                 $inner->whereNotNull('contract_id')

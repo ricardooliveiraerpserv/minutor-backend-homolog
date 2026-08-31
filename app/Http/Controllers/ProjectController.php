@@ -954,6 +954,7 @@ class ProjectController extends Controller
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'required|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
+            'is_rateio' => 'nullable|boolean',
             'service_type_id' => 'required|exists:service_types,id',
                         'contract_type_id' => 'required|exists:contract_types,id',
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
@@ -1454,6 +1455,7 @@ class ProjectController extends Controller
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'sometimes|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
+            'is_rateio' => 'nullable|boolean',
             'service_type_id' => 'sometimes|exists:service_types,id',
             'contract_type_id' => 'sometimes|exists:contract_types,id',
             // Permite o status ATUAL do projeto mesmo que não esteja em getStatuses() — há

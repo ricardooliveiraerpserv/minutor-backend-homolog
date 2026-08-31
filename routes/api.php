@@ -595,6 +595,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'rateio'])->name('projects.rateio');
             Route::put('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'saveRateio'])->name('projects.rateio.save');
             // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
+            // Rateio de horas — config dos projetos-servidor e seus destinos.
+            Route::get('/rateio-hours/projects',                            [\App\Http\Controllers\RateioHoursController::class, 'index'])->name('rateio-hours.index');
+            Route::get('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'targets'])->name('rateio-hours.targets');
+            Route::put('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'saveTargets'])->name('rateio-hours.targets.save');
             Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
             Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
             Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send');
