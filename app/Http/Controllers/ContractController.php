@@ -3867,6 +3867,9 @@ class ContractController extends Controller
         $q = Contract::query()
             ->whereNotNull('data_assinatura')
             ->whereNotNull('data_vencimento')
+            // Contratos-satélite vinculados (parent_contract_id) NÃO são reajustados
+            // separadamente — o contrato PAI/âncora carrega a fatura única (e o valor).
+            ->whereNull('parent_contract_id')
             ->withCount([
                 'valueChanges as active_changes_count'   => fn ($x) => $x->whereNull('reversed_at'),
                 'valueChanges as reversed_changes_count' => fn ($x) => $x->whereNotNull('reversed_at'),

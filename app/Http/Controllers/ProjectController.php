@@ -1359,12 +1359,13 @@ class ProjectController extends Controller
             $ctr = $project->contract_id
                 ? \App\Models\Contract::with([
                     'parentContract:id,project_code_preview',
-                    'childContracts:id,parent_contract_id,valor_projeto,tipo_faturamento',
+                    'childContracts:id,parent_contract_id,valor_projeto,tipo_faturamento,contract_type_id',
                   ])->find($project->contract_id)
                 : null;
             if ($ctr) {
-                $bhMensalItem = (bool) $ctr->parent_contract_id && $ctr->tipo_faturamento === 'banco_horas_mensal';
-                $bhKids = $ctr->childContracts->filter(fn ($c) => $c->tipo_faturamento === 'banco_horas_mensal');
+                $CLOSED_TYPE_ID = 3; // itens Fechado (Setup/Dev) são cobrados à parte
+                $bhMensalItem = (bool) $ctr->parent_contract_id && (int) $ctr->contract_type_id !== $CLOSED_TYPE_ID;
+                $bhKids = $ctr->childContracts->filter(fn ($c) => (int) $c->contract_type_id !== $CLOSED_TYPE_ID);
                 $hasBhItems = $bhKids->isNotEmpty();
                 $project->bh_mensal_item         = $bhMensalItem;
                 $project->parent_contract_code   = $ctr->parentContract?->project_code_preview;
