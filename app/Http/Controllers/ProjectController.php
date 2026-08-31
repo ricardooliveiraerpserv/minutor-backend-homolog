@@ -1351,6 +1351,31 @@ class ProjectController extends Controller
         $project->total_project_value = $project->calculateTotalProjectValue();
         $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
         $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+        // Vínculo de fatura (item BH Mensal cobrado no contrato PAI Cloud = fatura única) —
+        // espelha o formatKanbanCard do Kanban de Contratos pra a mesma faixa amarela aparecer
+        // também no detalhe do PROJETO já gerado (não só no card de demanda).
+        try {
+            $ctr = $project->contract_id
+                ? \App\Models\Contract::with([
+                    'parentContract:id,project_code_preview',
+                    'childContracts:id,parent_contract_id,valor_projeto,tipo_faturamento',
+                  ])->find($project->contract_id)
+                : null;
+            if ($ctr) {
+                $bhMensalItem = (bool) $ctr->parent_contract_id && $ctr->tipo_faturamento === 'banco_horas_mensal';
+                $bhKids = $ctr->childContracts->filter(fn ($c) => $c->tipo_faturamento === 'banco_horas_mensal');
+                $hasBhItems = $bhKids->isNotEmpty();
+                $project->bh_mensal_item         = $bhMensalItem;
+                $project->parent_contract_code   = $ctr->parentContract?->project_code_preview;
+                $project->has_bh_mensal_items    = $hasBhItems;
+                $project->combined_billing_value = $hasBhItems
+                    ? round((float) ($ctr->valor_projeto ?? 0) + (float) $bhKids->sum(fn ($c) => (float) ($c->valor_projeto ?? 0)), 2)
+                    : null;
+            }
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@show: falha ao calcular vínculo de fatura', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
+        }
         // Banco de coordenação (coordination_hours já vem como coluna). Consumo = horas
         // apontadas pelos coordenadores; saldo/%/risco c/ fallback são calculados no front.
         $project->coordination_consumed_hours = $project->getCoordinationConsumedHours();
