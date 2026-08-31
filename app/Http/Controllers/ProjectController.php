@@ -197,6 +197,13 @@ class ProjectController extends Controller
             elseif ($status === 'open') $q->open();
             elseif ($status) $q->where('status', $status);
             if ($request->get('customer_id')) $q->where('customer_id', $request->get('customer_id'));
+            // Filtro por tipo de contrato (ex.: Rateio de Horas só oferece destinos Cloud).
+            if ($ctCode = $request->get('contract_type_code')) {
+                $q->whereRelation('contractType', 'code', $ctCode);
+            }
+            if ($ctId = $request->get('contract_type_id')) {
+                $q->where('contract_type_id', $ctId);
+            }
             // Filtra por consultor ALOCADO (project_consultants) — usado p/ só oferecer,
             // na realocação de apontamento, projetos em que o consultor está alocado.
             if ($request->get('consultant_user_id')) {

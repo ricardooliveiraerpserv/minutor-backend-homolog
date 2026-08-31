@@ -17,7 +17,7 @@ class RateioHoursController extends Controller
     public function index(): JsonResponse
     {
         $projects = Project::where('is_rateio', true)
-            ->with('customer:id,name')
+            ->with('customer:id,name', 'consultants:id,name', 'coordinators:id,name')
             ->withCount('rateioTargets')
             ->orderBy('name')
             ->get(['id', 'name', 'code', 'customer_id'])
@@ -27,6 +27,9 @@ class RateioHoursController extends Controller
                 'code'          => $p->code,
                 'cliente'       => $p->customer?->name,
                 'targets_count' => $p->rateio_targets_count,
+                // Equipe alocada (para apontar + aprovar). coordinator = 1 (M2M, max 1).
+                'consultants'   => $p->consultants->map(fn ($c) => ['id' => $c->id, 'name' => $c->name])->values(),
+                'coordinator'   => $p->coordinators->first() ? ['id' => $p->coordinators->first()->id, 'name' => $p->coordinators->first()->name] : null,
             ]);
 
         return response()->json(['data' => $projects]);
@@ -92,5 +95,28 @@ class RateioHoursController extends Controller
         }
 
         return $this->targets($project->fresh());
+    }
+
+    /**
+     * Aloca a equipe do projeto-servidor de rateio: consultores (que poderão APONTAR
+     * horas nele) + 1 coordenador (que APROVA). Endpoint leve/isolado — só mexe nos
+     * pivôs project_consultants/project_coordinators, sem tocar nos demais campos do
+     * projeto (o servidor de rateio costuma nascer com campos zerados).
+     */
+    public function saveTeam(Project $project, Request $request): JsonResponse
+    {
+        if (!$project->is_rateio) {
+            return response()->json(['message' => 'Projeto não é de rateio.'], 422);
+        }
+        $data = $request->validate([
+            'consultant_ids'   => 'nullable|array',
+            'consultant_ids.*' => 'integer|exists:users,id',
+            'coordinator_id'   => 'nullable|integer|exists:users,id',
+        ]);
+
+        $project->consultants()->sync($data['consultant_ids'] ?? []);
+        $project->coordinators()->sync(!empty($data['coordinator_id']) ? [$data['coordinator_id']] : []);
+
+        return $this->index();
     }
 }
