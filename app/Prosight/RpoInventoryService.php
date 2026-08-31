@@ -87,49 +87,58 @@ class RpoInventoryService
         $dir = sys_get_temp_dir().'/rpo-scan-'.bin2hex(random_bytes(6));
 
         try {
-            // Clone BLOBLESS (sem baixar conteúdo dos arquivos) + histórico p/ datas. Rápido e leve.
-            $clone = new Process(['git', 'clone', '--filter=blob:none', '--no-checkout', '--single-branch', '--branch', $branch, $url, $dir]);
-            $clone->setTimeout(180)->run();
+            // Clone COMPLETO (NÃO shallow / NÃO blobless) — igual ao ProSight enviado. Com clone parcial/
+            // shallow o `git log` carimba a data do HEAD em todos os arquivos (import em massa) → tudo vira
+            // "recompilar". O histórico completo é necessário p/ a data REAL do último commit por arquivo.
+            $clone = new Process(['git', 'clone', '--single-branch', '--branch', $branch, $url, $dir]);
+            $clone->setTimeout(300)->run();
             if (! $clone->isSuccessful()) {
                 throw new \RuntimeException($this->scrub($clone->getErrorOutput() ?: 'git clone falhou', $token));
             }
 
-            // git log newest-first: data (@%cI) seguida dos arquivos alterados. 1ª data por path vence.
-            $log = new Process(['git', '-C', $dir, 'log', '--name-only', '--pretty=format:@%cI'], null, null, null, 180);
+            // Mapa data por CAMINHO: git log newest-first (@%cI seguido dos arquivos). 1ª data por path vence.
+            $log = new Process(['git', '-C', $dir, 'log', '--no-merges', '--name-only', '--date=iso-strict', '--pretty=format:@%cI'], null, null, null, 240);
             $log->run();
             if (! $log->isSuccessful()) {
                 throw new \RuntimeException($this->scrub($log->getErrorOutput() ?: 'git log falhou', $token));
             }
-
-            $out = [];
+            $dateByPath = [];  // relpath => timestamp(ms)
             $curMs = null;
-            $prefix = trim($basePath, '/');
             foreach (explode("\n", $log->getOutput()) as $line) {
                 if ($line === '') {
                     continue;
                 }
                 if ($line[0] === '@') {
-                    $iso = substr($line, 1);
-                    $curMs = strtotime($iso);
-                    $curMs = $curMs !== false ? $curMs * 1000 : null;
+                    $ts = strtotime(substr($line, 1));
+                    $curMs = $ts !== false ? $ts * 1000 : null;
                     continue;
                 }
-                // linha de path
-                $path = $line;
-                if ($prefix !== '' && ! str_starts_with($path, $prefix.'/') && $path !== $prefix) {
-                    continue;
+                if ($curMs !== null && ! isset($dateByPath[$line])) {
+                    $dateByPath[$line] = $curMs;   // 1ª (mais nova) por caminho
                 }
-                $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-                if (! in_array($ext, self::SOURCE_EXTENSIONS, true)) {
-                    continue;
-                }
-                $prog = strtoupper(pathinfo($path, PATHINFO_FILENAME));
-                if ($prog === '') {
-                    continue;
-                }
-                // newest-first → só grava a 1ª (mais nova) ocorrência de cada programa.
-                if (! isset($out[$prog]) && $curMs !== null) {
-                    $out[$prog] = $curMs;
+            }
+
+            // Varre o DISCO (só arquivos que EXISTEM) sob base_path, casando a data pelo caminho relativo.
+            $base = $basePath !== '' ? $dir.'/'.trim($basePath, '/') : $dir;
+            $out = [];  // PROGRAM(upper) => timestamp(ms) mais novo
+            if (is_dir($base)) {
+                $it = new \RecursiveIteratorIterator(
+                    new \RecursiveDirectoryIterator($base, \FilesystemIterator::SKIP_DOTS)
+                );
+                foreach ($it as $file) {
+                    if (! $file->isFile()) {
+                        continue;
+                    }
+                    $ext = strtolower($file->getExtension());
+                    if (! in_array($ext, self::SOURCE_EXTENSIONS, true)) {
+                        continue;
+                    }
+                    $rel = str_replace('\\', '/', substr($file->getPathname(), strlen($dir) + 1));
+                    $ms = $dateByPath[$rel] ?? ($file->getMTime() * 1000);
+                    $prog = strtoupper($file->getBasename('.'.$file->getExtension()));
+                    if ($prog !== '' && (! isset($out[$prog]) || $ms > $out[$prog])) {
+                        $out[$prog] = $ms;
+                    }
                 }
             }
 
