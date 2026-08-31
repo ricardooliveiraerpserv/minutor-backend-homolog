@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Connector\EnvironmentHubService;
 use App\Models\ConnectorAppserverBinding;
+use App\Models\EnvAppserver;
 use App\Models\EnvEnvironment;
 use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
@@ -57,6 +58,40 @@ class EnvironmentHubController extends Controller
             return response()->json($body, (int) ($res['status'] ?? 422));
         }
         return response()->json(['data' => ['ok' => true, 'binding_id' => $res['binding']->id]]);
+    }
+
+    /**
+     * POST /prosight/environments/{environmentId}/appservers/register-and-bind
+     * {name, appserver_ref, version?, build?, patch?} — cria o AppServer CADASTRAL a partir de um
+     * DETECTADO e já vincula (binding humano em 1 passo). Evita ter que cadastrar antes só p/ vincular.
+     */
+    public function registerAndBind(Request $r, int $environmentId): JsonResponse
+    {
+        $env = $this->env($r, $environmentId);
+        if (! $env) { return response()->json(['message' => 'Ambiente não encontrado.'], 404); }
+        $data = $r->validate([
+            'name'          => 'required|string|max:120',
+            'appserver_ref' => 'required|uuid',
+            'version'       => 'nullable|string|max:60',
+            'build'         => 'nullable|string|max:60',
+            'patch'         => 'nullable|string|max:60',
+        ]);
+
+        // Reusa um cadastral de mesmo nome se já existir; senão cria.
+        $app = EnvAppserver::firstOrNew(['environment_id' => $env->id, 'name' => $data['name']]);
+        $app->version = $data['version'] ?? $app->version;
+        $app->build   = $data['build'] ?? $app->build;
+        $app->patch   = $data['patch'] ?? $app->patch;
+        $app->created_by = $app->created_by ?? $r->user()?->id;
+        $app->save();
+
+        $res = $this->hub->confirmBinding($env, (int) $app->id, $data['appserver_ref'], (int) $r->user()->id);
+        if (! ($res['ok'] ?? false)) {
+            $body = ['error' => $res['error'], 'message' => $this->msg($res['error']), 'env_appserver_id' => (int) $app->id];
+            if (isset($res['conflict_env_appserver_id'])) { $body['conflict_env_appserver_id'] = $res['conflict_env_appserver_id']; }
+            return response()->json($body, (int) ($res['status'] ?? 422));
+        }
+        return response()->json(['data' => ['ok' => true, 'env_appserver_id' => (int) $app->id, 'binding_id' => $res['binding']->id]]);
     }
 
     // POST /prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede  (perm appserver.bind)

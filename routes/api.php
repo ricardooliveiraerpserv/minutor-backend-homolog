@@ -800,6 +800,7 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
             Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
+            Route::post('/prosight/environments/{environmentId}/appservers/register-and-bind', [\App\Http\Controllers\EnvironmentHubController::class, 'registerAndBind'])->whereNumber('environmentId');
             Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
         });
         // PATCH P1 — produção GOVERNADA de artefato (base RPO + .ptm = candidato). NÃO publica/promove/registra em P1.
@@ -2094,6 +2095,7 @@ Route::prefix('v1')->group(function () {
         });
         Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
             Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
+            Route::post('/prosight/environments/{environmentId}/appservers/register-and-bind', [\App\Http\Controllers\EnvironmentHubController::class, 'registerAndBind'])->whereNumber('environmentId');
             Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
         });
         // PATCH P1 — produção GOVERNADA de artefato (base RPO + .ptm = candidato). NÃO publica/promove/registra em P1.
