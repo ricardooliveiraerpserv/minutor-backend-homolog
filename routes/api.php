@@ -697,6 +697,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
             Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+            // Download do agente Connector (pacote-fonte servido pelo Minutor + binários do Release proxied).
+            Route::get('/prosight/connector/agent/package', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'package']);
+            Route::get('/prosight/connector/agent/releases', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'releases']);
+            Route::get('/prosight/connector/agent/download', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'download']);
             // Config REST AdvPL (RPO) por ambiente — paridade com o configurador do ProSight enviado.
             Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
             Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
@@ -1992,6 +1996,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
             Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+            // Download do agente Connector (pacote-fonte servido pelo Minutor + binários do Release proxied).
+            Route::get('/prosight/connector/agent/package', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'package']);
+            Route::get('/prosight/connector/agent/releases', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'releases']);
+            Route::get('/prosight/connector/agent/download', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'download']);
             // Config REST AdvPL (RPO) por ambiente — paridade com o configurador do ProSight enviado.
             Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
             Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
