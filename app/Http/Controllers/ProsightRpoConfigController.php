@@ -154,6 +154,65 @@ class ProsightRpoConfigController extends Controller
 
         $result = $service->scan($env, $repos->all());
 
+        // Cacheia o resumo (leve) para a Visão Geral não re-rodar o scan pesado.
+        if (($result['ok'] ?? false) && isset($result['summary'])) {
+            ProsightRpoConfig::where('environment_id', $env->id)->update([
+                'last_scan_summary' => $result['summary'],
+                'last_scan_at' => now(),
+            ]);
+        }
+
         return response()->json(['data' => $result], 200);
+    }
+
+    /**
+     * GET /prosight/companies/{customerId}/rpo-overview — status RPO da EMPRESA (leve, sem scan).
+     * Para a Visão Geral: quais ambientes têm RPO configurado + o resumo do último inventário.
+     */
+    public function companyOverview(Request $request, int $customerId): JsonResponse
+    {
+        if (! $this->scope->canAccessCustomerId($request->user(), $customerId)) {
+            return response()->json(['message' => 'Empresa fora do seu escopo.'], 403);
+        }
+        $envs = EnvEnvironment::where('customer_id', $customerId)->whereNull('deleted_at')->get(['id', 'name', 'type']);
+        $cfgs = ProsightRpoConfig::whereIn('environment_id', $envs->pluck('id'))->get()->keyBy('environment_id');
+
+        $items = $envs->map(function ($e) use ($cfgs) {
+            $c = $cfgs->get($e->id);
+            return [
+                'environment_id' => (int) $e->id,
+                'name' => $e->name,
+                'type' => $e->type,
+                'rpo_configured' => (bool) ($c && $c->rpo_api_url),
+                'last_scan_at' => $c?->last_scan_at?->toIso8601String(),
+                'summary' => $c?->last_scan_summary,
+            ];
+        })->values();
+
+        $configuredN = $items->where('rpo_configured', true)->count();
+
+        // Rollup de saúde: soma dos counts dos últimos scans (só ambientes já escaneados).
+        $agg = ['sincronizado' => 0, 'recompilar' => 0, 'verificar_rpo' => 0, 'nao_compilado' => 0, 'so_rpo' => 0];
+        $total = 0; $scanned = 0;
+        foreach ($items as $it) {
+            $sum = $it['summary'] ?? null;
+            if (! is_array($sum) || ! isset($sum['counts'])) {
+                continue;
+            }
+            $scanned++;
+            foreach ($agg as $k => $_) {
+                $agg[$k] += (int) ($sum['counts'][$k] ?? 0);
+            }
+            $total += (int) ($sum['total'] ?? 0);
+        }
+        $healthPct = $total > 0 ? round(($agg['sincronizado'] / $total) * 1000) / 10 : null;
+
+        return response()->json(['data' => [
+            'customer_id' => $customerId,
+            'environments' => $items,
+            'configured_count' => $configuredN,
+            'scanned_count' => $scanned,
+            'rollup' => $total > 0 ? ['counts' => $agg, 'total' => $total, 'health_pct' => $healthPct] : null,
+        ]], 200);
     }
 }

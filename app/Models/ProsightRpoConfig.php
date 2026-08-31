@@ -17,6 +17,7 @@ class ProsightRpoConfig extends Model
     protected $fillable = [
         'environment_id', 'rpo_api_url', 'rpo_api_user', 'rpo_api_password',
         'rpo_exclusion_patterns', 'allow_insecure_tls', 'updated_by',
+        'last_scan_summary', 'last_scan_at',
     ];
 
     protected $hidden = ['rpo_api_password'];
@@ -24,6 +25,8 @@ class ProsightRpoConfig extends Model
     protected $casts = [
         'rpo_api_password' => 'encrypted',
         'allow_insecure_tls' => 'boolean',
+        'last_scan_summary' => 'array',
+        'last_scan_at' => 'datetime',
     ];
 
     public function environment(): BelongsTo
