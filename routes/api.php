@@ -712,6 +712,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/observed', [\App\Http\Controllers\ConnectorAgentController::class, 'observed'])->whereNumber('environmentId');
             // Visão Geral — status RPO da empresa (leve, sem re-scan): ambientes configurados + último resumo.
             Route::get('/prosight/companies/{customerId}/rpo-overview', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyOverview'])->whereNumber('customerId');
+            Route::get('/prosight/companies/{customerId}/rpo-inventory/results', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyResults'])->whereNumber('customerId');
             // Connector-3 — LISTAR/VER comandos (read-only; perm operations.view). Anti-IDOR 404.
             Route::get('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'index'])->whereNumber('environmentId');
             Route::get('/prosight/commands/{commandId}', [\App\Http\Controllers\ConnectorCommandController::class, 'show'])->whereNumber('commandId');
@@ -2005,6 +2006,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/observed', [\App\Http\Controllers\ConnectorAgentController::class, 'observed'])->whereNumber('environmentId');
             // Visão Geral — status RPO da empresa (leve, sem re-scan): ambientes configurados + último resumo.
             Route::get('/prosight/companies/{customerId}/rpo-overview', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyOverview'])->whereNumber('customerId');
+            Route::get('/prosight/companies/{customerId}/rpo-inventory/results', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyResults'])->whereNumber('customerId');
             // Connector-3 — LISTAR/VER comandos (read-only; perm operations.view). Anti-IDOR 404.
             Route::get('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'index'])->whereNumber('environmentId');
             Route::get('/prosight/commands/{commandId}', [\App\Http\Controllers\ConnectorCommandController::class, 'show'])->whereNumber('commandId');

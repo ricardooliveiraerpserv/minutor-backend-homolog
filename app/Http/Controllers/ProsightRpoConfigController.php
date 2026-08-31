@@ -154,10 +154,16 @@ class ProsightRpoConfigController extends Controller
 
         $result = $service->scan($env, $repos->all());
 
-        // Cacheia o resumo (leve) para a Visão Geral não re-rodar o scan pesado.
+        // Cacheia resumo + lista (campos de exibição) para a Visão Geral não re-rodar o scan pesado.
         if (($result['ok'] ?? false) && isset($result['summary'])) {
+            $lite = array_map(fn ($r) => [
+                'program' => $r['program'], 'status' => $r['status'],
+                'disk_date' => $r['disk_date'], 'rpo_date' => $r['rpo_date'],
+                'rpo_status' => $r['rpo_status'], 'is_rest_api' => $r['is_rest_api'],
+            ], $result['results'] ?? []);
             ProsightRpoConfig::where('environment_id', $env->id)->update([
                 'last_scan_summary' => $result['summary'],
+                'last_scan_results' => $lite,
                 'last_scan_at' => now(),
             ]);
         }
@@ -175,7 +181,9 @@ class ProsightRpoConfigController extends Controller
             return response()->json(['message' => 'Empresa fora do seu escopo.'], 403);
         }
         $envs = EnvEnvironment::where('customer_id', $customerId)->whereNull('deleted_at')->get(['id', 'name', 'type']);
-        $cfgs = ProsightRpoConfig::whereIn('environment_id', $envs->pluck('id'))->get()->keyBy('environment_id');
+        // Exclui last_scan_results (pesado) do overview — só resumo/flag.
+        $cfgs = ProsightRpoConfig::whereIn('environment_id', $envs->pluck('id'))
+            ->get(['environment_id', 'rpo_api_url', 'last_scan_at', 'last_scan_summary'])->keyBy('environment_id');
 
         $items = $envs->map(function ($e) use ($cfgs) {
             $c = $cfgs->get($e->id);
@@ -216,5 +224,28 @@ class ProsightRpoConfigController extends Controller
             'scanned_count' => $scanned,
             'rollup' => $total > 0 ? ['counts' => $agg, 'total' => $total, 'health_pct' => $healthPct, 'health_label' => $healthLabel, 'rest_api_count' => $restApi] : null,
         ]], 200);
+    }
+
+    /**
+     * GET /prosight/companies/{customerId}/rpo-inventory/results — lista do último inventário da EMPRESA
+     * (cache), para o drill-down (clicar num card → lista filtrada). Agrega os ambientes configurados.
+     */
+    public function companyResults(Request $request, int $customerId): JsonResponse
+    {
+        if (! $this->scope->canAccessCustomerId($request->user(), $customerId)) {
+            return response()->json(['message' => 'Empresa fora do seu escopo.'], 403);
+        }
+        $envIds = EnvEnvironment::where('customer_id', $customerId)->whereNull('deleted_at')->pluck('id');
+        $cfgs = ProsightRpoConfig::whereIn('environment_id', $envIds)
+            ->whereNotNull('last_scan_results')->get(['environment_id', 'last_scan_results']);
+
+        $rows = [];
+        foreach ($cfgs as $c) {
+            foreach ((array) $c->last_scan_results as $r) {
+                $rows[] = $r;
+            }
+        }
+
+        return response()->json(['data' => ['customer_id' => $customerId, 'results' => $rows]], 200);
     }
 }
