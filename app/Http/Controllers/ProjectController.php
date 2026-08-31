@@ -152,12 +152,16 @@ class ProjectController extends Controller
      */
     public function myProjects(Request $request): JsonResponse
     {
-        // Inclui IC: projetos de Investimento Interno onde o consultor está
-        // alocado também aparecem em "Meus Projetos". A restrição "alocado"
-        // já é aplicada via consultant_only + filtro de IC do index().
+        // "Meus Projetos" (visão do consultor): SÓ projetos do tipo PROJETO (operacionais,
+        // cronograma) e SÓ onde ele está ALOCADO em atividade (responsável por atividade OU
+        // alocado numa etapa). NÃO entram Sustentação/Cloud/Bizify/Investimento nem projeto
+        // onde ele está só na equipe sem alocação no cronograma.
+        //  - activity_allocated=true → escopo por etapa/atividade (no index)
+        //  - projeto_only=true       → só categoria Projeto (no index)
         $request->merge([
-            'consultant_only'                => 'true',
-            'include_investimento_comercial' => 'true',
+            'consultant_only'    => 'true',
+            'activity_allocated' => 'true',
+            'projeto_only'       => 'true',
         ]);
         return $this->index($request);
     }
@@ -255,6 +259,11 @@ class ProjectController extends Controller
 
         $query = Project::with($withRelations);
 
+        // "Meus Projetos" (activity_allocated): id do consultor cujas horas próprias a lista deve
+        // mostrar (disponibilizadas/apontadas/saldo DELE, não os totais do projeto). Preenchido só
+        // quando o alvo é um consultor não-admin no modo activity_allocated.
+        $myProjectsUserId = null;
+
         // Filtrar apenas projetos onde o usuário é consultor (exceto para Administrators)
         if ($consultantOnly === 'true') {
             $currentUser = $request->user();
@@ -273,20 +282,50 @@ class ProjectController extends Controller
 
             // Apenas aplicar filtro se o usuário alvo NÃO for Administrator
             if ($targetUser && !$targetUser->isAdmin()) {
-                // $query->whereHas('consultants', function ($q) use ($targetUserId) {
-                //     $q->where('user_id', $targetUserId);
-                // });
-                $query->where(function ($q) use ($targetUserId) {
-                    $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId);
-                    })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId);
-                    })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
-                        $subQ->where('users.id', $targetUserId);
-                    })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
-                        $subQ->where('user_id', $targetUserId);
+                if ($request->boolean('activity_allocated')) {
+                    // Mostra as horas DESTE consultor por projeto (não os totais).
+                    $myProjectsUserId = $targetUserId;
+                    // "Meus Projetos": SÓ projetos onde o consultor está ALOCADO no cronograma —
+                    // responsável por alguma atividade OU alocado em alguma etapa. Estar só na
+                    // equipe do projeto (project_consultants) NÃO basta.
+                    $query->where(function ($q) use ($targetUserId) {
+                        $q->whereHas('stages.deliveries', function ($d) use ($targetUserId) {
+                            $d->where('responsible_user_id', $targetUserId);
+                        })->orWhereHas('stages.allocations', function ($a) use ($targetUserId) {
+                            $a->where('user_id', $targetUserId);
+                        });
                     });
-                });
+
+                    // Split Ativos/Encerrados pela CONCLUSÃO DAS ATIVIDADES DELE (não pelo status do
+                    // projeto): se todas as atividades do consultor estão concluídas, o projeto é
+                    // "encerrado" pra ele. Cancelados/finalizados vão sempre pra Encerrados.
+                    if ($status === 'closed') {
+                        $query->where(function ($q) use ($targetUserId) {
+                            $q->where(function ($qq) use ($targetUserId) {
+                                $qq->whereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId))
+                                   ->whereDoesntHave('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId)->where('status', '!=', 'done'));
+                            })->orWhereIn('status', ['cancelled', 'finished']);
+                        });
+                    } else { // 'open' (padrão de Meus Projetos): ainda NÃO concluído pra ele
+                        $query->whereNotIn('status', ['cancelled', 'finished'])
+                              ->where(function ($q) use ($targetUserId) {
+                                  $q->whereDoesntHave('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId))
+                                    ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId)->where('status', '!=', 'done'));
+                              });
+                    }
+                } else {
+                    $query->where(function ($q) use ($targetUserId) {
+                        $q->whereHas('consultants', function ($subQ) use ($targetUserId) {
+                            $subQ->where('user_id', $targetUserId);
+                        })->orWhereHas('approvers', function ($subQ) use ($targetUserId) {
+                            $subQ->where('user_id', $targetUserId);
+                        })->orWhereHas('consultantGroups.consultants', function ($subQ) use ($targetUserId) {
+                            $subQ->where('users.id', $targetUserId);
+                        })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
+                            $subQ->where('user_id', $targetUserId);
+                        });
+                    });
+                }
             }
             // Se o usuário alvo for Administrator, não aplica filtro (vê todos os projetos)
         }
@@ -354,10 +393,13 @@ class ProjectController extends Controller
             });
         }
 
-        // Filtro por status — hierárquico (WITH RECURSIVE) para status específicos
+        // Filtro por status — hierárquico (WITH RECURSIVE) para status específicos.
+        // No modo activity_allocated (Meus Projetos) o split Ativos/Encerrados já foi feito
+        // acima pela conclusão das atividades DO consultor — não aplicar o filtro por status
+        // do projeto aqui (senão status=closed viraria "status do projeto = closed" = vazio).
         $nodeStateMap = collect(); // id => node_state ('ACTIVE' | 'DISABLED')
 
-        if ($status) {
+        if ($status && !$request->boolean('activity_allocated')) {
             if ($status === 'open') {
                 $query->open(); // Scope: exclui apenas cancelled e finished (permite paused)
             } elseif ($status === 'active') {
@@ -523,6 +565,22 @@ class ProjectController extends Controller
             }
         }
 
+        // projeto_only: SÓ categoria "Projeto" (operacionais). Espelha Project::isOperational()
+        // — exclui Investimento e serviceType com nome contendo sustenta/cloud/bizify/investimento.
+        // Projeto sem serviceType = operacional (entra).
+        if ($request->boolean('projeto_only')) {
+            $query->where('is_investimento_comercial', false)
+                ->where(function ($q) {
+                    $q->whereDoesntHave('serviceType')
+                      ->orWhereHas('serviceType', function ($s) {
+                          $s->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%sustenta%'")
+                            ->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%cloud%'")
+                            ->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%bizify%'")
+                            ->whereRaw("LOWER(COALESCE(name,'')) NOT LIKE '%investimento%'");
+                      });
+                });
+        }
+
         // Mapeamento de campos virtuais/computados para colunas reais ou joins
         $virtualFieldMap = [
             'contract_type_display' => 'contract_types.name',
@@ -566,7 +624,7 @@ class ProjectController extends Controller
         $gestaoMonths = $gestaoMonthsRaw
             ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
             : [];
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
+        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths, $myProjectsUserId) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -686,10 +744,52 @@ class ProjectController extends Controller
             ->flip()
             ->toArray();
 
-        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap) {
+        // "Meus Projetos" (consultor): a lista mostra as horas DO CONSULTOR — não os totais do projeto.
+        // DISPONIBILIZADAS = SUM(hours_planned) das ATIVIDADES onde ele é responsável (= coluna HORAS
+        // do cronograma dele). CONSUMIDAS = SUM(effort_minutes) dos apontamentos dele (exclui
+        // rejeitado/ajuste). Saldo = disp − cons (no front). Anti-N+1 (2 queries agregadas).
+        $activityAllocatedMode = $myProjectsUserId && !empty($projectIds);
+        $myAllocMap = []; $myConsumedMap = []; $myDoneMap = [];
+        if ($activityAllocatedMode) {
+            $myAllocMap = \App\Models\StageDelivery::query()
+                ->join('project_stages', 'project_stages.id', '=', 'stage_deliveries.stage_id')
+                ->where('stage_deliveries.responsible_user_id', $myProjectsUserId)
+                ->whereIn('project_stages.project_id', $projectIds)
+                ->groupBy('project_stages.project_id')
+                ->selectRaw('project_stages.project_id as pid, COALESCE(SUM(stage_deliveries.hours_planned), 0) as h')
+                ->pluck('h', 'pid')->toArray();
+            $myConsumedMap = \App\Models\Timesheet::query()
+                ->whereIn('project_id', $projectIds)
+                ->where('user_id', $myProjectsUserId)
+                ->whereNull('deleted_at')
+                ->whereNotIn('status', [\App\Models\Timesheet::STATUS_ADJUSTMENT_REQUESTED, \App\Models\Timesheet::STATUS_REJECTED])
+                ->groupBy('project_id')
+                ->selectRaw('project_id as pid, COALESCE(SUM(effort_minutes), 0) as m')
+                ->pluck('m', 'pid')->toArray();
+            // Total e concluídas das atividades DELE por projeto → my_all_done (todas concluídas).
+            $myDoneMap = \App\Models\StageDelivery::query()
+                ->join('project_stages', 'project_stages.id', '=', 'stage_deliveries.stage_id')
+                ->where('stage_deliveries.responsible_user_id', $myProjectsUserId)
+                ->whereIn('project_stages.project_id', $projectIds)
+                ->groupBy('project_stages.project_id')
+                ->selectRaw("project_stages.project_id as pid, COUNT(*) as total, SUM(CASE WHEN stage_deliveries.status = 'done' THEN 1 ELSE 0 END) as done")
+                ->get()->keyBy('pid');
+        }
+
+        $projects->getCollection()->transform(function ($project) use ($nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $openPeriodIds, $coordinationMap, $monthlyMap, $activityAllocatedMode, $myAllocMap, $myConsumedMap, $myDoneMap) {
             $project->has_open_period = isset($openPeriodIds[$project->id]);
             $project->status_display = $project->status_display;
             $project->contract_type_display = $project->contract_type_display;
+
+            // Meus Projetos (consultor): horas do PRÓPRIO consultor, não do projeto todo.
+            if ($activityAllocatedMode) {
+                $project->my_allocated_hours = round((float) ($myAllocMap[$project->id] ?? 0), 2);
+                $project->my_consumed_hours  = round((float) ($myConsumedMap[$project->id] ?? 0) / 60, 2);
+                // Encerrado PRA ELE = tem atividade dele e todas concluídas → o front esconde
+                // Disponibilizadas/Saldo e mostra só Apontadas.
+                $row = $myDoneMap[$project->id] ?? null;
+                $project->my_all_done = $row && (int) $row->total > 0 && (int) $row->total === (int) $row->done;
+            }
 
             if ($gestaoMode) {
                 // Modo leve: usar apenas campos já presentes na query, sem relações extras
@@ -3136,6 +3236,25 @@ class ProjectController extends Controller
         ]);
     }
 
+    /** Nota editável PELO coordenador (visão Visualizar). Admin ou coordenador; cliente não. */
+    public function updateNotaCoordenador(Request $request, Project $project): JsonResponse
+    {
+        $user = $request->user();
+        if ($user?->isCliente()) {
+            return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        $validated = $request->validate([
+            'nota_coordenador' => ['nullable', 'string'],
+        ]);
+        $project->nota_coordenador = $validated['nota_coordenador'] ?? null;
+        $project->save();
+
+        return response()->json([
+            'success' => true,
+            'nota_coordenador' => $project->nota_coordenador,
+        ]);
+    }
+
     /** Edição inline (tabela Demandas e Projetos): datas de prazo + percentual de entrega. Cliente não edita. */
     public function updateDelivery(Request $request, Project $project): JsonResponse
     {
@@ -4193,4 +4312,1067 @@ class ProjectController extends Controller
             'consumption_hours' => round($minutes / 60, 2),
         ]);
     }
+
+    public function schedule(Project $project, Request $request): JsonResponse
+    {
+        $project->loadMissing(['serviceType', 'coordinators:id,name,email']);
+
+        if (!$project->isOperational()) {
+            return response()->json([
+                'is_operational' => false,
+                'stages'         => [],
+                'project_window' => null,
+            ]);
+        }
+
+        // Prazo de Entrega deriva do cronograma (fim da última atividade) — mantém
+        // sincronizado automaticamente ao visualizar. Usa queries próprias do projeto
+        // inteiro (não afetado pelo filtro de consultor abaixo).
+        $project->recalcExpectedEndFromSchedule();
+
+        $stages = $project->stages()
+            ->with([
+                'responsible:id,name,email',
+                'deliveries:id,stage_id,title,responsible_user_id,hours_planned,priority,status,due_date,order_index,planned_start_at,actual_start_at,completed_at,depends_on_delivery_id,dependency_type,client_involved,client_user_id,client_email,extra_clients,approval_status,approval_requested_at,approval_decided_at,approval_decided_by,approval_note',
+                'deliveries.responsible:id,name,email',
+                'deliveries.client:id,name,email',
+                'deliveries.approvalDecider:id,name',
+            ])
+            ->orderBy('order_index')
+            ->get();
+
+        // Consultor: vê SOMENTE as atividades onde está ALOCADO (por atividade =
+        // stage_allocations.delivery_id, mesmo critério do "+ Apontar") OU é o RESPONSÁVEL
+        // por ela (responsible_user_id) — não o board completo. Descarta etapas sem atividade
+        // dele; contadores/resumo refletem só o escopo dele. Admin/coordenador (ou com
+        // hours.view_all) seguem vendo tudo.
+        // $request->user() (não auth()->user()) — reflete corretamente o usuário do token,
+        // inclusive sob "Ver como" (impersonation emite token real do alvo).
+        $viewer = $request->user();
+        // Escopo ESTRITO por perfil: consultor só vê o cronograma dele, independentemente
+        // de hours.view_all — a visão de gestão (totais/horas do projeto) é exclusiva de
+        // admin/coordenador. Admin/coordenador seguem vendo tudo (isConsultor() = false).
+        $isConsultorScoped = $viewer && method_exists($viewer, 'isConsultor') && $viewer->isConsultor();
+        if ($isConsultorScoped) {
+            $vid = $viewer->id;
+            $deliveryIds = $stages->flatMap(fn ($st) => $st->deliveries->pluck('id'))->all();
+            $allocatedSet = \App\Models\StageAllocation::where('user_id', $vid)
+                ->whereNotNull('delivery_id')
+                ->whereIn('delivery_id', $deliveryIds)
+                ->pluck('delivery_id')
+                ->flip();
+            $stages->each(fn ($st) => $st->setRelation(
+                'deliveries',
+                $st->deliveries->filter(fn ($d) => isset($allocatedSet[$d->id]) || (int) $d->responsible_user_id === $vid)->values()
+            ));
+            $stages = $stages->filter(fn ($st) => $st->deliveries->isNotEmpty())->values();
+        }
+
+        // effort_minutes_sum por atividade (apontamentos vinculados via stage_delivery_id) —
+        // usado no card do cronograma p/ mostrar "Apont" (o /schedule não trazia este campo,
+        // só o StageDeliveryController separado; por isso o card mostrava sempre 0).
+        $effortDeliveryIds = $stages->flatMap(fn ($st) => $st->deliveries->pluck('id'))->all();
+        if (!empty($effortDeliveryIds)) {
+            $effortByDelivery = DB::table('timesheets')
+                ->whereIn('stage_delivery_id', $effortDeliveryIds)
+                ->whereNull('deleted_at')
+                ->selectRaw('stage_delivery_id, COALESCE(SUM(effort_minutes), 0) as s')
+                ->groupBy('stage_delivery_id')
+                ->pluck('s', 'stage_delivery_id');
+            foreach ($stages as $st) {
+                foreach ($st->deliveries as $d) {
+                    $d->effort_minutes_sum = (int) ($effortByDelivery[$d->id] ?? 0);
+                }
+            }
+        }
+
+        // Follow Ups vinculados (denormalizados em project_id/stage_id/delivery_id):
+        // contadores por atividade + agregados por etapa pra exibir no cronograma.
+        $fuByDelivery = [];
+        $fuByStage = [];
+        $todayFu = \Carbon\Carbon::now()->startOfDay();
+        foreach (\App\Models\FollowUp::where('project_id', $project->id)->where('status', '!=', \App\Models\FollowUp::STATUS_CANCELLED)
+                     ->get(['id', 'delivery_id', 'stage_id', 'status', 'waiting_subtype', 'due_date']) as $r) {
+            if ($r->delivery_id) $fuByDelivery[$r->delivery_id] = ($fuByDelivery[$r->delivery_id] ?? 0) + 1;
+            if ($r->stage_id) {
+                $fuByStage[$r->stage_id] ??= ['count' => 0, 'overdue' => 0, 'waiting_client' => 0, 'done' => 0];
+                $fuByStage[$r->stage_id]['count']++;
+                if ($r->status === 'completed') $fuByStage[$r->stage_id]['done']++;
+                if (in_array($r->status, ['pending', 'in_progress'], true) && $r->due_date && \Carbon\Carbon::parse($r->due_date)->lt($todayFu)) {
+                    $fuByStage[$r->stage_id]['overdue']++;
+                }
+                if ($r->status === 'waiting_third' && $r->waiting_subtype === 'client') $fuByStage[$r->stage_id]['waiting_client']++;
+            }
+        }
+
+        // Estado do predecessor (FS) por atividade — usado pelo cronograma e board.
+        // O frontend renderiza 🔒 Bloqueada por quando state === 'pending'.
+        $statusById = [];
+        $titleById  = [];
+        $orderById  = [];
+        $hoursById  = [];
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                $statusById[$d->id] = $d->status;
+                $titleById[$d->id]  = $d->title;
+                $orderById[$d->id]  = $d->order_index;
+                $hoursById[$d->id]  = (float) ($d->hours_planned ?? 0);
+            }
+        }
+        // Adjacência FS: predecessor → [dependentes diretos]
+        $adj = [];
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                    $adj[$d->depends_on_delivery_id][] = $d->id;
+                }
+            }
+        }
+
+        // Calcula títulos impactados (downstream transitivo FS, BFS depth ≤ 10)
+        $impactedFor = function (int $rootId) use ($adj, $titleById): array {
+            $out  = [];
+            $seen = [];
+            $queue = [$rootId];
+            $depth = 0;
+            while (!empty($queue) && $depth < 10) {
+                $depth++;
+                $next = [];
+                foreach ($queue as $id) {
+                    foreach ($adj[$id] ?? [] as $childId) {
+                        if (isset($seen[$childId])) continue;
+                        $seen[$childId] = true;
+                        if (isset($titleById[$childId])) {
+                            $out[] = $titleById[$childId];
+                        }
+                        $next[] = $childId;
+                    }
+                }
+                $queue = $next;
+            }
+            return $out;
+        };
+
+        // Critical path leve = longest path no DAG FS por horas planejadas.
+        // Topo-sort + DP, depois reconstrói o(s) caminho(s).
+        $criticalSet = [];
+        if (!empty($titleById)) {
+            $inDeg = [];
+            foreach ($titleById as $id => $_) {
+                $inDeg[$id] = 0;
+            }
+            foreach ($adj as $_parent => $children) {
+                foreach ($children as $c) {
+                    if (isset($inDeg[$c])) $inDeg[$c]++;
+                }
+            }
+            $queue = [];
+            foreach ($inDeg as $id => $deg) {
+                if ($deg === 0) $queue[] = $id;
+            }
+            // Tie-break por order_index
+            usort($queue, fn ($a, $b) => ($orderById[$a] ?? 0) <=> ($orderById[$b] ?? 0));
+            $topo = [];
+            $deg = $inDeg;
+            while (!empty($queue)) {
+                $n = array_shift($queue);
+                $topo[] = $n;
+                $newReady = [];
+                foreach ($adj[$n] ?? [] as $c) {
+                    $deg[$c]--;
+                    if ($deg[$c] === 0) $newReady[] = $c;
+                }
+                usort($newReady, fn ($a, $b) => ($orderById[$a] ?? 0) <=> ($orderById[$b] ?? 0));
+                foreach ($newReady as $c) $queue[] = $c;
+            }
+            $dist = [];
+            $pred = [];
+            foreach ($topo as $n) {
+                $dist[$n] = $hoursById[$n] ?? 0;
+                $pred[$n] = null;
+            }
+            foreach ($topo as $n) {
+                foreach ($adj[$n] ?? [] as $c) {
+                    $candidate = $dist[$n] + ($hoursById[$c] ?? 0);
+                    if ($candidate > $dist[$c]) {
+                        $dist[$c] = $candidate;
+                        $pred[$c] = $n;
+                    }
+                }
+            }
+            if (!empty($dist)) {
+                arsort($dist);
+                $end = array_key_first($dist);
+                while ($end !== null) {
+                    $criticalSet[$end] = true;
+                    $end = $pred[$end] ?? null;
+                }
+            }
+        }
+
+        // Calendário de negócio pra duration_business_days (singleton via container)
+        // Opts contextuais do projeto (Fase 7): permite sábado/feriado por projeto.
+        $calendar = app(\App\Services\BusinessCalendarService::class);
+        $calOpts = [
+            'allow_weekend' => (bool) $project->allow_weekend_work,
+            'allow_holiday' => (bool) $project->allow_holiday_work,
+        ];
+
+        // Fix Fase 9: actual_hours por etapa no payload /schedule (evita 2 fetches no front).
+        // Soma effort_minutes/60 de timesheets approved+released agrupados por stage_id.
+        $stageIds = $stages->pluck('id')->all();
+        $actualByStage = [];
+        if (!empty($stageIds)) {
+            $actualByStage = \DB::table('timesheets')
+                ->whereNull('deleted_at')
+                ->whereIn('stage_id', $stageIds)
+                ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_RELEASED])
+                ->groupBy('stage_id')
+                ->selectRaw('stage_id, COALESCE(SUM(effort_minutes),0)/60.0 as actual_hours')
+                ->pluck('actual_hours', 'stage_id')
+                ->map(fn ($v) => (float) $v)
+                ->all();
+        }
+        foreach ($stages as $st) {
+            $st->setAttribute('actual_hours', (float) ($actualByStage[$st->id] ?? 0));
+        }
+
+        // Enriquecer cada delivery com os 4 campos derivados
+        foreach ($stages as $st) {
+            foreach ($st->deliveries as $d) {
+                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                    $predStatus = $statusById[$d->depends_on_delivery_id] ?? null;
+                    $state = $predStatus === \App\Models\StageDelivery::STATUS_DONE ? 'done' : 'pending';
+                    $d->setAttribute('predecessor', [
+                        'id'    => (int) $d->depends_on_delivery_id,
+                        'title' => $titleById[$d->depends_on_delivery_id] ?? '',
+                    ]);
+                } else {
+                    $state = 'none';
+                    $d->setAttribute('predecessor', null);
+                }
+                $d->setAttribute('predecessor_state', $state);
+                $d->setAttribute('impacted_titles', $impactedFor($d->id));
+                $d->setAttribute('is_critical', isset($criticalSet[$d->id]));
+
+                if ($d->planned_start_at && $d->due_date) {
+                    $d->setAttribute(
+                        'duration_business_days',
+                        $calendar->businessDaysBetween($d->planned_start_at, $d->due_date, $calOpts)
+                    );
+                } else {
+                    $d->setAttribute('duration_business_days', null);
+                }
+
+                // Fase 10: is_late = atrasada (due passou e não concluída)
+                $isLate = false;
+                if ($d->due_date && $d->status !== \App\Models\StageDelivery::STATUS_DONE) {
+                    $isLate = $d->due_date->lt(\Carbon\Carbon::now()->startOfDay());
+                }
+                $d->setAttribute('is_late', $isLate);
+            }
+        }
+
+        // Fase 10: derived_status + risk_level + risk_reasons por etapa
+        foreach ($stages as $st) {
+            // derived_status derivado das deliveries (mesma regra de ProjectStageController)
+            $total = $st->deliveries->count();
+            $done  = $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_DONE)->count();
+            $review = $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_REVIEW)->count();
+            $waiting = $st->deliveries->where('status', \App\Models\StageDelivery::STATUS_WAITING_CLIENT)->count();
+
+            if ($total === 0) {
+                $derivedStatus = 'planejamento';
+            } elseif ($waiting > 0) {
+                $derivedStatus = 'bloqueada';
+            } elseif ($done === $total) {
+                $derivedStatus = 'concluida';
+            } elseif (($review + $done) === $total) {
+                $derivedStatus = 'homologacao';
+            } elseif ($done > 0 || $st->deliveries->where('status', '!=', 'backlog')->count() > 0) {
+                $derivedStatus = 'execucao';
+            } else {
+                $derivedStatus = 'planejamento';
+            }
+            $st->setAttribute('derived_status', $derivedStatus);
+            // Fase 10: alinhamento com /stages — earned value se houver horas, senão contagem.
+            // Atividades de responsabilidade do CLIENTE são medidas em dias, não horas:
+            // não entram na soma de horas planejadas da etapa nem do progresso.
+            $billableDeliveries = $st->deliveries->reject(fn ($d) => $d->client_involved);
+            $totalHours = (float) $billableDeliveries->sum('hours_planned');
+            $doneHours  = (float) $billableDeliveries->where('status', \App\Models\StageDelivery::STATUS_DONE)->sum('hours_planned');
+            $progressPct = $totalHours > 0
+                ? round(($doneHours / $totalHours) * 100, 2)
+                : ($total > 0 ? round(($done / $total) * 100, 2) : 0.0);
+            $st->setAttribute('progress_pct', $progressPct);
+
+            // Horas da etapa: soma das atividades + valor "efetivo" (hours_planned da
+            // etapa se preenchido, senão a soma das atividades). A UI mostra o efetivo
+            // pra que as Horas Previstas informadas na criação da etapa apareçam.
+            $stagePlanned = (float) ($st->hours_planned ?? 0);
+            $st->setAttribute('deliveries_hours_planned_sum', $totalHours);
+            $st->setAttribute('effective_hours_planned', $stagePlanned > 0 ? $stagePlanned : $totalHours);
+
+            // Follow Ups: agregado da etapa + contador por atividade.
+            $st->setAttribute('followups', $fuByStage[$st->id] ?? ['count' => 0, 'overdue' => 0, 'waiting_client' => 0, 'done' => 0]);
+            foreach ($st->deliveries as $d) {
+                $d->setAttribute('followups_count', $fuByDelivery[$d->id] ?? 0);
+            }
+
+            $lastActAt = $st->deliveries->pluck('updated_at')->filter()->max();
+            $daysSince = $lastActAt
+                ? (int) \Carbon\Carbon::now()->startOfDay()->diffInDays(\Carbon\Carbon::parse($lastActAt)->startOfDay())
+                : null;
+
+            $risk = \App\Services\ProjectStageRiskService::compute([
+                'derived_status'      => $derivedStatus,
+                'expected_end_date'   => $st->expected_end_date?->toDateString(),
+                'days_since_activity' => $daysSince,
+                'planned_hours'       => (float) ($st->hours_planned ?? 0),
+                'actual_hours'        => (float) ($st->actual_hours ?? 0),
+                'team_overrun_count'  => 0,
+            ]);
+            $st->setAttribute('risk_level', $risk['level']);
+            $st->setAttribute('risk_reasons', $risk['reasons']);
+        }
+
+        // Fase 10: executive summary + alerts + team_load
+        $todayCarbon = \Carbon\Carbon::now()->startOfDay();
+        $totalDeliveries = 0; $doneDeliveries = 0; $lateCount = 0;
+        $blockedCount = 0; $reviewCount = 0; $waitingClientCount = 0; $inProgressCount = 0;
+        $hoursPlannedTotal = 0; $hoursActualTotal = 0; $hoursPlannedDone = 0;
+        $alerts = [];
+        $userIdsInvolved = [];
+        foreach ($stages as $st) {
+            $hoursActualTotal += (float) ($st->actual_hours ?? 0);
+            foreach ($st->deliveries as $d) {
+                $totalDeliveries++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_DONE)         $doneDeliveries++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_IN_PROGRESS)  $inProgressCount++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_REVIEW)       $reviewCount++;
+                if ($d->status === \App\Models\StageDelivery::STATUS_WAITING_CLIENT) $waitingClientCount++;
+                if ($d->predecessor_state === 'pending')                            $blockedCount++;
+                if ($d->is_late)                                                    $lateCount++;
+                // Atividade do cliente é medida em dias — não soma horas planejadas.
+                if (!$d->client_involved) {
+                    $hoursPlannedTotal += (float) ($d->hours_planned ?? 0);
+                    // Progresso por HORAS: horas planejadas das atividades já concluídas.
+                    if ($d->status === \App\Models\StageDelivery::STATUS_DONE) {
+                        $hoursPlannedDone += (float) ($d->hours_planned ?? 0);
+                    }
+                }
+                if ($d->responsible_user_id) $userIdsInvolved[$d->responsible_user_id] = true;
+
+                // Alertas leves por delivery
+                if ($d->status === \App\Models\StageDelivery::STATUS_IN_PROGRESS
+                    && $d->updated_at
+                    && $todayCarbon->diffInDays(\Carbon\Carbon::parse($d->updated_at)->startOfDay()) > 5
+                    && !$d->is_late) {
+                    $alerts[] = [
+                        'severity' => 'warning',
+                        'type'     => 'stale_activity',
+                        'message'  => 'Atividade parada há mais de 5 dias',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+                if ($d->is_late) {
+                    $alerts[] = [
+                        'severity' => 'danger',
+                        'type'     => 'overdue',
+                        'message'  => 'Prazo vencido — atividade ainda não concluída',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+                if ($d->status === \App\Models\StageDelivery::STATUS_WAITING_CLIENT
+                    && $d->updated_at
+                    && $todayCarbon->diffInDays(\Carbon\Carbon::parse($d->updated_at)->startOfDay()) > 7) {
+                    $alerts[] = [
+                        'severity' => 'warning',
+                        'type'     => 'waiting_client_stale',
+                        'message'  => 'Aguardando cliente há mais de 7 dias — sem retorno',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+                if (!$d->responsible_user_id) {
+                    $alerts[] = [
+                        'severity' => 'warning',
+                        'type'     => 'no_responsible',
+                        'message'  => 'Atividade sem responsável',
+                        'delivery_id' => $d->id,
+                        'title'    => $d->title,
+                    ];
+                }
+            }
+        }
+        // Alertas no nível etapa
+        foreach ($stages as $st) {
+            if ($st->risk_level === \App\Services\ProjectStageRiskService::LEVEL_HIGH) {
+                $alerts[] = [
+                    'severity' => 'danger',
+                    'type'     => 'stage_high_risk',
+                    'message'  => 'Etapa em risco alto: ' . implode(' · ', $st->risk_reasons ?? []),
+                    'stage_id' => $st->id,
+                    'title'    => $st->name,
+                ];
+            }
+        }
+
+        // Risco geral (precedência alto > médio > baixo)
+        $highStages = $stages->filter(fn ($s) => $s->risk_level === 'high')->count();
+        $medStages  = $stages->filter(fn ($s) => $s->risk_level === 'medium')->count();
+        $overallRisk = $highStages > 0 ? 'high' : ($medStages > 0 ? 'medium' : 'low');
+
+        // Atraso estimado: max(days_late) entre etapas vencidas
+        $maxDaysLate = 0;
+        foreach ($stages as $st) {
+            if ($st->expected_end_date && $st->derived_status !== 'concluida') {
+                $diff = (int) $todayCarbon->diffInDays($st->expected_end_date->startOfDay(), false);
+                if ($diff < 0 && abs($diff) > $maxDaysLate) $maxDaysLate = abs($diff);
+            }
+        }
+
+        // Team load: envolvimento de cada pessoa NESTE projeto — reflete os apontamentos.
+        // usage_pct = horas consumidas pela pessoa neste projeto (approved/released) sobre
+        // o pool do cronograma. Assim quem apontou aparece (mesmo sem stage_allocation), e
+        // não confunde com a carga GLOBAL da pessoa (bug anterior: usava planned/capacity).
+        $teamLoad = [];
+        if (!empty($userIdsInvolved)) {
+            $uids  = array_keys($userIdsInvolved);
+            $pool  = (float) $project->cronogramaPoolHours();
+
+            // Consumido real por usuário neste projeto. Inclui 'pending' (apontou mas
+            // ainda não aprovado) — mesma whitelist de consumo do card CONSUMIDAS, senão
+            // o apontamento recém-feito não apareceria na equipe.
+            $actualByUser = \DB::table('timesheets')
+                ->where('project_id', $project->id)
+                ->whereNull('deleted_at')
+                ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_PENDING, \App\Models\Timesheet::STATUS_RELEASED])
+                ->whereIn('user_id', $uids)
+                ->groupBy('user_id')
+                ->selectRaw('user_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS h')
+                ->pluck('h', 'user_id');
+
+            // DISPONIBILIZADAS por usuário = SUM(hours_planned) das ATIVIDADES onde ele é responsável
+            // (stage_deliveries) — igual ao "Meus Projetos". NÃO usar stage_allocations (fica 0 no
+            // cronograma delivery-based). Saldo = disponibilizadas − apontadas.
+            $plannedByUser = \DB::table('stage_deliveries as sd')
+                ->join('project_stages as ps', 'ps.id', '=', 'sd.stage_id')
+                ->where('ps.project_id', $project->id)
+                ->whereNull('ps.deleted_at')
+                ->whereNull('sd.deleted_at')
+                ->whereIn('sd.responsible_user_id', $uids)
+                ->groupBy('sd.responsible_user_id')
+                ->selectRaw('sd.responsible_user_id AS user_id, COALESCE(SUM(sd.hours_planned), 0) AS h')
+                ->pluck('h', 'user_id');
+
+            $usersData = \App\Models\User::whereIn('id', $uids)->get(['id', 'name', 'email']);
+            foreach ($usersData as $u) {
+                $planned = (float) ($plannedByUser[$u->id] ?? 0);
+                $actual  = (float) ($actualByUser[$u->id] ?? 0);
+                $teamLoad[] = [
+                    'user' => [
+                        'id'    => $u->id,
+                        'name'  => $u->name,
+                        'profile_photo_url' => $u->profile_photo_url ?? null,
+                    ],
+                    'planned_hours'   => round($planned, 2),
+                    'actual_hours'    => round($actual, 2),
+                    'remaining_hours' => round($planned - $actual, 2),
+                    'usage_pct'       => $pool > 0 ? round(($actual / $pool) * 100, 1) : 0.0,
+                    'overloaded'      => $planned > 0 && $actual > $planned,
+                ];
+            }
+            // Quem mais consumiu no projeto primeiro.
+            usort($teamLoad, fn ($a, $b) => $b['actual_hours'] <=> $a['actual_hours']);
+        }
+
+        // Calcula a janela do cronograma (min start, max end) — usado pelo Gantt
+        // e pelo card "Prazo Final" no executive header.
+        $minDate = null;
+        $maxDate = null;
+        foreach ($stages as $st) {
+            // Início da etapa → minDate; fim da etapa → maxDate.
+            if ($st->stage_start_at) {
+                $minDate = $minDate === null || $st->stage_start_at->lt($minDate) ? $st->stage_start_at : $minDate;
+            }
+            if ($st->expected_end_date) {
+                $maxDate = $maxDate === null || $st->expected_end_date->gt($maxDate) ? $st->expected_end_date : $maxDate;
+            }
+            foreach ($st->deliveries as $del) {
+                // Início da atividade → minDate.
+                if ($del->planned_start_at) {
+                    $minDate = $minDate === null || $del->planned_start_at->lt($minDate) ? $del->planned_start_at : $minDate;
+                }
+                // Prazo Final usa o FIM da atividade (due_date, ou início + horas no
+                // calendário útil) — NUNCA o início cru como se fosse fim.
+                $end = $del->plannedEndDate($calendar, $calOpts);
+                if ($end) {
+                    $maxDate = $maxDate === null || $end->gt($maxDate) ? $end : $maxDate;
+                }
+            }
+        }
+
+        // Diferença em dias entre prazo planejado (project.expected_end_date)
+        // e prazo estimado real (maxDate das deliveries) — positivo = atraso projetado.
+        $plannedEnd = $project->expected_end_date;
+        $endDelta = ($plannedEnd && $maxDate)
+            ? (int) $plannedEnd->startOfDay()->diffInDays($maxDate->startOfDay(), false)
+            : null;
+
+        $executiveSummary = [
+            'progress_pct'         => $totalDeliveries > 0 ? round(($doneDeliveries / $totalDeliveries) * 100, 1) : 0.0,
+            'total_deliveries'     => $totalDeliveries,
+            'done_deliveries'      => $doneDeliveries,
+            // Progresso por HORAS: horas planejadas concluídas / total planejado (só atividades faturáveis).
+            'progress_hours_pct'   => $hoursPlannedTotal > 0 ? round(($hoursPlannedDone / $hoursPlannedTotal) * 100, 1) : 0.0,
+            'hours_done'           => round($hoursPlannedDone, 2),
+            'in_progress_count'    => $inProgressCount,
+            'review_count'         => $reviewCount,
+            'blocked_count'        => $blockedCount,
+            'waiting_client_count' => $waitingClientCount,
+            'overdue_count'        => $lateCount,
+            'hours_planned'        => round($hoursPlannedTotal, 2),
+            'hours_actual'         => round($hoursActualTotal, 2),
+            // Horas CONSUMIDAS do projeto (apontadas + inicial) — MESMA fonte do card "Consumidas".
+            // Usado no card "Progresso (horas)", que reflete consumo (não exige conclusão de atividade
+            // nem vínculo do apontamento a uma etapa do cronograma).
+            'hours_consumed'       => round($project->getTotalLoggedHours() + (float) ($project->initial_hours_consumed ?? 0), 2),
+            'hours_balance'        => round($hoursPlannedTotal - $hoursActualTotal, 2),
+            // Horas disponibilizadas à gestão (pool do cronograma): coordination_hours
+            // se preenchido, senão 100% das vendidas. Saldo a alocar = disponibilizadas − planejadas.
+            'hours_available'      => round($project->cronogramaPoolHours(), 2),
+            'overall_risk'         => $overallRisk,
+            'high_risk_stages'     => $highStages,
+            'medium_risk_stages'   => $medStages,
+            'estimated_delay_days' => $maxDaysLate,
+            // Card "Prazo Final": data prevista do projeto baseada nas deliveries
+            'estimated_end_date'   => $maxDate?->toDateString(),
+            'planned_end_date'     => $plannedEnd?->toDateString(),
+            'end_date_delta_days'  => $endDelta,
+        ];
+
+        // Feriados ativos dentro da janela do cronograma — frontend usa pra replicar
+        // BusinessCalendarService::addBusinessHours client-side (sugestão de fim).
+        // Todos os feriados ativos do cadastro (com nome) — o date picker do cronograma
+        // marca/exibe e o BusinessCalendar usa as datas pro cálculo de dias úteis.
+        // Dataset pequeno (~13/ano), então não filtra por janela (picker navega livre).
+        $holidays = \App\Models\Holiday::active()
+            ->orderBy('date')
+            ->get(['date', 'name'])
+            ->map(fn ($h) => ['date' => $h->date->toDateString(), 'name' => $h->name])
+            ->values();
+
+        // Última movimentação = o mais recente entre um APONTAMENTO e um EVENTO de atividade
+        // (mover/concluir/criar entrega). Antes o card só olhava timesheets → uma conclusão ou
+        // mudança de status recente ficava invisível e mostrava um apontamento antigo como "última".
+        $lastMovement = null;
+        $recentActivity = [];
+        if (!$isConsultorScoped) {
+            $allStageIds = $project->stages()->pluck('id')->all();
+            // Feed "Atividade recente" (aba Indicadores): últimos eventos do cronograma
+            // (criar/mover/concluir atividade, envolver cliente, aprovação…). Mesmo shape do
+            // last_movement (sem timesheet) → o front mapeia kind → texto/ícone.
+            if (!empty($allStageIds)) {
+                $recentActivity = \App\Models\StageActivityEvent::query()
+                    ->whereIn('stage_id', $allStageIds)->with('actor:id,name')
+                    ->orderByDesc('created_at')->orderByDesc('id')->limit(8)->get()
+                    ->map(function ($e) {
+                        $p = $e->payload ?? [];
+                        return [
+                            'kind'  => $e->type,
+                            'user'  => optional($e->actor)->name,
+                            'at'    => optional($e->created_at)->toIso8601String(),
+                            'title' => $p['title'] ?? null,
+                            'to'    => $p['to'] ?? null,
+                        ];
+                    })->values()->all();
+            }
+            $ev = !empty($allStageIds) ? \App\Models\StageActivityEvent::query()
+                ->whereIn('stage_id', $allStageIds)->with('actor:id,name')
+                ->orderByDesc('created_at')->orderByDesc('id')->first() : null;
+            $ts = \App\Models\Timesheet::where('project_id', $project->id)->whereNull('deleted_at')
+                ->with('user:id,name')->orderByDesc('created_at')->orderByDesc('id')->first();
+            $useEv = $ev && (!$ts || $ev->created_at->greaterThanOrEqualTo($ts->created_at));
+            if ($useEv) {
+                $p = $ev->payload ?? [];
+                $lastMovement = [
+                    'kind'  => $ev->type, // delivery_completed | delivery_moved | delivery_created
+                    'user'  => optional($ev->actor)->name,
+                    'at'    => optional($ev->created_at)->toIso8601String(),
+                    'title' => $p['title'] ?? null,
+                    'to'    => $p['to'] ?? null,
+                ];
+            } elseif ($ts) {
+                $lastMovement = [
+                    'kind'  => 'timesheet',
+                    'user'  => optional($ts->user)->name,
+                    'at'    => optional($ts->created_at)->toIso8601String(),
+                    'hours' => round(((int) $ts->effort_minutes) / 60, 1),
+                ];
+            }
+        }
+
+        return response()->json([
+            'is_operational' => true,
+            'last_movement'  => $lastMovement,
+            'recent_activity' => $recentActivity,
+            'project_window' => [
+                'start' => $minDate?->toDateString(),
+                'end'   => $maxDate?->toDateString(),
+            ],
+            'holidays' => $holidays,
+            'project' => [
+                'id'                  => $project->id,
+                'name'                => $project->name,
+                // Consultor não recebe as horas do projeto (vendidas/liberadas à gestão).
+                'sold_hours'          => $isConsultorScoped ? 0.0 : (float) ($project->sold_hours ?? 0),
+                'coordination_hours'  => $isConsultorScoped ? 0.0 : (float) ($project->coordination_hours ?? 0),
+                'start_date'          => $project->start_date?->toDateString(),
+                'expected_end_date'   => $project->expected_end_date?->toDateString(),
+                'allow_weekend_work'  => (bool) $project->allow_weekend_work,
+                'allow_holiday_work'  => (bool) $project->allow_holiday_work,
+                'coordinators'        => $project->coordinators->map(fn ($u) => [
+                    'id'    => $u->id,
+                    'name'  => $u->name,
+                    'email' => $u->email,
+                ])->values(),
+            ],
+            // Executive/alertas/team_load são visão de gestão — omitidos pro consultor.
+            'executive'  => $isConsultorScoped ? null : $executiveSummary,
+            'alerts'     => $isConsultorScoped ? [] : $alerts,
+            'team_load'  => $isConsultorScoped ? [] : $teamLoad,
+            'stages' => $stages,
+        ]);
+    }
+
+    public function recalcPreview(\Illuminate\Http\Request $request, Project $project): \Illuminate\Http\JsonResponse
+    {
+        $trigger = $request->input('trigger');
+        $simulate = $request->input('simulate', []);
+
+        if (!in_array($trigger, ['delivery_field', 'stage_field', 'project_calendar'], true)) {
+            return response()->json(['message' => 'trigger inválido'], 422);
+        }
+
+        $calendar = app(\App\Services\BusinessCalendarService::class);
+        $currentEnd = $this->projectScheduleMaxEnd($project);
+
+        if ($trigger === 'delivery_field') {
+            $deliveryId = (int) $request->input('delivery_id');
+            $delivery = \App\Models\StageDelivery::find($deliveryId);
+            if (!$delivery) {
+                return response()->json(['message' => 'delivery não encontrado'], 404);
+            }
+            if ($delivery->stage->project_id !== $project->id) {
+                return response()->json(['message' => 'delivery não pertence ao projeto'], 422);
+            }
+
+            // Snapshot ANTES do cascade — recalcDependents muta $delivery em memória
+            // quando simulate é passado. Sem snapshot, change_description fica "X → X".
+            $origHours  = $delivery->hours_planned;
+            $origStart  = $delivery->planned_start_at?->toDateString();
+            $origDue    = $delivery->due_date?->toDateString();
+            $origPredId = $delivery->depends_on_delivery_id;
+            $origTitle  = $delivery->title;
+
+            // Cascade FS via método existente (com simulate)
+            $cascadeRequest = new \Illuminate\Http\Request();
+            $cascadeRequest->merge(['apply' => false, 'simulate' => $simulate]);
+            $cascadeResp = app(\App\Http\Controllers\StageDeliveryController::class)
+                ->recalcDependents($cascadeRequest, $delivery);
+            $chain = $cascadeResp->getData(true)['chain'] ?? [];
+
+            // Descrição amigável da mudança (usa snapshot ANTES do cascade)
+            $changes = [];
+            if (array_key_exists('hours_planned', $simulate))    $changes[] = "Horas: {$origHours}h → {$simulate['hours_planned']}h";
+            if (array_key_exists('planned_start_at', $simulate)) $changes[] = "Início: " . ($origStart ?? '—') . " → " . ($simulate['planned_start_at'] ?? '—');
+            if (array_key_exists('due_date', $simulate))         $changes[] = "Fim: "    . ($origDue   ?? '—') . " → " . ($simulate['due_date']         ?? '—');
+            if (array_key_exists('depends_on_delivery_id', $simulate)) {
+                $oldPredTitle = $origPredId
+                    ? (\App\Models\StageDelivery::find($origPredId)?->title ?? '?')
+                    : 'sem predecessor';
+                $newPredId = $simulate['depends_on_delivery_id'];
+                $newPredTitle = $newPredId
+                    ? (\App\Models\StageDelivery::find($newPredId)?->title ?? '?')
+                    : 'sem predecessor';
+                $changes[] = "Predecessor: {$oldPredTitle} → {$newPredTitle}";
+            }
+
+            // Mapa das atividades que se moveram (cadeia + a editada) → novo fim.
+            $movedEnds = [];
+            foreach ($chain as $c) {
+                if (!empty($c['id'])) $movedEnds[(int) $c['id']] = $c['suggested_end'] ?? null;
+            }
+            $movedEnds[$delivery->id] = $simulate['due_date'] ?? $origDue;
+
+            // Novo prazo do projeto = MAX de todas as deliveries (com o fim movido onde
+            // aplicável) + as etapas. Funciona empurrando E puxando o prazo.
+            $newMaxEnd = null;
+            $allDeliv = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+                ->get(['id', 'due_date']);
+            foreach ($allDeliv as $ad) {
+                $e = array_key_exists($ad->id, $movedEnds) ? $movedEnds[$ad->id] : $ad->due_date?->toDateString();
+                if ($e && (!$newMaxEnd || $e > $newMaxEnd)) $newMaxEnd = $e;
+            }
+            $maxStage = $project->stages()->max('expected_end_date');
+            $maxStageStr = $maxStage instanceof \Carbon\Carbon ? $maxStage->toDateString() : (is_string($maxStage) ? substr($maxStage, 0, 10) : null);
+            if ($maxStageStr && (!$newMaxEnd || $maxStageStr > $newMaxEnd)) $newMaxEnd = $maxStageStr;
+
+            $daysDiff = $this->datesDiff($currentEnd, $newMaxEnd);
+
+            // Resumo executivo estruturado (campo primário alterado).
+            [$fieldLabel, $oldVal, $newVal] = $this->primaryChangedField($simulate, [
+                'hours' => $origHours, 'start' => $origStart, 'due' => $origDue, 'pred_id' => $origPredId,
+            ]);
+
+            // Impacto por etapa: a etapa editada (com datas simuladas) + as etapas da cadeia.
+            $suggestions = $chain;
+            $suggestions[] = [
+                'id' => $delivery->id,
+                'suggested_start' => $simulate['planned_start_at'] ?? $origStart,
+                'suggested_end'   => $simulate['due_date'] ?? $origDue,
+            ];
+            $affectedStages = $this->buildAffectedStages($suggestions);
+
+            return response()->json([
+                'summary' => [
+                    'change_description' => implode(' · ', $changes) ?: 'Sem mudanças detectadas',
+                    'trigger_label' => "Alteração em '{$origTitle}'",
+                    'item_title'    => $origTitle,
+                    'item_kind'     => 'atividade',
+                    'field_label'   => $fieldLabel,
+                    'old_value'     => $oldVal,
+                    'new_value'     => $newVal,
+                ],
+                'impact' => [
+                    'affected_deliveries_count' => count($chain),
+                    'affected_stages_count'     => count($affectedStages),
+                    'project_end_current'       => $currentEnd,
+                    'project_end_new'           => $newMaxEnd,
+                    'days_diff'                 => $daysDiff,
+                    'has_conflicts'             => false,
+                ],
+                'affected'        => $chain,
+                'affected_stages' => $affectedStages,
+                'conflicts'       => [],
+            ]);
+        }
+
+        // trigger=stage_field — etapa não cascateia (sem FS entre etapas); só pode
+        // mover o prazo do projeto se a etapa for a mais distante.
+        if ($trigger === 'stage_field') {
+            $stage = \App\Models\ProjectStage::find((int) $request->input('stage_id'));
+            if (!$stage || $stage->project_id !== $project->id) {
+                return response()->json(['message' => 'etapa inválida'], 422);
+            }
+            $origStageStart = $stage->stage_start_at?->toDateString();
+            $origStageEnd   = $stage->expected_end_date?->toDateString();
+            $origStageHours = $stage->hours_planned;
+
+            $newStageEnd = array_key_exists('expected_end_date', $simulate) ? $simulate['expected_end_date'] : $origStageEnd;
+            $newStageStart = array_key_exists('stage_start_at', $simulate) ? $simulate['stage_start_at'] : $origStageStart;
+
+            // Novo prazo do projeto: maior entre as OUTRAS etapas, todas as deliveries e o novo fim da etapa.
+            $otherStagesMax = $project->stages()->where('id', '!=', $stage->id)->max('expected_end_date');
+            $delivMax = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))->max('due_date');
+            $newMaxEnd = null;
+            foreach ([$otherStagesMax, $delivMax, $newStageEnd] as $d) {
+                $ds = $d instanceof \Carbon\Carbon ? $d->toDateString() : (is_string($d) ? substr($d, 0, 10) : null);
+                if ($ds && (!$newMaxEnd || $ds > $newMaxEnd)) $newMaxEnd = $ds;
+            }
+            $daysDiff = $this->datesDiff($currentEnd, $newMaxEnd);
+
+            [$fieldLabel, $oldVal, $newVal] = $this->primaryChangedStageField($simulate, [
+                'hours' => $origStageHours, 'start' => $origStageStart, 'end' => $origStageEnd,
+            ]);
+
+            $affectedStages = [[
+                'stage_id'      => $stage->id,
+                'name'          => $stage->name,
+                'current_start' => $origStageStart,
+                'current_end'   => $origStageEnd,
+                'new_start'     => $newStageStart,
+                'new_end'       => $newStageEnd,
+                'days_diff'     => $this->datesDiff($origStageEnd, $newStageEnd),
+            ]];
+
+            return response()->json([
+                'summary' => [
+                    'change_description' => trim(($fieldLabel ?? 'Etapa') . ": " . ($oldVal ?? '—') . " → " . ($newVal ?? '—')),
+                    'trigger_label' => "Alteração na etapa '{$stage->name}'",
+                    'item_title'    => $stage->name,
+                    'item_kind'     => 'etapa',
+                    'field_label'   => $fieldLabel,
+                    'old_value'     => $oldVal,
+                    'new_value'     => $newVal,
+                ],
+                'impact' => [
+                    'affected_deliveries_count' => 0,
+                    'affected_stages_count'     => 1,
+                    'project_end_current'       => $currentEnd,
+                    'project_end_new'           => $newMaxEnd,
+                    'days_diff'                 => $daysDiff,
+                    'has_conflicts'             => false,
+                ],
+                'affected'        => [],
+                'affected_stages' => $affectedStages,
+                'conflicts'       => [],
+            ]);
+        }
+
+        // trigger=project_calendar
+        $allowWeekend = $simulate['allow_weekend_work'] ?? (bool) $project->allow_weekend_work;
+        $allowHoliday = $simulate['allow_holiday_work'] ?? (bool) $project->allow_holiday_work;
+        $newOpts = ['allow_weekend' => (bool) $allowWeekend, 'allow_holiday' => (bool) $allowHoliday];
+        $oldOpts = [
+            'allow_weekend' => (bool) $project->allow_weekend_work,
+            'allow_holiday' => (bool) $project->allow_holiday_work,
+        ];
+
+        $deliveries = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->whereNotNull('planned_start_at')
+            ->whereNotNull('due_date')
+            ->get();
+
+        $affected = [];
+        $stageIds = [];
+        foreach ($deliveries as $d) {
+            $durOld = $calendar->businessDaysBetween($d->planned_start_at, $d->due_date, $oldOpts);
+            $durNew = $calendar->businessDaysBetween($d->planned_start_at, $d->due_date, $newOpts);
+            if ($durOld !== $durNew) {
+                $affected[] = [
+                    'id'              => $d->id,
+                    'title'           => $d->title,
+                    'current_start'   => $d->planned_start_at?->toDateString(),
+                    'current_end'     => $d->due_date?->toDateString(),
+                    'suggested_start' => $d->planned_start_at?->toDateString(),  // calendar não move datas
+                    'suggested_end'   => $d->due_date?->toDateString(),
+                    'duration_old'    => $durOld,
+                    'duration_new'    => $durNew,
+                ];
+                $stageIds[$d->stage_id] = true;
+            }
+        }
+
+        $changes = [];
+        if (array_key_exists('allow_weekend_work', $simulate)) {
+            $changes[] = "Sábado/domingo: " . ((bool) $project->allow_weekend_work ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_weekend_work'] ? 'SIM' : 'NÃO');
+        }
+        if (array_key_exists('allow_holiday_work', $simulate)) {
+            $changes[] = "Feriados: " . ((bool) $project->allow_holiday_work ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_holiday_work'] ? 'SIM' : 'NÃO');
+        }
+
+        return response()->json([
+            'summary' => [
+                'change_description' => implode(' · ', $changes) ?: 'Sem mudanças detectadas',
+                'trigger_label' => 'Alteração no calendário operacional',
+            ],
+            'impact' => [
+                'affected_deliveries_count' => count($affected),
+                'affected_stages_count'     => count($stageIds),
+                'project_end_current'       => $currentEnd,
+                'project_end_new'           => $currentEnd,  // datas não movem, só durações
+                'days_diff'                 => 0,
+                'has_conflicts'             => false,
+            ],
+            'affected'        => $affected,
+            'affected_stages' => [],
+            'conflicts'       => [],
+        ]);
+    }
+
+    /** Campo primário alterado numa atividade → [label, old, new] p/ resumo executivo. */
+    private function primaryChangedField(array $simulate, array $orig): array
+    {
+        if (array_key_exists('hours_planned', $simulate)) {
+            return ['Horas planejadas', $orig['hours'] . 'h', $simulate['hours_planned'] . 'h'];
+        }
+        if (array_key_exists('due_date', $simulate)) {
+            return ['Data de entrega', $orig['due'] ?? '—', $simulate['due_date'] ?? '—'];
+        }
+        if (array_key_exists('planned_start_at', $simulate)) {
+            return ['Data de início', $orig['start'] ?? '—', $simulate['planned_start_at'] ?? '—'];
+        }
+        if (array_key_exists('depends_on_delivery_id', $simulate)) {
+            $oldT = $orig['pred_id'] ? (\App\Models\StageDelivery::find($orig['pred_id'])?->title ?? '?') : 'sem predecessor';
+            $newT = $simulate['depends_on_delivery_id'] ? (\App\Models\StageDelivery::find($simulate['depends_on_delivery_id'])?->title ?? '?') : 'sem predecessor';
+            return ['Predecessora', $oldT, $newT];
+        }
+        return [null, null, null];
+    }
+
+    /** Campo primário alterado numa etapa → [label, old, new]. */
+    private function primaryChangedStageField(array $simulate, array $orig): array
+    {
+        if (array_key_exists('hours_planned', $simulate)) {
+            return ['Horas da etapa', $orig['hours'] . 'h', $simulate['hours_planned'] . 'h'];
+        }
+        if (array_key_exists('expected_end_date', $simulate)) {
+            return ['Data de fim', $orig['end'] ?? '—', $simulate['expected_end_date'] ?? '—'];
+        }
+        if (array_key_exists('stage_start_at', $simulate)) {
+            return ['Data de início', $orig['start'] ?? '—', $simulate['stage_start_at'] ?? '—'];
+        }
+        return [null, null, null];
+    }
+
+    /**
+     * Impacto por etapa: dadas as sugestões {id, suggested_start/end} das atividades
+     * que se moveram, agrupa por etapa e calcula o prazo atual (min/max das deliveries
+     * de cada etapa hoje) vs o novo (aplicando as sugestões). Fase 10.1+.
+     */
+    private function buildAffectedStages(array $suggestions): array
+    {
+        if (empty($suggestions)) return [];
+        $suggById = [];
+        foreach ($suggestions as $s) {
+            if (!empty($s['id'])) $suggById[(int) $s['id']] = $s;
+        }
+        $stageIds = \App\Models\StageDelivery::whereIn('id', array_keys($suggById))
+            ->pluck('stage_id')->unique()->values()->all();
+
+        $out = [];
+        foreach ($stageIds as $sid) {
+            $stage = \App\Models\ProjectStage::find($sid);
+            if (!$stage) continue;
+            $deliveries = \App\Models\StageDelivery::where('stage_id', $sid)
+                ->where('client_involved', false)
+                ->whereNotNull('planned_start_at')->whereNotNull('due_date')
+                ->get(['id', 'planned_start_at', 'due_date']);
+
+            $curStart = $curEnd = $newStart = $newEnd = null;
+            foreach ($deliveries as $d) {
+                $cs = $d->planned_start_at->toDateString();
+                $ce = $d->due_date->toDateString();
+                $ns = isset($suggById[$d->id]) ? ($suggById[$d->id]['suggested_start'] ?? $cs) : $cs;
+                $ne = isset($suggById[$d->id]) ? ($suggById[$d->id]['suggested_end'] ?? $ce) : $ce;
+                if ($curStart === null || $cs < $curStart) $curStart = $cs;
+                if ($curEnd === null   || $ce > $curEnd)   $curEnd = $ce;
+                if ($newStart === null || $ns < $newStart) $newStart = $ns;
+                if ($newEnd === null   || $ne > $newEnd)   $newEnd = $ne;
+            }
+            $out[] = [
+                'stage_id'      => $sid,
+                'name'          => $stage->name,
+                'current_start' => $curStart,
+                'current_end'   => $curEnd,
+                'new_start'     => $newStart,
+                'new_end'       => $newEnd,
+                'days_diff'     => $this->datesDiff($curEnd, $newEnd),
+            ];
+        }
+        return $out;
+    }
+
+    /** Maior due_date / expected_end_date do projeto operacional. Fase 10.1. */
+    private function projectScheduleMaxEnd(Project $project): ?string
+    {
+        $maxStage = $project->stages()->max('expected_end_date');
+        $maxDeliv = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
+            ->max('due_date');
+        $max = null;
+        foreach ([$maxStage, $maxDeliv] as $d) {
+            if ($d && (!$max || $d > $max)) $max = $d;
+        }
+        return $max instanceof \Carbon\Carbon ? $max->toDateString() : (is_string($max) ? substr($max, 0, 10) : null);
+    }
+
+    /** Diferença em dias (positivo = atraso, negativo = adiantamento). Fase 10.1. */
+    private function datesDiff(?string $current, ?string $new): int
+    {
+        if (!$current || !$new) return 0;
+        return \Carbon\Carbon::parse($current)->diffInDays(\Carbon\Carbon::parse($new), false);
+    }
+
+    public function consolidatedTeam(Project $project): JsonResponse
+    {
+        $project->loadMissing('serviceType');
+
+        if (!$project->isOperational()) {
+            return response()->json(['items' => [], 'is_operational' => false]);
+        }
+
+        // Soma de horas consumidas por (user_id, stage_id) — só approved+released
+        $tsSum = \DB::table('timesheets')
+            ->whereNull('deleted_at')
+            ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_RELEASED])
+            ->groupBy('user_id', 'stage_id')
+            ->selectRaw('user_id, stage_id, COALESCE(SUM(effort_minutes), 0) / 60.0 AS actual_hours');
+
+        $rows = \DB::table('stage_allocations as a')
+            ->join('project_stages as ps', 'ps.id', '=', 'a.stage_id')
+            ->join('users as u', 'u.id', '=', 'a.user_id')
+            ->leftJoinSub($tsSum, 'ts', function ($j) {
+                $j->on('ts.user_id', '=', 'a.user_id')
+                  ->on('ts.stage_id', '=', 'a.stage_id');
+            })
+            ->where('ps.project_id', $project->id)
+            ->whereNull('ps.deleted_at')
+            ->where('ps.status', '!=', 'done')
+            ->selectRaw('
+                u.id AS user_id,
+                u.name AS user_name,
+                u.email AS user_email,
+                ps.id AS stage_id,
+                ps.name AS stage_name,
+                a.planned_hours,
+                COALESCE(ts.actual_hours, 0) AS actual_hours
+            ')
+            ->orderBy('u.name')
+            ->orderBy('ps.order_index')
+            ->get();
+
+        // Agrupa por usuário
+        $byUser = [];
+        foreach ($rows as $r) {
+            $uid = (int) $r->user_id;
+            if (!isset($byUser[$uid])) {
+                $byUser[$uid] = [
+                    'user' => [
+                        'id'    => $uid,
+                        'name'  => $r->user_name,
+                        'email' => $r->user_email,
+                    ],
+                    'total_planned'   => 0.0,
+                    'total_actual'    => 0.0,
+                    'total_remaining' => 0.0,
+                    'stages'          => [],
+                ];
+            }
+            $planned = (float) $r->planned_hours;
+            $actual  = (float) $r->actual_hours;
+            $byUser[$uid]['stages'][] = [
+                'stage_id'   => (int) $r->stage_id,
+                'stage_name' => (string) $r->stage_name,
+                'planned'    => $planned,
+                'actual'     => round($actual, 2),
+            ];
+            $byUser[$uid]['total_planned'] += $planned;
+            $byUser[$uid]['total_actual']  += $actual;
+        }
+
+        $items = array_values(array_map(function ($u) {
+            $u['total_planned']   = round($u['total_planned'], 2);
+            $u['total_actual']    = round($u['total_actual'], 2);
+            $u['total_remaining'] = round($u['total_planned'] - $u['total_actual'], 2);
+            return $u;
+        }, $byUser));
+
+        // Ordena por total_planned desc (consultor com mais carga primeiro)
+        usort($items, fn ($a, $b) => $b['total_planned'] <=> $a['total_planned']);
+
+        return response()->json([
+            'items'          => $items,
+            'is_operational' => true,
+            'totals'         => [
+                'consultant_count' => count($items),
+                'total_planned'    => array_sum(array_column($items, 'total_planned')),
+                'total_actual'     => array_sum(array_column($items, 'total_actual')),
+            ],
+        ]);
+    }
+
 }
