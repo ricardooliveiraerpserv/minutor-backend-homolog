@@ -205,7 +205,9 @@ class ConnectorAgentController extends Controller
                 ]);
                 return;
             }
-            $isNewest = $received->getTimestamp() >= $row->last_seen_at->getTimestamp();
+            // last_seen_at pode ser NULL se o state foi criado pelo inventário (C-2) antes do 1º heartbeat.
+            // Nesse caso o heartbeat É o mais novo (estabelece a presença) — não regride nada.
+            $isNewest = $row->last_seen_at === null || $received->getTimestamp() >= $row->last_seen_at->getTimestamp();
             if ($isNewest) {
                 $row->last_seen_at = $received; // presença SEMPRE avança (guard só evita regressão em reorder)
             }
