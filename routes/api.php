@@ -701,6 +701,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
             Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
             Route::post('/prosight/environments/{environmentId}/rpo-config/test', [\App\Http\Controllers\ProsightRpoConfigController::class, 'test'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-inventory/scan', [\App\Http\Controllers\ProsightRpoConfigController::class, 'scan'])->whereNumber('environmentId');
         });
         // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
         // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).
@@ -1987,6 +1988,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
             Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
             Route::post('/prosight/environments/{environmentId}/rpo-config/test', [\App\Http\Controllers\ProsightRpoConfigController::class, 'test'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-inventory/scan', [\App\Http\Controllers\ProsightRpoConfigController::class, 'scan'])->whereNumber('environmentId');
         });
         // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
         // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).

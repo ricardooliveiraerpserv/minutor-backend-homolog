@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ClientSourceRepo;
 use App\Models\EnvEnvironment;
 use App\Models\ProsightRpoConfig;
+use App\Prosight\RpoInventoryService;
 use App\SourceCode\SourceDocCustomerScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -134,5 +136,24 @@ class ProsightRpoConfigController extends Controller
             return response()->json(['data' => ['ok' => false,
                 'message' => 'Falha ao chamar o endpoint AdvPL: ' . mb_substr($e->getMessage(), 0, 200)]], 200);
         }
+    }
+
+    /**
+     * POST /prosight/environments/{environmentId}/rpo-inventory/scan — Inventário Git × RPO.
+     * Clona (blobless) os repos da empresa, obtém a data do último commit por fonte, consulta o RPO
+     * e compara (sincronizado/recompilar/verificar_rpo/nao_compilado/so_rpo) + exclusões + resumo.
+     */
+    public function scan(Request $request, int $environmentId, RpoInventoryService $service): JsonResponse
+    {
+        $env = $this->envOrNull($request, $environmentId);
+        if (! $env) {
+            return response()->json(['message' => 'Ambiente não encontrado.'], 404);
+        }
+        $repos = ClientSourceRepo::where('customer_id', $env->customer_id)
+            ->where('active', true)->whereNull('deleted_at')->get();
+
+        $result = $service->scan($env, $repos->all());
+
+        return response()->json(['data' => $result], 200);
     }
 }
