@@ -1360,6 +1360,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
             Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
             // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
+            // Rateio de horas — config dos projetos-servidor e seus destinos.
+            Route::get('/rateio-hours/projects',                            [\App\Http\Controllers\RateioHoursController::class, 'index'])->name('rateio-hours.index');
+            Route::get('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'targets'])->name('rateio-hours.targets');
+            Route::put('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'saveTargets'])->name('rateio-hours.targets.save');
             Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
             Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
             Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send');

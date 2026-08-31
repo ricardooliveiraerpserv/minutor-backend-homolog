@@ -127,6 +127,7 @@ class Project extends Model
         'is_manual_code',
         'contract_request_id',
         'is_investimento_comercial',
+        'is_rateio',
         'categoria_interna',
         'kanban_coordinator_override_id',
         'movidesk_integration_enabled',
@@ -173,6 +174,7 @@ class Project extends Model
         'client_follows_timesheets' => 'boolean',
         'extrato_visivel_cliente' => 'boolean',
         'is_investimento_comercial' => 'boolean',
+        'is_rateio' => 'boolean',
         'movidesk_integration_enabled' => 'boolean',
         'save_erpserv' => 'decimal:2',
         'start_date' => 'date:Y-m-d',
@@ -476,6 +478,12 @@ class Project extends Model
     public function timesheets(): HasMany
     {
         return $this->hasMany(Timesheet::class);
+    }
+
+    /** Destinos do rateio de horas (quando este projeto é is_rateio). */
+    public function rateioTargets(): HasMany
+    {
+        return $this->hasMany(ProjectRateioTarget::class, 'rateio_project_id')->orderBy('position');
     }
 
     public function stages(): HasMany

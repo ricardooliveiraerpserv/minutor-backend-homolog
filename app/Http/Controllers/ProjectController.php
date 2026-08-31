@@ -191,7 +191,7 @@ class ProjectController extends Controller
         // Modo minimal: retorna apenas id, name, code (para dropdowns). Inclui
         // parent_project_id p/ os seletores montarem a árvore (filho com seta ↳).
         if ($minimal) {
-            $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id');
+            $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id', 'is_rateio', 'customer_id');
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
             elseif ($status === 'open') $q->open();
@@ -991,6 +991,7 @@ class ProjectController extends Controller
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'required|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
+            'is_rateio' => 'nullable|boolean',
             'service_type_id' => 'required|exists:service_types,id',
                         'contract_type_id' => 'required|exists:contract_types,id',
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
@@ -1525,6 +1526,7 @@ class ProjectController extends Controller
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'sometimes|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
+            'is_rateio' => 'nullable|boolean',
             'service_type_id' => 'sometimes|exists:service_types,id',
             'contract_type_id' => 'sometimes|exists:contract_types,id',
             // Permite o status ATUAL do projeto mesmo que não esteja em getStatuses() — há

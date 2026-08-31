@@ -326,6 +326,8 @@ class ContractController extends Controller
             ->whereNull('parent_project_id')
             // Buckets internos de investimento (Comercial/Suporte/Projeto) não entram.
             ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+            // Projeto de rateio (SERVIDOR CLARA NET etc.) não gera card no Kanban.
+            ->where(fn ($q) => $q->where('is_rateio', false)->orWhereNull('is_rateio'))
             ->whereHas('contractType', fn ($q) => $q->whereIn('code', array_keys($allowedByCode)))
             ->with('contractType:id,name,code')
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->get('customer_id')))
