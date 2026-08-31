@@ -225,6 +225,20 @@ class RateioHoursController extends Controller
             }
         });
 
+        // RETROATIVO: re-distribui os apontamentos já lançados no servidor conforme os novos
+        // períodos — PRESERVANDO os que foram ajustados manualmente (rateio_overridden=true).
+        // Sem período na data => sync limpa os filhos (não distribui).
+        $svc = app(RateioHoursService::class);
+        Timesheet::where('project_id', $project->id)
+            ->whereNull('rateio_source_timesheet_id')
+            ->where('rateio_overridden', false)
+            ->with('project')
+            ->chunkById(200, function ($parents) use ($svc) {
+                foreach ($parents as $parent) {
+                    $svc->sync($parent, null);
+                }
+            });
+
         return $this->plans($project->fresh());
     }
 
@@ -253,6 +267,7 @@ class RateioHoursController extends Controller
                 'consultor'      => $ts->user?->name,
                 'effort_minutes' => (int) $ts->effort_minutes,
                 'status'         => $ts->status,
+                'overridden'     => (bool) $ts->rateio_overridden,
                 'splits'         => $kids->map(fn ($c) => [
                     'target_project_id' => $c->project_id,
                     'projeto'           => $c->project?->name,
@@ -277,6 +292,15 @@ class RateioHoursController extends Controller
         if ($timesheet->project_id !== $project->id || $timesheet->rateio_source_timesheet_id !== null) {
             return response()->json(['message' => 'Apontamento inválido para este servidor de rateio.'], 422);
         }
+
+        // Voltar ao automático: limpa o flag manual e re-distribui pelo período da data.
+        if ($request->boolean('auto')) {
+            $timesheet->rateio_overridden = false;
+            $timesheet->save();
+            app(RateioHoursService::class)->sync($timesheet, null);
+            return $this->timesheets($project);
+        }
+
         $data = $request->validate([
             'distribution'                     => 'present|array',
             'distribution.*.target_project_id' => 'required|integer|exists:projects,id',
@@ -291,6 +315,9 @@ class RateioHoursController extends Controller
         }
 
         app(RateioHoursService::class)->sync($timesheet, $dist->all());
+        // Marca como ajustado manualmente → a re-distribuição retroativa (savePlans) o preserva.
+        $timesheet->rateio_overridden = true;
+        $timesheet->save();
 
         return $this->timesheets($project);
     }

@@ -57,6 +57,7 @@ class Timesheet extends Model
         'stage_delivery_id',
         'real_project_id',
         'rateio_source_timesheet_id',
+        'rateio_overridden',
         'date',
         'start_time',
         'end_time',
@@ -89,6 +90,7 @@ class Timesheet extends Model
     protected $casts = [
         'date' => 'date:Y-m-d',
         'is_billable_only'    => 'boolean',
+        'rateio_overridden'   => 'boolean',
         'is_internal_action'  => 'boolean',
         'manual_project_edit' => 'boolean',
         'date_locked'         => 'boolean',
