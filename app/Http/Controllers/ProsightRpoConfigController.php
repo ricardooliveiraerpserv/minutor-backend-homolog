@@ -193,7 +193,7 @@ class ProsightRpoConfigController extends Controller
 
         // Rollup de saúde: soma dos counts dos últimos scans (só ambientes já escaneados).
         $agg = ['sincronizado' => 0, 'recompilar' => 0, 'verificar_rpo' => 0, 'nao_compilado' => 0, 'so_rpo' => 0];
-        $total = 0; $scanned = 0;
+        $total = 0; $scanned = 0; $restApi = 0;
         foreach ($items as $it) {
             $sum = $it['summary'] ?? null;
             if (! is_array($sum) || ! isset($sum['counts'])) {
@@ -204,15 +204,17 @@ class ProsightRpoConfigController extends Controller
                 $agg[$k] += (int) ($sum['counts'][$k] ?? 0);
             }
             $total += (int) ($sum['total'] ?? 0);
+            $restApi += (int) ($sum['rest_api_count'] ?? 0);
         }
         $healthPct = $total > 0 ? round(($agg['sincronizado'] / $total) * 1000) / 10 : null;
+        $healthLabel = $healthPct === null ? '—' : ($healthPct < 30 ? 'Crítico' : ($healthPct < 60 ? 'Alerta' : ($healthPct < 80 ? 'Regular' : 'Saudável')));
 
         return response()->json(['data' => [
             'customer_id' => $customerId,
             'environments' => $items,
             'configured_count' => $configuredN,
             'scanned_count' => $scanned,
-            'rollup' => $total > 0 ? ['counts' => $agg, 'total' => $total, 'health_pct' => $healthPct] : null,
+            'rollup' => $total > 0 ? ['counts' => $agg, 'total' => $total, 'health_pct' => $healthPct, 'health_label' => $healthLabel, 'rest_api_count' => $restApi] : null,
         ]], 200);
     }
 }
