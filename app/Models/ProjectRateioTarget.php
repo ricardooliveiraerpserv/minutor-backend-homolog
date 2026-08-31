@@ -11,13 +11,18 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class ProjectRateioTarget extends Model
 {
-    protected $fillable = ['rateio_project_id', 'target_project_id', 'percentual', 'position'];
+    protected $fillable = ['rateio_project_id', 'plan_id', 'target_project_id', 'percentual', 'position'];
 
     protected $casts = ['percentual' => 'decimal:2'];
 
     public function rateioProject(): BelongsTo
     {
         return $this->belongsTo(Project::class, 'rateio_project_id');
+    }
+
+    public function plan(): BelongsTo
+    {
+        return $this->belongsTo(ProjectRateioPlan::class, 'plan_id');
     }
 
     public function targetProject(): BelongsTo

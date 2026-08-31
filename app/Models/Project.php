@@ -486,6 +486,11 @@ class Project extends Model
         return $this->hasMany(ProjectRateioTarget::class, 'rateio_project_id')->orderBy('position');
     }
 
+    public function rateioPlans(): HasMany
+    {
+        return $this->hasMany(ProjectRateioPlan::class, 'rateio_project_id')->orderBy('position');
+    }
+
     public function stages(): HasMany
     {
         return $this->hasMany(ProjectStage::class)->orderBy('order_index');

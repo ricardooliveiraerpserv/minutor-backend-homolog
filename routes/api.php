@@ -1373,6 +1373,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'targets'])->name('rateio-hours.targets');
             Route::put('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'saveTargets'])->name('rateio-hours.targets.save');
             Route::put('/rateio-hours/projects/{project}/team',             [\App\Http\Controllers\RateioHoursController::class, 'saveTeam'])->name('rateio-hours.team.save');
+            Route::get('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'plans'])->name('rateio-hours.plans');
+            Route::put('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'savePlans'])->name('rateio-hours.plans.save');
+            Route::get('/rateio-hours/projects/{project}/timesheets',       [\App\Http\Controllers\RateioHoursController::class, 'timesheets'])->name('rateio-hours.timesheets');
+            Route::put('/rateio-hours/projects/{project}/timesheets/{timesheet}/override', [\App\Http\Controllers\RateioHoursController::class, 'overrideTimesheet'])->name('rateio-hours.timesheets.override');
             Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
             Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
             Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send');

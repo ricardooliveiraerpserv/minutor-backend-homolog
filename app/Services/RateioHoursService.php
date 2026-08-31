@@ -35,7 +35,7 @@ class RateioHoursService
 
         $dateStr = $parent->date instanceof \Carbon\Carbon ? $parent->date->format('Y-m-d') : (string) $parent->date;
 
-        foreach ($this->resolveSplits($project, $total, $distribution) as $split) {
+        foreach ($this->resolveSplits($project, $total, $distribution, $dateStr) as $split) {
             if ($split['minutes'] <= 0) {
                 continue;
             }
@@ -62,12 +62,14 @@ class RateioHoursService
     }
 
     /**
-     * Resolve os minutos por destino. Se veio distribuição explícita do FE, usa ela;
-     * senão distribui pelo % padrão (proporcional; sobra de arredondamento no último).
+     * Resolve os minutos por destino. Se veio distribuição explícita (override manual
+     * feito na tela de Rateio), usa ela; senão escolhe o PERÍODO ativo na data do
+     * apontamento e distribui pelos pesos dos destinos NORMALIZADOS p/ 100%. Se nenhum
+     * período cobre a data, retorna vazio (não distribui — as horas ficam só do consultor).
      *
      * @return array<int,array{target_project_id:int,minutes:int}>
      */
-    private function resolveSplits(Project $project, int $totalMinutes, ?array $distribution): array
+    private function resolveSplits(Project $project, int $totalMinutes, ?array $distribution, string $dateStr): array
     {
         if (!empty($distribution)) {
             return collect($distribution)
@@ -79,21 +81,44 @@ class RateioHoursService
                 ->values()->all();
         }
 
-        $targets = $project->rateioTargets()->get()->values();
+        $plan = $this->activePlan($project, $dateStr);
+        if (!$plan) {
+            return []; // sem período de rateio nesta data → não distribui
+        }
+        $targets = $plan->targets()->get()->values();
         if ($targets->isEmpty()) {
+            return [];
+        }
+        $totalPeso = (float) $targets->sum(fn ($t) => (float) $t->percentual);
+        if ($totalPeso <= 0) {
             return [];
         }
         $out = [];
         $acc = 0;
         $n   = $targets->count();
         foreach ($targets as $i => $t) {
+            // Normaliza o peso do destino p/ 100% dentro do período (a fatia dos inativos
+            // já não existe — este período só tem os destinos ativos na faixa).
             $m = ($i === $n - 1)
                 ? $totalMinutes - $acc
-                : (int) floor($totalMinutes * (float) $t->percentual / 100);
+                : (int) floor($totalMinutes * ((float) $t->percentual / $totalPeso));
             $acc += $m;
             $out[] = ['target_project_id' => (int) $t->target_project_id, 'minutes' => $m];
         }
         return $out;
+    }
+
+    /**
+     * Período de rateio ativo numa data (exclusivos; se houver >1 por engano, vence o de
+     * maior position/id). data_inicio null = desde sempre; data_fim null = sem fim (aberto).
+     */
+    public function activePlan(Project $project, string $dateStr): ?\App\Models\ProjectRateioPlan
+    {
+        return $project->rateioPlans()
+            ->where(fn ($q) => $q->whereNull('data_inicio')->orWhere('data_inicio', '<=', $dateStr))
+            ->where(fn ($q) => $q->whereNull('data_fim')->orWhere('data_fim', '>=', $dateStr))
+            ->orderByDesc('position')->orderByDesc('id')
+            ->first();
     }
 
     /** Apaga os filhos de um apontamento (usado no destroy do pai). */
