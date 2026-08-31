@@ -697,6 +697,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
             Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+            // Config REST AdvPL (RPO) por ambiente — paridade com o configurador do ProSight enviado.
+            Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
+            Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-config/test', [\App\Http\Controllers\ProsightRpoConfigController::class, 'test'])->whereNumber('environmentId');
         });
         // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
         // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).
@@ -1979,6 +1983,10 @@ Route::prefix('v1')->group(function () {
             Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
             Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
             Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+            // Config REST AdvPL (RPO) por ambiente — paridade com o configurador do ProSight enviado.
+            Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
+            Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-config/test', [\App\Http\Controllers\ProsightRpoConfigController::class, 'test'])->whereNumber('environmentId');
         });
         // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
         // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).

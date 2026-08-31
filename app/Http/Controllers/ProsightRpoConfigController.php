@@ -1,0 +1,138 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\EnvEnvironment;
+use App\Models\ProsightRpoConfig;
+use App\SourceCode\SourceDocCustomerScope;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+
+/**
+ * Configuração REST AdvPL (RPO) por AMBIENTE — paridade com o configurador do ProSight enviado.
+ * O SERVIDOR consulta o RPO direto (rpoApiUrl + Basic auth). Senha cifrada em repouso, nunca
+ * retornada (só flag). Escopo: admin + acesso ao customer do ambiente (anti-IDOR 404).
+ */
+class ProsightRpoConfigController extends Controller
+{
+    public function __construct(private SourceDocCustomerScope $scope)
+    {
+    }
+
+    private function envOrNull(Request $request, int $environmentId): ?EnvEnvironment
+    {
+        $env = EnvEnvironment::query()->whereKey($environmentId)->first(['id', 'customer_id', 'name']);
+        if (! $env || ! $this->scope->canAccessCustomerId($request->user(), (int) $env->customer_id)) {
+            return null;
+        }
+        return $env;
+    }
+
+    /** GET /prosight/environments/{environmentId}/rpo-config — campos seguros + flag da senha. */
+    public function show(Request $request, int $environmentId): JsonResponse
+    {
+        $env = $this->envOrNull($request, $environmentId);
+        if (! $env) {
+            return response()->json(['message' => 'Ambiente não encontrado.'], 404);
+        }
+        $cfg = ProsightRpoConfig::where('environment_id', $env->id)->first();
+
+        return response()->json(['data' => [
+            'environment_id'         => (int) $env->id,
+            'rpo_api_url'            => $cfg?->rpo_api_url,
+            'rpo_api_user'           => $cfg?->rpo_api_user,
+            'rpo_api_password_set'   => (bool) ($cfg?->rpo_api_password),   // nunca a senha em si
+            'rpo_exclusion_patterns' => $cfg?->rpo_exclusion_patterns ?? '',
+            'allow_insecure_tls'     => (bool) ($cfg?->allow_insecure_tls),
+        ]]);
+    }
+
+    /** PUT /prosight/environments/{environmentId}/rpo-config — salva; senha só se enviada. */
+    public function update(Request $request, int $environmentId): JsonResponse
+    {
+        $env = $this->envOrNull($request, $environmentId);
+        if (! $env) {
+            return response()->json(['message' => 'Ambiente não encontrado.'], 404);
+        }
+        $data = $request->validate([
+            'rpo_api_url'            => 'nullable|string|max:500|url',
+            'rpo_api_user'           => 'nullable|string|max:120',
+            'rpo_api_password'       => 'nullable|string|max:200',   // vazio = manter atual
+            'rpo_exclusion_patterns' => 'nullable|string|max:1000',
+            'allow_insecure_tls'     => 'nullable|boolean',
+        ]);
+
+        $cfg = ProsightRpoConfig::firstOrNew(['environment_id' => $env->id]);
+        $cfg->rpo_api_url            = $data['rpo_api_url'] ?? null;
+        $cfg->rpo_api_user           = $data['rpo_api_user'] ?? null;
+        $cfg->rpo_exclusion_patterns = $data['rpo_exclusion_patterns'] ?? '';
+        $cfg->allow_insecure_tls     = (bool) ($data['allow_insecure_tls'] ?? false);
+        // Senha: só sobrescreve se veio preenchida (branco = manter a atual).
+        if (! empty($data['rpo_api_password'])) {
+            $cfg->rpo_api_password = $data['rpo_api_password'];
+        }
+        $cfg->updated_by = $request->user()?->id;
+        $cfg->save();
+
+        return response()->json(['data' => ['saved' => true, 'rpo_api_password_set' => (bool) $cfg->rpo_api_password]]);
+    }
+
+    /**
+     * POST /prosight/environments/{environmentId}/rpo-config/test — probe do endpoint AdvPL.
+     * Usa a config salva; permite override no corpo (p/ testar antes de salvar). Espelha o
+     * fetchRpoFromAdvPL do ProSight enviado: POST {programs:['_PROSIGHT_CHECK_']} + Basic auth;
+     * HTML → credencial errada; não-array → erro; timeout 15s.
+     */
+    public function test(Request $request, int $environmentId): JsonResponse
+    {
+        $env = $this->envOrNull($request, $environmentId);
+        if (! $env) {
+            return response()->json(['message' => 'Ambiente não encontrado.'], 404);
+        }
+        $cfg = ProsightRpoConfig::where('environment_id', $env->id)->first();
+
+        $url      = $request->input('rpo_api_url')  ?: $cfg?->rpo_api_url;
+        $user     = $request->input('rpo_api_user') ?: $cfg?->rpo_api_user;
+        // Senha: usa a do corpo se enviada, senão a salva (decifrada).
+        $password = $request->filled('rpo_api_password') ? $request->input('rpo_api_password') : $cfg?->rpo_api_password;
+        $insecure = $request->has('allow_insecure_tls') ? (bool) $request->boolean('allow_insecure_tls') : (bool) ($cfg?->allow_insecure_tls);
+
+        if (! $url) {
+            return response()->json(['data' => ['ok' => false, 'message' => 'rpoApiUrl não configurado. Preencha a URL do endpoint AdvPL.']], 200);
+        }
+        if (! filter_var($url, FILTER_VALIDATE_URL)) {
+            return response()->json(['data' => ['ok' => false, 'message' => "URL inválida: {$url}"]], 200);
+        }
+
+        try {
+            $client = Http::timeout(15)->acceptJson()->asJson();
+            if ($insecure) {
+                $client = $client->withoutVerifying(); // on-prem cert self-signed
+            }
+            if ($user && $password) {
+                $client = $client->withBasicAuth($user, $password);
+            }
+            $resp = $client->post($url, ['programs' => ['_PROSIGHT_CHECK_']]);
+
+            $bodyRaw = ltrim($resp->body());
+            if ($bodyRaw !== '' && $bodyRaw[0] === '<') {
+                return response()->json(['data' => ['ok' => false,
+                    'message' => "Endpoint AdvPL retornou HTML (HTTP {$resp->status()}) — verifique usuário e senha."]], 200);
+            }
+            $json = $resp->json();
+            if (! is_array($json) || array_is_list($json) === false) {
+                $preview = mb_substr(is_string($resp->body()) ? $resp->body() : json_encode($json), 0, 200);
+                return response()->json(['data' => ['ok' => false,
+                    'message' => "Resposta AdvPL não é um array JSON (HTTP {$resp->status()}): {$preview}"]], 200);
+            }
+
+            return response()->json(['data' => ['ok' => true,
+                'message' => 'Conexão AdvPL ok — endpoint respondeu um array JSON.',
+                'status'  => $resp->status(), 'sample_count' => count($json)]], 200);
+        } catch (\Throwable $e) {
+            return response()->json(['data' => ['ok' => false,
+                'message' => 'Falha ao chamar o endpoint AdvPL: ' . mb_substr($e->getMessage(), 0, 200)]], 200);
+        }
+    }
+}
