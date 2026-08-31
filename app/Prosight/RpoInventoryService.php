@@ -180,6 +180,20 @@ class RpoInventoryService
     }
 
     // ── Comparação (idêntica ao inventory-core.js) ────────────────────────────────
+    /**
+     * Data do RPO → timestamp ms. O RPO grava a data em horário de BRASÍLIA (sem timezone) →
+     * interpreta como America/Sao_Paulo (o disco/git é UTC). Sem isso há offset de ~3h e nada
+     * fica "sincronizado". Se a string já vier com timezone, ela é respeitada.
+     */
+    private function parseRpoDateMs(string $s): ?int
+    {
+        try {
+            return (int) (\Illuminate\Support\Carbon::parse(trim($s), 'America/Sao_Paulo')->getTimestamp() * 1000);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     /** @param array<string,int> $diskDates */
     private function compare(array $rpoRecords, array $diskDates): array
     {
@@ -197,7 +211,7 @@ class RpoInventoryService
             $inDisk = isset($diskDates[$key]);
             $rpoRec = $rpoMap[$key] ?? null;
 
-            $rpoMs = ($inRpo && ! empty($rpoRec['date'])) ? (strtotime((string) $rpoRec['date']) * 1000) : null;
+            $rpoMs = ($inRpo && ! empty($rpoRec['date'])) ? $this->parseRpoDateMs((string) $rpoRec['date']) : null;
             $diskMs = $inDisk ? $diskDates[$key] : null;
 
             if ($inRpo && $inDisk) {
