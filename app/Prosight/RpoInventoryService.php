@@ -96,8 +96,9 @@ class RpoInventoryService
                 throw new \RuntimeException($this->scrub($clone->getErrorOutput() ?: 'git clone falhou', $token));
             }
 
-            // Mapa data por CAMINHO: git log newest-first (@%cI seguido dos arquivos). 1ª data por path vence.
-            $log = new Process(['git', '-C', $dir, 'log', '--no-merges', '--name-only', '--date=iso-strict', '--pretty=format:@%cI'], null, null, null, 240);
+            // Mapa data por CAMINHO: git log newest-first. Usa AUTHOR date (%aI) — num import em massa o
+            // committer date vira a data do import, mas a author date preserva a data ORIGINAL do fonte.
+            $log = new Process(['git', '-C', $dir, 'log', '--no-merges', '--name-only', '--date=iso-strict', '--pretty=format:@%aI'], null, null, null, 240);
             $log->run();
             if (! $log->isSuccessful()) {
                 throw new \RuntimeException($this->scrub($log->getErrorOutput() ?: 'git log falhou', $token));
