@@ -35,6 +35,7 @@ class RateioHoursService
 
         $dateStr = $parent->date instanceof \Carbon\Carbon ? $parent->date->format('Y-m-d') : (string) $parent->date;
 
+        $created = 0;
         foreach ($this->resolveSplits($project, $total, $distribution, $dateStr) as $split) {
             if ($split['minutes'] <= 0) {
                 continue;
@@ -52,12 +53,23 @@ class RateioHoursService
                 'ticket'         => $parent->ticket,
             ]);
             $child->customer_id                = $target->customer_id;
-            $child->is_billable_only           = true;   // conta no destino, não no pagamento do consultor
+            // Os rateios (filhos) PAGAM o consultor + consumo do destino (is_billable_only=false).
+            $child->is_billable_only           = false;
             $child->status                     = $parent->status;
             $child->origin                     = $parent->origin;
             $child->rateio_source_timesheet_id = $parent->id;
             $child->company_id                 = $target->company_id ?? $parent->company_id;
             $child->save();
+            $created++;
+        }
+
+        // O apontamento-PAI no servidor vira só a ORIGEM quando DISTRIBUIU: não paga (evita
+        // dobra, pois os filhos já pagam) e some da lista de Apontamentos (vive na tela de
+        // Rateio). Sem distribuição (sem período) → o pai continua pagando normalmente.
+        $shouldBeSource = $created > 0;
+        if ((bool) $parent->is_billable_only !== $shouldBeSource) {
+            $parent->is_billable_only = $shouldBeSource;
+            Timesheet::where('id', $parent->id)->update(['is_billable_only' => $shouldBeSource]);
         }
     }
 

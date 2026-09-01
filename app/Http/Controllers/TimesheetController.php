@@ -250,6 +250,15 @@ class TimesheetController extends Controller
             $query->where('timesheets.is_billable_only', false);
         }
 
+        // Apontamento-ORIGEM do rateio (feito no projeto-servidor is_rateio e já DISTRIBUÍDO
+        // → is_billable_only=true) NÃO aparece na lista de Apontamentos: ele vive na tela de
+        // Rateio; aqui aparecem só os rateios (filhos). Vale p/ todos os perfis (inclusive admin).
+        $query->whereNot(function ($q) {
+            $q->whereNull('timesheets.rateio_source_timesheet_id')
+              ->where('timesheets.is_billable_only', true)
+              ->whereHas('project', fn ($p) => $p->where('is_rateio', true));
+        });
+
         // Percentuais de acréscimo: consultor e cliente nunca veem client_extra_pct
         $hideClientPct = !$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo';
 
