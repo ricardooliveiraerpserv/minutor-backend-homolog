@@ -490,11 +490,10 @@ class HelpDeskEmailIngestor
             }
 
             $companyId = $rule?->company_id ?? 1;
+            // Perfil: regra de associação → senão o PADRÃO DO CLIENTE (customers.helpdesk_default_access_profile_id).
+            // (Antes caía no default GLOBAL por tipo; agora é definido por cliente.)
             $profileId = $rule?->access_profile_id
-                ?? \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
-                    ->where('is_default', true)
-                    ->where('company_id', $companyId)
-                    ->value('id');
+                ?? optional(\App\Models\Customer::find($customerId))->helpdesk_default_access_profile_id;
 
             $user = new User();
             $user->forceFill([

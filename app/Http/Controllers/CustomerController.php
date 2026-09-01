@@ -247,6 +247,7 @@ class CustomerController extends Controller
             'emails_administrativos.*' => 'email',
             'secondary_cgcs' => 'nullable|array',
             'secondary_cgcs.*' => 'string',
+            'helpdesk_default_access_profile_id' => 'nullable|exists:helpdesk_access_profiles,id',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
@@ -424,6 +425,7 @@ class CustomerController extends Controller
             'emails_administrativos.*' => 'email',
             'secondary_cgcs' => 'nullable|array',
             'secondary_cgcs.*' => 'string',
+            'helpdesk_default_access_profile_id' => 'nullable|exists:helpdesk_access_profiles,id',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',

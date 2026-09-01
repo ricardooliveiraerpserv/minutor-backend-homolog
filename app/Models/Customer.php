@@ -33,6 +33,8 @@ class Customer extends Model
         'secondary_cgcs',
         // Vínculo jurídico (Contrato Guarda-Chuva) como METADADO — Proposal-Centric, sem entidade própria.
         'umbrella_contract_numero', 'umbrella_contract_assinatura', 'umbrella_contract_vigencia',
+        // Perfil de acesso do Help Desk PADRÃO deste cliente (aplicado ao pré-cadastrar pessoa-cliente).
+        'helpdesk_default_access_profile_id',
     ];
 
     /** Status do ciclo comercial (CRM) — empresa única (mesma entidade do cliente).
