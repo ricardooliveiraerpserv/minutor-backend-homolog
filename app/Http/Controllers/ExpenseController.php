@@ -326,9 +326,29 @@ class ExpenseController extends Controller
             $query->whereIn('user_id', $filterUserIds);
         }
 
-        // Filtro por coordenador (despesas de projetos coordenados pelo usuário escolhido).
-        if ($request->filled('coordinator_id')) {
-            $query->whereHas('project.coordinators', fn ($q) => $q->where('users.id', $request->coordinator_id));
+        // Filtro por coordenador — espelha a regra de exibição do coordinator_label:
+        //   override do coord > (se sustentação) coordenador de sustentação > coordenadores do projeto.
+        // (antes casava só project.coordinators = coordenador-base, trazendo projetos cujo
+        //  coordenador EFETIVO é outro via override do Kanban — bug relatado.)
+        $coordinatorIds = array_values(array_filter((array) $request->input('coordinator_id', [])));
+        if (!empty($coordinatorIds)) {
+            $sustSelected = \App\Models\User::whereIn('id', $coordinatorIds)
+                ->where('coordinator_type', 'sustentacao')->exists();
+            $query->where(function ($q) use ($coordinatorIds, $sustSelected) {
+                // (A) override do coordenador é um dos selecionados
+                $q->whereHas('project', fn($pq) => $pq->whereIn('kanban_coordinator_override_id', $coordinatorIds));
+                // (C) sem override, projeto NÃO-sustentação, coordenador do projeto é um dos selecionados
+                $q->orWhere(function ($q2) use ($coordinatorIds) {
+                    $q2->whereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                            ->whereDoesntHave('serviceType', fn($sq) => $sq->where('code', 'sustentacao')))
+                       ->whereHas('project.coordinators', fn($cq) => $cq->whereIn('users.id', $coordinatorIds));
+                });
+                // (B) sem override, serviço de sustentação e um coord de sustentação foi selecionado
+                if ($sustSelected) {
+                    $q->orWhereHas('project', fn($pq) => $pq->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('serviceType', fn($sq) => $sq->where('code', 'sustentacao')));
+                }
+            });
         }
 
         // has_partner=1 → só usuários de parceiro ("No Fechamento"); =0 → só não-parceiro
