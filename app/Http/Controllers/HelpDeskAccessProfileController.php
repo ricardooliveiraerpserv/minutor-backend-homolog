@@ -93,7 +93,12 @@ class HelpDeskAccessProfileController extends Controller
         $kind === 'cliente'
             ? $q->where('type', 'cliente')
             : $q->whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor']);
-        if ($request->filled('search')) $q->where('name', 'ilike', '%' . $request->search . '%');
+        // Busca SERVER-SIDE (antes do limite de 500): por nome da pessoa OU nome da empresa (cliente).
+        if ($request->filled('search')) {
+            $s = '%' . $request->search . '%';
+            $q->where(fn ($w) => $w->where('name', 'ilike', $s)
+                ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $s)));
+        }
         $rows = $q->orderBy('name')->limit(500)->get()->map(function (User $u) {
             $u->setAttribute('customer_name', $u->customer?->name);
             $u->unsetRelation('customer');
