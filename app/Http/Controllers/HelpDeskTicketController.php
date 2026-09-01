@@ -116,7 +116,7 @@ class HelpDeskTicketController extends Controller
         ]);
     }
 
-    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false): array
+    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false, int $interCount = 0): array
     {
         // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
         $solicitante = optional($t->contact)->name ?: optional($t->requester)->name ?: $t->requester_name;
@@ -135,6 +135,7 @@ class HelpDeskTicketController extends Controller
             'solicitante_nome'       => $solicitante,
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
             'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
+            'interactions_count'     => $interCount,       // qtd de interações (comentários reais) — lista/card admin
         ]);
     }
 
@@ -165,6 +166,19 @@ class HelpDeskTicketController extends Controller
             ->groupBy('helpdesk_ticket_comments.ticket_id')
             ->selectRaw('helpdesk_ticket_comments.ticket_id as tid, MAX(helpdesk_ticket_comments.created_at) as last_agent_at')
             ->pluck('last_agent_at', 'tid');
+    }
+
+    /** Qtd de INTERAÇÕES (comentários reais, não-sistema) por ticket — batch anti-N+1. */
+    private function interactionCountByTicket(\Illuminate\Support\Collection $tickets): \Illuminate\Support\Collection
+    {
+        if ($tickets->isEmpty()) return collect();
+        return HelpDeskTicketComment::query()
+            ->whereIn('ticket_id', $tickets->pluck('id'))
+            ->whereNull('deleted_at')
+            ->where('is_system', false)
+            ->groupBy('ticket_id')
+            ->selectRaw('ticket_id as tid, COUNT(*) as cnt')
+            ->pluck('cnt', 'tid');
     }
 
     private function filtered(Request $request)
@@ -247,9 +261,10 @@ class HelpDeskTicketController extends Controller
         // e recebe coleção vazia (pausa por status = 0). Corta a query de eventos e o cálculo por ticket.
         $events = $this->eventsByTicket($tickets->where('sla_ever_paused', true)->values());
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
+        $interCounts = $this->interactionCountByTicket($tickets);
         $t2 = $mark();
         $cal = app(\App\Services\BusinessCalendarService::class);
-        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true));
+        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true, (int) ($interCounts->get($t->id) ?? 0)));
         $t3 = $mark();
 
         $payload = ['data' => $data];
