@@ -313,9 +313,10 @@ class HelpDeskTriggerEngine
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], [], true, [], $ticket->graph_thread_msg_id);
             $readable = $isHtml ? $rendered : self::textToHtmlParagraphs($rendered);
         }
-        // Registra o e-mail enviado por gatilho como INTERAÇÃO no chamado (histórico completo, com o CORPO),
-        // além do evento "email_sent". Assim o texto exato enviado aparece no chamado (não só um log de linha).
-        if (($ok ?? false) && trim(strip_tags((string) ($readable ?? ''))) !== '') {
+        // Registra o e-mail como INTERAÇÃO no chamado APENAS quando o gatilho pede (`record_interaction`).
+        // Só os comunicados de inatividade (aviso de X dias) e o aviso de ENCERRAMENTO gravam; e-mails de
+        // rotina (ex.: "Aguardando cliente → cliente") NÃO poluem o histórico do chamado.
+        if (($ok ?? false) && !empty($params['record_interaction']) && trim(strip_tags((string) ($readable ?? ''))) !== '') {
             self::recordTriggerInteraction($ticket, $params, $to, (string) $readable, $triggerName);
         }
         self::logEmailSent($ticket, $to, $cc, $params, (bool) ($ok ?? false), $err ?? null, $triggerName);
