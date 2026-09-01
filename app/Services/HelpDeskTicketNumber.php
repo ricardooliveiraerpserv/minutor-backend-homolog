@@ -8,11 +8,18 @@ use Illuminate\Support\Facades\DB;
 /** Gera o número do chamado no formato configurado (prefixo + sequência com zero-padding). */
 class HelpDeskTicketNumber
 {
-    /** Próximo número, incrementando a sequência de forma atômica. */
-    public static function next(): string
+    /**
+     * Próximo número, incrementando a sequência de forma atômica.
+     * $companyId: força o template DAQUELA empresa (sem depender do contexto/escopo atual) — evita
+     * que um cliente sem current_company_id incremente o template de outra empresa (número colidente).
+     */
+    public static function next(?int $companyId = null): string
     {
-        return DB::transaction(function () {
-            $cfg = HelpDeskCommTemplate::lockForUpdate()->first() ?? HelpDeskCommTemplate::current();
+        return DB::transaction(function () use ($companyId) {
+            $cfg = ($companyId !== null
+                    ? HelpDeskCommTemplate::withoutGlobalScopes()->where('company_id', $companyId)->lockForUpdate()->first()
+                    : HelpDeskCommTemplate::lockForUpdate()->first())
+                ?? HelpDeskCommTemplate::current();
             $seq = (int) $cfg->ticket_sequence + 1;
             $cfg->update(['ticket_sequence' => $seq]);
             return self::format($seq, $cfg);

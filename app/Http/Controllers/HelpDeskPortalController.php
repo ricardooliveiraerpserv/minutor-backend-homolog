@@ -189,17 +189,27 @@ class HelpDeskPortalController extends Controller
             abort_unless(\App\Models\Contract::where('id', $v['contract_id'])->where('customer_id', $cid)->exists(), 422, 'Contrato não pertence à sua empresa.');
         }
 
+        // Empresa (tenant) do chamado: NUNCA deixar NULL, senão o chamado some da fila do admin
+        // (CompanyScope filtra por company_id). Clientes normalmente NÃO têm current_company_id →
+        // o BelongsToCompany carimbava NULL. Usa a empresa do status DEFAULT (mesma empresa onde o
+        // chamado vai viver); prefere o contexto do usuário se existir; fallback final = 1.
+        $status    = HelpDeskStatus::default();
+        $companyId = $request->user()->current_company_id
+            ?: ($request->user()->home_company_id ?: (optional($status)->company_id ?: 1));
+
         $ticket = HelpDeskTicket::create(array_merge($v, [
             'customer_id'       => $cid,
+            'company_id'        => $companyId,
             'priority'          => $v['priority'] ?? 'normal',
             'channel'           => 'portal',
-            'status_id'         => optional(HelpDeskStatus::default())->id,
+            'status_id'         => optional($status)->id,
             'requester_user_id' => $request->user()->id,
             'created_by_id'     => $request->user()->id,
             'last_activity_at'  => now(),
         ]));
-        // Número no formato CONFIGURADO (prefixo + dígitos + sequência) — não hardcoded HD-######.
-        $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next()]);
+        // Número no formato CONFIGURADO (prefixo + dígitos + sequência) DA MESMA EMPRESA — senão o
+        // cliente sem contexto incrementava o template de outra empresa (gerando número colidente).
+        $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next($companyId)]);
         $this->sla->apply($ticket);
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
 
