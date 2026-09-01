@@ -49,7 +49,9 @@ class RateioHoursService
                 'user_id'        => $parent->user_id,
                 'date'           => $dateStr,
                 'effort_minutes' => $split['minutes'],
-                'observation'    => 'Rateio de ' . $project->name . ' — apontamento #' . $parent->id,
+                // Descrição = a que o CONSULTOR escreveu no apontamento-origem (o vínculo de
+                // rateio é sinalizado por rateio_source_timesheet_id + selo/cor no front).
+                'observation'    => $parent->observation,
                 'ticket'         => $parent->ticket,
             ]);
             $child->customer_id                = $target->customer_id;
