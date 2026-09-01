@@ -321,4 +321,25 @@ class RateioHoursController extends Controller
 
         return $this->timesheets($project);
     }
+
+    /**
+     * Exclui o apontamento-ORIGEM do servidor e ESTORNA os rateios (filhos). SOFT-DELETE
+     * (deleted_at) em ambos — nunca físico (auditoria financeira). Ação deliberada do
+     * usuário (confirmada no front).
+     */
+    public function destroyTimesheet(Project $project, Timesheet $timesheet): JsonResponse
+    {
+        if (!$project->is_rateio) {
+            return response()->json(['message' => 'Projeto não é de rateio.'], 422);
+        }
+        if ($timesheet->project_id !== $project->id || $timesheet->rateio_source_timesheet_id !== null) {
+            return response()->json(['message' => 'Apontamento inválido para este servidor de rateio.'], 422);
+        }
+
+        // Estorna os rateios (filhos) e exclui o original — soft-delete (o model usa SoftDeletes).
+        Timesheet::where('rateio_source_timesheet_id', $timesheet->id)->delete();
+        $timesheet->delete();
+
+        return $this->timesheets($project);
+    }
 }
