@@ -53,6 +53,20 @@ class HelpDeskAccessProfileController extends Controller
         });
     }
 
+    /** Duplica um perfil (mesmas permissões) — cópia nunca vira padrão. */
+    public function duplicate(HelpDeskAccessProfile $accessProfile): JsonResponse
+    {
+        $copy = HelpDeskAccessProfile::create([
+            'name'        => mb_substr($accessProfile->name . ' (cópia)', 0, 120),
+            'kind'        => $accessProfile->kind,
+            'is_default'  => false,
+            'enabled'     => (bool) $accessProfile->enabled,
+            'permissions' => $accessProfile->permissions,
+            'sort_order'  => (int) $accessProfile->sort_order + 1,
+        ]);
+        return response()->json(['data' => $copy->fresh()], 201);
+    }
+
     public function destroy(HelpDeskAccessProfile $accessProfile): JsonResponse
     {
         // Garante ao menos um perfil ativo do tipo (regra Movidesk).

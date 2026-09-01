@@ -318,6 +318,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/usage', [\App\Http\Controllers\HelpDeskUsageController::class, 'record']);
         Route::put('/help-desk/access-profiles/{accessProfile}',     [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'update']);
         Route::delete('/help-desk/access-profiles/{accessProfile}',  [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'destroy']);
+        Route::post('/help-desk/access-profiles/{accessProfile}/duplicate', [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'duplicate']);
         Route::put('/help-desk/association-rules/{associationRule}',  [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'update']);
         Route::delete('/help-desk/association-rules/{associationRule}', [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'destroy']);
         Route::put('/help-desk/categories/{category}',   [\App\Http\Controllers\HelpDeskCategoryController::class, 'update']);
