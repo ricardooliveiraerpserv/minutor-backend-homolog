@@ -264,6 +264,18 @@ class User extends Authenticatable
             }
         });
 
+        // FAIL-SAFE (LGPD): NENHUM usuário com acesso ao Help Desk pode ser salvo SEM perfil de acesso.
+        // Cobre TODOS os fluxos (portal/e-mail, cadastro manual, importação). Cliente → perfil PADRÃO do
+        // seu customer (senão a âncora is_default de cliente). Agente → âncora is_default de agente.
+        static::saving(function (User $u) {
+            $mods = (array) ($u->allowed_modules ?? []);
+            if (!in_array('help_desk', $mods, true) || !empty($u->helpdesk_access_profile_id)) return;
+            $u->helpdesk_access_profile_id = $u->type === 'cliente'
+                ? (optional(\App\Models\Customer::find($u->customer_id))->helpdesk_default_access_profile_id
+                    ?? \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')->where('is_default', true)->value('id'))
+                : \App\Models\HelpDeskAccessProfile::where('kind', 'agent')->where('is_default', true)->value('id');
+        });
+
         // A empresa da folha tem que ser uma das empresas VINCULADAS — garante o vínculo.
         static::saved(function (User $u) {
             if ($u->wasChanged('home_company_id') && $u->home_company_id

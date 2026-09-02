@@ -294,6 +294,13 @@ class CustomerController extends Controller
             $validated['crm_status'] = $status;   // $status = input('crm_status', 'cliente')
         }
 
+        // Todo cliente NASCE com um perfil de acesso HD padrão (âncora is_default de cliente) se não
+        // for informado — garante que as pessoas-cliente sempre tenham perfil definido (LGPD).
+        if (empty($validated['helpdesk_default_access_profile_id'])) {
+            $validated['helpdesk_default_access_profile_id'] = \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
+                ->where('is_default', true)->value('id');
+        }
+
         // Só agora cria no banco, pois sabemos que é válido
         $customer = Customer::create($validated);
 
