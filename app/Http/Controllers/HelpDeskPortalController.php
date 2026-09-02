@@ -96,9 +96,18 @@ class HelpDeskPortalController extends Controller
             ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
         // Abertura em nome de outra pessoa → lista os CONTATOS da empresa do cliente. Tags → catálogo.
         $onBehalf = $this->access->clientOpenOnBehalf($u);
-        $contacts = $onBehalf
-            ? \App\Models\CustomerContact::where('customer_id', $this->customerId($request))->orderBy('name')->get(['id', 'name', 'email'])
-            : [];
+        // "Em nome de": PESSOAS da empresa do cliente — usuários cliente (que logam) + contatos.
+        // Muitas empresas não têm contatos cadastrados, só usuários → listar os usuários resolve.
+        $cid = $this->customerId($request);
+        $contacts = [];
+        if ($onBehalf) {
+            $users = \App\Models\User::where('customer_id', $cid)->where('type', 'cliente')
+                ->where('id', '!=', $u->id)->orderBy('name')->get(['id', 'name', 'email'])
+                ->map(fn ($x) => ['id' => 'u:' . $x->id, 'name' => $x->name, 'email' => $x->email]);
+            $cts = \App\Models\CustomerContact::where('customer_id', $cid)->orderBy('name')->get(['id', 'name', 'email'])
+                ->map(fn ($x) => ['id' => 'c:' . $x->id, 'name' => $x->name, 'email' => $x->email]);
+            $contacts = $users->concat($cts)->values();
+        }
         $tags = $this->access->informAllowed($u, 'tags')
             ? \App\Models\HelpDeskTag::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('name')->get(['id', 'name', 'color'])
             : [];
@@ -198,7 +207,7 @@ class HelpDeskPortalController extends Controller
             'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
             'contract_id'         => 'nullable|exists:contracts,id',
             'project_id'          => 'nullable|exists:projects,id',
-            'customer_contact_id' => 'nullable|exists:customer_contacts,id',
+            'on_behalf'           => 'nullable|string|max:20', // 'u:ID' (usuário) ou 'c:ID' (contato)
             'tags'                => 'nullable|array',
             'tags.*'              => 'integer|exists:helpdesk_tags,id',
         ]);
@@ -208,15 +217,22 @@ class HelpDeskPortalController extends Controller
         if (!$this->access->informAllowed($u, 'category')) unset($v['category_id']);
         if (!$this->access->informAllowed($u, 'service'))  unset($v['service_id']);
         if (!$this->access->informAllowed($u, 'urgency'))  unset($v['priority']);
-        // Abrir em nome de outra pessoa (contato) só se o perfil permitir.
-        if (!$this->access->clientOpenOnBehalf($u)) unset($v['customer_contact_id']);
+        // Abrir EM NOME DE (usuário 'u:ID' ou contato 'c:ID' da MESMA empresa) só se o perfil permitir.
+        $onBehalfReq = null; $onBehalfContact = null;
+        if ($this->access->clientOpenOnBehalf($u) && !empty($v['on_behalf'])) {
+            [$kind, $pid] = array_pad(explode(':', (string) $v['on_behalf'], 2), 2, null);
+            $pid = (int) $pid;
+            if ($kind === 'u' && \App\Models\User::where('id', $pid)->where('customer_id', $cid)->where('type', 'cliente')->exists()) {
+                $onBehalfReq = $pid;
+            } elseif ($kind === 'c' && \App\Models\CustomerContact::where('id', $pid)->where('customer_id', $cid)->exists()) {
+                $onBehalfContact = $pid;
+            }
+        }
+        unset($v['on_behalf']);
         // Tags só se o perfil permitir informar; extrai (não é coluna do ticket) p/ aplicar depois.
         $tagIds = $this->access->informAllowed($u, 'tags') ? array_map('intval', (array) ($v['tags'] ?? [])) : [];
         unset($v['tags']);
 
-        if (!empty($v['customer_contact_id'])) {
-            abort_unless(\App\Models\CustomerContact::where('id', $v['customer_contact_id'])->where('customer_id', $cid)->exists(), 422, 'Contato não pertence à sua empresa.');
-        }
         if (!empty($v['contract_id'])) {
             abort_unless(\App\Models\Contract::where('id', $v['contract_id'])->where('customer_id', $cid)->exists(), 422, 'Contrato não pertence à sua empresa.');
         }
@@ -234,7 +250,9 @@ class HelpDeskPortalController extends Controller
             'priority'          => $v['priority'] ?? 'normal',
             'channel'           => 'portal',
             'status_id'         => optional($status)->id,
-            'requester_user_id' => $request->user()->id,
+            // Solicitante = a pessoa em nome de quem foi aberto (se houver); quem ABRIU fica em created_by.
+            'requester_user_id' => $onBehalfReq ?: $request->user()->id,
+            'customer_contact_id' => $onBehalfContact,
             'created_by_id'     => $request->user()->id,
             'last_activity_at'  => now(),
         ]));
