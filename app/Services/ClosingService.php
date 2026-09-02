@@ -185,9 +185,18 @@ class ClosingService
             || $this->activeMonthReopen($this->weekMonth($weekStart), $projectId, $userId));
     }
 
+    /** Existe reabertura de SEMANA ativa cobrindo esta data+escopo? Uma reabertura de semana
+     *  específica (ação deliberada) LIBERA o dia mesmo com a competência/mês fechada. */
+    public function hasActiveWeekReopen(string $date, ?int $projectId, ?int $userId = null): bool
+    {
+        return $this->activeWeekReopen($this->weekStart($date)->toDateString(), $projectId, $userId);
+    }
+
     /** Bloqueio COMBINADO (integração + lançamento manual). $userId = quem apontou. */
     public function isPeriodClosed(string $date, int $projectId, ?int $userId = null, bool $forIntegration = false): bool
     {
+        // Reabertura de SEMANA específica vence o bloqueio MENSAL (escopo mais específico).
+        if ($this->hasActiveWeekReopen($date, $projectId, $userId)) return false;
         return $this->isMonthClosed($date, $projectId, $userId, $forIntegration) || $this->isWeekClosed($date, $projectId, $userId);
     }
 

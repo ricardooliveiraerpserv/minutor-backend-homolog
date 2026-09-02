@@ -999,7 +999,9 @@ class TimesheetController extends Controller
         $closing     = app(\App\Services\ClosingService::class);
         $monthClosed = $closing->isMonthClosed($request->date, (int) $project->id, (int) $timesheetUserId);
         $weekClosed  = $closing->isWeekClosed($request->date, (int) $project->id, (int) $timesheetUserId);
-        if ($monthClosed || $weekClosed) {
+        // Reabertura de SEMANA específica p/ este escopo libera o dia mesmo com o mês fechado.
+        $weekReopened = $closing->hasActiveWeekReopen($request->date, (int) $project->id, (int) $timesheetUserId);
+        if (($monthClosed || $weekClosed) && !$weekReopened) {
             return response()->json($monthClosed ? [
                 'code'          => 'PERIOD_CLOSED',
                 'type'          => 'error',
@@ -1616,7 +1618,9 @@ class TimesheetController extends Controller
             $editClosing = app(\App\Services\ClosingService::class);
             $editUid     = (int) $timesheet->user_id;
             $editPid     = (int) $projectForValidation->id;
-            if ($editClosing->isMonthClosed($serviceDate->toDateString(), $editPid, $editUid)) {
+            // Reabertura de SEMANA específica p/ este escopo libera a edição mesmo com o mês fechado.
+            $editWeekReopened = $editClosing->hasActiveWeekReopen($serviceDate->toDateString(), $editPid, $editUid);
+            if (!$editWeekReopened && $editClosing->isMonthClosed($serviceDate->toDateString(), $editPid, $editUid)) {
                 return response()->json([
                     'code'          => 'PERIOD_CLOSED',
                     'type'          => 'error',
