@@ -132,6 +132,16 @@ class Expense extends Model
     }
 
     /**
+     * Itens da despesa (categoria + descrição + valor + comprovante por item).
+     * O total (amount) é a soma dos itens. Despesas legadas (single-line) não
+     * têm itens — o cabeçalho carrega amount/categoria/descrição/receipt direto.
+     */
+    public function items(): HasMany
+    {
+        return $this->hasMany(ExpenseItem::class);
+    }
+
+    /**
      * Accessor para exibir status em português
      */
     public function getStatusDisplayAttribute(): string
