@@ -308,9 +308,13 @@ class HelpDeskAccessPolicy
      */
     public function clientViewScope(?User $user): string
     {
-        if ($this->unrestricted($user)) return 'same_org';
-        $s = (string) $this->perm($user, 'tickets.view_tickets', 'same_org');
-        return in_array($s, ['own', 'department', 'same_org', 'none'], true) ? $s : 'same_org';
+        // FAIL-SAFE (LGPD): na dúvida, o cliente vê SÓ os próprios chamados ('own'), nunca "tudo".
+        if (!$user) return 'none';
+        if ($user->isAdmin()) return 'same_org';           // admin (não usa o portal, mas por garantia)
+        if (!$this->profile($user)) return 'own';           // cliente SEM perfil → só os dele
+        $s = (string) $this->perm($user, 'tickets.view_tickets', 'own'); // default restritivo
+        if ($s === 'any') return 'same_org';                // 'any' no portal = tudo da PRÓPRIA empresa (nunca cross-customer)
+        return in_array($s, ['own', 'department', 'same_org', 'none'], true) ? $s : 'own';
     }
 
     public function canSee(?User $user, HelpDeskTicket $t): bool
