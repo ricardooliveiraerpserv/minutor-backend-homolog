@@ -86,9 +86,19 @@ class HelpDeskPortalController extends Controller
     public function permissions(Request $request): JsonResponse
     {
         $u = $request->user();
+        // Empresa do cliente (mesma lógica do openTicket) para escopar as opções sem depender do
+        // CompanyScope (que fica NULL p/ cliente). withoutGlobalScopes + company_id explícito.
+        $companyId = $u->current_company_id
+            ?: ($u->home_company_id ?: (optional(HelpDeskStatus::default())->company_id ?: 1));
+        $cats = \App\Models\HelpDeskCategory::withoutGlobalScopes()->where('company_id', $companyId)
+            ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
+        $svcs = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
+            ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
         return response()->json(['data' => [
-            'can_open' => $this->access->clientCanOpen($u),
-            'inform'   => $this->access->informMap($u, ['service', 'category', 'urgency', 'subject', 'tags']),
+            'can_open'   => $this->access->clientCanOpen($u),
+            'inform'     => $this->access->informMap($u, ['service', 'category', 'urgency', 'subject', 'tags']),
+            'categories' => $cats,
+            'services'   => $svcs,
         ]]);
     }
 
@@ -172,6 +182,7 @@ class HelpDeskPortalController extends Controller
             'subject'             => 'required|string|max:200',
             'description'         => 'nullable|string',
             'category_id'         => 'nullable|exists:helpdesk_categories,id',
+            'service_id'          => 'nullable|exists:helpdesk_services,id',
             'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
             'contract_id'         => 'nullable|exists:contracts,id',
             'project_id'          => 'nullable|exists:projects,id',
@@ -181,6 +192,7 @@ class HelpDeskPortalController extends Controller
         // Perfil de acesso: ignora campos que o cliente não pode informar na abertura.
         $u = $request->user();
         if (!$this->access->informAllowed($u, 'category')) unset($v['category_id']);
+        if (!$this->access->informAllowed($u, 'service'))  unset($v['service_id']);
         if (!$this->access->informAllowed($u, 'urgency'))  unset($v['priority']);
 
         if (!empty($v['customer_contact_id'])) {
