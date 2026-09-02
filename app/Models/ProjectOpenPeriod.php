@@ -30,4 +30,10 @@ class ProjectOpenPeriod extends Model
     {
         return $this->belongsTo(User::class, 'closed_by');
     }
+
+    /** Usuário-ALVO da reabertura (para quem a competência foi liberada). null = todos. */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
 }

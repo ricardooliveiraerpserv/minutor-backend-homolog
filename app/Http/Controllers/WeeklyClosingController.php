@@ -74,22 +74,22 @@ class WeeklyClosingController extends Controller
         $active = collect();
         WeekOpenPeriod::whereNull('closed_at')->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])->orderByDesc('week_start')->limit(100)->get()
+            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name', 'user:id,name'])->orderByDesc('week_start')->limit(100)->get()
             ->each(fn ($p) => $active->push([
                 'period_kind' => 'week', 'period_key' => Carbon::parse($p->week_start)->toDateString(),
                 'project_id' => $p->project_id, 'project' => $p->project?->name,
                 'customer_id' => $p->project?->customer_id, 'customer' => $p->project?->customer?->name,
-                'user_id' => $p->user_id, 'user' => $p->openedBy?->name,
+                'user_id' => $p->user_id, 'user' => $p->openedBy?->name, 'target_user_id' => $p->user_id, 'target_user' => $p->user?->name,
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
         ProjectOpenPeriod::whereNull('closed_at')->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])->orderByDesc('year_month')->limit(100)->get()
+            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name', 'user:id,name'])->orderByDesc('year_month')->limit(100)->get()
             ->each(fn ($p) => $active->push([
                 'period_kind' => 'month', 'period_key' => $p->year_month,
                 'project_id' => $p->project_id, 'project' => $p->project?->name,
                 'customer_id' => $p->project?->customer_id, 'customer' => $p->project?->customer?->name,
-                'user_id' => $p->user_id, 'user' => $p->openedBy?->name,
+                'user_id' => $p->user_id, 'user' => $p->openedBy?->name, 'target_user_id' => $p->user_id, 'target_user' => $p->user?->name,
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
 
@@ -121,6 +121,8 @@ class WeeklyClosingController extends Controller
                     'projects_count' => $reopenedIds->count(),
                     'user_id'      => null,
                     'user'         => $first['user'],
+                    'target_user_id' => null,
+                    'target_user'    => null,
                     'auto_close_at' => $first['auto_close_at'],
                 ]]);
             });
