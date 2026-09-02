@@ -36,24 +36,26 @@ class WeeklyClosingController extends Controller
             $mDate = $now->copy()->startOfMonth()->subMonths($mi);
             $ym    = $mDate->format('Y-m');
 
-            // Semana pertence ao mês em que TERMINA (domingo). Assim a semana que começa
-            // no mês anterior mas termina neste (ex.: 31/08–06/09) conta neste mês — a
-            // semana ATUAL sempre aparece no mês corrente (não some por começar no dia 31).
-            $ws = $mDate->copy()->startOfWeek(Carbon::MONDAY);
+            // Semanas presas ao MÊS (não cruzam): a 1ª começa no dia 01 (pode ter menos
+            // dias), a última termina no último dia do mês. Fonte: ClosingService.
+            $cur         = $mDate->copy()->startOfMonth();
+            $lastOfMonth = $mDate->copy()->endOfMonth();
 
             $weeks = [];
             $n = 1;
-            while ($ws->copy()->addDays(6)->format('Y-m') === $ym) {
-                $st = $svc->weekStatusGlobal($ws);
+            while ($cur->lte($lastOfMonth)) {
+                $wStart = $svc->weekStart($cur->toDateString());
+                $wEnd   = $svc->weekEnd($wStart);
+                $st = $svc->weekStatusGlobal($wStart);
                 $weeks[] = [
                     'n'                    => $n,
-                    'week_start'           => $ws->toDateString(),
-                    'week_end'             => $ws->copy()->addDays(6)->toDateString(),
+                    'week_start'           => $wStart->toDateString(),
+                    'week_end'             => $wEnd->toDateString(),
                     'deadline'             => $st['deadline'],
                     'status'               => $st['status'],
                     'reopen_auto_close_at' => $st['auto_close_at'],
                 ];
-                $ws->addWeek();
+                $cur = $wEnd->copy()->addDay();
                 $n++;
             }
 
