@@ -208,6 +208,8 @@ class HelpDeskPortalController extends Controller
             'contract_id'         => 'nullable|exists:contracts,id',
             'project_id'          => 'nullable|exists:projects,id',
             'on_behalf'           => 'nullable|string|max:20', // 'u:ID' (usuário) ou 'c:ID' (contato)
+            'cc_emails'           => 'nullable|array',         // pessoas em CÓPIA (todos os perfis)
+            'cc_emails.*'         => 'email',
             'tags'                => 'nullable|array',
             'tags.*'              => 'integer|exists:helpdesk_tags,id',
         ]);
