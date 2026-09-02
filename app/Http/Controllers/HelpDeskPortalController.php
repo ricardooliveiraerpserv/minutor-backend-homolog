@@ -94,11 +94,23 @@ class HelpDeskPortalController extends Controller
             ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
         $svcs = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
             ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
+        // Abertura em nome de outra pessoa → lista os CONTATOS da empresa do cliente. Tags → catálogo.
+        $onBehalf = $this->access->clientOpenOnBehalf($u);
+        $contacts = $onBehalf
+            ? \App\Models\CustomerContact::where('customer_id', $this->customerId($request))->orderBy('name')->get(['id', 'name', 'email'])
+            : [];
+        $tags = $this->access->informAllowed($u, 'tags')
+            ? \App\Models\HelpDeskTag::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('name')->get(['id', 'name', 'color'])
+            : [];
         return response()->json(['data' => [
-            'can_open'   => $this->access->clientCanOpen($u),
-            'inform'     => $this->access->informMap($u, ['service', 'category', 'urgency', 'subject', 'tags']),
-            'categories' => $cats,
-            'services'   => $svcs,
+            'can_open'       => $this->access->clientCanOpen($u),
+            'inform'         => $this->access->informMap($u, ['service', 'category', 'urgency', 'subject', 'tags']),
+            'categories'     => $cats,
+            'services'       => $svcs,
+            'kb_suggestions' => $this->access->kbSuggestionsEnabled($u),
+            'open_on_behalf' => $onBehalf,
+            'contacts'       => $contacts,
+            'tags'           => $tags,
         ]]);
     }
 
@@ -187,6 +199,8 @@ class HelpDeskPortalController extends Controller
             'contract_id'         => 'nullable|exists:contracts,id',
             'project_id'          => 'nullable|exists:projects,id',
             'customer_contact_id' => 'nullable|exists:customer_contacts,id',
+            'tags'                => 'nullable|array',
+            'tags.*'              => 'integer|exists:helpdesk_tags,id',
         ]);
 
         // Perfil de acesso: ignora campos que o cliente não pode informar na abertura.
@@ -194,6 +208,11 @@ class HelpDeskPortalController extends Controller
         if (!$this->access->informAllowed($u, 'category')) unset($v['category_id']);
         if (!$this->access->informAllowed($u, 'service'))  unset($v['service_id']);
         if (!$this->access->informAllowed($u, 'urgency'))  unset($v['priority']);
+        // Abrir em nome de outra pessoa (contato) só se o perfil permitir.
+        if (!$this->access->clientOpenOnBehalf($u)) unset($v['customer_contact_id']);
+        // Tags só se o perfil permitir informar; extrai (não é coluna do ticket) p/ aplicar depois.
+        $tagIds = $this->access->informAllowed($u, 'tags') ? array_map('intval', (array) ($v['tags'] ?? [])) : [];
+        unset($v['tags']);
 
         if (!empty($v['customer_contact_id'])) {
             abort_unless(\App\Models\CustomerContact::where('id', $v['customer_contact_id'])->where('customer_id', $cid)->exists(), 422, 'Contato não pertence à sua empresa.');
@@ -226,6 +245,12 @@ class HelpDeskPortalController extends Controller
         // cliente sem contexto incrementava o template de outra empresa (gerando número colidente).
         $ticket->ticket_number = \App\Services\HelpDeskTicketNumber::next($companyId);
         $ticket->save();
+        // Tags informadas na abertura (se o perfil permitiu) — só as da empresa do chamado.
+        if (!empty($tagIds)) {
+            $validTags = \App\Models\HelpDeskTag::withoutGlobalScopes()->whereIn('id', $tagIds)
+                ->where('company_id', $companyId)->pluck('id')->all();
+            if ($validTags) $ticket->tags()->syncWithoutDetaching($validTags);
+        }
         $this->sla->apply($ticket);
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
 

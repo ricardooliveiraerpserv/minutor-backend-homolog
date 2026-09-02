@@ -136,6 +136,12 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.kb_suggestions', true);
     }
 
+    /** Cliente pode abrir chamado EM NOME DE outra pessoa (contato) da mesma empresa. */
+    public function clientOpenOnBehalf(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.open_on_behalf', false);
+    }
+
     /**
      * Escopo p/ candidatar uma interação como artigo da KB: 'none' | 'own' | 'any_any'.
      * Default: none (não permite) — precisa liberar no perfil.
