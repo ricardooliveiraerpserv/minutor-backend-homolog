@@ -146,7 +146,8 @@ class HelpDeskPortalController extends Controller
             // Detalhes do chamado — VISÍVEIS por padrão (o cliente vê os dados do próprio chamado).
             'customer'      => $this->access->clientViewField($u, 'customer', true),
             'requester'     => $this->access->clientViewField($u, 'requester', true),
-            'agent'         => $this->access->clientViewField($u, 'agent', true),
+            // FE salva a chave 'responsible' (toggle "Responsável"); o $view/presenter usa 'agent'. Alinhar.
+            'agent'         => $this->access->clientViewField($u, 'responsible', true),
             'team'          => $this->access->clientViewField($u, 'team', true),
             'category'      => $this->access->clientViewField($u, 'category', true),
             'service'       => $this->access->clientViewField($u, 'service', true),
