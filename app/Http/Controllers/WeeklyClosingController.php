@@ -36,13 +36,14 @@ class WeeklyClosingController extends Controller
             $mDate = $now->copy()->startOfMonth()->subMonths($mi);
             $ym    = $mDate->format('Y-m');
 
-            // 1ª semana cuja SEGUNDA cai neste mês.
+            // Semana pertence ao mês em que TERMINA (domingo). Assim a semana que começa
+            // no mês anterior mas termina neste (ex.: 31/08–06/09) conta neste mês — a
+            // semana ATUAL sempre aparece no mês corrente (não some por começar no dia 31).
             $ws = $mDate->copy()->startOfWeek(Carbon::MONDAY);
-            if ($ws->format('Y-m') !== $ym) $ws->addWeek();
 
             $weeks = [];
             $n = 1;
-            while ($ws->format('Y-m') === $ym) {
+            while ($ws->copy()->addDays(6)->format('Y-m') === $ym) {
                 $st = $svc->weekStatusGlobal($ws);
                 $weeks[] = [
                     'n'                    => $n,
