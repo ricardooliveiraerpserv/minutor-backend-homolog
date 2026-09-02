@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Expense;
-use App\Models\ExpenseItem;
 use App\Models\ExpenseCategory;
 use App\Models\ExpenseType;
 use App\Models\Project;
@@ -236,7 +235,7 @@ class ExpenseController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 100);
         $page = (int) $request->get('page', 1);
 
-        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'realProject:id,name', 'category', 'items.category', 'reviewedBy']);
+        $query = Expense::with(['user', 'project.customer', 'project.customer.executive:id,name', 'project.contractType', 'project.serviceType', 'project.coordinators:id,name', 'project.kanbanOverrideCoordinator:id,name', 'realProject:id,name', 'category', 'reviewedBy']);
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request->get('scope') === 'sustentacao') {
@@ -468,42 +467,22 @@ class ExpenseController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        // Despesa multi-item: categoria/descrição/valor/comprovante vêm por item;
-        // o total é a soma. Sem `items` = payload legado single-line.
-        $hasItems = is_array($request->input('items')) && count($request->input('items')) > 0;
-
-        $rules = [
+        $validator = Validator::make($request->all(), [
             'user_id' => 'nullable|exists:users,id', // Opcional - apenas para administradores
             'project_id' => 'required|exists:projects,id',
             'real_project_id' => 'nullable|integer|exists:projects,id',
+            'expense_category_id' => 'required|exists:expense_categories,id',
             'expense_date' => 'required|date',
+            'description' => 'required|string|max:1000',
+            'amount' => 'required|numeric|min:0.01|max:999999.99',
             'expense_type' => ['nullable', 'string'],
             'payment_method' => ['nullable', 'string'],
-        ];
-        if ($hasItems) {
-            $rules['description'] = 'nullable|string|max:1000';
-            $rules['items'] = 'required|array|min:1';
-            $rules['items.*.expense_category_id'] = 'required|exists:expense_categories,id';
-            $rules['items.*.description'] = 'required|string|max:1000';
-            $rules['items.*.amount'] = 'required|numeric|min:0.01|max:999999.99';
-            $rules['items.*.receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png,webp,xlsx,xls,csv|max:5120';
-        } else {
-            $rules['expense_category_id'] = 'required|exists:expense_categories,id';
-            $rules['description'] = 'required|string|max:1000';
-            $rules['amount'] = 'required|numeric|min:0.01|max:999999.99';
-            $rules['receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120'; // 5MB max
-        }
-        $validator = Validator::make($request->all(), $rules);
+            'receipt' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120', // 5MB max
+        ]);
 
         if ($validator->fails()) {
             return $this->validationErrorResponse($validator->errors()->all());
         }
-
-        // Valor efetivo = soma dos itens (multi) ou o amount único (legado).
-        $itemsInput = $hasItems ? array_values($request->input('items')) : [];
-        $effectiveAmount = $hasItems
-            ? round(array_sum(array_map(fn ($it) => (float) ($it['amount'] ?? 0), $itemsInput)), 2)
-            : (float) $validator->validated()['amount'];
 
         $project = Project::find($request->project_id);
         $user = Auth::user();
@@ -549,7 +528,7 @@ class ExpenseController extends Controller
         $limitError = $this->checkDailyLimit(
             $project,
             $targetUserId,
-            $effectiveAmount,
+            (float) $validator->validated()['amount'],
             $validator->validated()['expense_date']
         );
         if ($limitError) return $limitError;
@@ -579,21 +558,6 @@ class ExpenseController extends Controller
         }
 
         $expenseData = $validator->validated();
-
-        // Multi-item: deriva cabeçalho (total, categoria representativa, descrição)
-        // a partir dos itens. amount = soma; categoria = a do 1º item (retrocompat
-        // com quem lê expense.expense_category_id); descrição = informada ou junção.
-        if ($hasItems) {
-            unset($expenseData['items']);
-            $expenseData['amount'] = $effectiveAmount;
-            $expenseData['expense_category_id'] = (int) $itemsInput[0]['expense_category_id'];
-            $headerDesc = trim((string) ($expenseData['description'] ?? ''));
-            if ($headerDesc === '') {
-                $headerDesc = collect($itemsInput)->pluck('description')->filter()->implode(' • ');
-            }
-            $expenseData['description'] = mb_substr($headerDesc, 0, 1000);
-        }
-
         $expenseData['real_project_id'] = $realProjectId; // só preenchido em investimento
 
         // Definir o user_id final baseado nas permissões
@@ -602,11 +566,10 @@ class ExpenseController extends Controller
         $expenseData['expense_type']   = $expenseData['expense_type']   ?? 'reimbursement';
         $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
 
-        // Upload do comprovante (legado single-line) — no multi-item o comprovante
-        // é por item (registrado abaixo). Guardado pra registrar APÓS o create
+        // Upload do comprovante se fornecido — guardado pra registrar APÓS o create
         // (precisamos do expense->id pra entity_id da camada Attachment).
         $newReceiptInfo = null;
-        if (!$hasItems && $request->hasFile('receipt')) {
+        if ($request->hasFile('receipt')) {
             $file = $request->file('receipt');
             $filename = time() . '_' . $file->getClientOriginalName();
             $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
@@ -614,22 +577,7 @@ class ExpenseController extends Controller
         }
 
         $expense = Expense::create($expenseData);
-
-        // Itens (multi-item): cria cada item e registra o comprovante próprio.
-        if ($hasItems) {
-            foreach ($itemsInput as $i => $it) {
-                $item = $expense->items()->create([
-                    'expense_category_id' => (int) $it['expense_category_id'],
-                    'description'         => (string) $it['description'],
-                    'amount'              => round((float) $it['amount'], 2),
-                ]);
-                if ($request->hasFile("items.$i.receipt")) {
-                    $this->registerItemReceiptAttachment($item, $request->file("items.$i.receipt"));
-                }
-            }
-        }
-
-        $expense->load(['user', 'project.customer', 'category', 'items.category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+        $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
 
         // FASE 11.7 — Receipt persiste 100% na camada Attachment.
@@ -667,7 +615,7 @@ class ExpenseController extends Controller
     {
         $user = Auth::user();
 
-        $expense = Expense::with(['user', 'project.customer', 'realProject:id,name', 'category', 'items.category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
+        $expense = Expense::with(['user', 'project.customer', 'realProject:id,name', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover'])->find($id);
 
         if (!$expense) {
             return $this->notFoundResponse('Despesa não encontrada');
@@ -748,53 +696,23 @@ class ExpenseController extends Controller
             );
         }
 
-        // Multi-item na edição: quando `items` é enviado, o cabeçalho (total,
-        // categoria, descrição) é derivado dos itens e a lista é sincronizada.
-        $hasItems = is_array($request->input('items')) && count($request->input('items')) > 0;
-
-        $rules = [
+        $validator = Validator::make($request->all(), [
             'user_id' => 'sometimes|exists:users,id', // Apenas para administradores
             'project_id' => 'sometimes|exists:projects,id',
+            'expense_category_id' => 'sometimes|exists:expense_categories,id',
             'expense_date' => 'sometimes|date',
+            'description' => 'sometimes|string|max:1000',
+            'amount' => 'sometimes|numeric|min:0.01|max:999999.99',
             'expense_type' => ['nullable', 'string'],
             'payment_method' => ['nullable', 'string'],
-        ];
-        if ($hasItems) {
-            $rules['description'] = 'nullable|string|max:1000';
-            $rules['items'] = 'required|array|min:1';
-            $rules['items.*.id'] = 'nullable|integer';
-            $rules['items.*.expense_category_id'] = 'required|exists:expense_categories,id';
-            $rules['items.*.description'] = 'required|string|max:1000';
-            $rules['items.*.amount'] = 'required|numeric|min:0.01|max:999999.99';
-            $rules['items.*.receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png,webp,xlsx,xls,csv|max:5120';
-        } else {
-            $rules['expense_category_id'] = 'sometimes|exists:expense_categories,id';
-            $rules['description'] = 'sometimes|string|max:1000';
-            $rules['amount'] = 'sometimes|numeric|min:0.01|max:999999.99';
-            $rules['receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120';
-        }
-        $validator = Validator::make($request->all(), $rules);
+            'receipt' => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120',
+        ]);
 
         if ($validator->fails()) {
             return $this->validationErrorResponse($validator->errors()->all());
         }
 
         $updateData = $validator->validated();
-
-        // Deriva cabeçalho a partir dos itens (multi-item).
-        $itemsInput = [];
-        if ($hasItems) {
-            $itemsInput = array_values($updateData['items']);
-            unset($updateData['items']);
-            $total = round(array_sum(array_map(fn ($it) => (float) ($it['amount'] ?? 0), $itemsInput)), 2);
-            $updateData['amount'] = $total;
-            $updateData['expense_category_id'] = (int) $itemsInput[0]['expense_category_id'];
-            $headerDesc = trim((string) ($updateData['description'] ?? ''));
-            if ($headerDesc === '') {
-                $headerDesc = collect($itemsInput)->pluck('description')->filter()->implode(' • ');
-            }
-            $updateData['description'] = mb_substr($headerDesc, 0, 1000);
-        }
 
         // Apenas administradores podem alterar o user_id
         if (isset($updateData['user_id']) && !$user->isAdmin()) {
@@ -835,10 +753,9 @@ class ExpenseController extends Controller
             if ($limitError) return $limitError;
         }
 
-        // Upload de novo comprovante (legado single-line) — no multi-item o
-        // comprovante é por item (sincronizado abaixo).
+        // Upload de novo comprovante se fornecido
         $newReceiptInfo = null;
-        if (!$hasItems && $request->hasFile('receipt')) {
+        if ($request->hasFile('receipt')) {
             // Soft-delete dos attachment(s) atuais (FASE 11.7: única fonte).
             $this->softDeleteReceiptAttachments($expense);
 
@@ -857,13 +774,7 @@ class ExpenseController extends Controller
         }
 
         $expense->update($updateData);
-
-        // Sincroniza itens (multi-item): atualiza/insere os enviados, remove o resto.
-        if ($hasItems) {
-            $this->syncExpenseItems($expense, $itemsInput, $request);
-        }
-
-        $expense->load(['user', 'project.customer', 'category', 'items.category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
+        $expense->load(['user', 'project.customer', 'category', 'reviewedBy', 'reversals.reversedBy', 'reversals.originalApprover']);
         $this->invalidateListCache('expenses');
 
         // FASE 11.7 — Receipt persiste 100% na camada Attachment.
@@ -1633,88 +1544,6 @@ class ExpenseController extends Controller
         } catch (\Throwable $e) {
             \Log::warning('EXPENSE.receipt soft-delete falhou', [
                 'expense_id' => $expense->id, 'error' => $e->getMessage(),
-            ]);
-        }
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-    // Multi-item — itens de despesa (categoria + descrição + valor + comprovante).
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Sincroniza os itens da despesa na edição: atualiza os que têm id, cria os
-     * novos, remove os que saíram da lista (junto dos comprovantes), e recalcula
-     * o total do cabeçalho.
-     */
-    private function syncExpenseItems(Expense $expense, array $itemsInput, Request $request): void
-    {
-        $keptIds = [];
-        foreach ($itemsInput as $i => $it) {
-            $itemId = !empty($it['id']) ? (int) $it['id'] : null;
-            $data = [
-                'expense_category_id' => (int) $it['expense_category_id'],
-                'description'         => (string) $it['description'],
-                'amount'              => round((float) $it['amount'], 2),
-            ];
-
-            $item = $itemId ? $expense->items()->whereKey($itemId)->first() : null;
-            if ($item) {
-                $item->update($data);
-            } else {
-                $item = $expense->items()->create($data);
-            }
-            $keptIds[] = $item->id;
-
-            // Novo comprovante do item substitui o anterior.
-            if ($request->hasFile("items.$i.receipt")) {
-                $this->softDeleteItemReceiptAttachments($item);
-                $this->registerItemReceiptAttachment($item, $request->file("items.$i.receipt"));
-            }
-        }
-
-        // Remove itens que saíram da lista (e seus comprovantes).
-        $expense->items()->whereNotIn('id', $keptIds ?: [0])->get()->each(function (ExpenseItem $item) {
-            $this->softDeleteItemReceiptAttachments($item);
-            $item->delete();
-        });
-
-        // Recalcula o total do cabeçalho a partir do que ficou (defensivo).
-        $sum = round((float) $expense->items()->sum('amount'), 2);
-        if (round((float) $expense->amount, 2) !== $sum) {
-            $expense->update(['amount' => $sum]);
-        }
-    }
-
-    private function registerItemReceiptAttachment(ExpenseItem $item, $file): void
-    {
-        $actor = Auth::user() ?? \App\Models\User::find(optional($item->expense)->user_id);
-        if (!$actor) {
-            throw new \RuntimeException("Não há ator pra registrar receipt do expense_item {$item->id}");
-        }
-        $filename = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
-        $path = $file->storeAs('receipts/' . date('Y/m'), $filename, 'public');
-        app(\App\Attachments\AttachmentService::class)->registerExisting($actor, [
-            'entity_type'   => 'EXPENSE_ITEM',
-            'entity_id'     => $item->id,
-            'category'      => 'receipt',
-            'storage_path'  => $path,
-            'original_name' => $file->getClientOriginalName(),
-            'mime_type'     => $file->getMimeType() ?? 'application/octet-stream',
-        ]);
-    }
-
-    private function softDeleteItemReceiptAttachments(ExpenseItem $item): void
-    {
-        try {
-            \App\Models\Attachment::query()
-                ->forEntity('EXPENSE_ITEM', $item->id)
-                ->ofCategory('receipt')
-                ->whereNull('deleted_at')
-                ->get()
-                ->each(fn ($att) => $att->delete());
-        } catch (\Throwable $e) {
-            \Log::warning('EXPENSE_ITEM.receipt soft-delete falhou', [
-                'expense_item_id' => $item->id, 'error' => $e->getMessage(),
             ]);
         }
     }

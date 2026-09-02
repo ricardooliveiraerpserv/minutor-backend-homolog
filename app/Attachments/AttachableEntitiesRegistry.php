@@ -222,6 +222,20 @@ class AttachableEntitiesRegistry
                 'max_size_mb' => 10,
             ],
 
+            // ── EXPENSE_ITEM (comprovante por item de despesa) ────────────────
+            'EXPENSE_ITEM' => [
+                'model' => \App\Models\ExpenseItem::class,
+                'categories' => ['receipt'],
+                'default_visibility' => 'internal',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalOrPartner) {
+                    // Mesma regra do EXPENSE: cliente não vê comprovante interno.
+                    return $internalOrPartner($user);
+                },
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','xlsx','xls','csv'],
+                'max_size_mb' => 10,
+            ],
+
             // ── TIMESHEET ─────────────────────────────────────────────────────
             'TIMESHEET' => [
                 'model' => Timesheet::class,
