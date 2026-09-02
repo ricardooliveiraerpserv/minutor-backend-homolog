@@ -113,8 +113,12 @@ class ImpersonationController extends Controller
                 // é a flag is_executive (executivo/ADM do parceiro vs membro comum) — mesma
                 // regra do FechamentoParceiro.
                 $query->where('type', 'parceiro_admin')->whereNotNull('partner_id')
-                    ->where('is_executive', $admin)
                     ->with('partner:id,name');
+                // "Todos": quando o param `admin` NÃO é enviado, não filtra por is_executive
+                // (mostra admin + membro juntos). Quando enviado (1/0), filtra normalmente.
+                if ($request->has('admin')) {
+                    $query->where('is_executive', $admin);
+                }
                 if ($partnerId) {
                     $query->where('partner_id', (int) $partnerId);
                 }
