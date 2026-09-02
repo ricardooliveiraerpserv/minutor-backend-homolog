@@ -199,7 +199,6 @@ class HelpDeskPortalController extends Controller
 
         $ticket = HelpDeskTicket::create(array_merge($v, [
             'customer_id'       => $cid,
-            'company_id'        => $companyId,
             'priority'          => $v['priority'] ?? 'normal',
             'channel'           => 'portal',
             'status_id'         => optional($status)->id,
@@ -207,9 +206,13 @@ class HelpDeskPortalController extends Controller
             'created_by_id'     => $request->user()->id,
             'last_activity_at'  => now(),
         ]));
+        // ⚠️ company_id NÃO é fillable → o create() DESCARTA no mass-assign e o BelongsToCompany carimba
+        // do contexto (NULL p/ cliente) → chamado sumia da fila do admin. Setar DIRETO (fora do mass-assign).
+        $ticket->company_id = $companyId;
         // Número no formato CONFIGURADO (prefixo + dígitos + sequência) DA MESMA EMPRESA — senão o
         // cliente sem contexto incrementava o template de outra empresa (gerando número colidente).
-        $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next($companyId)]);
+        $ticket->ticket_number = \App\Services\HelpDeskTicketNumber::next($companyId);
+        $ticket->save();
         $this->sla->apply($ticket);
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
 
