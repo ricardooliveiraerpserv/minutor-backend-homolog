@@ -48,6 +48,7 @@ class PartnerReportController extends Controller
             ->whereIn('user_id', $consultantIds)
             ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('timesheets.company_id', $cid))
             ->whereIn('status', ['approved', 'pending'])
+            ->where('is_billable_only', false)
             ->whereNull('deleted_at');
 
         if ($request->filled('start_date')) {

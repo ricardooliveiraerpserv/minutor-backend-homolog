@@ -352,6 +352,8 @@ class FechamentoParceiroController extends Controller
                 ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
                 ->whereNull('deleted_at')
                 ->where('is_internal_action', false)
+                // Fat. Admin fatura no cliente, não paga o parceiro (regra do FechamentoConsultor).
+                ->where('is_billable_only', false)
                 ->sum('effort_minutes');
 
             $horas = round($minutos / 60, 2);
@@ -468,6 +470,7 @@ class FechamentoParceiroController extends Controller
             ->whereBetween('timesheets.date', [$from, $to])
             ->whereNotIn('timesheets.status', $excludeStatuses)
             ->whereNull('timesheets.deleted_at')
+            ->where('timesheets.is_billable_only', false)
             ->orderBy('timesheets.user_id')
             ->orderBy('timesheets.date')
             ->get()
