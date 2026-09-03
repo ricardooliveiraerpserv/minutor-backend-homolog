@@ -894,12 +894,29 @@ class FechamentoClienteController extends Controller
             ->get();
 
         // Quais despesas têm comprovante (anexo category=receipt) — batch, sem N+1.
-        $withReceipt = \App\Models\Attachment::query()
+        // Considera o comprovante legado (nível despesa, entity_type EXPENSE) E os
+        // comprovantes por item (despesa multi-item, entity_type EXPENSE_ITEM).
+        $expIds = $expenses->pluck('id')->all() ?: [0];
+        $withReceiptSet = \App\Models\Attachment::query()
             ->where('entity_type', 'EXPENSE')
-            ->whereIn('entity_id', $expenses->pluck('id')->all() ?: [0])
+            ->whereIn('entity_id', $expIds)
             ->where('category', 'receipt')
             ->whereNull('deleted_at')
-            ->pluck('entity_id')->unique()->flip();
+            ->pluck('entity_id')->unique();
+        $itemToExpense = \App\Models\ExpenseItem::whereIn('expense_id', $expIds)
+            ->pluck('expense_id', 'id'); // [item_id => expense_id]
+        if ($itemToExpense->isNotEmpty()) {
+            $itemsWithReceipt = \App\Models\Attachment::query()
+                ->where('entity_type', 'EXPENSE_ITEM')
+                ->whereIn('entity_id', $itemToExpense->keys()->all())
+                ->where('category', 'receipt')
+                ->whereNull('deleted_at')
+                ->pluck('entity_id')->unique();
+            $withReceiptSet = $withReceiptSet
+                ->concat($itemsWithReceipt->map(fn ($iid) => $itemToExpense[$iid]))
+                ->unique();
+        }
+        $withReceipt = $withReceiptSet->flip();
 
         return $expenses
             ->map(fn ($e) => [
@@ -1791,10 +1808,20 @@ class FechamentoClienteController extends Controller
                 $expenseIds = [];
             }
             if ($expenseIds) {
+                // Comprovante legado (nível despesa).
                 $atts = \App\Models\Attachment::query()
                     ->where('entity_type', 'EXPENSE')->whereIn('entity_id', $expenseIds)
                     ->where('category', 'receipt')->whereNull('deleted_at')
                     ->orderBy('entity_id')->orderBy('id')->get();
+                // Comprovantes POR ITEM (despesa multi-item) — entity_type EXPENSE_ITEM.
+                $itemIds = \App\Models\ExpenseItem::whereIn('expense_id', $expenseIds)->pluck('id')->all();
+                if ($itemIds) {
+                    $itemAtts = \App\Models\Attachment::query()
+                        ->where('entity_type', 'EXPENSE_ITEM')->whereIn('entity_id', $itemIds)
+                        ->where('category', 'receipt')->whereNull('deleted_at')
+                        ->orderBy('entity_id')->orderBy('id')->get();
+                    $atts = $atts->concat($itemAtts);
+                }
                 foreach ($atts as $att) {
                     $abs = \Illuminate\Support\Facades\Storage::disk('public')->path($att->storage_path);
                     if (is_file($abs)) { $receiptPaths[] = $abs; }
