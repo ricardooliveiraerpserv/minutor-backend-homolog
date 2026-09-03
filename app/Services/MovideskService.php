@@ -924,10 +924,14 @@ class MovideskService
 
     /**
      * Trava de re-rota da varredura: bloqueia MIGRAR um apontamento já importado para o
-     * projeto-destino quando ele é ANTERIOR ao início da integração desse destino
-     * (projects.movidesk_integration_since). Assim, ao trocar a chave do Movidesk e escolher
-     * "não migrar", os apontamentos antigos NÃO são movidos automaticamente pela varredura.
-     * since = null → sem trava (comportamento antigo: re-roteia).
+     * projeto-destino quando ele foi IMPORTADO (created_at) ANTES do início da integração
+     * desse destino (projects.movidesk_integration_since). Assim, ao trocar a chave do
+     * Movidesk e escolher "não migrar", os apontamentos ANTIGOS (já existentes) NÃO são
+     * movidos automaticamente pela varredura — só os novos (importados a partir do corte)
+     * caem no projeto novo. since = null → sem trava (comportamento antigo: re-roteia).
+     *
+     * OBS: usa created_at (data de importação), não a data do serviço — "antigo" = o que já
+     * existia no momento da troca, independente da data do serviço.
      */
     private function movideskRerouteBlocked(Timesheet $timesheet, int $newProjectId): bool
     {
@@ -936,9 +940,15 @@ class MovideskService
         if (!$since) {
             return false;
         }
-        $sinceStr = $since instanceof \Carbon\Carbon ? $since->format('Y-m-d') : substr((string) $since, 0, 10);
-        $tsDate   = $timesheet->date instanceof \Carbon\Carbon ? $timesheet->date->format('Y-m-d') : substr((string) $timesheet->date, 0, 10);
-        return $tsDate < $sinceStr;
+        $sinceStr  = $since instanceof \Carbon\Carbon ? $since->format('Y-m-d') : substr((string) $since, 0, 10);
+        $createdAt = $timesheet->created_at instanceof \Carbon\Carbon
+            ? $timesheet->created_at->format('Y-m-d')
+            : substr((string) $timesheet->created_at, 0, 10);
+        // Sem created_at (raro), cai na data do serviço como aproximação.
+        if ($createdAt === '') {
+            $createdAt = $timesheet->date instanceof \Carbon\Carbon ? $timesheet->date->format('Y-m-d') : substr((string) $timesheet->date, 0, 10);
+        }
+        return $createdAt < $sinceStr;
     }
 
     private function extractProjectId(?int $customerId, bool $forRemap = false): ?int
