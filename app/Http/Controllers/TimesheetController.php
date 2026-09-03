@@ -2397,21 +2397,26 @@ class TimesheetController extends Controller
         }
         $validated = $request->validate(['date' => 'required|date']);
 
-        $timesheet->date        = $validated['date'];
-        $timesheet->date_locked = true; // integracao nao sobrescreve
+        // "Data de digitacao" = created_at (quando o apontamento foi LANÇADO/digitado),
+        // NAO a data do servico (`date`). Preserva a hora original, só troca a data.
+        $orig = $timesheet->created_at instanceof \Carbon\Carbon
+            ? $timesheet->created_at
+            : ($timesheet->created_at ? \Carbon\Carbon::parse($timesheet->created_at) : \Carbon\Carbon::now());
+        $timesheet->created_at = \Carbon\Carbon::parse($validated['date'])->setTimeFrom($orig);
+        // Se estava marcado como ATRASO (lançado fora do prazo) e a nova data de digitacao
+        // o coloca dentro do prazo, volta a Pendente.
         if ($timesheet->status === Timesheet::STATUS_LATE) {
             $timesheet->status = Timesheet::STATUS_PENDING;
         }
         $timesheet->save();
 
-        $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
         $this->invalidateListCache('timesheets');
         $timesheet->load(['user', 'customer', 'project']);
 
         return response()->json([
             'success' => true,
             'data'    => $timesheet,
-            'message' => 'Data de digitacao alterada e travada (a integracao nao sobrescreve).',
+            'message' => 'Data de digitacao (inclusao) alterada.',
         ]);
     }
 
