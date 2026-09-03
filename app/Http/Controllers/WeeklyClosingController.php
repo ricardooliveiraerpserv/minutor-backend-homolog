@@ -31,10 +31,29 @@ class WeeklyClosingController extends Controller
         $svc = app(ClosingService::class);
         $now = Carbon::now(self::TZ);
 
-        $months = [];
+        // Meses exibidos: janela recente (4) ∪ meses COM MOVIMENTO (apontamento/despesa)
+        // — assim meses antigos que têm movimento (ex.: Maio) também aparecem no painel e
+        // no seletor. Lookback limitado (24 meses) p/ não explodir a lista.
+        $monthKeys = collect();
         for ($mi = 0; $mi < 4; $mi++) {
-            $mDate = $now->copy()->startOfMonth()->subMonths($mi);
-            $ym    = $mDate->format('Y-m');
+            $monthKeys->push($now->copy()->startOfMonth()->subMonths($mi)->format('Y-m'));
+        }
+        $lookbackFrom = $now->copy()->startOfMonth()->subMonths(24)->toDateString();
+        $tsMonths = \App\Models\Timesheet::query()
+            ->where('date', '>=', $lookbackFrom)->whereNull('deleted_at')
+            ->selectRaw("distinct to_char(date, 'YYYY-MM') as ym")->pluck('ym');
+        $expMonths = \App\Models\Expense::query()
+            ->where('expense_date', '>=', $lookbackFrom)
+            ->selectRaw("distinct to_char(expense_date, 'YYYY-MM') as ym")->pluck('ym');
+        $curYm = $now->format('Y-m');
+        $monthKeys = $monthKeys->merge($tsMonths)->merge($expMonths)
+            ->filter()
+            ->filter(fn ($ym) => $ym <= $curYm)   // nunca meses futuros
+            ->unique()->sortDesc()->values();
+
+        $months = [];
+        foreach ($monthKeys as $ym) {
+            $mDate = Carbon::createFromFormat('Y-m', $ym, self::TZ)->startOfMonth();
 
             // Semanas presas ao MÊS (não cruzam): a 1ª começa no dia 01 (pode ter menos
             // dias), a última termina no último dia do mês. Fonte: ClosingService.
@@ -131,7 +150,7 @@ class WeeklyClosingController extends Controller
         // INDIVIDUALMENTE, que NÃO aparecem no status global do mês/semana. Era o que travava
         // um consultor de forma invisível (ex.: mês fechado só p/ ele). Descontar os que já
         // têm reabertura ativa (não bloqueiam mais). Janela = os meses exibidos no painel.
-        $minYm = $now->copy()->startOfMonth()->subMonths(3)->format('Y-m');
+        $minYm = $monthKeys->min() ?: $now->copy()->startOfMonth()->subMonths(3)->format('Y-m');
         $rows = \App\Models\CompetenceClosure::query()
             ->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where('period_key', '>=', $minYm)
