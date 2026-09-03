@@ -1822,6 +1822,16 @@ class ProjectController extends Controller
         $enablingMovidesk = !empty($validated['movidesk_integration_enabled'])
             && !(bool) $project->movidesk_integration_enabled;
 
+        // ATÔMICO: grava o marco (movidesk_integration_since) JUNTO com a flag, na MESMA
+        // transação/UPDATE. Se ficasse num update separado DEPOIS, a varredura (que roda a cada
+        // 5 min) poderia pegar a janela flag=true + since=null e migrar os antigos indevidamente.
+        // "NÃO migrar" → data de hoje (varredura só re-roteia a partir daqui); "migrar" → null.
+        if ($enablingMovidesk) {
+            $validated['movidesk_integration_since'] = $migrateMovideskTimesheets
+                ? null
+                : Carbon::now('America/Sao_Paulo')->toDateString();
+        }
+
         \DB::transaction(function () use ($project, $validated) {
             // Desliga o flag dos OUTROS projetos do cliente ANTES de ligar neste, pra
             // nunca haver 2 ativos ao mesmo tempo (a unique index parcial barraria).
@@ -1833,18 +1843,6 @@ class ProjectController extends Controller
             }
             $project->update($validated);
         });
-
-        // Marco da integração: ao LIGAR a chave neste projeto, grava desde quando ela vale.
-        // "NÃO migrar" (migrate=false) → data de hoje: a varredura automática só re-roteia
-        // apontamentos A PARTIR de hoje; os anteriores ficam parados (não migra automático).
-        // "Migrar" (migrate=true) → null (sem trava; migra tudo, inclusive os antigos abaixo).
-        if ($enablingMovidesk) {
-            $project->update([
-                'movidesk_integration_since' => $migrateMovideskTimesheets
-                    ? null
-                    : Carbon::now('America/Sao_Paulo')->toDateString(),
-            ]);
-        }
 
         // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
         // para o novo projeto flagado. "Origem Movidesk" = tem movidesk_appointment_id
