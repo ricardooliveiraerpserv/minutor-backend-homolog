@@ -1167,6 +1167,13 @@ class ProjectController extends Controller
             }
         }
 
+        // Marco da integração no projeto novo: se acabou com a chave ligada, grava a data
+        // de hoje. A varredura só re-roteia apontamentos existentes a partir daqui (primeiras
+        // importações são CREATE e não são afetadas pela trava).
+        if ($project->movidesk_integration_enabled && !$project->movidesk_integration_since) {
+            $project->update(['movidesk_integration_since' => Carbon::now('America/Sao_Paulo')->toDateString()]);
+        }
+
         // Vincular consultores
         if (!empty($consultantIds)) {
             $project->consultants()->attach($consultantIds);
@@ -1811,6 +1818,10 @@ class ProjectController extends Controller
                 ->all();
         }
 
+        // Está LIGANDO a chave neste projeto agora (transição desligada→ligada)?
+        $enablingMovidesk = !empty($validated['movidesk_integration_enabled'])
+            && !(bool) $project->movidesk_integration_enabled;
+
         \DB::transaction(function () use ($project, $validated) {
             // Desliga o flag dos OUTROS projetos do cliente ANTES de ligar neste, pra
             // nunca haver 2 ativos ao mesmo tempo (a unique index parcial barraria).
@@ -1822,6 +1833,18 @@ class ProjectController extends Controller
             }
             $project->update($validated);
         });
+
+        // Marco da integração: ao LIGAR a chave neste projeto, grava desde quando ela vale.
+        // "NÃO migrar" (migrate=false) → data de hoje: a varredura automática só re-roteia
+        // apontamentos A PARTIR de hoje; os anteriores ficam parados (não migra automático).
+        // "Migrar" (migrate=true) → null (sem trava; migra tudo, inclusive os antigos abaixo).
+        if ($enablingMovidesk) {
+            $project->update([
+                'movidesk_integration_since' => $migrateMovideskTimesheets
+                    ? null
+                    : Carbon::now('America/Sao_Paulo')->toDateString(),
+            ]);
+        }
 
         // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
         // para o novo projeto flagado. "Origem Movidesk" = tem movidesk_appointment_id

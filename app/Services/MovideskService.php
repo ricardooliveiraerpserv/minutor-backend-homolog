@@ -271,8 +271,14 @@ class MovideskService
             // Sem isso, NÃO troca o projeto — evita o flip-flop com a chave desativada.
             $newProjectId = $this->extractProjectId($timesheet->customer_id, true);
             if ($newProjectId && $newProjectId !== $timesheet->project_id) {
-                $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
-                $timesheet->project_id = $newProjectId;
+                // TRAVA de migração automática: ao trocar a chave do Movidesk e escolher
+                // "não migrar", o projeto-destino recebe movidesk_integration_since (data da
+                // troca). A varredura só re-roteia apontamentos A PARTIR dessa data; os
+                // ANTERIORES ficam parados no projeto original (não migra automático).
+                if (!$this->movideskRerouteBlocked($timesheet, $newProjectId)) {
+                    $changes['project_id'] = ['from' => $timesheet->project_id, 'to' => $newProjectId];
+                    $timesheet->project_id = $newProjectId;
+                }
             }
 
             // Atualizar data/horários/descrição/effort do Movidesk se divergirem
@@ -914,6 +920,25 @@ class MovideskService
                 'active'       => true,
             ]
         );
+    }
+
+    /**
+     * Trava de re-rota da varredura: bloqueia MIGRAR um apontamento já importado para o
+     * projeto-destino quando ele é ANTERIOR ao início da integração desse destino
+     * (projects.movidesk_integration_since). Assim, ao trocar a chave do Movidesk e escolher
+     * "não migrar", os apontamentos antigos NÃO são movidos automaticamente pela varredura.
+     * since = null → sem trava (comportamento antigo: re-roteia).
+     */
+    private function movideskRerouteBlocked(Timesheet $timesheet, int $newProjectId): bool
+    {
+        $target = Project::find($newProjectId);
+        $since  = $target?->movidesk_integration_since;
+        if (!$since) {
+            return false;
+        }
+        $sinceStr = $since instanceof \Carbon\Carbon ? $since->format('Y-m-d') : substr((string) $since, 0, 10);
+        $tsDate   = $timesheet->date instanceof \Carbon\Carbon ? $timesheet->date->format('Y-m-d') : substr((string) $timesheet->date, 0, 10);
+        return $tsDate < $sinceStr;
     }
 
     private function extractProjectId(?int $customerId, bool $forRemap = false): ?int
