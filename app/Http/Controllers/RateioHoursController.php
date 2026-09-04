@@ -226,18 +226,11 @@ class RateioHoursController extends Controller
         });
 
         // RETROATIVO: re-distribui os apontamentos já lançados no servidor conforme os novos
-        // períodos — PRESERVANDO os que foram ajustados manualmente (rateio_overridden=true).
-        // Sem período na data => sync limpa os filhos (não distribui).
-        $svc = app(RateioHoursService::class);
-        Timesheet::where('project_id', $project->id)
-            ->whereNull('rateio_source_timesheet_id')
-            ->where('rateio_overridden', false)
-            ->with('project')
-            ->chunkById(200, function ($parents) use ($svc) {
-                foreach ($parents as $parent) {
-                    $svc->sync($parent, null);
-                }
-            });
+        // períodos — PRESERVANDO os ajustados manualmente (rateio_overridden=true). Roda em
+        // FILA (job) e NÃO no request: assim, com muitos apontamentos, não estoura o timeout
+        // (deixando o re-sync parcial) e uma falha isolada não aborta os demais (try/catch por
+        // pai no job). A divisão atualiza em segundo plano em segundos.
+        \App\Jobs\ResyncRateioHoursJob::dispatch($project->id);
 
         return $this->plans($project->fresh());
     }
