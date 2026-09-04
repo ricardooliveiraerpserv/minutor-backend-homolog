@@ -187,8 +187,11 @@ class TimesheetController extends Controller
     {
         $user = Auth::user();
 
-        // Paginação PO-UI
-        $perPage = min($request->get('pageSize', 15), 100);
+        // Paginação PO-UI. Teto de 5000 (não 100): o Relatório de Apontamentos/Fechamento pede
+        // pageSize alto (2000) p/ trazer o MÊS INTEIRO de um cliente numa página. Com o teto de 100
+        // + order by date desc, clientes com >100 apontamentos no período tinham os apontamentos
+        // MAIS ANTIGOS (início do mês) descartados SILENCIOSAMENTE do relatório de cobrança.
+        $perPage = min((int) $request->get('pageSize', 15), 5000);
         $page = (int) $request->get('page', 1);
 
         // Eager-load com colunas específicas — evita trazer rows inteiras de relações
