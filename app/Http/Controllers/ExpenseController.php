@@ -518,12 +518,12 @@ class ExpenseController extends Controller
             $rules['items.*.expense_category_id'] = 'required|exists:expense_categories,id';
             $rules['items.*.description'] = 'required|string|max:1000';
             $rules['items.*.amount'] = 'required|numeric|min:0.01|max:999999.99';
-            $rules['items.*.receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png,webp,xlsx,xls,csv|max:5120';
+            $rules['items.*.receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png,webp,xlsx,xls,csv|max:51200'; // 50MB — upload direto no backend (contorna a borda da Vercel)
         } else {
             $rules['expense_category_id'] = 'required|exists:expense_categories,id';
             $rules['description'] = 'required|string|max:1000';
             $rules['amount'] = 'required|numeric|min:0.01|max:999999.99';
-            $rules['receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png|max:5120'; // 5MB max
+            $rules['receipt'] = 'nullable|file|mimes:pdf,jpg,jpeg,png,webp,xlsx,xls,csv|max:51200'; // 50MB — idem
         }
         $validator = Validator::make($request->all(), $rules);
 
