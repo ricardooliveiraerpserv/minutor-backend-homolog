@@ -91,6 +91,24 @@ class ActionReminderController extends Controller
      * IDs dos usuários que têm a ação $key não resolvida AGORA. Reusado pelo comando de lembrete.
      * Mesma definição de "pendência" usada em ApprovalController::homeActions.
      */
+    /**
+     * Só mantém quem REALMENTE tem pendência no seu escopo de aprovação — a MESMA contagem do card
+     * do Meu Dia (ApprovalController::pending*ApprovalCount). Sem isto, o lembrete avisava coords
+     * listados num projeto cujo override aponta p/ OUTRO (contagem 0 na tela → "notificação sem nada").
+     */
+    private static function filterByPendingApproval(array $userIds, string $kind): array
+    {
+        if (empty($userIds)) return [];
+        $ctrl = app(ApprovalController::class);
+        return collect($userIds)->unique()->filter(function ($id) use ($ctrl, $kind) {
+            $u = User::find($id);
+            if (!$u) return false;
+            return $kind === 'expense'
+                ? $ctrl->pendingExpenseApprovalCount($u) > 0
+                : $ctrl->pendingTimesheetApprovalCount($u) > 0;
+        })->values()->all();
+    }
+
     public static function affectedUserIds(string $key): array
     {
         switch ($key) {
@@ -132,7 +150,8 @@ class ActionReminderController extends Controller
                     User::where('type', 'coordenador')->where('coordinator_type', 'sustentacao')->where('enabled', true)
                         ->pluck('id')->each(fn ($id) => $expIds->push($id));
                 }
-                return $expIds->unique()->filter()->values()->all();
+                // Só quem tem despesa pendente NO SEU escopo (respeita override de coord = card do Meu Dia).
+                return self::filterByPendingApproval($expIds->unique()->filter()->values()->all(), 'expense');
 
             case 'pay_exp':
                 return Expense::where('status', Expense::STATUS_APPROVED)->where('is_paid', false)->exists()
@@ -153,7 +172,8 @@ class ActionReminderController extends Controller
                         if ($p->kanban_coordinator_override_id) $ids->push($p->kanban_coordinator_override_id);
                     });
 
-                return $ids->unique()->filter()->values()->all();
+                // Só quem tem apontamento pendente NO SEU escopo (respeita override de coord = card do Meu Dia).
+                return self::filterByPendingApproval($ids->unique()->filter()->values()->all(), 'timesheet');
 
             case 'approve_ts_sust':
                 // Sustentação: só os apontamentos do DIA ANTERIOR, nos projetos sustentacao/cloud.
@@ -162,8 +182,10 @@ class ActionReminderController extends Controller
                     ->whereHas('project.serviceType', fn ($q) => $q->whereIn('code', ['sustentacao', 'cloud']))->exists();
                 if (!$hasSust) return [];
 
-                return User::where('type', 'coordenador')->where('coordinator_type', 'sustentacao')->where('enabled', true)
+                $sustIds = User::where('type', 'coordenador')->where('coordinator_type', 'sustentacao')->where('enabled', true)
                     ->pluck('id')->all();
+                // Só quem tem apontamento de sustentação (dia anterior) pendente no seu escopo.
+                return self::filterByPendingApproval($sustIds, 'timesheet');
 
             default:
                 return [];
