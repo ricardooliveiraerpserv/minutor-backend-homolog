@@ -100,10 +100,27 @@ class GraphMailSender
         }
 
         try {
+            $token   = self::token();
+            $bccClean = array_values(array_filter(array_map('trim', $bcc), fn ($e) => $e !== ''));
+
+            // Anexos > ~3 MB no total (arquivos + memória) não cabem no sendMail inline (teto de
+            // ~4 MB de request do Graph). Nesse caso envia via RASCUNHO (mesmo padrão do
+            // fechamento): anexa cada arquivo/imagem num request separado e envia — teto sobe pro
+            // tamanho máx. de mensagem da caixa (~25 MB).
+            $filePaths = array_values(array_filter(array_map('trim', $attachmentPaths), fn ($p) => $p !== '' && is_file($p)));
+            $grandTotal = array_sum(array_map(fn ($p) => (int) filesize($p), $filePaths));
+            foreach ($inlineAttachments as $a) { $grandTotal += strlen((string) ($a['bytes'] ?? '')); }
+            if ($grandTotal > GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
+                if ($grandTotal > GraphMailer::MAX_TOTAL_ATTACHMENTS_BYTES) {
+                    return [false, 'Anexos excedem ' . (int) round(GraphMailer::MAX_TOTAL_ATTACHMENTS_BYTES / 1048576) . ' MB no total.'];
+                }
+                GraphMailer::sendViaDraft($token, $fromEmail, $to, $cc, $bccClean, $subject, $htmlBody, $filePaths, $inlineAttachments);
+                return [true, null];
+            }
+
             $message = GraphMailer::buildMessage($subject, $htmlBody, $to, $cc, $attachmentPaths);
 
             // BCC (envio único p/ muitos destinatários — ex.: notificação a um grupo).
-            $bccClean = array_values(array_filter(array_map('trim', $bcc), fn ($e) => $e !== ''));
             if (!empty($bccClean)) {
                 $message['bccRecipients'] = array_map(fn ($e) => ['emailAddress' => ['address' => $e]], $bccClean);
             }
@@ -131,7 +148,6 @@ class GraphMailSender
                 $message['attachments'][] = $entry;
             }
 
-            $token   = self::token();
             $url     = sprintf('%s/users/%s/sendMail', self::GRAPH_BASE, rawurlencode($fromEmail));
 
             $resp = Http::withToken($token)->acceptJson()->asJson()
