@@ -26,13 +26,6 @@ class GraphMailer
     /** Teto por ARQUIVO no e-mail (createUploadSession cobre >3MB). Alinha com o upload (25MB). */
     public const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
-    /**
-     * Teto TOTAL de anexos quando enviado via RASCUNHO (draft + anexos individuais /
-     * upload session). Sobe bem além do sendMail inline (~4 MB de request). 25 MB é o teto
-     * prático/padrão de tamanho de mensagem da caixa (dá pra subir se a org permitir mais).
-     */
-    public const MAX_TOTAL_ATTACHMENTS_BYTES = 25 * 1024 * 1024;
-
     /** true só quando as 3 credenciais estão preenchidas. */
     public static function enabled(): bool
     {
@@ -92,23 +85,9 @@ class GraphMailer
         string $htmlBody,
         array $attachmentPaths = []
     ): void {
-        $token = self::token();
-
-        // Anexos > ~3 MB no total não cabem no sendMail inline (teto de ~4 MB de request do
-        // Graph). Nesse caso, envia via RASCUNHO: cria o draft, anexa cada arquivo num request
-        // separado (upload session pros individuais > 3 MB) e envia. Sobe o teto pro tamanho
-        // máx. de mensagem da caixa (~25 MB).
-        $paths = array_values(array_filter(array_map('trim', $attachmentPaths), fn ($p) => $p !== '' && is_file($p)));
-        $total = array_sum(array_map(fn ($p) => (int) filesize($p), $paths));
-        if ($total > self::MAX_INLINE_ATTACHMENTS_BYTES) {
-            if ($total > self::MAX_TOTAL_ATTACHMENTS_BYTES) {
-                throw new \RuntimeException('Graph: anexos excedem ' . (int) round(self::MAX_TOTAL_ATTACHMENTS_BYTES / 1048576) . ' MB (teto da caixa).');
-            }
-            self::sendViaDraft($token, $fromEmail, $to, $cc, $subject, $htmlBody, $paths);
-            return;
-        }
-
         $message = self::buildMessage($subject, $htmlBody, $to, $cc, $attachmentPaths);
+
+        $token = self::token();
         $url   = sprintf('%s/users/%s/sendMail', self::GRAPH_BASE, rawurlencode($fromEmail));
 
         $resp = Http::withToken($token)
@@ -123,111 +102,6 @@ class GraphMailer
             throw new \RuntimeException(
                 'Graph sendMail falhou (HTTP ' . $resp->status() . '): ' . $resp->body()
             );
-        }
-    }
-
-    /**
-     * Envio via RASCUNHO (draft) para anexos grandes: cria a mensagem sem anexos, anexa cada
-     * arquivo num request separado (upload session pros > 3 MB) e envia. Contorna o teto de
-     * ~4 MB de request do sendMail inline.
-     *
-     * @param array<int,string> $to
-     * @param array<int,string> $cc
-     * @param array<int,string> $paths
-     */
-    private static function sendViaDraft(string $token, string $fromEmail, array $to, array $cc, string $subject, string $htmlBody, array $paths): void
-    {
-        $base = sprintf('%s/users/%s', self::GRAPH_BASE, rawurlencode($fromEmail));
-
-        // 1) Cria o rascunho (sem anexos de arquivo).
-        $create = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages', [
-            'subject'      => $subject,
-            'body'         => ['contentType' => 'HTML', 'content' => $htmlBody],
-            'toRecipients' => self::recipients($to),
-            'ccRecipients' => self::recipients($cc),
-        ]);
-        if (!$create->successful()) {
-            throw new \RuntimeException('Graph criar rascunho falhou (HTTP ' . $create->status() . '): ' . $create->body());
-        }
-        $msgId = (string) $create->json('id');
-        if ($msgId === '') {
-            throw new \RuntimeException('Graph: rascunho criado sem id.');
-        }
-
-        try {
-            // 2) Anexa cada arquivo — request separado (sem o teto de ~4 MB do sendMail).
-            foreach ($paths as $path) {
-                $size = (int) filesize($path);
-                if ($size <= self::MAX_INLINE_ATTACHMENTS_BYTES) {
-                    $r = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages/' . $msgId . '/attachments', [
-                        '@odata.type'  => '#microsoft.graph.fileAttachment',
-                        'name'         => basename($path),
-                        'contentType'  => self::contentTypeFor(basename($path)),
-                        'contentBytes' => base64_encode((string) file_get_contents($path)),
-                    ]);
-                    if (!$r->successful()) {
-                        throw new \RuntimeException('Graph anexar falhou (HTTP ' . $r->status() . '): ' . $r->body());
-                    }
-                } else {
-                    self::uploadLargeAttachment($token, $base, $msgId, $path, $size);
-                }
-            }
-
-            // 3) Envia o rascunho.
-            $send = Http::withToken($token)->acceptJson()->post($base . '/messages/' . $msgId . '/send');
-            if (!$send->successful()) {
-                throw new \RuntimeException('Graph enviar rascunho falhou (HTTP ' . $send->status() . '): ' . $send->body());
-            }
-        } catch (\Throwable $e) {
-            // Não deixa rascunho órfão na caixa.
-            try { Http::withToken($token)->delete($base . '/messages/' . $msgId); } catch (\Throwable $ignored) {}
-            throw $e;
-        }
-    }
-
-    /** Anexo individual > 3 MB: upload session em chunks (múltiplos de 320 KiB, exceto o último). */
-    private static function uploadLargeAttachment(string $token, string $base, string $msgId, string $path, int $size): void
-    {
-        $session = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages/' . $msgId . '/attachments/createUploadSession', [
-            'AttachmentItem' => [
-                'attachmentType' => 'file',
-                'name'           => basename($path),
-                'size'           => $size,
-                'contentType'    => self::contentTypeFor(basename($path)),
-            ],
-        ]);
-        if (!$session->successful()) {
-            throw new \RuntimeException('Graph upload session falhou (HTTP ' . $session->status() . '): ' . $session->body());
-        }
-        $uploadUrl = (string) $session->json('uploadUrl');
-        if ($uploadUrl === '') {
-            throw new \RuntimeException('Graph: upload session sem uploadUrl.');
-        }
-
-        $fh = fopen($path, 'rb');
-        if ($fh === false) {
-            throw new \RuntimeException("Graph: não consegui abrir anexo {$path}.");
-        }
-        $chunk  = 10 * 320 * 1024; // 3,125 MB — múltiplo de 320 KiB (requisito do Graph)
-        $offset = 0;
-        try {
-            while (!feof($fh)) {
-                $data = fread($fh, $chunk);
-                $len  = strlen((string) $data);
-                if ($len === 0) break;
-                $end = $offset + $len - 1;
-                // O uploadUrl é pré-autenticado — NÃO enviar o bearer token. Content-Length é
-                // calculado pelo cliente HTTP a partir do corpo.
-                $r = Http::withHeaders([
-                    'Content-Range' => "bytes {$offset}-{$end}/{$size}",
-                ])->withBody((string) $data, 'application/octet-stream')->put($uploadUrl);
-                if (!$r->successful()) {
-                    throw new \RuntimeException('Graph upload chunk falhou (HTTP ' . $r->status() . '): ' . $r->body());
-                }
-                $offset += $len;
-            }
-        } finally {
-            fclose($fh);
         }
     }
 
