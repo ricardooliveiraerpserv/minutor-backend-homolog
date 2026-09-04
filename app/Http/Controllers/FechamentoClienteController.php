@@ -1837,13 +1837,13 @@ class FechamentoClienteController extends Controller
             foreach (array_merge($extraPaths, $receiptPaths) as $p) {
                 $totalBytes += is_file($p) ? (int) filesize($p) : 0;
             }
-            if ($totalBytes > \App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES) {
+            if ($totalBytes > \App\Services\GraphMailer::MAX_TOTAL_ATTACHMENTS_BYTES) {
                 foreach ($extraPaths as $p) { @unlink($p); @rmdir(dirname($p)); }
-                $maxMb = number_format(\App\Services\GraphMailer::MAX_INLINE_ATTACHMENTS_BYTES / 1048576, 1, ',', '.');
+                $maxMb = number_format(\App\Services\GraphMailer::MAX_TOTAL_ATTACHMENTS_BYTES / 1048576, 0, ',', '.');
                 $totMb = number_format($totalBytes / 1048576, 1, ',', '.');
                 return response()->json([
                     'success' => false,
-                    'message' => "Anexos excedem o limite de envio: {$totMb} MB de {$maxMb} MB (inclui relatório PDF, planilha e comprovantes). Reduza os anexos extras ou desmarque os comprovantes.",
+                    'message' => "Anexos excedem o limite de envio: {$totMb} MB de {$maxMb} MB (inclui relatório PDF, planilha e comprovantes). Reduza os anexos extras ou desmarque alguns comprovantes.",
                 ], 422);
             }
         }
