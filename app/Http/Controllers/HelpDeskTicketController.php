@@ -1245,9 +1245,16 @@ class HelpDeskTicketController extends Controller
             'status_id'        => 'required|exists:helpdesk_statuses,id',
             'note'             => 'nullable|string|max:500',
             'justification_id' => 'nullable|exists:helpdesk_ticket_justifications,id', // motivo vinculado ao status
+            'dev_delivery_at'  => 'nullable|date_format:Y-m-d', // previsão de entrega em homologação (Em Desenvolvimento)
         ]);
         abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
         $new = HelpDeskStatus::find($v['status_id']);
+        // "Em Desenvolvimento" EXIGE a data de entrega prevista em homologação (vira legenda + comunicação ao cliente).
+        if ($new && $new->key === 'em_desenvolvimento') {
+            abort_if(empty($v['dev_delivery_at']), 422, 'Informe a data de entrega prevista em homologação para colocar o chamado em desenvolvimento.');
+            $ticket->dev_delivery_at = $v['dev_delivery_at'];
+            $ticket->save();
+        }
         // Reabertura: status alvo aberto vindo de resolvido/encerrado.
         $isReopen = $new && $new->is_open && ($ticket->status && ($ticket->status->is_resolved || $ticket->status->is_terminal));
         abort_if($isReopen && !$this->access->canReopen($request->user()), 422, 'Seu perfil não permite reabrir chamados.');
