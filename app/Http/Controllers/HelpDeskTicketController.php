@@ -1268,6 +1268,23 @@ class HelpDeskTicketController extends Controller
             $ticket->save();
         }
         $this->transitionStatus($ticket, $new, $v['note'] ?? null);
+        // Em Desenvolvimento: a previsão de entrega em homologação também AGENDA o SLA para essa data
+        // (retoma = entrega prevista) — mantém as duas datas iguais e substitui o agendamento genérico.
+        if ($new && $new->key === 'em_desenvolvimento' && !empty($v['dev_delivery_at'])) {
+            $tz   = $this->sla->resolvePolicy($ticket)?->slaTimezone() ?? 'America/Sao_Paulo';
+            $when = \Illuminate\Support\Carbon::parse($v['dev_delivery_at'] . ' 23:59', $tz)->setTimezone('UTC');
+            // Reagenda sobre um agendamento vigente (assa a pausa anterior no prazo) antes de fixar a nova data.
+            if ($ticket->sla_paused_at || $ticket->scheduled_until) $this->sla->resumeSchedule($ticket);
+            $statusPauses = $this->sla->isPausedByStatus($ticket);
+            $ticket->scheduled_until   = $when;
+            $ticket->scheduled_all_day = true;
+            $ticket->sla_paused_at     = $statusPauses ? null : now();
+            $ticket->save();
+            HelpDeskTicketEvent::log($ticket->id, 'scheduled', [
+                'to_value' => $when->toIso8601String(),
+                'meta'     => ['all_day' => true, 'via' => 'dev_delivery'],
+            ]);
+        }
         $u = $request->user();
         // Encerrou → registra uma INTERAÇÃO no chamado dizendo que foi encerrado e por QUEM.
         if ($isClose) {
