@@ -1249,6 +1249,8 @@ class HelpDeskTicketController extends Controller
         ]);
         abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
         $new = HelpDeskStatus::find($v['status_id']);
+        // Mudança REAL de status? "Manter" (mesmo status) só atualiza a data de entrega, sem disparar gatilho.
+        $statusChanged = $new && (int) $new->id !== (int) $ticket->status_id;
         // "Em Desenvolvimento" EXIGE a data de entrega prevista em homologação (vira legenda + comunicação ao cliente).
         if ($new && $new->key === 'em_desenvolvimento') {
             abort_if(empty($v['dev_delivery_at']), 422, 'Informe a data de entrega prevista em homologação para colocar o chamado em desenvolvimento.');
@@ -1278,7 +1280,9 @@ class HelpDeskTicketController extends Controller
             ]);
             HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'close']]);
         }
-        \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        if ($statusChanged) {
+            \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        }
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
 
