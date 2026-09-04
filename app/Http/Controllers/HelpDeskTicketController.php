@@ -199,6 +199,12 @@ class HelpDeskTicketController extends Controller
             ->when($request->boolean('mine'), fn ($q) => $q->where('assignee_id', $user?->id))
             ->when($request->boolean('unassigned'), fn ($q) => $q->whereNull('assignee_id'))
             ->when($request->boolean('breached'), fn ($q) => $q->where(fn ($w) => $w->where('first_response_breached', true)->orWhere('resolution_breached', true)))
+            // Fila de ENTREGAS VENCIDAS: chamados Em Desenvolvimento cuja previsão de entrega em
+            // homologação (dev_delivery_at) já passou.
+            ->when($request->boolean('dev_overdue'), fn ($q) => $q
+                ->whereNotNull('dev_delivery_at')
+                ->whereDate('dev_delivery_at', '<', now('America/Sao_Paulo')->toDateString())
+                ->whereHas('status', fn ($s) => $s->where('key', 'em_desenvolvimento')))
             // Busca ÚNICA da fila — respeita todos os filtros (roda dentro do filtered()): assunto,
             // descrição, cliente, solicitante/responsável/contato E conteúdo das interações.
             ->when($request->filled('search'), function ($q) use ($request) {
