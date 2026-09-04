@@ -340,6 +340,16 @@ Schedule::command('help-desk:run-idle-triggers')
   ->withoutOverlapping(10)
   ->runInBackground();
 
+// Lembretes de PRAZO DE ENTREGA em homologação (chamados Em Desenvolvimento): 3/2/1 dias úteis
+// antes → consultor + coordenador de sustentação; vencido → consultor diariamente. Aparece no
+// "Meu Dia" (Central) + pop-up. Idempotente por dia. Em homolog o disparo vem de um Render Cron Job
+// (`php artisan help-desk:remind-dev-delivery`). Foreground: no homolog o scheduler não roda em background.
+Schedule::command('help-desk:remind-dev-delivery')
+  ->dailyAt('08:10')
+  ->timezone('America/Sao_Paulo')
+  ->name('help-desk-remind-dev-delivery')
+  ->description('Lembretes de prazo de entrega em homologação (Em Desenvolvimento)');
+
 // Central de Fontes (C2) — mantém o read-model de busca em dia por RECONCILIAÇÃO de staleness
 // (indexed_version_id/blob × versão vigente). DESACOPLADO do motor/pipeline (sem observer):
 // uma falha aqui NUNCA afeta a GMUD/documentação. Idempotente, em lote, sem execuções concorrentes.
