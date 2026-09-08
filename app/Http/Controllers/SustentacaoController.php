@@ -815,6 +815,121 @@ class SustentacaoController extends Controller
         ]);
     }
 
+    /**
+     * Painel ON DEMAND — aba dedicada do Portal de Sustentação. Últimos 12 meses de HORAS
+     * apontadas + TICKETS (demandas) por CLIENTE, resultado do mês corrente, e clientes SEM
+     * movimentação. Base: timesheets em projetos com contract_type='on_demand' (id 4),
+     * status approved+pending. Tickets = nº de tickets distintos (timesheets.ticket) — cada
+     * demanda On Demand tem seu ticket.
+     */
+    public function onDemandPanel(Request $request): JsonResponse
+    {
+        $this->authorize();
+        $cid = $this->activeCompanyId();
+        $ON_DEMAND = 4; // contract_types.code = 'on_demand'
+
+        // Janela de 12 meses terminando no mês atual (America/Sao_Paulo).
+        $end   = Carbon::now('America/Sao_Paulo')->startOfMonth();
+        $start = (clone $end)->subMonths(11);
+        $months = [];
+        for ($m = clone $start; $m <= $end; $m->addMonth()) $months[] = $m->format('Y-m');
+        $currentMonth = $end->format('Y-m');
+
+        // Agregação horas + tickets(distintos) por cliente × mês.
+        $rows = DB::table('timesheets as t')
+            ->join('projects as p', 'p.id', '=', 't.project_id')
+            ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->where('p.contract_type_id', $ON_DEMAND)
+            ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
+            ->whereIn('t.status', ['approved', 'pending'])
+            ->where('t.date', '>=', $start->toDateString())
+            ->groupBy('p.customer_id', 'c.name', DB::raw("to_char(t.date, 'YYYY-MM')"))
+            ->selectRaw("p.customer_id, c.name as customer, to_char(t.date, 'YYYY-MM') as mes,
+                         SUM(t.effort_minutes) as minutes, COUNT(DISTINCT NULLIF(t.ticket, '')) as tickets")
+            ->get();
+
+        // Monta por cliente + totais mensais.
+        $byClient = [];
+        $monthAgg = array_fill_keys($months, ['h' => 0.0, 'tk' => 0, 'cli' => 0]);
+        foreach ($rows as $r) {
+            $id  = (int) $r->customer_id;
+            $mes = $r->mes;
+            $h   = round(((int) $r->minutes) / 60, 1);
+            $tk  = (int) $r->tickets;
+            if (!isset($byClient[$id])) {
+                $byClient[$id] = ['customer_id' => $id, 'customer' => $r->customer, 'months' => [],
+                    'total_hours' => 0.0, 'total_tickets' => 0, 'current_hours' => 0.0,
+                    'current_tickets' => 0, 'last_activity' => null];
+            }
+            $byClient[$id]['months'][$mes] = ['h' => $h, 'tk' => $tk];
+            $byClient[$id]['total_hours']  += $h;
+            $byClient[$id]['total_tickets'] += $tk;
+            if ($mes === $currentMonth) { $byClient[$id]['current_hours'] = $h; $byClient[$id]['current_tickets'] = $tk; }
+            if ($h > 0 && ($byClient[$id]['last_activity'] === null || $mes > $byClient[$id]['last_activity'])) {
+                $byClient[$id]['last_activity'] = $mes;
+            }
+            if (isset($monthAgg[$mes])) {
+                $monthAgg[$mes]['h']  += $h;
+                $monthAgg[$mes]['tk'] += $tk;
+                if ($h > 0) $monthAgg[$mes]['cli']++;
+            }
+        }
+        foreach ($byClient as &$b) $b['total_hours'] = round($b['total_hours'], 1);
+        unset($b);
+        $byClient = array_values($byClient);
+        usort($byClient, fn ($a, $b) => $b['total_hours'] <=> $a['total_hours']);
+
+        $monthlyTotals = array_map(fn ($mkey) => [
+            'month'   => $mkey,
+            'hours'   => round($monthAgg[$mkey]['h'], 1),
+            'tickets' => $monthAgg[$mkey]['tk'],
+            'clients' => $monthAgg[$mkey]['cli'],
+        ], $months);
+
+        // Universo de clientes On Demand (têm projeto on_demand vivo) — base p/ "sem movimentação".
+        $allOnDemand = DB::table('projects as p')
+            ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->where('p.contract_type_id', $ON_DEMAND)
+            ->whereNull('p.deleted_at')
+            ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
+            ->distinct()->pluck('c.name', 'p.customer_id');
+
+        $activeCurrent = collect($byClient)->filter(fn ($b) => $b['current_hours'] > 0 || $b['current_tickets'] > 0)
+            ->pluck('customer_id')->all();
+        $byId = collect($byClient)->keyBy('customer_id');
+
+        $noMovement = [];
+        foreach ($allOnDemand as $custId => $custName) {
+            if (in_array((int) $custId, array_map('intval', $activeCurrent), true)) continue;
+            $noMovement[] = [
+                'customer_id'   => (int) $custId,
+                'customer'      => $custName,
+                'last_activity' => $byId[$custId]['last_activity'] ?? null,   // null = nunca (nos 12m)
+                'hours_12m'     => $byId[$custId]['total_hours'] ?? 0.0,
+            ];
+        }
+        usort($noMovement, fn ($a, $b) => ($b['last_activity'] ?? '') <=> ($a['last_activity'] ?? ''));
+
+        $cur = collect($monthlyTotals)->firstWhere('month', $currentMonth) ?? ['hours' => 0, 'tickets' => 0, 'clients' => 0];
+
+        return response()->json([
+            'months'         => $months,
+            'current_month'  => $currentMonth,
+            'summary'        => [
+                'hours_month'      => $cur['hours'],
+                'tickets_month'    => $cur['tickets'],
+                'clients_active'   => $cur['clients'],
+                'clients_total'    => $allOnDemand->count(),
+                'clients_no_move'  => count($noMovement),
+                'hours_12m'        => round(collect($monthlyTotals)->sum('hours'), 1),
+                'tickets_12m'      => (int) collect($monthlyTotals)->sum('tickets'),
+            ],
+            'monthly_totals' => $monthlyTotals,
+            'by_client'      => $byClient,
+            'no_movement'    => $noMovement,
+        ]);
+    }
+
     public function filterOptions(): JsonResponse
     {
         $this->authorize();

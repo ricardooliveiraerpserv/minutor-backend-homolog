@@ -1339,6 +1339,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/evolution',       [SustentacaoController::class, 'evolution'])->name('sustentacao.evolution');
             Route::get('/context-stats',       [SustentacaoController::class, 'contextStats'])->name('sustentacao.context-stats');
             Route::get('/filter-options',      [SustentacaoController::class, 'filterOptions'])->name('sustentacao.filter-options');
+            Route::get('/on-demand-panel',     [SustentacaoController::class, 'onDemandPanel'])->name('sustentacao.on-demand-panel');
             Route::get('/executive',           [SustentacaoController::class, 'executive'])->name('sustentacao.executive');
             Route::get('/debug-clientes',      [SustentacaoController::class, 'debugClientes'])->name('sustentacao.debug-clientes');
             Route::get('/debug-responsaveis',  [SustentacaoController::class, 'debugResponsaveis'])->name('sustentacao.debug-responsaveis');
