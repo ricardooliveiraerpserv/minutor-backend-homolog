@@ -894,6 +894,18 @@ class SustentacaoController extends Controller
             ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
             ->distinct()->pluck('c.name', 'p.customer_id');
 
+        // Situação do contrato On Demand por cliente: ATIVO se tiver ao menos um projeto On Demand
+        // com status ≠ finished/cancelled; senão ENCERRADO (todos finalizados/cancelados).
+        $activeContractIds = DB::table('projects')
+            ->where('contract_type_id', $ON_DEMAND)->whereNull('deleted_at')
+            ->when($cid, fn ($q, $c) => $q->where('company_id', $c))
+            ->whereNotIn('status', ['finished', 'cancelled'])
+            ->distinct()->pluck('customer_id')->map(fn ($x) => (int) $x)->all();
+        $statusOf = fn (int $id) => in_array($id, $activeContractIds, true) ? 'ativo' : 'encerrado';
+
+        foreach ($byClient as &$b) $b['status'] = $statusOf((int) $b['customer_id']);
+        unset($b);
+
         $activeCurrent = collect($byClient)->filter(fn ($b) => $b['current_hours'] > 0 || $b['current_tickets'] > 0)
             ->pluck('customer_id')->all();
         $byId = collect($byClient)->keyBy('customer_id');
@@ -904,6 +916,7 @@ class SustentacaoController extends Controller
             $noMovement[] = [
                 'customer_id'   => (int) $custId,
                 'customer'      => $custName,
+                'status'        => $statusOf((int) $custId),
                 'last_activity' => $byId[$custId]['last_activity'] ?? null,   // null = nunca (nos 12m)
                 'hours_12m'     => $byId[$custId]['total_hours'] ?? 0.0,
             ];
