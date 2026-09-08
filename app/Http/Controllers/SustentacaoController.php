@@ -827,6 +827,10 @@ class SustentacaoController extends Controller
         $this->authorize();
         $cid = $this->activeCompanyId();
         $ON_DEMAND = 4; // contract_types.code = 'on_demand'
+        // ⚠️ O trio "Investimento Suporte/Projetos/Comercial" é auto-criado p/ TODOS os clientes
+        // com contract_type on_demand — NÃO é contrato On Demand real. On Demand de verdade =
+        // projeto on_demand com nome fora desse trio (ex.: "Atendimento On Demand"). (Ricardo 2026-09-08)
+        $TRIO = ['investimento suporte', 'investimento projetos', 'investimento comercial'];
 
         // Janela de 12 meses terminando no mês atual (America/Sao_Paulo).
         $end   = Carbon::now('America/Sao_Paulo')->startOfMonth();
@@ -840,6 +844,7 @@ class SustentacaoController extends Controller
             ->join('projects as p', 'p.id', '=', 't.project_id')
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
             ->where('p.contract_type_id', $ON_DEMAND)
+            ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
             ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
             ->whereIn('t.status', ['approved', 'pending'])
             ->where('t.date', '>=', $start->toDateString())
@@ -890,6 +895,7 @@ class SustentacaoController extends Controller
         $allOnDemand = DB::table('projects as p')
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
             ->where('p.contract_type_id', $ON_DEMAND)
+            ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
             ->whereNull('p.deleted_at')
             ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
             ->distinct()->pluck('c.name', 'p.customer_id');
@@ -898,6 +904,7 @@ class SustentacaoController extends Controller
         // com status ≠ finished/cancelled; senão ENCERRADO (todos finalizados/cancelados).
         $activeContractIds = DB::table('projects')
             ->where('contract_type_id', $ON_DEMAND)->whereNull('deleted_at')
+            ->whereNotIn(DB::raw('lower(trim(name))'), $TRIO)
             ->when($cid, fn ($q, $c) => $q->where('company_id', $c))
             ->whereNotIn('status', ['finished', 'cancelled'])
             ->distinct()->pluck('customer_id')->map(fn ($x) => (int) $x)->all();
