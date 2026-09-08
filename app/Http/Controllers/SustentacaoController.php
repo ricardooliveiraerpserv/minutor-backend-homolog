@@ -25,6 +25,16 @@ class SustentacaoController extends Controller
         return MovideskTicket::where(function ($q) {
             $q->whereNull('owner_email')
               ->orWhere('owner_email', 'not ilike', '%@promax.bardahl.com.br');
+        })
+        // Equipes INTERNAS do cliente (help desk próprio dele, no mesmo Movidesk) NÃO são
+        // atendimento da ERPSERV → fora dos indicadores. Ex.: "Promax Bardahl" / "Manutenção
+        // Promax". Exclui por EQUIPE (owner_team), pois o filtro por e-mail não pega ticket com
+        // owner_email nulo ou de outro domínio. Só conta Promax atendido por Atendimento/Cloud/
+        // etc. (pedido Ricardo 2026-09-08).
+        ->where(function ($q) {
+            // ⚠️ owner_team vem com ESPAÇO à direita no Movidesk ("Promax Bardahl ") → TRIM.
+            $q->whereNull('owner_team')
+              ->orWhereRaw("LOWER(TRIM(owner_team)) NOT IN ('promax bardahl', 'manutenção promax')");
         });
     }
 
