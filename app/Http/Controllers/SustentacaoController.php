@@ -330,11 +330,10 @@ class SustentacaoController extends Controller
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                  ->orWhere(function ($s) {
-                      // Investimento Suporte (todos os clientes) conta como sustentação.
-                      $s->where('projects.is_investimento_comercial', true)
-                        ->where('projects.categoria_interna', 'Suporte');
-                  });
+                  // Só "Investimento Suporte" (por NOME) conta como sustentação nas HORAS —
+                  // o par is_investimento_comercial+categoria='Suporte' vazava Day Off /
+                  // Investimento Cloud (pedido Ricardo 2026-09-08).
+                  ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -368,11 +367,10 @@ class SustentacaoController extends Controller
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                  ->orWhere(function ($s) {
-                      // Investimento Suporte (todos os clientes) conta como sustentação.
-                      $s->where('projects.is_investimento_comercial', true)
-                        ->where('projects.categoria_interna', 'Suporte');
-                  });
+                  // Só "Investimento Suporte" (por NOME) conta como sustentação nas HORAS —
+                  // o par is_investimento_comercial+categoria='Suporte' vazava Day Off /
+                  // Investimento Cloud (pedido Ricardo 2026-09-08).
+                  ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -748,11 +746,8 @@ class SustentacaoController extends Controller
                     ->where(function ($q) {
                         $q->where('service_types.code', 'sustentacao')
                           ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                          ->orWhere(function ($s) {
-                              // Investimento Suporte (todos os clientes) conta como sustentação.
-                              $s->where('projects.is_investimento_comercial', true)
-                                ->where('projects.categoria_interna', 'Suporte');
-                          });
+                          // Só "Investimento Suporte" (por NOME) — ver nota acima (Ricardo 2026-09-08).
+                          ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
                     })
                     ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
                     ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -870,8 +865,7 @@ class SustentacaoController extends Controller
             ->join('customers',     'customers.id',     '=', 'projects.customer_id')
             ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
                                  ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                                 ->orWhere(fn($s) => $s->where('projects.is_investimento_comercial', true)
-                                                       ->where('projects.categoria_interna', 'Suporte')))
+                                 ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'"))
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->select(
@@ -895,8 +889,7 @@ class SustentacaoController extends Controller
             ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
                                  ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                                 ->orWhere(fn($s) => $s->where('projects.is_investimento_comercial', true)
-                                                       ->where('projects.categoria_interna', 'Suporte')))
+                                 ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'"))
             ->where('contract_types.name', 'Banco de Horas Mensal')
             ->whereNull('projects.deleted_at')
             ->whereNotNull('projects.customer_id')
