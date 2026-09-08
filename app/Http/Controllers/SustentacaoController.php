@@ -106,6 +106,31 @@ class SustentacaoController extends Controller
         return null;
     }
 
+    /**
+     * Filtro por CLIENTE (organização) que casa o org RESOLVIDO — não só o campo `organization`
+     * cru. Antes, filtrar "PROMAX" pegava só tickets com organization='PROMAX'; os das equipes
+     * (Promax Bardahl / Manutenção Promax) têm organization=departamento (Compras, Financeiro…)
+     * e ficavam de fora, embora a LISTA os rotule como PROMAX pelo domínio do e-mail. Agora casa:
+     * organization ILIKE  OU  domínio de e-mail do org  OU  customer_id do org. (Ricardo 2026-09-08)
+     */
+    private function applyClienteFilter($q, array $clienteFilter,
+        \Illuminate\Support\Collection $orgByCustomerId, array $domainMap): void
+    {
+        if (!$clienteFilter) return;
+        $match = fn(string $orgName) => (bool) array_filter($clienteFilter, fn($c) => stripos($orgName, $c) !== false);
+        $domains = [];
+        foreach ($domainMap as $dom => $orgName) { if ($match((string) $orgName)) $domains[] = strtolower($dom); }
+        $custIds = [];
+        foreach ($orgByCustomerId as $cid => $org) { if ($match((string) $org->name)) $custIds[] = $cid; }
+        $q->where(function ($q2) use ($clienteFilter, $domains, $custIds) {
+            foreach ($clienteFilter as $c) {
+                $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
+            }
+            if ($domains) $q2->orWhereIn(DB::raw("split_part(lower(solicitante->>'email'),'@',2)"), array_values(array_unique($domains)));
+            if ($custIds) $q2->orWhereIn('customer_id', array_values(array_unique($custIds)));
+        });
+    }
+
     private function authorize(): void
     {
         $user = auth()->user();
@@ -192,11 +217,7 @@ class SustentacaoController extends Controller
         $tickets = $this->applyOpen($this->tickets())
             ->with(['user:id,name', 'customer:id,name'])
             ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
-            ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
-                foreach ($clienteFilter as $c) {
-                    $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
-                }
-            }))
+            ->when($clienteFilter, fn($q) => $this->applyClienteFilter($q, $clienteFilter, $orgByCustomerId, $domainMap))
             ->when($urgenciaFilter, fn($q) => $q->whereIn('urgencia', $urgenciaFilter))
             ->when($statusFilter, fn($q) => $q->whereIn('status', $statusFilter))
             ->when($searchFilter, fn($q) => $q->where(function ($q2) use ($searchFilter) {
@@ -629,14 +650,15 @@ class SustentacaoController extends Controller
         $responsavelFilter = $split($request->query('responsavel'));
         $clienteFilter     = $split($request->query('cliente'));
 
+        // Mesmo casamento de cliente da fila (org resolvido: organization/domínio/customer_id).
+        $orgByName       = $this->orgLookup();
+        $orgByCustomerId = MovideskOrganization::whereNotNull('customer_id')->get(['name', 'customer_id'])->keyBy('customer_id');
+        $domainMap       = $this->domainOrgMap($orgByName);
+
         // Aplica os filtros de contexto
         $base = fn() => $this->tickets()
             ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
-            ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
-                foreach ($clienteFilter as $c) {
-                    $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
-                }
-            }));
+            ->when($clienteFilter, fn($q) => $this->applyClienteFilter($q, $clienteFilter, $orgByCustomerId, $domainMap));
 
         // Tickets abertos agora
         $ticketsOpen = $this->applyOpen($base())->count();
