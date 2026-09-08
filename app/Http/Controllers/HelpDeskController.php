@@ -56,6 +56,8 @@ class HelpDeskController extends Controller
             'can_open'   => app(\App\Services\HelpDeskAccessPolicy::class)->canOpen(auth()->user()),
             // Fila (Kanban): exibir a coluna "Novo" (tickets ainda não distribuídos) p/ este perfil?
             'see_new_column' => app(\App\Services\HelpDeskAccessPolicy::class)->seeNewColumn(auth()->user()),
+            // Card/filtro "Triagem" (chamados sem responsável) — liberado por perfil de acesso.
+            'can_triage'     => app(\App\Services\HelpDeskAccessPolicy::class)->canTriage(auth()->user()),
             // Busca global (lupa) liberada para este perfil?
             'can_search'     => app(\App\Services\HelpDeskAccessPolicy::class)->canGlobalSearch(auth()->user()),
             // Escopo de visão na fila: 'all' vê os de outros; 'assigned' só os próprios → esconde o

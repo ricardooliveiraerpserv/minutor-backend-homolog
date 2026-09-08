@@ -64,6 +64,12 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'policies.see_new_column', true);
     }
 
+    /** Card/filtro "Triagem" (chamados sem responsável) na fila — liberado por perfil (opt-in). */
+    public function canTriage(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.triagem', false);
+    }
+
     /**
      * Busca global: pesquisa QUALQUER chamado (fora do escopo da fila) para abrir e assumir.
      * O agente não vê tickets de outros na fila dele, mas pode encontrá-los pela lupa. Default: sim.
