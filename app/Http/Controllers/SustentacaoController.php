@@ -958,6 +958,121 @@ class SustentacaoController extends Controller
         ]);
     }
 
+    /**
+     * Painel CONTRATOS — visão por TIPO DE CONTRATO (On Demand, Banco de Horas Mensal/Fixo,
+     * Fechado, Cloud, SaaS) com totais de horas + tickets (mês corrente e 12 meses) e detalhe
+     * por cliente × tipo. Filtros: ?service=projeto|sustentacao, ?status=ativo|inativo.
+     * (cliente é filtrado no FE). Base: projetos vivos; no On Demand exclui o trio Investimento
+     * auto-criado (ver onDemandPanel).
+     */
+    public function contractsPanel(Request $request): JsonResponse
+    {
+        $this->authorize();
+        $cid = $this->activeCompanyId();
+        $TRIO = ['investimento suporte', 'investimento projetos', 'investimento comercial'];
+
+        $service = in_array($request->query('service'), ['sustentacao', 'projeto', 'arquitetura'], true)
+            ? $request->query('service') : null;
+        $serviceId = $service ? DB::table('service_types')->where('code', $service)->value('id') : null;
+        $statusFilter = in_array($request->query('status'), ['ativo', 'inativo'], true) ? $request->query('status') : null;
+
+        $end   = Carbon::now('America/Sao_Paulo')->startOfMonth();
+        $start = (clone $end)->subMonths(11);
+        $curKey = $end->format('Y-m');
+
+        // Projetos vivos por cliente × tipo de contrato (On Demand exclui o trio Investimento).
+        $projects = DB::table('projects as p')
+            ->join('contract_types as ct', 'ct.id', '=', 'p.contract_type_id')
+            ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereNull('p.deleted_at')
+            ->when($cid, fn ($q, $x) => $q->where('p.company_id', $x))
+            ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
+            ->where(fn ($q) => $q->where('p.contract_type_id', '!=', 4)
+                ->orWhereNotIn(DB::raw('lower(trim(p.name))'), $TRIO))
+            ->get(['p.id', 'p.customer_id', 'c.name as customer', 'ct.id as ct_id', 'ct.name as ct_name', 'p.status']);
+
+        // key = customer_id|ct_id → agrega horas/tickets/status/última atividade.
+        $agg = [];   // key => [...]
+        $projMap = [];  // project_id => key
+        foreach ($projects as $p) {
+            $key = $p->customer_id . '|' . $p->ct_id;
+            $projMap[$p->id] = $key;
+            if (!isset($agg[$key])) {
+                $agg[$key] = [
+                    'customer_id' => (int) $p->customer_id, 'customer' => $p->customer,
+                    'contract_type' => $p->ct_name, 'contract_type_id' => (int) $p->ct_id,
+                    'hours_12m' => 0.0, 'tickets_12m' => 0, 'hours_month' => 0.0, 'tickets_month' => 0,
+                    'active' => false, 'last_activity' => null,
+                ];
+            }
+            if (!in_array($p->status, ['finished', 'cancelled'], true)) $agg[$key]['active'] = true;
+        }
+
+        // Timesheets dos projetos, por projeto × mês.
+        if (!empty($projMap)) {
+            $tsRows = DB::table('timesheets')
+                ->whereIn('project_id', array_keys($projMap))
+                ->whereIn('status', ['approved', 'pending'])
+                ->where('date', '>=', $start->toDateString())
+                ->groupBy('project_id', DB::raw("to_char(date, 'YYYY-MM')"))
+                ->selectRaw("project_id, to_char(date, 'YYYY-MM') as mes, SUM(effort_minutes) as minutes, COUNT(DISTINCT NULLIF(ticket, '')) as tickets")
+                ->get();
+            foreach ($tsRows as $r) {
+                $key = $projMap[$r->project_id] ?? null;
+                if (!$key || !isset($agg[$key])) continue;
+                $h = round(((int) $r->minutes) / 60, 1);
+                $tk = (int) $r->tickets;
+                $agg[$key]['hours_12m'] += $h;
+                $agg[$key]['tickets_12m'] += $tk;
+                if ($r->mes === $curKey) { $agg[$key]['hours_month'] += $h; $agg[$key]['tickets_month'] += $tk; }
+                if ($h > 0 && ($agg[$key]['last_activity'] === null || $r->mes > $agg[$key]['last_activity'])) {
+                    $agg[$key]['last_activity'] = $r->mes;
+                }
+            }
+        }
+
+        $byClient = [];
+        foreach ($agg as $row) {
+            $row['hours_12m'] = round($row['hours_12m'], 1);
+            $row['hours_month'] = round($row['hours_month'], 1);
+            $row['status'] = $row['active'] ? 'ativo' : 'inativo';
+            unset($row['active']);
+            if ($statusFilter && $row['status'] !== $statusFilter) continue;
+            $byClient[] = $row;
+        }
+        usort($byClient, fn ($a, $b) => $b['hours_12m'] <=> $a['hours_12m']);
+
+        // Resumo por tipo de contrato (a partir do detalhe já filtrado).
+        $byType = [];
+        foreach ($byClient as $r) {
+            $t = $r['contract_type'];
+            if (!isset($byType[$t])) $byType[$t] = ['contract_type' => $t, 'clients' => 0, 'hours_month' => 0.0, 'tickets_month' => 0, 'hours_12m' => 0.0, 'tickets_12m' => 0];
+            $byType[$t]['clients']++;
+            $byType[$t]['hours_month'] += $r['hours_month'];
+            $byType[$t]['tickets_month'] += $r['tickets_month'];
+            $byType[$t]['hours_12m'] += $r['hours_12m'];
+            $byType[$t]['tickets_12m'] += $r['tickets_12m'];
+        }
+        foreach ($byType as &$bt) { $bt['hours_month'] = round($bt['hours_month'], 1); $bt['hours_12m'] = round($bt['hours_12m'], 1); }
+        unset($bt);
+        $byType = array_values($byType);
+        usort($byType, fn ($a, $b) => $b['hours_12m'] <=> $a['hours_12m']);
+
+        return response()->json([
+            'current_month' => $curKey,
+            'summary' => [
+                'contracts'     => count($byClient),
+                'clients'       => count(array_unique(array_map(fn ($r) => $r['customer_id'], $byClient))),
+                'hours_month'   => round(array_sum(array_map(fn ($r) => $r['hours_month'], $byClient)), 1),
+                'tickets_month' => (int) array_sum(array_map(fn ($r) => $r['tickets_month'], $byClient)),
+                'hours_12m'     => round(array_sum(array_map(fn ($r) => $r['hours_12m'], $byClient)), 1),
+                'tickets_12m'   => (int) array_sum(array_map(fn ($r) => $r['tickets_12m'], $byClient)),
+            ],
+            'by_type'   => $byType,
+            'by_client' => $byClient,
+        ]);
+    }
+
     public function filterOptions(): JsonResponse
     {
         $this->authorize();
