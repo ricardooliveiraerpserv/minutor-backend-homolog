@@ -852,6 +852,7 @@ class SustentacaoController extends Controller
         $rows = DB::table('timesheets as t')
             ->join('projects as p', 'p.id', '=', 't.project_id')
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereRaw("lower(trim(c.name)) <> 'erpserv'")   // ERPSERV (interno) não é contrato de cliente
             ->where('p.contract_type_id', $ON_DEMAND)
             ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
             ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
@@ -907,6 +908,7 @@ class SustentacaoController extends Controller
         // Universo de clientes On Demand (têm projeto on_demand vivo) — base p/ "sem movimentação".
         $allOnDemand = DB::table('projects as p')
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereRaw("lower(trim(c.name)) <> 'erpserv'")   // ERPSERV (interno) não é contrato de cliente
             ->where('p.contract_type_id', $ON_DEMAND)
             ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
             ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
@@ -995,6 +997,7 @@ class SustentacaoController extends Controller
         $projects = DB::table('projects as p')
             ->join('contract_types as ct', 'ct.id', '=', 'p.contract_type_id')
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereRaw("lower(trim(c.name)) <> 'erpserv'")   // ERPSERV (interno) não é contrato de cliente
             ->whereNull('p.deleted_at')
             ->when($cid, fn ($q, $x) => $q->where('p.company_id', $x))
             ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
