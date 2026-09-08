@@ -832,6 +832,11 @@ class SustentacaoController extends Controller
         // projeto on_demand com nome fora desse trio (ex.: "Atendimento On Demand"). (Ricardo 2026-09-08)
         $TRIO = ['investimento suporte', 'investimento projetos', 'investimento comercial'];
 
+        // Filtro opcional por tipo de serviço: ?service=sustentacao|projeto (vazio = todos).
+        $service = in_array($request->query('service'), ['sustentacao', 'projeto', 'arquitetura'], true)
+            ? $request->query('service') : null;
+        $serviceId = $service ? DB::table('service_types')->where('code', $service)->value('id') : null;
+
         // Janela de 12 meses terminando no mês atual (America/Sao_Paulo).
         $end   = Carbon::now('America/Sao_Paulo')->startOfMonth();
         $start = (clone $end)->subMonths(11);
@@ -845,6 +850,7 @@ class SustentacaoController extends Controller
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
             ->where('p.contract_type_id', $ON_DEMAND)
             ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
+            ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
             ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
             ->whereIn('t.status', ['approved', 'pending'])
             ->where('t.date', '>=', $start->toDateString())
@@ -896,6 +902,7 @@ class SustentacaoController extends Controller
             ->join('customers as c', 'c.id', '=', 'p.customer_id')
             ->where('p.contract_type_id', $ON_DEMAND)
             ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
+            ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
             ->whereNull('p.deleted_at')
             ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
             ->distinct()->pluck('c.name', 'p.customer_id');
@@ -905,6 +912,7 @@ class SustentacaoController extends Controller
         $activeContractIds = DB::table('projects')
             ->where('contract_type_id', $ON_DEMAND)->whereNull('deleted_at')
             ->whereNotIn(DB::raw('lower(trim(name))'), $TRIO)
+            ->when($serviceId, fn ($q, $id) => $q->where('service_type_id', $id))
             ->when($cid, fn ($q, $c) => $q->where('company_id', $c))
             ->whereNotIn('status', ['finished', 'cancelled'])
             ->distinct()->pluck('customer_id')->map(fn ($x) => (int) $x)->all();
