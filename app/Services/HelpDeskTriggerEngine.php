@@ -347,9 +347,8 @@ class HelpDeskTriggerEngine
     {
         $toList     = (array) ($params['to'] ?? []);
         $visibility = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'customer' : 'internal';
-        $prefix     = $visibility === 'customer' ? '📧 E-mail enviado ao cliente' : '🔔 Aviso enviado ao responsável';
-        if ($triggerName) $prefix .= ' — ' . $triggerName;
-        $body = '<p><b>' . e($prefix) . '</b></p>' . $bodyHtml;
+        // Grava SOMENTE o corpo do aviso — sem o cabeçalho "E-mail enviado ao cliente — <gatilho>".
+        $body = $bodyHtml;
         // Dedup: mesmo gatilho + mesmo corpo + mesmos destinatários = uma interação só (evita duplicar em reprocessos).
         $idem = 'trg-mail:' . $ticket->id . ':' . md5(($triggerName ?? '') . '|' . $bodyHtml . '|' . implode(',', $to));
         try {
