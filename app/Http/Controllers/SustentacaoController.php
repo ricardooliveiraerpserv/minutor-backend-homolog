@@ -838,7 +838,11 @@ class SustentacaoController extends Controller
         $serviceId = $service ? DB::table('service_types')->where('code', $service)->value('id') : null;
 
         // Janela de 12 meses terminando no mês atual (America/Sao_Paulo).
-        $end   = Carbon::now('America/Sao_Paulo')->startOfMonth();
+        // Mês de referência: segue o seletor de data do topo (?ref=YYYY-MM); sem ele, o mês atual.
+        $ref   = (string) $request->query('ref');
+        $end   = preg_match('/^\d{4}-\d{2}$/', $ref)
+            ? Carbon::createFromFormat('Y-m-d', $ref . '-01')->startOfMonth()
+            : Carbon::now('America/Sao_Paulo')->startOfMonth();
         $start = (clone $end)->subMonths(11);
         $months = [];
         for ($m = clone $start; $m <= $end; $m->addMonth()) $months[] = $m->format('Y-m');
@@ -979,7 +983,11 @@ class SustentacaoController extends Controller
         $serviceId = $service ? DB::table('service_types')->where('code', $service)->value('id') : null;
         $statusFilter = in_array($request->query('status'), ['ativo', 'inativo'], true) ? $request->query('status') : null;
 
-        $end   = Carbon::now('America/Sao_Paulo')->startOfMonth();
+        // Mês de referência: segue o seletor de data do topo (?ref=YYYY-MM); sem ele, o mês atual.
+        $ref   = (string) $request->query('ref');
+        $end   = preg_match('/^\d{4}-\d{2}$/', $ref)
+            ? Carbon::createFromFormat('Y-m-d', $ref . '-01')->startOfMonth()
+            : Carbon::now('America/Sao_Paulo')->startOfMonth();
         $start = (clone $end)->subMonths(11);
         $curKey = $end->format('Y-m');
 
