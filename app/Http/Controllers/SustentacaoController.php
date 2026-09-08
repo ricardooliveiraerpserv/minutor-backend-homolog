@@ -854,6 +854,9 @@ class SustentacaoController extends Controller
             ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
             ->whereIn('t.status', ['approved', 'pending'])
             ->where('t.date', '>=', $start->toDateString())
+            // Exclui apontamento-ORIGEM do rateio (is_billable_only no projeto-servidor) → só filhos.
+            ->whereNot(fn ($q) => $q->whereNull('t.rateio_source_timesheet_id')
+                ->where('t.is_billable_only', true)->where('p.is_rateio', true))
             ->groupBy('p.customer_id', 'c.name', DB::raw("to_char(t.date, 'YYYY-MM')"))
             ->selectRaw("p.customer_id, c.name as customer, to_char(t.date, 'YYYY-MM') as mes,
                          SUM(t.effort_minutes) as minutes, COUNT(DISTINCT NULLIF(t.ticket, '')) as tickets")
@@ -989,14 +992,16 @@ class SustentacaoController extends Controller
             ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
             ->where(fn ($q) => $q->where('p.contract_type_id', '!=', 4)
                 ->orWhereNotIn(DB::raw('lower(trim(p.name))'), $TRIO))
-            ->get(['p.id', 'p.customer_id', 'c.name as customer', 'ct.id as ct_id', 'ct.name as ct_name', 'p.status']);
+            ->get(['p.id', 'p.customer_id', 'c.name as customer', 'ct.id as ct_id', 'ct.name as ct_name', 'p.status', 'p.is_rateio']);
 
         // key = customer_id|ct_id → agrega horas/tickets/status/última atividade.
         $agg = [];   // key => [...]
         $projMap = [];  // project_id => key
+        $rateioProjIds = [];  // projetos-servidor de rateio (p/ excluir o apontamento-ORIGEM)
         foreach ($projects as $p) {
             $key = $p->customer_id . '|' . $p->ct_id;
             $projMap[$p->id] = $key;
+            if ($p->is_rateio) $rateioProjIds[] = $p->id;
             if (!isset($agg[$key])) {
                 $agg[$key] = [
                     'customer_id' => (int) $p->customer_id, 'customer' => $p->customer,
@@ -1014,6 +1019,10 @@ class SustentacaoController extends Controller
                 ->whereIn('project_id', array_keys($projMap))
                 ->whereIn('status', ['approved', 'pending'])
                 ->where('date', '>=', $start->toDateString())
+                // Exclui o apontamento-ORIGEM do rateio (is_billable_only no projeto-servidor, sem
+                // rateio_source): os filhos distribuídos já contam nos projetos-destino → evita dobrar.
+                ->whereNot(fn ($q) => $q->whereNull('rateio_source_timesheet_id')
+                    ->where('is_billable_only', true)->whereIn('project_id', $rateioProjIds ?: [0]))
                 ->groupBy('project_id', DB::raw("to_char(date, 'YYYY-MM')"))
                 ->selectRaw("project_id, to_char(date, 'YYYY-MM') as mes, SUM(effort_minutes) as minutes, COUNT(DISTINCT NULLIF(ticket, '')) as tickets")
                 ->get();
