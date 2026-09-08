@@ -51,24 +51,26 @@ class HelpDeskRemindDevDelivery extends Command
         $n = 0;
         foreach ($tickets as $t) {
             $due         = Carbon::parse((string) $t->dev_delivery_at, $tz)->startOfDay();
+            // Prazo EFETIVO: se a data prometida cai em fim de semana/feriado, rola p/ o próximo dia útil.
+            $effDue      = $cal->nextBusinessDay($due)->startOfDay();
             $consultorId = $t->assignee_id ? (int) $t->assignee_id : null;
             $num         = $t->ticket_number ?: ('#' . $t->id);
             $subj        = \Illuminate\Support\Str::limit((string) $t->subject, 60);
             $dueBr       = $due->format('d/m/Y');
+            $coordTargets = array_values(array_unique(array_filter(array_merge([$consultorId], $coordIds))));
 
-            if ($due->gt($today)) {
+            if ($effDue->gt($today)) {
                 // Antes do vencimento: só avaliamos marcos em DIA ÚTIL (a contagem de dias úteis
                 // só faz sentido rodando num dia útil).
                 if (!$isBiz) {
                     continue;
                 }
-                // Dias úteis restantes ATÉ a entrega (exclui o dia de hoje). businessDaysBetween é inclusivo.
-                $remaining = $cal->businessDaysBetween($today, $due) - 1;
+                // Dias úteis restantes ATÉ o prazo efetivo (exclui o dia de hoje). businessDaysBetween é inclusivo.
+                $remaining = $cal->businessDaysBetween($today, $effDue) - 1;
                 if (!in_array($remaining, [1, 2, 3], true)) {
                     continue;
                 }
-                $targets = array_values(array_unique(array_filter(array_merge([$consultorId], $coordIds))));
-                if (empty($targets)) {
+                if (empty($coordTargets)) {
                     continue;
                 }
                 if ($remaining === 1) {
@@ -78,16 +80,22 @@ class HelpDeskRemindDevDelivery extends Command
                     $msg  = "Chamado {$num} — {$subj}: entrega em homologação prevista para {$dueBr}. Faltam {$remaining} dias úteis.";
                     $prio = $remaining === 2 ? 'high' : 'medium';
                 }
-                $this->upsert($t, $num, $targets, $msg, $prio, $due->copy()->endOfDay(), $today);
+                $this->upsert($t, $num, $coordTargets, $msg, $prio, $effDue->copy()->endOfDay(), $today);
+                $n++;
+            } elseif ($effDue->isSameDay($today)) {
+                // Vence HOJE (prazo efetivo) → consultor + coordenador de sustentação.
+                if (empty($coordTargets)) {
+                    continue;
+                }
+                $msg = "Chamado {$num} — {$subj}: o prazo de entrega em homologação vence HOJE ({$dueBr}).";
+                $this->upsert($t, $num, $coordTargets, $msg, 'critical', $today->copy()->endOfDay(), $today);
                 $n++;
             } else {
-                // Vence hoje ou já venceu: avisa o CONSULTOR diariamente.
+                // Já venceu (prazo efetivo < hoje): avisa o CONSULTOR diariamente.
                 if (!$consultorId) {
                     continue;
                 }
-                $msg = $due->isSameDay($today)
-                    ? "Chamado {$num} — {$subj}: o prazo de entrega em homologação vence HOJE ({$dueBr})."
-                    : "Chamado {$num} — {$subj}: o prazo de entrega em homologação EXPIROU (venceu em {$dueBr}). Atualize a previsão ou conclua a entrega.";
+                $msg = "Chamado {$num} — {$subj}: o prazo de entrega em homologação EXPIROU (venceu em {$dueBr}). Atualize a previsão ou conclua a entrega.";
                 $this->upsert($t, $num, [$consultorId], $msg, 'critical', $today->copy()->endOfDay(), $today);
                 $n++;
             }

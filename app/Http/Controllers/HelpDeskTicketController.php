@@ -136,6 +136,10 @@ class HelpDeskTicketController extends Controller
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
             'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
             'interactions_count'     => $interCount,       // qtd de interações (comentários reais) — lista/card admin
+            // Entrega em homologação VENCIDA (em dias úteis, considera feriados): só p/ Em Desenvolvimento.
+            'dev_delivery_overdue'   => (optional($t->status)->key === 'em_desenvolvimento' && $t->dev_delivery_at)
+                ? (\Illuminate\Support\Carbon::parse($t->dev_delivery_at)->toDateString() <= $this->lastBusinessDayBeforeToday())
+                : false,
         ]);
     }
 
@@ -181,6 +185,23 @@ class HelpDeskTicketController extends Controller
             ->pluck('cnt', 'tid');
     }
 
+    /**
+     * Último DIA ÚTIL estritamente antes de hoje (considera fins de semana e feriados).
+     * Uma entrega em `dev_delivery_at` está VENCIDA hoje ⟺ dev_delivery_at <= este dia.
+     * (Se a data prometida cai em fim de semana/feriado, o prazo efetivo rola p/ o próximo dia útil,
+     * então ela só vence depois — o corte por dia útil trata isso automaticamente.)
+     */
+    private function lastBusinessDayBeforeToday(): string
+    {
+        $cal = app(\App\Services\BusinessCalendarService::class);
+        $d = \Illuminate\Support\Carbon::today('America/Sao_Paulo')->subDay();
+        $guard = 0;
+        while (!$cal->isBusinessDay($d) && $guard++ < 60) {
+            $d->subDay();
+        }
+        return $d->toDateString();
+    }
+
     private function filtered(Request $request)
     {
         $user = $request->user();
@@ -200,11 +221,13 @@ class HelpDeskTicketController extends Controller
             ->when($request->boolean('unassigned'), fn ($q) => $q->whereNull('assignee_id'))
             ->when($request->boolean('breached'), fn ($q) => $q->where(fn ($w) => $w->where('first_response_breached', true)->orWhere('resolution_breached', true)))
             // Fila de ENTREGAS VENCIDAS: chamados Em Desenvolvimento cuja previsão de entrega em
-            // homologação (dev_delivery_at) já passou.
-            ->when($request->boolean('dev_overdue'), fn ($q) => $q
-                ->whereNotNull('dev_delivery_at')
-                ->whereDate('dev_delivery_at', '<', now('America/Sao_Paulo')->toDateString())
-                ->whereHas('status', fn ($s) => $s->where('key', 'em_desenvolvimento')))
+            // homologação já passou — em DIAS ÚTEIS (considera fins de semana e feriados). Vencido ⟺
+            // dev_delivery_at <= B, onde B = último dia útil ANTES de hoje.
+            ->when($request->boolean('dev_overdue'), function ($q) {
+                $q->whereNotNull('dev_delivery_at')
+                  ->whereDate('dev_delivery_at', '<=', $this->lastBusinessDayBeforeToday())
+                  ->whereHas('status', fn ($s) => $s->where('key', 'em_desenvolvimento'));
+            })
             // Busca ÚNICA da fila — respeita todos os filtros (roda dentro do filtered()): assunto,
             // descrição, cliente, solicitante/responsável/contato E conteúdo das interações.
             ->when($request->filled('search'), function ($q) use ($request) {
