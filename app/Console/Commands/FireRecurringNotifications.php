@@ -24,6 +24,9 @@ class FireRecurringNotifications extends Command
         $candidates = AppNotification::where('is_template', false)
             ->where('recurrence', '!=', 'none')
             ->whereNotNull('recurrence_value')
+            // A recorrência PARA no prazo da decisão: não redisparar avisos já expirados
+            // (o limite da decisão = expires_at encerra a campanha sozinho).
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', $today))
             // scope=hours roda de hora em hora só p/ every_hours; daily (1x/dia) p/ o resto.
             ->when($scope === 'hours', fn ($q) => $q->where('recurrence', 'every_hours'))
             ->when($scope === 'daily', fn ($q) => $q->where('recurrence', '!=', 'every_hours'))

@@ -192,6 +192,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/notifications/{notification}/respond', [\App\Http\Controllers\NotificationController::class, 'respond']);
         Route::get('/notifications/{notification}/log',   [\App\Http\Controllers\NotificationController::class, 'log']);
         Route::post('/notifications/{notification}/resend', [\App\Http\Controllers\NotificationController::class, 'resend']);
+        Route::post('/notifications/{notification}/encerrar', [\App\Http\Controllers\NotificationController::class, 'encerrar']);
 
         // Rotina (admin): recorrência dos lembretes de ações não resolvidas.
         Route::get('/action-reminders',                [\App\Http\Controllers\ActionReminderController::class, 'index']);
