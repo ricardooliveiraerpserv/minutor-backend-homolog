@@ -4831,15 +4831,25 @@ class ProjectController extends Controller
                 ->where('ps.project_id', $project->id)
                 ->whereNull('ps.deleted_at')->whereNull('sd.deleted_at')
                 ->whereIn('sd.responsible_user_id', $uids)
-                ->get(['sd.responsible_user_id', 'sd.status'])
+                ->get(['sd.responsible_user_id', 'sd.id', 'sd.title', 'sd.status'])
                 ->groupBy('responsible_user_id');
             $raiaOrder  = ['in_progress' => 1, 'review' => 2, 'waiting_client' => 3, 'backlog' => 4, 'done' => 5];
             $raiaLabels = ['in_progress' => 'Em andamento', 'review' => 'Em revisão', 'waiting_client' => 'Aguardando cliente', 'backlog' => 'A fazer', 'done' => 'Concluído'];
-            $raiaFor = function ($uid) use ($raiaRows, $raiaOrder, $raiaLabels) {
-                $sts = ($raiaRows[$uid] ?? collect())->pluck('status')->filter()->all();
-                if (empty($sts)) return [null, null];
-                usort($sts, fn ($a, $b) => ($raiaOrder[$a] ?? 99) <=> ($raiaOrder[$b] ?? 99));
-                return [$sts[0], $raiaLabels[$sts[0]] ?? ucfirst((string) $sts[0])];
+            // Lista de atividades do consultor (um consultor pode ter várias), mais ativa primeiro.
+            $activitiesFor = function ($uid) use ($raiaRows, $raiaOrder, $raiaLabels) {
+                $rows = ($raiaRows[$uid] ?? collect())->all();
+                usort($rows, fn ($a, $b) => ($raiaOrder[$a->status] ?? 99) <=> ($raiaOrder[$b->status] ?? 99));
+                return array_map(fn ($r) => [
+                    'id'         => $r->id,
+                    'name'       => $r->title,
+                    'raia'       => $r->status,
+                    'raia_label' => $raiaLabels[$r->status] ?? ucfirst((string) $r->status),
+                ], $rows);
+            };
+            // Raia agregada (a mais ativa) — resumo p/ ordenar/badge principal.
+            $raiaFor = function ($uid) use ($activitiesFor) {
+                $acts = $activitiesFor($uid);
+                return empty($acts) ? [null, null] : [$acts[0]['raia'], $acts[0]['raia_label']];
             };
 
             $usersData = \App\Models\User::whereIn('id', $uids)->get(['id', 'name', 'email']);
@@ -4860,6 +4870,7 @@ class ProjectController extends Controller
                     'overloaded'      => $planned > 0 && $actual > $planned,
                     'raia'            => $raiaKey,
                     'raia_label'      => $raiaLabel,
+                    'activities'      => $activitiesFor($u->id),
                 ];
             }
             // Quem mais consumiu no projeto primeiro.
