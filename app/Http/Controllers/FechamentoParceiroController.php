@@ -619,8 +619,10 @@ class FechamentoParceiroController extends Controller
         // relatório precisa aplicá-los p/ BATER com o card RECEBIMENTO (antes ignorava o Adicional:
         // 31.213 em vez de 33.438). No snapshot FECHADO o total_a_pagar já é o recebimento (com
         // ajustes) → NÃO reaplicar.
+        $descontoFmt = $adiantamentoFmt = $adicionalFmt = $emprestimoFmt = null;
+        $adiantamentoDesc = $adicionalDesc = $descontoDesc = null;
         $fechAtual = FechamentoParceiro::where('partner_id', $partner->id)->where('year_month', $yearMonth)->first();
-        if (!($fechAtual?->isClosed())) {
+        if (!($fechAtual?->isClosed()) && !$soDespesa) {
             $ajusteRec     = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partner->id)->where('year_month', $yearMonth)->first();
             $descontoRec   = round((float) ($ajusteRec->desconto ?? 0), 2);
             $adiantamRec   = round((float) ($ajusteRec->adiantamento ?? 0), 2)
@@ -628,6 +630,11 @@ class FechamentoParceiroController extends Controller
             $emprestimoRec = \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partner->id, $yearMonth);
             $adicionalRec  = round((float) ($ajusteRec->adicional ?? 0), 2);
             $totalValue    = round($totalValue - $descontoRec - $adiantamRec + $adicionalRec + $emprestimoRec, 2);
+            // Resumo dos ajustes p/ o relatório (só exibe os != 0).
+            if ($descontoRec   != 0) { $descontoFmt      = $this->brl($descontoRec);   $descontoDesc     = $ajusteRec->desconto_desc ?? null; }
+            if ($adiantamRec   != 0) { $adiantamentoFmt  = $this->brl($adiantamRec);   $adiantamentoDesc = \App\Models\Adiantamento::descricaoNoMes('parceiro', (int) $partner->id, $yearMonth); }
+            if ($adicionalRec  != 0) { $adicionalFmt     = $this->brl($adicionalRec);  $adicionalDesc    = $ajusteRec->adicional_desc ?? null; }
+            if ($emprestimoRec != 0) { $emprestimoFmt    = $this->brl($emprestimoRec); }
         }
 
         // Taxa/hora por consultor (consultoresData) — alimenta o cabeçalho de cada grupo
@@ -656,6 +663,13 @@ class FechamentoParceiroController extends Controller
             'despesasAntecip'  => $soServico ? [] : $despesasAntecip,
             'totalServicosFmt' => $this->brl($totalServicos),
             'totalDespesasFmt' => $this->brl($totalDespesas),
+            'descontoFmt'      => $descontoFmt,
+            'descontoDesc'     => $descontoDesc,
+            'adiantamentoFmt'  => $adiantamentoFmt,
+            'adiantamentoDesc' => $adiantamentoDesc,
+            'adicionalFmt'     => $adicionalFmt,
+            'adicionalDesc'    => $adicionalDesc,
+            'emprestimoFmt'    => $emprestimoFmt,
             'brl'              => fn ($v) => $this->brl((float) $v),
         ];
     }

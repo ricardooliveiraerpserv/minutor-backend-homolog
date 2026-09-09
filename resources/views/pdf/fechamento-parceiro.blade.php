@@ -164,6 +164,10 @@
   <table width="100%" style="margin-top:18px; font-size:11px;">
     @if(($mode ?? 'ambos') !== 'despesa')<tr><td style="color:#555; padding:2px 6px;">Serviços</td><td class="right" style="padding:2px 6px;">{{ $totalServicosFmt }}</td></tr>@endif
     @if(($mode ?? 'ambos') !== 'servicos')<tr><td style="color:#555; padding:2px 6px;">Despesas (no fechamento)</td><td class="right" style="padding:2px 6px;">{{ $totalDespesasFmt }}</td></tr>@endif
+    @if(!empty($adicionalFmt))<tr><td style="color:#6d28d9; padding:2px 6px;">Adicional{{ !empty($adicionalDesc) ? ' — '.$adicionalDesc : '' }}</td><td class="right" style="padding:2px 6px; color:#6d28d9;">+ {{ $adicionalFmt }}</td></tr>@endif
+    @if(!empty($emprestimoFmt))<tr><td style="color:#6d28d9; padding:2px 6px;">Empréstimo (aporte)</td><td class="right" style="padding:2px 6px; color:#6d28d9;">+ {{ $emprestimoFmt }}</td></tr>@endif
+    @if(!empty($adiantamentoFmt))<tr><td style="color:#b91c1c; padding:2px 6px;">Adiantamento{{ !empty($adiantamentoDesc) ? ' — '.$adiantamentoDesc : '' }}</td><td class="right" style="padding:2px 6px; color:#b91c1c;">− {{ $adiantamentoFmt }}</td></tr>@endif
+    @if(!empty($descontoFmt))<tr><td style="color:#b91c1c; padding:2px 6px;">Desconto{{ !empty($descontoDesc) ? ' — '.$descontoDesc : '' }}</td><td class="right" style="padding:2px 6px; color:#b91c1c;">− {{ $descontoFmt }}</td></tr>@endif
   </table>
   <table class="total-box" width="100%">
     <tr>
