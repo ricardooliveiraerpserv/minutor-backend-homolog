@@ -192,6 +192,11 @@ class UserController extends Controller
             $query->where('customer_id', $request->customer_id);
         }
 
+        // Filtro por perfil de acesso do Help Desk (coluna/atribuição inline em Usuários).
+        if ($request->filled('helpdesk_access_profile_id')) {
+            $query->where('helpdesk_access_profile_id', $request->helpdesk_access_profile_id);
+        }
+
         // Filtro por status (ativo/inativo) usando campo enabled
         $status = $request->get('status');
         if ($status === 'active') {
