@@ -184,6 +184,19 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'time.contract_summary', true);
     }
 
+    /** Tela padrão após o logon (perfil de acesso): 'principal' | 'tickets'. Default: principal. */
+    public function defaultScreen(?User $user): string
+    {
+        if ($this->unrestricted($user)) return 'principal';
+        return (string) $this->perm($user, 'general.default_screen', 'principal') === 'tickets' ? 'tickets' : 'principal';
+    }
+
+    /** Vê o GRÁFICO de consumo de horas do contrato (barra banco de horas). Default: sim. */
+    public function canViewContractChart(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'time.contract_chart', true);
+    }
+
     /** Pode ver VALORES trabalhados (R$ / taxa) no chamado. Default: sim. */
     public function canSeeWorkedValues(?User $user): bool
     {

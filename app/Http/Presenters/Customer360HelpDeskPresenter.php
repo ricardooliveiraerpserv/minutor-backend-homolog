@@ -55,10 +55,11 @@ class Customer360HelpDeskPresenter
         }
 
         return [
-            'financeiro_visivel' => $financeiro,
-            'contrato_visivel'   => $contratoVisivel,
-            'atencoes'           => $atencoes,
-            'blocos'             => $blocos,
+            'financeiro_visivel'      => $financeiro,
+            'contrato_visivel'        => $contratoVisivel,
+            'contrato_chart_visivel'  => $this->access->canViewContractChart($user),
+            'atencoes'                => $atencoes,
+            'blocos'                  => $blocos,
         ];
     }
 
