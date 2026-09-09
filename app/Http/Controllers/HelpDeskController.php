@@ -47,6 +47,8 @@ class HelpDeskController extends Controller
             'sla_policies' => HelpDeskSlaPolicy::where('active', true)->orderByDesc('is_default')->orderBy('name')->get(['id', 'name', 'is_default']),
             // Árvore completa (pais + filhos) ativa; o FE monta a hierarquia e desabilita os não-selecionáveis.
             'services'     => HelpDeskService::where('active', true)
+                ->when(!app(\App\Services\HelpDeskAccessPolicy::class)->canSeeAllCatalog(auth()->user()),
+                    fn ($q) => $q->where('visible_to_agent', true))
                 ->orderBy('sort_order')->orderBy('name')->get(['id', 'parent_id', 'name', 'code', 'selectable_by_agent']),
             'justifications' => HelpDeskTicketJustification::where('active', true)
                 ->orderBy('sort_order')->orderBy('name')->get(['id', 'status_id', 'name']),

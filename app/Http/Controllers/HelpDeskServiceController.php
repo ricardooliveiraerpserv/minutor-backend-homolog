@@ -11,8 +11,13 @@ class HelpDeskServiceController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        // Perfil de acesso: sem "todo o catálogo", o agente só vê serviços marcados "visível ao agente".
+        // (O cadastro admin usa ?all=1 e não é filtrado.)
+        $restrictCatalog = !$request->boolean('all')
+            && !app(\App\Services\HelpDeskAccessPolicy::class)->canSeeAllCatalog($request->user());
         $services = HelpDeskService::query()
             ->when(!$request->boolean('all'), fn ($q) => $q->where('active', true))
+            ->when($restrictCatalog, fn ($q) => $q->where('visible_to_agent', true))
             ->orderBy('sort_order')->orderBy('name')
             ->get();
         return response()->json(['data' => $services]);

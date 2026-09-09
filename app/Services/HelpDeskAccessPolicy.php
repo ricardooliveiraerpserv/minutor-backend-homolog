@@ -202,6 +202,12 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.collision', true);
     }
 
+    /** Acesso a TODO o catálogo de serviços. Off = só os marcados "visível ao agente". Default: sim. */
+    public function canSeeAllCatalog(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'policies.all_catalog', true);
+    }
+
     /** Tipo PADRÃO da nova ação em chamados: 'public' | 'internal'. Default: public. */
     public function defaultActionType(?User $user): string
     {
