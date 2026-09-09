@@ -4824,10 +4824,29 @@ class ProjectController extends Controller
                 ->selectRaw('sd.responsible_user_id AS user_id, COALESCE(SUM(sd.hours_planned), 0) AS h')
                 ->pluck('h', 'user_id');
 
+            // "Raia" de cada consultor = status agregado das SUAS atividades (a mais ativa).
+            // Prioridade: em andamento > em revisão > aguardando cliente > a fazer > concluído.
+            $raiaRows = \DB::table('stage_deliveries as sd')
+                ->join('project_stages as ps', 'ps.id', '=', 'sd.stage_id')
+                ->where('ps.project_id', $project->id)
+                ->whereNull('ps.deleted_at')->whereNull('sd.deleted_at')
+                ->whereIn('sd.responsible_user_id', $uids)
+                ->get(['sd.responsible_user_id', 'sd.status'])
+                ->groupBy('responsible_user_id');
+            $raiaOrder  = ['in_progress' => 1, 'review' => 2, 'waiting_client' => 3, 'backlog' => 4, 'done' => 5];
+            $raiaLabels = ['in_progress' => 'Em andamento', 'review' => 'Em revisão', 'waiting_client' => 'Aguardando cliente', 'backlog' => 'A fazer', 'done' => 'Concluído'];
+            $raiaFor = function ($uid) use ($raiaRows, $raiaOrder, $raiaLabels) {
+                $sts = ($raiaRows[$uid] ?? collect())->pluck('status')->filter()->all();
+                if (empty($sts)) return [null, null];
+                usort($sts, fn ($a, $b) => ($raiaOrder[$a] ?? 99) <=> ($raiaOrder[$b] ?? 99));
+                return [$sts[0], $raiaLabels[$sts[0]] ?? ucfirst((string) $sts[0])];
+            };
+
             $usersData = \App\Models\User::whereIn('id', $uids)->get(['id', 'name', 'email']);
             foreach ($usersData as $u) {
                 $planned = (float) ($plannedByUser[$u->id] ?? 0);
                 $actual  = (float) ($actualByUser[$u->id] ?? 0);
+                [$raiaKey, $raiaLabel] = $raiaFor($u->id);
                 $teamLoad[] = [
                     'user' => [
                         'id'    => $u->id,
@@ -4839,6 +4858,8 @@ class ProjectController extends Controller
                     'remaining_hours' => round($planned - $actual, 2),
                     'usage_pct'       => $pool > 0 ? round(($actual / $pool) * 100, 1) : 0.0,
                     'overloaded'      => $planned > 0 && $actual > $planned,
+                    'raia'            => $raiaKey,
+                    'raia_label'      => $raiaLabel,
                 ];
             }
             // Quem mais consumiu no projeto primeiro.
