@@ -1587,8 +1587,14 @@ class TimesheetController extends Controller
             $projectForValidation = $timesheet->project;
         }
 
+        // O DONO pode editar o PRÓPRIO apontamento já existente em sustentação (ajustar horário,
+        // observação, etc.), desde que NÃO troque o projeto. O bloqueio abaixo vale só p/ criar
+        // ou mover para um projeto de sustentação sem permissão — não p/ manter o próprio.
+        $editingOwnSameProject = (int) $timesheet->user_id === (int) $user->id
+            && (!isset($validatedData['project_id']) || (int) $validatedData['project_id'] === (int) $timesheet->project_id);
+
         // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação
-        if ($projectForValidation && ($user->isConsultor() || $user->isParceiroAdmin())) {
+        if (!$editingOwnSameProject && $projectForValidation && ($user->isConsultor() || $user->isParceiroAdmin())) {
             $isSustentacao = $projectForValidation->service_type_id &&
                 \App\Models\ServiceType::where('id', $projectForValidation->service_type_id)
                     ->whereIn('code', ['sustentacao', 'cloud'])
