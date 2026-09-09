@@ -614,6 +614,21 @@ class FechamentoParceiroController extends Controller
         $totalDespesas   = round(collect($despesas)->sum('valor'), 2);
         $totalServicos   = round($totalAll - $totalDespesas, 2);
         $totalValue      = $soDespesa ? $totalDespesas : ($soServico ? $totalServicos : $totalAll);
+        // Ajustes do recebimento (desconto/adiantamento/adicional/empréstimo). Ao VIVO o
+        // parceiroTotals devolve a BASE (serviços+despesas) SEM ajustes → o "Total a Pagar" do
+        // relatório precisa aplicá-los p/ BATER com o card RECEBIMENTO (antes ignorava o Adicional:
+        // 31.213 em vez de 33.438). No snapshot FECHADO o total_a_pagar já é o recebimento (com
+        // ajustes) → NÃO reaplicar.
+        $fechAtual = FechamentoParceiro::where('partner_id', $partner->id)->where('year_month', $yearMonth)->first();
+        if (!($fechAtual?->isClosed())) {
+            $ajusteRec     = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partner->id)->where('year_month', $yearMonth)->first();
+            $descontoRec   = round((float) ($ajusteRec->desconto ?? 0), 2);
+            $adiantamRec   = round((float) ($ajusteRec->adiantamento ?? 0), 2)
+                + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            $emprestimoRec = \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            $adicionalRec  = round((float) ($ajusteRec->adicional ?? 0), 2);
+            $totalValue    = round($totalValue - $descontoRec - $adiantamRec + $adicionalRec + $emprestimoRec, 2);
+        }
 
         // Taxa/hora por consultor (consultoresData) — alimenta o cabeçalho de cada grupo
         // e o card "Taxa/Hora" do resumo (quando o parceiro tem uma única taxa).
