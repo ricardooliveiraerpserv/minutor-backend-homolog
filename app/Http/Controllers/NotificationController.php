@@ -399,6 +399,24 @@ class NotificationController extends Controller
         return response()->json(null, 204);
     }
 
+    /**
+     * Encerra a campanha AGORA (admin/dono): desliga a recorrência e fecha o prazo da decisão.
+     * Efeito: o pop-up some (sai do visibleQuery por expires_at), não re-pergunta mais
+     * (recurrence=none sai do fire-recurring) e novas respostas ficam bloqueadas
+     * ("prazo já encerrou"). NÃO apaga — mantém visível no Gerenciar com as respostas registradas.
+     */
+    public function encerrar(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        $notification->forceFill([
+            'recurrence'          => 'none',
+            'recurrence_value'    => null,
+            'recurrence_weekdays' => null,
+            'expires_at'          => now(),
+        ])->save();
+        return response()->json(['data' => $notification->fresh('poll.options')]);
+    }
+
     /** Reenvia o aviso AGORA (admin): reabre p/ todos (limpa leituras) + reenvia e-mail + re-popa. */
     public function resend(Request $request, AppNotification $notification): JsonResponse
     {
