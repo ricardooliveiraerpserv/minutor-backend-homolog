@@ -730,6 +730,16 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'rateio'])->name('projects.rateio');
             Route::put('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'saveRateio'])->name('projects.rateio.save');
             // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
+            // Rateio de horas — config dos projetos-servidor e seus destinos.
+            Route::get('/rateio-hours/projects',                            [\App\Http\Controllers\RateioHoursController::class, 'index'])->name('rateio-hours.index');
+            Route::get('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'targets'])->name('rateio-hours.targets');
+            Route::put('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'saveTargets'])->name('rateio-hours.targets.save');
+            Route::put('/rateio-hours/projects/{project}/team',             [\App\Http\Controllers\RateioHoursController::class, 'saveTeam'])->name('rateio-hours.team.save');
+            Route::get('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'plans'])->name('rateio-hours.plans');
+            Route::put('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'savePlans'])->name('rateio-hours.plans.save');
+            Route::get('/rateio-hours/projects/{project}/timesheets',       [\App\Http\Controllers\RateioHoursController::class, 'timesheets'])->name('rateio-hours.timesheets');
+            Route::put('/rateio-hours/projects/{project}/timesheets/{timesheet}/override', [\App\Http\Controllers\RateioHoursController::class, 'overrideTimesheet'])->name('rateio-hours.timesheets.override');
+            Route::delete('/rateio-hours/projects/{project}/timesheets/{timesheet}', [\App\Http\Controllers\RateioHoursController::class, 'destroyTimesheet'])->name('rateio-hours.timesheets.destroy');
             Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
             Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
             Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send');
@@ -1466,6 +1476,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/evolution',       [SustentacaoController::class, 'evolution'])->name('sustentacao.evolution');
             Route::get('/context-stats',       [SustentacaoController::class, 'contextStats'])->name('sustentacao.context-stats');
             Route::get('/filter-options',      [SustentacaoController::class, 'filterOptions'])->name('sustentacao.filter-options');
+            Route::get('/on-demand-panel',     [SustentacaoController::class, 'onDemandPanel'])->name('sustentacao.on-demand-panel');
+            Route::get('/contracts-panel',      [SustentacaoController::class, 'contractsPanel'])->name('sustentacao.contracts-panel');
             Route::get('/executive',           [SustentacaoController::class, 'executive'])->name('sustentacao.executive');
             Route::get('/debug-clientes',      [SustentacaoController::class, 'debugClientes'])->name('sustentacao.debug-clientes');
             Route::get('/debug-responsaveis',  [SustentacaoController::class, 'debugResponsaveis'])->name('sustentacao.debug-responsaveis');

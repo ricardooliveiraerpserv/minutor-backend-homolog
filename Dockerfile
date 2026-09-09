@@ -55,7 +55,7 @@ RUN printf 'server {\n\
     root /var/www/public;\n\
     index index.php;\n\
     disable_symlinks off;\n\
-    client_max_body_size 25M;\n\
+    client_max_body_size 64M;\n\
     location ^~ /storage/ {\n\
         alias /var/www/storage/app/public/;\n\
         try_files $uri =404;\n\
@@ -72,8 +72,8 @@ RUN printf 'server {\n\
     }\n\
 }\n' > /etc/nginx/http.d/default.conf
 
-# Limite de upload PHP
-RUN printf 'upload_max_filesize=20M\npost_max_size=25M\nmemory_limit=256M\n' > /usr/local/etc/php/conf.d/uploads.ini
+# Limite de upload PHP (52M/64M p/ comprovantes de despesa e anexos grandes via upload direto)
+RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=256M\n' > /usr/local/etc/php/conf.d/uploads.ini
 
 # PHP-FPM pool: o default da imagem é max_children=5 — muito apertado.
 # Backend recebe tráfego de usuários + webhooks Movidesk (que podem segurar

@@ -100,7 +100,7 @@ class MicrosoftCalendarService
             $url = self::GRAPH_BASE . '/me/calendarView?' . http_build_query([
                 'startDateTime' => $start->toIso8601String(),
                 'endDateTime'   => $end->toIso8601String(),
-                '$select'       => 'subject,start,end,isAllDay,location,onlineMeeting,webLink,attendees,organizer',
+                '$select'       => 'subject,start,end,isAllDay,location,onlineMeeting,webLink,attendees,organizer,isCancelled',
                 '$orderby'      => 'start/dateTime',
                 '$top'          => 100,
             ]);
@@ -111,6 +111,13 @@ class MicrosoftCalendarService
             if (!$r->successful()) return [];
 
             return collect($r->json('value', []))->map(function ($e) {
+                // Reunião CANCELADA não deve entrar na agenda nem gerar lembrete "entrar na reunião".
+                // Filtra pela flag do Graph E pelo prefixo do assunto ("Cancelado:"/"Canceled:") — em
+                // alguns casos o convidado ainda não processou o cancelamento e isCancelled fica false.
+                if (data_get($e, 'isCancelled') === true) return null;
+                $subject = (string) (data_get($e, 'subject') ?: 'Compromisso');
+                if (preg_match('/^\s*cancel(?:ad[oa]|ed|led)\s*:/i', $subject)) return null;
+
                 $startDt = data_get($e, 'start.dateTime');
                 $endDt   = data_get($e, 'end.dateTime');
                 $date = $startDt ? Carbon::parse($startDt)->toDateString() : null;
@@ -123,7 +130,7 @@ class MicrosoftCalendarService
                 return [
                     'tipo'        => 'outlook',
                     'data'        => $date,
-                    'titulo'      => (string) (data_get($e, 'subject') ?: 'Compromisso'),
+                    'titulo'      => $subject,
                     'hora'        => data_get($e, 'isAllDay') ? null : ($startDt ? Carbon::parse($startDt)->format('H:i') : null),
                     'hora_fim'    => data_get($e, 'isAllDay') ? null : ($endDt ? Carbon::parse($endDt)->format('H:i') : null),
                     'local'       => (string) (data_get($e, 'location.displayName') ?: ''),

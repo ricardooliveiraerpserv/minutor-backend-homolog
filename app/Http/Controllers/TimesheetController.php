@@ -187,8 +187,11 @@ class TimesheetController extends Controller
     {
         $user = Auth::user();
 
-        // Paginação PO-UI
-        $perPage = min($request->get('pageSize', 15), 100);
+        // Paginação PO-UI. Teto de 5000 (não 100): o Relatório de Apontamentos/Fechamento pede
+        // pageSize alto (2000) p/ trazer o MÊS INTEIRO de um cliente numa página. Com o teto de 100
+        // + order by date desc, clientes com >100 apontamentos no período tinham os apontamentos
+        // MAIS ANTIGOS (início do mês) descartados SILENCIOSAMENTE do relatório de cobrança.
+        $perPage = min((int) $request->get('pageSize', 15), 5000);
         $page = (int) $request->get('page', 1);
 
         // Eager-load com colunas específicas — evita trazer rows inteiras de relações
@@ -264,6 +267,15 @@ class TimesheetController extends Controller
         if (!$user->isAdmin() && !$user->isCoordenador()) {
             $query->where('timesheets.is_billable_only', false);
         }
+
+        // Apontamento-ORIGEM do rateio (feito no projeto-servidor is_rateio e já DISTRIBUÍDO
+        // → is_billable_only=true) NÃO aparece na lista de Apontamentos: ele vive na tela de
+        // Rateio; aqui aparecem só os rateios (filhos). Vale p/ todos os perfis (inclusive admin).
+        $query->whereNot(function ($q) {
+            $q->whereNull('timesheets.rateio_source_timesheet_id')
+              ->where('timesheets.is_billable_only', true)
+              ->whereHas('project', fn ($p) => $p->where('is_rateio', true));
+        });
 
         // Percentuais de acréscimo: consultor e cliente nunca veem client_extra_pct
         $hideClientPct = !$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo';
@@ -902,6 +914,9 @@ class TimesheetController extends Controller
         $rules = [
             'project_id' => 'required|exists:projects,id',
             'real_project_id' => 'nullable|integer|exists:projects,id',
+            'distribution' => 'nullable|array',
+            'distribution.*.target_project_id' => 'required|integer|exists:projects,id',
+            'distribution.*.minutes' => 'required|numeric|min:0',
             'date' => 'required|date|before_or_equal:today',
             'start_time' => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i',
             'end_time'   => $hasTotalHours ? 'nullable|date_format:H:i' : 'required|date_format:H:i|after:start_time',
@@ -999,7 +1014,9 @@ class TimesheetController extends Controller
         $closing     = app(\App\Services\ClosingService::class);
         $monthClosed = $closing->isMonthClosed($request->date, (int) $project->id, (int) $timesheetUserId);
         $weekClosed  = $closing->isWeekClosed($request->date, (int) $project->id, (int) $timesheetUserId);
-        if ($monthClosed || $weekClosed) {
+        // Reabertura de SEMANA específica p/ este escopo libera o dia mesmo com o mês fechado.
+        $weekReopened = $closing->hasActiveWeekReopen($request->date, (int) $project->id, (int) $timesheetUserId);
+        if (($monthClosed || $weekClosed) && !$weekReopened) {
             return response()->json($monthClosed ? [
                 'code'          => 'PERIOD_CLOSED',
                 'type'          => 'error',
@@ -1248,6 +1265,11 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
+            // Rateio de horas: projeto-servidor (is_rateio) distribui as horas para os destinos.
+            if ($project->is_rateio) {
+                app(\App\Services\RateioHoursService::class)->sync($timesheet, $request->input('distribution'));
+            }
+
             // FASE 11.7 — Attachment persiste 100% na camada Attachment.
             if ($newAttachmentInfo !== null) {
                 $this->registerTimesheetAttachment($timesheet, $newAttachmentInfo);
@@ -1490,6 +1512,9 @@ class TimesheetController extends Controller
             // Cronograma: atividade (stage_delivery). stage_id é derivado no mutator.
             'stage_id' => 'nullable|integer|exists:project_stages,id',
             'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
+            'distribution' => 'nullable|array',
+            'distribution.*.target_project_id' => 'required|integer|exists:projects,id',
+            'distribution.*.minutes' => 'required|numeric|min:0',
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
@@ -1611,7 +1636,9 @@ class TimesheetController extends Controller
             $editClosing = app(\App\Services\ClosingService::class);
             $editUid     = (int) $timesheet->user_id;
             $editPid     = (int) $projectForValidation->id;
-            if ($editClosing->isMonthClosed($serviceDate->toDateString(), $editPid, $editUid)) {
+            // Reabertura de SEMANA específica p/ este escopo libera a edição mesmo com o mês fechado.
+            $editWeekReopened = $editClosing->hasActiveWeekReopen($serviceDate->toDateString(), $editPid, $editUid);
+            if (!$editWeekReopened && $editClosing->isMonthClosed($serviceDate->toDateString(), $editPid, $editUid)) {
                 return response()->json([
                     'code'          => 'PERIOD_CLOSED',
                     'type'          => 'error',
@@ -1939,6 +1966,12 @@ class TimesheetController extends Controller
 
             $timesheet->save();
 
+            // Rateio de horas: re-sincroniza os filhos (mudou horas/data/status/distribuição).
+            $timesheet->loadMissing('project');
+            if ($timesheet->project && $timesheet->project->is_rateio) {
+                app(\App\Services\RateioHoursService::class)->sync($timesheet, $request->input('distribution'));
+            }
+
             // FASE 11.7 — Attachment persiste 100% na camada Attachment.
             if (isset($newAttachmentInfoUpd) && $newAttachmentInfoUpd !== null) {
                 $this->registerTimesheetAttachment($timesheet->fresh(), $newAttachmentInfoUpd);
@@ -2077,6 +2110,9 @@ class TimesheetController extends Controller
 
         // FASE 11.7 — soft-delete attachment(s) ANTES do timesheet sumir.
         $this->softDeleteTimesheetAttachments($timesheet);
+
+        // Rateio de horas: apaga os filhos de distribuição junto com o pai.
+        app(\App\Services\RateioHoursService::class)->clear($timesheet);
 
         $timesheet->delete();
         $this->resolveStaleConflicts($tsUserId, $tsDate);
@@ -2379,21 +2415,26 @@ class TimesheetController extends Controller
         }
         $validated = $request->validate(['date' => 'required|date']);
 
-        $timesheet->date        = $validated['date'];
-        $timesheet->date_locked = true; // integracao nao sobrescreve
+        // "Data de digitacao" = created_at (quando o apontamento foi LANÇADO/digitado),
+        // NAO a data do servico (`date`). Preserva a hora original, só troca a data.
+        $orig = $timesheet->created_at instanceof \Carbon\Carbon
+            ? $timesheet->created_at
+            : ($timesheet->created_at ? \Carbon\Carbon::parse($timesheet->created_at) : \Carbon\Carbon::now());
+        $timesheet->created_at = \Carbon\Carbon::parse($validated['date'])->setTimeFrom($orig);
+        // Se estava marcado como ATRASO (lançado fora do prazo) e a nova data de digitacao
+        // o coloca dentro do prazo, volta a Pendente.
         if ($timesheet->status === Timesheet::STATUS_LATE) {
             $timesheet->status = Timesheet::STATUS_PENDING;
         }
         $timesheet->save();
 
-        $this->resolveStaleConflicts($timesheet->user_id, $timesheet->date);
         $this->invalidateListCache('timesheets');
         $timesheet->load(['user', 'customer', 'project']);
 
         return response()->json([
             'success' => true,
             'data'    => $timesheet,
-            'message' => 'Data de digitacao alterada e travada (a integracao nao sobrescreve).',
+            'message' => 'Data de digitacao (inclusao) alterada.',
         ]);
     }
 

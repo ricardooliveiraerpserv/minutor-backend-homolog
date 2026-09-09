@@ -39,7 +39,28 @@ class SkillDashboardController extends Controller
             ->where('status', SkillSubmission::STATUS_SUBMITTED)
             ->when($type || $classifications || $search, fn ($q) => $q->whereHas('respondent', function ($r) use ($type, $classifications, $search) {
                 $r->when($type, fn ($x) => $x->where('type', $type))
-                    ->when($classifications, fn ($x) => $x->whereIn('classification', $classifications))
+                    ->when($classifications, function ($x) use ($classifications) {
+                        // Manuais = coluna `classification`. Interno/Freelance/Desligado NÃO ficam na coluna:
+                        // são DERIVADAS do cadastro (ver SkillRespondent::classificationFromUser) → casam via
+                        // whereHas('user', ...) com as mesmas regras (enabled/type/work_bond).
+                        $manual   = array_values(array_intersect($classifications, SkillRespondent::MANUAL_CLASSIFICATIONS));
+                        $cadastro = array_values(array_diff($classifications, SkillRespondent::MANUAL_CLASSIFICATIONS));
+                        $x->where(function ($w) use ($manual, $cadastro) {
+                            if ($manual) $w->orWhereIn('classification', $manual);
+                            foreach ($cadastro as $c) {
+                                $w->orWhereHas('user', function ($u) use ($c) {
+                                    if ($c === 'desligado') {
+                                        $u->where('enabled', false);
+                                    } elseif ($c === 'freelance') {
+                                        $u->where('enabled', true)->where('type', '!=', 'parceiro_admin')->where('work_bond', 'freelance');
+                                    } elseif ($c === 'erpserv') { // Interno
+                                        $u->where('enabled', true)->where('type', '!=', 'parceiro_admin')
+                                          ->where(fn ($b) => $b->where('work_bond', '!=', 'freelance')->orWhereNull('work_bond'));
+                                    }
+                                });
+                            }
+                        });
+                    })
                     ->when($search, fn ($x) => $x->where('name', 'ilike', '%' . $search . '%'));
             }))
             ->when($respondentIds, fn ($q) => $q->whereIn('respondent_id', $respondentIds))
@@ -47,8 +68,10 @@ class SkillDashboardController extends Controller
             ->groupBy('respondent_id')
             ->pluck('id');
 
-        // Só as classificações MANUAIS no dropdown — Interno/Freelance/Desligado vêm do cadastro.
-        $classificationOptions = collect(SkillRespondent::MANUAL_CLASSIFICATIONS)
+        // Filtro de classificação: as manuais + Interno/Freelance (derivadas do cadastro, mas
+        // filtráveis — pedido Ricardo). "Desligado" fica de fora do dropdown (não faz parte da consulta).
+        $filterClassifications = array_merge(SkillRespondent::MANUAL_CLASSIFICATIONS, ['erpserv', 'freelance']);
+        $classificationOptions = collect($filterClassifications)
             ->map(fn ($value) => ['value' => $value, 'label' => SkillRespondent::CLASSIFICATIONS[$value]])->values();
 
         return response()->json([

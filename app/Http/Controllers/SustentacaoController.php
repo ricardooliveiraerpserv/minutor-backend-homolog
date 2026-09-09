@@ -25,6 +25,16 @@ class SustentacaoController extends Controller
         return MovideskTicket::where(function ($q) {
             $q->whereNull('owner_email')
               ->orWhere('owner_email', 'not ilike', '%@promax.bardahl.com.br');
+        })
+        // Equipes INTERNAS do cliente (help desk próprio dele, no mesmo Movidesk) NÃO são
+        // atendimento da ERPSERV → fora dos indicadores. Ex.: "Promax Bardahl" / "Manutenção
+        // Promax". Exclui por EQUIPE (owner_team), pois o filtro por e-mail não pega ticket com
+        // owner_email nulo ou de outro domínio. Só conta Promax atendido por Atendimento/Cloud/
+        // etc. (pedido Ricardo 2026-09-08).
+        ->where(function ($q) {
+            // ⚠️ owner_team vem com ESPAÇO à direita no Movidesk ("Promax Bardahl ") → TRIM.
+            $q->whereNull('owner_team')
+              ->orWhereRaw("LOWER(TRIM(owner_team)) NOT IN ('promax bardahl', 'manutenção promax')");
         });
     }
 
@@ -104,6 +114,31 @@ class SustentacaoController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * Filtro por CLIENTE (organização) que casa o org RESOLVIDO — não só o campo `organization`
+     * cru. Antes, filtrar "PROMAX" pegava só tickets com organization='PROMAX'; os das equipes
+     * (Promax Bardahl / Manutenção Promax) têm organization=departamento (Compras, Financeiro…)
+     * e ficavam de fora, embora a LISTA os rotule como PROMAX pelo domínio do e-mail. Agora casa:
+     * organization ILIKE  OU  domínio de e-mail do org  OU  customer_id do org. (Ricardo 2026-09-08)
+     */
+    private function applyClienteFilter($q, array $clienteFilter,
+        \Illuminate\Support\Collection $orgByCustomerId, array $domainMap): void
+    {
+        if (!$clienteFilter) return;
+        $match = fn(string $orgName) => (bool) array_filter($clienteFilter, fn($c) => stripos($orgName, $c) !== false);
+        $domains = [];
+        foreach ($domainMap as $dom => $orgName) { if ($match((string) $orgName)) $domains[] = strtolower($dom); }
+        $custIds = [];
+        foreach ($orgByCustomerId as $cid => $org) { if ($match((string) $org->name)) $custIds[] = $cid; }
+        $q->where(function ($q2) use ($clienteFilter, $domains, $custIds) {
+            foreach ($clienteFilter as $c) {
+                $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
+            }
+            if ($domains) $q2->orWhereIn(DB::raw("split_part(lower(solicitante->>'email'),'@',2)"), array_values(array_unique($domains)));
+            if ($custIds) $q2->orWhereIn('customer_id', array_values(array_unique($custIds)));
+        });
     }
 
     private function authorize(): void
@@ -192,11 +227,7 @@ class SustentacaoController extends Controller
         $tickets = $this->applyOpen($this->tickets())
             ->with(['user:id,name', 'customer:id,name'])
             ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
-            ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
-                foreach ($clienteFilter as $c) {
-                    $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
-                }
-            }))
+            ->when($clienteFilter, fn($q) => $this->applyClienteFilter($q, $clienteFilter, $orgByCustomerId, $domainMap))
             ->when($urgenciaFilter, fn($q) => $q->whereIn('urgencia', $urgenciaFilter))
             ->when($statusFilter, fn($q) => $q->whereIn('status', $statusFilter))
             ->when($searchFilter, fn($q) => $q->where(function ($q2) use ($searchFilter) {
@@ -330,11 +361,10 @@ class SustentacaoController extends Controller
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                  ->orWhere(function ($s) {
-                      // Investimento Suporte (todos os clientes) conta como sustentação.
-                      $s->where('projects.is_investimento_comercial', true)
-                        ->where('projects.categoria_interna', 'Suporte');
-                  });
+                  // Só "Investimento Suporte" (por NOME) conta como sustentação nas HORAS —
+                  // o par is_investimento_comercial+categoria='Suporte' vazava Day Off /
+                  // Investimento Cloud (pedido Ricardo 2026-09-08).
+                  ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -368,11 +398,10 @@ class SustentacaoController extends Controller
             ->where(function ($q) {
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                  ->orWhere(function ($s) {
-                      // Investimento Suporte (todos os clientes) conta como sustentação.
-                      $s->where('projects.is_investimento_comercial', true)
-                        ->where('projects.categoria_interna', 'Suporte');
-                  });
+                  // Só "Investimento Suporte" (por NOME) conta como sustentação nas HORAS —
+                  // o par is_investimento_comercial+categoria='Suporte' vazava Day Off /
+                  // Investimento Cloud (pedido Ricardo 2026-09-08).
+                  ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -631,14 +660,15 @@ class SustentacaoController extends Controller
         $responsavelFilter = $split($request->query('responsavel'));
         $clienteFilter     = $split($request->query('cliente'));
 
+        // Mesmo casamento de cliente da fila (org resolvido: organization/domínio/customer_id).
+        $orgByName       = $this->orgLookup();
+        $orgByCustomerId = MovideskOrganization::whereNotNull('customer_id')->get(['name', 'customer_id'])->keyBy('customer_id');
+        $domainMap       = $this->domainOrgMap($orgByName);
+
         // Aplica os filtros de contexto
         $base = fn() => $this->tickets()
             ->when($responsavelFilter, fn($q) => $q->whereIn(DB::raw('LOWER(owner_email)'), array_map('strtolower', $responsavelFilter)))
-            ->when($clienteFilter, fn($q) => $q->where(function ($q2) use ($clienteFilter) {
-                foreach ($clienteFilter as $c) {
-                    $q2->orWhereRaw("solicitante->>'organization' ILIKE ?", ["%{$c}%"]);
-                }
-            }));
+            ->when($clienteFilter, fn($q) => $this->applyClienteFilter($q, $clienteFilter, $orgByCustomerId, $domainMap));
 
         // Tickets abertos agora
         $ticketsOpen = $this->applyOpen($base())->count();
@@ -748,11 +778,8 @@ class SustentacaoController extends Controller
                     ->where(function ($q) {
                         $q->where('service_types.code', 'sustentacao')
                           ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                          ->orWhere(function ($s) {
-                              // Investimento Suporte (todos os clientes) conta como sustentação.
-                              $s->where('projects.is_investimento_comercial', true)
-                                ->where('projects.categoria_interna', 'Suporte');
-                          });
+                          // Só "Investimento Suporte" (por NOME) — ver nota acima (Ricardo 2026-09-08).
+                          ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
                     })
                     ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
                     ->whereIn('timesheets.status', ['approved', 'pending'])
@@ -785,6 +812,284 @@ class SustentacaoController extends Controller
                 'responsavel' => $responsavelFilter,
                 'cliente'     => $clienteFilter,
             ],
+        ]);
+    }
+
+    /**
+     * Painel ON DEMAND — aba dedicada do Portal de Sustentação. Últimos 12 meses de HORAS
+     * apontadas + TICKETS (demandas) por CLIENTE, resultado do mês corrente, e clientes SEM
+     * movimentação. Base: timesheets em projetos com contract_type='on_demand' (id 4),
+     * status approved+pending. Tickets = nº de tickets distintos (timesheets.ticket) — cada
+     * demanda On Demand tem seu ticket.
+     */
+    public function onDemandPanel(Request $request): JsonResponse
+    {
+        $this->authorize();
+        $cid = $this->activeCompanyId();
+        $ON_DEMAND = 4; // contract_types.code = 'on_demand'
+        // ⚠️ O trio "Investimento Suporte/Projetos/Comercial" é auto-criado p/ TODOS os clientes
+        // com contract_type on_demand — NÃO é contrato On Demand real. On Demand de verdade =
+        // projeto on_demand com nome fora desse trio (ex.: "Atendimento On Demand"). (Ricardo 2026-09-08)
+        $TRIO = ['investimento suporte', 'investimento projetos', 'investimento comercial'];
+
+        // Filtro opcional por tipo de serviço: ?service=sustentacao|projeto (vazio = todos).
+        $service = in_array($request->query('service'), ['sustentacao', 'projeto', 'arquitetura'], true)
+            ? $request->query('service') : null;
+        $serviceId = $service ? DB::table('service_types')->where('code', $service)->value('id') : null;
+
+        // Janela de 12 meses terminando no mês atual (America/Sao_Paulo).
+        // Mês de referência: segue o seletor de data do topo (?ref=YYYY-MM); sem ele, o mês atual.
+        $ref   = (string) $request->query('ref');
+        $end   = preg_match('/^\d{4}-\d{2}$/', $ref)
+            ? Carbon::createFromFormat('Y-m-d', $ref . '-01')->startOfMonth()
+            : Carbon::now('America/Sao_Paulo')->startOfMonth();
+        $start = (clone $end)->subMonths(11);
+        $months = [];
+        for ($m = clone $start; $m <= $end; $m->addMonth()) $months[] = $m->format('Y-m');
+        $currentMonth = $end->format('Y-m');
+
+        // Agregação horas + tickets(distintos) por cliente × mês.
+        $rows = DB::table('timesheets as t')
+            ->join('projects as p', 'p.id', '=', 't.project_id')
+            ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereRaw("lower(trim(c.name)) <> 'erpserv'")   // ERPSERV (interno) não é contrato de cliente
+            ->where('p.contract_type_id', $ON_DEMAND)
+            ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
+            ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
+            ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
+            ->whereIn('t.status', ['approved', 'pending'])
+            ->where('t.date', '>=', $start->toDateString())
+            // Exclui apontamento-ORIGEM do rateio (is_billable_only no projeto-servidor) → só filhos.
+            ->whereNot(fn ($q) => $q->whereNull('t.rateio_source_timesheet_id')
+                ->where('t.is_billable_only', true)->where('p.is_rateio', true))
+            ->groupBy('p.customer_id', 'c.name', DB::raw("to_char(t.date, 'YYYY-MM')"))
+            ->selectRaw("p.customer_id, c.name as customer, to_char(t.date, 'YYYY-MM') as mes,
+                         SUM(t.effort_minutes) as minutes, COUNT(DISTINCT NULLIF(t.ticket, '')) as tickets")
+            ->get();
+
+        // Monta por cliente + totais mensais.
+        $byClient = [];
+        $monthAgg = array_fill_keys($months, ['h' => 0.0, 'tk' => 0, 'cli' => 0]);
+        foreach ($rows as $r) {
+            $id  = (int) $r->customer_id;
+            $mes = $r->mes;
+            $h   = round(((int) $r->minutes) / 60, 1);
+            $tk  = (int) $r->tickets;
+            if (!isset($byClient[$id])) {
+                $byClient[$id] = ['customer_id' => $id, 'customer' => $r->customer, 'months' => [],
+                    'total_hours' => 0.0, 'total_tickets' => 0, 'current_hours' => 0.0,
+                    'current_tickets' => 0, 'last_activity' => null];
+            }
+            $byClient[$id]['months'][$mes] = ['h' => $h, 'tk' => $tk];
+            $byClient[$id]['total_hours']  += $h;
+            $byClient[$id]['total_tickets'] += $tk;
+            if ($mes === $currentMonth) { $byClient[$id]['current_hours'] = $h; $byClient[$id]['current_tickets'] = $tk; }
+            if ($h > 0 && ($byClient[$id]['last_activity'] === null || $mes > $byClient[$id]['last_activity'])) {
+                $byClient[$id]['last_activity'] = $mes;
+            }
+            if (isset($monthAgg[$mes])) {
+                $monthAgg[$mes]['h']  += $h;
+                $monthAgg[$mes]['tk'] += $tk;
+                if ($h > 0) $monthAgg[$mes]['cli']++;
+            }
+        }
+        foreach ($byClient as &$b) $b['total_hours'] = round($b['total_hours'], 1);
+        unset($b);
+        $byClient = array_values($byClient);
+        usort($byClient, fn ($a, $b) => $b['total_hours'] <=> $a['total_hours']);
+
+        $monthlyTotals = array_map(fn ($mkey) => [
+            'month'   => $mkey,
+            'hours'   => round($monthAgg[$mkey]['h'], 1),
+            'tickets' => $monthAgg[$mkey]['tk'],
+            'clients' => $monthAgg[$mkey]['cli'],
+        ], $months);
+
+        // Universo de clientes On Demand (têm projeto on_demand vivo) — base p/ "sem movimentação".
+        $allOnDemand = DB::table('projects as p')
+            ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereRaw("lower(trim(c.name)) <> 'erpserv'")   // ERPSERV (interno) não é contrato de cliente
+            ->where('p.contract_type_id', $ON_DEMAND)
+            ->whereNotIn(DB::raw('lower(trim(p.name))'), $TRIO)
+            ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
+            ->whereNull('p.deleted_at')
+            ->when($cid, fn ($q, $c) => $q->where('p.company_id', $c))
+            ->distinct()->pluck('c.name', 'p.customer_id');
+
+        // Situação do contrato On Demand por cliente: ATIVO se tiver ao menos um projeto On Demand
+        // com status ≠ finished/cancelled; senão ENCERRADO (todos finalizados/cancelados).
+        $activeContractIds = DB::table('projects')
+            ->where('contract_type_id', $ON_DEMAND)->whereNull('deleted_at')
+            ->whereNotIn(DB::raw('lower(trim(name))'), $TRIO)
+            ->when($serviceId, fn ($q, $id) => $q->where('service_type_id', $id))
+            ->when($cid, fn ($q, $c) => $q->where('company_id', $c))
+            ->whereNotIn('status', ['finished', 'cancelled'])
+            ->distinct()->pluck('customer_id')->map(fn ($x) => (int) $x)->all();
+        $statusOf = fn (int $id) => in_array($id, $activeContractIds, true) ? 'ativo' : 'encerrado';
+
+        foreach ($byClient as &$b) $b['status'] = $statusOf((int) $b['customer_id']);
+        unset($b);
+
+        $activeCurrent = collect($byClient)->filter(fn ($b) => $b['current_hours'] > 0 || $b['current_tickets'] > 0)
+            ->pluck('customer_id')->all();
+        $byId = collect($byClient)->keyBy('customer_id');
+
+        $noMovement = [];
+        foreach ($allOnDemand as $custId => $custName) {
+            if (in_array((int) $custId, array_map('intval', $activeCurrent), true)) continue;
+            $noMovement[] = [
+                'customer_id'   => (int) $custId,
+                'customer'      => $custName,
+                'status'        => $statusOf((int) $custId),
+                'last_activity' => $byId[$custId]['last_activity'] ?? null,   // null = nunca (nos 12m)
+                'hours_12m'     => $byId[$custId]['total_hours'] ?? 0.0,
+            ];
+        }
+        usort($noMovement, fn ($a, $b) => ($b['last_activity'] ?? '') <=> ($a['last_activity'] ?? ''));
+
+        $cur = collect($monthlyTotals)->firstWhere('month', $currentMonth) ?? ['hours' => 0, 'tickets' => 0, 'clients' => 0];
+
+        return response()->json([
+            'months'         => $months,
+            'current_month'  => $currentMonth,
+            'summary'        => [
+                'hours_month'      => $cur['hours'],
+                'tickets_month'    => $cur['tickets'],
+                'clients_active'   => $cur['clients'],
+                'clients_total'    => $allOnDemand->count(),
+                'clients_no_move'  => count($noMovement),
+                'hours_12m'        => round(collect($monthlyTotals)->sum('hours'), 1),
+                'tickets_12m'      => (int) collect($monthlyTotals)->sum('tickets'),
+            ],
+            'monthly_totals' => $monthlyTotals,
+            'by_client'      => $byClient,
+            'no_movement'    => $noMovement,
+        ]);
+    }
+
+    /**
+     * Painel CONTRATOS — visão por TIPO DE CONTRATO (On Demand, Banco de Horas Mensal/Fixo,
+     * Fechado, Cloud, SaaS) com totais de horas + tickets (mês corrente e 12 meses) e detalhe
+     * por cliente × tipo. Filtros: ?service=projeto|sustentacao, ?status=ativo|inativo.
+     * (cliente é filtrado no FE). Base: projetos vivos; no On Demand exclui o trio Investimento
+     * auto-criado (ver onDemandPanel).
+     */
+    public function contractsPanel(Request $request): JsonResponse
+    {
+        $this->authorize();
+        $cid = $this->activeCompanyId();
+        $TRIO = ['investimento suporte', 'investimento projetos', 'investimento comercial'];
+
+        $service = in_array($request->query('service'), ['sustentacao', 'projeto', 'arquitetura'], true)
+            ? $request->query('service') : null;
+        $serviceId = $service ? DB::table('service_types')->where('code', $service)->value('id') : null;
+        $statusFilter = in_array($request->query('status'), ['ativo', 'inativo'], true) ? $request->query('status') : null;
+
+        // Mês de referência: segue o seletor de data do topo (?ref=YYYY-MM); sem ele, o mês atual.
+        $ref   = (string) $request->query('ref');
+        $end   = preg_match('/^\d{4}-\d{2}$/', $ref)
+            ? Carbon::createFromFormat('Y-m-d', $ref . '-01')->startOfMonth()
+            : Carbon::now('America/Sao_Paulo')->startOfMonth();
+        $start = (clone $end)->subMonths(11);
+        $curKey = $end->format('Y-m');
+
+        // Projetos vivos por cliente × tipo de contrato (On Demand exclui o trio Investimento).
+        $projects = DB::table('projects as p')
+            ->join('contract_types as ct', 'ct.id', '=', 'p.contract_type_id')
+            ->join('customers as c', 'c.id', '=', 'p.customer_id')
+            ->whereRaw("lower(trim(c.name)) <> 'erpserv'")   // ERPSERV (interno) não é contrato de cliente
+            ->whereNull('p.deleted_at')
+            ->when($cid, fn ($q, $x) => $q->where('p.company_id', $x))
+            ->when($serviceId, fn ($q, $id) => $q->where('p.service_type_id', $id))
+            ->where(fn ($q) => $q->where('p.contract_type_id', '!=', 4)
+                ->orWhereNotIn(DB::raw('lower(trim(p.name))'), $TRIO))
+            ->get(['p.id', 'p.customer_id', 'c.name as customer', 'ct.id as ct_id', 'ct.name as ct_name', 'p.status', 'p.is_rateio']);
+
+        // key = customer_id|ct_id → agrega horas/tickets/status/última atividade.
+        $agg = [];   // key => [...]
+        $projMap = [];  // project_id => key
+        $rateioProjIds = [];  // projetos-servidor de rateio (p/ excluir o apontamento-ORIGEM)
+        foreach ($projects as $p) {
+            $key = $p->customer_id . '|' . $p->ct_id;
+            $projMap[$p->id] = $key;
+            if ($p->is_rateio) $rateioProjIds[] = $p->id;
+            if (!isset($agg[$key])) {
+                $agg[$key] = [
+                    'customer_id' => (int) $p->customer_id, 'customer' => $p->customer,
+                    'contract_type' => $p->ct_name, 'contract_type_id' => (int) $p->ct_id,
+                    'hours_12m' => 0.0, 'tickets_12m' => 0, 'hours_month' => 0.0, 'tickets_month' => 0,
+                    'active' => false, 'last_activity' => null,
+                ];
+            }
+            if (!in_array($p->status, ['finished', 'cancelled'], true)) $agg[$key]['active'] = true;
+        }
+
+        // Timesheets dos projetos, por projeto × mês.
+        if (!empty($projMap)) {
+            $tsRows = DB::table('timesheets')
+                ->whereIn('project_id', array_keys($projMap))
+                ->whereIn('status', ['approved', 'pending'])
+                ->where('date', '>=', $start->toDateString())
+                // Exclui o apontamento-ORIGEM do rateio (is_billable_only no projeto-servidor, sem
+                // rateio_source): os filhos distribuídos já contam nos projetos-destino → evita dobrar.
+                ->whereNot(fn ($q) => $q->whereNull('rateio_source_timesheet_id')
+                    ->where('is_billable_only', true)->whereIn('project_id', $rateioProjIds ?: [0]))
+                ->groupBy('project_id', DB::raw("to_char(date, 'YYYY-MM')"))
+                ->selectRaw("project_id, to_char(date, 'YYYY-MM') as mes, SUM(effort_minutes) as minutes, COUNT(DISTINCT NULLIF(ticket, '')) as tickets")
+                ->get();
+            foreach ($tsRows as $r) {
+                $key = $projMap[$r->project_id] ?? null;
+                if (!$key || !isset($agg[$key])) continue;
+                $h = round(((int) $r->minutes) / 60, 1);
+                $tk = (int) $r->tickets;
+                $agg[$key]['hours_12m'] += $h;
+                $agg[$key]['tickets_12m'] += $tk;
+                if ($r->mes === $curKey) { $agg[$key]['hours_month'] += $h; $agg[$key]['tickets_month'] += $tk; }
+                if ($h > 0 && ($agg[$key]['last_activity'] === null || $r->mes > $agg[$key]['last_activity'])) {
+                    $agg[$key]['last_activity'] = $r->mes;
+                }
+            }
+        }
+
+        $byClient = [];
+        foreach ($agg as $row) {
+            $row['hours_12m'] = round($row['hours_12m'], 1);
+            $row['hours_month'] = round($row['hours_month'], 1);
+            $row['status'] = $row['active'] ? 'ativo' : 'inativo';
+            unset($row['active']);
+            if ($statusFilter && $row['status'] !== $statusFilter) continue;
+            $byClient[] = $row;
+        }
+        usort($byClient, fn ($a, $b) => $b['hours_12m'] <=> $a['hours_12m']);
+
+        // Resumo por tipo de contrato (a partir do detalhe já filtrado).
+        $byType = [];
+        foreach ($byClient as $r) {
+            $t = $r['contract_type'];
+            if (!isset($byType[$t])) $byType[$t] = ['contract_type' => $t, 'clients' => 0, 'hours_month' => 0.0, 'tickets_month' => 0, 'hours_12m' => 0.0, 'tickets_12m' => 0];
+            $byType[$t]['clients']++;
+            $byType[$t]['hours_month'] += $r['hours_month'];
+            $byType[$t]['tickets_month'] += $r['tickets_month'];
+            $byType[$t]['hours_12m'] += $r['hours_12m'];
+            $byType[$t]['tickets_12m'] += $r['tickets_12m'];
+        }
+        foreach ($byType as &$bt) { $bt['hours_month'] = round($bt['hours_month'], 1); $bt['hours_12m'] = round($bt['hours_12m'], 1); }
+        unset($bt);
+        $byType = array_values($byType);
+        usort($byType, fn ($a, $b) => $b['hours_12m'] <=> $a['hours_12m']);
+
+        return response()->json([
+            'current_month' => $curKey,
+            'summary' => [
+                'contracts'     => count($byClient),
+                'clients'       => count(array_unique(array_map(fn ($r) => $r['customer_id'], $byClient))),
+                'hours_month'   => round(array_sum(array_map(fn ($r) => $r['hours_month'], $byClient)), 1),
+                'tickets_month' => (int) array_sum(array_map(fn ($r) => $r['tickets_month'], $byClient)),
+                'hours_12m'     => round(array_sum(array_map(fn ($r) => $r['hours_12m'], $byClient)), 1),
+                'tickets_12m'   => (int) array_sum(array_map(fn ($r) => $r['tickets_12m'], $byClient)),
+            ],
+            'by_type'   => $byType,
+            'by_client' => $byClient,
         ]);
     }
 
@@ -870,8 +1175,7 @@ class SustentacaoController extends Controller
             ->join('customers',     'customers.id',     '=', 'projects.customer_id')
             ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
                                  ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                                 ->orWhere(fn($s) => $s->where('projects.is_investimento_comercial', true)
-                                                       ->where('projects.categoria_interna', 'Suporte')))
+                                 ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'"))
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending'])
             ->select(
@@ -895,8 +1199,7 @@ class SustentacaoController extends Controller
             ->when($this->activeCompanyId(), fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->where(fn($q) => $q->where('service_types.code', 'sustentacao')
                                  ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                                 ->orWhere(fn($s) => $s->where('projects.is_investimento_comercial', true)
-                                                       ->where('projects.categoria_interna', 'Suporte')))
+                                 ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'"))
             ->where('contract_types.name', 'Banco de Horas Mensal')
             ->whereNull('projects.deleted_at')
             ->whereNotNull('projects.customer_id')

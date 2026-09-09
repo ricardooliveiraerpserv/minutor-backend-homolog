@@ -285,12 +285,12 @@ class SustentacaoMetrics
             ->when($this->companyId, fn ($q, $cid) => $q->where('projects.company_id', $cid))
             ->join('service_types', 'service_types.id', '=', 'projects.service_type_id')
             ->where(function ($q) {
+                // Escopo de HORAS de suporte = sustentação + SOMENTE "Investimento Suporte"
+                // (por NOME). NÃO usar o par is_investimento_comercial+categoria='Suporte', que
+                // vazava projetos como "Day Off" e "Investimento Cloud" (pedido Ricardo 2026-09-08).
                 $q->where('service_types.code', 'sustentacao')
                   ->orWhere('service_types.name', 'ilike', '%sustenta%')
-                  ->orWhere(function ($s) {
-                      $s->where('projects.is_investimento_comercial', true)
-                        ->where('projects.categoria_interna', 'Suporte');
-                  });
+                  ->orWhereRaw("LOWER(TRIM(projects.name)) = 'investimento suporte'");
             })
             ->whereBetween('timesheets.date', [$from->toDateString(), $to->toDateString()])
             ->whereIn('timesheets.status', ['approved', 'pending']);

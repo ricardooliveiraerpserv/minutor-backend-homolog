@@ -325,6 +325,7 @@ class ContractController extends Controller
             ->whereNull('parent_project_id')
             // Buckets internos de investimento (Comercial/Suporte/Projeto) não entram.
             ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+            ->where(fn ($q) => $q->where('is_rateio', false)->orWhereNull('is_rateio'))
             ->whereHas('contractType', fn ($q) => $q->whereIn('code', array_keys($allowedByCode)))
             ->with('contractType:id,name,code')
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->get('customer_id')))
@@ -1357,7 +1358,7 @@ class ContractController extends Controller
                 'aditivoProject:id,code,name,hourly_rate,sold_hours,contract_type_id',
                 'aditivoProject.contractType:id,code',
                 'parentContract:id,project_code_preview',
-                'childContracts:id,parent_contract_id,project_code_preview,kanban_status,valor_projeto,tipo_faturamento',
+                'childContracts:id,parent_contract_id,project_code_preview,kanban_status,valor_projeto,tipo_faturamento,contract_type_id',
             ])->where(function ($q) {
                 $q->whereIn('kanban_status', array_merge(Contract::DEMAND_COLUMNS, [Contract::KANBAN_INICIO_AUTORIZADO, Contract::KANBAN_ALOCADO, Contract::KANBAN_ADITIVO, 'novo', 'novo_contrato']))
                   ->orWhereNull('kanban_status');
@@ -1382,7 +1383,7 @@ class ContractController extends Controller
                 'serviceType:id,name',
                 'project:id,code,name,status',
                 'parentContract:id,project_code_preview',
-                'childContracts:id,parent_contract_id,project_code_preview,kanban_status,valor_projeto,tipo_faturamento',
+                'childContracts:id,parent_contract_id,project_code_preview,kanban_status,valor_projeto,tipo_faturamento,contract_type_id',
             ])->where('status', Contract::STATUS_INICIO_AUTORIZADO)
               ->whereNull('project_id')
               ->orderBy('kanban_order')
@@ -1399,7 +1400,7 @@ class ContractController extends Controller
             'customer.executive:id,name', 'customer.executiveBizify:id,name',
             'contract:id,project_name,project_code_preview,parent_contract_id',
             'contract.parentContract:id,project_code_preview',
-            'contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento',
+            'contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento,contract_type_id',
             'coordinators:id,name',
             'kanbanOverrideCoordinator:id,name',
             'consultants:id,name',
@@ -1412,6 +1413,7 @@ class ContractController extends Controller
         ])
         // Investimento (comercial/interno + lead-projeto) NÃO gera card no pipeline — mora em "Investimento Interno".
         ->where(fn ($iq) => $iq->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
+        ->where(fn ($iq) => $iq->where('is_rateio', false)->orWhereNull('is_rateio'))
         ->where(function ($q) use ($demandProjectIds) {
             $q->where(function ($inner) {
                 $inner->whereNotNull('contract_id')
@@ -1524,7 +1526,7 @@ class ContractController extends Controller
                 'project.contractType:id,name',
                 'project.contract:id,project_name,project_code_preview,parent_contract_id',
                 'project.contract.parentContract:id,project_code_preview',
-                'project.contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento',
+                'project.contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento,contract_type_id',
                 'project.serviceType:id,name',
             ])
             ->whereNotNull('sustentacao_column')
@@ -2368,12 +2370,16 @@ class ContractController extends Controller
 
     private function formatKanbanCard(Contract $contract): array
     {
-        // Faturamento consolidado: item "Banco de Horas Mensal" é cobrado no contrato
-        // PAI (Cloud/mensalidade). O item mostra "fatura no principal nº X"; o pai mostra
-        // o VALOR CHEIO (mensalidade + itens BH Mensal) = fatura única.
-        $bhMensalItem = (bool) $contract->parent_contract_id && $contract->tipo_faturamento === 'banco_horas_mensal';
+        // Faturamento consolidado ("fatura única"): um GRUPO de contratos vinculados
+        // (pai-ÂNCORA + satélites) é cobrado em UMA nota no contrato PAI, qualquer que
+        // seja o tipo (Cloud pai + BH Mensal filho, OU BH Mensal pai + Cloud filho, etc.).
+        // O satélite (filho) mostra "faturado no principal nº X"; o pai mostra o VALOR
+        // CHEIO (pai + satélites) = fatura única. Itens FECHADO (Setup/Dev, contract_type
+        // id 3) NÃO entram — são cobrados à parte no próprio card.
+        $CLOSED_TYPE_ID = 3;
+        $bhMensalItem = (bool) $contract->parent_contract_id && (int) $contract->contract_type_id !== $CLOSED_TYPE_ID;
         $bhKids = $contract->relationLoaded('childContracts')
-            ? $contract->childContracts->filter(fn ($c) => $c->tipo_faturamento === 'banco_horas_mensal')
+            ? $contract->childContracts->filter(fn ($c) => (int) $c->contract_type_id !== $CLOSED_TYPE_ID)
             : collect();
         $hasBhItems = $bhKids->isNotEmpty();
         $combinedBilling = $hasBhItems
@@ -2508,7 +2514,7 @@ class ContractController extends Controller
         // Item (child) → aponta pro pai; mensalidade (pai) → lista os filhos.
         $lc = $project->contract;
         if ($lc && !$lc->relationLoaded('childContracts')) {
-            $lc->load(['parentContract:id,project_code_preview', 'childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento']);
+            $lc->load(['parentContract:id,project_code_preview', 'childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento,contract_type_id']);
         }
         $linkedChildren = $lc && $lc->relationLoaded('childContracts')
             ? $lc->childContracts->map(fn ($c) => ['id' => $c->id, 'code' => $c->project_code_preview])->values()
@@ -4192,6 +4198,9 @@ class ContractController extends Controller
         $q = Contract::query()
             ->whereNotNull('data_assinatura')
             ->whereNotNull('data_vencimento')
+            // Contratos-satélite vinculados (parent_contract_id) NÃO são reajustados
+            // separadamente — o contrato PAI/âncora carrega a fatura única (e o valor).
+            ->whereNull('parent_contract_id')
             ->withCount([
                 'valueChanges as active_changes_count'   => fn ($x) => $x->whereNull('reversed_at'),
                 'valueChanges as reversed_changes_count' => fn ($x) => $x->whereNotNull('reversed_at'),

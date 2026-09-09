@@ -31,28 +31,50 @@ class WeeklyClosingController extends Controller
         $svc = app(ClosingService::class);
         $now = Carbon::now(self::TZ);
 
-        $months = [];
+        // Meses exibidos: janela recente (4) ∪ meses COM MOVIMENTO (apontamento/despesa)
+        // — assim meses antigos que têm movimento (ex.: Maio) também aparecem no painel e
+        // no seletor. Lookback limitado (24 meses) p/ não explodir a lista.
+        $monthKeys = collect();
         for ($mi = 0; $mi < 4; $mi++) {
-            $mDate = $now->copy()->startOfMonth()->subMonths($mi);
-            $ym    = $mDate->format('Y-m');
+            $monthKeys->push($now->copy()->startOfMonth()->subMonths($mi)->format('Y-m'));
+        }
+        $lookbackFrom = $now->copy()->startOfMonth()->subMonths(24)->toDateString();
+        $tsMonths = \App\Models\Timesheet::query()
+            ->where('date', '>=', $lookbackFrom)->whereNull('deleted_at')
+            ->selectRaw("distinct to_char(date, 'YYYY-MM') as ym")->pluck('ym');
+        $expMonths = \App\Models\Expense::query()
+            ->where('expense_date', '>=', $lookbackFrom)
+            ->selectRaw("distinct to_char(expense_date, 'YYYY-MM') as ym")->pluck('ym');
+        $curYm = $now->format('Y-m');
+        $monthKeys = $monthKeys->merge($tsMonths)->merge($expMonths)
+            ->filter()
+            ->filter(fn ($ym) => $ym <= $curYm)   // nunca meses futuros
+            ->unique()->sortDesc()->values();
 
-            // 1ª semana cuja SEGUNDA cai neste mês.
-            $ws = $mDate->copy()->startOfWeek(Carbon::MONDAY);
-            if ($ws->format('Y-m') !== $ym) $ws->addWeek();
+        $months = [];
+        foreach ($monthKeys as $ym) {
+            $mDate = Carbon::createFromFormat('Y-m', $ym, self::TZ)->startOfMonth();
+
+            // Semanas presas ao MÊS (não cruzam): a 1ª começa no dia 01 (pode ter menos
+            // dias), a última termina no último dia do mês. Fonte: ClosingService.
+            $cur         = $mDate->copy()->startOfMonth();
+            $lastOfMonth = $mDate->copy()->endOfMonth();
 
             $weeks = [];
             $n = 1;
-            while ($ws->format('Y-m') === $ym) {
-                $st = $svc->weekStatusGlobal($ws);
+            while ($cur->lte($lastOfMonth)) {
+                $wStart = $svc->weekStart($cur->toDateString());
+                $wEnd   = $svc->weekEnd($wStart);
+                $st = $svc->weekStatusGlobal($wStart);
                 $weeks[] = [
                     'n'                    => $n,
-                    'week_start'           => $ws->toDateString(),
-                    'week_end'             => $ws->copy()->addDays(6)->toDateString(),
+                    'week_start'           => $wStart->toDateString(),
+                    'week_end'             => $wEnd->toDateString(),
                     'deadline'             => $st['deadline'],
                     'status'               => $st['status'],
                     'reopen_auto_close_at' => $st['auto_close_at'],
                 ];
-                $ws->addWeek();
+                $cur = $wEnd->copy()->addDay();
                 $n++;
             }
 
@@ -71,22 +93,22 @@ class WeeklyClosingController extends Controller
         $active = collect();
         WeekOpenPeriod::whereNull('closed_at')->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])->orderByDesc('week_start')->limit(100)->get()
+            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name', 'user:id,name'])->orderByDesc('week_start')->limit(100)->get()
             ->each(fn ($p) => $active->push([
                 'period_kind' => 'week', 'period_key' => Carbon::parse($p->week_start)->toDateString(),
                 'project_id' => $p->project_id, 'project' => $p->project?->name,
                 'customer_id' => $p->project?->customer_id, 'customer' => $p->project?->customer?->name,
-                'user_id' => $p->user_id, 'user' => $p->openedBy?->name,
+                'user_id' => $p->user_id, 'user' => $p->openedBy?->name, 'target_user_id' => $p->user_id, 'target_user' => $p->user?->name,
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
         ProjectOpenPeriod::whereNull('closed_at')->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
-            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name'])->orderByDesc('year_month')->limit(100)->get()
+            ->with(['project:id,name,customer_id', 'project.customer:id,name', 'openedBy:id,name', 'user:id,name'])->orderByDesc('year_month')->limit(100)->get()
             ->each(fn ($p) => $active->push([
                 'period_kind' => 'month', 'period_key' => $p->year_month,
                 'project_id' => $p->project_id, 'project' => $p->project?->name,
                 'customer_id' => $p->project?->customer_id, 'customer' => $p->project?->customer?->name,
-                'user_id' => $p->user_id, 'user' => $p->openedBy?->name,
+                'user_id' => $p->user_id, 'user' => $p->openedBy?->name, 'target_user_id' => $p->user_id, 'target_user' => $p->user?->name,
                 'auto_close_at' => optional($p->auto_close_at)->toIso8601String(),
             ]));
 
@@ -118,6 +140,8 @@ class WeeklyClosingController extends Controller
                     'projects_count' => $reopenedIds->count(),
                     'user_id'      => null,
                     'user'         => $first['user'],
+                    'target_user_id' => null,
+                    'target_user'    => null,
                     'auto_close_at' => $first['auto_close_at'],
                 ]]);
             });
@@ -126,7 +150,7 @@ class WeeklyClosingController extends Controller
         // INDIVIDUALMENTE, que NÃO aparecem no status global do mês/semana. Era o que travava
         // um consultor de forma invisível (ex.: mês fechado só p/ ele). Descontar os que já
         // têm reabertura ativa (não bloqueiam mais). Janela = os meses exibidos no painel.
-        $minYm = $now->copy()->startOfMonth()->subMonths(3)->format('Y-m');
+        $minYm = $monthKeys->min() ?: $now->copy()->startOfMonth()->subMonths(3)->format('Y-m');
         $rows = \App\Models\CompetenceClosure::query()
             ->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where('period_key', '>=', $minYm)

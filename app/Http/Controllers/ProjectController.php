@@ -198,6 +198,13 @@ class ProjectController extends Controller
             elseif ($status === 'open') $q->open();
             elseif ($status) $q->where('status', $status);
             if ($request->get('customer_id')) $q->where('customer_id', $request->get('customer_id'));
+            // Filtro por tipo de contrato (ex.: Rateio de Horas só oferece destinos Cloud).
+            if ($ctCode = $request->get('contract_type_code')) {
+                $q->whereRelation('contractType', 'code', $ctCode);
+            }
+            if ($ctId = $request->get('contract_type_id')) {
+                $q->where('contract_type_id', $ctId);
+            }
             // Filtra por consultor ALOCADO (project_consultants) — usado p/ só oferecer,
             // na realocação de apontamento, projetos em que o consultor está alocado.
             if ($request->get('consultant_user_id')) {
@@ -1054,6 +1061,7 @@ class ProjectController extends Controller
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'required|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
+            'is_rateio' => 'nullable|boolean',
             'service_type_id' => 'required|exists:service_types,id',
                         'contract_type_id' => 'required|exists:contract_types,id',
             'project_value' => 'nullable|numeric|min:0|max:999999999.99',
@@ -1259,6 +1267,13 @@ class ProjectController extends Controller
             }
         }
 
+        // Marco da integração no projeto novo: se acabou com a chave ligada, grava a data
+        // de hoje. A varredura só re-roteia apontamentos existentes a partir daqui (primeiras
+        // importações são CREATE e não são afetadas pela trava).
+        if ($project->movidesk_integration_enabled && !$project->movidesk_integration_since) {
+            $project->update(['movidesk_integration_since' => Carbon::now('America/Sao_Paulo')->toDateString()]);
+        }
+
         // Vincular consultores
         if (!empty($consultantIds)) {
             $project->consultants()->attach($consultantIds);
@@ -1386,6 +1401,32 @@ class ProjectController extends Controller
         $project->total_project_value = $project->calculateTotalProjectValue();
         $project->weighted_hourly_rate = $project->getWeightedAverageHourlyRate();
         $project->total_contributions_hours = $project->hourContributions()->sum('contributed_hours') ?? 0;
+
+        // Vínculo de fatura (item BH Mensal cobrado no contrato PAI Cloud = fatura única) —
+        // espelha o formatKanbanCard do Kanban de Contratos pra a mesma faixa amarela aparecer
+        // também no detalhe do PROJETO já gerado (não só no card de demanda).
+        try {
+            $ctr = $project->contract_id
+                ? \App\Models\Contract::with([
+                    'parentContract:id,project_code_preview',
+                    'childContracts:id,parent_contract_id,valor_projeto,tipo_faturamento,contract_type_id',
+                  ])->find($project->contract_id)
+                : null;
+            if ($ctr) {
+                $CLOSED_TYPE_ID = 3; // itens Fechado (Setup/Dev) são cobrados à parte
+                $bhMensalItem = (bool) $ctr->parent_contract_id && (int) $ctr->contract_type_id !== $CLOSED_TYPE_ID;
+                $bhKids = $ctr->childContracts->filter(fn ($c) => (int) $c->contract_type_id !== $CLOSED_TYPE_ID);
+                $hasBhItems = $bhKids->isNotEmpty();
+                $project->bh_mensal_item         = $bhMensalItem;
+                $project->parent_contract_code   = $ctr->parentContract?->project_code_preview;
+                $project->has_bh_mensal_items    = $hasBhItems;
+                $project->combined_billing_value = $hasBhItems
+                    ? round((float) ($ctr->valor_projeto ?? 0) + (float) $bhKids->sum(fn ($c) => (float) ($c->valor_projeto ?? 0)), 2)
+                    : null;
+            }
+        } catch (\Throwable $e) {
+            try { \Log::warning('ProjectController@show: falha ao calcular vínculo de fatura', ['error' => $e->getMessage(), 'project_id' => $project->id]); } catch (\Throwable $_) {}
+        }
 
         // Quebra das HS Vendidas (Projeto + Aporte) — espelha lógica do index()
         // gestaoMode pra que a Visão Geral do projeto não dependa do cache da lista.
@@ -1554,6 +1595,7 @@ class ProjectController extends Controller
             'description' => 'nullable|string|max:2000',
             'customer_id' => 'sometimes|exists:customers,id',
             'parent_project_id' => 'nullable|exists:projects,id',
+            'is_rateio' => 'nullable|boolean',
             'service_type_id' => 'sometimes|exists:service_types,id',
             'contract_type_id' => 'sometimes|exists:contract_types,id',
             // Permite o status ATUAL do projeto mesmo que não esteja em getStatuses() — há
@@ -1874,6 +1916,20 @@ class ProjectController extends Controller
                 ->where('movidesk_integration_enabled', true)
                 ->pluck('id')
                 ->all();
+        }
+
+        // Está LIGANDO a chave neste projeto agora (transição desligada→ligada)?
+        $enablingMovidesk = !empty($validated['movidesk_integration_enabled'])
+            && !(bool) $project->movidesk_integration_enabled;
+
+        // ATÔMICO: grava o marco (movidesk_integration_since) JUNTO com a flag, na MESMA
+        // transação/UPDATE. Se ficasse num update separado DEPOIS, a varredura (que roda a cada
+        // 5 min) poderia pegar a janela flag=true + since=null e migrar os antigos indevidamente.
+        // "NÃO migrar" → data de hoje (varredura só re-roteia a partir daqui); "migrar" → null.
+        if ($enablingMovidesk) {
+            $validated['movidesk_integration_since'] = $migrateMovideskTimesheets
+                ? null
+                : Carbon::now('America/Sao_Paulo')->toDateString();
         }
 
         \DB::transaction(function () use ($project, $validated) {

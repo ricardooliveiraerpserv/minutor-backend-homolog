@@ -29,10 +29,23 @@ class ClosingService
 
     public function weekStart(string $date): Carbon
     {
-        return Carbon::parse($date, self::TZ)->startOfDay()->startOfWeek(Carbon::MONDAY);
+        $d   = Carbon::parse($date, self::TZ)->startOfDay();
+        $mon = $d->copy()->startOfWeek(Carbon::MONDAY);
+        // Semana NÃO cruza o mês: se a segunda-feira cair no mês anterior, a semana
+        // começa no DIA 01 do mês da data (1ª semana pode ter menos dias).
+        $firstOfMonth = $d->copy()->startOfMonth();
+        return $mon->lt($firstOfMonth) ? $firstOfMonth : $mon;
     }
 
-    /** Mês (Y-m) ao qual a semana pertence — o da SEGUNDA-feira. */
+    /** Fim da semana (domingo) preso ao ÚLTIMO dia do mês — a semana não cruza o mês. */
+    public function weekEnd(Carbon $weekStart): Carbon
+    {
+        $sun         = $weekStart->copy()->startOfWeek(Carbon::MONDAY)->addDays(6);
+        $lastOfMonth = $weekStart->copy()->endOfMonth()->startOfDay();
+        return $sun->gt($lastOfMonth) ? $lastOfMonth : $sun->startOfDay();
+    }
+
+    /** Mês (Y-m) ao qual a semana pertence — o do INÍCIO (preso ao dia 01). */
     public function weekMonth(Carbon $weekStart): string
     {
         return $weekStart->format('Y-m');
@@ -83,7 +96,9 @@ class ClosingService
 
     public function weekDeadline(Carbon $weekStart): Carbon
     {
-        return $this->firstBusinessDayDeadline($weekStart->copy()->addWeek());
+        // 1º dia útil APÓS o FIM da semana (preso ao mês), 23:59. Ex.: última semana de
+        // agosto (…–31/08) → 01/09; 1ª de setembro (01–06/09) → 07/09 (feriado) → 08/09.
+        return $this->firstBusinessDayDeadline($this->weekEnd($weekStart)->copy()->addDay());
     }
 
     /** Marco "daqui pra frente": semanas com prazo < isso nunca fecham pela regra semanal. */
@@ -170,9 +185,18 @@ class ClosingService
             || $this->activeMonthReopen($this->weekMonth($weekStart), $projectId, $userId));
     }
 
+    /** Existe reabertura de SEMANA ativa cobrindo esta data+escopo? Uma reabertura de semana
+     *  específica (ação deliberada) LIBERA o dia mesmo com a competência/mês fechada. */
+    public function hasActiveWeekReopen(string $date, ?int $projectId, ?int $userId = null): bool
+    {
+        return $this->activeWeekReopen($this->weekStart($date)->toDateString(), $projectId, $userId);
+    }
+
     /** Bloqueio COMBINADO (integração + lançamento manual). $userId = quem apontou. */
     public function isPeriodClosed(string $date, int $projectId, ?int $userId = null, bool $forIntegration = false): bool
     {
+        // Reabertura de SEMANA específica vence o bloqueio MENSAL (escopo mais específico).
+        if ($this->hasActiveWeekReopen($date, $projectId, $userId)) return false;
         return $this->isMonthClosed($date, $projectId, $userId, $forIntegration) || $this->isWeekClosed($date, $projectId, $userId);
     }
 

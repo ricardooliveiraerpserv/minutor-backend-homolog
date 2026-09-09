@@ -148,6 +148,27 @@ class ApprovalController extends Controller
             'message' => $message, 'cta_label' => $cta, 'cta_url' => $url, 'count' => $count];
     }
 
+    /**
+     * Contagem de DESPESAS pendentes de aprovação NO ESCOPO do usuário — MESMA base do card do
+     * Meu Dia (homeActions L56). O lembrete recorrente usa isto p/ só avisar quem realmente tem o
+     * que aprovar (respeita override de coordenador, sustentação, etc.) — evita o "notificação sem
+     * nada" (ex.: coord listada num projeto cujo override aponta p/ outro).
+     */
+    public function pendingExpenseApprovalCount(User $u): int
+    {
+        return $this->scopedApprovalCount($this->buildExpenseQuery($u), $u);
+    }
+
+    /** Idem p/ APONTAMENTOS — espelha homeActions L48-51 (inclui a regra do dia anterior da sustentação). */
+    public function pendingTimesheetApprovalCount(User $u): int
+    {
+        $q = $this->buildTimesheetQuery($u);
+        if ($u->isCoordenador() && $u->coordinator_type === 'sustentacao') {
+            $q->whereDate('date', now()->subDay()->toDateString());
+        }
+        return $this->scopedApprovalCount($q, $u);
+    }
+
     /** Apontamento rejeitado aparece até o 5º dia útil do mês POSTERIOR à sua competência (prazo de correção). */
     private function withinRejectionWindow(?\Illuminate\Support\Carbon $date): bool
     {
