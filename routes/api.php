@@ -261,6 +261,11 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/access-profiles',                     [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'index']);
         Route::post('/help-desk/access-profiles',                    [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'store']);
         Route::get('/help-desk/agents', [\App\Http\Controllers\HelpDeskController::class, 'agents']);
+        // Visualizações salvas da fila (pessoais + compartilhadas).
+        Route::get('/help-desk/saved-views',                 [\App\Http\Controllers\HelpDeskSavedViewController::class, 'index']);
+        Route::post('/help-desk/saved-views',                [\App\Http\Controllers\HelpDeskSavedViewController::class, 'store']);
+        Route::put('/help-desk/saved-views/{savedView}',     [\App\Http\Controllers\HelpDeskSavedViewController::class, 'update']);
+        Route::delete('/help-desk/saved-views/{savedView}',  [\App\Http\Controllers\HelpDeskSavedViewController::class, 'destroy']);
         Route::get('/help-desk/association-rules',                    [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'index']);
         Route::post('/help-desk/association-rules',                   [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'store']);
         Route::get('/help-desk/categories',              [\App\Http\Controllers\HelpDeskCategoryController::class, 'index']);

@@ -75,6 +75,18 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.triagem', false);
     }
 
+    /** Pode CRIAR visualizações pessoais (salvar filtros da fila). Default: sim. */
+    public function canCreatePersonalViews(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.personal_views', true);
+    }
+
+    /** Pode CRIAR/EDITAR visualizações compartilhadas (todos os agentes). Default: sim. */
+    public function canCreateSharedViews(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'tickets.shared_views', true);
+    }
+
     /**
      * Busca global: pesquisa QUALQUER chamado (fora do escopo da fila) para abrir e assumir.
      * O agente não vê tickets de outros na fila dele, mas pode encontrá-los pela lupa. Default: sim.

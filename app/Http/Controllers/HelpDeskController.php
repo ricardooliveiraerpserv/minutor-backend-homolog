@@ -69,6 +69,9 @@ class HelpDeskController extends Controller
             'my_perms'       => app(\App\Services\HelpDeskAccessPolicy::class)->bulkPermsMap(auth()->user()),
             // Pode editar o próprio perfil (conta)? (enforce real está no updateProfile).
             'can_edit_own_profile' => app(\App\Services\HelpDeskAccessPolicy::class)->canEditOwnProfile(auth()->user()),
+            // Visualizações salvas: pode salvar pessoal / compartilhada?
+            'can_save_personal_view' => app(\App\Services\HelpDeskAccessPolicy::class)->canCreatePersonalViews(auth()->user()),
+            'can_save_shared_view'   => app(\App\Services\HelpDeskAccessPolicy::class)->canCreateSharedViews(auth()->user()),
         ]]);
     }
 
