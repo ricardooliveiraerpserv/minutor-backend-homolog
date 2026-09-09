@@ -1253,6 +1253,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/boards/{board}/members', [$c, 'boardMembers'])->name('boards.members');
             Route::put('/boards/{board}/members', [$c, 'setBoardMembers'])->name('boards.members.set');
             Route::post('/boards/{board}/invite', [$c, 'invite'])->name('boards.invite');
+            Route::get('/boards/{board}/invites', [$c, 'boardInvites'])->name('boards.invites');   // log de convites
+            Route::post('/invites/accept', [$c, 'acceptInvite'])->name('invites.accept');           // aceitar (por token)
+            Route::get('/my-invites', [$c, 'myInvites'])->name('my-invites');                       // pendentes do usuário (pop-up)
             Route::get('/boards/{board}/report', [$c, 'report'])->name('boards.report');
         });
 

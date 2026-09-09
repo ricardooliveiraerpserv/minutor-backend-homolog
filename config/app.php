@@ -56,6 +56,11 @@ return [
 
     'frontend_url' => env('APP_FRONTEND_URL', 'http://localhost:4200'),
 
+    // Base FIXA para links de convite do Kanban do Cliente. Diferente do frontend_url:
+    // o convite deve SEMPRE apontar para produção (o cliente acessa a rotina em prod),
+    // mesmo quando disparado do homolog. Override por env se um dia mudar o domínio.
+    'kanban_invite_link_base' => env('KANBAN_INVITE_LINK_BASE', 'https://app.minutor.com.br'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

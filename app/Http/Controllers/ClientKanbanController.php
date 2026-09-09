@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AppNotification;
 use App\Models\KanbanBoard;
+use App\Models\KanbanBoardInvite;
 use App\Models\KanbanCard;
 use App\Models\KanbanCardComment;
 use App\Models\KanbanCardEvent;
@@ -468,9 +470,10 @@ class ClientKanbanController extends Controller
     }
 
     /**
-     * Envia um convite por e-mail para um usuário do cliente acessar o quadro.
-     * O link é do AMBIENTE (config('app.frontend_url')) → homolog no homolog, prod no prod.
-     * Garante o acesso adicionando o convidado como membro do quadro.
+     * Envia um convite para um usuário do cliente acessar o quadro. O acesso fica
+     * PENDENTE — o convidado só passa a ver o quadro depois de ACEITAR (pelo link do
+     * e-mail ou pela notificação in-app). O link aponta SEMPRE para produção
+     * (config('app.kanban_invite_link_base')). Grava o convite como log.
      */
     public function invite(Request $request, int $boardId): JsonResponse
     {
@@ -482,17 +485,120 @@ class ClientKanbanController extends Controller
         abort_unless($user, 422, 'Usuário inválido para este cliente.');
         abort_if(empty($user->email), 422, 'O usuário não tem e-mail cadastrado.');
 
-        // Garante acesso ao quadro (adiciona como membro se ainda não for).
-        $board->members()->syncWithoutDetaching([$user->id]);
+        // Se já é membro, não há o que aceitar — evita convite redundante.
+        $alreadyMember = $board->members()->where('users.id', $user->id)->exists();
+        abort_if($alreadyMember, 422, 'Este usuário já tem acesso ao quadro.');
 
-        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
-        $link = $base . '/portal-cliente/kanban/' . $board->id;
+        // Cria/renova o convite PENDENTE (um por quadro+usuário). Token novo a cada envio.
+        $token = \Illuminate\Support\Str::random(48);
+        $invite = KanbanBoardInvite::updateOrCreate(
+            ['board_id' => $board->id, 'user_id' => $user->id],
+            [
+                'invited_by'  => (int) Auth::id(),
+                'token'       => $token,
+                'status'      => KanbanBoardInvite::STATUS_PENDING,
+                'sent_at'     => now(),
+                'accepted_at' => null,
+            ],
+        );
 
+        // Caminho da tela do quadro; o `?convite=token` faz a tela aceitar o convite e
+        // liberar o acesso. E-mail usa a URL ABSOLUTA de produção (o cliente acessa em
+        // prod); a notificação in-app usa caminho RELATIVO (o CTA navega via router).
+        $path = '/portal-cliente/kanban/' . $board->id . '?convite=' . $token;
+        $base = rtrim((string) config('app.kanban_invite_link_base', config('app.frontend_url')), '/');
+        $emailLink = $base . $path;
+
+        $inviterName = Auth::user()->name;
+
+        // 1) E-mail (com botão Aceitar). 2) Notificação in-app + pop-up (sino) com CTA.
         $user->notify(new \App\Notifications\KanbanBoardInviteNotification(
-            $board->name, $link, Auth::user()->name,
+            $board->name, $emailLink, $inviterName,
         ));
 
-        return response()->json(['data' => ['sent' => true, 'email' => $user->email]]);
+        AppNotification::create([
+            'title'        => 'Convite para um quadro',
+            'message'      => e($inviterName) . ' convidou você para o quadro <b>' . e($board->name)
+                              . '</b> em Meus Processos. Clique em <b>Aceitar convite</b> para acessar.',
+            'type'         => 'action',
+            'priority'     => 'high',
+            'target_users' => [$user->id],
+            'send_email'   => false,       // e-mail já vai pela notification acima
+            'visible'      => true,
+            'requires_ack' => true,        // aparece como pop-up
+            'cta_label'    => 'Aceitar convite',
+            'cta_url'      => $path,   // relativo → router.push navega e a tela aceita o token
+            'created_by'   => (int) Auth::id(),
+            'expires_at'   => now()->addDays(30),
+        ]);
+
+        return response()->json(['data' => ['sent' => true, 'email' => $user->email, 'invite_id' => $invite->id]]);
+    }
+
+    /**
+     * Aceita um convite pelo TOKEN (não exige ser membro — o token é a autorização).
+     * Ao aceitar, o convidado vira membro do quadro e passa a vê-lo em Meus Processos.
+     * Só o próprio convidado (usuário logado) pode aceitar o seu convite.
+     */
+    public function acceptInvite(Request $request): JsonResponse
+    {
+        $token = (string) $request->validate(['token' => 'required|string'])['token'];
+        $invite = KanbanBoardInvite::where('token', $token)->first();
+        abort_unless($invite, 404, 'Convite inválido ou expirado.');
+        abort_unless($invite->user_id === (int) Auth::id(), 403, 'Este convite não é para o seu usuário.');
+
+        // Garante que o quadro é do mesmo cliente do usuário logado (defesa em profundidade).
+        $board = KanbanBoard::where('customer_id', $this->customerId())->find($invite->board_id);
+        abort_unless($board, 404, 'Quadro não encontrado.');
+
+        if ($invite->status !== KanbanBoardInvite::STATUS_ACCEPTED) {
+            $board->members()->syncWithoutDetaching([$invite->user_id]);
+            $invite->forceFill([
+                'status'      => KanbanBoardInvite::STATUS_ACCEPTED,
+                'accepted_at' => now(),
+            ])->save();
+        }
+
+        return response()->json(['data' => ['board_id' => $board->id, 'board_name' => $board->name, 'accepted' => true]]);
+    }
+
+    /** Convites PENDENTES do usuário logado — usado pelo FE p/ o pop-up de convites. */
+    public function myInvites(): JsonResponse
+    {
+        $items = KanbanBoardInvite::with(['board:id,name', 'inviter:id,name'])
+            ->where('user_id', (int) Auth::id())
+            ->where('status', KanbanBoardInvite::STATUS_PENDING)
+            ->latest('sent_at')
+            ->get()
+            ->map(fn (KanbanBoardInvite $i) => [
+                'token'        => $i->token,
+                'board_id'     => $i->board_id,
+                'board_name'   => $i->board?->name,
+                'inviter_name' => $i->inviter?->name,
+                'sent_at'      => $i->sent_at?->toIso8601String(),
+            ]);
+
+        return response()->json(['items' => $items]);
+    }
+
+    /** Log de convites de um quadro (quem convidou, quem, quando, aceite). */
+    public function boardInvites(int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $items = KanbanBoardInvite::with(['user:id,name', 'inviter:id,name'])
+            ->where('board_id', $board->id)
+            ->latest('sent_at')
+            ->get()
+            ->map(fn (KanbanBoardInvite $i) => [
+                'user_id'      => $i->user_id,
+                'user_name'    => $i->user?->name,
+                'inviter_name' => $i->inviter?->name,
+                'status'       => $i->status,
+                'sent_at'      => $i->sent_at?->toIso8601String(),
+                'accepted_at'  => $i->accepted_at?->toIso8601String(),
+            ]);
+
+        return response()->json(['items' => $items]);
     }
 
     // ─────────────────────────────── relatório ───────────────────────────────

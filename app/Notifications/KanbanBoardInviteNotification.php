@@ -9,8 +9,9 @@ use Illuminate\Notifications\Notification;
 
 /**
  * Convite para um quadro do Kanban do Cliente ("Meus Processos").
- * O link é montado no controller com config('app.frontend_url') → cada ambiente
- * (homolog/prod) usa a própria URL, então o convite sempre aponta para o ambiente correto.
+ * O link é montado no controller com config('app.kanban_invite_link_base') → aponta
+ * SEMPRE para produção (o cliente acessa a rotina em prod) e carrega ?convite=token,
+ * que faz a tela aceitar o convite e liberar o acesso ao quadro.
  */
 class KanbanBoardInviteNotification extends Notification implements ShouldQueue
 {
