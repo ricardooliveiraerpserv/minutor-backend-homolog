@@ -352,6 +352,15 @@ class NotificationController extends Controller
                 $q->where(function ($pub) use ($admin) {
                     // Fora do gerenciamento: conclusões de tarefa E notificações de apontamento (pessoais).
                     $pub->whereNotIn('title', array_merge(self::COMPLETION_TITLES, self::APONTAMENTO_TITLES));
+                    // Fora TAMBÉM: avisos AUTO-GERADOS por rotinas (competências, contratação/parceiro,
+                    // apontamento, despesas, aprovações, tarefas atrasadas, fechamento…). Todas essas têm
+                    // workflow próprio na Central de Workflows e SEMPRE trazem um cta_url (link da ação);
+                    // publicações criadas AQUI não têm cta_url. O lembrete recorrente de fechamento semanal
+                    // é o único sem cta_url → filtrado por título. Esta tela só lista publicações manuais.
+                    $pub->whereNot(function ($wf) {
+                        $wf->where(fn ($c) => $c->whereNotNull('cta_url')->where('cta_url', '<>', ''))
+                           ->orWhere('title', 'like', '%Fechamento semanal de horas%');
+                    });
                     if (!$admin->isAdmin() && !$admin->isAdministrativo()) {
                         $pub->where('created_by', $admin->id);
                     }
