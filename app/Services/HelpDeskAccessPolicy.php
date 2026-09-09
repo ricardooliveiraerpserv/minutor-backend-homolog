@@ -41,10 +41,15 @@ class HelpDeskAccessPolicy
         return $p->permissions[$key] ?? $default;
     }
 
-    /** Admin sempre, e quem não tem perfil = sem restrição (compat). */
+    /**
+     * Sem restrição APENAS quando não há perfil vinculado (compat/rollout) ou sem usuário.
+     * ⚠️ Admin NÃO é mais bypass: se um perfil de acesso estiver vinculado ao usuário, ele
+     * governa — inclusive para admin (pedido: "até o admin deve seguir o perfil dedicado a ele").
+     * Para o admin mandar em tudo, deixá-lo SEM perfil vinculado (ou com um perfil liberado).
+     */
     private function unrestricted(?User $user): bool
     {
-        return !$user || $user->isAdmin() || !$this->profile($user);
+        return !$user || !$this->profile($user);
     }
 
     // ── Escopos ────────────────────────────────────────────────────────────
@@ -173,6 +178,37 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'time.view_contract', true);
     }
 
+    /** Pode ver o RESUMO do contrato dentro do chamado (bloco de horas/consumo). Default: sim. */
+    public function canViewContractSummary(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'time.contract_summary', true);
+    }
+
+    /** Pode ver VALORES trabalhados (R$ / taxa) no chamado. Default: sim. */
+    public function canSeeWorkedValues(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'time.see_worked_values', true);
+    }
+
+    /** Pode editar o PRÓPRIO perfil (conta: nome/senha/assinatura). Default: sim. */
+    public function canEditOwnProfile(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'general.edit_own_profile', true);
+    }
+
+    /** Vê a sinalização de COLISÃO (quem mais está no chamado). Default: sim. */
+    public function canSeeCollision(?User $user): bool
+    {
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.collision', true);
+    }
+
+    /** Tipo PADRÃO da nova ação em chamados: 'public' | 'internal'. Default: public. */
+    public function defaultActionType(?User $user): string
+    {
+        if ($this->unrestricted($user)) return 'public';
+        return (string) $this->perm($user, 'service.default_action', 'public') === 'internal' ? 'internal' : 'public';
+    }
+
     /**
      * Escopo do "Ver apontamentos" do chamado: 'all' (todos) ou 'own' (só os do usuário logado).
      * Default: todos. Configurável no perfil de acesso (time.apontamentos_scope).
@@ -197,7 +233,8 @@ class HelpDeskAccessPolicy
     public function canClose(?User $user): bool
     {
         if (!$user) return false;
-        if ($user->isAdmin() || $user->isCoordenador() || !$this->profile($user)) return true;
+        // Sem perfil vinculado: baseline (admin + coordenador podem). Com perfil: segue o perfil (inclusive admin).
+        if (!$this->profile($user)) return $user->isAdmin() || $user->isCoordenador();
         return (bool) $this->perm($user, 'service.close_tickets', false);
     }
 
@@ -211,7 +248,7 @@ class HelpDeskAccessPolicy
     public function canBeAssignee(?User $user): bool
     {
         if (!$user) return false;
-        return ($user->isAdmin() || !$this->profile($user)) ? true : (bool) $this->perm($user, 'policies.can_be_assignee', true);
+        return !$this->profile($user) ? true : (bool) $this->perm($user, 'policies.can_be_assignee', true);
     }
 
     /** Pode editar interações em geral (qualquer escopo != none)? Usado p/ a Descrição (1ª interação). */

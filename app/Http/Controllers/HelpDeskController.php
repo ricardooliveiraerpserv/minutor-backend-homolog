@@ -65,6 +65,8 @@ class HelpDeskController extends Controller
             'view_scope'     => app(\App\Services\HelpDeskAccessPolicy::class)->viewScope(auth()->user()),
             // Ações em massa liberadas para o perfil do agente (barra de seleção da lista).
             'my_perms'       => app(\App\Services\HelpDeskAccessPolicy::class)->bulkPermsMap(auth()->user()),
+            // Pode editar o próprio perfil (conta)? (enforce real está no updateProfile).
+            'can_edit_own_profile' => app(\App\Services\HelpDeskAccessPolicy::class)->canEditOwnProfile(auth()->user()),
         ]]);
     }
 

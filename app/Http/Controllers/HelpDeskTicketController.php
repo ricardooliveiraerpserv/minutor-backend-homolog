@@ -51,6 +51,9 @@ class HelpDeskTicketController extends Controller
         $data['can_send_email'] = $this->access->canSendEmail($user);
         $data['can_reopen']     = $this->access->canReopen($user);
         $data['can_close']      = $this->access->canClose($user);
+        $data['can_see_collision']        = $this->access->canSeeCollision($user);
+        $data['can_view_contract_summary'] = $this->access->canViewContractSummary($user);
+        $data['default_action']           = $this->access->defaultActionType($user);
         // Marca (badge + filtro futuro): o chamado tem alguma Solicitação de Código-Fonte?
         $data['has_source_code'] = \App\Models\SourceCodeRequest::where('ticket_id', $ticket->id)->exists();
         // Resultado da varredura de fonte da GMUD (null se ainda não é/foi GMUD).

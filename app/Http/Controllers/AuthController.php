@@ -339,6 +339,7 @@ class AuthController extends Controller
     public function updateProfile(Request $request): JsonResponse
     {
         $user = $request->user();
+        abort_unless(app(\App\Services\HelpDeskAccessPolicy::class)->canEditOwnProfile($user), 403, 'Seu perfil de acesso não permite editar o próprio perfil.');
 
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|required|string|max:255',

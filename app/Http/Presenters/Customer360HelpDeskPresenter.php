@@ -29,7 +29,8 @@ class Customer360HelpDeskPresenter
 
     public function present(Customer $customer, ?HelpDeskTicket $ticket, User $user): array
     {
-        $financeiro = $this->canSeeFinancial($user);
+        // Financeiro: papel (coord/admin/administrativo) E o perfil de acesso (time.see_worked_values).
+        $financeiro = $this->canSeeFinancial($user) && $this->access->canSeeWorkedValues($user);
         $contratoVisivel = $this->access->canViewContract($user);
 
         $blocos = [

@@ -29,6 +29,11 @@ class HelpDeskPresenceController extends Controller
             ['last_seen_at' => $now, 'updated_at' => $now, 'created_at' => $now],
         );
 
+        // Perfil de acesso: quem não pode ver a sinalização de colisão não recebe a lista de viewers.
+        if (!app(\App\Services\HelpDeskAccessPolicy::class)->canSeeCollision($user)) {
+            return response()->json(['viewers' => [], 'change_key' => $this->changeKey($ticket)]);
+        }
+
         $since = $now->copy()->subSeconds(self::ACTIVE_SECONDS);
         $viewers = DB::table('helpdesk_ticket_views as v')
             ->join('users as u', 'u.id', '=', 'v.user_id')
