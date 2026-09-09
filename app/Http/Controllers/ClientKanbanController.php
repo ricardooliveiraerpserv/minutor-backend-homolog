@@ -467,6 +467,34 @@ class ClientKanbanController extends Controller
         return response()->json(['user_ids' => $valid]);
     }
 
+    /**
+     * Envia um convite por e-mail para um usuário do cliente acessar o quadro.
+     * O link é do AMBIENTE (config('app.frontend_url')) → homolog no homolog, prod no prod.
+     * Garante o acesso adicionando o convidado como membro do quadro.
+     */
+    public function invite(Request $request, int $boardId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        $v = $request->validate(['user_id' => 'required|integer']);
+        $user = User::where('customer_id', $this->customerId())
+            ->where('type', 'cliente')->where('enabled', true)
+            ->whereKey($v['user_id'])->first();
+        abort_unless($user, 422, 'Usuário inválido para este cliente.');
+        abort_if(empty($user->email), 422, 'O usuário não tem e-mail cadastrado.');
+
+        // Garante acesso ao quadro (adiciona como membro se ainda não for).
+        $board->members()->syncWithoutDetaching([$user->id]);
+
+        $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+        $link = $base . '/portal-cliente/kanban/' . $board->id;
+
+        $user->notify(new \App\Notifications\KanbanBoardInviteNotification(
+            $board->name, $link, Auth::user()->name,
+        ));
+
+        return response()->json(['data' => ['sent' => true, 'email' => $user->email]]);
+    }
+
     // ─────────────────────────────── relatório ───────────────────────────────
 
     public function report(int $boardId): JsonResponse

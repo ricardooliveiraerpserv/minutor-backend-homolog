@@ -1252,6 +1252,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/cards/{card}/history', [$c, 'cardHistory'])->name('cards.history');
             Route::get('/boards/{board}/members', [$c, 'boardMembers'])->name('boards.members');
             Route::put('/boards/{board}/members', [$c, 'setBoardMembers'])->name('boards.members.set');
+            Route::post('/boards/{board}/invite', [$c, 'invite'])->name('boards.invite');
             Route::get('/boards/{board}/report', [$c, 'report'])->name('boards.report');
         });
 
