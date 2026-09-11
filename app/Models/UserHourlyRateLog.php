@@ -38,7 +38,7 @@ class UserHourlyRateLog extends Model
     {
         $comp = \Carbon\Carbon::parse($firstDayOfMonth)->startOfMonth();
 
-        $applicable = static::where('user_id', $userId)
+        $logs = static::where('user_id', $userId)
             ->orderBy('created_at')
             ->get()
             ->map(fn ($l) => [
@@ -47,16 +47,38 @@ class UserHourlyRateLog extends Model
                     ? \Carbon\Carbon::parse($l->effective_from)->startOfMonth()
                     : \Carbon\Carbon::parse($l->created_at)->startOfMonth()->addMonthNoOverflow(),
             ])
-            ->filter(fn ($x) => $x['eff']->lessThanOrEqualTo($comp))
             ->sortBy(fn ($x) => $x['eff']->timestamp)
-            ->last();
+            ->values();
 
-        $log = $applicable ? $applicable['log'] : null;
+        // Log já vigente NA competência (eff <= comp): usa os valores NOVOS do mais recente.
+        $applicable = $logs->filter(fn ($x) => $x['eff']->lessThanOrEqualTo($comp))->last();
+        if ($applicable) {
+            $log = $applicable['log'];
+            return [
+                'hourly_rate'     => $log->new_hourly_rate     ?? $user->hourly_rate,
+                'rate_type'       => $log->new_rate_type        ?? $user->rate_type,
+                'consultant_type' => $log->new_consultant_type  ?? $user->consultant_type,
+            ];
+        }
 
+        // Nenhum log vigente ainda, mas há reajuste FUTURO: a competência é ANTERIOR ao 1º
+        // reajuste → usa os valores ANTIGOS (old_*) dele. NÃO usar user.* aqui: o cadastro
+        // atual já reflete o reajuste futuro e usá-lo mudaria fechamentos passados (o bug).
+        $firstFuture = $logs->first();
+        if ($firstFuture) {
+            $log = $firstFuture['log'];
+            return [
+                'hourly_rate'     => $log->old_hourly_rate     ?? $user->hourly_rate,
+                'rate_type'       => $log->old_rate_type        ?? $user->rate_type,
+                'consultant_type' => $log->old_consultant_type  ?? $user->consultant_type,
+            ];
+        }
+
+        // Nunca houve reajuste registrado → valores atuais do cadastro.
         return [
-            'hourly_rate'     => $log?->new_hourly_rate    ?? $user->hourly_rate,
-            'rate_type'       => $log?->new_rate_type       ?? $user->rate_type,
-            'consultant_type' => $log?->new_consultant_type ?? $user->consultant_type,
+            'hourly_rate'     => $user->hourly_rate,
+            'rate_type'       => $user->rate_type,
+            'consultant_type' => $user->consultant_type,
         ];
     }
 
