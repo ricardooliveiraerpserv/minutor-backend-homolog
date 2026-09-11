@@ -300,7 +300,16 @@ class FolhaPagamentoController extends Controller
             // Despesas a reembolsar no fechamento (não-pagas) entram na PRODUÇÃO — igual cooperado.
             $totalDespesas = round((float) collect($parceiroCtrl->despesasData((int) $partner->id, $yearMonth))
                 ->where('is_paid', false)->sum('valor'), 2);
-            $totalApuracao = round($totalServicos + $totalDespesas, 2); // recebimento = serviços + despesas
+            // Ajustes do fechamento do parceiro — recebimento = serviços + despesas − desconto
+            // − adiantamento(+parcelas da rotina) + adicional + empréstimo. Antes a folha usava só
+            // serviços + despesas e IGNORAVA os ajustes (ex.: Adicional não entrava — 31.213 em vez de 33.438).
+            $ajP     = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partner->id)->where('year_month', $yearMonth)->first();
+            $descP   = round((float) ($ajP->desconto ?? 0), 2);
+            $adiantP = round((float) ($ajP->adiantamento ?? 0), 2)
+                + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            $emprP   = \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            $adicP   = round((float) ($ajP->adicional ?? 0), 2);
+            $totalApuracao = round($totalServicos + $totalDespesas - $descP - $adiantP + $adicP + $emprP, 2); // recebimento (com ajustes)
 
             $uid = $admin->id;
             $f   = $folhaByUser[$uid] ?? null;
@@ -343,9 +352,9 @@ class FolhaPagamentoController extends Controller
                 'valor_hora_calc'    => 0.0,
                 'producao_calc'      => $totalApuracao,
                 'fech_serv'          => $totalServicos,
-                'fech_desconto'      => 0.0,
-                'fech_adiantamento'  => 0.0,
-                'fech_adicional'     => 0.0,
+                'fech_desconto'      => $descP,
+                'fech_adiantamento'  => $adiantP,
+                'fech_adicional'     => $adicP,
                 'fech_desp'          => $totalDespesas,
                 'variavel'           => $variavel,
                 'reemb'              => $reemb,
