@@ -300,7 +300,16 @@ class FolhaPagamentoController extends Controller
             // Despesas a reembolsar no fechamento (não-pagas) entram na PRODUÇÃO — igual cooperado.
             $totalDespesas = round((float) collect($parceiroCtrl->despesasData((int) $partner->id, $yearMonth))
                 ->where('is_paid', false)->sum('valor'), 2);
-            $totalApuracao = round($totalServicos + $totalDespesas, 2); // recebimento = serviços + despesas
+            // Ajustes do fechamento do parceiro — recebimento = serviços + despesas − desconto
+            // − adiantamento(+parcelas da rotina) + adicional + empréstimo. Antes a folha usava só
+            // serviços + despesas e IGNORAVA os ajustes (ex.: Adicional não entrava — 31.213 em vez de 33.438).
+            $ajP     = \App\Models\FechamentoParceiroAjuste::where('partner_id', $partner->id)->where('year_month', $yearMonth)->first();
+            $descP   = round((float) ($ajP->desconto ?? 0), 2);
+            $adiantP = round((float) ($ajP->adiantamento ?? 0), 2)
+                + \App\Models\Adiantamento::descontoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            $emprP   = \App\Models\Adiantamento::aporteEmprestimoNoMes('parceiro', (int) $partner->id, $yearMonth);
+            $adicP   = round((float) ($ajP->adicional ?? 0), 2);
+            $totalApuracao = round($totalServicos + $totalDespesas - $descP - $adiantP + $adicP + $emprP, 2); // recebimento (com ajustes)
 
             $uid = $admin->id;
             $f   = $folhaByUser[$uid] ?? null;
@@ -343,9 +352,9 @@ class FolhaPagamentoController extends Controller
                 'valor_hora_calc'    => 0.0,
                 'producao_calc'      => $totalApuracao,
                 'fech_serv'          => $totalServicos,
-                'fech_desconto'      => 0.0,
-                'fech_adiantamento'  => 0.0,
-                'fech_adicional'     => 0.0,
+                'fech_desconto'      => $descP,
+                'fech_adiantamento'  => $adiantP,
+                'fech_adicional'     => $adicP,
                 'fech_desp'          => $totalDespesas,
                 'variavel'           => $variavel,
                 'reemb'              => $reemb,
@@ -491,8 +500,24 @@ class FolhaPagamentoController extends Controller
         // na coluna VARIÁVEL; a coop COM INSS (e o caso de coop única) grava em PRODUÇÃO.
         $contrib = [];
         foreach ($headers as $h) {
-            $valErp = (float) $h->valor_coop_erpserv; $taxErp = (float) $h->taxa_coop_erpserv;
-            $valBiz = (float) $h->valor_coop_bizify;  $taxBiz = (float) $h->taxa_coop_bizify;
+            // valor_coop AO VIVO (mesma fórmula do fechamento, que no FE é readOnly/auto):
+            // Σ(lançamentos da coop) − Σ(adiantamentos da coop) + empréstimo (na erpserv).
+            // Garante que adiantamentos/lançamentos alterados APÓS o último save do fechamento
+            // reflitam na folha — senão o valor_coop gravado fica defasado (ex.: desconto novo).
+            $lancErp = 0.0; $lancBiz = 0.0;
+            foreach (\App\Models\FechamentoDiretoriaItem::where('user_id', $h->user_id)->where('year_month', $yearMonth)->get() as $it) {
+                $v = (float) ($it->valor ?? 0);
+                if (($it->coop ?? 'erpserv') === 'bizify') { $lancBiz += $v; } else { $lancErp += $v; }
+            }
+            $coopsMap    = $h->adiantamento_coops ?? [];
+            $defaultCoop = in_array($h->adiantamento_coop, ['erpserv', 'bizify'], true) ? $h->adiantamento_coop : 'erpserv';
+            foreach (\App\Models\Adiantamento::parcelasNoMes('consultor', (int) $h->user_id, $yearMonth) as $a) {
+                $coopA = $coopsMap[$a['adiantamento_id']] ?? $coopsMap[(string) $a['adiantamento_id']] ?? $defaultCoop;
+                if ($coopA === 'bizify') { $lancBiz -= (float) $a['valor']; } else { $lancErp -= (float) $a['valor']; }
+            }
+            $lancErp += round(collect(\App\Models\Adiantamento::aportesEmprestimoNoMes('consultor', (int) $h->user_id, $yearMonth))->sum('valor'), 2);
+            $valErp = round($lancErp, 2); $taxErp = (float) $h->taxa_coop_erpserv;
+            $valBiz = round($lancBiz, 2); $taxBiz = (float) $h->taxa_coop_bizify;
             $valor = $empresa === 'bizify' ? $valBiz : $valErp;
             $taxa  = $empresa === 'bizify' ? $taxBiz : $taxErp;
             $c = round($valor + $taxa, 2);
