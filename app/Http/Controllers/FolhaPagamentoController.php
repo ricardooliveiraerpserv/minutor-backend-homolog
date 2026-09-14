@@ -500,8 +500,24 @@ class FolhaPagamentoController extends Controller
         // na coluna VARIÁVEL; a coop COM INSS (e o caso de coop única) grava em PRODUÇÃO.
         $contrib = [];
         foreach ($headers as $h) {
-            $valErp = (float) $h->valor_coop_erpserv; $taxErp = (float) $h->taxa_coop_erpserv;
-            $valBiz = (float) $h->valor_coop_bizify;  $taxBiz = (float) $h->taxa_coop_bizify;
+            // valor_coop AO VIVO (mesma fórmula do fechamento, que no FE é readOnly/auto):
+            // Σ(lançamentos da coop) − Σ(adiantamentos da coop) + empréstimo (na erpserv).
+            // Garante que adiantamentos/lançamentos alterados APÓS o último save do fechamento
+            // reflitam na folha — senão o valor_coop gravado fica defasado (ex.: desconto novo).
+            $lancErp = 0.0; $lancBiz = 0.0;
+            foreach (\App\Models\FechamentoDiretoriaItem::where('user_id', $h->user_id)->where('year_month', $yearMonth)->get() as $it) {
+                $v = (float) ($it->valor ?? 0);
+                if (($it->coop ?? 'erpserv') === 'bizify') { $lancBiz += $v; } else { $lancErp += $v; }
+            }
+            $coopsMap    = $h->adiantamento_coops ?? [];
+            $defaultCoop = in_array($h->adiantamento_coop, ['erpserv', 'bizify'], true) ? $h->adiantamento_coop : 'erpserv';
+            foreach (\App\Models\Adiantamento::parcelasNoMes('consultor', (int) $h->user_id, $yearMonth) as $a) {
+                $coopA = $coopsMap[$a['adiantamento_id']] ?? $coopsMap[(string) $a['adiantamento_id']] ?? $defaultCoop;
+                if ($coopA === 'bizify') { $lancBiz -= (float) $a['valor']; } else { $lancErp -= (float) $a['valor']; }
+            }
+            $lancErp += round(collect(\App\Models\Adiantamento::aportesEmprestimoNoMes('consultor', (int) $h->user_id, $yearMonth))->sum('valor'), 2);
+            $valErp = round($lancErp, 2); $taxErp = (float) $h->taxa_coop_erpserv;
+            $valBiz = round($lancBiz, 2); $taxBiz = (float) $h->taxa_coop_bizify;
             $valor = $empresa === 'bizify' ? $valBiz : $valErp;
             $taxa  = $empresa === 'bizify' ? $taxBiz : $taxErp;
             $c = round($valor + $taxa, 2);
