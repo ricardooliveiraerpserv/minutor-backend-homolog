@@ -680,8 +680,8 @@ class ClientKanbanController extends Controller
         $users = User::where('customer_id', $this->customerId())
             ->where('type', 'cliente')
             ->where('enabled', true)
-            ->orderBy('name')->get(['id', 'name'])
-            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name]);
+            ->orderBy('name')->get(['id', 'name', 'email'])
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
         return response()->json(['items' => $users]);
     }
 
