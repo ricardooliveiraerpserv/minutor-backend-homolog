@@ -24,6 +24,22 @@ class HelpDeskTicket extends Model
 
     protected $table = 'helpdesk_tickets';
 
+    /**
+     * Multi-empresa: o route-model-binding NÃO aplica o scope de empresa única — senão um
+     * ticket de outra empresa (na fila unificada) daria 404 ao abrir/atuar. A autorização por
+     * empresa é feita aqui: o usuário só resolve tickets de empresas que seu perfil ATENDE
+     * (attendsCompany). Combinado com os checks de canSee/canEdit dos controllers.
+     */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $t = static::withoutCompanyScope()->where($field ?? $this->getRouteKeyName(), $value)->firstOrFail();
+        $u = auth()->user();
+        if ($u && !app(\App\Services\HelpDeskAccessPolicy::class)->attendsCompany($u, $t->company_id ? (int) $t->company_id : null)) {
+            abort(404);
+        }
+        return $t;
+    }
+
     protected $fillable = [
         'ticket_number', 'subject', 'description',
         'customer_id', 'customer_contact_id', 'requester_user_id', 'requester_name', 'requester_email', 'cc_emails', 'contract_id', 'project_id',

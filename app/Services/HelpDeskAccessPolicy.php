@@ -334,6 +334,55 @@ class HelpDeskAccessPolicy
         };
     }
 
+    // ── Escopo de EMPRESAS (multi-empresa no Help Desk) ───────────────────────
+    /**
+     * Empresas (company_id) que o agente ATENDE no Help Desk. Fonte de verdade:
+     * permissions['policies.companies'] (array de ids). Fallbacks:
+     *  - sem perfil vinculado → todas as empresas do usuário (compat/rollout);
+     *  - perfil sem a lista definida → a empresa do próprio perfil (mantém a segregação atual).
+     */
+    public function companiesScope(?User $user): array
+    {
+        if (!$user) return [];
+        $p = $this->profile($user);
+        if (!$p) {
+            $ids = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->all();
+            return $ids ?: array_values(array_filter([(int) $user->current_company_id]));
+        }
+        $list = is_array($p->permissions) ? ($p->permissions['policies.companies'] ?? null) : null;
+        if (is_array($list) && count($list)) {
+            return array_values(array_unique(array_map('intval', $list)));
+        }
+        return array_values(array_filter([(int) $p->company_id]));
+    }
+
+    /** Atende (pode ver/atuar em) tickets desta empresa? */
+    public function attendsCompany(?User $user, ?int $companyId): bool
+    {
+        if (!$companyId) return true;
+        $scope = $this->companiesScope($user);
+        return empty($scope) || in_array((int) $companyId, $scope, true);
+    }
+
+    /** A fila mostra o selo de empresa? (perfil atende 2+ empresas → visão unificada) */
+    public function isMultiCompany(?User $user): bool
+    {
+        return count($this->companiesScope($user)) > 1;
+    }
+
+    /**
+     * Aplica o escopo de EMPRESAS do perfil à query de tickets: desliga o scope de empresa
+     * ÚNICA (global) e filtra pelas empresas que o agente atende. Com 1 empresa mostra só ela;
+     * com 2+ traz tudo unificado (ignora o seletor de empresa do topo).
+     */
+    public function applyCompanyScope(Builder $q, ?User $user): Builder
+    {
+        $ids = $this->companiesScope($user);
+        if (empty($ids)) return $q; // não resolveu escopo → mantém o comportamento padrão
+        $table = $q->getModel()->getTable();
+        return $q->withoutCompanyScope()->whereIn($table . '.company_id', $ids);
+    }
+
     // ── Campos: o que pode INFORMAR na abertura (agente ou cliente) ───────────
     public function informAllowed(?User $user, string $field): bool
     {

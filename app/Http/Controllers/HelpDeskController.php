@@ -25,14 +25,21 @@ class HelpDeskController extends Controller
             return response()->json(['data' => User::whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor'])
                 ->orderBy('name')->get(['id', 'name', 'type'])]);
         }
-        // AGENTES = usuários vinculados a ALGUMA equipe (promovidos automaticamente ao entrar na equipe).
+        // Multi-empresa: se vier company_id (empresa do ticket), lista os agentes que ATENDEM
+        // essa empresa pelo PERFIL DE ACESSO — incluindo os "ambas" (independe da equipe/empresa
+        // ativa). Sem company_id, mantém o comportamento por empresa ativa.
+        $companyId = (int) $request->input('company_id');
         $memberIds = \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
-            ->when($this->activeCompanyId(), fn ($q, $cid) => $q
+            ->when(!$companyId && $this->activeCompanyId(), fn ($q, $cid) => $q
                 ->join('helpdesk_teams', 'helpdesk_teams.id', '=', 'helpdesk_team_user.helpdesk_team_id')
                 ->where('helpdesk_teams.company_id', $cid))
             ->distinct()->pluck('helpdesk_team_user.user_id');
-        $agents = User::whereIn('id', $memberIds)->orderBy('name')->get(['id', 'name', 'type']);
-        return response()->json(['data' => $agents]);
+        $agents = User::whereIn('id', $memberIds)->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id']);
+        if ($companyId) {
+            $pol = app(\App\Services\HelpDeskAccessPolicy::class);
+            $agents = $agents->filter(fn ($u) => $pol->attendsCompany($u, $companyId))->values();
+        }
+        return response()->json(['data' => $agents->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'type' => $u->type])]);
     }
 
     public function meta(): JsonResponse
@@ -72,6 +79,11 @@ class HelpDeskController extends Controller
             // Visualizações salvas: pode salvar pessoal / compartilhada?
             'can_save_personal_view' => app(\App\Services\HelpDeskAccessPolicy::class)->canCreatePersonalViews(auth()->user()),
             'can_save_shared_view'   => app(\App\Services\HelpDeskAccessPolicy::class)->canCreateSharedViews(auth()->user()),
+            // Multi-empresa: empresas que o agente ATENDE (perfil de acesso). O FE usa p/ o selo
+            // de empresa (só quando 2+) e o filtro rápido por empresa na fila unificada.
+            'companies_scope' => \App\Models\Company::whereIn('id', app(\App\Services\HelpDeskAccessPolicy::class)->companiesScope(auth()->user()))
+                ->orderBy('name')->get(['id', 'name', 'slug', 'color']),
+            'is_multi_company' => app(\App\Services\HelpDeskAccessPolicy::class)->isMultiCompany(auth()->user()),
         ]]);
     }
 

@@ -116,6 +116,7 @@ class HelpDeskTicketController extends Controller
         return $q->with([
             'customer:id,name', 'contact:id,name', 'requester:id,name',
             'status:id,key,label,color,is_open,is_resolved,is_terminal', 'assignee:id,name',
+            'company:id,name,slug,color', // multi-empresa: selo de empresa na fila unificada
         ]);
     }
 
@@ -208,8 +209,11 @@ class HelpDeskTicketController extends Controller
     private function filtered(Request $request)
     {
         $user = $request->user();
-        return $this->access->applyViewScope($this->withListRels(HelpDeskTicket::query()), $user) // perfil: escopo de visão
+        // Escopo de EMPRESAS do perfil (multi-empresa): 1 empresa = só ela; 2+ = fila unificada.
+        $base = $this->access->applyCompanyScope($this->withListRels(HelpDeskTicket::query()), $user);
+        return $this->access->applyViewScope($base, $user) // perfil: escopo de visão
             ->whereNull('merged_into_id') // chamados mesclados somem das listagens (ficam no destino)
+            ->when($request->filled('company_id'), fn ($q) => $q->where('company_id', $request->company_id)) // filtro rápido por empresa (dentro do escopo)
             ->when($request->filled('status_id'), fn ($q) => $q->where('status_id', $request->status_id))
             ->when($request->filled('status_key'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('key', $request->status_key)))
             ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
@@ -1706,9 +1710,11 @@ class HelpDeskTicketController extends Controller
             'assignee_id' => 'nullable|exists:users,id',
             'team_id'     => 'nullable|exists:helpdesk_teams,id',
         ]);
-        // O alvo precisa poder ser responsável (perfil de acesso).
+        // O alvo precisa poder ser responsável (perfil de acesso) E atender a empresa do chamado.
         if (!empty($v['assignee_id'])) {
-            abort_unless($this->access->canBeAssignee(\App\Models\User::find($v['assignee_id'])), 422, 'O agente selecionado não pode ser responsável (perfil de acesso).');
+            $target = \App\Models\User::find($v['assignee_id']);
+            abort_unless($this->access->canBeAssignee($target), 422, 'O agente selecionado não pode ser responsável (perfil de acesso).');
+            abort_unless($this->access->attendsCompany($target, $ticket->company_id ? (int) $ticket->company_id : null), 422, 'Este agente não atende a empresa deste chamado.');
         }
         $oldA = $ticket->assignee_id; $oldT = $ticket->team_id;
         $ticket->fill($v)->save();
@@ -1977,12 +1983,11 @@ class HelpDeskTicketController extends Controller
                 // ao final da RESPOSTA AO CLIENTE com texto. Nota interna e anexo-só não assinam.
                 $body = $v['body'] ?? '';
                 if (($v['visibility'] ?? 'internal') === 'customer' && trim((string) $body) !== '') {
-                    // Marca da assinatura: Bizify quando o AGENTE é Bizify OU está logado na BASE
-                    // BIZIFY (empresa ativa = current_company_id). Assim o admin assina pela BASE LOGADA
-                    // (logado como Bizify → assina Bizify; como ERPSERV → assina ERPSERV) → tem as DUAS.
-                    $bizId = \App\Models\Company::where('slug', 'bizify')->value('id');
-                    $activeCompanyId = optional($request->user())->current_company_id;
-                    $sigBrand = ((optional($request->user())->is_bizify) || ($bizId && (int) $activeCompanyId === (int) $bizId)) ? 'bizify' : null;
+                    // Marca da assinatura: pela EMPRESA DONA DO TICKET (multi-empresa). Ticket Bizify →
+                    // assinatura Bizify; ERPSERV → ERPSERV, independente de quem responde. O
+                    // SignatureRenderer entende 'bizify' / null (=erpserv, default).
+                    $ticketSlug = optional($ticket->company()->first())->slug;
+                    $sigBrand = $ticketSlug === 'bizify' ? 'bizify' : null;
                     $sig = \App\Services\SignatureRenderer::resolveFor($request->user(), $sigBrand);
                     if (\App\Services\SignatureRenderer::hasData($sig)) {
                         // Assinatura COMPLETA (com a faixa "LET'S DO IT"). No dark mode do Apple Mail a
