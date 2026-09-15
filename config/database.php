@@ -110,6 +110,27 @@ return [
             'options' => [],
         ],
 
+        // Conexão LANDLORD (fixa no schema `public`), imune ao SET search_path do
+        // SwitchTenantSchemaTask (que só age na conexão default 'pgsql'). Usada para as
+        // tabelas de FILA (jobs/failed_jobs/job_batches): assim o job de um tenant é
+        // gravado/lido no public, o worker (landlord) o encontra, e o spatie torna o
+        // tenant corrente só na EXECUÇÃO do job (queues_are_tenant_aware_by_default=true).
+        'pgsql_landlord' => [
+            'driver' => 'pgsql',
+            'url' => env('DB_URL'),
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'laravel'),
+            'username' => env('DB_USERNAME', 'root'),
+            'password' => env('DB_PASSWORD', ''),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => 'prefer',
+            'options' => [],
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
