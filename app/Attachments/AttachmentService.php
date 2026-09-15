@@ -130,6 +130,11 @@ class AttachmentService
             $entityId,
             $fileName,
         );
+        // Multi-tenant: isola os arquivos por tenant (o entity_id se repete entre schemas).
+        // Sem tenant ativo (grupo ERPSERV/BIZIFY no schema public) o path fica inalterado.
+        if ($tenant = \Spatie\Multitenancy\Models\Tenant::current()) {
+            $storageKey = 'tenants/' . $tenant->slug . '/' . $storageKey;
+        }
 
         // 6. Persiste em transação: storage primeiro (rollback se DB falhar), DB depois.
         $this->storage->putUploaded($storageKey, $file);
