@@ -47,9 +47,9 @@ class ClientKanbanController extends Controller
         $uid = (int) Auth::id();
         $cid = $this->customerId();
         return function ($q) use ($uid, $cid) {
+            // Sem membros = SÓ quem criou tem acesso (removido o "sem membros → todos da empresa").
             $q->where('customer_id', $cid)->where(function ($qq) use ($uid) {
                 $qq->where('created_by_user_id', $uid)
-                   ->orWhereDoesntHave('members')
                    ->orWhereHas('members', fn ($m) => $m->where('users.id', $uid));
             });
         };
