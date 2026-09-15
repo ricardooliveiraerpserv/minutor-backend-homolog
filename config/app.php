@@ -56,6 +56,14 @@ return [
 
     'frontend_url' => env('APP_FRONTEND_URL', 'http://localhost:4200'),
 
+    // Base FIXA para links de convite do Kanban do Cliente. Diferente do frontend_url:
+    // o convite deve SEMPRE apontar para produção (o cliente acessa a rotina em prod).
+    'kanban_invite_link_base' => env('KANBAN_INVITE_LINK_BASE', 'https://app.minutor.com.br'),
+
+    // Remetente (mailbox HABILITADO e coberto pela Application Access Policy do app Graph)
+    // usado para enviar o convite do Kanban via Microsoft Graph.
+    'kanban_invite_from_email' => env('KANBAN_INVITE_FROM_EMAIL', 'noreply@minutor.com.br'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone
