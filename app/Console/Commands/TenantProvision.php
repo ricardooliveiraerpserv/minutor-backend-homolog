@@ -134,6 +134,9 @@ class TenantProvision extends Command
             'pg_dump', '-h', (string) $c['host'], '-p', (string) $c['port'],
             '-U', (string) $c['username'], '-d', (string) $c['database'],
             '--schema-only', '--schema=' . $source, '--no-owner', '--no-privileges', '--no-comments',
+            // O registry `tenants` vive SÓ no public (landlord); não clonar p/ o schema do tenant
+            // (senão Tenant::query() sob tenant ativo resolveria a tabela vazia via search_path).
+            '--exclude-table=' . $source . '.tenants',
             '-f', $dump,
         ];
         $r = Process::env($env)->timeout(600)->run($args);
