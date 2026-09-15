@@ -518,16 +518,40 @@ class ClientKanbanController extends Controller
         // Caminho da tela do quadro; o `?convite=token` faz a tela aceitar o convite e
         // liberar o acesso. E-mail usa a URL ABSOLUTA de produção (o cliente acessa em
         // prod); a notificação in-app usa caminho RELATIVO (o CTA navega via router).
-        $path = '/portal-cliente/kanban/' . $board->id . '?convite=' . $token;
+        // Aponta para a LISTA (Meus Processos) com o token: a tela abre um modal de
+        // confirmação e só ao aceitar o quadro é liberado e aberto.
+        $path = '/portal-cliente/kanban?convite=' . $token;
         $base = rtrim((string) config('app.kanban_invite_link_base', config('app.frontend_url')), '/');
         $emailLink = $base . $path;
 
         $inviterName = Auth::user()->name;
 
-        // 1) E-mail (com botão Aceitar). 2) Notificação in-app + pop-up (sino) com CTA.
-        $user->notify(new \App\Notifications\KanbanBoardInviteNotification(
+        // 1) E-mail (com botão Aceitar). Preferir Microsoft Graph (app-only) — o SMTP
+        // basic-auth do Office365 está sendo desativado pela MS e o mailbox do homolog
+        // (noreply_homolog@) está desabilitado. Cai no SMTP só se o Graph não estiver ligado.
+        $notification = new \App\Notifications\KanbanBoardInviteNotification(
             $board->name, $emailLink, $inviterName,
-        ));
+        );
+        $sentByGraph = false;
+        if (\App\Services\GraphMailer::enabled()) {
+            try {
+                $mail    = $notification->toMail($user);
+                $html    = app(\Illuminate\Mail\Markdown::class)->render('notifications::email', $mail->data());
+                $subject = $mail->subject ?: ('Convite para o quadro "' . $board->name . '"');
+                \App\Services\GraphMailer::sendAs(
+                    (string) config('app.kanban_invite_from_email', config('mail.from.address')),
+                    [$user->email], [], $subject, (string) $html,
+                );
+                $sentByGraph = true;
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::error('Convite Kanban: falha no envio via Graph, tentando SMTP', [
+                    'board' => $board->id, 'user' => $user->id, 'erro' => $e->getMessage(),
+                ]);
+            }
+        }
+        if (!$sentByGraph) {
+            $user->notify($notification);   // fallback SMTP (mailer padrão)
+        }
 
         AppNotification::create([
             'title'        => 'Convite para um quadro',

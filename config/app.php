@@ -61,6 +61,11 @@ return [
     // mesmo quando disparado do homolog. Override por env se um dia mudar o domínio.
     'kanban_invite_link_base' => env('KANBAN_INVITE_LINK_BASE', 'https://app.minutor.com.br'),
 
+    // Remetente (mailbox HABILITADO e coberto pela Application Access Policy do app Graph)
+    // usado para enviar o convite do Kanban via Microsoft Graph. NÃO usar o MAIL_FROM do
+    // homolog (noreply_homolog@ está desabilitado na MS). Default = caixa de sistema ativa.
+    'kanban_invite_from_email' => env('KANBAN_INVITE_FROM_EMAIL', 'noreply@minutor.com.br'),
+
     /*
     |--------------------------------------------------------------------------
     | Application Timezone

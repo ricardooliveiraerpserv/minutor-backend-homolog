@@ -238,9 +238,11 @@ return [
      * Requer app registrado no Azure AD + permissão de aplicação Mail.Send.
      */
     'graph' => [
-        'tenant_id'     => env('MAIL_GRAPH_TENANT_ID'),
-        'client_id'     => env('MAIL_GRAPH_CLIENT_ID'),
-        'client_secret' => env('MAIL_GRAPH_CLIENT_SECRET'),
+        // Homolog só tem GRAPH_* (sem o prefixo MAIL_): cai de volta nele para o
+        // GraphMailer ligar (SMTP basic-auth do Office365 está sendo desativado pela MS).
+        'tenant_id'     => env('MAIL_GRAPH_TENANT_ID', env('GRAPH_TENANT_ID')),
+        'client_id'     => env('MAIL_GRAPH_CLIENT_ID', env('GRAPH_CLIENT_ID')),
+        'client_secret' => env('MAIL_GRAPH_CLIENT_SECRET', env('GRAPH_CLIENT_SECRET')),
         // Caixa que envia notificações do sistema (comunicado de reajuste / alerta).
         'mailbox'       => env('MAIL_GRAPH_MAILBOX', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS'))),
     ],
