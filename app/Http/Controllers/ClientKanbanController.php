@@ -47,10 +47,11 @@ class ClientKanbanController extends Controller
         $uid = (int) Auth::id();
         $cid = $this->customerId();
         return function ($q) use ($uid, $cid) {
-            // Sem membros = SÓ quem criou tem acesso (removido o "sem membros → todos da empresa").
+            // Acesso = quem CRIOU o quadro OU quem ACEITOU o convite. Não há membro sem aceite
+            // (o grant direto foi removido); quadro sem convites aceitos fica só p/ quem criou.
             $q->where('customer_id', $cid)->where(function ($qq) use ($uid) {
                 $qq->where('created_by_user_id', $uid)
-                   ->orWhereHas('members', fn ($m) => $m->where('users.id', $uid));
+                   ->orWhereHas('invites', fn ($m) => $m->where('user_id', $uid)->where('status', KanbanBoardInvite::STATUS_ACCEPTED));
             });
         };
     }
@@ -453,7 +454,9 @@ class ClientKanbanController extends Controller
     public function boardMembers(int $boardId): JsonResponse
     {
         $board = $this->board($boardId);
-        $ids = $board->members()->pluck('users.id')->all();
+        // "Membro" = quem ACEITOU o convite (fonte de verdade). Sem aceite, não é membro.
+        $ids = KanbanBoardInvite::where('board_id', $board->id)
+            ->where('status', KanbanBoardInvite::STATUS_ACCEPTED)->pluck('user_id')->all();
         return response()->json(['user_ids' => $ids]);
     }
 
@@ -467,6 +470,15 @@ class ClientKanbanController extends Controller
             ->whereIn('id', $ids)->pluck('id')->all();
         $board->members()->sync($valid);
         return response()->json(['user_ids' => $valid]);
+    }
+
+    /** Cancela o convite (pendente) OU revoga o acesso (aceito) de um usuário no quadro. */
+    public function removeInvite(int $boardId, int $userId): JsonResponse
+    {
+        $board = $this->board($boardId);
+        KanbanBoardInvite::where('board_id', $board->id)->where('user_id', $userId)->delete();
+        $board->members()->detach($userId);   // revoga acesso / limpa membro
+        return response()->json(null, 204);
     }
 
     /**
@@ -485,9 +497,10 @@ class ClientKanbanController extends Controller
         abort_unless($user, 422, 'Usuário inválido para este cliente.');
         abort_if(empty($user->email), 422, 'O usuário não tem e-mail cadastrado.');
 
-        // Se já é membro, não há o que aceitar — evita convite redundante.
-        $alreadyMember = $board->members()->where('users.id', $user->id)->exists();
-        abort_if($alreadyMember, 422, 'Este usuário já tem acesso ao quadro.');
+        // Só bloqueia se o usuário JÁ ACEITOU (tem acesso de fato). Pendente pode reenviar.
+        $alreadyAccepted = KanbanBoardInvite::where('board_id', $board->id)->where('user_id', $user->id)
+            ->where('status', KanbanBoardInvite::STATUS_ACCEPTED)->exists();
+        abort_if($alreadyAccepted, 422, 'Este usuário já aceitou o convite e tem acesso.');
 
         // Cria/renova o convite PENDENTE (um por quadro+usuário). Token novo a cada envio.
         $token = \Illuminate\Support\Str::random(48);

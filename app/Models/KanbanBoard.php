@@ -26,4 +26,5 @@ class KanbanBoard extends Model
     {
         return $this->belongsToMany(User::class, 'kanban_board_members', 'board_id', 'user_id');
     }
+    public function invites(): HasMany { return $this->hasMany(\App\Models\KanbanBoardInvite::class, 'board_id'); }
 }
