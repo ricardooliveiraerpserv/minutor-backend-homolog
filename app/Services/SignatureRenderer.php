@@ -108,6 +108,13 @@ class SignatureRenderer
         return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
     }
 
+    /** data:URI do logo HORIZONTAL oficial CONECTA (símbolo + "conecta" + slogan). */
+    private static function conectaLogoHorizontalDataUri(): string
+    {
+        $p = public_path('conecta-logo-horizontal.png');
+        return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+    }
+
     /** Assinatura padrão da empresa (fallback quando o usuário não tem assinatura). */
     public static function companyDefault(string $brand = 'erpserv'): array
     {
@@ -382,12 +389,10 @@ class SignatureRenderer
                 $photoC = '<td width="60" style="width:60px;vertical-align:middle;padding-left:12px">'
                     . '<span style="display:inline-block;width:52px;height:52px;border-radius:50%;background-image:url(\'' . e($d['photo']) . '\');background-size:cover;background-position:center;background-repeat:no-repeat"></span></td>';
             }
-            $logoBlock = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-                . ($logo !== '' ? '<td valign="middle" style="vertical-align:middle;padding-right:9px"><img src="' . $logo . '" width="40" height="40" border="0" style="width:40px;height:40px;border-radius:9px;display:block;border:0;outline:none" /></td>' : '')
-                . '<td valign="middle" style="vertical-align:middle">'
-                .   '<div style="font-size:23px;font-weight:800;letter-spacing:-.5px;color:' . $nameC . ';line-height:1">conecta</div>'
-                .   '<div style="font-size:10px;font-weight:700;color:' . $textC . ';line-height:1.2;margin-top:2px">ERP para a era digital.</div>'
-                . '</td></tr></table>';
+            $logoH = self::conectaLogoHorizontalDataUri();
+            $logoBlock = $logoH !== ''
+                ? '<img src="' . $logoH . '" width="172" height="55" alt="Conecta ERP – ERP para a era digital." style="display:block;border:0;outline:none" />'
+                : '<div style="font-size:23px;font-weight:800;letter-spacing:-.5px;color:' . $nameC . ';line-height:1">conecta</div><div style="font-size:10px;font-weight:700;color:' . $textC . ';line-height:1.2;margin-top:2px">ERP para a era digital.</div>';
             $nameBlock = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
                 . '<td valign="middle" align="right" style="vertical-align:middle;text-align:right">'
                 .   '<div style="font-size:16px;font-weight:800;color:' . $nameC . ';line-height:1.15;white-space:nowrap">' . e($name) . '</div>'
@@ -421,11 +426,11 @@ class SignatureRenderer
             $social2 = $soc ? '<div style="margin-top:8px;font-size:12px;color:' . $purple . '">' . implode(' <span style="color:#9ca3af">|</span> ', $soc) . '</div>' : '';
             $chev = self::conectaChevronDataUri();
             $chevCell = $chev !== ''
-                ? '<td valign="middle" width="94" style="width:94px;vertical-align:middle;padding-right:14px"><img src="' . $chev . '" width="83" height="152" border="0" style="width:83px;height:152px;display:block;border:0;outline:none" /></td>'
+                ? '<td width="78" valign="middle" style="padding:0;width:78px;vertical-align:middle"><img src="' . $chev . '" width="78" height="180" border="0" style="display:block;border:0;outline:none" /></td>'
                 : '<td width="16" style="width:16px;border-left:6px solid ' . $purple . '"></td>';
-            return '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px"><tr>'
+            return '<table role="presentation" width="600" height="180" cellpadding="0" cellspacing="0" border="0" style="width:600px;height:180px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif"><tr>'
                 . $chevCell
-                . '<td valign="top" style="vertical-align:top">' . $header . $divider . $contacts . $social2 . '</td></tr></table>';
+                . '<td valign="middle" style="vertical-align:middle;padding-left:22px">' . $header . $divider . $contacts . $social2 . '</td></tr></table>';
         }
 
         // ── LAYOUT BIZIFY (fiel ao modelo): logo + redes + @bizifyapp à ESQUERDA; nome + contatos no
