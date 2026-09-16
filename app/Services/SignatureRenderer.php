@@ -101,17 +101,17 @@ class SignatureRenderer
         return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
     }
 
-    /** data:URI do chevron ">" roxo (public/conecta-sig-chevron.png) — grafismo à esquerda. */
+    /** data:URI da SETA/capa CONECTA (public/capa.png, 234x540) — arquivo pronto do brandbook. */
     private static function conectaChevronDataUri(): string
     {
-        $p = public_path('conecta-sig-chevron.png');
+        $p = public_path('capa.png');
         return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
     }
 
-    /** data:URI do logo HORIZONTAL oficial CONECTA (símbolo + "conecta" + slogan). */
+    /** data:URI do LOGO oficial CONECTA (public/logo.png, 516x165) — arquivo pronto do brandbook. */
     private static function conectaLogoHorizontalDataUri(): string
     {
-        $p = public_path('conecta-logo-horizontal.png');
+        $p = public_path('logo.png');
         return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
     }
 
@@ -426,7 +426,7 @@ class SignatureRenderer
             $social2 = $soc ? '<div style="margin-top:8px;font-size:12px;color:' . $purple . '">' . implode(' <span style="color:#9ca3af">|</span> ', $soc) . '</div>' : '';
             $chev = self::conectaChevronDataUri();
             $chevCell = $chev !== ''
-                ? '<td width="78" valign="middle" style="padding:0;width:78px;vertical-align:middle"><img src="' . $chev . '" width="78" height="180" border="0" style="display:block;border:0;outline:none" /></td>'
+                ? '<td width="78" valign="top" style="width:78px;padding:0;margin:0;line-height:0;font-size:0;border:0"><img src="' . $chev . '" width="78" height="180" alt="" border="0" style="display:block;border:0;outline:none" /></td>'
                 : '<td width="16" style="width:16px;border-left:6px solid ' . $purple . '"></td>';
             return '<table role="presentation" width="600" height="180" cellpadding="0" cellspacing="0" border="0" style="width:600px;height:180px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif"><tr>'
                 . $chevCell
