@@ -1311,6 +1311,14 @@ class UserController extends Controller
             'signature.bizify_email'=> 'nullable|string|max:160',
             'signature.alt_email' => 'nullable|string|max:160',
             'signature.alt_role'  => 'nullable|string|max:120',
+            // CONECTA (tenant): todos os campos configuráveis pelo usuário.
+            'signature.phone_fixo' => 'nullable|string|max:60',
+            'signature.sig_email'  => 'nullable|string|max:160',
+            'signature.city'       => 'nullable|string|max:120',
+            'signature.website'    => 'nullable|string|max:160',
+            'signature.linkedin'   => 'nullable|string|max:255',
+            'signature.instagram'  => 'nullable|string|max:255',
+            'signature.youtube'    => 'nullable|string|max:255',
         ]);
 
         $sig = $v['signature'] ?? [];
@@ -1343,6 +1351,8 @@ class UserController extends Controller
         $brand = $request->has('is_bizify')
             ? ($request->boolean('is_bizify') ? 'bizify' : 'erpserv')
             : $homeBrand;
+        // Tenant CONECTA (schema próprio) → assinatura conecta, ignorando ERPSERV/Bizify.
+        if ($tb = \App\Services\SignatureRenderer::brandForTenant()) { $brand = $tb; $homeBrand = $tb; }
         $data = \App\Services\SignatureRenderer::resolveData(
             (string) ($v['name'] ?? ''),
             (string) ($v['email'] ?? ''),
