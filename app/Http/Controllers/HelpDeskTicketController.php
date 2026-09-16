@@ -1216,7 +1216,18 @@ class HelpDeskTicketController extends Controller
         }
         $v['last_activity_at'] = now();
 
+        // Multi-empresa: quem atende 2+ empresas pode ESCOLHER a empresa do chamado na abertura.
+        // Sem escolha, o trait carimba a empresa ativa (comportamento atual).
+        $chosenCompany = (int) $request->input('company_id');
+        if ($chosenCompany) {
+            abort_unless($this->access->attendsCompany($u, $chosenCompany), 422, 'Você não atende a empresa selecionada para o chamado.');
+        }
+
         $ticket = HelpDeskTicket::create($v);
+        // Empresa escolhida sobrepõe a empresa ativa carimbada pelo trait (company_id não é fillable).
+        if ($chosenCompany && (int) $ticket->company_id !== $chosenCompany) {
+            $ticket->forceFill(['company_id' => $chosenCompany])->save();
+        }
         // Número no formato CONFIGURADO (prefixo + dígitos + sequência) — não hardcoded HD-######.
         $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next()]);
         if ($tagIds) $ticket->tags()->sync($tagIds);
@@ -1227,7 +1238,8 @@ class HelpDeskTicketController extends Controller
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject]);
         \App\Services\HelpDeskTriggerEngine::queue('ticket_created', $ticket, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
 
-        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))], 201);
+        // withoutCompanyScope: o chamado pode ter sido aberto em empresa diferente da ativa (escolha).
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query()->withoutCompanyScope())->find($ticket->id))], 201);
     }
 
     public function update(Request $request, HelpDeskTicket $ticket): JsonResponse
