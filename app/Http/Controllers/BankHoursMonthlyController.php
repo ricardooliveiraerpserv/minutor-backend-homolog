@@ -499,6 +499,15 @@ class BankHoursMonthlyController extends Controller
         $monthStart = $targetDate->copy()->startOfMonth()->format('Y-m-d');
         $monthEnd = $targetDate->copy()->endOfMonth()->format('Y-m-d');
 
+        // Quando o usuário filtra por PERÍODO (start_month/start_year → month/year), o card
+        // "Consumo do Mês/Período" deve somar TODO o range, não só o mês final. O helper
+        // devolve o range completo; sem start_* ele retorna o próprio mês → comportamento
+        // idêntico ao modo Mês/Ano (zero regressão). Alinha o card com "Apontamentos do período".
+        $range = $this->resolveIndicatorDateRange($request);
+        if ($range) {
+            [$monthStart, $monthEnd] = $range;
+        }
+
         foreach ($parentProjects as $parentProject) {
             // Se há filtro por tipo de serviço, só incluir o projeto pai se ele tiver o tipo especificado
             // (os filhos serão processados separadamente)
