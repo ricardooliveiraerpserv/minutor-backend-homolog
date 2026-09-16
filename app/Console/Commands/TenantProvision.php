@@ -38,6 +38,9 @@ class TenantProvision extends Command
     /** Tabelas de CONFIG copiadas como template inicial. NUNCA tabelas operacionais. */
     private const SEED_TABLES = [
         'service_types', 'contract_types', 'expense_categories', 'system_settings',
+        // Navegação/módulos + Configurador de Menus (senão o tenant nasce sem módulos).
+        // Ordem importa (FKs): nav_modules → nav_screens → screen_actions.
+        'nav_modules', 'nav_screens', 'screen_actions', 'profile_modules',
     ];
 
     public function handle(): int
@@ -89,10 +92,15 @@ class TenantProvision extends Command
         DB::statement("insert into \"{$schema}\".migrations (migration, batch) select migration, batch from \"{$source}\".migrations");
         $this->info('• migrations carimbadas');
 
-        // 5. Copia os cadastros de config (template inicial).
+        // 5. Copia os cadastros de config (template inicial) + ajusta a sequence do id
+        //    (senão o tenant colide de id ao criar um novo registro, ex.: no Configurador).
         foreach (self::SEED_TABLES as $t) {
             if ($this->tableExists($source, $t) && $this->tableExists($schema, $t)) {
                 DB::statement("insert into \"{$schema}\".{$t} select * from \"{$source}\".{$t}");
+                $seq = DB::selectOne('select pg_get_serial_sequence(?, ?) as s', ["{$schema}.{$t}", 'id'])->s ?? null;
+                if ($seq) {
+                    DB::statement("select setval('{$seq}', coalesce((select max(id) from \"{$schema}\".{$t}), 1))");
+                }
             }
         }
         $this->info('• cadastros de config copiados');
