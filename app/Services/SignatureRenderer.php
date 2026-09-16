@@ -101,6 +101,13 @@ class SignatureRenderer
         return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
     }
 
+    /** data:URI do chevron ">" roxo (public/conecta-sig-chevron.png) — grafismo à esquerda. */
+    private static function conectaChevronDataUri(): string
+    {
+        $p = public_path('conecta-sig-chevron.png');
+        return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+    }
+
     /** Assinatura padrão da empresa (fallback quando o usuário não tem assinatura). */
     public static function companyDefault(string $brand = 'erpserv'): array
     {
@@ -412,8 +419,13 @@ class SignatureRenderer
                 }
             }
             $social2 = $soc ? '<div style="margin-top:8px;font-size:12px;color:' . $purple . '">' . implode(' <span style="color:#9ca3af">|</span> ', $soc) . '</div>' : '';
-            return '<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="width:560px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px"><tr>'
-                . '<td style="border-left:6px solid ' . $purple . ';padding-left:16px">' . $header . $divider . $contacts . $social2 . '</td></tr></table>';
+            $chev = self::conectaChevronDataUri();
+            $chevCell = $chev !== ''
+                ? '<td valign="middle" width="40" style="width:40px;vertical-align:middle;padding-right:16px"><img src="' . $chev . '" width="36" height="72" border="0" style="width:36px;height:72px;display:block;border:0;outline:none" /></td>'
+                : '<td width="16" style="width:16px;border-left:6px solid ' . $purple . '"></td>';
+            return '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px"><tr>'
+                . $chevCell
+                . '<td valign="top" style="vertical-align:top">' . $header . $divider . $contacts . $social2 . '</td></tr></table>';
         }
 
         // ── LAYOUT BIZIFY (fiel ao modelo): logo + redes + @bizifyapp à ESQUERDA; nome + contatos no
