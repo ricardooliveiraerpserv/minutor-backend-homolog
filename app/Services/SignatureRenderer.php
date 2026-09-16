@@ -421,7 +421,7 @@ class SignatureRenderer
             $social2 = $soc ? '<div style="margin-top:8px;font-size:12px;color:' . $purple . '">' . implode(' <span style="color:#9ca3af">|</span> ', $soc) . '</div>' : '';
             $chev = self::conectaChevronDataUri();
             $chevCell = $chev !== ''
-                ? '<td valign="middle" width="86" style="width:86px;vertical-align:middle;padding-right:14px"><img src="' . $chev . '" width="74" height="96" border="0" style="width:74px;height:96px;display:block;border:0;outline:none" /></td>'
+                ? '<td valign="middle" width="94" style="width:94px;vertical-align:middle;padding-right:14px"><img src="' . $chev . '" width="83" height="152" border="0" style="width:83px;height:152px;display:block;border:0;outline:none" /></td>'
                 : '<td width="16" style="width:16px;border-left:6px solid ' . $purple . '"></td>';
             return '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px"><tr>'
                 . $chevCell
