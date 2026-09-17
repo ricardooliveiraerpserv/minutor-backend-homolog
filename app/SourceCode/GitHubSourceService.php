@@ -52,6 +52,21 @@ class GitHubSourceService
      * Busca fuzzy nos repos ATIVOS do cliente (fan-out). Ranking: exato > começa > contém >
      * fuzzy; desempate por commit mais recente (só nos exibidos). NÃO seleciona automaticamente.
      */
+    /**
+     * O cliente tem ALGUM fonte disponível nos seus repositórios ativos? (usa a árvore cacheada;
+     * barato). Usado para, ao solicitar fonte de dentro de um chamado, avisar quando o cliente
+     * não tem nada nos diretórios. false também quando não há repo ativo / provider não configurado.
+     */
+    public function hasSources(Customer $customer): bool
+    {
+        if (!$this->isConfigured()) return false;
+        foreach ($customer->sourceRepos()->where('active', true)->get() as $repo) {
+            $tree = $this->treeCached($repo->owner, $repo->repository, $repo->branch, $repo->normalizedBasePath());
+            if (!empty($tree['files'])) return true;
+        }
+        return false;
+    }
+
     public function search(Customer $customer, string $term): array
     {
         $this->assertConfigured();

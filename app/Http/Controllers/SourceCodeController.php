@@ -59,6 +59,13 @@ class SourceCodeController extends Controller
         return response()->json($svc->search($customer, (string) $request->query('q', '')));
     }
 
+    /** O cliente tem algum fonte nos diretórios? (para o fluxo de solicitar fonte dentro do chamado) */
+    public function hasSources(Request $request, Customer $customer, GitHubSourceService $svc): JsonResponse
+    {
+        $this->authorize($request);
+        return response()->json(['data' => ['has_sources' => $svc->hasSources($customer)]]);
+    }
+
     /** Chamados do cliente selecionado (server-side, sem carregar tudo). */
     /** Só os clientes com PELO MENOS UM repositório de código-fonte ATIVO (git amarrado). */
     public function clients(Request $request): JsonResponse
