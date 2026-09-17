@@ -1752,20 +1752,33 @@ class HelpDeskTicketController extends Controller
     {
         $u = $request->user();
         abort_unless($this->access->canEdit($u, $ticket), 403, 'Seu perfil não permite editar este chamado.');
-        $v = $request->validate(['company_id' => 'required|integer|exists:companies,id']);
+        $v = $request->validate([
+            'company_id'  => 'required|integer|exists:companies,id',
+            'assignee_id' => 'nullable|integer|exists:users,id', // opcional: já direciona a alguém da empresa destino
+        ]);
         $target = (int) $v['company_id'];
         abort_unless($this->access->attendsCompany($u, $target), 422, 'Você não atende a empresa de destino.');
+        // Responsável opcional: precisa poder ser responsável E atender a empresa de destino.
+        if (!empty($v['assignee_id'])) {
+            $newAssignee = \App\Models\User::find($v['assignee_id']);
+            abort_unless($this->access->canBeAssignee($newAssignee), 422, 'O agente selecionado não pode ser responsável (perfil de acesso).');
+            abort_unless($this->access->attendsCompany($newAssignee, $target), 422, 'O agente selecionado não atende a empresa de destino.');
+        }
 
         $from = (int) $ticket->company_id;
         if ($from !== $target) {
             $ticket->forceFill(['company_id' => $target])->save();
-            // Responsável que não atende a nova empresa é desatribuído (sai da fila dele).
-            if ($ticket->assignee_id && !$this->access->attendsCompany(\App\Models\User::find($ticket->assignee_id), $target)) {
-                $oldAssignee = $ticket->assignee_id;
-                $ticket->forceFill(['assignee_id' => null])->save();
-                HelpDeskTicketEvent::log($ticket->id, 'assigned', ['field' => 'assignee', 'from_value' => (string) $oldAssignee, 'to_value' => '']);
-            }
             HelpDeskTicketEvent::log($ticket->id, 'company_changed', ['field' => 'company', 'from_value' => (string) $from, 'to_value' => (string) $target]);
+        }
+        // Define o responsável: (a) o escolhido no direcionamento; senão (b) mantém o atual se
+        // ele atende a nova empresa; senão (c) desatribui (transfere sem responsável).
+        $oldAssignee = (int) $ticket->assignee_id;
+        $finalAssignee = !empty($v['assignee_id'])
+            ? (int) $v['assignee_id']
+            : (($ticket->assignee_id && $this->access->attendsCompany(\App\Models\User::find($ticket->assignee_id), $target)) ? (int) $ticket->assignee_id : null);
+        if ($finalAssignee !== $oldAssignee) {
+            $ticket->forceFill(['assignee_id' => $finalAssignee])->save();
+            HelpDeskTicketEvent::log($ticket->id, 'assigned', ['field' => 'assignee', 'from_value' => (string) $oldAssignee, 'to_value' => (string) ($finalAssignee ?: '')]);
         }
         // withoutCompanyScope: o ticket agora pertence a outra empresa (pode != empresa ativa).
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query()->withoutCompanyScope())->find($ticket->id))]);
