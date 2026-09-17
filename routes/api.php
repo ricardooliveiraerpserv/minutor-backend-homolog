@@ -390,6 +390,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/portal/tickets/{ticket}', [\App\Http\Controllers\HelpDeskPortalController::class, 'showTicket']);
         Route::patch('/help-desk/tickets/{ticket}/assign', [\App\Http\Controllers\HelpDeskTicketController::class, 'assign']);
         Route::patch('/help-desk/tickets/{ticket}/company', [\App\Http\Controllers\HelpDeskTicketController::class, 'transferCompany']);
+        Route::get('/help-desk/tickets/{ticket}/apontamento-options', [\App\Http\Controllers\HelpDeskTicketController::class, 'apontamentoOptions']);
         Route::get('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'attachments']);
         Route::post('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'uploadAttachment']);
         Route::get('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'comments']);

@@ -1714,6 +1714,45 @@ class HelpDeskTicketController extends Controller
         return $q->orderBy('name')->get(['id', 'name'])->toArray();
     }
 
+    /**
+     * Opções de Contrato/Projeto de APONTAMENTO da triagem: contratos de SUSTENTAÇÃO/CLOUD do
+     * cliente do ticket (categoria='sustentacao' OU sustentacao_column preenchido), com seus
+     * projetos ATIVOS não-investimento. Cada opção = (contrato, projeto) → grava ticket.project_id
+     * (roteia as horas). `auto` = a única opção quando há exatamente 1 (FE preenche e trava);
+     * 2+ → FE vem em branco e obriga escolher.
+     */
+    public function apontamentoOptions(HelpDeskTicket $ticket): JsonResponse
+    {
+        $ativos = ['started', 'liberado_para_testes', 'paused', 'awaiting_start'];
+        $options = [];
+        if ($ticket->customer_id) {
+            $contracts = \App\Models\Contract::where('customer_id', $ticket->customer_id)
+                ->whereNull('deleted_at')
+                ->where(fn ($q) => $q->where('categoria', 'sustentacao')->orWhereNotNull('sustentacao_column'))
+                ->with(['contractType:id,name', 'serviceType:id,name'])
+                ->get();
+            foreach ($contracts as $c) {
+                $label = $c->contractType->name ?? $c->serviceType->name ?? $c->sustentacao_column ?? ucfirst((string) ($c->categoria ?: 'Contrato'));
+                $projects = \App\Models\Project::where('contract_id', $c->id)->whereNull('deleted_at')
+                    ->where('is_investimento_comercial', false)->whereIn('status', $ativos)
+                    ->orderBy('name')->get(['id', 'name']);
+                foreach ($projects as $p) {
+                    $options[] = [
+                        'contract_id'  => (int) $c->id,
+                        'project_id'   => (int) $p->id,
+                        'label'        => $label,          // nome/tipo do contrato (On Demand, Cloud, …)
+                        'project_name' => $p->name,
+                    ];
+                }
+            }
+        }
+        return response()->json(['data' => [
+            'options' => $options,
+            'auto'    => count($options) === 1 ? $options[0] : null,
+            'current' => ['contract_id' => $ticket->contract_id ? (int) $ticket->contract_id : null, 'project_id' => $ticket->project_id ? (int) $ticket->project_id : null],
+        ]]);
+    }
+
     /** Atribui atendente e/ou fila. */
     public function assign(Request $request, HelpDeskTicket $ticket): JsonResponse
     {
