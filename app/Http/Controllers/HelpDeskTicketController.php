@@ -1743,6 +1743,34 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => $this->decorate($ticket->fresh())]);
     }
 
+    /**
+     * Transfere o chamado para OUTRA empresa do grupo (multi-empresa). Só empresas que o
+     * usuário atende (perfil). Se o responsável atual não atende a empresa de destino, é
+     * desatribuído. O ticket passa a aparecer na fila da nova empresa (e a assinatura segue ela).
+     */
+    public function transferCompany(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $u = $request->user();
+        abort_unless($this->access->canEdit($u, $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        $v = $request->validate(['company_id' => 'required|integer|exists:companies,id']);
+        $target = (int) $v['company_id'];
+        abort_unless($this->access->attendsCompany($u, $target), 422, 'Você não atende a empresa de destino.');
+
+        $from = (int) $ticket->company_id;
+        if ($from !== $target) {
+            $ticket->forceFill(['company_id' => $target])->save();
+            // Responsável que não atende a nova empresa é desatribuído (sai da fila dele).
+            if ($ticket->assignee_id && !$this->access->attendsCompany(\App\Models\User::find($ticket->assignee_id), $target)) {
+                $oldAssignee = $ticket->assignee_id;
+                $ticket->forceFill(['assignee_id' => null])->save();
+                HelpDeskTicketEvent::log($ticket->id, 'assigned', ['field' => 'assignee', 'from_value' => (string) $oldAssignee, 'to_value' => '']);
+            }
+            HelpDeskTicketEvent::log($ticket->id, 'company_changed', ['field' => 'company', 'from_value' => (string) $from, 'to_value' => (string) $target]);
+        }
+        // withoutCompanyScope: o ticket agora pertence a outra empresa (pode != empresa ativa).
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query()->withoutCompanyScope())->find($ticket->id))]);
+    }
+
     public function destroy(Request $request, HelpDeskTicket $ticket): JsonResponse
     {
         abort_unless($this->access->canDelete($request->user()), 403, 'Seu perfil não permite excluir chamados.');
