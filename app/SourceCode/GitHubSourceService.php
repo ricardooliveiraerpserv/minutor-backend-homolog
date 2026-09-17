@@ -67,6 +67,40 @@ class GitHubSourceService
         return false;
     }
 
+    /**
+     * Árvore de fontes do cliente para NAVEGAÇÃO (todos os repos ativos + arquivos), sem resolver
+     * commit (barato, usa cache). O FE monta a hierarquia de diretórios a partir dos paths.
+     */
+    public function treeForCustomer(Customer $customer): array
+    {
+        if (!$this->isConfigured()) return ['repos' => []];
+        $out = [];
+        foreach ($customer->sourceRepos()->where('active', true)->get() as $repo) {
+            $tree = $this->treeCached($repo->owner, $repo->repository, $repo->branch, $repo->normalizedBasePath());
+            $out[] = [
+                'owner'      => $repo->owner,
+                'repository' => $repo->repository,
+                'branch'     => $repo->branch,
+                'tipo'       => $repo->tipo,
+                'truncated'  => $tree['truncated'] ?? false,
+                'files'      => array_map(fn ($f) => ['path' => $f['path'], 'name' => $f['name']], $tree['files'] ?? []),
+            ];
+        }
+        return ['repos' => $out];
+    }
+
+    /** Resolve UM item (commit/data) ao selecionar pela árvore — mesmo formato do search. */
+    public function resolveItem(Customer $customer, string $repository, string $path): ?array
+    {
+        $repo = $customer->sourceRepos()->where('active', true)->where('repository', $repository)->first();
+        if (!$repo) return null;
+        $commit = $this->provider->lastCommit($repo->owner, $repo->repository, $repo->branch, $path);
+        return [
+            'owner' => $repo->owner, 'repository' => $repo->repository, 'branch' => $repo->branch,
+            'tipo' => $repo->tipo, 'path' => $path, 'name' => basename($path), 'commit' => $commit,
+        ];
+    }
+
     public function search(Customer $customer, string $term): array
     {
         $this->assertConfigured();

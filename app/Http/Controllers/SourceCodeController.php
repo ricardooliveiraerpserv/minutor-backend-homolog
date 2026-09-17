@@ -66,6 +66,22 @@ class SourceCodeController extends Controller
         return response()->json(['data' => ['has_sources' => $svc->hasSources($customer)]]);
     }
 
+    /** Árvore de fontes (repos + arquivos) do cliente para navegação/seleção. */
+    public function tree(Request $request, Customer $customer, GitHubSourceService $svc): JsonResponse
+    {
+        $this->authorize($request);
+        return response()->json(['data' => $svc->treeForCustomer($customer)]);
+    }
+
+    /** Resolve UM item (commit/data) ao selecionar pela árvore. */
+    public function resolveItem(Request $request, Customer $customer, GitHubSourceService $svc): JsonResponse
+    {
+        $this->authorize($request);
+        $item = $svc->resolveItem($customer, (string) $request->query('repository', ''), (string) $request->query('path', ''));
+        abort_unless($item, 404, 'Fonte não encontrado.');
+        return response()->json(['data' => $item]);
+    }
+
     /** Chamados do cliente selecionado (server-side, sem carregar tudo). */
     /** Só os clientes com PELO MENOS UM repositório de código-fonte ATIVO (git amarrado). */
     public function clients(Request $request): JsonResponse
