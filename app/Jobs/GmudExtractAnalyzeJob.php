@@ -84,6 +84,10 @@ class GmudExtractAnalyzeJob implements ShouldQueue
         $package->update(['status' => GmudPackage::STATUS_ANALYZED]);
 
         $this->auditAnalyzed($package, $result);
+
+        // GMUD com código-fonte → pontuar cada arquivo (CodeAnalysis) e postar nota interna por
+        // arquivo (nota A-F + correções). Job à parte p/ não segurar a extração; best-effort.
+        GmudSourceQualityJob::dispatch($package->id)->onConnection('database')->onQueue('source-doc');
     }
 
     private function auditAnalyzed(GmudPackage $package, array $result): void
