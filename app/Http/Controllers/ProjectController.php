@@ -191,7 +191,7 @@ class ProjectController extends Controller
         // Modo minimal: retorna apenas id, name, code (para dropdowns). Inclui
         // parent_project_id p/ os seletores montarem a árvore (filho com seta ↳).
         if ($minimal) {
-            $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id', 'is_rateio', 'customer_id');
+            $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id', 'is_rateio', 'customer_id', 'is_investimento_comercial', 'categoria_interna');
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
             elseif ($status === 'open') $q->open();
