@@ -2150,10 +2150,11 @@ class TimesheetController extends Controller
             return response()->json(['message' => 'Não autorizado'], 403);
         }
         $data = $request->validate([
-            'ids'         => 'required|array|min:1',
-            'ids.*'       => 'integer|exists:timesheets,id',
-            'customer_id' => 'nullable|integer|exists:customers,id',
-            'project_id'  => 'nullable|integer|exists:projects,id',
+            'ids'             => 'required|array|min:1',
+            'ids.*'           => 'integer|exists:timesheets,id',
+            'customer_id'     => 'nullable|integer|exists:customers,id',
+            'project_id'      => 'nullable|integer|exists:projects,id',
+            'real_project_id' => 'nullable|integer|exists:projects,id',
         ]);
         if (empty($data['customer_id']) && empty($data['project_id'])) {
             return response()->json(['message' => 'Informe customer_id e/ou project_id'], 422);
@@ -2161,8 +2162,10 @@ class TimesheetController extends Controller
 
         // Se projeto for fornecido, descobrir o customer dele e validar coerência
         $projectCustomerId = null;
+        $finalRealProjectId = null;   // só definido ao mover PARA um projeto
+        $clearRealProject   = false;  // limpar o projeto real ao mover p/ projeto NÃO-investimento
         if (!empty($data['project_id'])) {
-            $project = \App\Models\Project::find($data['project_id']);
+            $project = \App\Models\Project::with('customer')->find($data['project_id']);
             if (!$project) {
                 return response()->json(['message' => 'Projeto não encontrado'], 422);
             }
@@ -2180,6 +2183,33 @@ class TimesheetController extends Controller
                     'message' => 'Projeto não pertence ao cliente informado',
                 ], 422);
             }
+
+            // Investimento (Projeto/Suporte, exceto ERPSERV) exige "Projeto Real" — igual ao store.
+            $isInvestimento = (bool) $project->is_investimento_comercial;
+            $isErpserv = $project->customer && strtoupper(trim($project->customer->name)) === 'ERPSERV';
+            $requiresRealProject = $isInvestimento && !$isErpserv
+                && in_array($project->categoria_interna, ['Projeto', 'Suporte'], true);
+            if ($requiresRealProject) {
+                $finalRealProjectId = (int) ($data['real_project_id'] ?? 0) ?: null;
+                if (!$finalRealProjectId) {
+                    return response()->json([
+                        'message' => 'Projeto Real é obrigatório ao mover para um investimento.',
+                        'errors'  => ['real_project_id' => ['Selecione o projeto real.']],
+                    ], 422);
+                }
+                if ($project->categoria_interna === 'Suporte') {
+                    $realProj = \App\Models\Project::with('serviceType')->find($finalRealProjectId);
+                    if (optional(optional($realProj)->serviceType)->code !== 'sustentacao') {
+                        return response()->json([
+                            'message' => 'Investimento Suporte: o Projeto Real deve ser de Sustentação.',
+                            'errors'  => ['real_project_id' => ['Selecione um projeto de Sustentação.']],
+                        ], 422);
+                    }
+                }
+            } else {
+                // Projeto não-investimento não tem projeto real — limpa qualquer valor antigo.
+                $clearRealProject = true;
+            }
         }
 
         $finalCustomerId = $data['customer_id'] ?? $projectCustomerId;
@@ -2188,7 +2218,11 @@ class TimesheetController extends Controller
         $updated = 0;
         foreach (Timesheet::whereIn('id', $data['ids'])->get() as $ts) {
             if ($finalCustomerId !== null) $ts->customer_id = $finalCustomerId;
-            if ($finalProjectId  !== null) $ts->project_id  = $finalProjectId;
+            if ($finalProjectId  !== null) {
+                $ts->project_id = $finalProjectId;
+                if ($finalRealProjectId !== null) $ts->real_project_id = $finalRealProjectId;
+                elseif ($clearRealProject)        $ts->real_project_id = null;
+            }
             // Trava manual: sync do Movidesk não sobrescreve mais cliente/projeto.
             $ts->manual_project_edit = true;
             if ($ts->isDirty()) {
