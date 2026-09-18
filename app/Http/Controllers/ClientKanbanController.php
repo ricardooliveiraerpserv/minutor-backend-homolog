@@ -491,13 +491,16 @@ class ClientKanbanController extends Controller
     {
         $board = $this->board($boardId);
         $v = $request->validate(['user_id' => 'required|integer']);
-        // Convidado válido = contato do cliente do convidante OU membro da equipe ERPSERV.
+        // Convidado válido: equipe ERPSERV sempre; cliente convida seus contatos; interno
+        // (agente) convida qualquer usuário-cliente (escolhe a empresa e o usuário na tela).
         $cid = $this->scopedCustomerId();
         $user = User::where('enabled', true)->whereKey($v['user_id'])
             ->where(function ($q) use ($cid) {
                 $q->whereIn('type', self::ERPSERV_TYPES);
                 if ($cid) {
                     $q->orWhere(fn ($qq) => $qq->where('customer_id', $cid)->where('type', 'cliente'));
+                } else {
+                    $q->orWhere('type', 'cliente');   // agente interno: qualquer usuário-cliente
                 }
             })->first();
         abort_unless($user, 422, 'Usuário inválido para convite.');
@@ -743,6 +746,27 @@ class ClientKanbanController extends Controller
         return response()->json(['items' => $users]);
     }
 
+    /** Clientes (empresas) que possuem usuários habilitados — p/ o agente escolher e convidar. */
+    public function customersWithUsers(): JsonResponse
+    {
+        $ids = User::where('type', 'cliente')->where('enabled', true)
+            ->whereNotNull('customer_id')->distinct()->pluck('customer_id')->all();
+        $items = \App\Models\Customer::whereIn('id', $ids)
+            ->orderBy('name')->get(['id', 'name'])
+            ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name]);
+        return response()->json(['items' => $items]);
+    }
+
+    /** Usuários (logins) de um cliente específico — p/ o agente convidar. */
+    public function customerUsers(int $customer): JsonResponse
+    {
+        $users = User::where('customer_id', $customer)
+            ->where('type', 'cliente')->where('enabled', true)
+            ->orderBy('name')->get(['id', 'name', 'email'])
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
+        return response()->json(['items' => $users]);
+    }
+
     // ─────────────────────────────── internos ────────────────────────────────
 
     private function validateCard(Request $request, int $boardId, bool $creating): array
@@ -785,6 +809,8 @@ class ClientKanbanController extends Controller
                 $q->whereIn('type', self::ERPSERV_TYPES);
                 if ($cid) {
                     $q->orWhere(fn ($qq) => $qq->where('customer_id', $cid)->where('type', 'cliente'));
+                } else {
+                    $q->orWhere('type', 'cliente');   // interno: qualquer usuário-cliente
                 }
             })
             ->pluck('id')->all();
