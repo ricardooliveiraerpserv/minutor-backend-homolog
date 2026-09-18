@@ -151,6 +151,8 @@ Route::prefix('v1')->group(function () {
             $c = \App\Http\Controllers\ClientKanbanController::class;
             Route::get('/assignable-users', [$c, 'assignableUsers'])->name('assignable-users');
             Route::get('/erpserv-users', [$c, 'erpservUsers'])->name('erpserv-users');
+            Route::get('/customers', [$c, 'customersWithUsers'])->name('customers');
+            Route::get('/customers/{customer}/users', [$c, 'customerUsers'])->name('customers.users');
             // Quadros
             Route::get('/boards', [$c, 'index'])->name('boards.index');
             Route::post('/boards', [$c, 'storeBoard'])->name('boards.store');
