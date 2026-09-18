@@ -159,7 +159,7 @@ class AttachableEntitiesRegistry
             // ── CONTRACT ──────────────────────────────────────────────────────
             'CONTRACT' => [
                 'model' => Contract::class,
-                'categories' => ['proposal', 'contract', 'logo', 'client_approval', 'attachment'],
+                'categories' => ['proposal', 'contract', 'logo', 'client_approval', 'document', 'attachment'],
                 'default_visibility' => 'internal',
                 'permission_check' => function (User $user, $entity, string $action) use ($adminOrAdministrativo, $internalStaff) {
                     if ($action === 'view') return $internalStaff($user);
