@@ -30,29 +30,29 @@ class ClientKanbanController extends Controller
 
     // ─────────────────────────── helpers de escopo ───────────────────────────
 
-    private function customerId(): int
+    /** customer_id do usuário logado (null para usuários internos/ERPSERV). */
+    private function scopedCustomerId(): ?int
     {
         $cid = Auth::user()->customer_id;
-        abort_unless($cid, 403, 'Usuário não está vinculado a um cliente.');
-        return (int) $cid;
+        return $cid ? (int) $cid : null;
     }
 
+    /** Tipos internos ERPSERV (equipe) — usados como convidados/atribuíveis nos quadros. */
+    private const ERPSERV_TYPES = ['admin', 'administrativo', 'coordenador', 'consultor'];
+
     /**
-     * Escopo de acesso ao quadro (Fase 4): do customer logado E acessível ao usuário —
-     * criador, OU quadro sem membros definidos (aberto a todos do cliente), OU o usuário
-     * é membro. Reusado em boards/colunas/cards/etc. via where()/whereHas('board').
+     * Escopo de acesso ao quadro: "Meus Processos" vale para TODOS os perfis. O acesso é
+     * governado por criador OU convite aceito — não mais pelo customer_id (que agora pode
+     * ser null p/ agentes e precisa permitir convite ENTRE empresas). Reusado em
+     * boards/colunas/cards/etc. via where()/whereHas('board').
      */
     private function boardAccessScope(): \Closure
     {
         $uid = (int) Auth::id();
-        $cid = $this->customerId();
-        return function ($q) use ($uid, $cid) {
-            // Acesso = quem CRIOU o quadro OU quem ACEITOU o convite. Não há membro sem aceite
-            // (o grant direto foi removido); quadro sem convites aceitos fica só p/ quem criou.
-            $q->where('customer_id', $cid)->where(function ($qq) use ($uid) {
-                $qq->where('created_by_user_id', $uid)
-                   ->orWhereHas('invites', fn ($m) => $m->where('user_id', $uid)->where('status', KanbanBoardInvite::STATUS_ACCEPTED));
-            });
+        return function ($q) use ($uid) {
+            // Acesso = quem CRIOU o quadro OU quem ACEITOU o convite. Não há membro sem aceite.
+            $q->where('created_by_user_id', $uid)
+              ->orWhereHas('invites', fn ($m) => $m->where('user_id', $uid)->where('status', KanbanBoardInvite::STATUS_ACCEPTED));
         };
     }
 
@@ -97,12 +97,13 @@ class ClientKanbanController extends Controller
         ]);
 
         $board = KanbanBoard::create([
-            'customer_id'        => $this->customerId(),
+            'customer_id'        => $this->scopedCustomerId(),
             'created_by_user_id' => Auth::id(),
             'name'               => $data['name'],
             'description'        => $data['description'] ?? null,
             'color'              => $data['color'] ?? null,
-            'position'           => (int) KanbanBoard::where('customer_id', $this->customerId())->max('position') + 1,
+            // Ordenação por criador (customer_id pode ser null p/ interno).
+            'position'           => (int) KanbanBoard::where('created_by_user_id', Auth::id())->max('position') + 1,
         ]);
 
         // Colunas iniciais padrão (o cliente pode renomear/excluir depois).
@@ -142,12 +143,12 @@ class ClientKanbanController extends Controller
     {
         $src = $this->board($id);
         $copy = KanbanBoard::create([
-            'customer_id'        => $this->customerId(),
+            'customer_id'        => $this->scopedCustomerId(),
             'created_by_user_id' => Auth::id(),
             'name'               => $src->name . ' (cópia)',
             'description'        => $src->description,
             'color'              => $src->color,
-            'position'           => (int) KanbanBoard::where('customer_id', $this->customerId())->max('position') + 1,
+            'position'           => (int) KanbanBoard::where('created_by_user_id', Auth::id())->max('position') + 1,
         ]);
         foreach ($src->columns as $col) {
             $copy->columns()->create(['name' => $col->name, 'color' => $col->color, 'position' => $col->position]);
@@ -465,9 +466,8 @@ class ClientKanbanController extends Controller
     {
         $board = $this->board($boardId);
         $ids = $request->validate(['user_ids' => 'array', 'user_ids.*' => 'integer'])['user_ids'] ?? [];
-        // Só usuários REAIS do cliente (mesmo filtro do responsável).
-        $valid = User::where('customer_id', $this->customerId())->where('type', 'cliente')->where('enabled', true)
-            ->whereIn('id', $ids)->pluck('id')->all();
+        // Contatos do cliente OU equipe ERPSERV interna.
+        $valid = $this->filterInvitableUserIds($ids);
         $board->members()->sync($valid);
         return response()->json(['user_ids' => $valid]);
     }
@@ -491,10 +491,16 @@ class ClientKanbanController extends Controller
     {
         $board = $this->board($boardId);
         $v = $request->validate(['user_id' => 'required|integer']);
-        $user = User::where('customer_id', $this->customerId())
-            ->where('type', 'cliente')->where('enabled', true)
-            ->whereKey($v['user_id'])->first();
-        abort_unless($user, 422, 'Usuário inválido para este cliente.');
+        // Convidado válido = contato do cliente do convidante OU membro da equipe ERPSERV.
+        $cid = $this->scopedCustomerId();
+        $user = User::where('enabled', true)->whereKey($v['user_id'])
+            ->where(function ($q) use ($cid) {
+                $q->whereIn('type', self::ERPSERV_TYPES);
+                if ($cid) {
+                    $q->orWhere(fn ($qq) => $qq->where('customer_id', $cid)->where('type', 'cliente'));
+                }
+            })->first();
+        abort_unless($user, 422, 'Usuário inválido para convite.');
         abort_if(empty($user->email), 422, 'O usuário não tem e-mail cadastrado.');
 
         // Só bloqueia se o usuário JÁ ACEITOU (tem acesso de fato). Pendente pode reenviar.
@@ -584,8 +590,9 @@ class ClientKanbanController extends Controller
         abort_unless($invite, 404, 'Convite inválido ou expirado.');
         abort_unless($invite->user_id === (int) Auth::id(), 403, 'Este convite não é para o seu usuário.');
 
-        // Garante que o quadro é do mesmo cliente do usuário logado (defesa em profundidade).
-        $board = KanbanBoard::where('customer_id', $this->customerId())->find($invite->board_id);
+        // Autorização = token + user_id (já validados acima). Convite pode ser entre
+        // empresas (cliente ↔ equipe ERPSERV), então NÃO se filtra por customer_id aqui.
+        $board = KanbanBoard::find($invite->board_id);
         abort_unless($board, 404, 'Quadro não encontrado.');
 
         if ($invite->status !== KanbanBoardInvite::STATUS_ACCEPTED) {
@@ -711,11 +718,25 @@ class ClientKanbanController extends Controller
 
     public function assignableUsers(): JsonResponse
     {
-        // Só usuários REAIS do cliente logado — mesmo filtro do "Ver como" (impersonation):
-        // type=cliente + enabled=true + customer_id. Sem isso apareciam ~94 registros
-        // importados/desabilitados (ex.: Competências) que não são logins do cliente.
-        $users = User::where('customer_id', $this->customerId())
+        // Contatos REAIS do cliente logado (type=cliente + enabled + customer_id). Para
+        // usuários internos (agente, sem customer_id) esta lista é vazia — o convite deles
+        // usa a equipe ERPSERV (erpservUsers). Mesmo filtro do "Ver como".
+        $cid = $this->scopedCustomerId();
+        if (!$cid) {
+            return response()->json(['items' => []]);
+        }
+        $users = User::where('customer_id', $cid)
             ->where('type', 'cliente')
+            ->where('enabled', true)
+            ->orderBy('name')->get(['id', 'name', 'email'])
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
+        return response()->json(['items' => $users]);
+    }
+
+    /** Equipe ERPSERV (interna) — candidatos a convite tanto p/ cliente quanto p/ agente. */
+    public function erpservUsers(): JsonResponse
+    {
+        $users = User::whereIn('type', self::ERPSERV_TYPES)
             ->where('enabled', true)
             ->orderBy('name')->get(['id', 'name', 'email'])
             ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
@@ -748,12 +769,25 @@ class ClientKanbanController extends Controller
         return KanbanLabel::where('board_id', $boardId)->whereIn('id', $ids)->pluck('id')->all();
     }
 
-    /** Só usuários reais do cliente logado (participantes/membros). */
+    /** Participantes/membros válidos: contatos do cliente logado OU equipe ERPSERV interna. */
     private function scopeCustomerUserIds(array $ids): array
     {
+        return $this->filterInvitableUserIds($ids);
+    }
+
+    /** IDs válidos p/ convite/atribuição: contatos do cliente logado OU equipe ERPSERV. */
+    private function filterInvitableUserIds(array $ids): array
+    {
         if (empty($ids)) return [];
-        return User::where('customer_id', $this->customerId())->where('type', 'cliente')->where('enabled', true)
-            ->whereIn('id', $ids)->pluck('id')->all();
+        $cid = $this->scopedCustomerId();
+        return User::where('enabled', true)->whereIn('id', $ids)
+            ->where(function ($q) use ($cid) {
+                $q->whereIn('type', self::ERPSERV_TYPES);
+                if ($cid) {
+                    $q->orWhere(fn ($qq) => $qq->where('customer_id', $cid)->where('type', 'cliente'));
+                }
+            })
+            ->pluck('id')->all();
     }
 
     private function validateField(Request $request, bool $creating): array

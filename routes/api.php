@@ -1219,6 +1219,7 @@ Route::prefix('v1')->group(function () {
         Route::prefix('client/kanban')->name('client.kanban.')->group(function () {
             $c = \App\Http\Controllers\ClientKanbanController::class;
             Route::get('/assignable-users', [$c, 'assignableUsers'])->name('assignable-users');
+            Route::get('/erpserv-users', [$c, 'erpservUsers'])->name('erpserv-users');
             // Quadros
             Route::get('/boards', [$c, 'index'])->name('boards.index');
             Route::post('/boards', [$c, 'storeBoard'])->name('boards.store');
