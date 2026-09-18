@@ -65,7 +65,7 @@ class GmudSourceQualityJob implements ShouldQueue
     private function analyzeAndComment(GmudPackage $package, string $filename, string $content, SourceDocQualityService $quality): void
     {
         try {
-            $sub = $quality->analyze($filename, $content, ['source' => 'gmud', 'ticket_id' => $package->ticket_id]);
+            $sub = $quality->analyze($filename, $content, ['source' => 'gmud', 'ticket_id' => $package->ticket_id], true); // force: sempre reanalisa o fonte publicado com o ruleset atual (sem reuse de cache)
             $jobId = (string) ($sub['job_id'] ?? '');
             $result = $this->poll($quality, $jobId, $sub);
             if (! $result) {
