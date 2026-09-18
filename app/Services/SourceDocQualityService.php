@@ -78,6 +78,13 @@ class SourceDocQualityService
             throw CodeAnalysisException::unavailable('Serviço de qualidade desabilitado/não configurado.', 'disabled');
         }
 
+        // Fontes Protheus/ADVPL costumam vir em Windows-1252/Latin-1 (acentos). Bytes
+        // inválidos p/ UTF-8 quebram o json_encode do payload ("Malformed UTF-8 characters")
+        // e a falha era mascarada como "CodeAnalysis indisponível". Normaliza antes de enviar.
+        if (! mb_check_encoding($content, 'UTF-8')) {
+            $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1252');
+        }
+
         try {
             $res = $this->client()->post("{$this->baseUrl}/api/v1/analyses", [
                 'filename' => $filename,
