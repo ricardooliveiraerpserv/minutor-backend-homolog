@@ -38,7 +38,7 @@ class ClientKanbanController extends Controller
     }
 
     /** Tipos internos ERPSERV (equipe) — usados como convidados/atribuíveis nos quadros. */
-    private const ERPSERV_TYPES = ['admin', 'administrativo', 'coordenador', 'consultor'];
+    private const ERPSERV_TYPES = ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin'];
 
     /**
      * Escopo de acesso ao quadro: "Meus Processos" vale para TODOS os perfis. O acesso é
