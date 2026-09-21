@@ -102,7 +102,7 @@ class HelpDeskTicket extends Model
 
     public function solicitanteEmail(): ?string
     {
-        return optional($this->contact)->email ?: $this->requester_email;
+        return optional($this->contact)->email ?: optional($this->requester)->email ?: $this->requester_email;
     }
 
     // ── Vínculos locais ──────────────────────────────────────────────────────

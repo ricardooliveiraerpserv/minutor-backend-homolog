@@ -26,7 +26,7 @@ class HelpDeskTicketController extends Controller
     private function detailRels(): array
     {
         return [
-            'customer:id,name', 'contact:id,name,email', 'requester:id,name',
+            'customer:id,name', 'contact:id,name,email', 'requester:id,name,email',
             'category:id,name,color', 'status:id,key,label,color,is_open,is_resolved,is_terminal',
             'assignee:id,name', 'team:id,name',
             'contract:id,categoria,helpdesk_integration_enabled', 'project:id,name',
@@ -114,7 +114,7 @@ class HelpDeskTicketController extends Controller
     private function withListRels($q)
     {
         return $q->with([
-            'customer:id,name', 'contact:id,name', 'requester:id,name',
+            'customer:id,name', 'contact:id,name,email', 'requester:id,name,email',
             'status:id,key,label,color,is_open,is_resolved,is_terminal', 'assignee:id,name',
             'company:id,name,slug,color', // multi-empresa: selo de empresa na fila unificada
         ]);
@@ -978,7 +978,7 @@ class HelpDeskTicketController extends Controller
     {
         abort_unless($this->access->canSee(\Illuminate\Support\Facades\Auth::user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
         $ticket->load([
-            'customer:id,name,cgc', 'contact:id,name,email,phone', 'requester:id,name',
+            'customer:id,name,cgc', 'contact:id,name,email,phone', 'requester:id,name,email',
             'category:id,name,color,sla_policy_id', 'status', 'assignee:id,name', 'team:id,name',
             'slaPolicy:id,name', 'contract:id', 'project:id,name',
             'service:id,name,code', 'justification:id,name,status_id',
