@@ -212,8 +212,12 @@ class HelpDeskPortalController extends Controller
 
     public function openTicket(Request $request): JsonResponse
     {
-        $cid = $this->customerId($request);
-        abort_unless($this->access->clientCanOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
+        // Interno (não-cliente) abre o PRÓPRIO chamado: customer_id = null (chamado sem cliente,
+        // só solicitante). Cliente segue com a trava de perfil de acesso.
+        $cid = $request->user()->customer_id;
+        if ($cid !== null) {
+            abort_unless($this->access->clientCanOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
+        }
         $v = $request->validate([
             'subject'             => 'required|string|max:200',
             'description'         => 'nullable|string',
