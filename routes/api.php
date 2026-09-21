@@ -1274,6 +1274,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
         Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
         Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        // Transferência de horas entre contratos do MESMO cliente (grava par de aportes; só admin).
+        Route::get('/contracts/{contract}/transfer-info',             [ContractController::class, 'transferInfo'])->name('contracts.transfer-info');
+        Route::post('/contracts/{contract}/transfer-hours',           [ContractController::class, 'transferHours'])->name('contracts.transfer-hours');
         Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment');
         Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
         // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)

@@ -28,13 +28,14 @@ class HourContribution extends Model
         'nao_valorizado',
         'description',
         'motivo',
+        'transfer_group_id',
         'kanban_status',
         'contributed_by',
         'contributed_at',
     ];
 
-    // Motivos do aporte: aporte | excedentes | absorvidas
-    public const MOTIVOS = ['aporte', 'excedentes', 'absorvidas'];
+    // Motivos do aporte: aporte | excedentes | absorvidas | transferencia (par origem/destino).
+    public const MOTIVOS = ['aporte', 'excedentes', 'absorvidas', 'transferencia'];
 
     // Colunas do kanban onde o aporte pode estar.
     // 'novo_contrato' = inicial (revisão); 'aporte' = final (coluna Aporte do kanban).
