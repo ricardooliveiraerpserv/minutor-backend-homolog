@@ -58,30 +58,55 @@ class GmudSourceQualityJob implements ShouldQueue
             if ($content === null || $content === '') {
                 continue;
             }
-            $this->analyzeAndComment($package, (string) ($file->filename ?: basename((string) $file->path_in_zip)), (string) $content, $quality);
+            $this->analyzeFile($package, $file, (string) $content, $quality);
         }
     }
 
-    private function analyzeAndComment(GmudPackage $package, string $filename, string $content, SourceDocQualityService $quality): void
+    /** Analisa 1 fonte e GRAVA o resultado NO PRÓPRIO fonte (painel GMUD). Falha vira comentário. */
+    private function analyzeFile(GmudPackage $package, \App\Models\GmudPackageFile $file, string $content, SourceDocQualityService $quality): void
     {
+        $filename = (string) ($file->filename ?: basename((string) $file->path_in_zip));
         try {
-            $sub = $quality->analyze($filename, $content, ['source' => 'gmud', 'ticket_id' => $package->ticket_id], true); // force: sempre reanalisa o fonte publicado com o ruleset atual (sem reuse de cache)
+            $sub = $quality->analyze($filename, $content, ['source' => 'gmud', 'ticket_id' => $package->ticket_id], true); // force: sempre reanalisa com o ruleset atual (sem reuse)
             $jobId = (string) ($sub['job_id'] ?? '');
             $result = $this->poll($quality, $jobId, $sub);
-            if (! $result) {
-                $this->postComment($package, $this->failBody($filename, 'A análise não concluiu no tempo esperado.'));
+            if (! $result || ($result['status'] ?? null) !== 'completed') {
+                $motivo = ! $result ? 'A análise não concluiu no tempo esperado.' : (string) ($result['error'] ?? 'Análise não concluída.');
+                $this->postComment($package, $this->failBody($filename, $motivo));
                 return;
             }
-            $status = $result['status'] ?? null;
-            if ($status !== 'completed') {
-                $this->postComment($package, $this->failBody($filename, (string) ($result['error'] ?? 'Análise não concluída.')));
-                return;
-            }
-            $this->postComment($package, $this->resultBody($filename, $result));
+            $findings = is_array($result['findings'] ?? null) ? $result['findings'] : [];
+            $file->update([
+                'quality_grade'       => (string) ($result['grade'] ?? '') ?: null,
+                'quality_score'       => is_numeric($result['score'] ?? null) ? (int) $result['score'] : null,
+                'quality_findings'    => $this->normFindings($findings),
+                'quality_analyzed_at' => now(),
+            ]);
         } catch (\Throwable $e) {
             Log::warning('gmud_quality.analyze_error', ['package' => $package->id, 'file' => $filename, 'error' => $e->getMessage()]);
             $this->postComment($package, $this->failBody($filename, 'CodeAnalysis indisponível no momento.'));
         }
+    }
+
+    /** Normaliza os achados p/ o shape dos cards (mesmo do painel/FE). */
+    private function normFindings(array $findings): array
+    {
+        $items = [];
+        foreach ($findings as $f) {
+            $line = $f['line'] ?? $f['start_line'] ?? null;
+            $items[] = [
+                'severity'       => strtoupper((string) ($f['severity'] ?? $f['analyzer_severity'] ?? 'INFO')),
+                'category'       => (string) ($f['category'] ?? $f['group'] ?? ''),
+                'rule'           => (string) ($f['rule'] ?? ''),
+                'title'          => (string) ($f['title'] ?? ''),
+                'description'    => (string) ($f['description'] ?? $f['desc'] ?? ''),
+                'line'           => is_numeric($line) ? (int) $line : null,
+                'snippet'        => (string) ($f['snippet'] ?? $f['code'] ?? ''),
+                'count'          => (int) ($f['count'] ?? 1),
+                'recommendation' => (string) ($f['recommendation'] ?? $f['fix'] ?? ''),
+            ];
+        }
+        return $items;
     }
 
     /** Faz polling do job até completar/falhar (ou timeout). Retorna o corpo final ou null. */
@@ -105,80 +130,6 @@ class GmudSourceQualityJob implements ShouldQueue
             }
         }
         return null;
-    }
-
-    private function gradeColor(?string $grade): string
-    {
-        $g = strtoupper((string) $grade);
-        if (in_array($g, ['A', 'B'], true)) return '#059669'; // verde
-        if ($g === 'C') return '#d97706';                     // amarelo
-        return '#dc2626';                                     // vermelho
-    }
-
-    private function resultBody(string $filename, array $r): string
-    {
-        $grade = (string) ($r['grade'] ?? '—');
-        $score = $r['score'] ?? null;
-        $color = $this->gradeColor($grade);
-        $findings = is_array($r['findings'] ?? null) ? $r['findings'] : [];
-
-        $html = '<div>';
-        $html .= '<p>📊 <b>CodeAnalysis — ' . e($filename) . '</b></p>';
-        $html .= '<p>Nota: <span style="color:' . $color . ';font-weight:bold;font-size:17px">' . e($grade) . '</span>'
-            . ($score !== null ? ' · <b>' . (int) $score . '</b>/100' : '')
-            . ' · ' . count($findings) . ' achado(s)</p>';
-
-        if ($findings) {
-            $html .= '<p><b>Possíveis correções:</b></p><ul style="margin:4px 0 0;padding-left:18px">';
-            foreach ($findings as $f) {
-                $sev = strtoupper((string) ($f['severity'] ?? $f['analyzer_severity'] ?? ''));
-                $title = (string) ($f['title'] ?? $f['rule'] ?? 'Achado');
-                $rec = trim((string) ($f['recommendation'] ?? ''));
-                $line = isset($f['line']) && $f['line'] ? ' (linha ' . (int) $f['line'] . ')' : '';
-                $html .= '<li>' . ($sev ? '<b>[' . e($sev) . ']</b> ' : '') . e($title) . e($line)
-                    . ($rec !== '' ? ' — ' . e($rec) : '') . '</li>';
-            }
-            $html .= '</ul>';
-        } else {
-            $html .= '<p style="color:#059669">Nenhuma correção sugerida. ✅</p>';
-        }
-
-        $html .= $this->legend();
-
-        // Payload estruturado (base64 JSON) p/ o FE do chamado renderizar o card interativo
-        // (resumo + botão expandir + cards). Fica oculto (display:none) e sobrevive à
-        // sanitização (pre/class/style permitidos). Ver code-analysis-comment.tsx.
-        $html .= '<pre class="ca-json" style="display:none">' . $this->caPayload($filename, $grade, $score, $findings) . '</pre>';
-
-        $html .= '</div>';
-        return $html;
-    }
-
-    /** JSON dos achados (base64) p/ o card interativo do chamado. */
-    private function caPayload(string $filename, string $grade, $score, array $findings): string
-    {
-        $items = [];
-        foreach ($findings as $f) {
-            $line = $f['line'] ?? $f['start_line'] ?? null;
-            $items[] = [
-                'severity'       => strtoupper((string) ($f['severity'] ?? $f['analyzer_severity'] ?? 'INFO')),
-                'category'       => (string) ($f['category'] ?? $f['group'] ?? ''),
-                'rule'           => (string) ($f['rule'] ?? ''),
-                'title'          => (string) ($f['title'] ?? ''),
-                'description'    => (string) ($f['description'] ?? $f['desc'] ?? ''),
-                'line'           => is_numeric($line) ? (int) $line : null,
-                'snippet'        => (string) ($f['snippet'] ?? $f['code'] ?? ''),
-                'count'          => (int) ($f['count'] ?? 1),
-                'recommendation' => (string) ($f['recommendation'] ?? $f['fix'] ?? ''),
-            ];
-        }
-        $payload = [
-            'file'     => $filename,
-            'grade'    => $grade,
-            'score'    => is_numeric($score) ? (int) $score : null,
-            'findings' => $items,
-        ];
-        return base64_encode(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     private function failBody(string $filename, string $motivo): string

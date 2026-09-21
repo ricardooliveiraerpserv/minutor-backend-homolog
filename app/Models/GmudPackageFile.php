@@ -20,6 +20,7 @@ class GmudPackageFile extends Model
         'match_status', 'matched_source_doc_id', 'matched_git_path',
         'match_candidates', 'match_evidence',
         'action', 'dest_git_path', 'old_git_path', 'published_blob_sha',
+        'quality_grade', 'quality_score', 'quality_findings', 'quality_analyzed_at',
     ];
 
     protected $casts = [
@@ -28,6 +29,9 @@ class GmudPackageFile extends Model
         'mtime'            => 'datetime',
         'match_candidates' => 'array',
         'match_evidence'   => 'array',
+        'quality_score'    => 'integer',
+        'quality_findings' => 'array',
+        'quality_analyzed_at' => 'datetime',
     ];
 
     /** Situações determinísticas do matching (G2). */

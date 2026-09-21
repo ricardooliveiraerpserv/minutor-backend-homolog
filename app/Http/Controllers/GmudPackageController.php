@@ -165,6 +165,38 @@ class GmudPackageController extends Controller
             'project_folder' => $package->project_folder,
             // committed=true SOMENTE após publicação explícita (status=published).
             'committed'      => $package->status === GmudPackage::STATUS_PUBLISHED,
+            // Nº da interação (publicação GMUD) onde o fonte foi anexado — mesmo #N do cabeçalho.
+            'interaction_seq' => $this->interactionSeq((int) $package->ticket_id),
+            // Resultado do CodeAnalysis POR FONTE (exibido no painel — resumo + expandir cards).
+            'quality_files'  => $package->files()->where('is_source', true)
+                ->orderBy('path_in_zip')->get()->map(fn ($f) => [
+                    'id'          => $f->id,
+                    'filename'    => $f->filename ?: basename((string) $f->path_in_zip),
+                    'grade'       => $f->quality_grade,
+                    'score'       => $f->quality_score,
+                    'findings'    => is_array($f->quality_findings) ? $f->quality_findings : [],
+                    'analyzed_at' => optional($f->quality_analyzed_at)->toIso8601String(),
+                ])->values(),
         ];
+    }
+
+    /** #N da interação de PUBLICAÇÃO GMUD (form_kind='gmud') do chamado — mesmo contador do cabeçalho. */
+    private function interactionSeq(int $ticketId): ?int
+    {
+        $gmud = \App\Models\HelpDeskTicketComment::where('ticket_id', $ticketId)
+            ->where('is_system', false)->where('form_kind', 'gmud')
+            ->orderByDesc('created_at')->orderByDesc('id')->first(['id', 'created_at']);
+        if (! $gmud) {
+            return null;
+        }
+        $rank = \App\Models\HelpDeskTicketComment::where('ticket_id', $ticketId)
+            ->where('is_system', false)
+            ->where(function ($q) use ($gmud) {
+                $q->where('created_at', '<', $gmud->created_at)
+                  ->orWhere(function ($q2) use ($gmud) {
+                      $q2->where('created_at', $gmud->created_at)->where('id', '<=', $gmud->id);
+                  });
+            })->count();
+        return $rank ?: null;
     }
 }
