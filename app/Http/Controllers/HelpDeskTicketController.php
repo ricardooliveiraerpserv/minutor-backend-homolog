@@ -138,6 +138,7 @@ class HelpDeskTicketController extends Controller
             'sla'                    => $lean ? $this->sla->listSummary($t, $events) : $this->sla->summary($t, $events),
             'solicitante_nome'       => $solicitante,
             'requester_user_id'      => $t->requester_user_id, // p/ o filtro "abri, mas não sou responsável"
+            'created_by_id'          => $t->created_by_id,     // quem ABRIU o chamado
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
             'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
             'interactions_count'     => $interCount,       // qtd de interações (comentários reais) — lista/card admin
@@ -227,9 +228,10 @@ class HelpDeskTicketController extends Controller
             ->when($request->filled('assignee_id'), fn ($q) => $q->where('assignee_id', $request->assignee_id))
             ->when($request->boolean('mine'), fn ($q) => $q->where('assignee_id', $user?->id))
             ->when($request->boolean('unassigned'), fn ($q) => $q->whereNull('assignee_id'))
-            // "Abri, mas não sou responsável": chamados que EU abri (solicitante) e cujo
-            // responsável (assignee) NÃO sou eu (ou está sem responsável).
-            ->when($request->boolean('opened_by_me'), fn ($q) => $q->where('requester_user_id', $user?->id)
+            // "Abri, mas não sou responsável": chamados que EU abri (quem criou OU solicitante)
+            // e cujo responsável (assignee) NÃO sou eu (ou está sem responsável).
+            ->when($request->boolean('opened_by_me'), fn ($q) => $q
+                ->where(fn ($o) => $o->where('created_by_id', $user?->id)->orWhere('requester_user_id', $user?->id))
                 ->where(fn ($w) => $w->where('assignee_id', '!=', $user?->id)->orWhereNull('assignee_id')))
             ->when($request->boolean('breached'), fn ($q) => $q->where(fn ($w) => $w->where('first_response_breached', true)->orWhere('resolution_breached', true)))
             // Fila de ENTREGAS VENCIDAS: chamados Em Desenvolvimento cuja previsão de entrega em
