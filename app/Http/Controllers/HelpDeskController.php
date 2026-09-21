@@ -42,6 +42,21 @@ class HelpDeskController extends Controller
         return response()->json(['data' => $agents->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'type' => $u->type])]);
     }
 
+    /**
+     * Agentes de Help Desk SEM equipe: internos (não-cliente) COM perfil de acesso mas fora
+     * de qualquer equipe. É a lista de correção da regra "agente não pode ficar sem equipe".
+     */
+    public function agentsWithoutTeam(): JsonResponse
+    {
+        $inTeam = \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->distinct()->pluck('user_id');
+        $rows = User::where('type', '<>', 'cliente')
+            ->whereNotNull('helpdesk_access_profile_id')
+            ->whereNotIn('id', $inTeam)
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'type']);
+        return response()->json(['data' => $rows]);
+    }
+
     public function meta(): JsonResponse
     {
         return response()->json(['data' => [

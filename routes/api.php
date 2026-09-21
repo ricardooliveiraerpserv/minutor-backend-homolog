@@ -261,6 +261,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/access-profiles',                     [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'index']);
         Route::post('/help-desk/access-profiles',                    [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'store']);
         Route::get('/help-desk/agents', [\App\Http\Controllers\HelpDeskController::class, 'agents']);
+        Route::get('/help-desk/agents/without-team', [\App\Http\Controllers\HelpDeskController::class, 'agentsWithoutTeam']);
         // Visualizações salvas da fila (pessoais + compartilhadas).
         Route::get('/help-desk/saved-views',                 [\App\Http\Controllers\HelpDeskSavedViewController::class, 'index']);
         Route::post('/help-desk/saved-views',                [\App\Http\Controllers\HelpDeskSavedViewController::class, 'store']);

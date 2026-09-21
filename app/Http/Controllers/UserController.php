@@ -288,6 +288,19 @@ class UserController extends Controller
      *  - Consultor vinculado a parceiro: SEMPRE herda do parceiro (ignora qualquer input).
      *  - Sem parceiro: o valor próprio já foi gravado via fillable — nada a propagar.
      */
+    /** Sincroniza as equipes de Help Desk do usuário (pivot helpdesk_team_user). */
+    private function syncHelpDeskTeams(User $user, $teamIds): void
+    {
+        $ids = collect((array) $teamIds)->filter()->map(fn ($i) => (int) $i)->unique()->values()->all();
+        DB::table('helpdesk_team_user')->where('user_id', $user->id)->delete();
+        if ($ids) {
+            $now = now();
+            DB::table('helpdesk_team_user')->insert(array_map(fn ($tid) => [
+                'helpdesk_team_id' => $tid, 'user_id' => $user->id, 'created_at' => $now, 'updated_at' => $now,
+            ], $ids));
+        }
+    }
+
     private function syncContractType(User $user, Request $request): void
     {
         if (!$user->partner_id) {
@@ -407,6 +420,8 @@ class UserController extends Controller
             'bot_allowed_scopes' => 'sometimes|nullable|array',
             'bot_allowed_scopes.*' => 'string|in:' . implode(',', \App\Services\Ai\Tools\MinutorToolRegistry::ALL_SCOPES),
             'bot_visibility' => 'sometimes|in:self,team,all',
+            'helpdesk_team_ids'   => 'sometimes|array',
+            'helpdesk_team_ids.*' => 'integer|exists:helpdesk_teams,id',
             'bot_scope_overrides' => 'sometimes|nullable|array',
             'inbox_email_disabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
@@ -497,6 +512,10 @@ class UserController extends Controller
                 }
             }
 
+            // Equipes de Help Desk (pivot helpdesk_team_user) — não é coluna de users.
+            $hdTeamIds = array_key_exists('helpdesk_team_ids', $userData) ? $userData['helpdesk_team_ids'] : null;
+            unset($userData['helpdesk_team_ids']);
+
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($userData, array_flip(User::PROTECTED_FIELDS));
             $fillableData = array_diff_key($userData, $protectedData);
@@ -505,6 +524,7 @@ class UserController extends Controller
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
             }
+            if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
 
             // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
             $this->syncContractType($user, $request);
@@ -617,6 +637,8 @@ class UserController extends Controller
         // Adicionar tipos de dashboard permitidos na resposta
         $userData = $user->toArray();
         $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+        // Equipes de Help Desk (pivot) — para o form marcar as equipes atuais.
+        $userData['helpdesk_team_ids'] = DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
 
         return response()->json($userData);
     }
@@ -704,6 +726,8 @@ class UserController extends Controller
             'bot_allowed_scopes' => 'sometimes|nullable|array',
             'bot_allowed_scopes.*' => 'string|in:' . implode(',', \App\Services\Ai\Tools\MinutorToolRegistry::ALL_SCOPES),
             'bot_visibility' => 'sometimes|in:self,team,all',
+            'helpdesk_team_ids'   => 'sometimes|array',
+            'helpdesk_team_ids.*' => 'integer|exists:helpdesk_teams,id',
             'bot_scope_overrides' => 'sometimes|nullable|array',
             'inbox_email_disabled' => 'sometimes|boolean',
             'hourly_rate' => 'nullable|numeric|min:0|max:999999.99',
@@ -767,6 +791,17 @@ class UserController extends Controller
             );
         }
 
+        // Agente de Help Desk (interno COM perfil de acesso) não pode ficar sem equipe.
+        $intendedType = $validatedForType['type'] ?? $user->type;
+        if ($intendedType !== 'cliente' && $user->helpdesk_access_profile_id) {
+            $teamIds = $request->has('helpdesk_team_ids')
+                ? array_filter((array) $request->input('helpdesk_team_ids'))
+                : DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
+            if (empty($teamIds)) {
+                return $this->validationErrorResponse(['Agente de Help Desk precisa estar em ao menos uma equipe.']);
+            }
+        }
+
         DB::beginTransaction();
         try {
             $updateData = $validator->validated();
@@ -797,7 +832,9 @@ class UserController extends Controller
             // smtp_app_password: setado explicitamente após o update (fora do mass-assignment);
             // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
             $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
-            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password']);
+            // Equipes de Help Desk (pivot) — não é coluna de users; sincroniza após salvar.
+            $hdTeamIds = array_key_exists('helpdesk_team_ids', $updateData) ? $updateData['helpdesk_team_ids'] : null;
+            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password'], $updateData['helpdesk_team_ids']);
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
@@ -807,6 +844,7 @@ class UserController extends Controller
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
             }
+            if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
 
             // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
             // Vazio/ausente NÃO sobrescreve o valor existente.
