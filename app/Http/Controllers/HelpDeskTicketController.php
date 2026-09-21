@@ -1605,7 +1605,9 @@ class HelpDeskTicketController extends Controller
         }
         $comments = $cq->get();
         $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
+        $commentSeq = $this->commentSeqMap($ticket);
         $commentsData = $comments->map(fn ($c) => array_merge($c->toArray(), [
+            'seq'              => $c->is_system ? null : ($commentSeq[$c->id] ?? null),
             'attachments'      => ($attByComment->get($c->id) ?? collect())->values(),
             'can_edit'         => $this->access->canEditComment($user, $c),
             'can_candidate_kb' => !$c->is_system && $c->author_user_id && $this->access->canCandidateKb($user, $c),
@@ -1838,6 +1840,25 @@ class HelpDeskTicketController extends Controller
     }
 
     // ── Interações (respostas/notas) ──────────────────────────────────────────
+    /**
+     * Contador de INTERAÇÕES do chamado: id do comentário -> número sequencial (1..N), estável
+     * e absoluto (independe de paginação/perfil). Numera só interações reais (não-sistema),
+     * em ordem cronológica. Usado como "número da interação" (badge #N no cabeçalho e referência
+     * pelo painel GMUD). Uma query leve (pluck de ids).
+     * @return array<int,int>
+     */
+    private function commentSeqMap(HelpDeskTicket $ticket): array
+    {
+        $ids = $ticket->comments()->where('is_system', false)
+            ->orderBy('created_at')->orderBy('id')->pluck('id');
+        $map = [];
+        $n = 0;
+        foreach ($ids as $cid) {
+            $map[(int) $cid] = ++$n;
+        }
+        return $map;
+    }
+
     public function comments(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
         // Cliente só enxerga as respostas marcadas como visíveis ao cliente.
@@ -1857,8 +1878,10 @@ class HelpDeskTicketController extends Controller
         // Anti-N+1: anexos de TODAS as interações em UMA query (era 1 query de anexos POR comentário —
         // 183 comentários = 183 queries). aggregateLoader agrupa por entity_id (= id do comentário).
         $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
-        $data = $comments->map(function ($c) use ($attByComment, $user) {
+        $commentSeq = $this->commentSeqMap($ticket);
+        $data = $comments->map(function ($c) use ($attByComment, $user, $commentSeq) {
             $arr = $c->toArray();
+            $arr['seq'] = $c->is_system ? null : ($commentSeq[$c->id] ?? null);
             $arr['attachments'] = ($attByComment->get($c->id) ?? collect())->values();
             $arr['can_edit'] = $this->access->canEditComment($user, $c);
             // Só faz sentido "virar artigo" a partir de interação da EQUIPE (não do cliente/sistema).
