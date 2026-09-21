@@ -95,12 +95,13 @@ class HelpDeskPortalController extends Controller
         $svcs = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
             ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
         // Abertura em nome de outra pessoa → lista os CONTATOS da empresa do cliente. Tags → catálogo.
-        $onBehalf = $this->access->clientOpenOnBehalf($u);
+        // Interno (não-cliente) não abre "em nome de" no portal — só os próprios chamados.
+        $onBehalf = $u->customer_id !== null && $this->access->clientOpenOnBehalf($u);
         // "Em nome de": PESSOAS da empresa do cliente — usuários cliente (que logam) + contatos.
         // Muitas empresas não têm contatos cadastrados, só usuários → listar os usuários resolve.
-        $cid = $this->customerId($request);
         $contacts = [];
         if ($onBehalf) {
+            $cid = $this->customerId($request);
             $users = \App\Models\User::where('customer_id', $cid)->where('type', 'cliente')
                 ->where('id', '!=', $u->id)->orderBy('name')->get(['id', 'name', 'email'])
                 ->map(fn ($x) => ['id' => 'u:' . $x->id, 'name' => $x->name, 'email' => $x->email]);
@@ -133,17 +134,31 @@ class HelpDeskPortalController extends Controller
 
     public function myTickets(Request $request): JsonResponse
     {
-        $cid = $this->customerId($request);
         $user = $request->user();
-        $scope = $this->access->clientViewScope($user); // own | department | same_org | none
-        $tickets = HelpDeskTicket::where('customer_id', $cid)
-            ->whereNull('merged_into_id') // chamados mesclados não aparecem na lista do cliente
-            ->when($scope === 'own', fn ($q) => $q->where('requester_user_id', $user->id)) // só os que ELE abriu
-            ->when($scope === 'department', fn ($q) => $this->scopeByDepartment($q, $user, $cid)) // do mesmo depto dele
-            ->when($scope === 'none', fn ($q) => $q->whereRaw('1 = 0'))
+        $withRels = fn ($q) => $q
             ->with(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'assignee:id,name', 'contact:id,name'])
-            ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
-            ->orderByDesc('updated_at')->get();
+            ->when($request->boolean('open'), fn ($qq) => $qq->whereHas('status', fn ($s) => $s->where('is_open', true)))
+            ->orderByDesc('updated_at');
+
+        if ($user->customer_id === null) {
+            // Interno NÃO-cliente (ex.: consultor ERPSERV não-agente): vê o portal escopado
+            // APENAS aos chamados que ELE MESMO abriu (solicitante) — visão tipo cliente.
+            $q = HelpDeskTicket::withoutGlobalScopes()
+                ->whereNull('merged_into_id')
+                ->where(fn ($w) => $w->where('requester_user_id', $user->id)
+                    ->orWhere(fn ($e) => $e->whereNotNull('requester_email')
+                        ->whereRaw('lower(requester_email) = ?', [mb_strtolower((string) $user->email)])));
+            $tickets = $withRels($q)->get();
+        } else {
+            $cid = $this->customerId($request);
+            $scope = $this->access->clientViewScope($user); // own | department | same_org | none
+            $q = HelpDeskTicket::where('customer_id', $cid)
+                ->whereNull('merged_into_id') // chamados mesclados não aparecem na lista do cliente
+                ->when($scope === 'own', fn ($qq) => $qq->where('requester_user_id', $user->id)) // só os que ELE abriu
+                ->when($scope === 'department', fn ($qq) => $this->scopeByDepartment($qq, $user, $cid)) // do mesmo depto dele
+                ->when($scope === 'none', fn ($qq) => $qq->whereRaw('1 = 0'));
+            $tickets = $withRels($q)->get();
+        }
         $events = $this->eventsByTicket($tickets);
         return response()->json(['data' => $tickets->map(fn ($t) =>
             HelpDeskPortalPresenter::ticket($t, $this->sla->clientSummary($t, $events->get($t->id) ?? collect())))]);
