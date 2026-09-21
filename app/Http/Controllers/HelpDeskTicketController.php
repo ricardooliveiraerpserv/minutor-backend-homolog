@@ -1183,12 +1183,14 @@ class HelpDeskTicketController extends Controller
     /** Busca de contatos p/ trocar o solicitante (por nome ou e-mail). */
     public function searchContacts(Request $request): JsonResponse
     {
-        $q = trim((string) $request->query('search', ''));
+        $q          = trim((string) $request->query('search', ''));
+        $customerId = $request->query('customer_id');
         $rows = \App\Models\CustomerContact::query()
             ->with('customer:id,name')
+            ->when($customerId, fn ($qq) => $qq->where('customer_id', (int) $customerId))
             ->when($q !== '', fn ($qq) => $qq->where(fn ($w) =>
                 $w->where('name', 'ilike', "%{$q}%")->orWhere('email', 'ilike', "%{$q}%")))
-            ->orderBy('name')->limit(20)
+            ->orderBy('name')->limit($customerId ? 200 : 20)
             ->get(['id', 'name', 'email', 'customer_id']);
         return response()->json(['data' => $rows]);
     }
