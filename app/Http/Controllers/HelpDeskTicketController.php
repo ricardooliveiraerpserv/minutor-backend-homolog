@@ -1209,9 +1209,21 @@ class HelpDeskTicketController extends Controller
         $like = fn ($qq) => $qq->when($q !== '', fn ($w) => $w->where(fn ($x) =>
             $x->where('name', 'ilike', "%{$q}%")->orWhere('email', 'ilike', "%{$q}%")));
 
-        $users = \App\Models\User::query()
-            ->where('type', 'cliente')->where('customer_id', $customerId)
-            ->tap($like)->orderBy('name')->limit(200)
+        // Empresa INTERNA (ERPSERV/BIZIFY): o customer homônimo casa com uma company type=internal.
+        // Nesse caso o solicitante pode ser QUALQUER usuário interno (agente, consultor, parceiro,
+        // administrativo…), não só type=cliente. Cliente externo → só os usuários do portal dele.
+        $customerName = \App\Models\Customer::whereKey($customerId)->value('name');
+        $isInternal = $customerName && \App\Models\Company::where('type', 'internal')
+            ->whereRaw('lower(name) = ?', [mb_strtolower($customerName)])->exists();
+
+        $usersQ = \App\Models\User::query();
+        if ($isInternal) {
+            // Todos os internos (type != cliente) + eventuais usuários vinculados a este customer.
+            $usersQ->where(fn ($w) => $w->where('type', '<>', 'cliente')->orWhere('customer_id', $customerId));
+        } else {
+            $usersQ->where('type', 'cliente')->where('customer_id', $customerId);
+        }
+        $users = $usersQ->tap($like)->orderBy('name')->limit(500)
             ->get(['id', 'name', 'email'])
             ->map(fn ($u) => ['kind' => 'user', 'id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
 
