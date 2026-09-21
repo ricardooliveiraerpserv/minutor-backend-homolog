@@ -2170,7 +2170,9 @@ class TimesheetController extends Controller
                 return response()->json(['message' => 'Projeto não encontrado'], 422);
             }
             // Não permitir mover apontamentos PARA projeto cancelado/encerrado (espelha store/update).
-            if (!$project->isOpen()) {
+            // ADMIN ignora esse bloqueio: projetos On Demand ficam "finished" mas seguem recebendo
+            // horas, e o admin pode realocar pra qualquer projeto do cliente (override total).
+            if (!$user->isAdmin() && !$project->isOpen()) {
                 return response()->json([
                     'code'          => 'INACTIVE_PROJECT',
                     'message'       => 'Projeto inativo',
