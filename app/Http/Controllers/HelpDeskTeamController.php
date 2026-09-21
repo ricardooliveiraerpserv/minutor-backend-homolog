@@ -26,6 +26,7 @@ class HelpDeskTeamController extends Controller
             'description'  => 'nullable|string',
             'color'        => 'nullable|string|max:16',
             'lead_user_id' => 'nullable|exists:users,id',
+            'company_id'   => 'nullable|integer|exists:companies,id', // empresa do grupo (ERPSERV/BIZIFY)
             'active'       => 'nullable|boolean',
             'sort_order'   => 'nullable|integer',
             'member_ids'   => 'nullable|array',
@@ -37,8 +38,10 @@ class HelpDeskTeamController extends Controller
     {
         $v = $request->validate($this->rules(true));
         $members = $v['member_ids'] ?? null; unset($v['member_ids']);
+        $companyId = $v['company_id'] ?? null; unset($v['company_id']); // não é fillable → seta à parte
         $v['slug'] = Str::slug($v['name']);
         $team = HelpDeskTeam::create($v);
+        if ($companyId) { $team->company_id = (int) $companyId; $team->save(); } // empresa do grupo escolhida
         if ($members) $team->members()->sync($members);
         return response()->json(['data' => $team->load('members:id,name')], 201);
     }
@@ -47,8 +50,10 @@ class HelpDeskTeamController extends Controller
     {
         $v = $request->validate($this->rules(false));
         $members = $v['member_ids'] ?? null; unset($v['member_ids']);
+        $hasCompany = array_key_exists('company_id', $v); $companyId = $v['company_id'] ?? null; unset($v['company_id']);
         if (isset($v['name'])) $v['slug'] = Str::slug($v['name']);
         $team->update($v);
+        if ($hasCompany) { $team->company_id = $companyId ? (int) $companyId : null; $team->save(); } // troca a empresa do grupo
         if ($members !== null) $team->members()->sync($members);
         return response()->json(['data' => $team->fresh()->load('members:id,name')]);
     }

@@ -22,8 +22,9 @@ class HelpDeskController extends Controller
     {
         // Candidatos = todos os internos que PODEM virar agente (usado p/ montar equipes).
         if ($request->boolean('candidates')) {
+            // is_bizify separa ERPSERV (false) × BIZIFY (true) — para vincular à equipe só os da empresa.
             return response()->json(['data' => User::whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor'])
-                ->orderBy('name')->get(['id', 'name', 'type'])]);
+                ->orderBy('name')->get(['id', 'name', 'type', 'is_bizify'])]);
         }
         // Multi-empresa: se vier company_id (empresa do ticket), lista os agentes que ATENDEM
         // essa empresa pelo PERFIL DE ACESSO — incluindo os "ambas" (independe da equipe/empresa
