@@ -183,8 +183,16 @@ class GmudPackageController extends Controller
     /** #N da interação de PUBLICAÇÃO GMUD (form_kind='gmud') do chamado — mesmo contador do cabeçalho. */
     private function interactionSeq(int $ticketId): ?int
     {
+        // A "solucao GMUD" pode vir como form_kind='gmud' OU como form dinamico
+        // (form_kind='dynamic') com o template "GMUD EM PRODUCAO" no corpo — casa os dois.
         $gmud = \App\Models\HelpDeskTicketComment::where('ticket_id', $ticketId)
-            ->where('is_system', false)->where('form_kind', 'gmud')
+            ->where('is_system', false)
+            ->where(function ($q) {
+                $q->where('form_kind', 'gmud')
+                  ->orWhere(function ($q2) {
+                      $q2->where('form_kind', 'dynamic')->where('body', 'ilike', '%GMUD EM PRODU%');
+                  });
+            })
             ->orderByDesc('created_at')->orderByDesc('id')->first(['id', 'created_at']);
         if (! $gmud) {
             return null;
