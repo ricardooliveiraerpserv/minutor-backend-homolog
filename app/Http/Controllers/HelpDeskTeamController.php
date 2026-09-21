@@ -12,7 +12,12 @@ class HelpDeskTeamController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $teams = HelpDeskTeam::query()
+        // Multi-empresa: quem atende AMBAS as empresas (admin/coordenador com escopo nas duas)
+        // vê as equipes das DUAS. applyCompanyScope respeita o escopo de empresas do usuário
+        // (substitui o CompanyScope padrão, que traria só a empresa ativa).
+        $base = app(\App\Services\HelpDeskAccessPolicy::class)
+            ->applyCompanyScope(HelpDeskTeam::query(), $request->user());
+        $teams = $base
             ->when(!$request->boolean('all'), fn ($q) => $q->where('active', true))
             ->with(['lead:id,name', 'members:id,name'])
             ->orderBy('sort_order')->orderBy('name')->get();
