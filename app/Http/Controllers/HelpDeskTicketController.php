@@ -1195,6 +1195,35 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => $rows]);
     }
 
+    /**
+     * Possíveis SOLICITANTES de um cliente para a abertura de chamado: usuários do PORTAL
+     * (users type=cliente vinculados ao customer → viram requester_user_id) + contatos do
+     * cadastro (customer_contacts → customer_contact_id). Os do portal vêm primeiro.
+     */
+    public function requesters(Request $request): JsonResponse
+    {
+        $q          = trim((string) $request->query('search', ''));
+        $customerId = (int) $request->query('customer_id');
+        if (! $customerId) return response()->json(['data' => []]);
+
+        $like = fn ($qq) => $qq->when($q !== '', fn ($w) => $w->where(fn ($x) =>
+            $x->where('name', 'ilike', "%{$q}%")->orWhere('email', 'ilike', "%{$q}%")));
+
+        $users = \App\Models\User::query()
+            ->where('type', 'cliente')->where('customer_id', $customerId)
+            ->tap($like)->orderBy('name')->limit(200)
+            ->get(['id', 'name', 'email'])
+            ->map(fn ($u) => ['kind' => 'user', 'id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
+
+        $contacts = \App\Models\CustomerContact::query()
+            ->where('customer_id', $customerId)
+            ->tap($like)->orderBy('name')->limit(200)
+            ->get(['id', 'name', 'email'])
+            ->map(fn ($c) => ['kind' => 'contact', 'id' => $c->id, 'name' => $c->name, 'email' => $c->email]);
+
+        return response()->json(['data' => $users->concat($contacts)->values()]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         abort_unless($this->access->canOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');

@@ -273,6 +273,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/comm-template',  [\App\Http\Controllers\HelpDeskTriggerController::class, 'commTemplate']);
         Route::put('/help-desk/comm-template',  [\App\Http\Controllers\HelpDeskTriggerController::class, 'updateCommTemplate']);
         Route::get('/help-desk/contacts', [\App\Http\Controllers\HelpDeskTicketController::class, 'searchContacts']);
+        Route::get('/help-desk/requesters', [\App\Http\Controllers\HelpDeskTicketController::class, 'requesters']);
         Route::get('/help-desk/email-accounts',                      [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'index']);
         Route::post('/help-desk/email-accounts',                     [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'store']);
         Route::get('/help-desk/email-suggestions', [\App\Http\Controllers\HelpDeskTicketController::class, 'emailSuggestions']);
