@@ -144,8 +144,41 @@ class GmudSourceQualityJob implements ShouldQueue
         }
 
         $html .= $this->legend();
+
+        // Payload estruturado (base64 JSON) p/ o FE do chamado renderizar o card interativo
+        // (resumo + botão expandir + cards). Fica oculto (display:none) e sobrevive à
+        // sanitização (pre/class/style permitidos). Ver code-analysis-comment.tsx.
+        $html .= '<pre class="ca-json" style="display:none">' . $this->caPayload($filename, $grade, $score, $findings) . '</pre>';
+
         $html .= '</div>';
         return $html;
+    }
+
+    /** JSON dos achados (base64) p/ o card interativo do chamado. */
+    private function caPayload(string $filename, string $grade, $score, array $findings): string
+    {
+        $items = [];
+        foreach ($findings as $f) {
+            $line = $f['line'] ?? $f['start_line'] ?? null;
+            $items[] = [
+                'severity'       => strtoupper((string) ($f['severity'] ?? $f['analyzer_severity'] ?? 'INFO')),
+                'category'       => (string) ($f['category'] ?? $f['group'] ?? ''),
+                'rule'           => (string) ($f['rule'] ?? ''),
+                'title'          => (string) ($f['title'] ?? ''),
+                'description'    => (string) ($f['description'] ?? $f['desc'] ?? ''),
+                'line'           => is_numeric($line) ? (int) $line : null,
+                'snippet'        => (string) ($f['snippet'] ?? $f['code'] ?? ''),
+                'count'          => (int) ($f['count'] ?? 1),
+                'recommendation' => (string) ($f['recommendation'] ?? $f['fix'] ?? ''),
+            ];
+        }
+        $payload = [
+            'file'     => $filename,
+            'grade'    => $grade,
+            'score'    => is_numeric($score) ? (int) $score : null,
+            'findings' => $items,
+        ];
+        return base64_encode(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
     }
 
     private function failBody(string $filename, string $motivo): string
