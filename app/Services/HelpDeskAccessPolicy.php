@@ -330,7 +330,12 @@ class HelpDeskAccessPolicy
         return match ($this->viewScope($user)) {
             'none' => $q->whereRaw('1 = 0'),
             'all'  => $q,
-            default => $q->where('assignee_id', $user?->id), // assigned / parent / assigned_or_parent
+            // Escopo "atribuídos" + os PRÓPRIOS chamados (que o agente abriu ou é solicitante),
+            // para ele acompanhar o que abriu mesmo sem ser o responsável.
+            default => $q->where(fn ($w) => $w
+                ->where('assignee_id', $user?->id)
+                ->orWhere('created_by_id', $user?->id)
+                ->orWhere('requester_user_id', $user?->id)),
         };
     }
 
