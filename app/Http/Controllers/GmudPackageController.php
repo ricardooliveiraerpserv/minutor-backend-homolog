@@ -60,6 +60,7 @@ class GmudPackageController extends Controller
 
         return response()->json([
             'data' => array_merge($this->manifest($package), [
+                'publication' => $this->publicationInfo($package),
                 'files' => $package->files->map(fn ($f) => [
                     'id'                    => $f->id,
                     'path_in_zip'           => $f->path_in_zip,   // EVIDÊNCIA — não é destino Git
@@ -206,5 +207,26 @@ class GmudPackageController extends Controller
                   });
             })->count();
         return $rank ?: null;
+    }
+
+    /** Metadados da publicação (commit/repo/branch/data) — lidos do evento gmud_package_published. */
+    private function publicationInfo(GmudPackage $package): ?array
+    {
+        $ev = \App\Models\HelpDeskTicketEvent::where('ticket_id', $package->ticket_id)
+            ->where('event_type', 'gmud_package_published')
+            ->whereRaw("meta->>'package_id' = ?", [(string) $package->id])
+            ->orderByDesc('id')->first(['created_at', 'meta']);
+        if (! $ev) {
+            return null;
+        }
+        $meta = is_array($ev->meta) ? $ev->meta : (json_decode((string) $ev->meta, true) ?: []);
+        return [
+            'commit_sha'   => $meta['commit_sha'] ?? null,
+            'repo'         => $meta['repo'] ?? null,
+            'branch'       => $meta['branch'] ?? null,
+            'published'    => $meta['published'] ?? null,
+            'skipped'      => $meta['skipped'] ?? null,
+            'published_at' => optional($ev->created_at)->toIso8601String(),
+        ];
     }
 }
