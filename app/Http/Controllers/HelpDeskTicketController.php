@@ -137,6 +137,7 @@ class HelpDeskTicketController extends Controller
             // Na LISTA (lean) o card só lê os flags do SLA — listSummary pula a serialização de datas.
             'sla'                    => $lean ? $this->sla->listSummary($t, $events) : $this->sla->summary($t, $events),
             'solicitante_nome'       => $solicitante,
+            'requester_user_id'      => $t->requester_user_id, // p/ o filtro "abri, mas não sou responsável"
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,
             'dias_sem_interacao'     => $diasSemInteracao, // dias úteis desde a última interação da equipe
             'interactions_count'     => $interCount,       // qtd de interações (comentários reais) — lista/card admin
@@ -226,6 +227,10 @@ class HelpDeskTicketController extends Controller
             ->when($request->filled('assignee_id'), fn ($q) => $q->where('assignee_id', $request->assignee_id))
             ->when($request->boolean('mine'), fn ($q) => $q->where('assignee_id', $user?->id))
             ->when($request->boolean('unassigned'), fn ($q) => $q->whereNull('assignee_id'))
+            // "Abri, mas não sou responsável": chamados que EU abri (solicitante) e cujo
+            // responsável (assignee) NÃO sou eu (ou está sem responsável).
+            ->when($request->boolean('opened_by_me'), fn ($q) => $q->where('requester_user_id', $user?->id)
+                ->where(fn ($w) => $w->where('assignee_id', '!=', $user?->id)->orWhereNull('assignee_id')))
             ->when($request->boolean('breached'), fn ($q) => $q->where(fn ($w) => $w->where('first_response_breached', true)->orWhere('resolution_breached', true)))
             // Fila de ENTREGAS VENCIDAS: chamados Em Desenvolvimento cuja previsão de entrega em
             // homologação já passou — em DIAS ÚTEIS (considera fins de semana e feriados). Vencido ⟺
