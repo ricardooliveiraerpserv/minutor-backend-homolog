@@ -90,7 +90,9 @@ class HelpDeskPortalController extends Controller
         // o portal separa em abas (ERPSERV/BIZIFY) e passa ?company_id para escopar tudo.
         $scopeIds = $this->access->companiesScope($u);
         $companiesList = $scopeIds
-            ? \App\Models\Company::whereIn('id', $scopeIds)->orderBy('name')->get(['id', 'name', 'slug', 'color'])
+            ? \App\Models\Company::whereIn('id', $scopeIds)
+                ->orderByRaw("case when slug = 'erpserv' then 0 else 1 end") // ERPSERV primeiro
+                ->orderBy('name')->get(['id', 'name', 'slug', 'color'])
             : collect();
         // Empresa do cliente (mesma lógica do openTicket) para escopar as opções sem depender do
         // CompanyScope (que fica NULL p/ cliente). withoutGlobalScopes + company_id explícito.
