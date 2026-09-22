@@ -86,10 +86,19 @@ class HelpDeskPortalController extends Controller
     public function permissions(Request $request): JsonResponse
     {
         $u = $request->user();
+        // Empresas do grupo que o cliente PODE abrir (policies.companies do perfil). Quando > 1,
+        // o portal separa em abas (ERPSERV/BIZIFY) e passa ?company_id para escopar tudo.
+        $scopeIds = $this->access->companiesScope($u);
+        $companiesList = $scopeIds
+            ? \App\Models\Company::whereIn('id', $scopeIds)->orderBy('name')->get(['id', 'name', 'slug', 'color'])
+            : collect();
         // Empresa do cliente (mesma lógica do openTicket) para escopar as opções sem depender do
         // CompanyScope (que fica NULL p/ cliente). withoutGlobalScopes + company_id explícito.
-        $companyId = $u->current_company_id
-            ?: ($u->home_company_id ?: (optional(HelpDeskStatus::default())->company_id ?: 1));
+        $reqCompany = (int) $request->query('company_id');
+        $companyId = ($reqCompany && (empty($scopeIds) || in_array($reqCompany, $scopeIds, true)))
+            ? $reqCompany
+            : ($u->current_company_id ?: ($u->home_company_id ?: (optional(HelpDeskStatus::default())->company_id ?: 1)));
+        if ($scopeIds && !in_array($companyId, $scopeIds, true)) $companyId = (int) $scopeIds[0]; // fora do escopo → 1ª permitida
         $cats = \App\Models\HelpDeskCategory::withoutGlobalScopes()->where('company_id', $companyId)
             ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
         $svcs = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
@@ -121,6 +130,8 @@ class HelpDeskPortalController extends Controller
             'open_on_behalf' => $onBehalf,
             'contacts'       => $contacts,
             'tags'           => $tags,
+            'companies'      => $companiesList, // empresas do grupo permitidas (abas do portal)
+            'company_id'     => $companyId,     // empresa efetiva desta resposta
         ]]);
     }
 
@@ -135,8 +146,14 @@ class HelpDeskPortalController extends Controller
     public function myTickets(Request $request): JsonResponse
     {
         $user = $request->user();
+        // Aba de empresa (ERPSERV/BIZIFY) do portal: filtra os chamados por company_id, só se a
+        // empresa estiver no escopo permitido do usuário (evita ver de empresa não autorizada).
+        $reqCompany = (int) $request->query('company_id');
+        $scopeIds = $this->access->companiesScope($user);
+        if ($reqCompany && $scopeIds && !in_array($reqCompany, $scopeIds, true)) $reqCompany = 0;
         $withRels = fn ($q) => $q
             ->with(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'assignee:id,name', 'contact:id,name'])
+            ->when($reqCompany, fn ($qq) => $qq->where('company_id', $reqCompany))
             ->when($request->boolean('open'), fn ($qq) => $qq->whereHas('status', fn ($s) => $s->where('is_open', true)))
             ->orderByDesc('updated_at');
 
@@ -263,8 +280,17 @@ class HelpDeskPortalController extends Controller
         // o BelongsToCompany carimbava NULL. Usa a empresa do status DEFAULT (mesma empresa onde o
         // chamado vai viver); prefere o contexto do usuário se existir; fallback final = 1.
         $status    = HelpDeskStatus::default();
-        $companyId = $request->user()->current_company_id
-            ?: ($request->user()->home_company_id ?: (optional($status)->company_id ?: 1));
+        // Empresa do chamado: a aba escolhida (company_id) quando permitida; senão o contexto do usuário.
+        $scopeIds  = $this->access->companiesScope($request->user());
+        $reqCompany = (int) $request->input('company_id');
+        $companyId = ($reqCompany && (empty($scopeIds) || in_array($reqCompany, $scopeIds, true)))
+            ? $reqCompany
+            : ($request->user()->current_company_id ?: ($request->user()->home_company_id ?: (optional($status)->company_id ?: 1)));
+        if ($scopeIds && !in_array($companyId, $scopeIds, true)) $companyId = (int) $scopeIds[0];
+        // Status inicial DA EMPRESA do chamado (Kanban/colunas são por empresa).
+        $status = HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->where('is_default', true)->orderBy('sort_order')->first()
+            ?? HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('sort_order')->first()
+            ?? $status;
 
         $ticket = HelpDeskTicket::create(array_merge($v, [
             'customer_id'       => $cid,
