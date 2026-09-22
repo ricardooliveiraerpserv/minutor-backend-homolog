@@ -143,20 +143,21 @@ class HelpDeskAccessProfileController extends Controller
     /** Empresas do grupo (ERPSERV/BIZIFY) às quais o usuário fica vinculado (pivot company_user). */
     public function setCompanies(Request $request, User $user): JsonResponse
     {
-        // Cliente pertence a um CUSTOMER (empresa externa), nunca às empresas do GRUPO
-        // (ERPSERV/BIZIFY). Vincular cliente ao grupo faz o effectiveType virar interno
-        // (papel do company_user) e vaza acesso — por isso é bloqueado.
-        abort_if($user->type === 'cliente', 422, 'Cliente não é vinculado às empresas do grupo.');
         $v = $request->validate([
             'company_ids'   => 'present|array',
             'company_ids.*' => 'integer|exists:companies,id',
         ]);
         $ids = array_values(array_unique(array_map('intval', $v['company_ids'])));
+        $existing = $user->companies()->pluck('company_user.role', 'companies.id')->all();
+        // ⚠️ CLIENTE: papel SEMPRE 'cliente' (nunca papel interno — senão o effectiveType vira
+        // interno pelo company_user e vaza acesso). Define as empresas do PORTAL (abas ERPSERV/BIZIFY).
+        // Interno: preserva/deriva o papel existente.
         $roles = ['admin', 'administrativo', 'coordenador', 'consultor', 'cliente', 'parceiro_admin'];
         $defaultRole = in_array($user->type, $roles, true) ? $user->type : 'consultor';
-        $existing = $user->companies()->pluck('company_user.role', 'companies.id')->all(); // preserva o papel já existente
         $payload = [];
-        foreach ($ids as $id) $payload[$id] = ['role' => $existing[$id] ?? $defaultRole];
+        foreach ($ids as $id) {
+            $payload[$id] = ['role' => $user->type === 'cliente' ? 'cliente' : ($existing[$id] ?? $defaultRole)];
+        }
         $user->companies()->sync($payload);
         return response()->json(['data' => ['id' => $user->id, 'company_ids' => $ids]]);
     }

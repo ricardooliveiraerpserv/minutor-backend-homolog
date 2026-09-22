@@ -350,6 +350,12 @@ class HelpDeskAccessPolicy
     public function companiesScope(?User $user): array
     {
         if (!$user) return [];
+        // CLIENTE: se tiver empresas vinculadas explicitamente (company_user, definidas no cadastro),
+        // elas mandam — são as empresas/abas do portal. Senão, cai no perfil de acesso.
+        if ($user->type === 'cliente') {
+            $own = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->unique()->values()->all();
+            if ($own) return $own;
+        }
         $p = $this->profile($user);
         if (!$p) {
             $ids = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->all();
