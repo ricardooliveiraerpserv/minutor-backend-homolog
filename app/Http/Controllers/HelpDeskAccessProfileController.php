@@ -121,6 +121,23 @@ class HelpDeskAccessProfileController extends Controller
         return response()->json(['data' => ['id' => $user->id, 'helpdesk_access_profile_id' => $user->helpdesk_access_profile_id]]);
     }
 
+    /** Empresas do grupo (ERPSERV/BIZIFY) às quais o usuário fica vinculado (pivot company_user). */
+    public function setCompanies(Request $request, User $user): JsonResponse
+    {
+        $v = $request->validate([
+            'company_ids'   => 'present|array',
+            'company_ids.*' => 'integer|exists:companies,id',
+        ]);
+        $ids = array_values(array_unique(array_map('intval', $v['company_ids'])));
+        $roles = ['admin', 'administrativo', 'coordenador', 'consultor', 'cliente', 'parceiro_admin'];
+        $defaultRole = in_array($user->type, $roles, true) ? $user->type : 'consultor';
+        $existing = $user->companies()->pluck('company_user.role', 'companies.id')->all(); // preserva o papel já existente
+        $payload = [];
+        foreach ($ids as $id) $payload[$id] = ['role' => $existing[$id] ?? $defaultRole];
+        $user->companies()->sync($payload);
+        return response()->json(['data' => ['id' => $user->id, 'company_ids' => $ids]]);
+    }
+
     /** Atualização em massa: aplica um perfil de acesso a vários usuários de uma vez. */
     public function bulkSetAccessProfile(Request $request): JsonResponse
     {

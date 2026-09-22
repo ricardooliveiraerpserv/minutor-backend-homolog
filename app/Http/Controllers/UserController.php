@@ -120,7 +120,7 @@ class UserController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 500);
         $page = (int) $request->get('page', 1);
 
-        $query = User::with(['customer', 'partner:id,name']);
+        $query = User::with(['customer', 'partner:id,name', 'companies:id']);
 
         // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
@@ -235,6 +235,8 @@ class UserController extends Controller
         $items = collect($users->items())->map(function ($user) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            // Empresas do grupo às quais o usuário está vinculado (para a aba HD).
+            $userData['company_ids'] = $user->relationLoaded('companies') ? $user->companies->pluck('id')->all() : [];
             // Pré-cadastro pendente de convite (fase 1a/1b): cliente sem senha, desabilitado.
             // `password` não é serializado (hidden), então o FE precisa deste booleano derivado.
             $userData['is_pending_invite'] = $user->type === 'cliente' && !$user->enabled && $user->password === null;
