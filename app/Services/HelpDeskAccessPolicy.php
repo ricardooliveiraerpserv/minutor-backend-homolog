@@ -342,30 +342,31 @@ class HelpDeskAccessPolicy
 
     // ── Escopo de EMPRESAS (multi-empresa no Help Desk) ───────────────────────
     /**
-     * Empresas (company_id) que o agente ATENDE no Help Desk. Fonte de verdade:
-     * permissions['policies.companies'] (array de ids). Fallbacks:
-     *  - sem perfil vinculado → todas as empresas do usuário (compat/rollout);
-     *  - perfil sem a lista definida → a empresa do próprio perfil (mantém a segregação atual).
+     * Empresas (company_id) que o usuário ATENDE (agente) ou ACESSA (cliente, abas do portal).
+     * FONTE DE VERDADE: empresas vinculadas ao usuário no CADASTRO (company_user) — definidas na
+     * aba Help Desk do cadastro de usuários. Vale para agente E cliente.
+     * Fallbacks (compat/rollout, só quando o cadastro ainda não tem empresas):
+     *  - perfil de acesso com policies.companies definido → essa lista;
+     *  - perfil sem a lista → a empresa do próprio perfil;
+     *  - sem perfil → a empresa atual do usuário.
      */
     public function companiesScope(?User $user): array
     {
         if (!$user) return [];
-        // CLIENTE: se tiver empresas vinculadas explicitamente (company_user, definidas no cadastro),
-        // elas mandam — são as empresas/abas do portal. Senão, cai no perfil de acesso.
-        if ($user->type === 'cliente') {
-            $own = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->unique()->values()->all();
-            if ($own) return $own;
-        }
+        // 1) Cadastro do usuário (company_user) manda — para agente e cliente.
+        $own = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->unique()->values()->all();
+        if ($own) return $own;
+        // 2) Fallback: perfil de acesso (compat enquanto o cadastro não define as empresas).
         $p = $this->profile($user);
-        if (!$p) {
-            $ids = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->all();
-            return $ids ?: array_values(array_filter([(int) $user->current_company_id]));
+        if ($p) {
+            $list = is_array($p->permissions) ? ($p->permissions['policies.companies'] ?? null) : null;
+            if (is_array($list) && count($list)) {
+                return array_values(array_unique(array_map('intval', $list)));
+            }
+            if ((int) $p->company_id) return [(int) $p->company_id];
         }
-        $list = is_array($p->permissions) ? ($p->permissions['policies.companies'] ?? null) : null;
-        if (is_array($list) && count($list)) {
-            return array_values(array_unique(array_map('intval', $list)));
-        }
-        return array_values(array_filter([(int) $p->company_id]));
+        // 3) Último recurso: empresa atual do usuário.
+        return array_values(array_filter([(int) $user->current_company_id]));
     }
 
     /** Atende (pode ver/atuar em) tickets desta empresa? */
