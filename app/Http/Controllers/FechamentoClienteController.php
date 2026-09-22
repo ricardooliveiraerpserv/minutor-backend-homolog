@@ -335,6 +335,36 @@ class FechamentoClienteController extends Controller
         };
     }
 
+    /**
+     * On Demand — CRÉDITO PRÉ-PAGO por transferência de horas.
+     * Quando horas são transferidas PARA um projeto On Demand (aporte motivo='transferencia'),
+     * viram crédito: o consumo abate o crédito primeiro e NÃO é cobrado até esgotar.
+     * Retorna o crédito ainda DISPONÍVEL no início de $fromMonth = Σ crédito − consumo billável
+     * anterior. 0 quando não há transferência (todo On Demand existente cobra igual a hoje).
+     *
+     * @param array<int> $allIds  pai + filhos do contrato On Demand
+     */
+    private function onDemandTransferCreditRemaining(array $allIds, string $fromMonth): float
+    {
+        $creditTotal = (float) \App\Models\HourContribution::whereIn('project_id', $allIds)
+            ->where('motivo', 'transferencia')
+            ->whereNull('deleted_at')
+            ->sum('contributed_hours');
+        if ($creditTotal <= 0.0) {
+            return 0.0;
+        }
+        $before = Timesheet::whereIn('project_id', $allIds)
+            ->whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE])
+            ->whereNull('deleted_at')
+            ->where('date', '<', $fromMonth . '-01')
+            ->get();
+        $consumedBefore = 0.0;
+        foreach ($before as $t) {
+            $consumedBefore += $t->billableHours();
+        }
+        return round(max(0.0, $creditTotal - $consumedBefore), 2);
+    }
+
     private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null, ?int $projectId = null): array
     {
         $from = "{$fromMonth}-01";
@@ -453,16 +483,39 @@ class FechamentoClienteController extends Controller
             $totalProjeto = round($totalProjeto, 2);
             $basesProjeto = round($basesProjeto, 2);
 
+            // On Demand + crédito de transferência: o consumo abate o crédito e NÃO é cobrado
+            // até esgotar; só cobra o EXCEDENTE. Receita já foi reconhecida na origem.
+            $creditoAbatido  = 0.0;
+            $creditoRestante = 0.0;
+            if (($project?->contractType?->code) === 'on_demand') {
+                $childIds = $projects->filter(fn ($p) => ($p->parent_project_id ?: $p->id) === $projId)->keys()->all();
+                $allIds   = array_values(array_unique(array_merge([$projId], $childIds)));
+                $remaining = $this->onDemandTransferCreditRemaining($allIds, $fromMonth);
+                if ($remaining > 0.0) {
+                    $creditoAbatido = min($horasProjeto, $remaining);
+                    if ($creditoAbatido > 0.0 && $horasProjeto > 0.0) {
+                        $frac = ($horasProjeto - $creditoAbatido) / $horasProjeto;
+                        $totalProjeto = round($totalProjeto * $frac, 2);
+                        $basesProjeto = round($basesProjeto * $frac, 2);
+                    }
+                    $creditoRestante = round($remaining - $creditoAbatido, 2);
+                }
+            }
+
             $projetos[] = [
-                'projeto_id'     => $projId,
-                'projeto_nome'   => $project?->name ?? '—',
-                'projeto_codigo' => $project?->code ?? '—',
-                'tipo_contrato'  => $project?->contractType?->name ?? '—',
-                'horas'          => $horasProjeto,
-                'valor_hora'     => $projetoRate,
-                'total_receita'  => $totalProjeto,
-                'extra_receita'  => round($totalProjeto - $basesProjeto, 2),
-                'apontamentos'   => $apontamentos,
+                'projeto_id'      => $projId,
+                'projeto_nome'    => $project?->name ?? '—',
+                'projeto_codigo'  => $project?->code ?? '—',
+                'tipo_contrato'   => $project?->contractType?->name ?? '—',
+                'horas'           => $horasProjeto,
+                'valor_hora'      => $projetoRate,
+                'total_receita'   => $totalProjeto,
+                'extra_receita'   => round($totalProjeto - $basesProjeto, 2),
+                // Crédito pré-pago On Demand (transferência): abatido do mês e saldo restante.
+                'credito_abatido'  => round($creditoAbatido, 2),
+                'credito_restante' => $creditoRestante,
+                'horas_cobradas'   => round($horasProjeto - $creditoAbatido, 2),
+                'apontamentos'    => $apontamentos,
             ];
 
             $totalHoras += $horasProjeto;
