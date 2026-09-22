@@ -78,12 +78,13 @@ class HelpDeskTicketController extends Controller
             ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $user->id)
             || ($ticket->requester_email && $user->email && strcasecmp((string) $ticket->requester_email, (string) $user->email) === 0)
         ));
-        // Modo do campo de TEMPO (apontamento) no HD, seguindo a MESMA regra do app:
-        //  - contrato SEM integração de horas (helpdesk_integration_enabled) → 'optional' (exceção do contrato);
-        //  - com integração + consultor BLOQUEADO de apontar manual (nem global can_timesheet_sustentacao,
-        //    nem allow_manual_timesheet no projeto) → 'required' (deve apontar via HD);
-        //  - com integração + consultor que APONTA MANUAL → 'hidden' (aponta separado; campo some).
-        $data['apontamento_time_mode'] = 'optional';
+        // Modo do campo de TEMPO (apontamento) no HD — MESMA regra de PRD (SEM estado "optional"):
+        //  - consultor LIBERADO a apontar manual (can_timesheet_sustentacao OU allow_manual_timesheet
+        //    no projeto) → NÃO obrigatório → campo NÃO aparece ('hidden'): ele aponta manual à parte;
+        //  - consultor NÃO liberado → apontar via chamado é OBRIGATÓRIO ('required');
+        //  - ADMIN nunca é forçado → 'hidden'.
+        // Sem contrato/integração não há o que movimentar → 'hidden' (não obrigatório, some).
+        $data['apontamento_time_mode'] = 'hidden';
         if ($user) {
             $contract = $ticket->relationLoaded('contract') ? $ticket->contract : ($ticket->contract_id ? $ticket->contract()->first() : null);
             if ($contract && $contract->helpdesk_integration_enabled) {
@@ -91,11 +92,12 @@ class HelpDeskTicketController extends Controller
                     ->where('project_id', $ticket->project_id)->where('user_id', $user->id)
                     ->where('allow_manual_timesheet', true)->exists();
                 $canManual = ((bool) $user->can_timesheet_sustentacao) || $allowedInProject;
+                // Liberado → não obrigatório → não aparece; não liberado → obrigatório.
                 $data['apontamento_time_mode'] = $canManual ? 'hidden' : 'required';
             }
-            // ADMIN não tem obrigatoriedade de apontar horas → nunca 'required' (campo fica opcional).
+            // ADMIN nunca é forçado a apontar → não obrigatório → não aparece.
             if ($user->type === 'admin' && $data['apontamento_time_mode'] === 'required') {
-                $data['apontamento_time_mode'] = 'optional';
+                $data['apontamento_time_mode'] = 'hidden';
             }
         }
         return $data;
