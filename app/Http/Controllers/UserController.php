@@ -537,6 +537,16 @@ class UserController extends Controller
             }
             if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
 
+            // Regra: TODO CLIENTE entra com um perfil de acesso do Help Desk. Se não veio um
+            // explicitamente, aplica o perfil-padrão de cliente (is_default, kind=cliente).
+            if ($user->type === 'cliente' && !$user->helpdesk_access_profile_id) {
+                $defId = \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
+                    ->where('enabled', true)
+                    ->orderByDesc('is_default')->orderBy('id')
+                    ->value('id');
+                if ($defId) { $user->helpdesk_access_profile_id = $defId; $user->save(); }
+            }
+
             // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
             $this->syncContractType($user, $request);
 
@@ -650,6 +660,8 @@ class UserController extends Controller
         $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
         // Equipes de Help Desk (pivot) — para o form marcar as equipes atuais.
         $userData['helpdesk_team_ids'] = DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
+        // Empresas do grupo vinculadas (ERPSERV/BIZIFY) — para o form prefill (portal do cliente / fila do agente).
+        $userData['company_ids'] = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->unique()->values()->all();
 
         return response()->json($userData);
     }
