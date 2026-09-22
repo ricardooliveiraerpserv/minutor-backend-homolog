@@ -63,7 +63,7 @@ class HourContributionController extends Controller
         $data = $request->validate([
             'to_project_id' => 'required|integer|exists:projects,id',
             'hours'         => 'required|numeric|min:0.01|max:999999',
-            'description'   => 'nullable|string|max:1000',
+            'description'   => 'required|string|max:1000',
         ]);
 
         $dst = Project::find($data['to_project_id']);

@@ -4404,7 +4404,7 @@ class ContractController extends Controller
         $data = $request->validate([
             'to_contract_id' => 'required|integer|exists:contracts,id',
             'hours'          => 'required|numeric|min:0.01|max:999999',
-            'description'    => 'nullable|string|max:1000',
+            'description'    => 'required|string|max:1000',
         ]);
 
         $dest = Contract::find($data['to_contract_id']);
