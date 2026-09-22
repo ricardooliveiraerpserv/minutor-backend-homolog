@@ -123,16 +123,20 @@ class HelpDeskTicket extends Model
      */
     public function solicitanteDepartment(): ?string
     {
-        $u = $this->requester ?: ($this->requester_user_id ? User::find($this->requester_user_id) : null);
-        if ($u && $u->helpdesk_department_id) {
-            return HelpDeskDepartment::whereKey($u->helpdesk_department_id)->value('name');
+        // Busca por ID direto (não usa a relação eager-loaded, que carrega só id,name,email —
+        // sem helpdesk_department_id — e faria isto retornar null).
+        if ($this->requester_user_id) {
+            $deptId = User::whereKey($this->requester_user_id)->value('helpdesk_department_id');
+            if ($deptId) return HelpDeskDepartment::whereKey($deptId)->value('name');
         }
-        $c = $this->contact;
-        if ($c && $c->departamento) return $c->departamento;
-        if (!$u && !$c && $this->requester_email) {
+        if ($this->customer_contact_id) {
+            $dep = CustomerContact::whereKey($this->customer_contact_id)->value('departamento');
+            if ($dep) return $dep;
+        }
+        if (!$this->requester_user_id && !$this->customer_contact_id && $this->requester_email) {
             $email = mb_strtolower($this->requester_email);
-            $uu = User::whereRaw('lower(email) = ?', [$email])->first(['helpdesk_department_id']);
-            if ($uu && $uu->helpdesk_department_id) return HelpDeskDepartment::whereKey($uu->helpdesk_department_id)->value('name');
+            $uDeptId = User::whereRaw('lower(email) = ?', [$email])->value('helpdesk_department_id');
+            if ($uDeptId) return HelpDeskDepartment::whereKey($uDeptId)->value('name');
             $dep = CustomerContact::whereRaw('lower(email) = ?', [$email])->value('departamento');
             if ($dep) return $dep;
         }
@@ -142,9 +146,11 @@ class HelpDeskTicket extends Model
     /** Perfil do SOLICITANTE (informativo): perfil do usuário do portal, ou "Contato" p/ contato do cadastro. */
     public function solicitantePerfil(): ?string
     {
-        $u = $this->requester ?: ($this->requester_user_id ? User::find($this->requester_user_id) : null);
-        if ($u) return self::perfilLabel($u->type);
-        if ($this->contact) return 'Contato';
+        if ($this->requester_user_id) {
+            $type = User::whereKey($this->requester_user_id)->value('type');
+            if ($type) return self::perfilLabel($type);
+        }
+        if ($this->customer_contact_id) return 'Contato';
         if ($this->requester_email) {
             $type = User::whereRaw('lower(email) = ?', [mb_strtolower($this->requester_email)])->value('type');
             return $type ? self::perfilLabel($type) : 'Contato';
