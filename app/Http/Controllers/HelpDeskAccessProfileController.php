@@ -124,6 +124,10 @@ class HelpDeskAccessProfileController extends Controller
     /** Empresas do grupo (ERPSERV/BIZIFY) às quais o usuário fica vinculado (pivot company_user). */
     public function setCompanies(Request $request, User $user): JsonResponse
     {
+        // Cliente pertence a um CUSTOMER (empresa externa), nunca às empresas do GRUPO
+        // (ERPSERV/BIZIFY). Vincular cliente ao grupo faz o effectiveType virar interno
+        // (papel do company_user) e vaza acesso — por isso é bloqueado.
+        abort_if($user->type === 'cliente', 422, 'Cliente não é vinculado às empresas do grupo.');
         $v = $request->validate([
             'company_ids'   => 'present|array',
             'company_ids.*' => 'integer|exists:companies,id',
