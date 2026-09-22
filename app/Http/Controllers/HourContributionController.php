@@ -31,6 +31,8 @@ class HourContributionController extends Controller
         }
         $targets = Project::where('customer_id', $project->customer_id)
             ->where('id', '!=', $project->id)
+            // Não oferece INVESTIMENTO como destino (regra: não transfere horas p/ investimento).
+            ->where(fn ($q) => $q->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
             ->orderBy('code')
             ->get(['id', 'code', 'name'])
             ->map(fn ($p) => [
@@ -72,6 +74,9 @@ class HourContributionController extends Controller
         }
         if (!$project->customer_id || (int) $dst->customer_id !== (int) $project->customer_id) {
             return response()->json(['message' => 'A transferência só é permitida entre projetos do MESMO cliente.'], 422);
+        }
+        if ($dst->is_investimento_comercial) {
+            return response()->json(['message' => 'Não é permitido transferir horas para projetos de INVESTIMENTO.'], 422);
         }
 
         $hours     = round((float) $data['hours'], 2);
