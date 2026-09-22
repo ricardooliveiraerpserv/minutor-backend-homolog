@@ -127,6 +127,16 @@ class HelpDeskAccessProfileController extends Controller
     }
 
     /** Equipes de atendimento do usuário (pivot helpdesk_team_user) — atribuição inline na aba HD. */
+    /** Liga/desliga "Pode apontar manualmente em sustentação" (can_timesheet_sustentacao) inline. */
+    public function setCanTimesheetSustentacao(Request $request, User $user): JsonResponse
+    {
+        abort_if($user->type === 'cliente', 422, 'Não se aplica a cliente.');
+        $v = $request->validate(['can_timesheet_sustentacao' => 'required|boolean']);
+        $user->can_timesheet_sustentacao = (bool) $v['can_timesheet_sustentacao'];
+        $user->save();
+        return response()->json(['data' => ['id' => $user->id, 'can_timesheet_sustentacao' => (bool) $user->can_timesheet_sustentacao]]);
+    }
+
     public function setTeams(Request $request, User $user): JsonResponse
     {
         abort_if($user->type === 'cliente', 422, 'Cliente não entra em equipe de atendimento.');

@@ -381,6 +381,7 @@ Route::prefix('v1')->group(function () {
         Route::patch('/help-desk/people/{user}/access-profile',      [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setAccessProfile']);
         Route::patch('/help-desk/people/{user}/companies',           [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setCompanies']);
         Route::patch('/help-desk/people/{user}/teams',               [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setTeams']);
+        Route::patch('/help-desk/people/{user}/can-timesheet-sustentacao', [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setCanTimesheetSustentacao']);
         // Departamentos do Help Desk (escopo por cliente) + vínculo pessoa↔departamento.
         // Gestão interna — block.cliente barra o perfil cliente no backend (2ª camada).
         Route::middleware('block.cliente')->group(function () {
