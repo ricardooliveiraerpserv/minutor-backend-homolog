@@ -58,7 +58,8 @@ class HelpDeskTicketController extends Controller
         $data['has_source_code'] = \App\Models\SourceCodeRequest::where('ticket_id', $ticket->id)->exists();
         // Resultado da varredura de fonte da GMUD (null se ainda não é/foi GMUD).
         $data['gmud_source_status'] = $ticket->gmud_source_status ?? null;
-        $data['solicitante']    = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail()];
+        $data['solicitante']    = ['name' => $ticket->solicitanteName(), 'email' => $ticket->solicitanteEmail(),
+            'department' => $ticket->solicitanteDepartment(), 'perfil' => $ticket->solicitantePerfil()];
         $data['continuation_ticket'] = optional($ticket->relationLoaded('continuations')
             ? $ticket->continuations->sortByDesc('id')->first()
             : $ticket->continuations()->orderByDesc('id')->first())->only(['id', 'ticket_number']) ?: null;
@@ -1236,15 +1237,25 @@ class HelpDeskTicketController extends Controller
         } else {
             $usersQ->where('type', 'cliente')->where('customer_id', $customerId);
         }
-        $users = $usersQ->tap($like)->orderBy('name')->limit(500)
-            ->get(['id', 'name', 'email'])
-            ->map(fn ($u) => ['kind' => 'user', 'id' => $u->id, 'name' => $u->name, 'email' => $u->email]);
+        $usersRaw = $usersQ->tap($like)->orderBy('name')->limit(500)
+            ->get(['id', 'name', 'email', 'type', 'helpdesk_department_id']);
+        // Nomes dos departamentos (Help Desk) dos usuários, em bloco (sem N+1).
+        $deptNames = \App\Models\HelpDeskDepartment::whereIn('id', $usersRaw->pluck('helpdesk_department_id')->filter()->unique())
+            ->pluck('name', 'id');
+        $users = $usersRaw->map(fn ($u) => [
+            'kind' => 'user', 'id' => $u->id, 'name' => $u->name, 'email' => $u->email,
+            'department' => $u->helpdesk_department_id ? ($deptNames[$u->helpdesk_department_id] ?? null) : null,
+            'perfil'     => \App\Models\HelpDeskTicket::perfilLabel($u->type),
+        ]);
 
         $contacts = \App\Models\CustomerContact::query()
             ->where('customer_id', $customerId)
             ->tap($like)->orderBy('name')->limit(200)
-            ->get(['id', 'name', 'email'])
-            ->map(fn ($c) => ['kind' => 'contact', 'id' => $c->id, 'name' => $c->name, 'email' => $c->email]);
+            ->get(['id', 'name', 'email', 'departamento'])
+            ->map(fn ($c) => [
+                'kind' => 'contact', 'id' => $c->id, 'name' => $c->name, 'email' => $c->email,
+                'department' => $c->departamento ?: null, 'perfil' => 'Contato',
+            ]);
 
         return response()->json(['data' => $users->concat($contacts)->values()]);
     }

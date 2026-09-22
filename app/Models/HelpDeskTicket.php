@@ -105,6 +105,53 @@ class HelpDeskTicket extends Model
         return optional($this->contact)->email ?: optional($this->requester)->email ?: $this->requester_email;
     }
 
+    /** Rótulo amigável do perfil (type) do usuário — usado no solicitante (informativo). */
+    public static function perfilLabel(?string $type): ?string
+    {
+        if (!$type) return null;
+        return [
+            'admin' => 'Administrador', 'administrativo' => 'Administrativo',
+            'coordenador' => 'Coordenador', 'consultor' => 'Consultor',
+            'cliente' => 'Cliente', 'parceiro_admin' => 'Parceiro ADM', 'comercial' => 'Comercial',
+        ][$type] ?? $type;
+    }
+
+    /**
+     * Departamento do SOLICITANTE (informativo). Usuário do portal → departamento estruturado do
+     * Help Desk (helpdesk_department_id); contato do cadastro → campo livre "departamento" (CRM).
+     * Se não houver, retorna null (o front mostra o campo em branco).
+     */
+    public function solicitanteDepartment(): ?string
+    {
+        $u = $this->requester ?: ($this->requester_user_id ? User::find($this->requester_user_id) : null);
+        if ($u && $u->helpdesk_department_id) {
+            return HelpDeskDepartment::whereKey($u->helpdesk_department_id)->value('name');
+        }
+        $c = $this->contact;
+        if ($c && $c->departamento) return $c->departamento;
+        if (!$u && !$c && $this->requester_email) {
+            $email = mb_strtolower($this->requester_email);
+            $uu = User::whereRaw('lower(email) = ?', [$email])->first(['helpdesk_department_id']);
+            if ($uu && $uu->helpdesk_department_id) return HelpDeskDepartment::whereKey($uu->helpdesk_department_id)->value('name');
+            $dep = CustomerContact::whereRaw('lower(email) = ?', [$email])->value('departamento');
+            if ($dep) return $dep;
+        }
+        return null;
+    }
+
+    /** Perfil do SOLICITANTE (informativo): perfil do usuário do portal, ou "Contato" p/ contato do cadastro. */
+    public function solicitantePerfil(): ?string
+    {
+        $u = $this->requester ?: ($this->requester_user_id ? User::find($this->requester_user_id) : null);
+        if ($u) return self::perfilLabel($u->type);
+        if ($this->contact) return 'Contato';
+        if ($this->requester_email) {
+            $type = User::whereRaw('lower(email) = ?', [mb_strtolower($this->requester_email)])->value('type');
+            return $type ? self::perfilLabel($type) : 'Contato';
+        }
+        return null;
+    }
+
     // ── Vínculos locais ──────────────────────────────────────────────────────
     public function customer(): BelongsTo  { return $this->belongsTo(Customer::class); }
     public function contact(): BelongsTo   { return $this->belongsTo(CustomerContact::class, 'customer_contact_id'); }
