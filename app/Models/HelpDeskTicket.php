@@ -146,14 +146,26 @@ class HelpDeskTicket extends Model
     /** Perfil do SOLICITANTE (informativo): perfil do usuário do portal, ou "Contato" p/ contato do cadastro. */
     public function solicitantePerfil(): ?string
     {
+        // Nome do PERFIL DE ACESSO do Help Desk vinculado ao usuário (ex.: "Clientes (Padrão)").
+        // Fallback: rótulo do tipo (Cliente/Consultor…) se o usuário não tiver perfil HD.
+        $perfilFor = function (int $userId): ?string {
+            $u = User::whereKey($userId)->first(['type', 'helpdesk_access_profile_id']);
+            if (!$u) return null;
+            if ($u->helpdesk_access_profile_id) {
+                $name = HelpDeskAccessProfile::whereKey($u->helpdesk_access_profile_id)->value('name');
+                if ($name) return $name;
+            }
+            return self::perfilLabel($u->type);
+        };
         if ($this->requester_user_id) {
-            $type = User::whereKey($this->requester_user_id)->value('type');
-            if ($type) return self::perfilLabel($type);
+            $p = $perfilFor((int) $this->requester_user_id);
+            if ($p) return $p;
         }
         if ($this->customer_contact_id) return 'Contato';
         if ($this->requester_email) {
-            $type = User::whereRaw('lower(email) = ?', [mb_strtolower($this->requester_email)])->value('type');
-            return $type ? self::perfilLabel($type) : 'Contato';
+            $uid = User::whereRaw('lower(email) = ?', [mb_strtolower($this->requester_email)])->value('id');
+            if ($uid) { $p = $perfilFor((int) $uid); if ($p) return $p; }
+            return 'Contato';
         }
         return null;
     }
