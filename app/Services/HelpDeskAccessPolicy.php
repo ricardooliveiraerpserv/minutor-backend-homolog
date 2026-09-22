@@ -224,6 +224,7 @@ class HelpDeskAccessPolicy
     /** Vê a sinalização de COLISÃO (quem mais está no chamado). Default: sim. */
     public function canSeeCollision(?User $user): bool
     {
+        if ($user && $user->type === 'admin') return true; // admin sempre enxerga a colisão (quem mais está no chamado)
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.collision', true);
     }
 
