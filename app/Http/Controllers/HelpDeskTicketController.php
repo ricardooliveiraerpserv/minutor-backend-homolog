@@ -277,6 +277,12 @@ class HelpDeskTicketController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        // 🔒 Área de ATENDIMENTO (fila/chamados do agente): cliente NÃO acessa — ele usa o
+        // Portal (/help-desk/portal). Sem este gate, um cliente que chega à URL de agente
+        // enxergaria a fila inteira (viewScope do perfil de agente cai no default 'all').
+        $u = $request->user();
+        abort_if($u && $u->effectiveType() === 'cliente', 403, 'Área de atendimento disponível apenas para agentes.');
+
         // 🔎 Instrumentação temporária (?debug=1): conta queries, tempo por query e tempo de cada fase
         // → decide N+1 vs query pesada com DADO. Query normalizada (sem valores). Remover após diagnóstico.
         $debug = $request->boolean('debug');
