@@ -93,6 +93,11 @@ class HelpDeskAccessProfileController extends Controller
         $kind === 'cliente'
             ? $q->where('type', 'cliente')
             : $q->whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor']);
+        // Filtro opcional por cliente (customer_id): usado pela tela de Departamentos p/
+        // listar só as pessoas daquele cliente ao vincular ao departamento.
+        if ($request->filled('customer_id')) {
+            $q->where('customer_id', (int) $request->customer_id);
+        }
         // Busca SERVER-SIDE (antes do limite de 500): por nome da pessoa OU nome da empresa (cliente).
         if ($request->filled('search')) {
             $s = '%' . $request->search . '%';
