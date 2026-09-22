@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
+use App\Exports\UsersExport;
+use Maatwebsite\Excel\Facades\Excel;
 use App\Http\Traits\ResponseHelpers;
 use App\Traits\PasswordGenerator;
 use Illuminate\Http\Request;
@@ -114,6 +116,36 @@ class UserController extends Controller
      *     )
      * )
      */
+    /**
+     * Exporta TODOS os usuários em Excel, uma ABA por categoria
+     * (Consultor / Freelance / Parceiro / Interno / Cliente), com todos os campos.
+     * Mesmo gate do index (só quem pode ver todos os usuários).
+     */
+    public function exportUsers(Request $request)
+    {
+        $user = Auth::user();
+        $canSeeAll = !$user->isConsultor() && (
+            $user->isAdmin()
+            || $user->isCoordenador()
+            || $user->hasAccess('users.view_all')
+            || $user->hasAccess('users.update')
+            || $user->hasAccess('users.reset_password')
+            || $user->hasAccess('users.create')
+        );
+        if (!$canSeeAll) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+
+        $users = User::with([
+            'partner:id,name',
+            'customer:id,name',
+            'currentCompany:id,name',
+            'homeCompany:id,name',
+        ])->orderBy('name')->get();
+
+        return Excel::download(new UsersExport($users), 'usuarios_' . now()->format('Y-m-d') . '.xlsx');
+    }
+
     public function index(Request $request): JsonResponse
     {
         $user = Auth::user();

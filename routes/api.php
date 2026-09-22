@@ -915,6 +915,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/users/profile/reset-password', [UserController::class, 'selfResetPassword'])->name('users.profile.reset-password');
 
         // Gerenciamento completo de usuários (requer permissões específicas)
+        Route::get('/users/export', [UserController::class, 'exportUsers'])->name('users.export');
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::get('/users/counts', [UserController::class, 'counts'])->name('users.counts'); // ANTES de /users/{user}
         Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
