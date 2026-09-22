@@ -35,7 +35,12 @@ class HelpDeskController extends Controller
                 ->join('helpdesk_teams', 'helpdesk_teams.id', '=', 'helpdesk_team_user.helpdesk_team_id')
                 ->where('helpdesk_teams.company_id', $cid))
             ->distinct()->pluck('helpdesk_team_user.user_id');
-        $agents = User::whereIn('id', $memberIds)->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id']);
+        // Agente = membro de equipe OU quem tem PERFIL DE ACESSO de agente (mesmo sem equipe).
+        $agentProfileIds = \App\Models\HelpDeskAccessProfile::where('kind', 'agent')->pluck('id');
+        $profileUserIds = $agentProfileIds->isEmpty() ? collect()
+            : User::whereIn('helpdesk_access_profile_id', $agentProfileIds)->where('type', '<>', 'cliente')->pluck('id');
+        $allIds = $memberIds->merge($profileUserIds)->unique()->values();
+        $agents = User::whereIn('id', $allIds)->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id']);
         if ($companyId) {
             $pol = app(\App\Services\HelpDeskAccessPolicy::class);
             $agents = $agents->filter(fn ($u) => $pol->attendsCompany($u, $companyId))->values();
