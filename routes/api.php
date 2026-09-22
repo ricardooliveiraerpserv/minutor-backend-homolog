@@ -719,6 +719,9 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.update')->group(function () {
             Route::post('/projects/{project}/hour-contributions', [HourContributionController::class, 'store'])->name('hour-contributions.store');
+            // Transferência de horas entre projetos do MESMO cliente (grava par de aportes; só admin).
+            Route::get('/projects/{project}/transfer-info',  [HourContributionController::class, 'transferInfo'])->name('projects.transfer-info');
+            Route::post('/projects/{project}/transfer-hours', [HourContributionController::class, 'transferHours'])->name('projects.transfer-hours');
             Route::put('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'update'])->name('hour-contributions.update');
             Route::delete('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'destroy'])->name('hour-contributions.destroy');
         });
