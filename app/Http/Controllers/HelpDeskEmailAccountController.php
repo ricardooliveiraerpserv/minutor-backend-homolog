@@ -39,6 +39,7 @@ class HelpDeskEmailAccountController extends Controller
             'smtp_encryption' => 'nullable|in:ssl,tls,none',
             'settings'        => 'nullable|array',
             'default_team_id' => 'nullable|exists:helpdesk_teams,id',
+            'company_id'      => 'nullable|integer|exists:companies,id', // empresa do grupo (ERPSERV/BIZIFY) — chamados criados por esta caixa nascem nela
             'enabled'         => 'nullable|boolean',
         ];
     }
