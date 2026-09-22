@@ -33,6 +33,8 @@ use Illuminate\Support\Facades\Mail;
 
 class ContractController extends Controller
 {
+    use \App\Http\Traits\ListCacheable;
+
     /**
      * FASE 11.7 (PR 7b) — Map type-legado-pt → category-en (canônico). Vivia na
      * trait DualWritesEntityAttachments que foi removida junto com o legado.
@@ -4348,6 +4350,133 @@ class ContractController extends Controller
             }
         }
         return $achou ? round(($fator - 1) * 100, 4) : null;
+    }
+
+    /**
+     * Dados pro modal de transferência: saldo/valor-hora da ORIGEM + contratos ELEGÍVEIS
+     * (mesmo cliente, com projeto) pra escolher o destino.
+     */
+    public function transferInfo(Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        $user = \Illuminate\Support\Facades\Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+        $src       = $contract->project_id ? \App\Models\Project::find($contract->project_id) : null;
+        $available = $src ? round($src->getTotalAvailableHours(), 2) : 0.0;
+        $rate      = $src ? (float) ($src->hourly_rate ?? 0) : 0.0;
+
+        $targets = Contract::where('customer_id', $contract->customer_id)
+            ->where('id', '!=', $contract->id)
+            ->whereNotNull('project_id')
+            ->with('project:id,code,name')
+            ->get()
+            ->map(fn ($c) => [
+                'id'         => $c->id,
+                'label'      => ($c->project && $c->project->code ? $c->project->code . ' — ' : '') . ($c->project_name ?: ($c->project->name ?? ('Contrato #' . $c->id))),
+                'project_id' => $c->project_id,
+            ])->values();
+
+        return response()->json([
+            'source'  => [
+                'contract_id'     => $contract->id,
+                'has_project'     => (bool) $contract->project_id,
+                'available_hours' => $available,
+                'rate'            => $rate,
+            ],
+            'targets' => $targets,
+        ]);
+    }
+
+    /**
+     * Transfere horas de UM contrato para OUTRO do MESMO cliente. Grava o LOG como um PAR de
+     * aportes vinculados (transfer_group_id): origem −X@R e destino +X@R (motivo=transferencia).
+     * Move horas E valor (R = valor-hora vigente da origem). Bloqueia se a origem ficaria negativa.
+     * Só ADMIN. Mexe apenas em aportes (HourContribution), não toca em apontamentos/timesheets.
+     */
+    public function transferHours(\Illuminate\Http\Request $request, Contract $contract): \Illuminate\Http\JsonResponse
+    {
+        $user = \Illuminate\Support\Facades\Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['message' => 'Apenas administradores podem transferir horas.'], 403);
+        }
+
+        $data = $request->validate([
+            'to_contract_id' => 'required|integer|exists:contracts,id',
+            'hours'          => 'required|numeric|min:0.01|max:999999',
+            'description'    => 'required|string|max:1000',
+        ]);
+
+        $dest = Contract::find($data['to_contract_id']);
+        if (!$dest || (int) $dest->id === (int) $contract->id) {
+            return response()->json(['message' => 'Contrato destino inválido (deve existir e ser diferente da origem).'], 422);
+        }
+        if (!$contract->customer_id || (int) $dest->customer_id !== (int) $contract->customer_id) {
+            return response()->json(['message' => 'A transferência só é permitida entre contratos do MESMO cliente.'], 422);
+        }
+        if (!$contract->project_id || !$dest->project_id) {
+            return response()->json(['message' => 'Ambos os contratos precisam ter projeto vinculado para transferir horas.'], 422);
+        }
+
+        $src = \App\Models\Project::find($contract->project_id);
+        $dst = \App\Models\Project::find($dest->project_id);
+        if (!$src || !$dst) {
+            return response()->json(['message' => 'Projeto de origem/destino não encontrado.'], 422);
+        }
+
+        $hours     = round((float) $data['hours'], 2);
+        $available = round($src->getTotalAvailableHours(), 2);
+        if ($hours > $available) {
+            return response()->json([
+                'message'         => "Saldo insuficiente na origem: {$available}h disponíveis, transferência de {$hours}h bloqueada.",
+                'available_hours' => $available,
+            ], 422);
+        }
+
+        $rate    = (float) ($src->hourly_rate ?? 0);
+        $naoVal  = $rate <= 0;   // sem valor-hora na origem → transfere só horas
+        $group   = (string) \Illuminate\Support\Str::uuid();
+        $srcLbl  = $src->code ?: ('#' . $src->id);
+        $dstLbl  = $dst->code ?: ('#' . $dst->id);
+        $descTxt = trim((string) ($data['description'] ?? '')) ?: "Transferência de horas {$srcLbl} → {$dstLbl}";
+
+        DB::transaction(function () use ($src, $dst, $hours, $rate, $naoVal, $group, $descTxt, $user, $srcLbl, $dstLbl) {
+            $common = [
+                'hourly_rate'       => $naoVal ? null : $rate,
+                'nao_valorizado'    => $naoVal,
+                'motivo'            => 'transferencia',
+                'transfer_group_id' => $group,
+                'kanban_status'     => \App\Models\HourContribution::KANBAN_FINAL,
+                'contributed_by'    => $user->id,
+                'contributed_at'    => now(),
+            ];
+            $src->hourContributions()->create(array_merge($common, [
+                'contributed_hours' => -$hours,
+                'description'       => "SAÍDA — {$descTxt} (destino {$dstLbl})",
+            ]));
+            $dst->hourContributions()->create(array_merge($common, [
+                'contributed_hours' => $hours,
+                'description'       => "ENTRADA — {$descTxt} (origem {$srcLbl})",
+            ]));
+        });
+
+        $this->invalidateListCache('projects');
+
+        \Illuminate\Support\Facades\Log::info('🔁 [TRANSFER-HOURS] horas transferidas entre contratos', [
+            'transfer_group_id' => $group,
+            'from_contract'     => $contract->id, 'to_contract' => $dest->id,
+            'from_project'      => $src->id, 'to_project' => $dst->id,
+            'hours'             => $hours, 'rate' => $rate, 'by_user' => $user->id,
+        ]);
+
+        return response()->json([
+            'success'           => true,
+            'transfer_group_id' => $group,
+            'hours'             => $hours,
+            'rate'              => $rate,
+            'from'              => ['contract_id' => $contract->id, 'project' => $srcLbl, 'remaining_hours' => round($src->fresh()->getTotalAvailableHours(), 2)],
+            'to'                => ['contract_id' => $dest->id,     'project' => $dstLbl, 'available_hours' => round($dst->fresh()->getTotalAvailableHours(), 2)],
+        ]);
     }
 
 }

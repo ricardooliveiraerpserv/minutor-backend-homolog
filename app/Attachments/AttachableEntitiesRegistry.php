@@ -13,6 +13,7 @@ use App\Models\ContractRequestMessage;
 use App\Models\Expense;
 use App\Models\FechamentoNota;
 use App\Models\HourContribution;
+use App\Models\KanbanCard;
 use App\Models\Project;
 use App\Models\ProjectMessage;
 use App\Models\StageActivityEvent;
@@ -297,6 +298,21 @@ class AttachableEntitiesRegistry
                 'allowed_mime' => self::MIME_IMAGES,
                 'allowed_extensions' => ['png','jpg','jpeg','webp'],
                 'max_size_mb' => 5,
+            ],
+
+            // ── KANBAN_CARD (Kanban do Cliente — anexos do card) ──────────────
+            'KANBAN_CARD' => [
+                'model' => KanbanCard::class,
+                'categories' => ['attachment'],
+                'default_visibility' => 'customer',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
+                    if ($internalStaff($user)) return true;
+                    // Cliente dono do quadro (customer) vê/sobe/exclui anexos dos próprios cards.
+                    return $isClienteOfCustomer($user, $entity, optional(optional($entity)->board)->customer_id);
+                },
+                'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
+                'allowed_extensions' => ['pdf','docx','doc','xlsx','xls','csv','txt','png','jpg','jpeg','webp','gif'],
+                'max_size_mb' => 25,
             ],
         ];
 

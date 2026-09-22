@@ -155,6 +155,59 @@ Route::prefix('v1')->group(function () {
     Route::post('/skills-form/continue/{continueToken}/submit', [\App\Http\Controllers\SkillFormController::class, 'submit']);
 
     Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
+        // ===== Kanban do Cliente ("Meus Processos") =====
+        Route::prefix('client/kanban')->name('client.kanban.')->group(function () {
+            $c = \App\Http\Controllers\ClientKanbanController::class;
+            Route::get('/assignable-users', [$c, 'assignableUsers'])->name('assignable-users');
+            Route::get('/erpserv-users', [$c, 'erpservUsers'])->name('erpserv-users');
+            Route::get('/customers', [$c, 'customersWithUsers'])->name('customers');
+            Route::get('/customers/{customer}/users', [$c, 'customerUsers'])->name('customers.users');
+            // Quadros
+            Route::get('/boards', [$c, 'index'])->name('boards.index');
+            Route::post('/boards', [$c, 'storeBoard'])->name('boards.store');
+            Route::get('/boards/{board}', [$c, 'showBoard'])->name('boards.show');
+            Route::put('/boards/{board}', [$c, 'updateBoard'])->name('boards.update');
+            Route::delete('/boards/{board}', [$c, 'destroyBoard'])->name('boards.destroy');
+            Route::post('/boards/{board}/duplicate', [$c, 'duplicateBoard'])->name('boards.duplicate');
+            // Colunas
+            Route::post('/boards/{board}/columns', [$c, 'storeColumn'])->name('columns.store');
+            Route::post('/boards/{board}/columns/reorder', [$c, 'reorderColumns'])->name('columns.reorder');
+            Route::put('/columns/{column}', [$c, 'updateColumn'])->name('columns.update');
+            Route::delete('/columns/{column}', [$c, 'destroyColumn'])->name('columns.destroy');
+            // Etiquetas
+            Route::post('/boards/{board}/labels', [$c, 'storeLabel'])->name('labels.store');
+            Route::put('/labels/{label}', [$c, 'updateLabel'])->name('labels.update');
+            Route::delete('/labels/{label}', [$c, 'destroyLabel'])->name('labels.destroy');
+            // Campos configuráveis (Fase 2)
+            Route::post('/boards/{board}/fields', [$c, 'storeField'])->name('fields.store');
+            Route::post('/boards/{board}/fields/reorder', [$c, 'reorderFields'])->name('fields.reorder');
+            Route::put('/fields/{field}', [$c, 'updateField'])->name('fields.update');
+            Route::delete('/fields/{field}', [$c, 'destroyField'])->name('fields.destroy');
+            // Cards
+            Route::post('/columns/{column}/cards', [$c, 'storeCard'])->name('cards.store');
+            Route::get('/cards/{card}', [$c, 'showCard'])->name('cards.show');
+            Route::put('/cards/{card}', [$c, 'updateCard'])->name('cards.update');
+            Route::delete('/cards/{card}', [$c, 'destroyCard'])->name('cards.destroy');
+            Route::post('/cards/{card}/move', [$c, 'moveCard'])->name('cards.move');
+            // Checklist
+            Route::post('/cards/{card}/checklist', [$c, 'storeChecklistItem'])->name('checklist.store');
+            Route::put('/checklist/{item}', [$c, 'updateChecklistItem'])->name('checklist.update');
+            Route::delete('/checklist/{item}', [$c, 'destroyChecklistItem'])->name('checklist.destroy');
+            // Comentários
+            Route::post('/cards/{card}/comments', [$c, 'storeComment'])->name('comments.store');
+            Route::delete('/comments/{comment}', [$c, 'destroyComment'])->name('comments.destroy');
+            // Fase 4: histórico, membros do quadro, relatório
+            Route::get('/cards/{card}/history', [$c, 'cardHistory'])->name('cards.history');
+            Route::get('/boards/{board}/members', [$c, 'boardMembers'])->name('boards.members');
+            Route::put('/boards/{board}/members', [$c, 'setBoardMembers'])->name('boards.members.set');
+            Route::post('/boards/{board}/invite', [$c, 'invite'])->name('boards.invite');
+            Route::get('/boards/{board}/invites', [$c, 'boardInvites'])->name('boards.invites');   // log de convites
+            Route::delete('/boards/{board}/invites/{user}', [$c, 'removeInvite'])->name('boards.invite.remove'); // cancelar/revogar
+            Route::post('/invites/accept', [$c, 'acceptInvite'])->name('invites.accept');           // aceitar (por token)
+            Route::get('/my-invites', [$c, 'myInvites'])->name('my-invites');                       // pendentes do usuário (pop-up)
+            Route::get('/boards/{board}/report', [$c, 'report'])->name('boards.report');
+        });
+
         // ===== Multi-empresa: contexto do usuário (troca de empresa sem logout) =====
         Route::get('/my-companies', [\App\Http\Controllers\CompanyController::class, 'myCompanies'])->name('companies.mine');
         Route::post('/set-company', [\App\Http\Controllers\CompanyController::class, 'setCompany'])->name('companies.set');
@@ -803,6 +856,9 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.update')->group(function () {
             Route::post('/projects/{project}/hour-contributions', [HourContributionController::class, 'store'])->name('hour-contributions.store');
+            // Transferência de horas entre projetos do MESMO cliente (grava par de aportes; só admin).
+            Route::get('/projects/{project}/transfer-info',  [HourContributionController::class, 'transferInfo'])->name('projects.transfer-info');
+            Route::post('/projects/{project}/transfer-hours', [HourContributionController::class, 'transferHours'])->name('projects.transfer-hours');
             Route::put('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'update'])->name('hour-contributions.update');
             Route::delete('/projects/{project}/hour-contributions/{contribution}', [HourContributionController::class, 'destroy'])->name('hour-contributions.destroy');
         });
@@ -1358,6 +1414,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
         Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
         Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        // Transferência de horas entre contratos do MESMO cliente (grava par de aportes; só admin).
+        Route::get('/contracts/{contract}/transfer-info',             [ContractController::class, 'transferInfo'])->name('contracts.transfer-info');
+        Route::post('/contracts/{contract}/transfer-hours',           [ContractController::class, 'transferHours'])->name('contracts.transfer-hours');
         Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment');
         Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
         // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)

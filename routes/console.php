@@ -301,3 +301,14 @@ Schedule::command('closing:log')
   ->description('Registra encerramentos semanais e auto-fechamentos de reabertura no closing_logs')
   ->withoutOverlapping()
   ->runInBackground();
+
+// Re-resolução de apontamentos parados no CLIENTE PADRÃO do Movidesk. O sync de rotina só
+// relê tickets recentes (~6h); chamado cujo solicitante foi trocado DEPOIS de sair da janela
+// fica preso no padrão. Este passe re-lê esses tickets e corrige cliente+projeto (upgrade
+// padrão→real). Limite baixo + throttle de cache pra não sobrecarregar a API do Movidesk.
+Schedule::command('movidesk:reresolve-defaults --execute --limit=40')
+  ->hourly()
+  ->name('movidesk-reresolve-defaults')
+  ->description('Re-resolve apontamentos parados no cliente padrão do Movidesk (corrige cliente+projeto)')
+  ->withoutOverlapping(120)
+  ->runInBackground();

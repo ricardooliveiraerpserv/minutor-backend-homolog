@@ -20,6 +20,115 @@ class HourContributionController extends Controller
     use \App\Http\Traits\ListCacheable;
 
     /**
+     * Dados do modal de transferência de horas (projeto→projeto do MESMO cliente):
+     * saldo/valor-hora da ORIGEM + projetos ELEGÍVEIS (mesmo cliente). Só admin.
+     */
+    public function transferInfo(Project $project): JsonResponse
+    {
+        $user = \Illuminate\Support\Facades\Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+        $targets = Project::where('customer_id', $project->customer_id)
+            ->where('id', '!=', $project->id)
+            ->orderBy('code')
+            ->get(['id', 'code', 'name'])
+            ->map(fn ($p) => [
+                'id'    => $p->id,
+                'label' => ($p->code ? $p->code . ' — ' : '') . ($p->name ?? ('Projeto #' . $p->id)),
+            ])->values();
+
+        return response()->json([
+            'source'  => [
+                'project_id'      => $project->id,
+                'available_hours' => round($project->getTotalAvailableHours(), 2),
+                'rate'            => (float) ($project->hourly_rate ?? 0),
+            ],
+            'targets' => $targets,
+        ]);
+    }
+
+    /**
+     * Transfere horas de UM projeto para OUTRO do MESMO cliente. Grava o LOG como PAR de aportes
+     * vinculados (transfer_group_id): origem −X@R e destino +X@R (motivo=transferencia). Move horas
+     * E valor (R = valor-hora vigente da origem). Bloqueia se a origem ficaria negativa. Só ADMIN.
+     * Mexe apenas em aportes (HourContribution), não toca em apontamentos/timesheets.
+     */
+    public function transferHours(Request $request, Project $project): JsonResponse
+    {
+        $user = \Illuminate\Support\Facades\Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['message' => 'Apenas administradores podem transferir horas.'], 403);
+        }
+        $data = $request->validate([
+            'to_project_id' => 'required|integer|exists:projects,id',
+            'hours'         => 'required|numeric|min:0.01|max:999999',
+            'description'   => 'required|string|max:1000',
+        ]);
+
+        $dst = Project::find($data['to_project_id']);
+        if (!$dst || (int) $dst->id === (int) $project->id) {
+            return response()->json(['message' => 'Projeto destino inválido (deve existir e ser diferente da origem).'], 422);
+        }
+        if (!$project->customer_id || (int) $dst->customer_id !== (int) $project->customer_id) {
+            return response()->json(['message' => 'A transferência só é permitida entre projetos do MESMO cliente.'], 422);
+        }
+
+        $hours     = round((float) $data['hours'], 2);
+        $available = round($project->getTotalAvailableHours(), 2);
+        if ($hours > $available) {
+            return response()->json([
+                'message'         => "Saldo insuficiente na origem: {$available}h disponíveis, transferência de {$hours}h bloqueada.",
+                'available_hours' => $available,
+            ], 422);
+        }
+
+        $rate    = (float) ($project->hourly_rate ?? 0);
+        $naoVal  = $rate <= 0;
+        $group   = (string) \Illuminate\Support\Str::uuid();
+        $srcLbl  = $project->code ?: ('#' . $project->id);
+        $dstLbl  = $dst->code ?: ('#' . $dst->id);
+        $descTxt = trim((string) ($data['description'] ?? '')) ?: "Transferência de horas {$srcLbl} → {$dstLbl}";
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($project, $dst, $hours, $rate, $naoVal, $group, $descTxt, $user, $srcLbl, $dstLbl) {
+            $common = [
+                'hourly_rate'       => $naoVal ? null : $rate,
+                'nao_valorizado'    => $naoVal,
+                'motivo'            => 'transferencia',
+                'transfer_group_id' => $group,
+                'kanban_status'     => HourContribution::KANBAN_FINAL,
+                'contributed_by'    => $user->id,
+                'contributed_at'    => now(),
+            ];
+            $project->hourContributions()->create(array_merge($common, [
+                'contributed_hours' => -$hours,
+                'description'       => "SAÍDA — {$descTxt} (destino {$dstLbl})",
+            ]));
+            $dst->hourContributions()->create(array_merge($common, [
+                'contributed_hours' => $hours,
+                'description'       => "ENTRADA — {$descTxt} (origem {$srcLbl})",
+            ]));
+        });
+
+        $this->invalidateListCache('projects');
+
+        \Illuminate\Support\Facades\Log::info('🔁 [TRANSFER-HOURS] horas transferidas entre projetos', [
+            'transfer_group_id' => $group,
+            'from_project'      => $project->id, 'to_project' => $dst->id,
+            'hours'             => $hours, 'rate' => $rate, 'by_user' => $user->id,
+        ]);
+
+        return response()->json([
+            'success'           => true,
+            'transfer_group_id' => $group,
+            'hours'             => $hours,
+            'rate'              => $rate,
+            'from'              => ['project' => $srcLbl, 'remaining_hours' => round($project->fresh()->getTotalAvailableHours(), 2)],
+            'to'                => ['project' => $dstLbl, 'available_hours' => round($dst->fresh()->getTotalAvailableHours(), 2)],
+        ]);
+    }
+
+    /**
      * @OA\Get(
      *     path="/api/v1/projects/{project}/hour-contributions",
      *     tags={"Hour Contributions"},

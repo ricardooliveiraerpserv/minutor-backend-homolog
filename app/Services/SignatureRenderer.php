@@ -87,9 +87,43 @@ class SignatureRenderer
     private const COMPANY_SITE     = 'www.erpserv.com.br';
     private const COMPANY_CITY     = 'São Paulo/SP - Brasil';
 
+    /** Marca da assinatura pelo TENANT ativo (spatie). CONECTA (schema próprio) → 'conecta'. Senão ''. */
+    public static function brandForTenant(): string
+    {
+        $t = \Spatie\Multitenancy\Models\Tenant::current();
+        return $t && (string) $t->getAttribute('slug') === 'conecta' ? 'conecta' : '';
+    }
+
+    /** data:URI do logo/símbolo CONECTA (public/conecta-sig-logo.png) p/ a assinatura. */
+    private static function conectaLogoDataUri(): string
+    {
+        $p = public_path('conecta-sig-logo.png');
+        return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+    }
+
+    /** data:URI da SETA/capa CONECTA (public/capa.png, 234x540) — arquivo pronto do brandbook. */
+    private static function conectaChevronDataUri(): string
+    {
+        $p = public_path('capa.png');
+        return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+    }
+
+    /** data:URI do LOGO oficial CONECTA (public/logo.png, 516x165) — arquivo pronto do brandbook. */
+    private static function conectaLogoHorizontalDataUri(): string
+    {
+        $p = public_path('logo.png');
+        return is_file($p) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($p)) : '';
+    }
+
     /** Assinatura padrão da empresa (fallback quando o usuário não tem assinatura). */
     public static function companyDefault(string $brand = 'erpserv'): array
     {
+        if ($brand === 'conecta') {
+            // CONECTA: tudo é configurável pelo usuário; sem dados institucionais fixos.
+            return ['name' => 'Conecta ERP', 'role' => '', 'phone' => '', 'phone2' => '', 'email' => '',
+                'website' => '', 'city' => '', 'photo' => '', 'brand' => 'conecta',
+                'linkedin' => '', 'instagram' => '', 'youtube' => ''];
+        }
         if ($brand === 'bizify') {
             return [
                 'name'    => 'Bizify',
@@ -128,6 +162,26 @@ class SignatureRenderer
         $mobile = trim((string) ($sig['mobile'] ?? ''));
         $photo  = (string) ($sig['photo'] ?? '');
 
+        // CONECTA: TODOS os campos são configuráveis (cargo/celular/fixo/e-mail/cidade/site/redes).
+        // E-mail da assinatura: campo próprio (sig_email); vazio → cai no e-mail do cadastro.
+        if ($brand === 'conecta') {
+            $g = fn (string $k) => trim((string) ($sig[$k] ?? ''));
+            return [
+                'name'      => $name,
+                'role'      => $role,
+                'phone'     => $mobile,
+                'phone2'    => $g('phone_fixo'),
+                'email'     => $g('sig_email') !== '' ? $g('sig_email') : $email,
+                'website'   => $g('website'),
+                'city'      => $g('city'),
+                'photo'     => $photo,
+                'brand'     => 'conecta',
+                'linkedin'  => $g('linkedin'),
+                'instagram' => $g('instagram'),
+                'youtube'   => $g('youtube'),
+            ];
+        }
+
         if ($role === '' && $mobile === '' && $photo === '') {
             return self::companyDefault($brand);
         }
@@ -161,8 +215,10 @@ class SignatureRenderer
         // $forceBrand permite o chamador impor a marca (ex.: resposta de um chamado da Bizify → assinatura
         // Bizify mesmo que o AGENTE seja admin ERPSERV — assim admins têm as DUAS conforme o contexto).
         // Empresa BASE do usuário (define qual assinatura usa o e-mail do cadastro).
-        $homeBrand = ($u && $u->is_bizify) ? 'bizify' : 'erpserv';
-        $brand = $forceBrand ?: $homeBrand;
+        // Tenant CONECTA (schema próprio) → sempre marca 'conecta' (ignora is_bizify/forceBrand do grupo).
+        $tenantBrand = self::brandForTenant();
+        $homeBrand = $tenantBrand ?: (($u && $u->is_bizify) ? 'bizify' : 'erpserv');
+        $brand = $tenantBrand ?: ($forceBrand ?: $homeBrand);
         if (!$u) return self::companyDefault($brand);
         $sig = is_array($u->signature) ? $u->signature : [];
         // Cargo EFETIVO: se o usuário personalizou (custom_cargo), usa o cargo próprio; senão usa o
@@ -318,6 +374,65 @@ class SignatureRenderer
             $social .= '<a href="' . $s['url'] . '" target="_blank" title="' . $s['label'] . '" style="text-decoration:none;border:0;outline:none;margin-left:4px;display:inline-block">'
                 . '<img src="' . self::iconSrc($s['icon'], $iconMode, $isBizify ? 'bizify' : 'erpserv') . '" width="20" height="20" alt="' . $s['label'] . '" border="0" style="width:20px;height:20px;border:0;outline:none;text-decoration:none;display:inline-block;vertical-align:middle" /></a>';
         }
+
+        // ── LAYOUT CONECTA (tenant próprio): logo + nome/foto | divisória | contatos + redes de texto.
+        //    TODOS os campos vêm do usuário (cargo/celular/fixo/e-mail/cidade/site/redes) — nada fixo.
+        if (($d['brand'] ?? '') === 'conecta') {
+            $purple = $dark ? '#a78bfa' : '#5f12d3';
+            $nameC  = $dark ? '#ffffff' : '#111827';
+            $textC  = $dark ? '#E5E7EB' : '#1f2937';
+            $logo   = self::conectaLogoDataUri();
+            $bk     = 'erpserv';   // conjunto de ícones roxos
+
+            $photoC = '';
+            if ($showPhoto && !empty($d['photo']) && (Str::startsWith($d['photo'], 'data:image') || filter_var($d['photo'], FILTER_VALIDATE_URL))) {
+                $photoC = '<td width="60" style="width:60px;vertical-align:middle;padding-left:12px">'
+                    . '<span style="display:inline-block;width:52px;height:52px;border-radius:50%;background-image:url(\'' . e($d['photo']) . '\');background-size:cover;background-position:center;background-repeat:no-repeat"></span></td>';
+            }
+            $logoH = self::conectaLogoHorizontalDataUri();
+            $logoBlock = $logoH !== ''
+                ? '<img src="' . $logoH . '" width="172" height="55" alt="Conecta ERP – ERP para a era digital." style="display:block;border:0;outline:none" />'
+                : '<div style="font-size:23px;font-weight:800;letter-spacing:-.5px;color:' . $nameC . ';line-height:1">conecta</div><div style="font-size:10px;font-weight:700;color:' . $textC . ';line-height:1.2;margin-top:2px">ERP para a era digital.</div>';
+            $nameBlock = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+                . '<td valign="middle" align="right" style="vertical-align:middle;text-align:right">'
+                .   '<div style="font-size:16px;font-weight:800;color:' . $nameC . ';line-height:1.15;white-space:nowrap">' . e($name) . '</div>'
+                .   ($role !== '' ? '<div style="font-size:12px;font-weight:700;color:' . $purple . ';line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
+                . '</td>' . $photoC . '</tr></table>';
+            $header = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+                . '<td valign="middle" style="vertical-align:middle">' . $logoBlock . '</td>'
+                . '<td valign="middle" align="right" style="vertical-align:middle;text-align:right">' . $nameBlock . '</td>'
+                . '</tr></table>';
+            $divider = '<div style="border-top:1px solid ' . ($dark ? '#374151' : '#e5e7eb') . ';margin:12px 0 8px"></div>';
+            $cell = fn (string $ic, string $html) => '<td valign="middle" style="vertical-align:middle;padding-right:18px">' . self::contactLine($ic, $iconMode, $html, $textC, $bk) . '</td>';
+            $r1 = '';
+            if (!empty($d['phone']))  $r1 .= $cell('whatsapp', e($d['phone']));
+            if (!empty($d['phone2'])) $r1 .= $cell('phone', e($d['phone2']));
+            if (!empty($d['city']))   $r1 .= $cell('location', e($d['city']));
+            $r2 = '';
+            if (!empty($d['email']))  $r2 .= $cell('email', '<a href="mailto:' . e($d['email']) . '" style="color:' . $purple . ';text-decoration:none">' . e($d['email']) . '</a>');
+            if (!empty($d['website'])) {
+                $href = preg_match('#^https?://#i', $d['website']) ? $d['website'] : 'https://' . $d['website'];
+                $r2 .= $cell('web', '<a href="' . e($href) . '" target="_blank" style="color:' . $purple . ';text-decoration:none">' . e($d['website']) . '</a>');
+            }
+            $contacts = '<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+                . ($r1 !== '' ? '<tr>' . $r1 . '</tr>' : '') . ($r2 !== '' ? '<tr>' . $r2 . '</tr>' : '') . '</table>';
+            $soc = [];
+            foreach (['linkedin' => 'LinkedIn', 'instagram' => 'Instagram', 'youtube' => 'YouTube'] as $k => $lbl) {
+                if (!empty($d[$k])) {
+                    $u2 = preg_match('#^https?://#i', $d[$k]) ? $d[$k] : 'https://' . $d[$k];
+                    $soc[] = '<a href="' . e($u2) . '" target="_blank" style="color:' . $purple . ';text-decoration:none;font-weight:600">' . $lbl . '</a>';
+                }
+            }
+            $social2 = $soc ? '<div style="margin-top:8px;font-size:12px;color:' . $purple . '">' . implode(' <span style="color:#9ca3af">|</span> ', $soc) . '</div>' : '';
+            $chev = self::conectaChevronDataUri();
+            $chevCell = $chev !== ''
+                ? '<td width="78" valign="top" style="width:78px;padding:0;margin:0;line-height:0;font-size:0;border:0"><img src="' . $chev . '" width="78" height="180" alt="" border="0" style="display:block;border:0;outline:none" /></td>'
+                : '<td width="16" style="width:16px;border-left:6px solid ' . $purple . '"></td>';
+            return '<table role="presentation" width="600" height="180" cellpadding="0" cellspacing="0" border="0" style="width:600px;height:180px;max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif"><tr>'
+                . $chevCell
+                . '<td valign="middle" style="vertical-align:middle;padding-left:22px">' . $header . $divider . $contacts . $social2 . '</td></tr></table>';
+        }
+
         // ── LAYOUT BIZIFY (fiel ao modelo): logo + redes + @bizifyapp à ESQUERDA; nome + contatos no
         //    MEIO; grafismos (pontinhos / barras / anel PARCIAL) à DIREITA. Estrutura própria (o Bizify
         //    NÃO usa a estrutura da ERPSERV). Decorações como PNG (anel parcial, balão, telefone, nuvem).

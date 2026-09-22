@@ -1684,7 +1684,9 @@ class Project extends Model
         // Aporte é decimal (ex.: 8,5h) — NUNCA truncar para int (bug: 8,5 virava 8).
         $newContributions = (float) $contributions->sum('contributed_hours');
 
-        if ($newContributions > 0) {
+        // != 0 (não só > 0): com aportes de TRANSFERÊNCIA a soma pode ficar negativa;
+        // aí ainda é sold_hours + soma. Só cai no legado quando NÃO há aporte ativo (soma 0).
+        if ($newContributions != 0.0) {
             return (float) ($this->sold_hours ?? 0) + $newContributions;
         }
 
@@ -1716,7 +1718,8 @@ class Project extends Model
 
         $valued = (float) $contributions->reject(fn ($c) => $c->nao_valorizado)->sum('contributed_hours');
 
-        if ($valued > 0) {
+        // != 0: transferência valorizada pode deixar a soma valorizada negativa (saída −X@R).
+        if ($valued != 0.0) {
             return (float) ($this->sold_hours ?? 0) + $valued;
         }
 
@@ -1756,7 +1759,8 @@ class Project extends Model
 
         $newContributions = $contributions->sum(fn($c) => $c->contributed_hours * $c->hourly_rate);
 
-        if ($newContributions > 0) {
+        // != 0: transferência com valor (saída −X@R) pode deixar a soma de valor negativa.
+        if ($newContributions != 0.0) {
             return round($baseSoldHoursValue + $newContributions, 2);
         }
 

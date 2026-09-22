@@ -744,6 +744,18 @@ class MovideskService
         );
     }
 
+    /** Resolve público o cliente de um ticket (mesma regra do sync) — usado pelo passe de re-resolução. */
+    public function resolveTicketCustomerId(array $ticket): ?int
+    {
+        return $this->extractCustomerId($ticket);
+    }
+
+    /** Id do cliente PADRÃO (fallback) do Movidesk — público p/ o passe de re-resolução. */
+    public function defaultCustomerId(): ?int
+    {
+        return $this->getDefaultCustomerId();
+    }
+
     private function extractCustomerId(array $ticket): ?int
     {
         $clients = $ticket['clients'] ?? [];
