@@ -121,6 +121,25 @@ class HelpDeskAccessProfileController extends Controller
         return response()->json(['data' => ['id' => $user->id, 'helpdesk_access_profile_id' => $user->helpdesk_access_profile_id]]);
     }
 
+    /** Equipes de atendimento do usuário (pivot helpdesk_team_user) — atribuição inline na aba HD. */
+    public function setTeams(Request $request, User $user): JsonResponse
+    {
+        abort_if($user->type === 'cliente', 422, 'Cliente não entra em equipe de atendimento.');
+        $v = $request->validate([
+            'team_ids'   => 'present|array',
+            'team_ids.*' => 'integer|exists:helpdesk_teams,id',
+        ]);
+        $ids = collect($v['team_ids'])->filter()->map(fn ($i) => (int) $i)->unique()->values()->all();
+        $now = now();
+        \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->where('user_id', $user->id)->delete();
+        if ($ids) {
+            \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->insert(array_map(fn ($tid) => [
+                'helpdesk_team_id' => $tid, 'user_id' => $user->id, 'created_at' => $now, 'updated_at' => $now,
+            ], $ids));
+        }
+        return response()->json(['data' => ['id' => $user->id, 'helpdesk_team_ids' => $ids]]);
+    }
+
     /** Empresas do grupo (ERPSERV/BIZIFY) às quais o usuário fica vinculado (pivot company_user). */
     public function setCompanies(Request $request, User $user): JsonResponse
     {

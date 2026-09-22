@@ -231,12 +231,21 @@ class UserController extends Controller
 
         $users = $query->paginate($pageSize, ['*'], 'page', $page);
 
+        // Equipes de Help Desk por usuário (aba HD) — em LOTE (evita N+1 nas 500 linhas).
+        $pageUserIds = collect($users->items())->pluck('id')->all();
+        $teamsByUser = $pageUserIds
+            ? DB::table('helpdesk_team_user')->whereIn('user_id', $pageUserIds)
+                ->get(['user_id', 'helpdesk_team_id'])->groupBy('user_id')
+                ->map(fn ($rows) => $rows->pluck('helpdesk_team_id')->map(fn ($v) => (int) $v)->all())
+            : collect();
+
         // Adicionar tipos de dashboard permitidos para cada usuário
-        $items = collect($users->items())->map(function ($user) {
+        $items = collect($users->items())->map(function ($user) use ($teamsByUser) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
             // Empresas do grupo às quais o usuário está vinculado (para a aba HD).
             $userData['company_ids'] = $user->relationLoaded('companies') ? $user->companies->pluck('id')->all() : [];
+            $userData['helpdesk_team_ids'] = $teamsByUser->get($user->id, []);
             // Pré-cadastro pendente de convite (fase 1a/1b): cliente sem senha, desabilitado.
             // `password` não é serializado (hidden), então o FE precisa deste booleano derivado.
             $userData['is_pending_invite'] = $user->type === 'cliente' && !$user->enabled && $user->password === null;
