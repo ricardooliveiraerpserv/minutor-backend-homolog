@@ -259,11 +259,20 @@ class OnDemandController extends Controller
             }
         }
 
+        // Crédito pré-pago por TRANSFERÊNCIA (motivo=transferencia) nos projetos On Demand.
+        // O excedente (após esgotar o crédito) deve ser cobrado pela taxa do CONTRATO (hourly_rate),
+        // NÃO pela ponderada — a ponderada é inflada pelo valor-hora do crédito (R da origem).
+        $tcParentIds = $parentProjects->pluck('id')->all();
+        $transferCredit = empty($tcParentIds) ? 0.0 : (float) \App\Models\HourContribution::whereIn('project_id', $tcParentIds)
+            ->where('motivo', 'transferencia')->whereNull('deleted_at')->sum('contributed_hours');
+
         // Calcular valor a pagar usando a média ponderada (considera aportes)
-        // Usa weightedHourlyRate se disponível, senão usa hourlyRate padrão
+        // Usa weightedHourlyRate se disponível, senão usa hourlyRate padrão.
         $amountToPay = null;
-        $rateForPayment = $weightedHourlyRate ?? $hourlyRate;
-        
+        $rateForPayment = $transferCredit > 0
+            ? ($hourlyRate ?? $weightedHourlyRate)
+            : ($weightedHourlyRate ?? $hourlyRate);
+
         if ($exceededHours > 0 && $rateForPayment !== null) {
             $amountToPay = round($exceededHours * $rateForPayment, 2);
         }
@@ -459,7 +468,9 @@ class OnDemandController extends Controller
             $balanceAtStartOfMonth = round(($contractedHours + $contributedHours) - $consumedBeforeMonth, 2);
             $exceededHours = round(max(0, $monthConsumedHours - max(0, $balanceAtStartOfMonth)), 2);
             $hoursBalance = round($balanceAtStartOfMonth - $monthConsumedHours, 2);
-            $rateForPayment = $weightedHourlyRate ?? $hourlyRate;
+            $rateForPayment = $transferCredit > 0
+                ? ($hourlyRate ?? $weightedHourlyRate)
+                : ($weightedHourlyRate ?? $hourlyRate);
             $amountToPay = ($exceededHours > 0 && $rateForPayment !== null)
                 ? round($exceededHours * $rateForPayment, 2)
                 : null;
@@ -555,6 +566,8 @@ class OnDemandController extends Controller
             'data' => [
                 'contracted_hours' => $contractedHours,
                 'contributed_hours' => $contributedHours,
+                // Crédito recebido por transferência (saldo pré-pago) — p/ o card "Saldo recebido".
+                'transfer_credit_hours' => round($transferCredit, 2),
                 'consumed_hours' => $consumedHours,
                 'month_consumed_hours' => $monthConsumedHours,
                 'month_maintenance_hours' => $monthMaintenanceHours,
