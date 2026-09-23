@@ -31,6 +31,8 @@ class UsersExport implements WithMultipleSheets
         $cliente   = $this->users->filter(fn ($u) => $u->type === 'cliente');
 
         return [
+            // Aba "Todos": todos os usuários com a coluna Categoria (granular) p/ filtrar/ordenar.
+            new UsersSheet('Todos',     $this->users->values()),
             new UsersSheet('Interno',   $interno->values()),
             new UsersSheet('Freelance', $freelance->values()),
             new UsersSheet('Parceiro',  $parceiro->values()),

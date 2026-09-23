@@ -28,7 +28,7 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
     public function headings(): array
     {
         return [
-            'ID', 'Nome', 'Nome completo', 'E-mail', 'Ativo', 'Inativado em',
+            'ID', 'Nome', 'Categoria', 'Nome completo', 'E-mail', 'Ativo', 'Inativado em',
             'Tipo', 'Vínculo', 'Tipo consultor', 'Tipo contrato', 'Coordenador', 'Tipo coordenador',
             'Executivo', 'Diretor', 'Diretor Projetos', 'Bizify', 'Coord. Bizify',
             'CPF', 'Matrícula', 'Status folha',
@@ -49,11 +49,23 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
         $dt  = fn ($v) => $v ? \Illuminate\Support\Carbon::parse($v)->format('d/m/Y H:i') : '';
         // Normaliza texto: colapsa espaços/quebras embutidos (dados sujos infam a largura da coluna).
         $c   = fn ($v) => is_string($v) ? trim(preg_replace('/\s+/u', ' ', $v)) : $v;
+        // Categoria granular do usuário (Parceiro/Freelance/Interno/Coordenador/Admin/...).
+        $cat = fn ($u) => match (true) {
+            $u->type === 'cliente'        => 'Cliente',
+            $u->type === 'parceiro_admin' => 'Parceiro',
+            $u->type === 'admin'          => 'Admin',
+            $u->type === 'coordenador'    => 'Coordenador',
+            $u->type === 'administrativo' => 'Administrativo',
+            $u->type === 'consultor' && $u->work_bond === 'freelance' => 'Freelance',
+            $u->type === 'consultor'      => 'Interno',
+            default                       => (string) ($u->type ?? '—'),
+        };
 
-        return $this->users->map(function ($u) use ($b, $d, $dt, $c) {
+        return $this->users->map(function ($u) use ($b, $d, $dt, $c, $cat) {
             return array_map($c, [
                 $u->id,
                 $u->name,
+                $cat($u),
                 $u->full_name,
                 $u->email,
                 $b($u->enabled),
