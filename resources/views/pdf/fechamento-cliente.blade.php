@@ -111,6 +111,28 @@
     </tr>
   </table>
 
+  @if(!empty($temCredito))
+    <table class="summary" style="margin-top:6px;background:#f5f3ff;border:1px solid #ddd6fe;">
+      <tr>
+        <td>
+          <div class="summary-label">Horas consumidas</div>
+          <div class="summary-value">{{ $totalHorasFmt }}</div>
+        </td>
+        <td>
+          <div class="summary-label">Abatido do saldo (crédito)</div>
+          <div class="summary-value" style="color:#059669;">{{ $creditoAbatidoFmt }}</div>
+        </td>
+        <td>
+          <div class="summary-label">Horas a cobrar</div>
+          <div class="summary-value">{{ $horasCobradasFmt }}</div>
+        </td>
+      </tr>
+    </table>
+    <div style="font-size:11px;color:#6d28d9;margin:2px 0 0;">
+      Este contrato recebeu transferência de horas: das {{ $totalHorasFmt }} consumidas, {{ $creditoAbatidoFmt }} foram abatidas do saldo (crédito) e apenas {{ $horasCobradasFmt }} são cobradas. Saldo de crédito restante: {{ $creditoRestanteFmt }}.
+    </div>
+  @endif
+
   @if(empty($grupos))
     <div class="empty">Nenhum apontamento considerado no período.</div>
   @else
