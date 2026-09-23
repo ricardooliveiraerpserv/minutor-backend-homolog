@@ -177,33 +177,38 @@ class HourContributionController extends Controller
             ->with(['contributedBy:id,name,email', 'changeLogs.changedByUser:id,name,email'])
             ->get();
 
-        // Origem das TRANSFERÊNCIAS de entrada (motivo=transferencia, +horas): resolve o
-        // projeto de saída (−horas) do mesmo transfer_group_id para exibir de onde vieram.
+        // TRANSFERÊNCIAS (par vinculado por transfer_group_id): lado −horas = ORIGEM (saída),
+        // lado +horas = DESTINO (entrada). Resolve os dois lados para exibir de/para o projeto.
         $transferGroups = $contributions->where('motivo', 'transferencia')
-            ->where('contributed_hours', '>', 0)
             ->pluck('transfer_group_id')->filter()->unique()->all();
-        $originByGroup = [];
+        $sidesByGroup = []; // [group => ['origin' => {...saída}, 'destination' => {...entrada}]]
         if (!empty($transferGroups)) {
-            $originByGroup = HourContribution::whereIn('transfer_group_id', $transferGroups)
-                ->where('contributed_hours', '<', 0)
+            HourContribution::whereIn('transfer_group_id', $transferGroups)
                 ->with('project:id,code,name')
                 ->get()
-                ->reduce(function ($carry, $c) {
-                    if ($c->transfer_group_id && $c->project) {
-                        $carry[$c->transfer_group_id] = [
-                            'id' => $c->project->id, 'code' => $c->project->code, 'name' => $c->project->name,
-                        ];
+                ->each(function ($c) use (&$sidesByGroup) {
+                    if (!$c->transfer_group_id || !$c->project) {
+                        return;
                     }
-                    return $carry;
-                }, []);
+                    $proj = ['id' => $c->project->id, 'code' => $c->project->code, 'name' => $c->project->name];
+                    if ((float) $c->contributed_hours < 0) {
+                        $sidesByGroup[$c->transfer_group_id]['origin'] = $proj;      // saída = projeto de origem
+                    } elseif ((float) $c->contributed_hours > 0) {
+                        $sidesByGroup[$c->transfer_group_id]['destination'] = $proj; // entrada = projeto de destino
+                    }
+                });
         }
 
         // Adicionar campo total_value calculado + histórico de auditoria formatado
-        $contributions->transform(function ($contribution) use ($originByGroup) {
+        $contributions->transform(function ($contribution) use ($sidesByGroup) {
             $contribution->total_value = $contribution->getTotalValue();
-            $contribution->origin_project = ($contribution->motivo === 'transferencia' && (float) $contribution->contributed_hours > 0)
-                ? ($originByGroup[$contribution->transfer_group_id] ?? null)
-                : null;
+            $sides = ($contribution->motivo === 'transferencia')
+                ? ($sidesByGroup[$contribution->transfer_group_id] ?? [])
+                : [];
+            $hrs = (float) $contribution->contributed_hours;
+            // Entrada (+) mostra de ONDE veio; saída (−) mostra para ONDE foi.
+            $contribution->origin_project      = ($hrs > 0) ? ($sides['origin'] ?? null) : null;
+            $contribution->destination_project = ($hrs < 0) ? ($sides['destination'] ?? null) : null;
             $contribution->change_logs = $contribution->changeLogs
                 ->map(fn ($log) => $log->toFormattedArray())
                 ->values();
