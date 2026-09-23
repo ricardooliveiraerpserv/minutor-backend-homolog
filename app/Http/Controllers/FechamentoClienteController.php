@@ -1535,6 +1535,12 @@ class FechamentoClienteController extends Controller
             $apData['projetos'] ?? []
         ));
 
+        // Crédito pré-pago On Demand (transferência): quebra p/ transparência no relatório.
+        // Só aparece quando o contrato recebeu transferência (crédito abatido > 0).
+        $creditoAbatido  = round(array_sum(array_map(fn ($p) => (float) ($p['credito_abatido'] ?? 0), $apData['projetos'] ?? [])), 2);
+        $horasCobradas   = round(array_sum(array_map(fn ($p) => (float) ($p['horas_cobradas'] ?? 0), $apData['projetos'] ?? [])), 2);
+        $creditoRestante = round(array_sum(array_map(fn ($p) => (float) ($p['credito_restante'] ?? 0), $apData['projetos'] ?? [])), 2);
+
         // Valor hora p/ o resumo do topo: só quando há uma única taxa entre os projetos.
         $ratesUnicas = array_values(array_unique(array_filter(
             array_map(fn ($p) => (float) ($p['valor_hora'] ?? 0), $apData['projetos'] ?? []),
@@ -1573,6 +1579,11 @@ class FechamentoClienteController extends Controller
             'emitidoEm'            => now()->format('d/m/Y'),
             'projetos'             => $projetosList,
             'totalHorasFmt'        => $this->fmtHoras($totalHoras),
+            // Quebra do crédito (só quando recebeu transferência): consumido / abatido de saldo / a cobrar.
+            'temCredito'           => $creditoAbatido > 0,
+            'creditoAbatidoFmt'    => $this->fmtHoras($creditoAbatido),
+            'horasCobradasFmt'     => $this->fmtHoras($horasCobradas),
+            'creditoRestanteFmt'   => $this->fmtHoras($creditoRestante),
             'valorTotal'           => $this->brl($netValue),
             'temDesconto'          => $descontoValor > 0,
             'subtotalFmt'          => $this->brl($totalValue),
