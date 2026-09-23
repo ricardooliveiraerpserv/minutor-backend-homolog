@@ -97,8 +97,8 @@
   <table class="summary">
     <tr>
       <td>
-        <div class="summary-label">Total de Horas</div>
-        <div class="summary-value">{{ $totalHorasFmt }}</div>
+        <div class="summary-label">{{ ($temCredito ?? false) ? 'Total de Horas a Cobrar' : 'Total de Horas' }}</div>
+        <div class="summary-value">{{ ($temCredito ?? false) ? $horasCobradasFmt : $totalHorasFmt }}</div>
       </td>
       <td>
         <div class="summary-label">Valor Hora</div>
