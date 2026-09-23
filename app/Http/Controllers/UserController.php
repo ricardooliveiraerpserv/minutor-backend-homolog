@@ -136,14 +136,48 @@ class UserController extends Controller
             return response()->json(['message' => 'Não autorizado'], 403);
         }
 
-        $users = User::with([
+        $query = User::with([
             'partner:id,name',
             'customer:id,name',
             'currentCompany:id,name',
             'homeCompany:id,name',
-        ])->orderBy('name')->get();
+        ]);
 
-        return Excel::download(new UsersExport($users), 'usuarios_' . now()->format('Y-m-d') . '.xlsx');
+        // Opcional: aplica os MESMOS filtros da tela (mesma regra do index()).
+        if ($request->boolean('apply_filters')) {
+            $search = $request->get('filter') ?? $request->get('search');
+            if (!empty($search)) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('users.name', 'ilike', "%{$search}%")
+                      ->orWhere('users.email', 'ilike', "%{$search}%");
+                });
+            }
+            if ($request->filled('type')) {
+                $types = is_array($request->type)
+                    ? $request->type
+                    : array_values(array_filter(array_map('trim', explode(',', (string) $request->type))));
+                if (count($types) === 1) { $query->where('type', $types[0]); }
+                elseif (count($types) > 1) { $query->whereIn('type', $types); }
+            }
+            if ($request->filled('coordinator_type')) { $query->where('coordinator_type', $request->coordinator_type); }
+            if ($request->filled('work_bond'))       { $query->whereIn('work_bond', array_filter(array_map('trim', explode(',', (string) $request->work_bond)))); }
+            if ($request->filled('contract_type'))   { $query->whereIn('contract_type', array_filter(array_map('trim', explode(',', (string) $request->contract_type)))); }
+            if ($request->filled('consultant_type')) { $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type)))); }
+            if ($request->filled('sustentacao'))     { $query->where('can_timesheet_sustentacao', in_array($request->input('sustentacao'), ['1', 1, true], true)); }
+            if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
+            if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
+            if ($request->filled('partner_id'))      { $query->where('partner_id', $request->partner_id); }
+            if ($request->filled('customer_id'))     { $query->where('customer_id', $request->customer_id); }
+        }
+
+        $users = $query->orderBy('name')->get();
+
+        // Abas escolhidas na tela de perguntas (default: todas).
+        $only = $request->filled('sheets')
+            ? array_values(array_filter(array_map('trim', explode(',', (string) $request->get('sheets')))))
+            : null;
+
+        return Excel::download(new UsersExport($users, $only), 'usuarios_' . now()->format('Y-m-d') . '.xlsx');
     }
 
     public function index(Request $request): JsonResponse

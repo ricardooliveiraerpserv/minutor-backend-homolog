@@ -18,8 +18,11 @@ use Maatwebsite\Excel\Concerns\WithMultipleSheets;
  */
 class UsersExport implements WithMultipleSheets
 {
-    /** @param Collection<int,User> $users */
-    public function __construct(protected Collection $users) {}
+    /**
+     * @param Collection<int,User> $users
+     * @param array<int,string>|null $only  Abas a incluir (ex.: ['Todos','Interno']); null = todas.
+     */
+    public function __construct(protected Collection $users, protected ?array $only = null) {}
 
     public function sheets(): array
     {
@@ -30,13 +33,27 @@ class UsersExport implements WithMultipleSheets
         $parceiro  = $this->users->filter(fn ($u) => $u->type === 'parceiro_admin');
         $cliente   = $this->users->filter(fn ($u) => $u->type === 'cliente');
 
-        return [
+        $all = [
             // Aba "Todos": todos os usuários com a coluna Categoria (granular) p/ filtrar/ordenar.
-            new UsersSheet('Todos',     $this->users->values()),
-            new UsersSheet('Interno',   $interno->values()),
-            new UsersSheet('Freelance', $freelance->values()),
-            new UsersSheet('Parceiro',  $parceiro->values()),
-            new UsersSheet('Cliente',   $cliente->values()),
+            'Todos'     => $this->users->values(),
+            'Interno'   => $interno->values(),
+            'Freelance' => $freelance->values(),
+            'Parceiro'  => $parceiro->values(),
+            'Cliente'   => $cliente->values(),
         ];
+
+        $sheets = [];
+        foreach ($all as $title => $rows) {
+            if ($this->only !== null && !in_array($title, $this->only, true)) {
+                continue; // aba não escolhida na tela de perguntas
+            }
+            $sheets[] = new UsersSheet($title, $rows);
+        }
+        // Garante ao menos 1 aba (evita xlsx inválido se a seleção não bater nada).
+        if (empty($sheets)) {
+            $sheets[] = new UsersSheet('Todos', $this->users->values());
+        }
+
+        return $sheets;
     }
 }
