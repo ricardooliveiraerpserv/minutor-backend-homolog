@@ -44,6 +44,7 @@ class HelpDeskTicketController extends Controller
     {
         $data['can_edit_description'] = $this->access->canEditActions($user);
         $data['can_merge']      = $this->access->canMerge($user);
+        $data['can_change_customer'] = $this->access->canChangeCustomer($user);
         $data['can_delete']     = $this->access->canDelete($user);
         $data['can_print']      = $this->access->canPrint($user);
         $data['can_view_sla']   = $this->access->canViewSla($user);
@@ -1317,6 +1318,11 @@ class HelpDeskTicketController extends Controller
         $v = $request->validate($this->rules(false));
         $tagIds = $v['tag_ids'] ?? null;
         unset($v['tag_ids']);
+
+        // Trocar a EMPRESA (cliente) do chamado exige permissão específica do perfil de acesso.
+        if (array_key_exists('customer_id', $v) && (int) $v['customer_id'] !== (int) $ticket->customer_id) {
+            abort_unless($this->access->canChangeCustomer($request->user()), 403, 'Seu perfil não permite alterar a empresa do chamado.');
+        }
 
         $oldPriority = $ticket->priority;
         $oldAssignee = $ticket->assignee_id;

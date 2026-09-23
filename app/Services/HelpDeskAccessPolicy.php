@@ -277,6 +277,13 @@ class HelpDeskAccessPolicy
         return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'service.merge_tickets', true);
     }
 
+    /** Pode ALTERAR a empresa (cliente) do chamado? Opt-in pelo perfil de acesso (default: não). */
+    public function canChangeCustomer(?User $user): bool
+    {
+        if (!$user) return false;
+        return $this->unrestricted($user) ? true : (bool) $this->perm($user, 'policies.change_customer', false);
+    }
+
     public function canBeAssignee(?User $user): bool
     {
         if (!$user) return false;
