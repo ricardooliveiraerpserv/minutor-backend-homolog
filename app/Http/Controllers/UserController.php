@@ -152,6 +152,7 @@ class UserController extends Controller
                       ->orWhere('users.email', 'ilike', "%{$search}%");
                 });
             }
+            if ($request->filled('enabled')) { $query->where('enabled', in_array($request->input('enabled'), ['1', 1, true, 'true'], true)); }
             if ($request->filled('type')) {
                 $types = is_array($request->type)
                     ? $request->type
