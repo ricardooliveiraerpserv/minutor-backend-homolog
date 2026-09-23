@@ -607,6 +607,39 @@ class FechamentoClienteController extends Controller
             ]);
 
         $valorTimesheets = round($timesheets->sum('valor'), 2);
+
+        // CRÉDITO pré-pago On Demand (transferência): abate do VALOR PENDENTE. Por projeto, o
+        // crédito é consumido primeiro pelo que veio ANTES do período + APROVADO no período; o
+        // que sobra cobre as horas pendentes (essas não são cobradas até o crédito esgotar).
+        $creditoAbatidoValor = 0.0;
+        $exclStatus = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_LATE, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL];
+        foreach ($tsModels->groupBy('project_id') as $pid => $group) {
+            $credit = (float) \App\Models\HourContribution::where('project_id', $pid)
+                ->where('motivo', 'transferencia')->whereNull('deleted_at')->sum('contributed_hours');
+            if ($credit <= 0) {
+                continue;
+            }
+            $sumBillable = function ($q) {
+                $s = 0.0;
+                foreach ($q->get() as $t) { $s += $t->billableHours(); }
+                return $s;
+            };
+            $consumedBefore = $sumBillable(Timesheet::whereNotIn('status', $exclStatus)->whereNull('deleted_at')
+                ->where('project_id', $pid)->where('date', '<', $from));
+            $approvedInPeriod = $sumBillable(Timesheet::where('status', Timesheet::STATUS_APPROVED)->whereNull('deleted_at')
+                ->where('project_id', $pid)->whereBetween('date', [$from, $to]));
+            $creditForPending = max(0.0, $credit - $consumedBefore - $approvedInPeriod);
+            if ($creditForPending <= 0.0) {
+                continue;
+            }
+            $pendingBillable = 0.0;
+            foreach ($group as $t) { $pendingBillable += $t->billableHours(); }
+            $covered = min($pendingBillable, $creditForPending);
+            $rate    = (float) ($group->first()->project?->hourlyRateForCompetencia($fromMonth) ?? 0);
+            $creditoAbatidoValor += round($covered * $rate, 2);
+        }
+        $valorTimesheets = round(max(0.0, $valorTimesheets - $creditoAbatidoValor), 2);
+
         $valorDespesas   = round($despesas->sum('valor'), 2);
 
         return response()->json([
@@ -617,6 +650,7 @@ class FechamentoClienteController extends Controller
             'total_pendencias'  => $timesheets->count() + $despesas->count(),
             'valor_timesheets'  => $valorTimesheets,
             'valor_despesas'    => $valorDespesas,
+            'valor_credito_abatido' => round($creditoAbatidoValor, 2),
             'valor_pendente'    => round($valorTimesheets + $valorDespesas, 2),
         ]);
     }
