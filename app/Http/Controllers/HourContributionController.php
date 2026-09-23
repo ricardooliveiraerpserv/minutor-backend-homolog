@@ -177,9 +177,33 @@ class HourContributionController extends Controller
             ->with(['contributedBy:id,name,email', 'changeLogs.changedByUser:id,name,email'])
             ->get();
 
+        // Origem das TRANSFERÊNCIAS de entrada (motivo=transferencia, +horas): resolve o
+        // projeto de saída (−horas) do mesmo transfer_group_id para exibir de onde vieram.
+        $transferGroups = $contributions->where('motivo', 'transferencia')
+            ->where('contributed_hours', '>', 0)
+            ->pluck('transfer_group_id')->filter()->unique()->all();
+        $originByGroup = [];
+        if (!empty($transferGroups)) {
+            $originByGroup = HourContribution::whereIn('transfer_group_id', $transferGroups)
+                ->where('contributed_hours', '<', 0)
+                ->with('project:id,code,name')
+                ->get()
+                ->reduce(function ($carry, $c) {
+                    if ($c->transfer_group_id && $c->project) {
+                        $carry[$c->transfer_group_id] = [
+                            'id' => $c->project->id, 'code' => $c->project->code, 'name' => $c->project->name,
+                        ];
+                    }
+                    return $carry;
+                }, []);
+        }
+
         // Adicionar campo total_value calculado + histórico de auditoria formatado
-        $contributions->transform(function ($contribution) {
+        $contributions->transform(function ($contribution) use ($originByGroup) {
             $contribution->total_value = $contribution->getTotalValue();
+            $contribution->origin_project = ($contribution->motivo === 'transferencia' && (float) $contribution->contributed_hours > 0)
+                ? ($originByGroup[$contribution->transfer_group_id] ?? null)
+                : null;
             $contribution->change_logs = $contribution->changeLogs
                 ->map(fn ($log) => $log->toFormattedArray())
                 ->values();
