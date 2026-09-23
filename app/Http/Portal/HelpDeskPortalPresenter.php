@@ -52,6 +52,7 @@ class HelpDeskPortalPresenter
         $extra = [];
         if (($view['customer'] ?? true) !== false)    $extra['cliente']     = optional($t->customer)->name;
         if (($view['requester'] ?? true) !== false)   $extra['solicitante'] = $t->requester_name ?: optional($t->contact)->name ?: optional($t->requester)->name;
+        if (($view['requester'] ?? true) !== false)   $extra['departamento'] = $t->solicitanteDepartment(); // depto do solicitante (pode ser null)
         if (($view['agent'] ?? true) !== false)       $extra['agente']      = optional($t->assignee)->name;
         if (($view['team'] ?? true) !== false)        $extra['equipe']      = optional($t->team)->name;
         if (($view['category'] ?? true) !== false)    $extra['categoria']   = optional($t->category)->name;
