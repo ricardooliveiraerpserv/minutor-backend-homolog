@@ -514,21 +514,48 @@ class OnDemandController extends Controller
                 })->toArray();
 
             // 2. Buscar novos aportes da tabela hour_contributions
-            $newContributions = \App\Models\HourContribution::whereIn('project_id', $projectIdsForHistory)
+            $rawContribs = \App\Models\HourContribution::whereIn('project_id', $projectIdsForHistory)
                 ->with(['project:id,name,code', 'contributedBy:id,name,email'])
                 ->orderBy('contributed_at', 'desc')
                 ->limit(25) // Limitar a 25 novos aportes
-                ->get()
-                ->map(function($contribution) {
+                ->get();
+            // Origem das TRANSFERÊNCIAS (entradas +horas): resolve o projeto de saída (−horas)
+            // pelo transfer_group_id para exibir "de qual projeto vieram as horas".
+            $transferGroups = $rawContribs->where('motivo', 'transferencia')
+                ->where('contributed_hours', '>', 0)
+                ->pluck('transfer_group_id')->filter()->unique()->all();
+            $originByGroup = [];
+            if (!empty($transferGroups)) {
+                $originByGroup = \App\Models\HourContribution::whereIn('transfer_group_id', $transferGroups)
+                    ->where('contributed_hours', '<', 0)
+                    ->with('project:id,name,code')
+                    ->get()
+                    ->reduce(function ($carry, $c) {
+                        if ($c->transfer_group_id && $c->project) {
+                            $carry[$c->transfer_group_id] = [
+                                'id' => $c->project->id, 'name' => $c->project->name, 'code' => $c->project->code,
+                            ];
+                        }
+                        return $carry;
+                    }, []);
+            }
+            $newContributions = $rawContribs
+                ->map(function($contribution) use ($originByGroup) {
+                    $origin = ($contribution->motivo === 'transferencia' && (float) $contribution->contributed_hours > 0)
+                        ? ($originByGroup[$contribution->transfer_group_id] ?? null)
+                        : null;
                     return [
                         'id' => 'contribution_' . $contribution->id,
                         'type' => 'new_contribution',
+                        'motivo' => $contribution->motivo,
                         'project_id' => $contribution->project_id,
                         'project' => [
                             'id' => $contribution->project->id,
                             'name' => $contribution->project->name,
                             'code' => $contribution->project->code,
                         ],
+                        // Projeto de origem (só para transferências de entrada).
+                        'origin_project' => $origin,
                         'contributed_hours' => $contribution->contributed_hours,
                         'hourly_rate' => (float) $contribution->hourly_rate,
                         'total_value' => $contribution->getTotalValue(),
@@ -565,6 +592,22 @@ class OnDemandController extends Controller
                 : null;
         }
 
+        // Projetos de ORIGEM das horas recebidas por transferência (agrega entre os pais filtrados).
+        $transferOrigins = [];
+        if ($transferCredit > 0) {
+            foreach ($parentProjects as $pp) {
+                foreach ($pp->transferCreditOrigins() as $o) {
+                    $pid = $o['project_id'];
+                    if (!isset($transferOrigins[$pid])) {
+                        $transferOrigins[$pid] = $o;
+                    } else {
+                        $transferOrigins[$pid]['hours'] = round($transferOrigins[$pid]['hours'] + $o['hours'], 2);
+                    }
+                }
+            }
+            $transferOrigins = array_values($transferOrigins);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
@@ -573,6 +616,8 @@ class OnDemandController extends Controller
                 'contributed_hours' => $contributedHours,
                 // Crédito recebido por transferência (saldo pré-pago) — p/ o card "Saldo recebido".
                 'transfer_credit_hours' => round($transferCredit, 2),
+                // Projetos de origem das horas transferidas (para exibir "de qual projeto veio").
+                'transfer_credit_origins' => $transferOrigins,
                 'consumed_hours' => $consumedHours,
                 'month_consumed_hours' => $monthConsumedHours,
                 'month_maintenance_hours' => $monthMaintenanceHours,

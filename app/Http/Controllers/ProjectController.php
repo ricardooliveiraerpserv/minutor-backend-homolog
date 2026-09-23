@@ -786,6 +786,8 @@ class ProjectController extends Controller
                 }
                 $project->balance_percentage = $totalAvailable > 0 ? round(($project->consumed_hours / $totalAvailable) * 100, 2) : 0;
                 $project->total_available_hours = round($totalAvailable, 2);
+                // On Demand: projetos de origem das horas recebidas por transferência (crédito).
+                $project->transfer_credit_origins = $project->transferCreditOrigins();
                 $project->total_contributions_hours = $project->hourContributions->sum('contributed_hours');
                 $project->total_project_value = null;
                 $project->weighted_hourly_rate = null;
