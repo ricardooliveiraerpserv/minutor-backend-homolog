@@ -43,14 +43,17 @@ class RelatorioRentabilidadeController extends Controller
             ->whereNotIn('user_id', $this->rentabHiddenUserIds()) // oculta usuários da Rentabilidade (config admin) — fora dos dados E dos totais
             ->get();
 
-        // R$/H do PROJETO = valor-hora do ÚLTIMO APORTE (motivo 'aporte', datado, até a competência),
-        // senão o hourly_rate do projeto. Reflete a última atualização (aporte), não só o valor do contrato.
+        // R$/H do PROJETO = valor-hora do ÚLTIMO APORTE valorizado, datado, até a competência, senão o
+        // hourly_rate do projeto. Considera 'aporte' e TRANSFERÊNCIA-entrada (crédito On Demand): assim
+        // o On Demand com saldo transferido é valorizado pelo valor-hora do crédito (como projeto Fechado
+        // enquanto consome o saldo). A saída (contributed_hours<0) não define rate (não muda a origem).
         $aporteRate = [];
         $projIds = $timesheets->pluck('project_id')->filter()->unique()->values()->all();
         if (!empty($projIds)) {
             $cutoff = Carbon::create($y, $m, 1)->endOfMonth()->endOfDay();
             foreach (\App\Models\HourContribution::whereIn('project_id', $projIds)
-                ->where('motivo', 'aporte')
+                ->where(fn ($q) => $q->where('motivo', 'aporte')
+                    ->orWhere(fn ($q2) => $q2->where('motivo', 'transferencia')->where('contributed_hours', '>', 0)))
                 ->where('nao_valorizado', false) // aporte não valorizado não tem R$/h → não define o rate do projeto
                 ->whereNotNull('hourly_rate')
                 ->whereNotNull('contributed_at')
