@@ -274,6 +274,29 @@ class NotificationController extends Controller
         $r->ack_ip          = $request->ip();
         $r->ack_user_agent  = (string) $request->userAgent();
         $r->save();
+
+        // Acompanhantes/familiares: só quando a notificação permite E a resposta é AFIRMATIVA
+        // (a 1ª ação = "Confirmo presença"). Regrava a lista do respondente (idempotente ao
+        // reconfirmar). Resposta negativa (ou allow_guests off) limpa eventuais dependentes.
+        if ($notification->allow_guests) {
+            \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $u->id)->delete();
+            $affirmative = isset($actions[0]) && $action === $actions[0];
+            if ($affirmative) {
+                $guests = collect((array) $request->input('guests', []))
+                    ->map(fn ($g) => [
+                        'nome'       => trim((string) (is_array($g) ? ($g['nome'] ?? '') : '')),
+                        'parentesco' => trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : '')),
+                    ])
+                    ->filter(fn ($g) => $g['nome'] !== '')
+                    ->take(30)
+                    ->map(fn ($g) => [
+                        'notification_id' => $notification->id, 'user_id' => $u->id,
+                        'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
+                        'created_at' => now(), 'updated_at' => now(),
+                    ])->values()->all();
+                if ($guests) \App\Models\NotificationGuest::insert($guests);
+            }
+        }
         return response()->json(['data' => ['responded' => true, 'action' => $action]]);
     }
 
@@ -286,8 +309,12 @@ class NotificationController extends Controller
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         $recipients = $this->resolveRecipientUsers($notification);
         $reads = NotificationRead::where('notification_id', $notification->id)->get()->keyBy('user_id');
+        // Acompanhantes/familiares por respondente (só quando a notificação permite).
+        $guestsByUser = $notification->allow_guests
+            ? \App\Models\NotificationGuest::where('notification_id', $notification->id)->get()->groupBy('user_id')
+            : collect();
 
-        $rows = $recipients->map(function ($usr) use ($reads) {
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser) {
             $r = $reads->get($usr->id);
             return [
                 'user_id'      => $usr->id,
@@ -296,6 +323,8 @@ class NotificationController extends Controller
                 'viewed_at'    => $r?->viewed_at?->toIso8601String(),
                 'response'     => $r?->response_action,
                 'responded_at' => $r && $r->response_action ? $r->ack_at?->toIso8601String() : null,
+                'guests'       => ($guestsByUser->get($usr->id) ?? collect())
+                    ->map(fn ($g) => ['nome' => $g->nome, 'parentesco' => $g->parentesco])->values(),
             ];
         })->sortBy('user_name')->values();
 
@@ -306,11 +335,13 @@ class NotificationController extends Controller
         return response()->json(['data' => [
             'recipients' => $rows,
             'summary'    => [
-                'total'     => $rows->count(),
-                'viewed'    => $rows->whereNotNull('viewed_at')->count(),
-                'responded' => $rows->whereNotNull('response')->count(),
-                'actions'   => $actions,
-                'by_action' => $byAction,
+                'total'        => $rows->count(),
+                'viewed'       => $rows->whereNotNull('viewed_at')->count(),
+                'responded'    => $rows->whereNotNull('response')->count(),
+                'actions'      => $actions,
+                'by_action'    => $byAction,
+                'allow_guests' => (bool) $notification->allow_guests,
+                'guests_total' => $rows->sum(fn ($x) => count($x['guests'])),
             ],
         ]]);
     }
@@ -555,6 +586,8 @@ class NotificationController extends Controller
             // Botões de decisão personalizados (nomes definidos pelo admin) — exige resposta.
             'actions'      => 'nullable|array|max:6',
             'actions.*'    => 'string|max:80',
+            // Confirmar presença: permite ao respondente informar acompanhantes/familiares.
+            'allow_guests' => 'nullable|boolean',
             'version'      => 'nullable|integer|min:1',
             'expires_at'   => 'nullable|date',
             // Enquete (quando type=poll)
