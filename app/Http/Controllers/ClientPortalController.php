@@ -804,6 +804,17 @@ class ClientPortalController extends Controller
                     ->sum(DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
                 $consumed = $consumedMin > 0 ? round((float) $consumedMin / 60, 2) : 0.0;
             }
+            // On Demand com CRÉDITO de transferência: o cliente vê o crédito como total (o consumo
+            // abate o crédito e NÃO é cobrado até esgotar). total=crédito, saldo=crédito−consumo.
+            $odCredit = ((optional($p->contractType)->code ?? '') === 'on_demand')
+                ? (float) \App\Models\HourContribution::where('project_id', $p->id)
+                    ->where('motivo', 'transferencia')->whereNull('deleted_at')->sum('contributed_hours')
+                : 0.0;
+            if ($odCredit > 0) {
+                $sold      = round($odCredit, 2);
+                $available = $odCredit;
+                $balance   = round(max(0.0, $odCredit - (float) $consumed), 2);
+            }
             $pct = ($available && $available > 0 && $consumed !== null)
                 ? round(($consumed / $available) * 100, 1)
                 : null;
@@ -824,6 +835,8 @@ class ClientPortalController extends Controller
                 'balance_hours'  => $balance,
                 'percentage'     => $pct,
                 'status'         => $status,
+                // >0 quando o On Demand tem crédito pré-pago (transferência): FE rotula "Crédito".
+                'on_demand_credit_hours' => $odCredit > 0 ? round($odCredit, 2) : null,
             ];
         };
 
