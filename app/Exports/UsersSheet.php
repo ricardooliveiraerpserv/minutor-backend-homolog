@@ -47,9 +47,11 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
         $b   = fn ($v) => $v ? 'Sim' : 'Não';
         $d   = fn ($v) => $v ? (string) \Illuminate\Support\Str::of((string) $v)->before('T') : '';
         $dt  = fn ($v) => $v ? \Illuminate\Support\Carbon::parse($v)->format('d/m/Y H:i') : '';
+        // Normaliza texto: colapsa espaços/quebras embutidos (dados sujos infam a largura da coluna).
+        $c   = fn ($v) => is_string($v) ? trim(preg_replace('/\s+/u', ' ', $v)) : $v;
 
-        return $this->users->map(function ($u) use ($b, $d, $dt) {
-            return [
+        return $this->users->map(function ($u) use ($b, $d, $dt, $c) {
+            return array_map($c, [
                 $u->id,
                 $u->name,
                 $u->full_name,
@@ -94,7 +96,7 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
                 $u->currentCompany?->name ?? null,
                 $u->homeCompany?->name ?? null,
                 $dt($u->created_at),
-            ];
+            ]);
         })->values()->all();
     }
 
