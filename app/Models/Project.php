@@ -887,13 +887,29 @@ class Project extends Model
      * @param int|null $excludeTimesheetId ID do timesheet a excluir do cálculo (útil na edição)
      * @return float Saldo geral em horas
      */
+    /**
+     * Crédito pré-pago do On Demand = Σ aportes motivo='transferencia' (horas transferidas p/ o
+     * projeto). Vira saldo do On Demand: consome o crédito e não é cobrado até esgotar. 0 se não On Demand.
+     */
+    public function onDemandTransferCredit(): float
+    {
+        if (!$this->isOnDemand()) {
+            return 0.0;
+        }
+        $contribs = $this->relationLoaded('hourContributions')
+            ? $this->hourContributions
+            : $this->hourContributions()->get();
+        return (float) $contribs->where('motivo', 'transferencia')->sum('contributed_hours');
+    }
+
     public function getGeneralHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null, ?int $excludeChildProjectId = null): float
     {
         $this->loadMissing('contractType');
 
-        // On Demand não controla saldo
+        // On Demand não controla saldo — EXCETO quando tem crédito pré-pago (transferência):
+        // aí o saldo = crédito − consumo (via managementBreakdown, que já considera o crédito).
         if ($this->isOnDemand()) {
-            return 0.0;
+            return $this->onDemandTransferCredit() > 0 ? (float) $this->managementBreakdown()['balance'] : 0.0;
         }
 
         // Para Banco de Horas Mensal, usar accumulated_sold_hours; caso contrário, usar sold_hours
@@ -1007,8 +1023,15 @@ class Project extends Model
             $logged  = round((($this->timesheets()
                 ->whereIn('status', ['approved', 'pending'])
                 ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
-            $initial = (float) ($this->initial_hours_consumed ?? 0);
-            return ['available' => 0.0, 'consumed' => round($logged + $initial, 2), 'balance' => 0.0];
+            $initial  = (float) ($this->initial_hours_consumed ?? 0);
+            $consumed = round($logged + $initial, 2);
+            // CRÉDITO pré-pago por transferência: vira saldo do On Demand (consome o crédito, não
+            // é cobrado até esgotar). available = crédito, balance = crédito − consumo. Sem crédito = 0.
+            $credit = $this->onDemandTransferCredit();
+            if ($credit > 0) {
+                return ['available' => round($credit, 2), 'consumed' => $consumed, 'balance' => round($credit - $consumed, 2)];
+            }
+            return ['available' => 0.0, 'consumed' => $consumed, 'balance' => 0.0];
         }
 
         // Consumo FATURÁVEL ao cliente = horas apontadas × (1 + uplift do contrato).
