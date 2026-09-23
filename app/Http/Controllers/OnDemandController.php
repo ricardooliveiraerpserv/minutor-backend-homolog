@@ -554,11 +554,16 @@ class OnDemandController extends Controller
             $contributionHistory = array_slice($contributionHistory, 0, 50);
         }
 
-        // On Demand não tem horas contratadas/buffer — cobra TODO o consumo do
-        // período. Valor a pagar = consumo do mês × valor hora (ignora "excedente").
-        $amountToPay = ($monthConsumedHours > 0 && $rateForPayment !== null)
-            ? round($monthConsumedHours * $rateForPayment, 2)
-            : null;
+        // On Demand SEM crédito pré-pago não tem horas contratadas/buffer — cobra TODO
+        // o consumo do período: valor a pagar = consumo do mês × valor hora.
+        // COM crédito de transferência, o consumo abate o crédito e só o EXCEDENTE é
+        // cobrado — então preservamos o $amountToPay já netado (exceededHours × taxa,
+        // calculado no bloco de período/saldo acima). Sem esse gate, o crédito era ignorado.
+        if ($transferCredit <= 0) {
+            $amountToPay = ($monthConsumedHours > 0 && $rateForPayment !== null)
+                ? round($monthConsumedHours * $rateForPayment, 2)
+                : null;
+        }
 
         return response()->json([
             'success' => true,
