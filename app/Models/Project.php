@@ -1076,6 +1076,53 @@ class Project extends Model
         return (float) $contribs->where('motivo', 'transferencia')->sum('contributed_hours');
     }
 
+    /**
+     * Projetos de ORIGEM das horas recebidas por transferência (crédito pré-pago).
+     * Cada transferência é um par vinculado por transfer_group_id (origem −X, destino +X).
+     * Retorna [{project_id, code, name, hours}] agregado por projeto de origem.
+     */
+    public function transferCreditOrigins(): array
+    {
+        if (!$this->isOnDemand()) {
+            return [];
+        }
+        $contribs = $this->relationLoaded('hourContributions')
+            ? $this->hourContributions
+            : $this->hourContributions()->get();
+        // Grupos de transferência em que ESTE projeto foi o destino (entrada, +horas).
+        $groups = $contribs->where('motivo', 'transferencia')
+            ->where('contributed_hours', '>', 0)
+            ->pluck('transfer_group_id')->filter()->unique()->values();
+        if ($groups->isEmpty()) {
+            return [];
+        }
+        // As saídas (−horas) desses grupos = os projetos de origem.
+        $origins = \App\Models\HourContribution::whereIn('transfer_group_id', $groups->all())
+            ->where('contributed_hours', '<', 0)
+            ->with('project:id,code,name')
+            ->get();
+        $agg = [];
+        foreach ($origins as $o) {
+            if (!$o->project) {
+                continue;
+            }
+            $pid = $o->project->id;
+            if (!isset($agg[$pid])) {
+                $agg[$pid] = [
+                    'project_id' => $pid,
+                    'code'       => $o->project->code,
+                    'name'       => $o->project->name,
+                    'hours'      => 0.0,
+                ];
+            }
+            $agg[$pid]['hours'] += abs((float) $o->contributed_hours);
+        }
+        return array_values(array_map(function ($r) {
+            $r['hours'] = round($r['hours'], 2);
+            return $r;
+        }, $agg));
+    }
+
     public function getGeneralHoursBalance(bool $includeChildProjects = false, ?int $excludeTimesheetId = null, ?int $excludeChildProjectId = null): float
     {
         $this->loadMissing('contractType');
