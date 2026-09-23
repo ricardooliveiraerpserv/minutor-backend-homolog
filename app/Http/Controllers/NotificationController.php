@@ -283,15 +283,20 @@ class NotificationController extends Controller
             $affirmative = isset($actions[0]) && $action === $actions[0];
             if ($affirmative) {
                 $guests = collect((array) $request->input('guests', []))
-                    ->map(fn ($g) => [
-                        'nome'       => trim((string) (is_array($g) ? ($g['nome'] ?? '') : '')),
-                        'parentesco' => trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : '')),
-                    ])
+                    ->map(function ($g) {
+                        $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
+                        $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
+                        $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
+                        // Idade só faz sentido p/ Filho(a).
+                        if (stripos($par, 'filho') === false) $idade = null;
+                        return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade];
+                    })
                     ->filter(fn ($g) => $g['nome'] !== '')
                     ->take(30)
                     ->map(fn ($g) => [
                         'notification_id' => $notification->id, 'user_id' => $u->id,
                         'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
+                        'idade' => $g['idade'],
                         'created_at' => now(), 'updated_at' => now(),
                     ])->values()->all();
                 if ($guests) \App\Models\NotificationGuest::insert($guests);
@@ -324,7 +329,7 @@ class NotificationController extends Controller
                 'response'     => $r?->response_action,
                 'responded_at' => $r && $r->response_action ? $r->ack_at?->toIso8601String() : null,
                 'guests'       => ($guestsByUser->get($usr->id) ?? collect())
-                    ->map(fn ($g) => ['nome' => $g->nome, 'parentesco' => $g->parentesco])->values(),
+                    ->map(fn ($g) => ['nome' => $g->nome, 'parentesco' => $g->parentesco, 'idade' => $g->idade])->values(),
             ];
         })->sortBy('user_name')->values();
 

@@ -13,7 +13,7 @@ class NotificationGuest extends Model
 {
     protected $table = 'notification_guests';
 
-    protected $fillable = ['notification_id', 'user_id', 'nome', 'parentesco'];
+    protected $fillable = ['notification_id', 'user_id', 'nome', 'parentesco', 'idade'];
 
     public function notification(): BelongsTo { return $this->belongsTo(AppNotification::class, 'notification_id'); }
     public function user(): BelongsTo { return $this->belongsTo(User::class, 'user_id'); }
