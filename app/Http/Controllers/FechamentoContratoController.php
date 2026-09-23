@@ -156,6 +156,19 @@ class FechamentoContratoController extends Controller
                         $mensal      = $pval;
                     } else {
                         // on_demand e outros
+                        // CRÉDITO pré-pago (transferência): abate o consumo e só cobra o excedente.
+                        // O crédito acumula entre meses → desconta o consumo billável ANTERIOR ao mês.
+                        $credit = ($typeCode === 'on_demand')
+                            ? (float) \App\Models\HourContribution::where('project_id', $projId)
+                                ->where('motivo', 'transferencia')->whereNull('deleted_at')->sum('contributed_hours')
+                            : 0.0;
+                        if ($credit > 0) {
+                            $consumedBeforeMin = (float) Timesheet::whereNotIn('status', [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_LATE])
+                                ->whereNull('deleted_at')->where('project_id', $projId)->where('date', '<', $from)
+                                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'));
+                            $creditRemaining = max(0.0, $credit - round($consumedBeforeMin / 60, 2));
+                            $horas           = round(max(0.0, $horas - $creditRemaining), 2); // horas COBRÁVEIS (resto abatido do crédito)
+                        }
                         $receita     = round($horas * $rate, 2);
                         $displayRate = $rate;
                         $excHoras    = 0.0;
