@@ -788,6 +788,10 @@ Route::prefix('v1')->group(function () {
         });
 
         // 💰 DESPESAS - Protegido por permissões específicas (Admins sempre têm acesso)
+        // Whitelist de usuários autorizados a lançar despesa via cartão de crédito (admin/administrativo).
+        Route::get('/expense-credit-card-users', [\App\Http\Controllers\ExpenseCreditCardUserController::class, 'index'])->name('expense-cc-users.index');
+        Route::post('/expense-credit-card-users', [\App\Http\Controllers\ExpenseCreditCardUserController::class, 'store'])->name('expense-cc-users.store');
+        Route::delete('/expense-credit-card-users/{user}', [\App\Http\Controllers\ExpenseCreditCardUserController::class, 'destroy'])->name('expense-cc-users.destroy');
         Route::get('/expenses', [ExpenseController::class, 'index'])->name('expenses.index');
         Route::get('/expenses/export', [ExpenseController::class, 'export'])->name('expenses.export');
         Route::get('/expenses/{expense}', [ExpenseController::class, 'show'])->name('expenses.show');
