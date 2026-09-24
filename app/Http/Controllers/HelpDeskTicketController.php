@@ -79,27 +79,20 @@ class HelpDeskTicketController extends Controller
             ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $user->id)
             || ($ticket->requester_email && $user->email && strcasecmp((string) $ticket->requester_email, (string) $user->email) === 0)
         ));
-        // Modo do campo de TEMPO (apontamento) no HD — MESMA regra de PRD (SEM estado "optional"):
-        //  - consultor LIBERADO a apontar manual (can_timesheet_sustentacao OU allow_manual_timesheet
-        //    no projeto) → NÃO obrigatório → campo NÃO aparece ('hidden'): ele aponta manual à parte;
-        //  - consultor NÃO liberado → apontar via chamado é OBRIGATÓRIO ('required');
-        //  - ADMIN nunca é forçado → 'hidden'.
-        // Sem contrato/integração não há o que movimentar → 'hidden' (não obrigatório, some).
+        // Modo do campo de TEMPO (apontamento) no HD — depende SÓ da permissão do AGENTE (não do
+        // toggle de integração do contrato): quem é BLOQUEADO de apontar manual só consegue apontar
+        // PELO CHAMADO, então o campo TEM que aparecer.
+        //  - AGENTE HD LIBERADO a apontar manual (can_timesheet_sustentacao OU allow_manual_timesheet
+        //    no projeto) → NÃO obrigatório → campo NÃO aparece ('hidden'): aponta manual à parte;
+        //  - AGENTE HD BLOQUEADO → apontar via chamado é OBRIGATÓRIO ('required') — sempre;
+        //  - ADMIN e quem não é agente de HD → 'hidden' (não forçado).
         $data['apontamento_time_mode'] = 'hidden';
-        if ($user) {
-            $contract = $ticket->relationLoaded('contract') ? $ticket->contract : ($ticket->contract_id ? $ticket->contract()->first() : null);
-            if ($contract && $contract->helpdesk_integration_enabled) {
-                $allowedInProject = $ticket->project_id && \Illuminate\Support\Facades\DB::table('project_consultants')
-                    ->where('project_id', $ticket->project_id)->where('user_id', $user->id)
-                    ->where('allow_manual_timesheet', true)->exists();
-                $canManual = ((bool) $user->can_timesheet_sustentacao) || $allowedInProject;
-                // Liberado → não obrigatório → não aparece; não liberado → obrigatório.
-                $data['apontamento_time_mode'] = $canManual ? 'hidden' : 'required';
-            }
-            // ADMIN nunca é forçado a apontar → não obrigatório → não aparece.
-            if ($user->type === 'admin' && $data['apontamento_time_mode'] === 'required') {
-                $data['apontamento_time_mode'] = 'hidden';
-            }
+        if ($user && $user->type !== 'admin' && $user->isHelpDeskAgent()) {
+            $allowedInProject = $ticket->project_id && \Illuminate\Support\Facades\DB::table('project_consultants')
+                ->where('project_id', $ticket->project_id)->where('user_id', $user->id)
+                ->where('allow_manual_timesheet', true)->exists();
+            $canManual = ((bool) $user->can_timesheet_sustentacao) || $allowedInProject;
+            $data['apontamento_time_mode'] = $canManual ? 'hidden' : 'required';
         }
         return $data;
     }
