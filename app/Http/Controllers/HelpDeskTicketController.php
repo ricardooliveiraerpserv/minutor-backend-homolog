@@ -1837,6 +1837,20 @@ class HelpDeskTicketController extends Controller
             abort_unless($this->access->canBeAssignee($target), 422, 'O agente selecionado não pode ser responsável (perfil de acesso).');
             abort_unless($this->access->attendsCompany($target, $ticket->company_id ? (int) $ticket->company_id : null), 422, 'Este agente não atende a empresa deste chamado.');
         }
+        // Se o front NÃO enviou team_id explícito, deriva a equipe do agente (na empresa do
+        // chamado) — assim a "Equipe" sempre reflete o responsável atribuído, mesmo quando ele
+        // foi escolhido pelo grupo sintético "Agentes" ou pelo botão "Assumir".
+        if (!array_key_exists('team_id', $v) && !empty($v['assignee_id'])) {
+            $derivedTeamId = \Illuminate\Support\Facades\DB::table('helpdesk_team_user as tu')
+                ->join('helpdesk_teams as t', 't.id', '=', 'tu.helpdesk_team_id')
+                ->where('tu.user_id', $v['assignee_id'])
+                ->when($ticket->company_id, fn ($q) => $q->where('t.company_id', $ticket->company_id))
+                ->orderBy('tu.id')
+                ->value('tu.helpdesk_team_id');
+            if ($derivedTeamId) {
+                $v['team_id'] = (int) $derivedTeamId;
+            }
+        }
         $oldA = $ticket->assignee_id; $oldT = $ticket->team_id;
         $ticket->fill($v)->save();
         if ((int) $ticket->assignee_id !== (int) $oldA) {
