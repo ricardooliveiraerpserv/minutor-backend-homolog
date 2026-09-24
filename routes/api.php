@@ -133,8 +133,21 @@ Route::prefix('v1')->group(function () {
         if ($secret === '' || !hash_equals($secret, (string) $request->header('X-Cron-Secret'))) {
             abort(403);
         }
-        \Illuminate\Support\Facades\Artisan::call('schedule:run');
-        return response()->json(['status' => 'ok', 'ran_at' => now()]);
+        // Roda as automações HD diretamente (o keep-alive dispara em minutos arbitrários, então
+        // schedule:run "everyFiveMinutes" quase nunca casaria). Comandos são idempotentes/guardados.
+        $ran = [];
+        foreach ([
+            ['help-desk:ingest-emails', ['--limit' => 25]],
+            ['help-desk:run-idle-triggers', []],
+            ['help-desk:resume-scheduled', []],
+            ['help-desk:run-scheduled-reopens', []],
+        ] as [$cmd, $args]) {
+            try { \Illuminate\Support\Facades\Artisan::call($cmd, $args); $ran[] = $cmd; }
+            catch (\Throwable $e) { $ran[] = $cmd . ':ERR'; }
+        }
+        // remind-dev-delivery é diário — deixa pro schedule:run respeitar a frequência.
+        try { \Illuminate\Support\Facades\Artisan::call('schedule:run'); } catch (\Throwable $e) {}
+        return response()->json(['status' => 'ok', 'ran' => $ran, 'ran_at' => now()]);
     })->name('api.internal.run-scheduler');
 
     // Rotas protegidas (com autenticação Sanctum)
