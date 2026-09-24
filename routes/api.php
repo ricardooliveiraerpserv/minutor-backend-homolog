@@ -126,6 +126,17 @@ Route::prefix('v1')->group(function () {
         ]);
     })->name('api.health');
 
+    // Gatilho de scheduler p/ ambientes sem processo cron (ex.: dev2 web-only).
+    // Protegido por segredo (env CRON_SECRET). Roda apenas as tarefas AGENDADAS que estão vencidas.
+    Route::match(['get', 'post'], '/internal/run-scheduler', function (\Illuminate\Http\Request $request) {
+        $secret = (string) config('app.cron_secret', env('CRON_SECRET'));
+        if ($secret === '' || !hash_equals($secret, (string) $request->header('X-Cron-Secret'))) {
+            abort(403);
+        }
+        \Illuminate\Support\Facades\Artisan::call('schedule:run');
+        return response()->json(['status' => 'ok', 'ran_at' => now()]);
+    })->name('api.internal.run-scheduler');
+
     // Rotas protegidas (com autenticação Sanctum)
     // 👤 CADASTRO PÚBLICO DE CANDIDATO — sem auth, com throttle pra evitar spam
     Route::get('/candidates/form-data', [CandidateController::class, 'formData'])
