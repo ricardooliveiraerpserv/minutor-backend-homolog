@@ -98,6 +98,11 @@ class HelpDeskAccessProfileController extends Controller
         if ($request->filled('customer_id')) {
             $q->where('customer_id', (int) $request->customer_id);
         }
+        // Filtro por perfil de acesso: usado pelo editor do perfil p/ listar os VINCULADOS
+        // (sem depender do limite de 500 da lista geral).
+        if ($request->filled('access_profile_id')) {
+            $q->where('helpdesk_access_profile_id', (int) $request->access_profile_id);
+        }
         // Busca SERVER-SIDE (antes do limite de 500): por nome da pessoa OU nome da empresa (cliente).
         if ($request->filled('search')) {
             $s = '%' . $request->search . '%';
