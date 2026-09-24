@@ -299,10 +299,17 @@ class ProjectController extends Controller
                         $q->whereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId))
                           ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId));
                     });
-                } elseif ($isTargetConsultor) {
-                    // CONSULTOR (Meus Projetos): só vê projetos onde é RESPONSÁVEL de alguma atividade
-                    // (delivery). Ao ser TROCADO (responsável alterado p/ outro), o projeto some. Estar só
-                    // no time (project_consultants) ou ter alocação-resquício (stage_allocations) NÃO basta.
+                } elseif ($isTargetConsultor && $request->boolean('activity_allocated')) {
+                    // CONSULTOR na tela "Meus Projetos" (activity_allocated=true): só vê projetos onde é
+                    // RESPONSÁVEL de alguma atividade (delivery). Ao ser TROCADO (responsável alterado p/
+                    // outro), o projeto some. Estar só no time (project_consultants) ou ter alocação-
+                    // resquício (stage_allocations) NÃO basta — ADR 0004: se aparece na lista, o cronograma
+                    // tem conteúdo pra ele.
+                    // ATENÇÃO: esta restrição vale APENAS para a listagem do cronograma. No APONTAMENTO
+                    // (/my-projects sem activity_allocated) o consultor cai no branch `else` abaixo e enxerga
+                    // TODO projeto onde está alocado (time/grupo/aprovador/coord) — MESMO comportamento de
+                    // produção. Isso é necessário p/ On Demand/Sustentação (sem cronograma): o consultor
+                    // alocado precisa apontar pelo painel dele.
                     $query->whereHas('stages.deliveries', function ($d) use ($targetUserId) {
                         $d->where('responsible_user_id', $targetUserId);
                     });
