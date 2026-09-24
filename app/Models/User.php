@@ -35,6 +35,7 @@ class User extends Authenticatable
         'coordinator_type',
         'can_timesheet_sustentacao',
         'extra_permissions',
+        'helpdesk_access_profile_id',
     ];
 
     /**
@@ -356,6 +357,19 @@ class User extends Authenticatable
         return [$type];
     }
     public function isParceiroAdmin(): bool { return $this->effectiveType() === 'parceiro_admin'; }
+
+    /** Help Desk: é agente (perfil de acesso kind=agent OU membro de alguma equipe HD). */
+    public function isHelpDeskAgent(): bool
+    {
+        if ($this->helpdesk_access_profile_id
+            && \App\Models\HelpDeskAccessProfile::whereKey($this->helpdesk_access_profile_id)
+                ->where('kind', 'agent')->exists()) {
+            return true;
+        }
+        return \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
+            ->where('user_id', $this->id)
+            ->exists();
+    }
 
     // ── BOT: equipe e clientes acessíveis ─────────────────────────────
     // Usados pelo BotAccessControl quando bot_visibility = 'team'.

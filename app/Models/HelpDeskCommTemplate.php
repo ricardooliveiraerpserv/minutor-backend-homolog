@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 /** Template institucional de comunicação (linha única). PEGADINHA: $table explícito. */
 class HelpDeskCommTemplate extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     protected $table = 'helpdesk_comm_template';
 
     protected $fillable = [

@@ -1,0 +1,522 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Attachments\AttachmentService;
+use App\Http\Portal\HelpDeskPortalPresenter;
+use App\Models\Attachment;
+use App\Models\HelpDeskTicketComment;
+use App\Models\HelpDeskKbArticle;
+use App\Models\HelpDeskStatus;
+use App\Models\HelpDeskTicket;
+use App\Models\HelpDeskTicketEvent;
+use App\Services\HelpDeskSlaService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
+
+/**
+ * Help Desk — Portal do Cliente. Consome EXCLUSIVAMENTE dados locais do Minutor,
+ * escopado ao customer_id do usuário cliente. Respostas SEMPRE via HelpDeskPortalPresenter
+ * (C2): nunca devolve a entidade completa nem campos internos.
+ */
+class HelpDeskPortalController extends Controller
+{
+    public function __construct(private HelpDeskSlaService $sla, private \App\Services\HelpDeskAccessPolicy $access)
+    {
+    }
+
+    /** customer_id do cliente logado (aborta se o usuário não for cliente vinculado). */
+    private function customerId(Request $request): int
+    {
+        $cid = $request->user()?->customer_id;
+        abort_if($cid === null, 403, 'Portal disponível apenas para usuários cliente.');
+        return (int) $cid;
+    }
+
+    /**
+     * Escopo "departamento": chamados abertos por pessoas do MESMO departamento do cliente.
+     * O chamado não tem departamento próprio — ele herda o departamento de quem o abriu
+     * (requester). Cliente sem departamento definido só enxerga os próprios (fallback seguro).
+     */
+    private function scopeByDepartment(\Illuminate\Database\Eloquent\Builder $q, \App\Models\User $user, int $cid): \Illuminate\Database\Eloquent\Builder
+    {
+        $dept = $user->helpdesk_department_id;
+        if (!$dept) return $q->where('requester_user_id', $user->id);
+        return $q->whereIn('requester_user_id', \App\Models\User::query()
+            ->where('customer_id', $cid)->where('helpdesk_department_id', $dept)->select('id'));
+    }
+
+    /** Eventos status_changed de vários tickets em UMA query (SLA pausado sem N+1). */
+    private function eventsByTicket(Collection $tickets): Collection
+    {
+        if ($tickets->isEmpty()) return collect();
+        return HelpDeskTicketEvent::whereIn('ticket_id', $tickets->pluck('id'))
+            ->where('event_type', 'status_changed')->orderBy('created_at')
+            ->get(['ticket_id', 'from_value', 'to_value', 'created_at'])
+            ->groupBy('ticket_id');
+    }
+
+    /** Garante que o chamado pertence à empresa do cliente. */
+    private function ownTicket(Request $request, HelpDeskTicket $ticket): void
+    {
+        $u = $request->user();
+        // SOLICITANTE do chamado — mesmo sendo agente/admin (sem customer_id): o chamado é dele,
+        // então pode ver/aceitar/recusar. Casa por user_id OU por e-mail (chamado de origem e-mail
+        // não tem requester_user_id). Só depois disso cai na regra de "cliente da mesma customer".
+        if ($u && (
+            ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $u->id)
+            || ($ticket->requester_email && $u->email && strcasecmp((string) $ticket->requester_email, (string) $u->email) === 0)
+        )) {
+            return;
+        }
+        abort_unless((int) $ticket->customer_id === $this->customerId($request), 404);
+    }
+
+    /** Anexos públicos (visíveis ao cliente) de um chamado. */
+    private function publicAttachments(HelpDeskTicket $ticket): Collection
+    {
+        return Attachment::query()->forEntity('HELPDESK_TICKET', $ticket->id)
+            ->where('visibility', 'customer')->whereNull('deleted_at')
+            ->orderBy('created_at')->get();
+    }
+
+    // ── Chamados do cliente ───────────────────────────────────────────────────
+    /** Permissões do cliente logado (p/ o Portal esconder campos/botões). */
+    public function permissions(Request $request): JsonResponse
+    {
+        $u = $request->user();
+        // Empresas do grupo que o cliente PODE abrir (policies.companies do perfil). Quando > 1,
+        // o portal separa em abas (ERPSERV/BIZIFY) e passa ?company_id para escopar tudo.
+        $scopeIds = $this->access->companiesScope($u);
+        $companiesList = $scopeIds
+            ? \App\Models\Company::whereIn('id', $scopeIds)
+                ->orderByRaw("case when slug = 'erpserv' then 0 else 1 end") // ERPSERV primeiro
+                ->orderBy('name')->get(['id', 'name', 'slug', 'color'])
+            : collect();
+        // Empresa do cliente (mesma lógica do openTicket) para escopar as opções sem depender do
+        // CompanyScope (que fica NULL p/ cliente). withoutGlobalScopes + company_id explícito.
+        $reqCompany = (int) $request->query('company_id');
+        $companyId = ($reqCompany && (empty($scopeIds) || in_array($reqCompany, $scopeIds, true)))
+            ? $reqCompany
+            : ($u->current_company_id ?: ($u->home_company_id ?: (optional(HelpDeskStatus::default())->company_id ?: 1)));
+        if ($scopeIds && !in_array($companyId, $scopeIds, true)) $companyId = (int) $scopeIds[0]; // fora do escopo → 1ª permitida
+        $cats = \App\Models\HelpDeskCategory::withoutGlobalScopes()->where('company_id', $companyId)
+            ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
+        $svcs = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
+            ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
+        // Abertura em nome de outra pessoa → lista os CONTATOS da empresa do cliente. Tags → catálogo.
+        // Interno (não-cliente) não abre "em nome de" no portal — só os próprios chamados.
+        $onBehalf = $u->customer_id !== null && $this->access->clientOpenOnBehalf($u);
+        // "Em nome de": PESSOAS da empresa do cliente — usuários cliente (que logam) + contatos.
+        // Muitas empresas não têm contatos cadastrados, só usuários → listar os usuários resolve.
+        $contacts = [];
+        if ($onBehalf) {
+            $cid = $this->customerId($request);
+            $users = \App\Models\User::where('customer_id', $cid)->where('type', 'cliente')
+                ->where('id', '!=', $u->id)->orderBy('name')->get(['id', 'name', 'email'])
+                ->map(fn ($x) => ['id' => 'u:' . $x->id, 'name' => $x->name, 'email' => $x->email]);
+            $cts = \App\Models\CustomerContact::where('customer_id', $cid)->orderBy('name')->get(['id', 'name', 'email'])
+                ->map(fn ($x) => ['id' => 'c:' . $x->id, 'name' => $x->name, 'email' => $x->email]);
+            $contacts = $users->concat($cts)->values();
+        }
+        $tags = $this->access->informAllowed($u, 'tags')
+            ? \App\Models\HelpDeskTag::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('name')->get(['id', 'name', 'color'])
+            : [];
+        return response()->json(['data' => [
+            'can_open'       => $this->access->clientCanOpen($u),
+            'inform'         => $this->access->informMap($u, ['service', 'category', 'urgency', 'subject', 'tags']),
+            'categories'     => $cats,
+            'services'       => $svcs,
+            'kb_suggestions' => $this->access->kbSuggestionsEnabled($u),
+            'open_on_behalf' => $onBehalf,
+            'contacts'       => $contacts,
+            'tags'           => $tags,
+            'companies'      => $companiesList, // empresas do grupo permitidas (abas do portal)
+            'company_id'     => $companyId,     // empresa efetiva desta resposta
+        ]]);
+    }
+
+    /** Colunas do Kanban do cliente: status ATIVOS e não-terminais (ordem do cadastro). */
+    public function statuses(): JsonResponse
+    {
+        $rows = HelpDeskStatus::where('active', true)->where('is_terminal', false)
+            ->orderBy('sort_order')->orderBy('id')->get(['label', 'color']);
+        return response()->json(['data' => $rows->map(fn ($s) => ['label' => $s->label, 'cor' => $s->color])->values()]);
+    }
+
+    public function myTickets(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        // Aba de empresa (ERPSERV/BIZIFY) do portal: filtra os chamados por company_id, só se a
+        // empresa estiver no escopo permitido do usuário (evita ver de empresa não autorizada).
+        $reqCompany = (int) $request->query('company_id');
+        $scopeIds = $this->access->companiesScope($user);
+        if ($reqCompany && $scopeIds && !in_array($reqCompany, $scopeIds, true)) $reqCompany = 0;
+        $withRels = fn ($q) => $q
+            ->with(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'assignee:id,name', 'contact:id,name'])
+            ->when($reqCompany, fn ($qq) => $qq->where('company_id', $reqCompany))
+            ->when($request->boolean('open'), fn ($qq) => $qq->whereHas('status', fn ($s) => $s->where('is_open', true)))
+            ->orderByDesc('updated_at');
+
+        if ($user->customer_id === null) {
+            // Interno NÃO-cliente (ex.: consultor ERPSERV não-agente): vê o portal escopado
+            // APENAS aos chamados que ELE MESMO abriu (solicitante) — visão tipo cliente.
+            $q = HelpDeskTicket::withoutGlobalScopes()
+                ->whereNull('merged_into_id')
+                ->where(fn ($w) => $w->where('requester_user_id', $user->id)
+                    ->orWhere(fn ($e) => $e->whereNotNull('requester_email')
+                        ->whereRaw('lower(requester_email) = ?', [mb_strtolower((string) $user->email)])));
+            $tickets = $withRels($q)->get();
+        } else {
+            $cid = $this->customerId($request);
+            $scope = $this->access->clientViewScope($user); // own | department | same_org | none
+            $q = HelpDeskTicket::where('customer_id', $cid)
+                ->whereNull('merged_into_id') // chamados mesclados não aparecem na lista do cliente
+                ->when($scope === 'own', fn ($qq) => $qq->where('requester_user_id', $user->id)) // só os que ELE abriu
+                ->when($scope === 'department', fn ($qq) => $this->scopeByDepartment($qq, $user, $cid)) // do mesmo depto dele
+                ->when($scope === 'none', fn ($qq) => $qq->whereRaw('1 = 0'));
+            $tickets = $withRels($q)->get();
+        }
+        $events = $this->eventsByTicket($tickets);
+        return response()->json(['data' => $tickets->map(fn ($t) =>
+            HelpDeskPortalPresenter::ticket($t, $this->sla->clientSummary($t, $events->get($t->id) ?? collect())))]);
+    }
+
+    public function showTicket(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        $u = $request->user();
+        $scope = $this->access->clientViewScope($u);
+        abort_if($scope === 'none', 403, 'Seu perfil de acesso não permite visualizar chamados.');
+        abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
+        if ($scope === 'department') {
+            $dept = $u->helpdesk_department_id;
+            $reqDept = $ticket->requester_user_id
+                ? optional(\App\Models\User::find($ticket->requester_user_id))->helpdesk_department_id : null;
+            $sameDept = $dept && $reqDept && (int) $dept === (int) $reqDept;
+            abort_unless($sameDept || (int) $ticket->requester_user_id === (int) $u->id, 404);
+        }
+        $ticket->load(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'service:id,name', 'assignee:id,name', 'category:id,name', 'justification:id,name', 'tags:id,name', 'customer:id,name', 'team:id,name', 'contact:id,name', 'requester:id,name', 'previousTicket:id,ticket_number,customer_id', 'continuations:id,ticket_number,customer_id,previous_ticket_id']);
+        $events   = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
+        $comments = $ticket->comments()->where('visibility', 'customer')->with('author:id,name')->orderBy('created_at')->get();
+        $atts     = $this->publicAttachments($ticket);
+        $agentHours = round((float) $ticket->timesheets()->whereNull('deleted_at')->sum('effort_minutes') / 60, 2);
+        // Campos visíveis ao cliente (perfil). Legados default visível; novos default oculto.
+        $view = [
+            'urgency'       => $this->access->clientViewField($u, 'urgency', true),
+            'status'        => $this->access->clientViewField($u, 'status', true),
+            'sla_due'       => $this->access->clientViewField($u, 'sla_due', true),
+            'subject'       => $this->access->clientViewField($u, 'subject', true),
+            // Detalhes do chamado — VISÍVEIS por padrão (o cliente vê os dados do próprio chamado).
+            'customer'      => $this->access->clientViewField($u, 'customer', true),
+            'requester'     => $this->access->clientViewField($u, 'requester', true),
+            // FE salva a chave 'responsible' (toggle "Responsável"); o $view/presenter usa 'agent'. Alinhar.
+            'agent'         => $this->access->clientViewField($u, 'responsible', true),
+            'team'          => $this->access->clientViewField($u, 'team', true),
+            'category'      => $this->access->clientViewField($u, 'category', true),
+            'service'       => $this->access->clientViewField($u, 'service', true),
+            'level'         => $this->access->clientViewField($u, 'level', true),
+            'reopens'       => $this->access->clientViewField($u, 'reopens', true),
+            'cc'            => $this->access->clientViewField($u, 'cc', true),
+            // Extras opt-in (mais internos).
+            'justification' => $this->access->clientViewField($u, 'justification', false),
+            'agent_times'   => $this->access->clientViewField($u, 'agent_times', false),
+            'tags'          => $this->access->clientViewField($u, 'tags', false),
+            'sla_first'     => $this->access->clientViewField($u, 'sla_first', false),
+        ];
+        return response()->json(['data' => HelpDeskPortalPresenter::ticketDetail(
+            $ticket, $this->sla->clientSummary($ticket, $events), $comments, $atts, $u->id, $view, $agentHours)]);
+    }
+
+    public function openTicket(Request $request): JsonResponse
+    {
+        // Interno (não-cliente) abre o PRÓPRIO chamado: customer_id = null (chamado sem cliente,
+        // só solicitante). Cliente segue com a trava de perfil de acesso.
+        $cid = $request->user()->customer_id;
+        if ($cid !== null) {
+            abort_unless($this->access->clientCanOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
+        }
+        $v = $request->validate([
+            'subject'             => 'required|string|max:200',
+            'description'         => 'nullable|string',
+            'category_id'         => 'nullable|exists:helpdesk_categories,id',
+            'service_id'          => 'nullable|exists:helpdesk_services,id',
+            'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
+            'contract_id'         => 'nullable|exists:contracts,id',
+            'project_id'          => 'nullable|exists:projects,id',
+            'on_behalf'           => 'nullable|string|max:20', // 'u:ID' (usuário) ou 'c:ID' (contato)
+            'cc_emails'           => 'nullable|array',         // pessoas em CÓPIA (todos os perfis)
+            'cc_emails.*'         => 'email',
+            'tags'                => 'nullable|array',
+            'tags.*'              => 'integer|exists:helpdesk_tags,id',
+        ]);
+
+        // Perfil de acesso: ignora campos que o cliente não pode informar na abertura.
+        $u = $request->user();
+        if (!$this->access->informAllowed($u, 'category')) unset($v['category_id']);
+        if (!$this->access->informAllowed($u, 'service'))  unset($v['service_id']);
+        if (!$this->access->informAllowed($u, 'urgency'))  unset($v['priority']);
+        // Abrir EM NOME DE (usuário 'u:ID' ou contato 'c:ID' da MESMA empresa) só se o perfil permitir.
+        $onBehalfReq = null; $onBehalfContact = null;
+        if ($this->access->clientOpenOnBehalf($u) && !empty($v['on_behalf'])) {
+            [$kind, $pid] = array_pad(explode(':', (string) $v['on_behalf'], 2), 2, null);
+            $pid = (int) $pid;
+            if ($kind === 'u' && \App\Models\User::where('id', $pid)->where('customer_id', $cid)->where('type', 'cliente')->exists()) {
+                $onBehalfReq = $pid;
+            } elseif ($kind === 'c' && \App\Models\CustomerContact::where('id', $pid)->where('customer_id', $cid)->exists()) {
+                $onBehalfContact = $pid;
+            }
+        }
+        unset($v['on_behalf']);
+        // Tags só se o perfil permitir informar; extrai (não é coluna do ticket) p/ aplicar depois.
+        $tagIds = $this->access->informAllowed($u, 'tags') ? array_map('intval', (array) ($v['tags'] ?? [])) : [];
+        unset($v['tags']);
+
+        if (!empty($v['contract_id'])) {
+            abort_unless(\App\Models\Contract::where('id', $v['contract_id'])->where('customer_id', $cid)->exists(), 422, 'Contrato não pertence à sua empresa.');
+        }
+
+        // Empresa (tenant) do chamado: NUNCA deixar NULL, senão o chamado some da fila do admin
+        // (CompanyScope filtra por company_id). Clientes normalmente NÃO têm current_company_id →
+        // o BelongsToCompany carimbava NULL. Usa a empresa do status DEFAULT (mesma empresa onde o
+        // chamado vai viver); prefere o contexto do usuário se existir; fallback final = 1.
+        $status    = HelpDeskStatus::default();
+        // Empresa do chamado: a aba escolhida (company_id) quando permitida; senão o contexto do usuário.
+        $scopeIds  = $this->access->companiesScope($request->user());
+        $reqCompany = (int) $request->input('company_id');
+        $companyId = ($reqCompany && (empty($scopeIds) || in_array($reqCompany, $scopeIds, true)))
+            ? $reqCompany
+            : ($request->user()->current_company_id ?: ($request->user()->home_company_id ?: (optional($status)->company_id ?: 1)));
+        if ($scopeIds && !in_array($companyId, $scopeIds, true)) $companyId = (int) $scopeIds[0];
+        // Status inicial DA EMPRESA do chamado (Kanban/colunas são por empresa).
+        $status = HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->where('is_default', true)->orderBy('sort_order')->first()
+            ?? HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('sort_order')->first()
+            ?? $status;
+
+        $ticket = HelpDeskTicket::create(array_merge($v, [
+            'customer_id'       => $cid,
+            'priority'          => $v['priority'] ?? 'normal',
+            'channel'           => 'portal',
+            'status_id'         => optional($status)->id,
+            // Solicitante = a pessoa em nome de quem foi aberto (se houver); quem ABRIU fica em created_by.
+            'requester_user_id' => $onBehalfReq ?: $request->user()->id,
+            'customer_contact_id' => $onBehalfContact,
+            'created_by_id'     => $request->user()->id,
+            'last_activity_at'  => now(),
+        ]));
+        // ⚠️ company_id NÃO é fillable → o create() DESCARTA no mass-assign e o BelongsToCompany carimba
+        // do contexto (NULL p/ cliente) → chamado sumia da fila do admin. Setar DIRETO (fora do mass-assign).
+        $ticket->company_id = $companyId;
+        // Número no formato CONFIGURADO (prefixo + dígitos + sequência) DA MESMA EMPRESA — senão o
+        // cliente sem contexto incrementava o template de outra empresa (gerando número colidente).
+        $ticket->ticket_number = \App\Services\HelpDeskTicketNumber::next($companyId);
+        $ticket->save();
+        // Tags informadas na abertura (se o perfil permitiu) — só as da empresa do chamado.
+        if (!empty($tagIds)) {
+            $validTags = \App\Models\HelpDeskTag::withoutGlobalScopes()->whereIn('id', $tagIds)
+                ->where('company_id', $companyId)->pluck('id')->all();
+            if ($validTags) $ticket->tags()->syncWithoutDetaching($validTags);
+        }
+        $this->sla->apply($ticket);
+        HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject, 'meta' => ['via' => 'portal']]);
+
+        $ticket->load('status:id,key,label,color,is_open,sla_paused');
+        return response()->json(['data' => HelpDeskPortalPresenter::ticket($ticket, $this->sla->clientSummary($ticket))], 201);
+    }
+
+    /** Cliente responde ao próprio chamado (sempre visível ao cliente). Anexos vão JUNTO da interação. */
+    public function addComment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        $v = $request->validate([
+            'body'    => 'required_without:files|nullable|string',
+            'files'   => 'nullable|array',
+            'files.*' => 'file|max:51200',
+        ]);
+        $comment = $ticket->comments()->create([
+            'author_user_id' => $request->user()->id,
+            'body'           => $v['body'] ?? '',
+            'visibility'     => 'customer',
+            'channel'        => 'portal',
+        ]);
+        // Anexos/prints DA INTERAÇÃO (entity_type do COMENTÁRIO, não solto no chamado).
+        foreach ((array) $request->file('files', []) as $file) {
+            $svc->store($request->user(), [
+                'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
+                'category'    => str_starts_with((string) $file->getMimeType(), 'image/') ? 'image' : 'attachment',
+                'file'        => $file, 'visibility' => 'customer',
+            ], $request);
+        }
+        $ticket->update(['last_activity_at' => now()]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
+        return response()->json(['data' => HelpDeskPortalPresenter::comment($comment->fresh()->load('author:id,name'), $request->user()->id)], 201);
+    }
+
+    /** Download de anexo de uma INTERAÇÃO (comentário) do chamado do cliente. */
+    public function downloadCommentAttachment(Request $request, HelpDeskTicket $ticket, HelpDeskTicketComment $comment, Attachment $attachment, AttachmentService $svc)
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless((int) $comment->ticket_id === $ticket->id, 404);
+        abort_unless($attachment->entity_type === 'HELPDESK_TICKET_COMMENT' && (int) $attachment->entity_id === $comment->id && $attachment->visibility === 'customer', 404);
+        return $svc->downloadStream($attachment, $request->user(), $request);
+    }
+
+    /** Cliente ACEITA a solução → chamado é ENCERRADO (fechado). Só se estiver resolvido. */
+    public function accept(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless(optional($ticket->status)->is_resolved, 422, 'O chamado não está resolvido.');
+        $fechado = HelpDeskStatus::where('key', 'fechado')->first();
+        abort_unless($fechado, 500, 'Status "fechado" não configurado.');
+        $old = $ticket->status;
+        // Transição ATÔMICA: só o 1º request (status ainda resolvido) efetiva. Duplo-clique/duplo-submit
+        // concorrente afeta 0 linhas → no-op, sem duplicar a interação de encerramento nem o e-mail.
+        $resolvedIds = HelpDeskStatus::where('is_resolved', true)->where('is_terminal', false)->pluck('id')->all();
+        $affected = HelpDeskTicket::whereKey($ticket->id)->whereIn('status_id', $resolvedIds)->update([
+            'status_id'        => $fechado->id,
+            'closed_at'        => \Illuminate\Support\Facades\DB::raw('COALESCE(closed_at, now())'),
+            'last_activity_at' => now(),
+        ]);
+        if (!$affected) {
+            return response()->json(['data' => ['ok' => true]]); // já encerrado por requisição concorrente
+        }
+        $ticket->refresh();
+        $this->sla->computeBreaches($ticket);
+        $ticket->save();
+        HelpDeskTicketEvent::log($ticket->id, 'closed', ['to_value' => $fechado->label, 'meta' => ['via' => 'portal', 'aceite_cliente' => true]]);
+        HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $fechado->key, 'meta' => ['via' => 'portal']]);
+        // Interação de encerramento (quem encerrou) — mesmo conceito do aceite por e-mail.
+        $closerName = trim((string) optional($request->user())->name) ?: 'cliente';
+        $c = $ticket->comments()->create([
+            'author_user_id' => $request->user()->id,
+            'body'           => '🔒 Chamado encerrado por ' . $closerName . '.',
+            'visibility'     => 'internal', 'channel' => 'portal', 'is_system' => true,
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'close_portal']]);
+        // Gatilho de encerramento (e-mail "Chamado encerrado" com histórico/link).
+        try {
+            $ctx = app(\App\Services\CompanyContext::class); $ctx->set($ticket->company_id);
+            try { \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['via' => 'portal_aceite']); }
+            finally { $ctx->forget(); }
+        } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('HelpDesk: gatilho de aceite (portal) falhou: ' . $e->getMessage()); }
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    /** Cliente RECUSA a solução → volta para "Em atendimento" + registra o motivo como interação. */
+    public function reject(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless(optional($ticket->status)->is_resolved, 422, 'O chamado não está resolvido.');
+        $v = $request->validate(['reason' => 'required|string|max:2000']);
+        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        abort_unless($em, 500, 'Status "em andamento" não configurado.');
+        $old = $ticket->status;
+        // Transição ATÔMICA: só o 1º request (status ainda resolvido) efetiva a recusa → evita
+        // duplicar a interação de recusa e o e-mail em duplo-clique/duplo-submit concorrente.
+        $resolvedIds = HelpDeskStatus::where('is_resolved', true)->where('is_terminal', false)->pluck('id')->all();
+        $affected = HelpDeskTicket::whereKey($ticket->id)->whereIn('status_id', $resolvedIds)->update([
+            'status_id'        => $em->id,
+            'reopened_at'      => now(),
+            'resolved_at'      => null,
+            'reopen_count'     => \Illuminate\Support\Facades\DB::raw('reopen_count + 1'),
+            'last_activity_at' => now(),
+        ]);
+        if (!$affected) {
+            return response()->json(['data' => ['ok' => true]]); // já recusado/reaberto por requisição concorrente
+        }
+        $ticket->refresh();
+        $this->sla->computeBreaches($ticket);
+        $ticket->save();
+        $comment = $ticket->comments()->create([
+            'author_user_id'    => $request->user()->id,
+            'author_contact_id' => $ticket->customer_contact_id, // quem recusou (contato do cliente)
+            'body'              => 'Solução recusada pelo cliente: ' . $v['reason'],
+            'visibility'        => 'customer',
+            'channel'           => 'portal',
+            'form_kind'         => 'rejection', // card vermelho "Solução recusada" no timeline
+        ]);
+        HelpDeskTicketEvent::log($ticket->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'portal', 'motivo' => $v['reason']]]);
+        HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['field' => 'status', 'from_value' => $old?->key, 'to_value' => $em->key, 'meta' => ['via' => 'portal']]);
+        HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'via' => 'portal']]);
+        // Aviso DETERMINÍSTICO de recusa (equipe + cliente), threadado — igual ao aceite/recusa por e-mail.
+        try {
+            \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $v['reason'], $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+        } catch (\Throwable $e) { \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de recusa (portal) falhou: ' . $e->getMessage()); }
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    // ── Anexos do chamado pelo cliente (R5) — Attachment Engine global ────────
+    public function attachments(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        return response()->json(['data' => $this->publicAttachments($ticket)
+            ->map(fn (Attachment $a) => HelpDeskPortalPresenter::attachment($a, $ticket->id))->values()]);
+    }
+
+    public function uploadAttachment(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        $request->validate(['file' => 'required|file|max:51200']);
+        $att = $svc->store($request->user(), [
+            'entity_type' => 'HELPDESK_TICKET', 'entity_id' => $ticket->id,
+            'category'    => 'attachment', 'file' => $request->file('file'),
+            'visibility'  => 'customer', // anexo do cliente nasce visível ao cliente
+        ], $request);
+        $ticket->update(['last_activity_at' => now()]);
+        HelpDeskTicketEvent::log($ticket->id, 'attachment_added', ['meta' => ['attachment_id' => $att->id ?? null, 'via' => 'portal']]);
+        return response()->json(['data' => HelpDeskPortalPresenter::attachment($att, $ticket->id)], 201);
+    }
+
+    public function downloadAttachment(Request $request, HelpDeskTicket $ticket, Attachment $attachment, AttachmentService $svc)
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless($attachment->entity_type === 'HELPDESK_TICKET' && (int) $attachment->entity_id === $ticket->id && $attachment->visibility === 'customer', 404);
+        return $svc->downloadStream($attachment, $request->user(), $request);
+    }
+
+    public function deleteAttachment(Request $request, HelpDeskTicket $ticket, Attachment $attachment, AttachmentService $svc): JsonResponse
+    {
+        $this->ownTicket($request, $ticket);
+        abort_unless($attachment->entity_type === 'HELPDESK_TICKET' && (int) $attachment->entity_id === $ticket->id && $attachment->visibility === 'customer', 404);
+        $svc->softDeleteOwn($attachment, $request->user(), $request); // só o próprio upload (não remove doc do atendente)
+        return response()->json(null, 204);
+    }
+
+    // ── Base de Conhecimento (somente publicado e visível ao cliente) ─────────
+    private function kbVisible()
+    {
+        return HelpDeskKbArticle::query()->where('status', 'published')->where('visibility', 'customer');
+    }
+
+    public function kbIndex(Request $request): JsonResponse
+    {
+        $arts = $this->kbVisible()
+            ->when($request->filled('search'), fn ($q) => $q->where(fn ($w) =>
+                $w->where('title', 'ilike', '%' . $request->search . '%')->orWhere('body', 'ilike', '%' . $request->search . '%')))
+            ->orderByDesc('pinned')->orderByDesc('published_at')->get();
+        return response()->json(['data' => $arts->map(fn (HelpDeskKbArticle $a) => HelpDeskPortalPresenter::kbArticle($a))]);
+    }
+
+    public function kbShow(HelpDeskKbArticle $article): JsonResponse
+    {
+        abort_unless($article->status === 'published' && $article->visibility === 'customer', 404);
+        $article->increment('views_count');
+        $article->load('category:id,name');
+        return response()->json(['data' => HelpDeskPortalPresenter::kbArticle($article, true)]);
+    }
+
+    public function kbFeedback(Request $request, HelpDeskKbArticle $article): JsonResponse
+    {
+        abort_unless($article->status === 'published' && $article->visibility === 'customer', 404);
+        $v = $request->validate(['helpful' => 'required|boolean', 'comment' => 'nullable|string|max:500']);
+        $article->feedback()->create([
+            'user_id' => $request->user()?->id,
+            'helpful' => $v['helpful'],
+            'comment' => $v['comment'] ?? null,
+            'ip'      => $request->ip(),
+        ]);
+        $article->increment($v['helpful'] ? 'helpful_count' : 'not_helpful_count');
+        return response()->json(['data' => ['ok' => true]]);
+    }
+}

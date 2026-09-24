@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /** Conta de e-mail do Help Desk (recebimento). PEGADINHA: $table explícito. Senha NUNCA serializa. */
 class HelpDeskEmailAccount extends Model
 {
+    use \App\Models\Concerns\BelongsToCompany;
     use SoftDeletes;
 
     protected $table = 'helpdesk_email_accounts';
@@ -17,7 +18,7 @@ class HelpDeskEmailAccount extends Model
         'name', 'email', 'brand', 'provider', 'receive_enabled', 'protocol', 'host', 'port',
         'encryption', 'username', 'password', 'inbox',
         'smtp_host', 'smtp_port', 'smtp_encryption', 'settings',
-        'default_team_id', 'enabled', 'last_status', 'last_error', 'last_checked_at',
+        'default_team_id', 'company_id', 'enabled', 'last_status', 'last_error', 'last_checked_at',
     ];
 
     protected $hidden = ['password']; // nunca volta na API

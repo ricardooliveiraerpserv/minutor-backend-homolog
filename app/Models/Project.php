@@ -113,6 +113,7 @@ class Project extends Model
         'categoria_interna',
         'kanban_coordinator_override_id',
         'movidesk_integration_enabled',
+        'helpdesk_integration_enabled',
         'movidesk_integration_since',
     ];
 
@@ -159,6 +160,7 @@ class Project extends Model
         'is_investimento_comercial' => 'boolean',
         'is_rateio' => 'boolean',
         'movidesk_integration_enabled' => 'boolean',
+        'helpdesk_integration_enabled' => 'boolean',
         'movidesk_integration_since' => 'date:Y-m-d',
         'save_erpserv' => 'decimal:2',
         'start_date' => 'date:Y-m-d',

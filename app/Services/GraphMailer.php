@@ -23,6 +23,8 @@ class GraphMailer
 
     /** Anexos inline (contentBytes) só valem até ~3 MB no total num único sendMail. */
     public const MAX_INLINE_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+    /** Teto por ARQUIVO no e-mail (createUploadSession cobre >3MB). Alinha com o upload (25MB). */
+    public const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
     /**
      * Teto TOTAL de anexos quando enviado via RASCUNHO (draft + anexos individuais /
@@ -34,11 +36,6 @@ class GraphMailer
     /** true só quando as 3 credenciais estão preenchidas. */
     public static function enabled(): bool
     {
-        // 🚫 Kill-switch de e-mail (bases de teste): desliga o Graph mesmo com credenciais.
-        if (config('mail.kill_switch')) {
-            return false;
-        }
-
         $c = config('services.graph');
 
         return !empty($c['tenant_id'])
@@ -107,7 +104,7 @@ class GraphMailer
             if ($total > self::MAX_TOTAL_ATTACHMENTS_BYTES) {
                 throw new \RuntimeException('Graph: anexos excedem ' . (int) round(self::MAX_TOTAL_ATTACHMENTS_BYTES / 1048576) . ' MB (teto da caixa).');
             }
-            self::sendViaDraft($token, $fromEmail, $to, $cc, [], $subject, $htmlBody, $paths);
+            self::sendViaDraft($token, $fromEmail, $to, $cc, $subject, $htmlBody, $paths);
             return;
         }
 
@@ -134,29 +131,21 @@ class GraphMailer
      * arquivo num request separado (upload session pros > 3 MB) e envia. Contorna o teto de
      * ~4 MB de request do sendMail inline.
      *
-     * Reusável pelos dois envios (sistema e Help Desk) — cada um passa o SEU token.
-     * $byteAttachments = anexos em memória (cid = imagem inline no corpo).
-     *
      * @param array<int,string> $to
      * @param array<int,string> $cc
-     * @param array<int,string> $bcc
      * @param array<int,string> $paths
-     * @param array<int,array{name:string,mime?:string,bytes:string,cid?:string}> $byteAttachments
      */
-    public static function sendViaDraft(string $token, string $fromEmail, array $to, array $cc, array $bcc, string $subject, string $htmlBody, array $paths, array $byteAttachments = []): void
+    private static function sendViaDraft(string $token, string $fromEmail, array $to, array $cc, string $subject, string $htmlBody, array $paths): void
     {
         $base = sprintf('%s/users/%s', self::GRAPH_BASE, rawurlencode($fromEmail));
 
         // 1) Cria o rascunho (sem anexos de arquivo).
-        $draft = [
+        $create = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages', [
             'subject'      => $subject,
             'body'         => ['contentType' => 'HTML', 'content' => $htmlBody],
             'toRecipients' => self::recipients($to),
             'ccRecipients' => self::recipients($cc),
-        ];
-        $bccR = self::recipients($bcc);
-        if (!empty($bccR)) $draft['bccRecipients'] = $bccR;
-        $create = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages', $draft);
+        ]);
         if (!$create->successful()) {
             throw new \RuntimeException('Graph criar rascunho falhou (HTTP ' . $create->status() . '): ' . $create->body());
         }
@@ -181,23 +170,6 @@ class GraphMailer
                     }
                 } else {
                     self::uploadLargeAttachment($token, $base, $msgId, $path, $size);
-                }
-            }
-
-            // 2b) Anexos em memória (bytes) — incluindo imagens inline (cid).
-            foreach ($byteAttachments as $a) {
-                $bytes = (string) ($a['bytes'] ?? '');
-                if ($bytes === '') continue;
-                $entry = [
-                    '@odata.type'  => '#microsoft.graph.fileAttachment',
-                    'name'         => (string) ($a['name'] ?? 'anexo'),
-                    'contentType'  => (string) ($a['mime'] ?? 'application/octet-stream'),
-                    'contentBytes' => base64_encode($bytes),
-                ];
-                if (!empty($a['cid'])) { $entry['contentId'] = (string) $a['cid']; $entry['isInline'] = true; }
-                $r = Http::withToken($token)->acceptJson()->asJson()->post($base . '/messages/' . $msgId . '/attachments', $entry);
-                if (!$r->successful()) {
-                    throw new \RuntimeException('Graph anexar (memória) falhou (HTTP ' . $r->status() . '): ' . $r->body());
                 }
             }
 
@@ -357,8 +329,6 @@ class GraphMailer
         return match ($ext) {
             'pdf'  => 'application/pdf',
             'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'jpg', 'jpeg' => 'image/jpeg',
-            'png'  => 'image/png',
             default => 'application/octet-stream',
         };
     }

@@ -1,0 +1,214 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\HelpDeskAccessProfile;
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+
+/** Help Desk — Cadastro de Perfis de Acesso (agente|cliente). CRUD. */
+class HelpDeskAccessProfileController extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        $rows = HelpDeskAccessProfile::query()
+            ->when($request->filled('kind'), fn ($q) => $q->where('kind', $request->kind))
+            ->when(!$request->boolean('all'), fn ($q) => $q->where('enabled', true))
+            ->orderBy('kind')->orderBy('sort_order')->orderBy('name')
+            ->get();
+        return response()->json(['data' => $rows]);
+    }
+
+    private function rules(bool $creating): array
+    {
+        return [
+            'name'        => ($creating ? 'required' : 'sometimes') . '|string|max:120',
+            'kind'        => ($creating ? 'required' : 'sometimes') . '|in:agent,cliente',
+            'is_default'  => 'nullable|boolean',
+            'enabled'     => 'nullable|boolean',
+            'permissions' => 'nullable|array',
+            'sort_order'  => 'nullable|integer',
+        ];
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $v = $request->validate($this->rules(true));
+        return DB::transaction(function () use ($v) {
+            $p = HelpDeskAccessProfile::create($v);
+            $this->ensureSingleDefault($p);
+            return response()->json(['data' => $p->fresh()], 201);
+        });
+    }
+
+    public function update(Request $request, HelpDeskAccessProfile $accessProfile): JsonResponse
+    {
+        $v = $request->validate($this->rules(false));
+        return DB::transaction(function () use ($v, $accessProfile) {
+            $accessProfile->update($v);
+            $this->ensureSingleDefault($accessProfile);
+            return response()->json(['data' => $accessProfile->fresh()]);
+        });
+    }
+
+    /** Duplica um perfil (mesmas permissões) — cópia nunca vira padrão. */
+    public function duplicate(HelpDeskAccessProfile $accessProfile): JsonResponse
+    {
+        $copy = HelpDeskAccessProfile::create([
+            'name'        => mb_substr($accessProfile->name . ' (cópia)', 0, 120),
+            'kind'        => $accessProfile->kind,
+            'is_default'  => false,
+            'enabled'     => (bool) $accessProfile->enabled,
+            'permissions' => $accessProfile->permissions,
+            'sort_order'  => (int) $accessProfile->sort_order + 1,
+        ]);
+        return response()->json(['data' => $copy->fresh()], 201);
+    }
+
+    public function destroy(HelpDeskAccessProfile $accessProfile): JsonResponse
+    {
+        // Garante ao menos um perfil ativo do tipo (regra Movidesk).
+        $ativosDoTipo = HelpDeskAccessProfile::where('kind', $accessProfile->kind)->where('enabled', true)->where('id', '!=', $accessProfile->id)->count();
+        abort_if($accessProfile->enabled && $ativosDoTipo === 0, 422, 'Pelo menos um perfil de acesso ' . ($accessProfile->kind === 'agent' ? 'de agente' : 'de cliente') . ' precisa estar ativo.');
+        $accessProfile->delete();
+        return response()->json(null, 204);
+    }
+
+    /**
+     * Pessoas do Help Desk com seu perfil de acesso vinculado.
+     * kind=agent → usuários internos (candidatos a agente); kind=cliente → usuários cliente.
+     */
+    public function people(Request $request): JsonResponse
+    {
+        $kind = $request->get('kind') === 'cliente' ? 'cliente' : 'agent';
+        // customer_id + helpdesk_department_id: p/ a tela de Pessoas oferecer o
+        // departamento (escopo por cliente). Ver HelpDeskDepartmentController.
+        // customer:id,name eager-load p/ a tela de Pessoas exibir a EMPRESA (cliente) de cada
+        // pessoa — sem N+1 (1 query extra p/ todos os clientes da página).
+        $q = User::query()
+            ->select('id', 'name', 'type', 'helpdesk_access_profile_id', 'customer_id', 'helpdesk_department_id')
+            ->with('customer:id,name');
+        $kind === 'cliente'
+            ? $q->where('type', 'cliente')
+            : $q->whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor']);
+        // Filtro opcional por cliente (customer_id): usado pela tela de Departamentos p/
+        // listar só as pessoas daquele cliente ao vincular ao departamento.
+        if ($request->filled('customer_id')) {
+            $q->where('customer_id', (int) $request->customer_id);
+        }
+        // Filtro por perfil de acesso: usado pelo editor do perfil p/ listar os VINCULADOS
+        // (sem depender do limite de 500 da lista geral).
+        if ($request->filled('access_profile_id')) {
+            $q->where('helpdesk_access_profile_id', (int) $request->access_profile_id);
+        }
+        // Busca SERVER-SIDE (antes do limite de 500): por nome da pessoa OU nome da empresa (cliente).
+        if ($request->filled('search')) {
+            $s = '%' . $request->search . '%';
+            $q->where(fn ($w) => $w->where('name', 'ilike', $s)
+                ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $s)));
+        }
+        $rows = $q->orderBy('name')->limit(500)->get()->map(function (User $u) {
+            $u->setAttribute('customer_name', $u->customer?->name);
+            $u->unsetRelation('customer');
+            return $u;
+        });
+        return response()->json(['data' => $rows]);
+    }
+
+    /** Vincula (ou remove) o perfil de acesso de um usuário, validando a compatibilidade de tipo. */
+    public function setAccessProfile(Request $request, User $user): JsonResponse
+    {
+        $v = $request->validate(['access_profile_id' => 'nullable|exists:helpdesk_access_profiles,id']);
+        if (!empty($v['access_profile_id'])) {
+            $prof = HelpDeskAccessProfile::find($v['access_profile_id']);
+            $userIsCliente = $user->type === 'cliente';
+            abort_if($userIsCliente !== ($prof->kind === 'cliente'), 422, 'Perfil incompatível com o tipo do usuário (agente × cliente).');
+        }
+        $user->helpdesk_access_profile_id = $v['access_profile_id'] ?? null; // set direto (fora do mass-assign)
+        $user->save();
+        return response()->json(['data' => ['id' => $user->id, 'helpdesk_access_profile_id' => $user->helpdesk_access_profile_id]]);
+    }
+
+    /** Equipes de atendimento do usuário (pivot helpdesk_team_user) — atribuição inline na aba HD. */
+    /** Liga/desliga "Pode apontar manualmente em sustentação" (can_timesheet_sustentacao) inline. */
+    public function setCanTimesheetSustentacao(Request $request, User $user): JsonResponse
+    {
+        abort_if($user->type === 'cliente', 422, 'Não se aplica a cliente.');
+        $v = $request->validate(['can_timesheet_sustentacao' => 'required|boolean']);
+        $user->can_timesheet_sustentacao = (bool) $v['can_timesheet_sustentacao'];
+        $user->save();
+        return response()->json(['data' => ['id' => $user->id, 'can_timesheet_sustentacao' => (bool) $user->can_timesheet_sustentacao]]);
+    }
+
+    public function setTeams(Request $request, User $user): JsonResponse
+    {
+        abort_if($user->type === 'cliente', 422, 'Cliente não entra em equipe de atendimento.');
+        $v = $request->validate([
+            'team_ids'   => 'present|array',
+            'team_ids.*' => 'integer|exists:helpdesk_teams,id',
+        ]);
+        $ids = collect($v['team_ids'])->filter()->map(fn ($i) => (int) $i)->unique()->values()->all();
+        $now = now();
+        \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->where('user_id', $user->id)->delete();
+        if ($ids) {
+            \Illuminate\Support\Facades\DB::table('helpdesk_team_user')->insert(array_map(fn ($tid) => [
+                'helpdesk_team_id' => $tid, 'user_id' => $user->id, 'created_at' => $now, 'updated_at' => $now,
+            ], $ids));
+        }
+        return response()->json(['data' => ['id' => $user->id, 'helpdesk_team_ids' => $ids]]);
+    }
+
+    /** Empresas do grupo (ERPSERV/BIZIFY) às quais o usuário fica vinculado (pivot company_user). */
+    public function setCompanies(Request $request, User $user): JsonResponse
+    {
+        $v = $request->validate([
+            'company_ids'   => 'present|array',
+            'company_ids.*' => 'integer|exists:companies,id',
+        ]);
+        $ids = array_values(array_unique(array_map('intval', $v['company_ids'])));
+        $existing = $user->companies()->pluck('company_user.role', 'companies.id')->all();
+        // ⚠️ CLIENTE: papel SEMPRE 'cliente' (nunca papel interno — senão o effectiveType vira
+        // interno pelo company_user e vaza acesso). Define as empresas do PORTAL (abas ERPSERV/BIZIFY).
+        // Interno: preserva/deriva o papel existente.
+        $roles = ['admin', 'administrativo', 'coordenador', 'consultor', 'cliente', 'parceiro_admin'];
+        $defaultRole = in_array($user->type, $roles, true) ? $user->type : 'consultor';
+        $payload = [];
+        foreach ($ids as $id) {
+            $payload[$id] = ['role' => $user->type === 'cliente' ? 'cliente' : ($existing[$id] ?? $defaultRole)];
+        }
+        $user->companies()->sync($payload);
+        return response()->json(['data' => ['id' => $user->id, 'company_ids' => $ids]]);
+    }
+
+    /** Atualização em massa: aplica um perfil de acesso a vários usuários de uma vez. */
+    public function bulkSetAccessProfile(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'user_ids'          => 'required|array|min:1',
+            'user_ids.*'        => 'integer|exists:users,id',
+            'access_profile_id' => 'nullable|exists:helpdesk_access_profiles,id',
+        ]);
+
+        $prof = !empty($v['access_profile_id']) ? HelpDeskAccessProfile::find($v['access_profile_id']) : null;
+        $users = User::whereIn('id', $v['user_ids'])->get();
+        $applied = 0; $skipped = 0;
+        foreach ($users as $user) {
+            // Respeita compatibilidade agente × cliente (pula incompatíveis em vez de abortar tudo).
+            if ($prof && (($user->type === 'cliente') !== ($prof->kind === 'cliente'))) { $skipped++; continue; }
+            $user->helpdesk_access_profile_id = $prof?->id;
+            $user->save();
+            $applied++;
+        }
+        return response()->json(['data' => ['applied' => $applied, 'skipped' => $skipped]]);
+    }
+
+    /** Apenas UM perfil padrão por tipo (agente|cliente). */
+    private function ensureSingleDefault(HelpDeskAccessProfile $p): void
+    {
+        if ($p->is_default) {
+            HelpDeskAccessProfile::where('kind', $p->kind)->where('id', '!=', $p->id)->where('is_default', true)->update(['is_default' => false]);
+        }
+    }
+}

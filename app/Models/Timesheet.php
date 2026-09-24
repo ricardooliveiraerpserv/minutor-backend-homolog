@@ -64,6 +64,7 @@ class Timesheet extends Model
         'effort_minutes',
         'observation',
         'ticket',
+        'helpdesk_ticket_id',
         'origin',
         'is_billable_only',
         'is_internal_action',
