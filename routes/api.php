@@ -1959,9 +1959,6 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/tickets/merge',          [\App\Http\Controllers\HelpDeskMergeController::class, 'merge']);
         Route::post('/help-desk/tickets/{target}/unmerge/{source}', [\App\Http\Controllers\HelpDeskMergeController::class, 'unmerge']);
         Route::get('/help-desk/tickets/{target}/merged', [\App\Http\Controllers\HelpDeskMergeController::class, 'mergedList']);
-            Route::post('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'store'])->whereNumber('ticket');
-            Route::post('/help-desk/tickets/{ticket}/gmud/packages/ensure', [\App\Http\Controllers\GmudPackageController::class, 'ensure'])->whereNumber('ticket');
-            Route::get('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'index'])->whereNumber('ticket');
         Route::get('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'index']);
         Route::put('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'update']);
         Route::get('/help-desk/portal/columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'portal']);

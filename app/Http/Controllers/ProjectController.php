@@ -1108,6 +1108,7 @@ class ProjectController extends Controller
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
             'movidesk_integration_enabled' => 'nullable|boolean',
+            'helpdesk_integration_enabled' => 'nullable|boolean',
             'confirm_movidesk_swap'        => 'nullable|boolean',
         ], [
             'name.required' => 'O nome é obrigatório',
@@ -1654,6 +1655,7 @@ class ProjectController extends Controller
             'kanban_coordinator_override_id' => 'nullable|exists:users,id',
             'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial,Leads',
             'movidesk_integration_enabled' => 'nullable|boolean',
+            'helpdesk_integration_enabled' => 'nullable|boolean',
             'confirm_movidesk_swap'        => 'nullable|boolean',
             'migrate_movidesk_timesheets'  => 'nullable|boolean',
         ], [

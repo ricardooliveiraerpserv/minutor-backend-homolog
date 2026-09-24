@@ -928,6 +928,7 @@ class TimesheetController extends Controller
             'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable',
+            'helpdesk_ticket_id' => 'nullable|integer|exists:helpdesk_tickets,id',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
             // Cronograma: atividade (stage_delivery) do apontamento quando o projeto é
             // tipo Projeto e o consultor está alocado. stage_id é derivado no mutator.
@@ -1240,7 +1241,7 @@ class TimesheetController extends Controller
             $timesheet->customer_id = $project->customer_id;
             $timesheet->real_project_id = $realProjectId; // só preenchido em investimento
             $timesheet->status = $hasConflict ? Timesheet::STATUS_CONFLICTED : Timesheet::STATUS_PENDING;
-            $timesheet->origin = 'web'; // Origem: criação manual via webapp
+            $timesheet->origin = $request->filled('helpdesk_ticket_id') ? 'help_desk' : 'web'; // Origem
             $timesheet->is_billable_only = $user->isAdmin()
                 && $timesheetUserId !== Auth::id()
                 && $request->boolean('is_billable_only', false);
@@ -1506,6 +1507,7 @@ class TimesheetController extends Controller
             'total_hours' => ['nullable', 'string', 'regex:/^(\d+:[0-5][0-9]|\d+(?:[.,]\d{1,2})?)$/'],
             'observation' => 'nullable|string|max:5000',
             'ticket' => 'nullable|string|max:100',
+            'helpdesk_ticket_id' => 'nullable|integer|exists:helpdesk_tickets,id',
             'customer_id' => 'sometimes|exists:customers,id',
             'project_id' => 'sometimes|exists:projects,id',
             'real_project_id' => 'nullable|integer|exists:projects,id',

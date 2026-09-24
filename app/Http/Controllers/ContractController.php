@@ -172,6 +172,11 @@ class ContractController extends Controller
                 }
             }
 
+            // Help Desk: sustentação nasce com integração de horas ligada (interações viram apontamento).
+            if (($data['categoria'] ?? null) === 'sustentacao' && !array_key_exists('helpdesk_integration_enabled', $data)) {
+                $data['helpdesk_integration_enabled'] = true;
+            }
+
             $contract = Contract::create($data);
 
             foreach ($validated['contacts'] ?? [] as $c) {
@@ -4476,6 +4481,17 @@ class ContractController extends Controller
             'rate'              => $rate,
             'from'              => ['contract_id' => $contract->id, 'project' => $srcLbl, 'remaining_hours' => round($src->fresh()->getTotalAvailableHours(), 2)],
             'to'                => ['contract_id' => $dest->id,     'project' => $dstLbl, 'available_hours' => round($dst->fresh()->getTotalAvailableHours(), 2)],
+        ]);
+    }
+
+    /** Help Desk: liga/desliga a integração de horas do contrato (interações do chamado viram apontamento). */
+    public function toggleHelpdeskIntegration(Request $request, Contract $contract): JsonResponse
+    {
+        $v = $request->validate(['enabled' => 'required|boolean']);
+        $contract->update(['helpdesk_integration_enabled' => $v['enabled']]);
+        return response()->json([
+            'id' => $contract->id,
+            'helpdesk_integration_enabled' => (bool) $contract->helpdesk_integration_enabled,
         ]);
     }
 
