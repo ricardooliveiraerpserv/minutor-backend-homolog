@@ -1,0 +1,232 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\GmudPackage;
+use App\Models\HelpDeskTicket;
+use App\SourceCode\Gmud\GmudPackageService;
+use App\SourceCode\Gmud\GmudPublishException;
+use App\SourceCode\Gmud\GmudPublishService;
+use App\SourceCode\Exceptions\SourceIntegrationException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+/**
+ * GMUD — Publicação Governada de Fontes (wizard). Endpoints G0-G2: receber ZIP (RECEBIMENTO, não
+ * publicação), listar pacotes do chamado e detalhar o resultado da extração/matching. NÃO existe
+ * endpoint de publish aqui — a publicação no Git (G7) é uma fase posterior, ainda não implementada.
+ * Gate: permission.or.admin:source_docs.gmud_publish (interno ERPSERV).
+ */
+class GmudPackageController extends Controller
+{
+    public function __construct(private GmudPackageService $service)
+    {
+    }
+
+    /** POST /help-desk/tickets/{ticket}/gmud/packages — recebe o ZIP e enfileira a análise. Sem commit. */
+    public function store(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        $request->validate([
+            'file' => ['required', 'file', 'mimes:zip', 'max:51200'], // 50 MB
+        ]);
+
+        $package = $this->service->receiveFromUpload($ticket, $request->user(), $request->file('file'));
+
+        return response()->json(['data' => $this->manifest($package)], 201);
+    }
+
+    /** POST /help-desk/tickets/{ticket}/gmud/packages/ensure — garante o pacote do ÚLTIMO zip do chamado. */
+    public function ensure(HelpDeskTicket $ticket): JsonResponse
+    {
+        $package = $this->service->ensureLatestForTicket($ticket);
+        return response()->json(['data' => $package ? $this->manifest($package) : null]);
+    }
+
+    /** GET /help-desk/tickets/{ticket}/gmud/packages — pacotes recebidos no chamado. */
+    public function index(HelpDeskTicket $ticket): JsonResponse
+    {
+        $packages = GmudPackage::where('ticket_id', $ticket->id)
+            ->withCount('files')
+            ->orderByDesc('id')->get()
+            ->map(fn (GmudPackage $p) => $this->manifest($p));
+
+        return response()->json(['data' => $packages]);
+    }
+
+    /** GET /gmud/packages/{package} — manifesto + arquivos + evidências + links de Acervo. */
+    public function show(GmudPackage $package): JsonResponse
+    {
+        $package->load(['files' => fn ($q) => $q->orderBy('path_in_zip')]);
+
+        return response()->json([
+            'data' => array_merge($this->manifest($package), [
+                'publication' => $this->publicationInfo($package),
+                'files' => $package->files->map(fn ($f) => [
+                    'id'                    => $f->id,
+                    'path_in_zip'           => $f->path_in_zip,   // EVIDÊNCIA — não é destino Git
+                    'filename'              => $f->filename,
+                    'extension'             => $f->extension,
+                    'size_bytes'            => $f->size_bytes,
+                    'sha256'                => $f->sha256,
+                    'git_blob_sha'          => $f->git_blob_sha,
+                    'mtime'                 => optional($f->mtime)->toIso8601String(),
+                    'is_source'             => $f->is_source,
+                    'match_status'          => $f->match_status,
+                    'matched_source_doc_id' => $f->matched_source_doc_id,
+                    'matched_git_path'      => $f->matched_git_path,
+                    'match_candidates'      => $f->match_candidates,
+                    'match_evidence'        => $f->match_evidence,
+                    // Resultado da publicação (G7) — preenchido só após publicar.
+                    'action'                => $f->action,
+                    'dest_git_path'         => $f->dest_git_path,
+                    'published_blob_sha'    => $f->published_blob_sha,
+                ])->values(),
+            ]),
+        ]);
+    }
+
+    /** DELETE /gmud/packages/{package} — descarta um pacote NÃO publicado (cancelamento do wizard). */
+    public function destroy(GmudPackage $package): JsonResponse
+    {
+        if ($package->status === GmudPackage::STATUS_PUBLISHED) {
+            return response()->json(['message' => 'Pacote já publicado não pode ser removido.'], 422);
+        }
+        $package->delete(); // cascade nos arquivos
+        return response()->json(['data' => true]);
+    }
+
+    /** GET /gmud/packages/{package}/dirs — diretórios do repo p/ o seletor de pasta (Git ao vivo). */
+    public function dirs(Request $request, GmudPackage $package, GmudPublishService $publisher): JsonResponse
+    {
+        $repoId = $request->integer('repo_id') ?: null;
+        try {
+            return response()->json(['data' => $publisher->directories($package, $repoId)]);
+        } catch (GmudPublishException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /** POST /gmud/packages/{package}/publish — destino escolhido → 1 commit atômico. Publica de fato. */
+    public function publish(Request $request, GmudPackage $package, GmudPublishService $publisher): JsonResponse
+    {
+        $data = $request->validate([
+            'dest_folder'          => ['nullable', 'string', 'max:1024'],
+            'repo_id'              => ['nullable', 'integer'],
+            'resolutions'          => ['nullable', 'array'],
+            'resolutions.*'        => ['string', 'max:1024'],
+            'folders'              => ['nullable', 'array'],
+            'folders.*'            => ['nullable', 'string', 'max:1024'],
+            'classification'       => ['nullable', 'string', 'in:projeto,avulso'],
+            'project_name'         => ['nullable', 'string', 'max:255'],
+        ]);
+
+        // resolutions: { "<file_id>": "<git_path>" } · folders: { "<file_id>": "<pasta>" } (NOVOS)
+        $resolutions = [];
+        foreach (($data['resolutions'] ?? []) as $fid => $path) {
+            $resolutions[(int) $fid] = (string) $path;
+        }
+        $folders = [];
+        foreach (($data['folders'] ?? []) as $fid => $path) {
+            $folders[(int) $fid] = (string) $path;
+        }
+
+        try {
+            $result = $publisher->publish($package, $data['repo_id'] ?? null, (string) ($data['dest_folder'] ?? ''), $resolutions, $request->user(), [
+                'classification' => $data['classification'] ?? null,
+                'project_name'   => $data['project_name'] ?? null,
+                'folders'        => $folders,
+            ]);
+            return response()->json(['data' => $result], 200);
+        } catch (GmudPublishException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (SourceIntegrationException $e) {
+            // Falha no Git (permissão da App, branch, HEAD moveu etc.) — nada foi publicado.
+            return response()->json(['message' => 'Falha ao gravar no Git: ' . $e->getMessage()], 502);
+        }
+    }
+
+    /** Manifesto do pacote. committed=false enquanto não publicado (status != published). */
+    private function manifest(GmudPackage $package): array
+    {
+        $package->loadMissing('uploader');
+        return [
+            'id'             => $package->id,
+            'ticket_id'      => $package->ticket_id,
+            'customer_id'    => $package->customer_id,
+            'original_name'  => $package->original_name,
+            'size_bytes'     => $package->size_bytes,
+            'sha256'         => $package->sha256,
+            'status'         => $package->status,
+            'error'          => $package->error,
+            'uploaded_by'    => $package->uploaded_by,
+            'uploaded_by_name' => optional($package->uploader)->name,
+            'received_at'    => optional($package->received_at)->toIso8601String(),
+            'files_count'    => $package->files_count ?? $package->files()->count(),
+            'source_repo_id' => $package->source_repo_id,
+            'project_folder' => $package->project_folder,
+            // committed=true SOMENTE após publicação explícita (status=published).
+            'committed'      => $package->status === GmudPackage::STATUS_PUBLISHED,
+            // Nº da interação (publicação GMUD) onde o fonte foi anexado — mesmo #N do cabeçalho.
+            'interaction_seq' => $this->interactionSeq((int) $package->ticket_id),
+            // Resultado do CodeAnalysis POR FONTE (exibido no painel — resumo + expandir cards).
+            'quality_files'  => $package->files()->where('is_source', true)
+                ->orderBy('path_in_zip')->get()->map(fn ($f) => [
+                    'id'          => $f->id,
+                    'filename'    => $f->filename ?: basename((string) $f->path_in_zip),
+                    'grade'       => $f->quality_grade,
+                    'score'       => $f->quality_score,
+                    'findings'    => is_array($f->quality_findings) ? $f->quality_findings : [],
+                    'analyzed_at' => optional($f->quality_analyzed_at)->toIso8601String(),
+                ])->values(),
+        ];
+    }
+
+    /** #N da interação de PUBLICAÇÃO GMUD (form_kind='gmud') do chamado — mesmo contador do cabeçalho. */
+    private function interactionSeq(int $ticketId): ?int
+    {
+        // A "solucao GMUD" pode vir como form_kind='gmud' OU como form dinamico
+        // (form_kind='dynamic') com o template "GMUD EM PRODUCAO" no corpo — casa os dois.
+        $gmud = \App\Models\HelpDeskTicketComment::where('ticket_id', $ticketId)
+            ->where('is_system', false)
+            ->where(function ($q) {
+                $q->where('form_kind', 'gmud')
+                  ->orWhere(function ($q2) {
+                      $q2->where('form_kind', 'dynamic')->where('body', 'ilike', '%GMUD EM PRODU%');
+                  });
+            })
+            ->orderByDesc('created_at')->orderByDesc('id')->first(['id', 'created_at']);
+        if (! $gmud) {
+            return null;
+        }
+        $rank = \App\Models\HelpDeskTicketComment::where('ticket_id', $ticketId)
+            ->where('is_system', false)
+            ->where(function ($q) use ($gmud) {
+                $q->where('created_at', '<', $gmud->created_at)
+                  ->orWhere(function ($q2) use ($gmud) {
+                      $q2->where('created_at', $gmud->created_at)->where('id', '<=', $gmud->id);
+                  });
+            })->count();
+        return $rank ?: null;
+    }
+
+    /** Metadados da publicação (commit/repo/branch/data) — lidos do evento gmud_package_published. */
+    private function publicationInfo(GmudPackage $package): ?array
+    {
+        $ev = \App\Models\HelpDeskTicketEvent::where('ticket_id', $package->ticket_id)
+            ->where('event_type', 'gmud_package_published')
+            ->whereRaw("meta->>'package_id' = ?", [(string) $package->id])
+            ->orderByDesc('id')->first(['created_at', 'meta']);
+        if (! $ev) {
+            return null;
+        }
+        $meta = is_array($ev->meta) ? $ev->meta : (json_decode((string) $ev->meta, true) ?: []);
+        return [
+            'commit_sha'   => $meta['commit_sha'] ?? null,
+            'repo'         => $meta['repo'] ?? null,
+            'branch'       => $meta['branch'] ?? null,
+            'published'    => $meta['published'] ?? null,
+            'skipped'      => $meta['skipped'] ?? null,
+            'published_at' => optional($ev->created_at)->toIso8601String(),
+        ];
+    }
+}

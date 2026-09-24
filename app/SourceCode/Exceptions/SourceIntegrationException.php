@@ -1,0 +1,88 @@
+<?php
+
+namespace App\SourceCode\Exceptions;
+
+use RuntimeException;
+
+/**
+ * Erro da integração de código-fonte, com código operacional para a UI/logs.
+ * NUNCA carrega token/segredo na mensagem.
+ */
+class SourceIntegrationException extends RuntimeException
+{
+    public string $errorCode;
+    public int $httpStatus;
+
+    public function __construct(string $errorCode, string $message, int $httpStatus = 502)
+    {
+        parent::__construct($message);
+        $this->errorCode = $errorCode;
+        $this->httpStatus = $httpStatus;
+    }
+
+    public static function notConfigured(): self
+    {
+        return new self('NOT_CONFIGURED', 'Integração de código-fonte não configurada.', 503);
+    }
+
+    /** GitHub App sem GITHUB_APP_ID / private key no servidor. */
+    public static function appNotConfigured(): self
+    {
+        return new self('APP_NOT_CONFIGURED', 'Integração de código-fonte (GitHub App) não configurada no servidor.', 503);
+    }
+
+    /** A GitHub App não está instalada na organização/owner. */
+    public static function appNotInstalled(string $owner): self
+    {
+        return new self('APP_NOT_INSTALLED', "GitHub App não instalada na organização \"{$owner}\".", 404);
+    }
+
+    /** A App está instalada no owner, mas sem acesso a ESTE repositório. */
+    public static function repoNotAuthorized(string $full): self
+    {
+        return new self('REPO_NOT_AUTHORIZED', "GitHub App instalada, mas sem acesso ao repositório {$full}. Libere-o na instalação.", 403);
+    }
+
+    public static function repoNotFound(string $full): self
+    {
+        return new self('REPO_NOT_FOUND', "Repositório não encontrado ou sem acesso: {$full}.", 404);
+    }
+
+    public static function branchNotFound(string $branch): self
+    {
+        return new self('BRANCH_NOT_FOUND', "Branch \"{$branch}\" não encontrada no repositório.", 404);
+    }
+
+    public static function pathNotFound(string $path): self
+    {
+        return new self('PATH_NOT_FOUND', "Caminho não encontrado na branch: \"{$path}\".", 404);
+    }
+
+    /** Tentativa de escrita (criar repo) sem a permissão "Administration: Read and write" na App. */
+    public static function writeNotPermitted(string $owner): self
+    {
+        return new self('WRITE_NOT_PERMITTED', "GitHub App sem permissão de escrita em \"{$owner}\". Ative \"Administration: Read and write\" nas permissões da App e aprove a atualização na instalação.", 403);
+    }
+
+    /** Tentativa de gravar CONTEÚDO (commit) sem "Contents: Read and write" na App. */
+    public static function contentsWriteNotPermitted(string $owner): self
+    {
+        return new self('CONTENTS_WRITE_NOT_PERMITTED', "GitHub App sem permissão de escrita de conteúdo em \"{$owner}\". Ative \"Contents: Read and write\" nas permissões da App e aprove a atualização na instalação.", 403);
+    }
+
+    /** Nome de repositório já em uso no owner e inacessível pela instalação. */
+    public static function repoNameTaken(string $owner, string $name): self
+    {
+        return new self('REPO_NAME_TAKEN', "Já existe um repositório \"{$name}\" em \"{$owner}\" e não foi possível acessá-lo.", 409);
+    }
+
+    public static function rateLimited(): self
+    {
+        return new self('RATE_LIMITED', 'Limite de requisições do GitHub atingido. Tente novamente em instantes.', 429);
+    }
+
+    public static function upstream(int $status): self
+    {
+        return new self('UPSTREAM', "Falha ao consultar o GitHub (HTTP {$status}).", 502);
+    }
+}

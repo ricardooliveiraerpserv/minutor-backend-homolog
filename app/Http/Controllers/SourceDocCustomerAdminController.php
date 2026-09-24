@@ -1,0 +1,272 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\SourceDocCustomerSetting;
+use App\Models\SourceDocSourceRequest;
+use App\SourceCode\SourceDocCustomerScope;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+/**
+ * Central de Fontes — administração por empresa: detentor de fonte, ocultar da Central e
+ * solicitações de fonte. Escopo por cliente respeitado (deny-by-default). Sem IA/motor.
+ */
+class SourceDocCustomerAdminController extends Controller
+{
+    public function __construct(private SourceDocCustomerScope $scope)
+    {
+    }
+
+    /** PUT /source-docs/customers/{customer}/settings {own_source?, hidden?} — detentor / ocultar. */
+    public function updateSettings(Request $request, int $customer): JsonResponse
+    {
+        if (! $this->scope->canAccessCustomerId($request->user(), $customer)) {
+            return response()->json(['message' => 'Cliente fora do seu escopo.'], 404);
+        }
+        $data = $request->validate([
+            'own_source' => ['sometimes', 'boolean'],
+            'hidden' => ['sometimes', 'boolean'],
+        ]);
+        if ($data === []) {
+            return response()->json(['message' => 'Nada para atualizar.'], 422);
+        }
+        $setting = SourceDocCustomerSetting::query()->firstOrNew(['customer_id' => $customer]);
+        foreach ($data as $k => $v) {
+            $setting->{$k} = (bool) $v;
+        }
+        $setting->updated_by = $request->user()?->id;
+        $setting->save();
+
+        return response()->json(['data' => [
+            'customer_id' => $customer,
+            'own_source' => (bool) $setting->own_source,
+            'hidden' => (bool) $setting->hidden,
+        ]]);
+    }
+
+    /** PUT /source-docs/repos/settings {customer_id, repository, hidden} — desabilita/reativa um repo na Central. */
+    public function updateRepoSettings(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'customer_id' => ['required', 'integer'],
+            'repository' => ['required', 'string', 'max:255'],
+            'hidden' => ['required', 'boolean'],
+        ]);
+        if (! $this->scope->canAccessCustomerId($request->user(), (int) $data['customer_id'])) {
+            return response()->json(['message' => 'Cliente fora do seu escopo.'], 404);
+        }
+        $setting = \App\Models\SourceDocRepoSetting::query()->firstOrNew([
+            'customer_id' => (int) $data['customer_id'],
+            'repository' => $data['repository'],
+        ]);
+        $setting->hidden = (bool) $data['hidden'];
+        $setting->updated_by = $request->user()?->id;
+        $setting->save();
+
+        return response()->json(['data' => [
+            'customer_id' => (int) $data['customer_id'],
+            'repository' => $data['repository'],
+            'hidden' => (bool) $setting->hidden,
+        ]]);
+    }
+
+    /** GET /source-docs/repos/hidden — lista os repositórios DESABILITADOS (aba Inativos), escopado. */
+    public function listHiddenRepos(Request $request): JsonResponse
+    {
+        $q = \App\Models\SourceDocRepoSetting::query()
+            ->where('source_doc_repo_settings.hidden', true)
+            ->leftJoin('customers', 'customers.id', '=', 'source_doc_repo_settings.customer_id')
+            ->leftJoin('users', 'users.id', '=', 'source_doc_repo_settings.updated_by')
+            ->when($request->filled('customer_id'), fn ($x) => $x->where('source_doc_repo_settings.customer_id', (int) $request->query('customer_id')));
+        $this->scope->applyScope($q, $request->user(), 'source_doc_repo_settings.customer_id');
+        $rows = $q->orderBy('customers.name')->orderBy('source_doc_repo_settings.repository')
+            ->get(['source_doc_repo_settings.customer_id', 'source_doc_repo_settings.repository',
+                'source_doc_repo_settings.updated_at', 'customers.name as customer_name', 'users.name as updated_by_name']);
+
+        // Contagem de fontes por (customer_id, repository) numa query só (repos hidden são poucos).
+        $counts = [];
+        if ($rows->isNotEmpty()) {
+            $cnt = \App\Models\SourceDoc::query()
+                ->where(function ($w) use ($rows) {
+                    foreach ($rows as $r) {
+                        $w->orWhere(fn ($x) => $x->where('customer_id', $r->customer_id)->where('repository', $r->repository));
+                    }
+                })
+                ->groupBy('customer_id', 'repository')
+                ->selectRaw('customer_id, repository, count(*) as fontes')->get();
+            foreach ($cnt as $c) {
+                $counts[$c->customer_id . ':' . $c->repository] = (int) $c->fontes;
+            }
+        }
+
+        return response()->json(['data' => $rows->map(fn ($r) => [
+            'customer_id' => (int) $r->customer_id,
+            'customer_name' => $r->customer_name,
+            'repository' => $r->repository,
+            'fontes' => $counts[$r->customer_id . ':' . $r->repository] ?? 0,
+            'updated_at' => $r->updated_at,
+            'updated_by_name' => $r->updated_by_name,
+        ])]);
+    }
+
+    /** POST /source-docs/source-requests {customer_id?, repository?, note} — registra solicitação. */
+    public function storeRequest(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'customer_id' => ['nullable', 'integer'],
+            'repository' => ['nullable', 'string', 'max:255'],
+            'ticket' => ['nullable', 'string', 'max:120'],
+            'priority' => ['nullable', 'in:baixa,media,alta'],
+            'scope_type' => ['nullable', 'in:source,folder,repository'],
+            'paths' => ['nullable', 'array', 'max:500'],
+            'paths.*' => ['string', 'max:1000'],
+            'note' => ['nullable', 'string', 'max:2000'],
+        ]);
+        if (empty($data['customer_id']) && empty($data['repository']) && empty($data['note']) && empty($data['paths'])) {
+            return response()->json(['message' => 'Informe ao menos a empresa, o repositório, a pasta/fontes ou uma observação.'], 422);
+        }
+        if (! empty($data['customer_id']) && ! $this->scope->canAccessCustomerId($request->user(), (int) $data['customer_id'])) {
+            return response()->json(['message' => 'Cliente fora do seu escopo.'], 404);
+        }
+
+        $req = SourceDocSourceRequest::create([
+            'customer_id' => $data['customer_id'] ?? null,
+            'repository' => $data['repository'] ?? null,
+            'ticket' => $data['ticket'] ?? null,
+            'priority' => $data['priority'] ?? 'media',
+            'scope_type' => $data['scope_type'] ?? 'repository',
+            'paths' => $data['paths'] ?? null,
+            'note' => $data['note'] ?? null,
+            'status' => 'open',
+            'requested_by' => $request->user()?->id,
+        ]);
+
+        return response()->json(['data' => $req], 201);
+    }
+
+    /** GET /source-docs/open-tickets?customer_id= — chamados ABERTOS da empresa (Help Desk), p/ o seletor. */
+    public function openTickets(Request $request): JsonResponse
+    {
+        $customerId = (int) $request->query('customer_id', 0);
+        if ($customerId <= 0 || ! $this->scope->canAccessCustomerId($request->user(), $customerId)) {
+            return response()->json(['data' => []]);
+        }
+        $tickets = \App\Models\HelpDeskTicket::query()
+            ->where('customer_id', $customerId)
+            ->whereHas('status', fn ($s) => $s->where('is_open', true))
+            ->orderByDesc('created_at')
+            ->limit(100)
+            ->get(['id', 'ticket_number', 'subject']);
+
+        return response()->json(['data' => $tickets]);
+    }
+
+    /** GET /source-docs/gmud-commits — versões de fonte criadas via GMUD (commit + ticket), escopado. */
+    public function gmudCommits(Request $request): JsonResponse
+    {
+        $q = \App\Models\SourceDocVersion::query()
+            ->join('source_docs', 'source_docs.id', '=', 'source_doc_versions.source_doc_id')
+            ->leftJoin('customers', 'customers.id', '=', 'source_docs.customer_id')
+            ->leftJoin('helpdesk_tickets as ht', 'ht.ticket_number', '=', 'source_doc_versions.ticket_number')
+            ->where(fn ($w) => $w->whereNotNull('source_doc_versions.gmud_id')->orWhereNotNull('source_doc_versions.ticket_number'))
+            ->when($request->filled('customer_id'), fn ($qq) => $qq->where('source_docs.customer_id', (int) $request->query('customer_id')))
+            ->when($request->filled('q'), fn ($qq) => $qq->where('source_docs.filename', 'ilike', '%' . trim((string) $request->query('q')) . '%'))
+            ->when($request->filled('from'), fn ($qq) => $qq->whereDate('source_doc_versions.created_at', '>=', $request->query('from')))
+            ->when($request->filled('to'), fn ($qq) => $qq->whereDate('source_doc_versions.created_at', '<=', $request->query('to')));
+        $this->scope->applyScope($q, $request->user(), 'source_docs.customer_id');
+        $rows = $q->orderByDesc('source_doc_versions.created_at')->limit(300)->get([
+            'source_doc_versions.id', 'source_doc_versions.source_doc_id', 'source_doc_versions.ticket_number',
+            'source_doc_versions.gmud_id', 'source_doc_versions.source_commit_sha', 'source_doc_versions.responsavel',
+            'source_doc_versions.diff_summary', 'source_doc_versions.created_at',
+            'source_docs.filename', 'source_docs.repository', 'source_docs.owner', 'source_docs.customer_id',
+            'customers.name as customer_name',
+            'ht.id as hd_ticket_id', 'ht.subject as hd_subject',
+        ]);
+
+        return response()->json(['data' => $rows]);
+    }
+
+    /** GET /source-docs/source-requests?status= — lista (gestão). */
+    public function listRequests(Request $request): JsonResponse
+    {
+        $status = (string) $request->query('status', 'open');
+        $customerId = $request->filled('customer_id') ? (int) $request->query('customer_id') : null;
+
+        // (A) Solicitações de PROVISIONAMENTO (source_doc_source_requests) — status open/provisioned/rejected.
+        $provQ = SourceDocSourceRequest::query()
+            ->leftJoin('customers', 'customers.id', '=', 'source_doc_source_requests.customer_id')
+            ->leftJoin('users', 'users.id', '=', 'source_doc_source_requests.requested_by')
+            ->leftJoin('helpdesk_tickets as ht', 'ht.ticket_number', '=', 'source_doc_source_requests.ticket')
+            ->when($status !== 'all', fn ($qq) => $qq->where('source_doc_source_requests.status', $status))
+            ->when($customerId, fn ($qq) => $qq->where('source_doc_source_requests.customer_id', $customerId));
+        // Anti-IDOR: só solicitações de empresas no escopo do usuário (deny-by-default; null customer só p/ global).
+        $this->scope->applyScope($provQ, $request->user(), 'source_doc_source_requests.customer_id');
+        $prov = $provQ
+            ->orderByDesc('source_doc_source_requests.created_at')
+            ->limit(300)
+            ->get(['source_doc_source_requests.*', 'customers.name as customer_name', 'users.name as requester_name', 'ht.id as hd_ticket_id', 'ht.subject as hd_subject'])
+            ->map(function ($r) {
+                $a = $r->toArray();
+                $a['kind'] = 'provisioning';
+                return $a;
+            });
+
+        // (B) Pedidos de CÓDIGO-FONTE abertos pelos CHAMADOS (source_code_requests) — unificados na mesma lista.
+        //     Read-only aqui (o atendimento acontece no chamado): id negativo p/ não colidir e não permitir PATCH.
+        $mapStatus = fn ($s) => in_array($s, ['done', 'partial'], true) ? 'provisioned' : 'open';
+        $ticketReqsQ = \App\Models\SourceCodeRequest::query()
+            ->leftJoin('customers as c', 'c.id', '=', 'source_code_requests.client_id')
+            ->leftJoin('users as u', 'u.id', '=', 'source_code_requests.requested_by')
+            ->leftJoin('helpdesk_tickets as ht2', 'ht2.id', '=', 'source_code_requests.ticket_id')
+            ->when($customerId, fn ($qq) => $qq->where('source_code_requests.client_id', $customerId));
+        // Anti-IDOR: mesmo escopo por cliente para os pedidos vindos de chamados.
+        $this->scope->applyScope($ticketReqsQ, $request->user(), 'source_code_requests.client_id');
+        $ticketReqs = $ticketReqsQ
+            ->orderByDesc('source_code_requests.created_at')
+            ->limit(300)
+            ->get(['source_code_requests.*', 'c.name as customer_name', 'u.name as requester_name', 'ht2.ticket_number as ticket_number', 'ht2.subject as hd_subject'])
+            ->map(fn ($r) => [
+                'id'             => -1 * (int) $r->id,
+                'customer_id'    => $r->client_id,
+                'customer_name'  => $r->customer_name,
+                'repository'     => null,
+                'ticket'         => $r->ticket_number,
+                'priority'       => 'media',
+                'scope_type'     => 'source',
+                'paths'          => null,
+                'note'           => null,
+                'status'         => $mapStatus($r->status),
+                'raw_status'     => $r->status,
+                'requester_name' => $r->requester_name,
+                'hd_ticket_id'   => $r->ticket_id,
+                'hd_subject'     => $r->hd_subject,
+                'created_at'     => optional($r->created_at)->toIso8601String(),
+                'kind'           => 'ticket',
+            ])
+            ->filter(fn ($r) => $status === 'all' || $r['status'] === $status)
+            ->values();
+
+        $all = $prov->concat($ticketReqs)->sortByDesc('created_at')->values();
+
+        return response()->json(['data' => $all]);
+    }
+
+    /** PATCH /source-docs/source-requests/{id} {status} — atender / rejeitar / reabrir. */
+    public function updateRequest(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate(['status' => ['required', 'in:open,provisioned,rejected']]);
+        $req = SourceDocSourceRequest::query()->find($id);
+        if (! $req) {
+            return response()->json(['message' => 'Solicitação não encontrada.'], 404);
+        }
+        // Anti-IDOR: autoridade pela ENTIDADE REAL — só altera solicitação de empresa no escopo do usuário.
+        if (! $this->scope->canAccessCustomerId($request->user(), (int) $req->customer_id)) {
+            return response()->json(['message' => 'Solicitação não encontrada.'], 404);
+        }
+        $req->status = $data['status'];
+        $req->save();
+
+        return response()->json(['data' => ['id' => $req->id, 'status' => $req->status]]);
+    }
+}
