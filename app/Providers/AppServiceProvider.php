@@ -37,6 +37,21 @@ class AppServiceProvider extends ServiceProvider
         // Empresa ativa do request (multi-empresa) — 1 instância por request,
         // compartilhada entre o middleware e o global scope BelongsToCompany.
         $this->app->scoped(\App\Services\CompanyContext::class);
+
+        // Central Fontes / Solicitar Código-Fonte (portado 2026-09-24) — bindings do subsistema.
+        $this->app->bind(
+            \App\Services\SourceDocQualityService::class,
+            fn () => \App\Services\SourceDocQualityService::fromConfig(),
+        );
+        $this->app->bind(
+            \App\SourceCode\Contracts\SourceProvider::class,
+            \App\SourceCode\Providers\GithubAppProvider::class,
+        );
+        $this->app->bind(\App\SourceCode\Analyzer\SourceDocAiProvider::class, function () {
+            return match ((string) config('services.source_doc_ai.provider', 'anthropic')) {
+                default => new \App\SourceCode\Analyzer\AnthropicProvider(),
+            };
+        });
     }
 
     /**
