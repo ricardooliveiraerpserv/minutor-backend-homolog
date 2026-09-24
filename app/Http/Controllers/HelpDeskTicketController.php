@@ -1812,6 +1812,7 @@ class HelpDeskTicketController extends Controller
                         'project_id'   => (int) $p->id,
                         'label'        => $label,          // nome/tipo do contrato (On Demand, Cloud, …)
                         'project_name' => $p->name,
+                        'type'         => $label,          // tipo do contrato (On Demand / Banco de Horas Mensal / …)
                     ];
                 }
             }
@@ -1832,6 +1833,7 @@ class HelpDeskTicketController extends Controller
                     'project_id'   => (int) $p->id,
                     'label'        => $p->name,   // projeto comum: mostra o NOME do projeto
                     'project_name' => $p->name,
+                    'type'         => $p->contractType->name ?? $p->serviceType->name ?? 'Projeto',
                 ];
             }
         }
