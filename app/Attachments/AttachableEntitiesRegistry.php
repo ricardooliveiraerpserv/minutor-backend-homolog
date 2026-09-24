@@ -12,6 +12,8 @@ use App\Models\ContractMessage;
 use App\Models\ContractRequestMessage;
 use App\Models\Expense;
 use App\Models\FechamentoNota;
+use App\Models\HelpDeskTicket;
+use App\Models\HelpDeskTicketComment;
 use App\Models\HourContribution;
 use App\Models\KanbanCard;
 use App\Models\Project;
@@ -60,6 +62,19 @@ class AttachableEntitiesRegistry
     private const MIME_DOCS_AND_IMAGES = [
         ...self::MIME_DOCS,
         ...self::MIME_IMAGES,
+    ];
+    // Comprimidos (código-fonte RDMAKE/patch no HD). Vários navegadores/SOs rotulam .rar/.zip de formas
+    // diferentes — cobrir os aliases comuns evita rejeição de anexo legítimo.
+    private const MIME_ARCHIVES = [
+        'application/zip',
+        'application/x-zip-compressed',
+        'application/x-rar',
+        'application/x-rar-compressed',
+        'application/vnd.rar',
+        'application/x-7z-compressed',
+        'application/x-tar',
+        'application/gzip',
+        'application/x-gzip',
     ];
 
     /**
@@ -231,6 +246,52 @@ class AttachableEntitiesRegistry
                 'allowed_mime' => self::MIME_DOCS_AND_IMAGES,
                 'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt'],
                 'max_size_mb' => 25,
+            ],
+
+            // ── HELPDESK_TICKET (anexos do chamado) ───────────────────────────
+            'HELPDESK_TICKET' => [
+                'model' => HelpDeskTicket::class,
+                // 'gmud_package' = ZIP recebido no wizard de Publicação Governada de Fontes (GMUD),
+                //   preservado imutável como pacote original (evidência) — nunca gera commit por si.
+                'categories' => ['attachment', 'image', 'evidence', 'gmud_package'],
+                'default_visibility' => 'internal',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
+                    if ($internalStaff($user)) return true;
+                    // Cliente (portal) vê anexos do próprio chamado.
+                    if ($action !== 'delete' && $entity !== null) {
+                        return $isClienteOfCustomer($user, $entity, optional($entity)->customer_id);
+                    }
+                    return false;
+                },
+                // Comprimidos liberados: o campo "Código Fonte (RDMAKE/Patch)" exige .zip/.rar/.7z etc.
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES],
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz'],
+                'max_size_mb' => 50,
+            ],
+
+            // ── HELPDESK_TICKET_COMMENT (anexos por interação, estilo e-mail) ──
+            'HELPDESK_TICKET_COMMENT' => [
+                'model' => HelpDeskTicketComment::class,
+                // 'source_code' = fonte trazido do GitHub pela Solicitação de Código-Fonte.
+                'categories' => ['attachment', 'image', 'source_code'],
+                'default_visibility' => 'internal',
+                'permission_check' => function (User $user, $entity, string $action) use ($internalStaff, $isClienteOfCustomer) {
+                    if ($internalStaff($user)) return true;
+                    // Cliente só enxerga anexo de interação VISÍVEL ao cliente, do próprio customer.
+                    if ($action !== 'delete' && $entity !== null) {
+                        if ((optional($entity)->visibility) !== 'customer') return false;
+                        return $isClienteOfCustomer($user, $entity, optional(optional($entity)->ticket)->customer_id);
+                    }
+                    return false;
+                },
+                // Comprimidos liberados (.zip/.rar…) + FONTES do GitHub (texto): ADVPL/Protheus e afins.
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'application/octet-stream', 'application/xml', 'application/json'],
+                'allowed_extensions' => [
+                    'pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz',
+                    // Fontes (Solicitação de Código-Fonte):
+                    'prw','prx','prg','ppr','ppx','ppp','tlpp','tlp','ch','apl','apo','apw','aph','apu','sql','xml','json','md',
+                ],
+                'max_size_mb' => 50,
             ],
 
             // ── PROJECT_MESSAGE (chat de projeto) ─────────────────────────────

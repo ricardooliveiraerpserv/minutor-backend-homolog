@@ -114,6 +114,9 @@ class PermissionService
         // Banco de Competências
         'competencias.view', 'competencias.manage', 'competencias.view_team',
         'competencias.respond', 'competencias.reports.view',
+        // Help Desk — acende o módulo no menu (sidebar). O acesso ao chamado em si
+        // é decidido pelo HelpDeskAccessPolicy, não por esta chave.
+        'help_desk.tickets.view',
         // Sistema
         'settings.view',
         // Central Fontes / Código-Fonte (portado 2026-09-24)
@@ -212,6 +215,9 @@ class PermissionService
             'expenses.view', 'expenses.manage',
             'users.view_own_profile', 'users.update_own_profile',
             'financial.view_own_rate', 'financial.view_partner_rate',
+            // Help Desk: acende o item no menu do consultor (sidebar gateia por esta chave).
+            // NÃO amplia dado: o que ele enxerga de chamado segue no HelpDeskAccessPolicy.
+            'help_desk.tickets.view',
             // Banco de Competências: responde a própria pesquisa.
             'competencias.respond',
         ];

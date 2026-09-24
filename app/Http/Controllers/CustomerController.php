@@ -222,6 +222,7 @@ class CustomerController extends Controller
             'emails_administrativos.*' => 'email',
             'secondary_cgcs' => 'nullable|array',
             'secondary_cgcs.*' => 'string',
+            'helpdesk_default_access_profile_id' => 'nullable|exists:helpdesk_access_profiles,id',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',
@@ -262,6 +263,13 @@ class CustomerController extends Controller
             $validated['code_prefix'] = strtoupper($validated['code_prefix']);
         }
 
+        // Todo cliente NASCE com um perfil de acesso HD padrão (âncora is_default de cliente) se não
+        // for informado — garante que as pessoas-cliente sempre tenham perfil definido (LGPD).
+        if (empty($validated['helpdesk_default_access_profile_id'])) {
+            $validated['helpdesk_default_access_profile_id'] = \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
+                ->where('is_default', true)->value('id');
+        }
+
         // Só agora cria no banco, pois sabemos que é válido
         $customer = Customer::create($validated);
 
@@ -271,6 +279,21 @@ class CustomerController extends Controller
         }
 
         $this->createInvestimentoProjects($customer);
+
+        // Provisiona o repositório de código-fonte do cliente (best-effort — NUNCA quebra o cadastro).
+        // Cliente ativo "real" ganha um repo privado + vínculo automático. Falhas (ex.: App sem
+        // permissão de escrita) só logam; o comando source-repos:backfill recupera depois.
+        try {
+            $prov = app(\App\SourceCode\SourceRepoProvisioner::class);
+            if ($prov->shouldProvision($customer)) {
+                $prov->provisionFor($customer);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('source_repo.provision_failed', [
+                'customer_id' => $customer->id,
+                'error'       => $e->getMessage(),
+            ]);
+        }
 
         // Resposta PO-UI
         return response()->json($customer->load(['executive', 'executiveBizify']), 201);
@@ -372,6 +395,7 @@ class CustomerController extends Controller
             'emails_administrativos.*' => 'email',
             'secondary_cgcs' => 'nullable|array',
             'secondary_cgcs.*' => 'string',
+            'helpdesk_default_access_profile_id' => 'nullable|exists:helpdesk_access_profiles,id',
         ], [
             'code_prefix.size' => 'O prefixo de código deve ter exatamente 3 letras',
             'code_prefix.alpha' => 'O prefixo de código deve conter apenas letras',

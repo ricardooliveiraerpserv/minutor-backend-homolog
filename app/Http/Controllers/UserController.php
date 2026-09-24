@@ -274,6 +274,11 @@ class UserController extends Controller
             $query->where('customer_id', $request->customer_id);
         }
 
+        // Filtro por perfil de acesso do Help Desk (coluna/atribuição inline em Usuários).
+        if ($request->filled('helpdesk_access_profile_id')) {
+            $query->where('helpdesk_access_profile_id', $request->helpdesk_access_profile_id);
+        }
+
         // Filtro por status (ativo/inativo) usando campo enabled
         $status = $request->get('status');
         if ($status === 'active') {
@@ -312,11 +317,20 @@ class UserController extends Controller
 
         $users = $query->paginate($pageSize, ['*'], 'page', $page);
 
+        // Equipes de Help Desk por usuário (aba HD) — em LOTE (evita N+1 nas linhas da página).
+        $pageUserIds = collect($users->items())->pluck('id')->all();
+        $teamsByUser = $pageUserIds
+            ? DB::table('helpdesk_team_user')->whereIn('user_id', $pageUserIds)
+                ->get(['user_id', 'helpdesk_team_id'])->groupBy('user_id')
+                ->map(fn ($rows) => $rows->pluck('helpdesk_team_id')->map(fn ($v) => (int) $v)->all())
+            : collect();
+
         // Adicionar tipos de dashboard permitidos para cada usuário
-        $items = collect($users->items())->map(function ($user) {
+        $items = collect($users->items())->map(function ($user) use ($teamsByUser) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
             $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
+            $userData['helpdesk_team_ids'] = $teamsByUser->get($user->id, []);
             return $userData;
         })->toArray();
 
@@ -361,6 +375,19 @@ class UserController extends Controller
      *     )
      * )
      */
+    /** Sincroniza as equipes de Help Desk do usuário (pivot helpdesk_team_user). */
+    private function syncHelpDeskTeams(User $user, $teamIds): void
+    {
+        $ids = collect((array) $teamIds)->filter()->map(fn ($i) => (int) $i)->unique()->values()->all();
+        DB::table('helpdesk_team_user')->where('user_id', $user->id)->delete();
+        if ($ids) {
+            $now = now();
+            DB::table('helpdesk_team_user')->insert(array_map(fn ($tid) => [
+                'helpdesk_team_id' => $tid, 'user_id' => $user->id, 'created_at' => $now, 'updated_at' => $now,
+            ], $ids));
+        }
+    }
+
     /**
      * Tipo de contrato (cooperado/clt/pj): regra "trava em todos".
      *  - Parceiro (parceiro_admin com partner_id): grava no parceiro e PROPAGA p/ todos
@@ -554,6 +581,11 @@ class UserController extends Controller
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
+            'helpdesk_team_ids'   => 'sometimes|array',
+            'helpdesk_team_ids.*' => 'integer|exists:helpdesk_teams,id',
+            // Acesso por módulo (só interpretado p/ cliente): ['projetos','help_desk']. Ausente/null = todos.
+            'allowed_modules'   => 'sometimes|nullable|array',
+            'allowed_modules.*' => 'string|in:projetos,help_desk',
             'coordinator_type' => 'nullable|in:projetos,sustentacao',
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'nullable|array',
@@ -627,6 +659,10 @@ class UserController extends Controller
                 }
             }
 
+            // Equipes de Help Desk (pivot helpdesk_team_user) — não é coluna de users.
+            $hdTeamIds = array_key_exists('helpdesk_team_ids', $userData) ? $userData['helpdesk_team_ids'] : null;
+            unset($userData['helpdesk_team_ids']); // allowed_modules É coluna (json) — persiste via mass-assign
+
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($userData, array_flip(User::PROTECTED_FIELDS));
             $fillableData = array_diff_key($userData, $protectedData);
@@ -634,6 +670,17 @@ class UserController extends Controller
             $user = User::create($fillableData);
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
+            }
+            if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
+
+            // Regra: TODO CLIENTE entra com um perfil de acesso do Help Desk. Se não veio um
+            // explicitamente, aplica o perfil-padrão de cliente (is_default, kind=cliente).
+            if ($user->type === 'cliente' && !$user->helpdesk_access_profile_id) {
+                $defId = \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
+                    ->where('enabled', true)
+                    ->orderByDesc('is_default')->orderBy('id')
+                    ->value('id');
+                if ($defId) { $user->helpdesk_access_profile_id = $defId; $user->save(); }
             }
 
             // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
@@ -666,6 +713,8 @@ class UserController extends Controller
             // Adicionar tipos de dashboard permitidos na resposta
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            // Equipes de Help Desk (pivot) — devolve o estado atual p/ o form da aba HD.
+            $userData['helpdesk_team_ids'] = DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
 
             \Log::info('✅ [USER CREATED] Usuário criado com sucesso:', [
                 'user_id' => $user->id,
@@ -846,6 +895,11 @@ class UserController extends Controller
             'dashboard_types' => 'sometimes|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'sometimes|nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
+            'helpdesk_team_ids'   => 'sometimes|array',
+            'helpdesk_team_ids.*' => 'integer|exists:helpdesk_teams,id',
+            // Acesso por módulo (só interpretado p/ cliente): ['projetos','help_desk']. Ausente/null = todos.
+            'allowed_modules'   => 'sometimes|nullable|array',
+            'allowed_modules.*' => 'string|in:projetos,help_desk',
             'coordinator_type' => 'sometimes|nullable|in:projetos,sustentacao',
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'sometimes|nullable|array',
@@ -872,6 +926,17 @@ class UserController extends Controller
                 'Não é possível rebaixar o último administrador',
                 'Deve existir pelo menos um administrador no sistema'
             );
+        }
+
+        // Agente de Help Desk (interno COM perfil de acesso) não pode ficar sem equipe.
+        $intendedType = $validatedForType['type'] ?? $user->type;
+        if ($intendedType !== 'cliente' && $user->helpdesk_access_profile_id) {
+            $teamIds = $request->has('helpdesk_team_ids')
+                ? array_filter((array) $request->input('helpdesk_team_ids'))
+                : DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
+            if (empty($teamIds)) {
+                return $this->validationErrorResponse(['Agente de Help Desk precisa estar em ao menos uma equipe.']);
+            }
         }
 
         DB::beginTransaction();
@@ -915,7 +980,9 @@ class UserController extends Controller
             // smtp_app_password: setado explicitamente após o update (fora do mass-assignment);
             // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
             $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
-            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password']);
+            // Equipes de Help Desk (pivot) — não é coluna de users; sincroniza após salvar.
+            $hdTeamIds = array_key_exists('helpdesk_team_ids', $updateData) ? $updateData['helpdesk_team_ids'] : null;
+            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password'], $updateData['helpdesk_team_ids']); // allowed_modules É coluna (json) — persiste via mass-assign
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
@@ -925,6 +992,7 @@ class UserController extends Controller
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
             }
+            if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
 
             // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
             // Vazio/ausente NÃO sobrescreve o valor existente.

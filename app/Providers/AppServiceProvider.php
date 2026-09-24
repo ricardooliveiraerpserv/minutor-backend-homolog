@@ -61,6 +61,10 @@ class AppServiceProvider extends ServiceProvider
     {
         Carbon::setLocale('pt_BR');
 
+        // Fila de e-mail do Help Desk: throttle p/ não estourar o rate limit do Azure/Graph.
+        // Ajustável via HELPDESK_EMAIL_PER_MINUTE (default 20/min, abaixo do teto ~30/min por caixa).
+        RateLimiter::for('helpdesk-email', fn () => Limit::perMinute((int) env('HELPDESK_EMAIL_PER_MINUTE', 20)));
+
         // 🚫 KILL-SWITCH DE E-MAIL (bases de teste): se mail.kill_switch = true, cancela
         // QUALQUER envio via Laravel Mail (log/smtp/nfe/user_smtp). MessageSending é evento
         // "halting": retornar false aborta o envio. Registrado ANTES do listener de debug.

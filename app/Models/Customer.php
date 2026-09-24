@@ -30,6 +30,8 @@ class Customer extends Model
         'fechamento_email',
         'emails_administrativos',
         'secondary_cgcs',
+        // Perfil de acesso do Help Desk PADRÃO deste cliente (aplicado ao pré-cadastrar pessoa-cliente).
+        'helpdesk_default_access_profile_id',
     ];
 
     /**

@@ -685,6 +685,7 @@ class ContractController extends Controller
             'observacoes'            => 'nullable|string',
             'observacoes_coordenador' => 'nullable|string',
             'project_code_preview'   => 'nullable|string|max:20',
+            'helpdesk_integration_enabled' => 'boolean',
             'contacts'               => 'nullable|array',
             'contacts.*.id'          => 'nullable|exists:contract_contacts,id',
             'contacts.*.name'        => 'required|string',
