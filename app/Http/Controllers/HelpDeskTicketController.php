@@ -2307,8 +2307,11 @@ class HelpDeskTicketController extends Controller
         if (!$effortMinutes || $effortMinutes <= 0) return null;
         if ($noCharge) return null;
         if ($visibility !== 'customer') return null;
+        // Integração ligada no CONTRATO (sustentação) OU no PROJETO vinculado (projetos comuns
+        // sem contrato). Basta um dos dois para movimentar horas.
         $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
-        if (!$contract || !$contract->helpdesk_integration_enabled) return null;
+        $project  = $ticket->project_id ? \App\Models\Project::find($ticket->project_id) : null;
+        if (!(($contract && $contract->helpdesk_integration_enabled) || ($project && $project->helpdesk_integration_enabled))) return null;
         return $this->resolveProjectForApontamento($ticket);
     }
 
@@ -2414,8 +2417,10 @@ class HelpDeskTicketController extends Controller
             return null;
         }
 
+        // Integração ligada no CONTRATO (sustentação) OU no PROJETO vinculado (projetos comuns).
         $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
-        if (!$contract || !$contract->helpdesk_integration_enabled) {
+        $project  = $ticket->project_id ? \App\Models\Project::find($ticket->project_id) : null;
+        if (!(($contract && $contract->helpdesk_integration_enabled) || ($project && $project->helpdesk_integration_enabled))) {
             return null; // integração desligada: guarda o tempo na interação, mas não movimenta horas
         }
 

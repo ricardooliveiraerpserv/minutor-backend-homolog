@@ -1049,6 +1049,7 @@ class ProjectController extends Controller
             'architect_id'          => 'nullable|exists:users,id',
             'executivo_conta_id'    => 'nullable|exists:users,id',
             'movidesk_integration_enabled' => 'nullable|boolean',
+            'helpdesk_integration_enabled' => 'nullable|boolean',
             'confirm_movidesk_swap'        => 'nullable|boolean',
         ], [
             'name.required' => 'O nome é obrigatório',
@@ -1453,14 +1454,6 @@ class ProjectController extends Controller
         // ProjectMessageController usa pra barrar a API (senão a aba aparece e dá 403).
         $project->diary_access = \App\Services\ProjectDiaryAccess::allows(request()->user(), $project);
 
-        // Help Desk: chave de "Integração de horas" do contrato deste projeto (1:1 em projeto),
-        // exposta ao cadastro para permitir VINCULAR CHAMADOS a projetos não-sustentação (o
-        // esforço lançado nas interações vira apontamento neste projeto). Sustentação já nasce on.
-        $hdContract = \App\Models\Contract::where('project_id', $project->id)
-            ->orderBy('id')->first(['id', 'helpdesk_integration_enabled']);
-        $project->helpdesk_contract_id = $hdContract?->id;
-        $project->helpdesk_integration_enabled = (bool) ($hdContract?->helpdesk_integration_enabled);
-
         return response()->json($project);
     }
 
@@ -1632,6 +1625,7 @@ class ProjectController extends Controller
             'kanban_coordinator_override_id' => 'nullable|exists:users,id',
             'categoria_interna' => 'nullable|in:Sustentação,Projeto,Suporte,Comercial,Leads',
             'movidesk_integration_enabled' => 'nullable|boolean',
+            'helpdesk_integration_enabled' => 'nullable|boolean',
             'confirm_movidesk_swap'        => 'nullable|boolean',
             'migrate_movidesk_timesheets'  => 'nullable|boolean',
         ], [
