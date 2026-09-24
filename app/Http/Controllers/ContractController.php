@@ -156,6 +156,13 @@ class ContractController extends Controller
                 }
             }
 
+            // Sustentação já nasce com a Integração de horas LIGADA: o esforço lançado nas
+            // interações do chamado vira apontamento no contrato (substitui o Movidesk). Projetos
+            // ficam desligados (default da coluna). A chave continua editável no cadastro do contrato.
+            if (($data['categoria'] ?? null) === 'sustentacao' && !array_key_exists('helpdesk_integration_enabled', $data)) {
+                $data['helpdesk_integration_enabled'] = true;
+            }
+
             $contract = Contract::create($data);
 
             foreach ($validated['contacts'] ?? [] as $c) {
