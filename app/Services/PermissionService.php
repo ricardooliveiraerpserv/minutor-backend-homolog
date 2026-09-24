@@ -116,6 +116,17 @@ class PermissionService
         'competencias.respond', 'competencias.reports.view',
         // Sistema
         'settings.view',
+        // Central Fontes / Código-Fonte (portado 2026-09-24)
+        'source_docs.view',
+        'source_docs.validate', 'source_docs.reprocess', 'source_docs.download',
+        'source_docs.view_git', 'source_docs.view_diff',
+        'source_docs.quality.view', 'source_docs.quality.run',
+        'source_docs.inventory',
+        'source_docs.gmud_publish',
+        'source_docs.view_all_customers',
+        'source_docs.view_cross_customer',
+        'source_docs.semantic_campaign',
+        'source_docs.cost_settings.view', 'source_docs.cost_settings.manage',
     ];
 
     /**
