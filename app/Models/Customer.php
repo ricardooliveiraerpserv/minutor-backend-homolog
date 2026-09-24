@@ -18,6 +18,7 @@ class Customer extends Model
      * @var array<int, string>
      */
     protected $fillable = [
+        'has_contract',
         'name',
         'company_name',
         'cgc',
@@ -37,6 +38,7 @@ class Customer extends Model
      * @var array<string, string>
      */
     protected $casts = [
+        'has_contract' => 'boolean',
         'active' => 'boolean',
         'is_bizify_customer' => 'boolean',
         'emails_administrativos' => 'array',
