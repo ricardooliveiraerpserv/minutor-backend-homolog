@@ -215,6 +215,12 @@ class Customer extends Model
         return $this->hasMany(CostCenter::class);
     }
 
+    /** Fontes Git autorizadas do cliente (Solicitação de código-fonte / Central Fontes). */
+    public function sourceRepos(): HasMany
+    {
+        return $this->hasMany(\App\Models\ClientSourceRepo::class);
+    }
+
     /**
      * Relacionamento com usuários do cliente
      */
