@@ -1815,6 +1815,25 @@ class HelpDeskTicketController extends Controller
                     ];
                 }
             }
+
+            // Projetos COMUNS (não-sustentação) marcados p/ receber chamados (flag no projeto).
+            // Permite vincular o chamado a projetos sem contrato de sustentação.
+            $hdProjects = \App\Models\Project::where('customer_id', $ticket->customer_id)
+                ->whereNull('deleted_at')
+                ->where('is_investimento_comercial', false)
+                ->where('helpdesk_integration_enabled', true)
+                ->whereIn('status', $ativos)
+                ->with(['contractType:id,name', 'serviceType:id,name'])
+                ->orderBy('name')->get();
+            foreach ($hdProjects as $p) {
+                if (collect($options)->firstWhere('project_id', (int) $p->id)) continue; // já veio via contrato
+                $options[] = [
+                    'contract_id'  => $p->contract_id ? (int) $p->contract_id : null,
+                    'project_id'   => (int) $p->id,
+                    'label'        => $p->contractType->name ?? $p->serviceType->name ?? 'Projeto',
+                    'project_name' => $p->name,
+                ];
+            }
         }
         return response()->json(['data' => [
             'options' => $options,
