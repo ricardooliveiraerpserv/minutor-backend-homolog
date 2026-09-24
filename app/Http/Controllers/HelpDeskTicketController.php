@@ -1830,7 +1830,7 @@ class HelpDeskTicketController extends Controller
                 $options[] = [
                     'contract_id'  => $p->contract_id ? (int) $p->contract_id : null,
                     'project_id'   => (int) $p->id,
-                    'label'        => $p->contractType->name ?? $p->serviceType->name ?? 'Projeto',
+                    'label'        => $p->name,   // projeto comum: mostra o NOME do projeto
                     'project_name' => $p->name,
                 ];
             }
