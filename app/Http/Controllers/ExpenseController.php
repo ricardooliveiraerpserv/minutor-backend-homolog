@@ -511,6 +511,7 @@ class ExpenseController extends Controller
             'expense_date' => 'required|date',
             'expense_type' => ['nullable', 'string'],
             'payment_method' => ['nullable', 'string'],
+            'is_credit_card' => ['nullable', 'boolean'],
         ];
         if ($hasItems) {
             $rules['description'] = 'nullable|string|max:1000';
@@ -633,6 +634,30 @@ class ExpenseController extends Controller
         $expenseData['status'] = Expense::STATUS_PENDING;
         $expenseData['expense_type']   = $expenseData['expense_type']   ?? 'reimbursement';
         $expenseData['payment_method'] = $expenseData['payment_method'] ?? 'pix';
+
+        // CARTÃO DE CRÉDITO (empresa): só para usuários autorizados (whitelist). A despesa
+        // já nasce APROVADA e PAGA (a empresa pagou no cartão) → não entra na fila "A Pagar"
+        // nem dispara workflow de aprovação/pagamento.
+        $isCreditCard = $request->boolean('is_credit_card');
+        if ($isCreditCard) {
+            $authorized = \App\Models\User::where('id', $targetUserId)
+                ->where('can_expense_credit_card', true)->exists();
+            if (!$authorized) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Usuário não autorizado a lançar despesa via cartão de crédito.',
+                    'errors'  => ['is_credit_card' => ['Usuário não autorizado ao cartão de crédito.']],
+                ], 422);
+            }
+            $expenseData['is_credit_card'] = true;
+            $expenseData['payment_method'] = 'credit_card';
+            $expenseData['status']         = Expense::STATUS_APPROVED;
+            $expenseData['reviewed_by']    = $user->id;
+            $expenseData['reviewed_at']    = now();
+            $expenseData['is_paid']        = true;
+            $expenseData['paid_by']        = $user->id;
+            $expenseData['paid_at']        = now();
+        }
 
         // Empresa (multi-empresa) = a do PROJETO. Sem isto, quem cria sem contexto de
         // empresa (ex.: parceiro com current_company_id NULL) gerava company_id NULL e a

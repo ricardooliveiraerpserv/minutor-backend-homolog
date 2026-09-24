@@ -90,6 +90,8 @@ class User extends Authenticatable
         'is_bizify_coordinator',
         // Diretor (aparece na rotina de Fechamento Diretoria)
         'is_diretor',
+        // Autorizado a lançar despesa via CARTÃO DE CRÉDITO da empresa (auto-aprovada, fora do pagamento)
+        'can_expense_credit_card',
         // Diretor de Projetos (recebe e-mails das fases do contrato/Triagem)
         'is_diretor_projetos',
         // Capacity (módulo skills)
@@ -161,6 +163,7 @@ class User extends Authenticatable
             'is_bizify' => 'boolean',
             'is_bizify_coordinator' => 'boolean',
             'is_diretor' => 'boolean',
+            'can_expense_credit_card' => 'boolean',
             'is_diretor_projetos' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
             'bank_hours_start_date' => 'date:Y-m-d',

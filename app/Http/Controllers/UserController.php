@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
+use App\Exports\UsersExport;
+use Maatwebsite\Excel\Facades\Excel;
 use App\Http\Traits\ResponseHelpers;
 use App\Traits\PasswordGenerator;
 use Illuminate\Http\Request;
@@ -114,6 +116,71 @@ class UserController extends Controller
      *     )
      * )
      */
+    /**
+     * Exporta TODOS os usuários em Excel, uma ABA por categoria
+     * (Consultor / Freelance / Parceiro / Interno / Cliente), com todos os campos.
+     * Mesmo gate do index (só quem pode ver todos os usuários).
+     */
+    public function exportUsers(Request $request)
+    {
+        $user = Auth::user();
+        $canSeeAll = !$user->isConsultor() && (
+            $user->isAdmin()
+            || $user->isCoordenador()
+            || $user->hasAccess('users.view_all')
+            || $user->hasAccess('users.update')
+            || $user->hasAccess('users.reset_password')
+            || $user->hasAccess('users.create')
+        );
+        if (!$canSeeAll) {
+            return response()->json(['message' => 'Não autorizado'], 403);
+        }
+
+        $query = User::with([
+            'partner:id,name',
+            'customer:id,name',
+            'currentCompany:id,name',
+            'homeCompany:id,name',
+        ]);
+
+        // Opcional: aplica os MESMOS filtros da tela (mesma regra do index()).
+        if ($request->boolean('apply_filters')) {
+            $search = $request->get('filter') ?? $request->get('search');
+            if (!empty($search)) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('users.name', 'ilike', "%{$search}%")
+                      ->orWhere('users.email', 'ilike', "%{$search}%");
+                });
+            }
+            if ($request->filled('enabled')) { $query->where('enabled', in_array($request->input('enabled'), ['1', 1, true, 'true'], true)); }
+            if ($request->filled('type')) {
+                $types = is_array($request->type)
+                    ? $request->type
+                    : array_values(array_filter(array_map('trim', explode(',', (string) $request->type))));
+                if (count($types) === 1) { $query->where('type', $types[0]); }
+                elseif (count($types) > 1) { $query->whereIn('type', $types); }
+            }
+            if ($request->filled('coordinator_type')) { $query->where('coordinator_type', $request->coordinator_type); }
+            if ($request->filled('work_bond'))       { $query->whereIn('work_bond', array_filter(array_map('trim', explode(',', (string) $request->work_bond)))); }
+            if ($request->filled('contract_type'))   { $query->whereIn('contract_type', array_filter(array_map('trim', explode(',', (string) $request->contract_type)))); }
+            if ($request->filled('consultant_type')) { $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type)))); }
+            if ($request->filled('sustentacao'))     { $query->where('can_timesheet_sustentacao', in_array($request->input('sustentacao'), ['1', 1, true], true)); }
+            if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
+            if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
+            if ($request->filled('partner_id'))      { $query->where('partner_id', $request->partner_id); }
+            if ($request->filled('customer_id'))     { $query->where('customer_id', $request->customer_id); }
+        }
+
+        $users = $query->orderBy('name')->get();
+
+        // Abas escolhidas na tela de perguntas (default: todas).
+        $only = $request->filled('sheets')
+            ? array_values(array_filter(array_map('trim', explode(',', (string) $request->get('sheets')))))
+            : null;
+
+        return Excel::download(new UsersExport($users, $only), 'usuarios_' . now()->format('Y-m-d') . '.xlsx');
+    }
+
     public function index(Request $request): JsonResponse
     {
         $user = Auth::user();

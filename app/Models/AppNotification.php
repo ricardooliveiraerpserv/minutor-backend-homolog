@@ -18,7 +18,7 @@ class AppNotification extends Model
     protected $fillable = [
         'title', 'message', 'type', 'priority', 'target_roles', 'target_users',
         'target_contract_types', 'target_bonds', 'excluded_user_ids', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
-        'requires_ack', 'cta_label', 'cta_url', 'actions', 'version', 'created_by', 'expires_at',
+        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'version', 'created_by', 'expires_at',
         'recurrence', 'recurrence_value', 'recurrence_weekdays', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
     ];
 
@@ -31,6 +31,7 @@ class AppNotification extends Model
         'target_customer_ids'   => 'array',
         'actions'               => 'array',
         'requires_ack'          => 'boolean',
+        'allow_guests'          => 'boolean',
         'send_email'            => 'boolean',
         'visible'               => 'boolean',
         'is_template'           => 'boolean',
@@ -48,6 +49,7 @@ class AppNotification extends Model
     public const PRIORITY_RANK = ['critical' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
 
     public function reads(): HasMany { return $this->hasMany(NotificationRead::class, 'notification_id'); }
+    public function guests(): HasMany { return $this->hasMany(NotificationGuest::class, 'notification_id'); }
     public function createdBy(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
     public function poll(): HasOne { return $this->hasOne(NotificationPoll::class, 'notification_id'); }
 }
