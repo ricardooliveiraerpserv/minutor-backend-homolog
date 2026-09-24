@@ -1453,6 +1453,14 @@ class ProjectController extends Controller
         // ProjectMessageController usa pra barrar a API (senão a aba aparece e dá 403).
         $project->diary_access = \App\Services\ProjectDiaryAccess::allows(request()->user(), $project);
 
+        // Help Desk: chave de "Integração de horas" do contrato deste projeto (1:1 em projeto),
+        // exposta ao cadastro para permitir VINCULAR CHAMADOS a projetos não-sustentação (o
+        // esforço lançado nas interações vira apontamento neste projeto). Sustentação já nasce on.
+        $hdContract = \App\Models\Contract::where('project_id', $project->id)
+            ->orderBy('id')->first(['id', 'helpdesk_integration_enabled']);
+        $project->helpdesk_contract_id = $hdContract?->id;
+        $project->helpdesk_integration_enabled = (bool) ($hdContract?->helpdesk_integration_enabled);
+
         return response()->json($project);
     }
 
