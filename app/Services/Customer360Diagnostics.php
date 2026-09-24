@@ -70,9 +70,7 @@ class Customer360Diagnostics
         }
 
         // ── Comercial ─────────────────────────────────────────────────────
-        if (count($blocos['comercial']['oportunidades_abertas'] ?? []) > 0) {
-            $out[] = $this->item('info', 'oportunidade_aberta', 'Cliente possui negociação comercial em andamento.');
-        }
+        // (Aviso "negociação comercial em andamento" removido a pedido — ruído no atendimento.)
 
         // ── Chamado parado aguardando cliente → sugere "Cobrar Retorno" ───
         if ($ticket && $ticket->status && $ticket->status->sla_paused && $ticket->last_activity_at) {
