@@ -187,6 +187,63 @@ class SourceDocCustomerAdminController extends Controller
         return response()->json(['data' => $rows]);
     }
 
+    /**
+     * GET /source-docs/gmud-packages — pacotes de GMUD (ZIP por chamado).
+     * `has_source` = já publicou fonte no catálogo (published_blob_sha). "GMUD sem fonte" = has_source=false.
+     */
+    public function gmudPackages(Request $request): JsonResponse
+    {
+        $q = \App\Models\GmudPackage::query()
+            ->leftJoin('customers', 'customers.id', '=', 'gmud_packages.customer_id')
+            ->leftJoin('helpdesk_tickets as ht', 'ht.id', '=', 'gmud_packages.ticket_id');
+        $this->scope->applyScope($q, $request->user(), 'gmud_packages.customer_id');
+        $pkgs = $q->orderByDesc('gmud_packages.id')->limit(300)
+            ->get([
+                'gmud_packages.*',
+                'customers.name as customer_name',
+                'ht.ticket_number as ticket_number', 'ht.subject as hd_subject',
+            ]);
+
+        $ids = $pkgs->pluck('id')->all();
+        $counts = $ids
+            ? \Illuminate\Support\Facades\DB::table('gmud_package_files')
+                ->whereIn('gmud_package_id', $ids)
+                ->selectRaw('gmud_package_id,
+                    count(*) as files_count,
+                    count(*) filter (where is_source) as source_files_count,
+                    count(*) filter (where matched_source_doc_id is not null) as matched_count,
+                    count(*) filter (where published_blob_sha is not null) as published_count')
+                ->groupBy('gmud_package_id')->get()->keyBy('gmud_package_id')
+            : collect();
+
+        $rows = $pkgs->map(function ($p) use ($counts) {
+            $c = $counts->get($p->id);
+            $published = (int) ($c->published_count ?? 0);
+            return [
+                'id'                 => $p->id,
+                'hd_ticket_id'       => $p->ticket_id,
+                'ticket_number'      => $p->ticket_number,
+                'hd_subject'         => $p->hd_subject,
+                'customer_id'        => $p->customer_id,
+                'customer_name'      => $p->customer_name,
+                'classification'     => $p->classification,
+                'status'             => $p->status,
+                'project_name'       => $p->project_name,
+                'project_folder'     => $p->project_folder,
+                'size_bytes'         => $p->size_bytes,
+                'received_at'        => optional($p->received_at)->toIso8601String(),
+                'created_at'         => optional($p->created_at)->toIso8601String(),
+                'files_count'        => (int) ($c->files_count ?? 0),
+                'source_files_count' => (int) ($c->source_files_count ?? 0),
+                'matched_count'      => (int) ($c->matched_count ?? 0),
+                'published_count'    => $published,
+                'has_source'         => $published > 0 || $p->status === 'published',
+            ];
+        });
+
+        return response()->json(['data' => $rows]);
+    }
+
     /** GET /source-docs/source-requests?status= — lista (gestão). */
     public function listRequests(Request $request): JsonResponse
     {
