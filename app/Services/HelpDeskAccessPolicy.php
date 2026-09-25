@@ -55,7 +55,7 @@ class HelpDeskAccessPolicy
     // ── Escopos ────────────────────────────────────────────────────────────
     public function viewScope(?User $user): string
     {
-        return $this->unrestricted($user) ? 'all' : (string) $this->perm($user, 'policies.view_tickets', 'all');
+        return $this->unrestricted($user) ? 'all' : (string) $this->perm($user, 'policies.view_tickets', 'own');
     }
 
     public function editScope(?User $user): string
