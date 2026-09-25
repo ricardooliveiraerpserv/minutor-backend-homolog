@@ -223,6 +223,7 @@ class SourceDocCustomerAdminController extends Controller
         // Anti-IDOR: mesmo escopo por cliente para os pedidos vindos de chamados.
         $this->scope->applyScope($ticketReqsQ, $request->user(), 'source_code_requests.client_id');
         $ticketReqs = $ticketReqsQ
+            ->with('items')   // fonte anexo: cada item tem attachment_id (zip do fonte no commit)
             ->orderByDesc('source_code_requests.created_at')
             ->limit(300)
             ->get(['source_code_requests.*', 'c.name as customer_name', 'u.name as requester_name', 'ht2.ticket_number as ticket_number', 'ht2.subject as hd_subject'])
@@ -243,6 +244,14 @@ class SourceDocCustomerAdminController extends Controller
                 'hd_subject'     => $r->hd_subject,
                 'created_at'     => optional($r->created_at)->toIso8601String(),
                 'kind'           => 'ticket',
+                // Fonte anexo: itens do pedido com o attachment_id (zip do fonte). Download via /attachments/{id}/url.
+                'sources'        => $r->items->map(fn ($i) => [
+                    'filename'      => $i->filename,
+                    'path'          => $i->path,
+                    'repository'    => $i->repository,
+                    'status'        => $i->status,
+                    'attachment_id' => $i->attachment_id,
+                ])->values(),
             ])
             ->filter(fn ($r) => $status === 'all' || $r['status'] === $status)
             ->values();
