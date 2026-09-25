@@ -478,7 +478,10 @@ class HelpDeskAccessPolicy
 
     public function canEdit(?User $user, HelpDeskTicket $t): bool
     {
-        $s = $this->editScope($user);
-        return $s === 'all' ? true : ($s === 'none' ? false : (int) $t->assignee_id === (int) $user?->id);
+        // Restrição de edição removida: todo chamado que o usuário consegue VER/ABRIR
+        // (fila própria, escopo do perfil ou busca global) ele pode atender —
+        // responder ao cliente, nota interna, triagem, assumir e finalizar.
+        // O toggle "Permitir editar tickets" do perfil deixa de bloquear o atendimento.
+        return $this->canSee($user, $t);
     }
 }
