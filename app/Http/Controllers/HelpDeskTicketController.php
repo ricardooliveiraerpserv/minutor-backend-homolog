@@ -1847,11 +1847,22 @@ class HelpDeskTicketController extends Controller
     /** Atribui atendente e/ou fila. */
     public function assign(Request $request, HelpDeskTicket $ticket): JsonResponse
     {
-        abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        $u = $request->user();
         $v = $request->validate([
             'assignee_id' => 'nullable|exists:users,id',
             'team_id'     => 'nullable|exists:helpdesk_teams,id',
         ]);
+        // "ASSUMIR" (auto-atribuição): liberado para QUALQUER chamado que ele possa VER (busca global),
+        // desde que o perfil permita ser responsável — mesmo fora da fila dele. Reatribuir a OUTROS
+        // ou mexer no time continua exigindo permissão de edição do chamado.
+        $selfAssume = !$request->has('team_id')
+            && (int) ($v['assignee_id'] ?? 0) > 0
+            && (int) ($v['assignee_id'] ?? 0) === (int) $u?->id;
+        if ($selfAssume) {
+            abort_unless($this->access->canSee($u, $ticket) && $this->access->canBeAssignee($u), 403, 'Seu perfil de acesso não permite assumir este chamado.');
+        } else {
+            abort_unless($this->access->canEdit($u, $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        }
         // O alvo precisa poder ser responsável (perfil de acesso) E atender a empresa do chamado.
         if (!empty($v['assignee_id'])) {
             $target = \App\Models\User::find($v['assignee_id']);
