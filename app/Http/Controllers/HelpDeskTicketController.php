@@ -362,7 +362,22 @@ class HelpDeskTicketController extends Controller
 
         $like = '%' . str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term) . '%';
 
-        $tickets = HelpDeskTicket::query()
+        // Dígitos do termo (busca por NÚMERO do chamado). Ex.: "1112" → casa "001112" ignorando zeros à esquerda.
+        $digits    = preg_replace('/\D/', '', $term);
+        $numKey    = ltrim($digits, '0');            // nº normalizado sem zeros à esquerda ("" se termo não-numérico)
+        $isNumeric = $digits !== '' && $digits === $term;
+
+        // Relevância: nº EXATO > nº contém > assunto > solicitante > qualquer outro campo (conteúdo/cliente/etc).
+        // Assim, procurar "1112" traz o chamado 001112 no topo, sem misturar matches de conteúdo na frente.
+        $relevance = "CASE
+                WHEN ltrim(regexp_replace(coalesce(ticket_number, ''), '\\D', '', 'g'), '0') = ? THEN 1000
+                WHEN ticket_number ILIKE ? THEN 800
+                WHEN subject ILIKE ? THEN 500
+                WHEN requester_name ILIKE ? THEN 250
+                ELSE 50
+            END";
+
+        $query = HelpDeskTicket::query()
             ->with(['customer:id,name', 'assignee:id,name', 'status:id,label,color', 'contact:id,name', 'requester:id,name'])
             ->whereNull('merged_into_id')
             ->where(function ($w) use ($like) {
@@ -374,7 +389,16 @@ class HelpDeskTicketController extends Controller
                   ->orWhereHas('assignee', fn ($a) => $a->where('name', 'ilike', $like))
                   ->orWhereHas('contact', fn ($c) => $c->where('name', 'ilike', $like))
                   ->orWhereHas('comments', fn ($cm) => $cm->whereNull('deleted_at')->where('body', 'ilike', $like));
-            })
+            });
+
+        // Termo puramente numérico ⇒ o usuário quer o CHAMADO por número: só o próprio nº entra
+        // (nada de trazer chamados cujo conteúdo por acaso contém aqueles dígitos).
+        if ($isNumeric) {
+            $query->where('ticket_number', 'ilike', $like);
+        }
+
+        $tickets = $query
+            ->orderByRaw($relevance . ' DESC', [$numKey, $like, $like, $like])
             ->orderByDesc('updated_at')
             ->limit(25)
             ->get();
