@@ -130,6 +130,18 @@ class PermissionService
         'source_docs.view_cross_customer',
         'source_docs.semantic_campaign',
         'source_docs.cost_settings.view', 'source_docs.cost_settings.manage',
+        'source_docs.cost_approval.view', 'source_docs.cost_approval.decide',
+        // Prosight — Ambientes / Operações / RPO / Compile
+        'environments.use', 'environments.admin', 'environments.audit.view',
+        'prosight.environments.view',
+        'prosight.operations.view', 'prosight.operations.manage', 'prosight.operations.execute', 'prosight.operations.approve',
+        'prosight.operations.start', 'prosight.operations.stop', 'prosight.operations.stop.override',
+        'prosight.operations.restart', 'prosight.operations.restart.override',
+        'prosight.operations.appserver.bind',
+        'prosight.operations.rpo.manage', 'prosight.operations.rpo.qualify', 'prosight.operations.rpo.approve',
+        'prosight.operations.rpo.promote', 'prosight.operations.rpo.override', 'prosight.operations.rpo.rollback',
+        'prosight.operations.patch.view', 'prosight.operations.patch.request', 'prosight.operations.patch.register', 'prosight.operations.patch.execute',
+        'prosight.compile.view', 'prosight.compile.request', 'prosight.compile.handoff',
     ];
 
     /**

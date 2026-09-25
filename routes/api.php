@@ -182,6 +182,47 @@ Route::prefix('v1')->group(function () {
         Route::get('/hd/aceite/{ticket}',          [\App\Http\Controllers\HelpDeskAcceptController::class, 'show'])->name('hd.accept');
         Route::post('/hd/aceite/{ticket}/encerrar', [\App\Http\Controllers\HelpDeskAcceptController::class, 'accept'])->name('hd.accept.do');
         Route::post('/hd/aceite/{ticket}/recusar',  [\App\Http\Controllers\HelpDeskAcceptController::class, 'reject'])->name('hd.reject.do');
+
+    // 🔌 CONECTOR PROTHEUS (Connector-0) — canal do AGENTE on-prem (sem sessão; outbound-only).
+    // enroll: auth por TOKEN de uso único no body. whoami: auth por ASSINATURA Ed25519 (middleware
+    // connector.agent) — endpoint MÍNIMO de prova do canal (sem heartbeat/estado/comando).
+    Route::post('/connector/enroll', [\App\Http\Controllers\ConnectorAgentController::class, 'enroll'])
+        ->middleware('throttle:10,1')->name('connector.enroll');
+    Route::get('/connector/whoami', [\App\Http\Controllers\ConnectorAgentController::class, 'whoami'])
+        ->middleware(['throttle:60,1', 'connector.agent'])->name('connector.whoami');
+    // Connector-1 — heartbeat (assinado). SÓ presença/saúde do canal; sem AppServer/RPO.
+    Route::post('/connector/heartbeat', [\App\Http\Controllers\ConnectorAgentController::class, 'heartbeat'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.heartbeat');
+    // Connector-2 — inventário Protheus OBSERVADO (assinado; read-only; separado do heartbeat).
+    Route::post('/connector/inventory', [\App\Http\Controllers\ConnectorAgentController::class, 'inventory'])
+        ->middleware(['throttle:60,1', 'connector.agent'])->name('connector.inventory');
+    // Connector-3 — comandos assíncronos NÃO destrutivos. Canal OUTBOUND-ONLY do agente: long-poll
+    // (claim atômico), ack, result. Escopo = registro do agente (nunca do payload). Sem execução síncrona.
+    Route::get('/connector/commands/next', [\App\Http\Controllers\ConnectorCommandController::class, 'next'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.next');
+    Route::post('/connector/commands/{id}/ack', [\App\Http\Controllers\ConnectorCommandController::class, 'ack'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.ack');
+    Route::post('/connector/commands/{id}/result', [\App\Http\Controllers\ConnectorCommandController::class, 'result'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.commands.result');
+    // Connector-4.1 — OPERAÇÕES (só start). Canal do agente (outbound-only, assinado). Claim single-shot
+    // (SEM retry); current recupera claim perdido; ack cruza a barreira; result(ok)→verifying (não sucesso).
+    Route::get('/connector/operations/next', [\App\Http\Controllers\ConnectorOperationController::class, 'next'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.next');
+    Route::get('/connector/operations/current', [\App\Http\Controllers\ConnectorOperationController::class, 'current'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.current');
+    Route::post('/connector/operations/{id}/ack', [\App\Http\Controllers\ConnectorOperationController::class, 'ack'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.ack');
+    Route::post('/connector/operations/{id}/result', [\App\Http\Controllers\ConnectorOperationController::class, 'result'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.operations.result');
+
+    // PATCH P2 — execução governada (agente): claim single-shot + ACK de marcadores + result causal. SIMULADO.
+    Route::get('/connector/patch-executions/next', [\App\Http\Controllers\PatchController::class, 'next'])
+        ->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.next');
+    Route::post('/connector/patch-executions/{id}/ack', [\App\Http\Controllers\PatchController::class, 'ack'])
+        ->whereNumber('id')->middleware(['throttle:240,1', 'connector.agent'])->name('connector.patch.ack');
+    Route::post('/connector/patch-executions/{id}/result', [\App\Http\Controllers\PatchController::class, 'result'])
+        ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.result');
+
     Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
         // ===== Kanban do Cliente ("Meus Processos") =====
         Route::prefix('client/kanban')->name('client.kanban.')->group(function () {
@@ -2153,6 +2194,227 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/quality/{analysis}/findings', [\App\Http\Controllers\SourceDocQualityController::class, 'findings'])->whereNumber('sourceDoc')->whereNumber('analysis');
             Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
+
+        // Prosight C3 — Ambientes: projeção READ-ONLY segura do Cofre Env* por customer_id.
+        // Permissão PRÓPRIA (não concede acesso ao Cofre/reveal); empresa obrigatória; escopo revalidado
+        // no controller. NÃO expõe secrets/credenciais/host/porta/URL/inventory (allowlist).
+        Route::middleware('permission.or.admin:prosight.environments.view')->group(function () {
+            Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
+            // C4 — configuração cadastral de UM ambiente (read-only; anti-IDOR por environment_id → 404).
+            Route::get('/prosight/environments/{environmentId}/configuration', [\App\Http\Controllers\ProsightEnvironmentController::class, 'configuration'])->whereNumber('environmentId');
+        });
+        // Conector-0 — gestão da IDENTIDADE do agente (emitir enrollment token, status da identidade,
+        // revogar). Permissão própria prosight.operations.manage (infra interna; NÃO é operação).
+        Route::middleware('permission:prosight.operations.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
+            Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+            // Download do agente Connector (pacote-fonte servido pelo Minutor + binários do Release proxied).
+            Route::get('/prosight/connector/agent/package', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'package']);
+            Route::get('/prosight/connector/agent/releases', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'releases']);
+            Route::get('/prosight/connector/agent/download', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'download']);
+            // Config REST AdvPL (RPO) por ambiente — paridade com o configurador do ProSight enviado.
+            Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
+            Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-config/test', [\App\Http\Controllers\ProsightRpoConfigController::class, 'test'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-inventory/scan', [\App\Http\Controllers\ProsightRpoConfigController::class, 'scan'])->whereNumber('environmentId');
+        });
+        // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
+        // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presenceBulk']);
+            Route::get('/prosight/environments/{environmentId}/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presence'])->whereNumber('environmentId');
+            // Connector-2 — inventário OBSERVADO (Protheus) + divergência cadastral × observado (read-only).
+            Route::get('/prosight/environments/{environmentId}/observed', [\App\Http\Controllers\ConnectorAgentController::class, 'observed'])->whereNumber('environmentId');
+            // Visão Geral — status RPO da empresa (leve, sem re-scan): ambientes configurados + último resumo.
+            Route::get('/prosight/companies/{customerId}/rpo-overview', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyOverview'])->whereNumber('customerId');
+            Route::get('/prosight/companies/{customerId}/rpo-inventory/results', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyResults'])->whereNumber('customerId');
+            // Connector-3 — LISTAR/VER comandos (read-only; perm operations.view). Anti-IDOR 404.
+            Route::get('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/commands/{commandId}', [\App\Http\Controllers\ConnectorCommandController::class, 'show'])->whereNumber('commandId');
+        });
+        // Conector-3 — EXECUÇÃO de comandos assíncronos não destrutivos. Permissão ESTRITA
+        // prosight.operations.execute (admin via '*' + administrativo; NÃO coordenador). Só allowlist.
+        Route::middleware('permission:prosight.operations.execute')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/commands/{commandId}/cancel', [\App\Http\Controllers\ConnectorCommandController::class, 'cancel'])->whereNumber('commandId');
+        });
+        // Conector-4.1 — OPERAÇÕES (só start). Leitura read-only (perm view).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
+            // C5.4 — auditoria PONTA-A-PONTA read-only (reconstrução + timeline correlacionada). Perm view.
+            Route::get('/prosight/operations/{id}/audit', [\App\Http\Controllers\ConnectorOperationController::class, 'audit'])->whereNumber('id');
+        });
+        // Criar/cancelar operação destrutiva — permissão GRANULAR POR TIPO (operations.start | operations.stop)
+        // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
+        Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
+        Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
+        // Aprovar/rejeitar/reconciliar/resolver — perm POR TIPO no CONTROLLER: lifecycle=operations.approve,
+        // rpo_promote=operations.rpo.approve (N-of-M). Middleware estático não distingue op_type.
+        Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
+        // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). Cria operação rpo_promote a partir do target.
+        // Perm prosight.operations.rpo.promote enforce no CONTROLLER. Anti-IDOR 404 por customer_id.
+        Route::post('/prosight/rpo/targets/{id}/promote', [\App\Http\Controllers\ConnectorOperationController::class, 'promote'])->whereNumber('id');
+        // Conector-5.3 — rollback GOVERNADO de RPO (SÓ hot). Cria operação rpo_rollback p/ known_good nomeada.
+        // Perm PRÓPRIA prosight.operations.rpo.rollback enforce no CONTROLLER (NÃO herda de promote). Anti-IDOR.
+        Route::post('/prosight/rpo/targets/{id}/rollback', [\App\Http\Controllers\ConnectorOperationController::class, 'rollback'])->whereNumber('id');
+        // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
+            // CP-PREPHYSICAL — read-model de prontidão física (diagnóstico; NUNCA habilita live).
+            Route::get('/prosight/environments/{environmentId}/physical-readiness', [\App\Http\Controllers\PatchController::class, 'physicalReadiness'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/rpo/artifacts', [\App\Http\Controllers\RpoRegistryController::class, 'artifacts'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/artifacts/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showArtifact'])->whereNumber('id');
+            Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/targets/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showTarget'])->whereNumber('id');
+            Route::get('/prosight/rpo/targets/{id}/qualifications', [\App\Http\Controllers\RpoRegistryController::class, 'qualifications'])->whereNumber('id');
+            // C5.3 — preview INFORMATIVO do rollback (read-only; NÃO cria operação). POST só p/ carregar qualification_id.
+            Route::post('/prosight/rpo/targets/{id}/rollback-preview', [\App\Http\Controllers\RpoRegistryController::class, 'rollbackPreview'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/artifacts/register', [\App\Http\Controllers\RpoRegistryController::class, 'register'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/artifacts/{id}/revise', [\App\Http\Controllers\RpoRegistryController::class, 'revise'])->whereNumber('id');
+            Route::post('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'createTarget'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/targets/{id}/confirm', [\App\Http\Controllers\RpoRegistryController::class, 'confirmTarget'])->whereNumber('id');
+            Route::post('/prosight/rpo/targets/{id}/preview', [\App\Http\Controllers\RpoRegistryController::class, 'preview'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.qualify')->group(function () {
+            Route::post('/prosight/rpo/targets/{id}/qualify', [\App\Http\Controllers\RpoRegistryController::class, 'qualify'])->whereNumber('id');
+            Route::post('/prosight/rpo/qualifications/{id}/revoke', [\App\Http\Controllers\RpoRegistryController::class, 'revokeQualification'])->whereNumber('id');
+        });
+        // ── Connector-6 (C6) — COMPILE. Produz ARTEFATO candidato; NENHUMA rota publica/promove RPO. ──
+        Route::middleware('permission.or.admin:prosight.compile.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/compile/capability', [\App\Http\Controllers\CompileController::class, 'capability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/compile/requests/{id}', [\App\Http\Controllers\CompileController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.compile.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/compile/requests/{id}/execute', [\App\Http\Controllers\CompileController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/compile/requests/{id}/cancel', [\App\Http\Controllers\CompileController::class, 'cancel'])->whereNumber('id');
+        });
+        // C6.7 — handoff GOVERNADO do artifact candidate ao registry C5 (register). C6 NÃO promove.
+        Route::middleware('permission:prosight.compile.handoff')->group(function () {
+            Route::post('/prosight/compile/candidates/{id}/handoff', [\App\Http\Controllers\CompileController::class, 'handoff'])->whereNumber('id');
+        });
+        // RPO-DISCOVERY (C5.0) — topologia detectada → sugestões → confirmação GOVERNADA (delega ao C5.1).
+        // NENHUMA rota promove/publica RPO nem auto-altera membership. Confirmação = ação de gestão (rpo.manage).
+        Route::middleware('permission.or.admin:prosight.operations.rpo.manage')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/topology', [\App\Http\Controllers\RpoTopologyController::class, 'show'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/topology/confirm', [\App\Http\Controllers\RpoTopologyController::class, 'confirm'])->whereNumber('environmentId');
+        });
+        // ENV-HUB — jornada operacional por ambiente (orquestra Connector/AppServers/RPO; NÃO duplica; NÃO promove).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operational-status', [\App\Http\Controllers\EnvironmentHubController::class, 'status'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/appservers/reconciliation', [\App\Http\Controllers\EnvironmentHubController::class, 'reconciliation'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
+            Route::post('/prosight/environments/{environmentId}/appservers/register-and-bind', [\App\Http\Controllers\EnvironmentHubController::class, 'registerAndBind'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
+        });
+        // PATCH P1 — produção GOVERNADA de artefato (base RPO + .ptm = candidato). NÃO publica/promove/registra em P1.
+        Route::middleware('permission.or.admin:prosight.operations.patch.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/patch/availability', [\App\Http\Controllers\PatchController::class, 'availability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'inputs'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'requests'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
+            // PATCH P2 — visualizar execução (marcadores + itens). SIMULADO explícito nos labels.
+            Route::get('/prosight/patch/executions/{id}', [\App\Http\Controllers\PatchController::class, 'showExecution'])->whereNumber('id');
+            // PATCH P3 — candidatos (jornada execução→candidato→registrar no C5). Read-only.
+            Route::get('/prosight/environments/{environmentId}/patch/candidates', [\App\Http\Controllers\PatchController::class, 'candidates'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/candidates/{id}', [\App\Http\Controllers\PatchController::class, 'showCandidate'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.patch.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'createRequest'])->whereNumber('environmentId');
+        });
+        // PATCH P2 — EXECUÇÃO governada (dispatch/reconcile). Perm PRÓPRIA patch.execute (não herda request). SIMULADO.
+        Route::middleware('permission:prosight.operations.patch.execute')->group(function () {
+            Route::post('/prosight/patch/requests/{id}/execute', [\App\Http\Controllers\PatchController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/reconcile', [\App\Http\Controllers\PatchController::class, 'reconcile'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/resolve', [\App\Http\Controllers\PatchController::class, 'resolve'])->whereNumber('id');
+        });
+        // PATCH P3 — HANDOFF ao C5 (ação EXPLÍCITA). Perm PRÓPRIA patch.register (não herda execute). Boundary=C5 REGISTERED.
+        Route::middleware('permission:prosight.operations.patch.register')->group(function () {
+            Route::post('/prosight/patch/candidates/{id}/handoff', [\App\Http\Controllers\PatchController::class, 'handoff'])->whereNumber('id');
+        });
+
+        // ────────────────────────────────────────────────────────────────────
+        // 🖥️ COFRE DE AMBIENTES (infra Protheus) — camada ADITIVA sobre o cofre.
+        // Metadados em CLARO; segredos só via /reveal enforced. NUNCA logar payload
+        // com blob. Reusa a cripto/chaves do cofre de senhas sem tocá-las.
+        // ────────────────────────────────────────────────────────────────────
+        Route::prefix('environments')->middleware('permission.or.admin:environments.use')->group(function () {
+            // Dashboard + busca (metadados CLARO)
+            Route::get('/dashboard',                       [\App\Http\Controllers\EnvironmentController::class, 'dashboard'])->name('environments.dashboard');
+            Route::get('/alerts',                          [\App\Http\Controllers\EnvironmentController::class, 'alerts'])->name('environments.alerts');
+            Route::get('/search',                          [\App\Http\Controllers\EnvironmentController::class, 'search'])->name('environments.search');
+            Route::get('/favorites',                       [\App\Http\Controllers\EnvironmentController::class, 'favorites'])->name('environments.favorites');
+            Route::post('/environments/{envId}/favorite',  [\App\Http\Controllers\EnvironmentController::class, 'toggleFavorite'])->name('environments.favorite.toggle');
+            // Clientes-vault
+            Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
+            Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
+            // Compartilhamento — remoção aditiva de membro do cofre do cliente (add/role reusam /vault/*)
+            Route::delete('/clients/{customerId}/members/{userId}', [\App\Http\Controllers\EnvironmentController::class, 'removeMember'])->name('environments.member.remove');
+            // Ambientes de um cliente
+            Route::get('/clients/{customerId}/environments',  [\App\Http\Controllers\EnvironmentController::class, 'environments'])->name('environments.env.index');
+            Route::post('/clients/{customerId}/environments', [\App\Http\Controllers\EnvironmentController::class, 'storeEnvironment'])->name('environments.env.store');
+            Route::get('/environments/{id}',               [\App\Http\Controllers\EnvironmentController::class, 'showEnvironment'])->name('environments.env.show');
+            Route::put('/environments/{id}',               [\App\Http\Controllers\EnvironmentController::class, 'updateEnvironment'])->name('environments.env.update');
+            Route::delete('/environments/{id}',            [\App\Http\Controllers\EnvironmentController::class, 'destroyEnvironment'])->name('environments.env.destroy');
+            // Credenciais (listagem SEM blob)
+            Route::get('/environments/{envId}/credentials',  [\App\Http\Controllers\EnvironmentCredentialController::class, 'index'])->name('environments.cred.index');
+            Route::post('/environments/{envId}/credentials', [\App\Http\Controllers\EnvironmentCredentialController::class, 'store'])->name('environments.cred.store');
+            Route::put('/credentials/{id}',                [\App\Http\Controllers\EnvironmentCredentialController::class, 'update'])->name('environments.cred.update');
+            Route::delete('/credentials/{id}',             [\App\Http\Controllers\EnvironmentCredentialController::class, 'destroy'])->name('environments.cred.destroy');
+            // Reveal ENFORCED (único caminho do ciphertext)
+            Route::post('/secrets/{id}/reveal',            [\App\Http\Controllers\EnvironmentSecretController::class, 'reveal'])->middleware('throttle:60,1')->name('environments.secret.reveal');
+
+            // Infra (F1b): Banco / AppServer / VPN — listagem SEM blob; senha via /reveal.
+            Route::get('/environments/{envId}/databases',  [\App\Http\Controllers\EnvironmentInfraController::class, 'databases'])->name('environments.db.index');
+            Route::post('/environments/{envId}/databases', [\App\Http\Controllers\EnvironmentInfraController::class, 'storeDatabase'])->name('environments.db.store');
+            Route::put('/databases/{id}',                  [\App\Http\Controllers\EnvironmentInfraController::class, 'updateDatabase'])->name('environments.db.update');
+            Route::delete('/databases/{id}',               [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyDatabase'])->name('environments.db.destroy');
+            Route::get('/environments/{envId}/appservers',  [\App\Http\Controllers\EnvironmentInfraController::class, 'appservers'])->name('environments.app.index');
+            Route::post('/environments/{envId}/appservers', [\App\Http\Controllers\EnvironmentInfraController::class, 'storeAppserver'])->name('environments.app.store');
+            Route::put('/appservers/{id}',                 [\App\Http\Controllers\EnvironmentInfraController::class, 'updateAppserver'])->name('environments.app.update');
+            Route::delete('/appservers/{id}',              [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyAppserver'])->name('environments.app.destroy');
+            Route::get('/environments/{envId}/vpns',        [\App\Http\Controllers\EnvironmentInfraController::class, 'vpns'])->name('environments.vpn.index');
+            Route::post('/environments/{envId}/vpns',       [\App\Http\Controllers\EnvironmentInfraController::class, 'storeVpn'])->name('environments.vpn.store');
+            Route::put('/vpns/{id}',                        [\App\Http\Controllers\EnvironmentInfraController::class, 'updateVpn'])->name('environments.vpn.update');
+            Route::delete('/vpns/{id}',                     [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyVpn'])->name('environments.vpn.destroy');
+
+            // Certificados (F1c) — metadados em CLARO; senha do PFX via reveal; arquivo .pfx cifrado no client
+            Route::get('/environments/{envId}/certificates',  [\App\Http\Controllers\EnvironmentCertificateController::class, 'index'])->name('environments.cert.index');
+            Route::post('/environments/{envId}/certificates', [\App\Http\Controllers\EnvironmentCertificateController::class, 'store'])->name('environments.cert.store');
+            Route::put('/certificates/{id}',                [\App\Http\Controllers\EnvironmentCertificateController::class, 'update'])->name('environments.cert.update');
+            Route::delete('/certificates/{id}',             [\App\Http\Controllers\EnvironmentCertificateController::class, 'destroy'])->name('environments.cert.destroy');
+            // Histórico de negócio do ambiente
+            Route::get('/environments/{envId}/history',     [\App\Http\Controllers\EnvironmentCertificateController::class, 'history'])->name('environments.history');
+
+            // ACL fina por ambiente (F2) — só admin do ambiente
+            Route::get('/environments/{envId}/permissions',            [\App\Http\Controllers\EnvPermissionController::class, 'index'])->name('environments.perm.index');
+            Route::put('/environments/{envId}/permissions/{userId}',   [\App\Http\Controllers\EnvPermissionController::class, 'upsert'])->name('environments.perm.upsert');
+            Route::delete('/environments/{envId}/permissions/{userId}', [\App\Http\Controllers\EnvPermissionController::class, 'destroy'])->name('environments.perm.destroy');
+            // ACL de grupo (herança automática)
+            Route::get('/environments/{envId}/group-permissions',              [\App\Http\Controllers\EnvPermissionController::class, 'groupIndex'])->name('environments.gperm.index');
+            Route::put('/environments/{envId}/group-permissions/{groupId}',    [\App\Http\Controllers\EnvPermissionController::class, 'groupUpsert'])->name('environments.gperm.upsert');
+            Route::delete('/environments/{envId}/group-permissions/{groupId}', [\App\Http\Controllers\EnvPermissionController::class, 'groupDestroy'])->name('environments.gperm.destroy');
+
+            // Links + Documentação (F1d)
+            Route::get('/environments/{envId}/links',       [\App\Http\Controllers\EnvironmentLinkController::class, 'index'])->name('environments.link.index');
+            Route::post('/environments/{envId}/links',      [\App\Http\Controllers\EnvironmentLinkController::class, 'store'])->name('environments.link.store');
+            Route::delete('/links/{id}',                    [\App\Http\Controllers\EnvironmentLinkController::class, 'destroy'])->name('environments.link.destroy');
+            Route::get('/environments/{envId}/docs',        [\App\Http\Controllers\EnvironmentLinkController::class, 'docs'])->name('environments.docs.index');
+        });
+
     });
 
     // Signed URL externa (sem auth:sanctum; o middleware 'signed' garante
