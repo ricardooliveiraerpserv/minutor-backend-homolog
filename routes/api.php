@@ -224,6 +224,45 @@ Route::prefix('v1')->group(function () {
         ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.result');
 
     Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
+        // 🔐 COFRE DE SENHAS (Vault) — dependência do módulo Ambientes (Prosight).
+        Route::prefix('vault')->middleware('permission.or.admin:vault.use')->group(function () {
+            // Perfil criptográfico / 2FA / unlock
+            Route::get('/profile',              [\App\Http\Controllers\VaultProfileController::class, 'profile'])->name('vault.profile');
+            Route::put('/lock-timeout',         [\App\Http\Controllers\VaultProfileController::class, 'setLockTimeout'])->middleware('throttle:20,1')->name('vault.lock-timeout');
+            Route::post('/totp/setup',          [\App\Http\Controllers\VaultProfileController::class, 'totpSetup'])->middleware('throttle:10,1')->name('vault.totp.setup');
+            Route::post('/totp/confirm',        [\App\Http\Controllers\VaultProfileController::class, 'totpConfirm'])->middleware('throttle:10,1')->name('vault.totp.confirm');
+            Route::post('/ms/start',            [\App\Http\Controllers\VaultProfileController::class, 'msStart'])->middleware('throttle:10,1')->name('vault.ms.start');
+            Route::get('/ms/status',            [\App\Http\Controllers\VaultProfileController::class, 'msStatus'])->name('vault.ms.status');
+            Route::post('/profile/setup',       [\App\Http\Controllers\VaultProfileController::class, 'setup'])->name('vault.profile.setup');
+            Route::post('/unlock',              [\App\Http\Controllers\VaultProfileController::class, 'unlock'])->middleware('throttle:vault-unlock')->name('vault.unlock');
+            Route::post('/master-password',     [\App\Http\Controllers\VaultProfileController::class, 'changeMasterPassword'])->middleware('throttle:10,1')->name('vault.master-password');
+            Route::post('/recovery/unlock',     [\App\Http\Controllers\VaultProfileController::class, 'recoveryUnlock'])->middleware('throttle:5,15')->name('vault.recovery.unlock');
+            Route::post('/recovery/regenerate', [\App\Http\Controllers\VaultProfileController::class, 'regenerateRecovery'])->middleware('throttle:10,1')->name('vault.recovery.regenerate');
+            Route::get('/public-keys',          [\App\Http\Controllers\VaultProfileController::class, 'publicKeys'])->name('vault.public-keys');
+            Route::get('/teams',                [\App\Http\Controllers\VaultProfileController::class, 'teams'])->name('vault.teams');
+
+            // Cofres e membros
+            Route::get('/vaults',                        [\App\Http\Controllers\VaultController::class, 'index'])->name('vault.vaults.index');
+            Route::post('/vaults',                       [\App\Http\Controllers\VaultController::class, 'store'])->name('vault.vaults.store');
+            Route::put('/vaults/{id}',                   [\App\Http\Controllers\VaultController::class, 'update'])->name('vault.vaults.update');
+            Route::delete('/vaults/{id}',                [\App\Http\Controllers\VaultController::class, 'destroy'])->name('vault.vaults.destroy');
+            Route::get('/vaults/{id}/members',           [\App\Http\Controllers\VaultController::class, 'members'])->name('vault.members.index');
+            Route::post('/vaults/{id}/members',          [\App\Http\Controllers\VaultController::class, 'addMember'])->name('vault.members.store');
+            Route::put('/vaults/{id}/members/{userId}',  [\App\Http\Controllers\VaultController::class, 'updateMember'])->name('vault.members.update');
+            Route::delete('/vaults/{id}/members/{userId}', [\App\Http\Controllers\VaultController::class, 'removeMember'])->name('vault.members.destroy');
+            Route::post('/vaults/{id}/rotate',           [\App\Http\Controllers\VaultController::class, 'rotate'])->name('vault.rotate');
+
+            // Itens
+            Route::get('/vaults/{vaultId}/items',        [\App\Http\Controllers\VaultItemController::class, 'index'])->name('vault.items.index');
+            Route::post('/vaults/{vaultId}/items',       [\App\Http\Controllers\VaultItemController::class, 'store'])->name('vault.items.store');
+            Route::put('/items/{id}',                    [\App\Http\Controllers\VaultItemController::class, 'update'])->name('vault.items.update');
+            Route::delete('/items/{id}',                 [\App\Http\Controllers\VaultItemController::class, 'destroy'])->name('vault.items.destroy');
+            Route::post('/items/{id}/restore',           [\App\Http\Controllers\VaultItemController::class, 'restore'])->name('vault.items.restore');
+            Route::post('/items/{id}/log',               [\App\Http\Controllers\VaultItemController::class, 'logAction'])->name('vault.items.log');
+
+            // Auditoria — admin global vê tudo; admin de cofre vê só os seus (escopo no controller)
+            Route::get('/logs',                          [\App\Http\Controllers\VaultController::class, 'logs'])->name('vault.logs');
+        });
         // ===== Kanban do Cliente ("Meus Processos") =====
         Route::prefix('client/kanban')->name('client.kanban.')->group(function () {
             $c = \App\Http\Controllers\ClientKanbanController::class;

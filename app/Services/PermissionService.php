@@ -142,6 +142,7 @@ class PermissionService
         'prosight.operations.rpo.promote', 'prosight.operations.rpo.override', 'prosight.operations.rpo.rollback',
         'prosight.operations.patch.view', 'prosight.operations.patch.request', 'prosight.operations.patch.register', 'prosight.operations.patch.execute',
         'prosight.compile.view', 'prosight.compile.request', 'prosight.compile.handoff',
+        'vault.use', 'vault.audit.view',
     ];
 
     /**
