@@ -166,6 +166,63 @@ class MovideskService
         return $tickets;
     }
 
+    /**
+     * Lista LEVE de tickets para o HELP DESK (espelhamento Promax → Minutor).
+     * Filtra por EQUIPE dona (ownerTeam) — só os chamados direcionados às nossas equipes de
+     * atendimento Promax — e por lastUpdate, trazendo os campos mínimos para decidir o import.
+     * Somente LEITURA (GET). Retorna [{id, ownerTeam, baseStatus, status, lastUpdate}, ...].
+     *
+     * @param string[] $teams Nomes de equipe (ownerTeam) a incluir. Vazio => não filtra por equipe.
+     */
+    public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = []): array
+    {
+        $tickets = [];
+        $top     = 50;
+        $skip    = 0;
+
+        // Filtro base por data. A comparação de equipe é feita em PHP (nomes com espaço/acentos
+        // no $filter OData do Movidesk são frágeis) — o $select traz ownerTeam para isso.
+        $filter = "lastUpdate gt " . $since->utc()->format('Y-m-d\TH:i:s\Z');
+        $wanted = array_map(fn ($t) => mb_strtolower(trim((string) $t)), $teams);
+
+        do {
+            try {
+                $url = "{$this->baseUrl()}/tickets"
+                    . '?token=' . urlencode($this->token())
+                    . '&$filter=' . urlencode($filter)
+                    . '&$select=' . urlencode('id,ownerTeam,baseStatus,status,lastUpdate')
+                    . '&$orderby=' . urlencode('lastUpdate asc')
+                    . '&$top=' . $top
+                    . '&$skip=' . $skip;
+
+                $response = Http::timeout(30)->get($url);
+                if (!$response->successful()) {
+                    Log::warning('📥 [MOVIDESK HD] Erro na listagem', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                    break;
+                }
+
+                $page = $response->json();
+                if (empty($page)) break;
+                if (isset($page['id'])) $page = [$page];
+
+                foreach ($page as $t) {
+                    if ($wanted && !in_array(mb_strtolower(trim((string) ($t['ownerTeam'] ?? ''))), $wanted, true)) {
+                        continue; // equipe fora do escopo Promax
+                    }
+                    $tickets[] = $t;
+                }
+
+                $skip += $top;
+                if (count($page) < $top) break;
+            } catch (\Throwable $e) {
+                Log::error('📥 [MOVIDESK HD] Exceção na listagem', ['error' => $e->getMessage()]);
+                break;
+            }
+        } while (true);
+
+        return $tickets;
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Processamento
     // ─────────────────────────────────────────────────────────────

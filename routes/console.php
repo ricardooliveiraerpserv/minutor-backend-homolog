@@ -97,6 +97,16 @@ Schedule::command('movidesk:sync')
   ->withoutOverlapping(30)
   ->runInBackground();
 
+// ENTRADA Help Desk ↔ Movidesk (espelhamento Promax): traz os chamados do Movidesk para o HD
+// do Minutor. SOMENTE LEITURA no Movidesk. Só age se movidesk_hd_import_enabled=true (o próprio
+// job checa o flag), então pode ficar agendado sem efeito até habilitarmos.
+Schedule::command('movidesk:hd-import')
+  ->cron('*/5 * * * *')
+  ->name('movidesk-hd-import')
+  ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
+  ->withoutOverlapping(30)
+  ->runInBackground();
+
 // Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
 // aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
 Schedule::command('movidesk:retry-problem-tickets')
