@@ -258,7 +258,8 @@ class MovideskHelpDeskImporter
                 'channel'            => 'movidesk',
                 'source'             => 'movidesk',
                 'external_action_id' => $aid,
-                'idempotency_key'    => 'movidesk-action-' . $aid,
+                // action.id do Movidesk é sequencial POR ticket (1,2,3…) — a chave precisa do id do ticket.
+                'idempotency_key'    => 'movidesk-' . $ticket->external_ref . '-a' . $aid,
             ]);
             $existing->put($aid, true);
             $n++;
