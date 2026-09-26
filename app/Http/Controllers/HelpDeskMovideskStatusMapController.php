@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Customer;
 use App\Models\HelpDeskMovideskStatusMap;
 use App\Models\HelpDeskStatus;
+use App\Models\MovideskOrganization;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -111,5 +113,55 @@ class HelpDeskMovideskStatusMapController extends Controller
         });
 
         return $this->index($request);
+    }
+
+    // ── VÍNCULO DE CLIENTE (organização Movidesk → cliente Minutor) ──────────────
+    /**
+     * Lista as organizações do Movidesk com o cliente Minutor vinculado (se houver) +
+     * a lista de clientes para o seletor. É o que resolve o `customer_id` dos chamados
+     * importados (org do chamado → cliente).
+     */
+    public function customersIndex(): JsonResponse
+    {
+        $orgs = MovideskOrganization::query()
+            ->leftJoin('customers', 'customers.id', '=', 'movidesk_organizations.customer_id')
+            ->orderBy('movidesk_organizations.name')
+            ->get([
+                'movidesk_organizations.id',
+                'movidesk_organizations.movidesk_id',
+                'movidesk_organizations.name',
+                'movidesk_organizations.cnpj',
+                'movidesk_organizations.customer_id',
+                'customers.name as customer_name',
+            ]);
+
+        $customers = Customer::query()->orderBy('name')->get(['id', 'name']);
+
+        return response()->json(['data' => [
+            'organizations' => $orgs,
+            'customers'     => $customers,
+        ]]);
+    }
+
+    /**
+     * Salva os vínculos alterados. Payload: { links: [{id, customer_id|null}] }.
+     * customer_id null = desvincular.
+     */
+    public function customersSave(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'links'               => 'required|array',
+            'links.*.id'          => 'required|integer|exists:movidesk_organizations,id',
+            'links.*.customer_id' => 'nullable|integer|exists:customers,id',
+        ]);
+
+        DB::transaction(function () use ($v) {
+            foreach ($v['links'] as $l) {
+                MovideskOrganization::where('id', (int) $l['id'])
+                    ->update(['customer_id' => $l['customer_id'] !== null ? (int) $l['customer_id'] : null]);
+            }
+        });
+
+        return $this->customersIndex();
     }
 }
