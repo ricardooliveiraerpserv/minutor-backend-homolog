@@ -143,6 +143,22 @@ class MovideskHelpDeskImporter
         return $stats;
     }
 
+    /**
+     * Importa UM chamado específico do Movidesk (por id), ignorando filtros de equipe/domínio/status.
+     * Uso: validação/teste manual. SOMENTE LEITURA no Movidesk.
+     * @return array{created:bool,comments:int,ticket_id:int|null,hd_number:string|null}
+     */
+    public function importOne(int $externalId, ?int $companyId = null): array
+    {
+        $companyId = $companyId ?: $this->companyId();
+        $full = $this->movidesk->fetchTicket($externalId);
+        if (!$full) return ['created' => false, 'comments' => 0, 'ticket_id' => null, 'hd_number' => null];
+
+        $res = DB::transaction(fn () => $this->upsert($full, $companyId));
+        $hd = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', (string) $externalId)->first(['id', 'ticket_number']);
+        return ['created' => $res['created'], 'comments' => $res['comments'], 'ticket_id' => $hd?->id, 'hd_number' => $hd?->ticket_number];
+    }
+
     private function bumpCursor(array $lite, Carbon &$max): void
     {
         $lu = $lite['lastUpdate'] ?? null;

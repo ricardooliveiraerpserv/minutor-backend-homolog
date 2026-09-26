@@ -16,11 +16,19 @@ use Illuminate\Console\Command;
  */
 class MovideskHelpDeskImportCommand extends Command
 {
-    protected $signature = 'movidesk:hd-import {--force : Ignora o flag de habilitação} {--since= : Data/hora mínima (ISO ou Y-m-d) para varrer}';
+    protected $signature = 'movidesk:hd-import {--force : Ignora o flag de habilitação} {--since= : Data/hora mínima (ISO ou Y-m-d) para varrer} {--ticket= : Importa APENAS este id de ticket do Movidesk (validação, sem filtros)}';
     protected $description = 'Espelha os chamados Promax do Movidesk no Help Desk (entrada; somente leitura no Movidesk)';
 
     public function handle(MovideskHelpDeskImporter $importer): int
     {
+        if ($this->option('ticket')) {
+            $r = $importer->importOne((int) $this->option('ticket'));
+            if (!$r['ticket_id']) { $this->error('Ticket não encontrado no Movidesk.'); return self::FAILURE; }
+            $this->info(sprintf('Ticket Movidesk %s → HD %s (%s) | interações novas: %d',
+                $this->option('ticket'), $r['hd_number'] ?? '?', $r['created'] ? 'CRIADO' : 'atualizado', $r['comments']));
+            return self::SUCCESS;
+        }
+
         $since = null;
         if ($this->option('since')) {
             try { $since = Carbon::parse($this->option('since')); }
