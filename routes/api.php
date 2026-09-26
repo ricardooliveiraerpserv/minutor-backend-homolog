@@ -1941,6 +1941,9 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/sla-policies',           [\App\Http\Controllers\HelpDeskSlaController::class, 'store']);
         Route::get('/help-desk/statuses',                [\App\Http\Controllers\HelpDeskStatusController::class, 'index']);
         Route::post('/help-desk/statuses',               [\App\Http\Controllers\HelpDeskStatusController::class, 'store']);
+        // De-para de status HD ↔ Movidesk (vínculo, por empresa)
+        Route::get('/help-desk/movidesk-status-map',     [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'index']);
+        Route::put('/help-desk/movidesk-status-map',     [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'save']);
         Route::get('/help-desk/tags',                    [\App\Http\Controllers\HelpDeskTagController::class, 'index']);
         Route::post('/help-desk/tags',                   [\App\Http\Controllers\HelpDeskTagController::class, 'store']);
         Route::get('/help-desk/teams',                   [\App\Http\Controllers\HelpDeskTeamController::class, 'index']);
