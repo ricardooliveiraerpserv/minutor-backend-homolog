@@ -229,8 +229,19 @@ class HelpDeskMovideskStatusMapController extends Controller
 
         DB::transaction(function () use ($v) {
             foreach ($v['links'] as $l) {
-                MovideskOrganization::where('id', (int) $l['id'])
-                    ->update(['hd_customer_id' => $l['customer_id'] !== null ? (int) $l['customer_id'] : null]);
+                $org = MovideskOrganization::find((int) $l['id']);
+                if (!$org) continue;
+                $newCustomer = $l['customer_id'] !== null ? (int) $l['customer_id'] : null;
+                if ($newCustomer) {
+                    // Ao VINCULAR: carimba o momento do vínculo (só se ainda não vinculada) — o import
+                    // passa a trazer apenas chamados criados a partir daqui.
+                    $org->hd_customer_id = $newCustomer;
+                    if (!$org->hd_linked_at) $org->hd_linked_at = now();
+                } else {
+                    $org->hd_customer_id = null;
+                    $org->hd_linked_at = null;
+                }
+                $org->save();
             }
         });
 

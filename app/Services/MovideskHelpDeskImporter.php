@@ -131,7 +131,12 @@ class MovideskHelpDeskImporter
                 // Filtro de teste por domínio do solicitante (ex.: erpserv.com.br).
                 if (!$this->domainAllowed($full)) { $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue; }
                 // Só age para ORGS VINCULADAS no Help Desk (hd_customer_id). Org sem vínculo → ignora.
-                if ($this->requireLinkedOrg() && !$this->resolveCustomer($this->extractOrgId($full))) {
+                $org = $this->orgFor($this->extractOrgId($full));
+                if ($this->requireLinkedOrg() && !($org && $org->hd_customer_id)) {
+                    $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
+                }
+                // "A partir do vínculo apenas": ignora chamados CRIADOS antes de a org ser vinculada.
+                if ($org && $org->hd_linked_at && $this->createdBeforeLink($full, $org)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
                 $res = DB::transaction(fn () => $this->upsert($full, $companyId));
@@ -281,17 +286,30 @@ class MovideskHelpDeskImporter
     /** Cliente Minutor a partir do VÍNCULO DEDICADO do HD (hd_customer_id). Null se a org não estiver vinculada. */
     private function resolveCustomer($orgId): ?int
     {
-        if ($orgId) {
-            $org = MovideskOrganization::where('movidesk_id', (string) $orgId)->first();
-            if ($org && $org->hd_customer_id) return (int) $org->hd_customer_id;
-        }
-        return null; // sem vínculo dedicado → sem cliente (integração só age para orgs vinculadas)
+        $org = $this->orgFor($orgId);
+        return $org && $org->hd_customer_id ? (int) $org->hd_customer_id : null;
+    }
+
+    /** Organização Movidesk (com hd_customer_id/hd_linked_at) a partir do id do Movidesk. */
+    private function orgFor($orgId): ?MovideskOrganization
+    {
+        if (!$orgId) return null;
+        return MovideskOrganization::where('movidesk_id', (string) $orgId)->first();
     }
 
     /** id da organização Movidesk do chamado (1º client). */
     private function extractOrgId(array $md)
     {
         return $md['clients'][0]['organization']['id'] ?? null;
+    }
+
+    /** true se o chamado foi CRIADO antes de a org ser vinculada ao HD (deve ser ignorado). */
+    private function createdBeforeLink(array $md, MovideskOrganization $org): bool
+    {
+        $created = $md['createdDate'] ?? null;
+        if (!$created || !$org->hd_linked_at) return false;
+        try { return Carbon::parse($created)->lt($org->hd_linked_at); }
+        catch (\Throwable) { return false; }
     }
 
     private function resolveAgentUser(?string $email): ?int

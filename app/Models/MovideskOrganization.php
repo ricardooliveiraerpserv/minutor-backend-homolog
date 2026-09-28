@@ -7,7 +7,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MovideskOrganization extends Model
 {
-    protected $fillable = ['movidesk_id', 'name', 'cnpj', 'is_active', 'customer_id', 'project_id', 'hd_customer_id'];
+    protected $fillable = ['movidesk_id', 'name', 'cnpj', 'is_active', 'customer_id', 'project_id', 'hd_customer_id', 'hd_linked_at'];
+
+    protected $casts = ['hd_linked_at' => 'datetime'];
 
     public function customer(): BelongsTo
     {
