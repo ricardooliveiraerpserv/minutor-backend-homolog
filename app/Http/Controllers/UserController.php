@@ -7,6 +7,7 @@ use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
 use App\Exports\UsersExport;
+use App\Services\AccessControl;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Http\Traits\ResponseHelpers;
 use App\Traits\PasswordGenerator;
@@ -191,8 +192,9 @@ class UserController extends Controller
 
         // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
-        // Consultor NUNCA vê outros usuários — mesmo com extra_permissions; rotina não pertence ao escopo dele.
-        $canSeeAll = !$user->isConsultor() && (
+        // Consultor NUNCA vê outros usuários pelo caminho de permissão — mesmo com extra_permissions.
+        // Quem passa por aqui vê inclusive os dados de FOLHA (valor-hora, CPF, matrícula) na lista.
+        $canSeeFolha = !$user->isConsultor() && (
             $user->isAdmin()
             || $user->isCoordenador()
             || $user->hasAccess('users.view_all')
@@ -200,6 +202,10 @@ class UserController extends Controller
             || $user->hasAccess('users.reset_password')
             || $user->hasAccess('users.create')
         );
+        // EXCEÇÃO: se o Configurador de Menus liberou explicitamente a tela /users a este usuário
+        // (override users[] do nó), ele PODE abrir a lista — mas SEM os dados sensíveis de folha.
+        $grantedByMenu = !$canSeeFolha && AccessControl::screenVisibleInMenu($user, '/users');
+        $canSeeAll = $canSeeFolha || $grantedByMenu;
         if (!$canSeeAll) {
             $query->where('users.id', $user->id);
         }
@@ -313,10 +319,20 @@ class UserController extends Controller
         $users = $query->paginate($pageSize, ['*'], 'page', $page);
 
         // Adicionar tipos de dashboard permitidos para cada usuário
-        $items = collect($users->items())->map(function ($user) {
+        // Campos de FOLHA / dados pessoais sensíveis — ocultados de quem abriu a lista só por
+        // liberação de menu (Configurador), sem permissão de folha. Ver $canSeeFolha acima.
+        $folhaFields = [
+            'hourly_rate', 'rate_type', 'daily_hours', 'guaranteed_hours', 'capacity_hours',
+            'allocated_hours', 'bank_hours_initial_balance', 'bank_hours_start_date',
+            'cpf', 'matricula', 'payroll_status', 'birth_date', 'extra_permissions', 'signature',
+        ];
+        $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
             $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
+            if (!$canSeeFolha) {
+                foreach ($folhaFields as $f) unset($userData[$f]);
+            }
             return $userData;
         })->toArray();
 

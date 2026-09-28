@@ -91,6 +91,38 @@ class AccessControl
     }
 
     /**
+     * Concessão EXPLÍCITA de uma tela a um usuário via Configurador de Menus (nav_modules.items):
+     * o admin adicionou o usuário no override `users[]` do nó daquela tela. Ignora perfil — é um
+     * "liberado direto" deliberado; `deny_users` no mesmo nó anula. Serve para o override do menu ser
+     * a FONTE DA VERDADE do ACESSO (ex.: liberar um consultor a /users), sem hardcode de perfil.
+     */
+    public static function screenVisibleInMenu(User $user, string $screenKey): bool
+    {
+        $uid = (int) $user->id;
+        foreach (\App\Models\NavModule::all(['items']) as $mod) {
+            if (self::nodeGrantsScreen($mod->items ?? [], $screenKey, $uid)) return true;
+        }
+        return false;
+    }
+
+    private static function nodeGrantsScreen(array $nodes, string $screenKey, int $uid): bool
+    {
+        foreach ($nodes as $n) {
+            if (!is_array($n)) continue;
+            if (($n['screen'] ?? null) === $screenKey
+                && !in_array($uid, array_map('intval', $n['deny_users'] ?? []), true)
+                && in_array($uid, array_map('intval', $n['users'] ?? []), true)) {
+                return true;
+            }
+            if (!empty($n['children']) && is_array($n['children'])
+                && self::nodeGrantsScreen($n['children'], $screenKey, $uid)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * ENFORCEMENT da política do Configurador para uma AÇÃO de tela (usado pelo middleware
      * screen.action). É ADITIVO: só RESTRINGE (nunca concede) — entra por cima do gate atual
      * (PermissionService). Regras:
