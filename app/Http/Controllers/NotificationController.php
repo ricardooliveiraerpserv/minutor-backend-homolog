@@ -827,7 +827,7 @@ class NotificationController extends Controller
                     case 'coordenador_projetos':     $w->where('type', 'coordenador')->where('coordinator_type', 'projetos'); break;
                     case 'coordenador_sustentacao':  $w->where('type', 'coordenador')->where('coordinator_type', 'sustentacao'); break;
                     case 'consultor_horista':        $w->where('type', 'consultor')->where('consultant_type', 'horista'); break;
-                    case 'consultor_banco_de_horas': $w->where('type', 'consultor')->whereIn('consultant_type', ['bh_fixo', 'bh_mensal']); break;
+                    case 'consultor_banco_de_horas': $w->where('type', 'consultor')->where('consultant_type', 'banco_de_horas'); break;
                     case 'consultor_fixo':           $w->where('type', 'consultor')->where('consultant_type', 'fixo'); break;
                     default:                         $w->where('type', $type); break; // admin, administrativo, cliente, consultor, coordenador
                 }
