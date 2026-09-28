@@ -406,8 +406,17 @@ class MovideskHelpDeskImporter
     private function merge3(bool $created, ?string $hdVal, ?string $mdVal, ?string $shadow): array
     {
         $n = fn ($v) => mb_strtolower(trim((string) $v));
-        // 1ª sincronização (novo chamado ou sombra ainda não inicializada): adota o Movidesk, sem empurrar.
-        if ($created || $shadow === null) {
+        if ($created) {
+            // Chamado novo: adota o Movidesk como ponto de partida (sem empurrar).
+            return ['setHd' => true, 'hd' => $mdVal, 'push' => null, 'shadow' => $mdVal];
+        }
+        if ($shadow === null) {
+            // Sombra ainda não inicializada (campo estava vazio no Movidesk / ticket antigo).
+            // Se o Minutor JÁ tem um valor próprio diferente do Movidesk, é uma edição do atendente
+            // → empurra (Minutor vence). Senão, adota o Movidesk.
+            if ($n($hdVal) !== '' && $n($hdVal) !== $n($mdVal)) {
+                return ['setHd' => false, 'hd' => null, 'push' => ($hdVal ?? ''), 'shadow' => $hdVal];
+            }
             return ['setHd' => true, 'hd' => $mdVal, 'push' => null, 'shadow' => $mdVal];
         }
         if ($n($hdVal) !== $n($shadow)) {
