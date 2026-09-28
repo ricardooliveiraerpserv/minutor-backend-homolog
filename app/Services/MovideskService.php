@@ -1621,6 +1621,31 @@ class MovideskService
      * @param array $payload corpo do PATCH (ex.: ['category'=>'Dúvida','urgency'=>'Média']).
      * @return bool sucesso.
      */
+    /**
+     * ESCRITA de INTERAÇÕES no Movidesk: adiciona ações ao chamado (PATCH com actions[]).
+     * type: 1 = interna | 2 = pública (chega ao cliente). `description` é TEXTO (htmlDescription é read-only).
+     * @param array $actions ex.: [['type'=>1,'description'=>'...']]
+     * @return bool sucesso.
+     */
+    public function addActions(int $ticketId, array $actions): bool
+    {
+        if (empty($actions)) return true;
+        try {
+            $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&id=' . $ticketId;
+            $response = Http::timeout(30)->withHeaders(['Content-Type' => 'application/json'])
+                ->patch($url, ['actions' => array_values($actions)]);
+            if (!$response->successful()) {
+                Log::warning('📤 [MOVIDESK WB] addActions falhou', ['id' => $ticketId, 'status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                return false;
+            }
+            Log::info('📤 [MOVIDESK WB] addActions ok', ['id' => $ticketId, 'n' => count($actions)]);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção em addActions', ['id' => $ticketId, 'error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
     public function patchTicket(int $ticketId, array $payload): bool
     {
         if (empty($payload)) return true;

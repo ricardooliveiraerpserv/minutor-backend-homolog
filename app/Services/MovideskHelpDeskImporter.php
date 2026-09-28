@@ -318,7 +318,56 @@ class MovideskHelpDeskImporter
         // interação (senão duplica: descrição + comentário #1 iguais).
         $comments = $this->importActions($ticket, $md['actions'] ?? [], $this->openingActionId($md));
 
+        // SAÍDA de INTERAÇÕES: empurra p/ o Movidesk os comentários NATIVOS do Minutor ainda não enviados.
+        if ($this->pushCommentsEnabled()) {
+            $this->pushComments($ticket, (int) $externalId, $md['actions'] ?? []);
+        }
+
         return ['created' => $created, 'comments' => $comments];
+    }
+
+    /** Empurra comentários nativos do Minutor (não importados) como ações no Movidesk. */
+    private function pushComments(HelpDeskTicket $ticket, int $externalId, array $mdActions): void
+    {
+        // Comentários criados NO MINUTOR (source null), não-sistema, ainda não enviados (sem action id).
+        $pending = HelpDeskTicketComment::query()
+            ->where('ticket_id', $ticket->id)
+            ->whereNull('source')
+            ->where('is_system', false)
+            ->whereNull('external_action_id')
+            ->orderBy('id')
+            ->get(['id', 'body', 'visibility']);
+        if ($pending->isEmpty()) return;
+
+        // id da última ação no Movidesk — as novas recebem ids sequenciais a partir daqui.
+        $maxId = 0;
+        foreach ($mdActions as $a) { $maxId = max($maxId, (int) ($a['id'] ?? 0)); }
+
+        foreach ($pending as $c) {
+            $text = $this->htmlToText((string) $c->body);
+            if ($text === '') { // nada a enviar; marca como tratado p/ não reprocessar
+                $c->external_action_id = '0'; $c->save();
+                continue;
+            }
+            $type = $c->visibility === 'customer' ? 2 : 1; // 2=pública (chega ao cliente), 1=interna
+            $ok = $this->movidesk->addActions($externalId, [['type' => $type, 'description' => $text]]);
+            if ($ok) {
+                $c->external_action_id = (string) (++$maxId); // id sequencial da ação recém-criada
+                $c->save();
+            } else {
+                break; // falhou → tenta de novo no próximo ciclo (mantém ordem)
+            }
+        }
+    }
+
+    /** Converte HTML do comentário em texto (preserva quebras) para enviar como `description`. */
+    private function htmlToText(string $html): string
+    {
+        $s = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $html);
+        $s = preg_replace('/<\/\s*(p|div|li)\s*>/i', "\n", $s);
+        $s = strip_tags($s);
+        $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return trim(preg_replace("/\n{3,}/", "\n\n", $s));
     }
 
     /** Importa as ações do Movidesk como interações do HD (dedup por external_action_id). */
@@ -326,9 +375,11 @@ class MovideskHelpDeskImporter
     {
         if (!$actions) return 0;
 
+        // Dedup por external_action_id em QUALQUER origem — inclui comentários NATIVOS que já
+        // empurramos p/ o Movidesk (guardam o id da ação criada) → evita reimportar (eco).
         $existing = HelpDeskTicketComment::withTrashed()
             ->where('ticket_id', $ticket->id)
-            ->where('source', 'movidesk')
+            ->whereNotNull('external_action_id')
             ->pluck('external_action_id')
             ->filter()->map(fn ($v) => (string) $v)->flip();
 
@@ -396,6 +447,12 @@ class MovideskHelpDeskImporter
     private function writebackEnabled(): bool
     {
         return (bool) SystemSetting::get('movidesk_hd_writeback_enabled', false);
+    }
+
+    /** Empurrar INTERAÇÕES (comentários) do Minutor como ações no Movidesk? */
+    private function pushCommentsEnabled(): bool
+    {
+        return (bool) SystemSetting::get('movidesk_hd_push_comments_enabled', false);
     }
 
     /**
