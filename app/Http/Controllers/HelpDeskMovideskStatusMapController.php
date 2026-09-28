@@ -22,6 +22,20 @@ use Illuminate\Support\Facades\DB;
  */
 class HelpDeskMovideskStatusMapController extends Controller
 {
+    /**
+     * Base de cada status do Movidesk (o endpoint /statuses NÃO devolve baseStatus).
+     * Fonte: observado nos tickets + cadastro de status do Movidesk (Promax). Chave = nome minúsculo/trim.
+     * Usado como fallback quando o par (nome→base) não foi visto em nenhum ticket ainda.
+     */
+    private const BASE_BY_NAME_FALLBACK = [
+        'agendado' => 'Stopped', 'aguardando' => 'Stopped', 'cancelado' => 'Canceled',
+        'comercial' => 'Stopped', 'em atendimento' => 'InAttendance', 'encerrado' => 'Closed',
+        'fechado' => 'Closed', 'novo' => 'New', 'pausado' => 'Stopped',
+        'pendente aprovação' => 'Stopped', 'pendente cliente' => 'Stopped',
+        'pendente terceiros' => 'Stopped', 'pendente totvs' => 'Stopped',
+        'resolvido' => 'Resolved', 'solução emergencial' => 'InAttendance',
+    ];
+
     /** Status base canônicos do Movidesk (fixos na API deles). */
     private const MOVIDESK_BASE = ['New', 'InAttendance', 'Stopped', 'Resolved', 'Closed', 'Canceled'];
 
@@ -51,9 +65,13 @@ class HelpDeskMovideskStatusMapController extends Controller
             });
 
         // Catálogo COMPLETO de status do Movidesk (todos os configurados, não só os já vistos).
+        // Base de cada um: 1º observada nos tickets; senão o fallback do cadastro Movidesk.
         $catalog = $this->statusCatalog(false);
         $texts = collect($catalog)
-            ->map(fn ($name) => ['base' => $baseByName[mb_strtolower(trim($name))] ?? '', 'text' => trim($name)])
+            ->map(function ($name) use ($baseByName) {
+                $key = mb_strtolower(trim($name));
+                return ['base' => $baseByName[$key] ?? (self::BASE_BY_NAME_FALLBACK[$key] ?? ''), 'text' => trim($name)];
+            })
             ->values();
 
         // Garante que sub-status já presentes no de-para (mas fora do catálogo atual) não sumam do select.
