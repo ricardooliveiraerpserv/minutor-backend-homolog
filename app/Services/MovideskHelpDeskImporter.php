@@ -230,59 +230,48 @@ class MovideskHelpDeskImporter
             $ticket->external_owner_email = $ownerEmail ?: null;
         }
 
-        // ── CLASSIFICAÇÃO: merge de 3 vias (Minutor vence no conflito → empurra p/ Movidesk) ──
-        // Campos: Categoria, Serviço, Urgência(→Prioridade), Nível, Status. $patch acumula o write-back.
-        $patch = [];
+        // ── CLASSIFICAÇÃO ──
+        // Categoria/Serviço/Urgência: merge de 3 vias com WRITE-BACK (Minutor vence → empurra p/ Movidesk).
+        //   A sombra desses campos só avança APÓS o PATCH dar certo (senão perde a alteração / re-tenta).
+        // Nível/Status: por ora só ENTRADA (Movidesk→HD) — o PATCH de nível (custom field) e de status
+        //   (exige "motivo") ainda não é suportado; empurrar esses dois fica para um próximo passo.
+        $patch = [];        // write-back
+        $pushShadow = [];   // sombras a gravar só se o PATCH tiver sucesso
 
         // Categoria
         $hdCatName = $ticket->category_id ? $this->nameOfId('helpdesk_categories', (int) $ticket->category_id) : null;
         $m = $this->merge3($created, $hdCatName, trim((string) ($md['category'] ?? '')) ?: null, $ticket->external_category);
-        if ($m['setHd']) { $ticket->category_id = $m['hd'] ? $this->matchByName('helpdesk_categories', $companyId, $m['hd']) : null; }
-        if ($m['push'] !== null) { $patch['category'] = $m['push']; }
-        $ticket->external_category = $m['shadow'];
+        if ($m['push'] !== null) { $patch['category'] = $m['push']; $pushShadow['external_category'] = $m['shadow']; }
+        else { if ($m['setHd']) { $ticket->category_id = $m['hd'] ? $this->matchByName('helpdesk_categories', $companyId, $m['hd']) : null; } $ticket->external_category = $m['shadow']; }
 
-        // Serviço
-        $mdSvc = $md['serviceFirstLevel'] ?? ($md['serviceFull'][0] ?? ($md['serviceSecondLevel'] ?? null));
-        $hdSvcName = $ticket->service_id ? $this->nameOfId('helpdesk_services', (int) $ticket->service_id) : null;
-        $m = $this->merge3($created, $hdSvcName, trim((string) ($mdSvc ?? '')) ?: null, $ticket->external_service);
-        if ($m['setHd']) { $ticket->service_id = $m['hd'] ? $this->matchByName('helpdesk_services', $companyId, $m['hd']) : null; }
-        if ($m['push'] !== null) { $patch['serviceFull'] = [$m['push']]; }
-        $ticket->external_service = $m['shadow'];
+        // Serviço — ENTRADA apenas: o Movidesk aceita o PATCH (200) mas IGNORA a troca de serviço
+        // (valida pelo contexto do chamado). Então adotamos o serviço do Movidesk quando ele muda.
+        $mdSvc = trim((string) ($md['serviceFirstLevel'] ?? ($md['serviceFull'][0] ?? ($md['serviceSecondLevel'] ?? '')))) ?: null;
+        if ($created || $ticket->external_service !== $mdSvc) {
+            $sid = $mdSvc ? $this->matchByName('helpdesk_services', $companyId, $mdSvc) : null;
+            if ($sid) { $ticket->service_id = $sid; }
+            $ticket->external_service = $mdSvc;
+        }
 
-        // Urgência ⇄ Prioridade (trabalha no espaço de nomes de urgência do Movidesk)
+        // Urgência ⇄ Prioridade (espaço de nomes de urgência do Movidesk)
         $hdUrg = $this->priorityToUrgency((string) $ticket->priority);
         $m = $this->merge3($created, $hdUrg, trim((string) ($md['urgency'] ?? '')) ?: null, $ticket->external_urgency);
-        if ($m['setHd'] && $m['hd']) { $p = $this->mapUrgency($m['hd']); if ($p) $ticket->priority = $p; }
-        if ($m['push'] !== null) { $patch['urgency'] = $m['push']; }
-        $ticket->external_urgency = $m['shadow'];
+        if ($m['push'] !== null) { $patch['urgency'] = $m['push']; $pushShadow['external_urgency'] = $m['shadow']; }
+        else { if ($m['setHd'] && $m['hd']) { $p = $this->mapUrgency($m['hd']); if ($p) $ticket->priority = $p; } $ticket->external_urgency = $m['shadow']; }
 
-        // Nível (custom field 13485 no Movidesk)
-        $m = $this->merge3($created, $ticket->level ?: null, $this->extractNivel($md), $ticket->external_level);
-        if ($m['setHd']) { $ticket->level = $m['hd']; }
-        if ($m['push'] !== null) {
-            $patch['customFieldValues'] = [['customFieldId' => 13485, 'items' => [['customFieldItem' => $m['push']]]]];
+        // Nível — ENTRADA apenas (adota o Movidesk quando ele muda; não empurra)
+        $nivel = $this->extractNivel($md);
+        if ($created || $ticket->external_level !== $nivel) {
+            if ($nivel !== null) { $ticket->level = $nivel; }
+            $ticket->external_level = $nivel;
         }
-        $ticket->external_level = $m['shadow'];
 
-        // Status (via de-para; sig = "base|text")
+        // Status — ENTRADA apenas (de-para Movidesk→HD; não empurra por ora)
         $mdSig = trim($base . '|' . $statusText);
-        $hdOut = $ticket->status_id ? $this->outboundStatus($companyId, (int) $ticket->status_id) : null;
-        $hdSig = $hdOut ? trim(($hdOut['base'] ?? '') . '|' . ($hdOut['text'] ?? '')) : null;
-        if ($created) {
+        if ($created || $ticket->external_status !== $mdSig) {
             $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
                 ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText)
-                ?? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id;
-            if ($sid) { $ticket->status_id = $sid; }
-            $ticket->external_status = $mdSig;
-        } elseif ($hdSig !== null && $hdSig !== $ticket->external_status) {
-            // Minutor mudou o status → empurra p/ Movidesk (Minutor vence)
-            if (!empty($hdOut['text'])) $patch['status'] = $hdOut['text'];
-            if (!empty($hdOut['base'])) $patch['baseStatus'] = $hdOut['base'];
-            $ticket->external_status = $hdSig;
-        } elseif ($mdSig !== $ticket->external_status) {
-            // Movidesk mudou → puxa p/ o Minutor
-            $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
-                ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText);
+                ?? ($created ? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id : null);
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
         }
@@ -292,9 +281,13 @@ class MovideskHelpDeskImporter
         if ((int) $ticket->company_id !== $companyId) { $ticket->forceFill(['company_id' => $companyId]); }
         $ticket->save();
 
-        // WRITE-BACK: empurra as mudanças do Minutor para o Movidesk (só metadado, nunca interação).
+        // WRITE-BACK: empurra Categoria/Serviço/Urgência do Minutor p/ o Movidesk (só metadado, nunca interação).
+        // A sombra desses campos só avança se o PATCH tiver sucesso — assim uma falha é re-tentada.
         if ($patch && $this->writebackEnabled()) {
-            $this->movidesk->patchTicket((int) $externalId, $patch);
+            if ($this->movidesk->patchTicket((int) $externalId, $patch) && $pushShadow) {
+                foreach ($pushShadow as $col => $val) { $ticket->$col = $val; }
+                $ticket->save();
+            }
         }
 
         // A ação de ABERTURA vira a "descrição inicial" do chamado — NÃO deve virar também uma
