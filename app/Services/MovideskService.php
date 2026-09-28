@@ -58,7 +58,7 @@ class MovideskService
             $response = Http::timeout(12)->retry(2, 500)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+                '$expand' => 'customFieldValues($expand=items),clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {

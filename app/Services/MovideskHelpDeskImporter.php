@@ -240,6 +240,21 @@ class MovideskHelpDeskImporter
             $ticket->external_owner_email = $ownerEmail ?: null;
         }
 
+        // CADASTROS idênticos (casados por NOME): Categoria, Serviço, Urgência→Prioridade, Nível.
+        // Aplicados quando o Movidesk traz o valor (Movidesk é a fonte). Vazio no Movidesk → não mexe.
+        $catId = $this->matchByName('helpdesk_categories', $companyId, (string) ($md['category'] ?? ''));
+        if ($catId) { $ticket->category_id = $catId; }
+
+        $svcName = $md['serviceFirstLevel'] ?? ($md['serviceFull'][0] ?? ($md['serviceSecondLevel'] ?? null));
+        $svcId = $this->matchByName('helpdesk_services', $companyId, (string) ($svcName ?? ''));
+        if ($svcId) { $ticket->service_id = $svcId; }
+
+        $priority = $this->mapUrgency((string) ($md['urgency'] ?? ''));
+        if ($priority) { $ticket->priority = $priority; }
+
+        $nivel = $this->extractNivel($md);
+        if ($nivel) { $ticket->level = $nivel; }
+
         $ticket->external_synced_at = now();
         // company_id não é fillable — garante empresa mesmo em update.
         if ((int) $ticket->company_id !== $companyId) { $ticket->forceFill(['company_id' => $companyId]); }
@@ -321,6 +336,42 @@ class MovideskHelpDeskImporter
         if (!$created || !$org->hd_linked_at) return false;
         try { return Carbon::parse($created)->lt($org->hd_linked_at); }
         catch (\Throwable) { return false; }
+    }
+
+    /** Casa um nome (categoria/serviço) com o cadastro do HD da empresa, por nome (case-insensitive). */
+    private function matchByName(string $table, int $companyId, string $name): ?int
+    {
+        $name = trim($name);
+        if ($name === '') return null;
+        $row = \Illuminate\Support\Facades\DB::table($table)
+            ->when(\Illuminate\Support\Facades\Schema::hasColumn($table, 'company_id'), fn ($q) => $q->where('company_id', $companyId))
+            ->whereRaw('lower(name) = ?', [mb_strtolower($name)])
+            ->first(['id']);
+        return $row?->id ? (int) $row->id : null;
+    }
+
+    /** Urgência do Movidesk → prioridade do HD (baixa|normal|alta|urgente). */
+    private function mapUrgency(string $urgency): ?string
+    {
+        return match (mb_strtolower(trim($urgency))) {
+            'baixa'                       => 'baixa',
+            'média', 'media', 'normal'    => 'normal',
+            'alta'                        => 'alta',
+            'urgente', 'crítica', 'critica' => 'urgente',
+            default                       => null,
+        };
+    }
+
+    /** Nível (N1/N2/N3) a partir do custom field 13485 do Movidesk. */
+    private function extractNivel(array $md): ?string
+    {
+        foreach (($md['customFieldValues'] ?? []) as $f) {
+            if ((int) ($f['customFieldId'] ?? 0) === 13485) {
+                $v = $f['items'][0]['customFieldItem'] ?? null;
+                return $v ? trim((string) $v) : null;
+            }
+        }
+        return null;
     }
 
     /** Mapeia o responsável (owner do Movidesk) para o usuário do Minutor PELO E-MAIL (case-insensitive). */
