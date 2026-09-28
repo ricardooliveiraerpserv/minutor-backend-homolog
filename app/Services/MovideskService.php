@@ -1615,6 +1615,35 @@ class MovideskService
     }
 
     /**
+     * ESCRITA no Movidesk (Fase 2): atualiza CAMPOS de classificação do chamado via PATCH.
+     * IMPORTANTE: só metadado (category, urgency, serviceFull, customFieldValues, status/baseStatus).
+     * NUNCA envia `actions` — não gera interação/e-mail ao cliente (respeita a regra Promax).
+     * @param array $payload corpo do PATCH (ex.: ['category'=>'Dúvida','urgency'=>'Média']).
+     * @return bool sucesso.
+     */
+    public function patchTicket(int $ticketId, array $payload): bool
+    {
+        if (empty($payload)) return true;
+        // Trava de segurança: nunca escrever ações/mensagens por aqui.
+        unset($payload['actions']);
+        try {
+            $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&id=' . $ticketId;
+            $response = Http::timeout(30)
+                ->withHeaders(['Content-Type' => 'application/json'])
+                ->patch($url, $payload);
+            if (!$response->successful()) {
+                Log::warning('📤 [MOVIDESK WB] PATCH falhou', ['id' => $ticketId, 'status' => $response->status(), 'body' => substr($response->body(), 0, 300), 'payload' => $payload]);
+                return false;
+            }
+            Log::info('📤 [MOVIDESK WB] PATCH ok', ['id' => $ticketId, 'campos' => array_keys($payload)]);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção no PATCH', ['id' => $ticketId, 'error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    /**
      * Catálogo COMPLETO de status configurados no Movidesk (GET /public/v1/statuses).
      * Retorna a lista de nomes exatos (ex.: "Novo", "Pendente Terceiros", "Agendado"), sem duplicar.
      * SOMENTE LEITURA. Usado para popular o de-para de status com os valores reais (não só os já vistos).
