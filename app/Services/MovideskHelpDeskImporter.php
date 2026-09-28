@@ -232,6 +232,14 @@ class MovideskHelpDeskImporter
             $ticket->external_status = $movideskSig;
         }
 
+        // RESPONSÁVEL: sincroniza o assignee com o owner do Movidesk (mapeado por e-mail → usuário).
+        // Só reaplica quando o responsável MUDOU no Movidesk — não desfaz reatribuição feita no Minutor.
+        $ownerEmail = mb_strtolower(trim((string) ($md['owner']['email'] ?? '')));
+        if ($created || mb_strtolower(trim((string) $ticket->external_owner_email)) !== $ownerEmail) {
+            $ticket->assignee_id = $ownerEmail !== '' ? $this->resolveAgentUser($ownerEmail) : null;
+            $ticket->external_owner_email = $ownerEmail ?: null;
+        }
+
         $ticket->external_synced_at = now();
         // company_id não é fillable — garante empresa mesmo em update.
         if ((int) $ticket->company_id !== $companyId) { $ticket->forceFill(['company_id' => $companyId]); }
