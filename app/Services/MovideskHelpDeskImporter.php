@@ -320,10 +320,12 @@ class MovideskHelpDeskImporter
         catch (\Throwable) { return false; }
     }
 
+    /** Mapeia o responsável (owner do Movidesk) para o usuário do Minutor PELO E-MAIL (case-insensitive). */
     private function resolveAgentUser(?string $email): ?int
     {
-        if (!$email) return null;
-        $u = User::where('email', $email)->first(['id']);
+        $email = mb_strtolower(trim((string) $email));
+        if ($email === '') return null;
+        $u = User::whereRaw('lower(email) = ?', [$email])->first(['id']);
         return $u?->id;
     }
 
