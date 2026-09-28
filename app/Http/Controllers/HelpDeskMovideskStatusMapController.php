@@ -50,7 +50,7 @@ class HelpDeskMovideskStatusMapController extends Controller
         $rows = HelpDeskMovideskStatusMap::query()
             ->when($companyId === null, fn ($q) => $q->whereNull('company_id'))
             ->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))
-            ->get(['id', 'helpdesk_status_id', 'movidesk_base_status', 'movidesk_status_text', 'is_outbound_default']);
+            ->get(['id', 'helpdesk_status_id', 'movidesk_base_status', 'movidesk_status_text', 'is_outbound_default', 'movidesk_justification']);
 
         // Base conhecida por nome de sub-status (a partir do cache de tickets) — usada p/ auto-preencher a base.
         $baseByName = [];
@@ -143,6 +143,7 @@ class HelpDeskMovideskStatusMapController extends Controller
             'outbound.*.helpdesk_status_id'   => 'required|integer',
             'outbound.*.movidesk_base_status' => 'required|string|max:40',
             'outbound.*.movidesk_status_text' => 'nullable|string|max:120',
+            'outbound.*.movidesk_justification' => 'nullable|string|max:255',
         ]);
 
         // Ids de status válidos para a empresa ativa (evita gravar status de outra empresa).
@@ -159,6 +160,7 @@ class HelpDeskMovideskStatusMapController extends Controller
                 'helpdesk_status_id' => (int) $r['helpdesk_status_id'],
                 'movidesk_base_status' => trim($r['movidesk_base_status']),
                 'movidesk_status_text' => isset($r['movidesk_status_text']) && trim((string) $r['movidesk_status_text']) !== '' ? trim($r['movidesk_status_text']) : null,
+                'movidesk_justification' => null,
                 'is_outbound_default' => false,
                 'created_at' => $now, 'updated_at' => $now,
             ];
@@ -170,6 +172,7 @@ class HelpDeskMovideskStatusMapController extends Controller
                 'helpdesk_status_id' => (int) $r['helpdesk_status_id'],
                 'movidesk_base_status' => trim($r['movidesk_base_status']),
                 'movidesk_status_text' => isset($r['movidesk_status_text']) && trim((string) $r['movidesk_status_text']) !== '' ? trim($r['movidesk_status_text']) : null,
+                'movidesk_justification' => isset($r['movidesk_justification']) && trim((string) $r['movidesk_justification']) !== '' ? trim($r['movidesk_justification']) : null,
                 'is_outbound_default' => true,
                 'created_at' => $now, 'updated_at' => $now,
             ];

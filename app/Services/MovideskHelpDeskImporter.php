@@ -259,19 +259,43 @@ class MovideskHelpDeskImporter
         if ($m['push'] !== null) { $patch['urgency'] = $m['push']; $pushShadow['external_urgency'] = $m['shadow']; }
         else { if ($m['setHd'] && $m['hd']) { $p = $this->mapUrgency($m['hd']); if ($p) $ticket->priority = $p; } $ticket->external_urgency = $m['shadow']; }
 
-        // Nível — ENTRADA apenas (adota o Movidesk quando ele muda; não empurra)
-        $nivel = $this->extractNivel($md);
-        if ($created || $ticket->external_level !== $nivel) {
-            if ($nivel !== null) { $ticket->level = $nivel; }
-            $ticket->external_level = $nivel;
+        // Nível — merge de 3 vias + PUSH (custom field 13485 com customFieldRuleId + line).
+        $m = $this->merge3($created, $ticket->level ?: null, $this->extractNivel($md), $ticket->external_level);
+        if ($m['push'] !== null) {
+            [$ruleId, $line] = $this->nivelMeta($md);
+            $patch['customFieldValues'] = [[
+                'customFieldId' => 13485, 'customFieldRuleId' => $ruleId, 'line' => $line,
+                'items' => [['customFieldItem' => $m['push']]],
+            ]];
+            $pushShadow['external_level'] = $m['shadow'];
+        } else {
+            if ($m['setHd']) { $ticket->level = $m['hd']; }
+            $ticket->external_level = $m['shadow'];
         }
 
-        // Status — ENTRADA apenas (de-para Movidesk→HD; não empurra por ora)
+        // Status — merge de 3 vias. PUSH só quando há JUSTIFICATIVA configurada (Movidesk exige).
         $mdSig = trim($base . '|' . $statusText);
-        if ($created || $ticket->external_status !== $mdSig) {
+        $hdOut = $ticket->status_id ? $this->outboundStatus($companyId, (int) $ticket->status_id) : null;
+        $hdSig = $hdOut ? trim(($hdOut['base'] ?? '') . '|' . ($hdOut['text'] ?? '')) : null;
+        if ($created) {
             $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
                 ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText)
-                ?? ($created ? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id : null);
+                ?? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id;
+            if ($sid) { $ticket->status_id = $sid; }
+            $ticket->external_status = $mdSig;
+        } elseif ($hdSig !== null && $hdSig !== $ticket->external_status) {
+            // Minutor mudou o status. Só empurra se houver justificativa (senão o Movidesk rejeita).
+            if (!empty($hdOut['justification']) && !empty($hdOut['text'])) {
+                $patch['status'] = $hdOut['text'];
+                if (!empty($hdOut['base'])) { $patch['baseStatus'] = $hdOut['base']; }
+                $patch['justification'] = $hdOut['justification'];
+                $pushShadow['external_status'] = $hdSig;
+            }
+            // sem justificativa: não empurra e não puxa (mantém o status do Minutor).
+        } elseif ($mdSig !== $ticket->external_status) {
+            // Só o Movidesk mudou → puxa p/ o Minutor.
+            $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
+                ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText);
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
         }
@@ -281,8 +305,8 @@ class MovideskHelpDeskImporter
         if ((int) $ticket->company_id !== $companyId) { $ticket->forceFill(['company_id' => $companyId]); }
         $ticket->save();
 
-        // WRITE-BACK: empurra Categoria/Serviço/Urgência do Minutor p/ o Movidesk (só metadado, nunca interação).
-        // A sombra desses campos só avança se o PATCH tiver sucesso — assim uma falha é re-tentada.
+        // WRITE-BACK: empurra Categoria/Urgência/Nível (e Status quando há justificativa) p/ o Movidesk
+        // (só metadado, nunca interação). A sombra só avança se o PATCH tiver sucesso (falha é re-tentada).
         if ($patch && $this->writebackEnabled()) {
             if ($this->movidesk->patchTicket((int) $externalId, $patch) && $pushShadow) {
                 foreach ($pushShadow as $col => $val) { $ticket->$col = $val; }
@@ -423,9 +447,9 @@ class MovideskHelpDeskImporter
             ->where('is_outbound_default', true)
             ->where('helpdesk_status_id', $statusId)
             ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
-            ->first(['movidesk_base_status', 'movidesk_status_text']);
+            ->first(['movidesk_base_status', 'movidesk_status_text', 'movidesk_justification']);
         if (!$row) return null;
-        return ['base' => $row->movidesk_base_status, 'text' => $row->movidesk_status_text];
+        return ['base' => $row->movidesk_base_status, 'text' => $row->movidesk_status_text, 'justification' => $row->movidesk_justification];
     }
 
     /** Casa um nome (categoria/serviço) com o cadastro do HD da empresa, por nome (case-insensitive). */
@@ -462,6 +486,17 @@ class MovideskHelpDeskImporter
             }
         }
         return null;
+    }
+
+    /** [customFieldRuleId, line] do campo Nível (13485) — necessários no PATCH. Fallback: 21751 / 1. */
+    private function nivelMeta(array $md): array
+    {
+        foreach (($md['customFieldValues'] ?? []) as $f) {
+            if ((int) ($f['customFieldId'] ?? 0) === 13485) {
+                return [(int) ($f['customFieldRuleId'] ?? 21751), (int) ($f['line'] ?? 1)];
+            }
+        }
+        return [21751, 1];
     }
 
     /** Mapeia o responsável (owner do Movidesk) para o usuário do Minutor PELO E-MAIL (case-insensitive). */

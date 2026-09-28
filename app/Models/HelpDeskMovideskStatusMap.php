@@ -15,7 +15,7 @@ class HelpDeskMovideskStatusMap extends Model
 
     protected $fillable = [
         'company_id', 'helpdesk_status_id',
-        'movidesk_base_status', 'movidesk_status_text', 'is_outbound_default',
+        'movidesk_base_status', 'movidesk_status_text', 'is_outbound_default', 'movidesk_justification',
     ];
 
     protected $casts = [
