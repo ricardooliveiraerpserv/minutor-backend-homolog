@@ -203,7 +203,8 @@ class MovideskHelpDeskImporter
         if (!$ticket) {
             $ticket = new HelpDeskTicket();
             $ticket->forceFill([
-                'ticket_number' => HelpDeskTicketNumber::next($companyId),
+                // Número do chamado = EXATAMENTE o número do Movidesk (não gera sequência própria).
+                'ticket_number' => $externalId,
                 'source_system' => 'movidesk',
                 'external_ref'  => $externalId,
                 'channel'       => 'movidesk',
