@@ -245,13 +245,15 @@ class MovideskHelpDeskImporter
         if ((int) $ticket->company_id !== $companyId) { $ticket->forceFill(['company_id' => $companyId]); }
         $ticket->save();
 
-        $comments = $this->importActions($ticket, $md['actions'] ?? []);
+        // A ação de ABERTURA vira a "descrição inicial" do chamado — NÃO deve virar também uma
+        // interação (senão duplica: descrição + comentário #1 iguais).
+        $comments = $this->importActions($ticket, $md['actions'] ?? [], $this->openingActionId($md));
 
         return ['created' => $created, 'comments' => $comments];
     }
 
     /** Importa as ações do Movidesk como interações do HD (dedup por external_action_id). */
-    private function importActions(HelpDeskTicket $ticket, array $actions): int
+    private function importActions(HelpDeskTicket $ticket, array $actions, ?string $skipActionId = null): int
     {
         if (!$actions) return 0;
 
@@ -265,6 +267,7 @@ class MovideskHelpDeskImporter
         foreach ($actions as $a) {
             $aid = (string) ($a['id'] ?? '');
             if ($aid === '' || $existing->has($aid)) continue;
+            if ($skipActionId !== null && $aid === $skipActionId) continue; // abertura = descrição, não duplicar
 
             $body = (string) ($a['htmlDescription'] ?? '');
             if (trim(strip_tags($body)) === '' && empty($a['attachments'])) continue; // ação vazia
@@ -343,6 +346,16 @@ class MovideskHelpDeskImporter
         foreach (($md['actions'] ?? []) as $a) {
             $b = (string) ($a['htmlDescription'] ?? '');
             if (trim(strip_tags($b)) !== '') return $b;
+        }
+        return null;
+    }
+
+    /** id da ação de ABERTURA (a mesma usada como descrição inicial) — para não duplicar como interação. */
+    private function openingActionId(array $md): ?string
+    {
+        foreach (($md['actions'] ?? []) as $a) {
+            $b = (string) ($a['htmlDescription'] ?? '');
+            if (trim(strip_tags($b)) !== '') return (string) ($a['id'] ?? '') ?: null;
         }
         return null;
     }
