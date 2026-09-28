@@ -360,14 +360,26 @@ class MovideskHelpDeskImporter
         }
     }
 
-    /** Converte HTML do comentário em texto (preserva quebras) para enviar como `description`. */
+    /** Converte HTML do comentário em texto (preserva quebras) para enviar como `description`.
+     * Movidesk aceita só texto na escrita (htmlDescription é read-only) — então tratamos também
+     * TABELAS (assinaturas montadas em <table>): célula → espaço, linha/tabela/bloco → quebra,
+     * senão a assinatura sai como texto corrido grudado. */
     private function htmlToText(string $html): string
     {
-        $s = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $html);
-        $s = preg_replace('/<\/\s*(p|div|li)\s*>/i', "\n", $s);
+        $s = $html;
+        // Células de tabela viram espaço (mantém itens da mesma linha separados).
+        $s = preg_replace('/<\s*\/\s*(td|th)\s*>/i', ' ', $s);
+        // Quebras explícitas.
+        $s = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $s);
+        // Fim de linha de tabela / tabela / blocos → quebra de linha.
+        $s = preg_replace('/<\s*\/\s*(p|div|li|tr|table|h[1-6]|blockquote|section|header|footer)\s*>/i', "\n", $s);
         $s = strip_tags($s);
         $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        return trim(preg_replace("/\n{3,}/", "\n\n", $s));
+        $s = str_replace("\xC2\xA0", ' ', $s);          // &nbsp; → espaço normal
+        $s = preg_replace('/[ \t]{2,}/', ' ', $s);       // colapsa espaços repetidos
+        $s = preg_replace('/[ \t]*\n[ \t]*/', "\n", $s); // limpa espaços em volta das quebras
+        $s = preg_replace("/\n{3,}/", "\n\n", $s);       // no máximo 1 linha em branco
+        return trim($s);
     }
 
     /** Importa as ações do Movidesk como interações do HD (dedup por external_action_id). */
