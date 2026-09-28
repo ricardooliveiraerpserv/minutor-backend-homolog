@@ -64,6 +64,12 @@ class MovideskHelpDeskImporter
         return false;
     }
 
+    /** Se true (padrão), o import só processa chamados de organizações VINCULADAS no HD (hd_customer_id). */
+    private function requireLinkedOrg(): bool
+    {
+        return (bool) SystemSetting::get('movidesk_hd_import_require_linked_org', true);
+    }
+
     private function companyId(): int
     {
         $c = (int) SystemSetting::get('movidesk_hd_import_company_id', 0);
@@ -124,6 +130,10 @@ class MovideskHelpDeskImporter
                 if (!$full) { $stats['skipped']++; continue; }
                 // Filtro de teste por domínio do solicitante (ex.: erpserv.com.br).
                 if (!$this->domainAllowed($full)) { $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue; }
+                // Só age para ORGS VINCULADAS no Help Desk (hd_customer_id). Org sem vínculo → ignora.
+                if ($this->requireLinkedOrg() && !$this->resolveCustomer($this->extractOrgId($full))) {
+                    $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
+                }
                 $res = DB::transaction(fn () => $this->upsert($full, $companyId));
                 $stats['imported'] += $res['created'] ? 1 : 0;
                 $stats['updated']  += $res['created'] ? 0 : 1;
@@ -268,13 +278,20 @@ class MovideskHelpDeskImporter
     }
 
     // ── Resolução de entidades ────────────────────────────────────────────────
+    /** Cliente Minutor a partir do VÍNCULO DEDICADO do HD (hd_customer_id). Null se a org não estiver vinculada. */
     private function resolveCustomer($orgId): ?int
     {
         if ($orgId) {
             $org = MovideskOrganization::where('movidesk_id', (string) $orgId)->first();
-            if ($org && $org->customer_id) return (int) $org->customer_id;
+            if ($org && $org->hd_customer_id) return (int) $org->hd_customer_id;
         }
-        return $this->fallbackCustomerId();
+        return null; // sem vínculo dedicado → sem cliente (integração só age para orgs vinculadas)
+    }
+
+    /** id da organização Movidesk do chamado (1º client). */
+    private function extractOrgId(array $md)
+    {
+        return $md['clients'][0]['organization']['id'] ?? null;
     }
 
     private function resolveAgentUser(?string $email): ?int

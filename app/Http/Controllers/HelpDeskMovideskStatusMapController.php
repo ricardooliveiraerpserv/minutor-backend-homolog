@@ -194,15 +194,16 @@ class HelpDeskMovideskStatusMapController extends Controller
      */
     public function customersIndex(): JsonResponse
     {
+        // Vínculo DEDICADO do Help Desk (hd_customer_id) — separado do customer_id compartilhado.
         $orgs = MovideskOrganization::query()
-            ->leftJoin('customers', 'customers.id', '=', 'movidesk_organizations.customer_id')
+            ->leftJoin('customers', 'customers.id', '=', 'movidesk_organizations.hd_customer_id')
             ->orderBy('movidesk_organizations.name')
             ->get([
                 'movidesk_organizations.id',
                 'movidesk_organizations.movidesk_id',
                 'movidesk_organizations.name',
                 'movidesk_organizations.cnpj',
-                'movidesk_organizations.customer_id',
+                'movidesk_organizations.hd_customer_id as customer_id',
                 'customers.name as customer_name',
             ]);
 
@@ -229,7 +230,7 @@ class HelpDeskMovideskStatusMapController extends Controller
         DB::transaction(function () use ($v) {
             foreach ($v['links'] as $l) {
                 MovideskOrganization::where('id', (int) $l['id'])
-                    ->update(['customer_id' => $l['customer_id'] !== null ? (int) $l['customer_id'] : null]);
+                    ->update(['hd_customer_id' => $l['customer_id'] !== null ? (int) $l['customer_id'] : null]);
             }
         });
 
