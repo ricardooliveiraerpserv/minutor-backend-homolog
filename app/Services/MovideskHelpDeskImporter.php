@@ -154,8 +154,57 @@ class MovideskHelpDeskImporter
         // Avança o cursor (com folga de 1s para trás para não perder atualizações no mesmo segundo).
         $this->saveCursor($maxUpdate->copy()->subSecond());
 
+        // PASSADA DEDICADA: empurra comentários pendentes de QUALQUER chamado espelhado,
+        // independente de o chamado ter entrado na varredura por lastUpdate. Sem isto, uma
+        // interação criada só no Minutor só ia pro Movidesk quando o chamado mudasse lá.
+        $stats['pushed'] = $this->pushPendingComments();
+
         Log::info('📥 [MOVIDESK HD] Import concluído', $stats);
         return $stats;
+    }
+
+    /**
+     * Varre TODOS os comentários pendentes (criados no Minutor, não-sistema, sem external_action_id)
+     * de chamados espelhados do Movidesk e os empurra como ações — independe do sync por lastUpdate.
+     * Idempotente: pushComments só envia quem ainda não tem external_action_id.
+     */
+    public function pushPendingComments(): int
+    {
+        if (!$this->pushCommentsEnabled()) {
+            return 0;
+        }
+        $ticketIds = HelpDeskTicketComment::query()
+            ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')
+            ->distinct()->pluck('ticket_id');
+        if ($ticketIds->isEmpty()) {
+            return 0;
+        }
+        $pushed = 0;
+        foreach ($ticketIds as $tid) {
+            $ticket = HelpDeskTicket::where('id', $tid)
+                ->where('source_system', 'movidesk')
+                ->whereNotNull('external_ref')
+                ->first();
+            if (!$ticket) {
+                continue; // chamado nativo do Minutor (sem par no Movidesk) — nada a empurrar
+            }
+            try {
+                $full = $this->movidesk->fetchTicket((int) $ticket->external_ref);
+                if (!$full) { continue; }
+                $before = HelpDeskTicketComment::where('ticket_id', $tid)
+                    ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
+                $this->pushComments($ticket, (int) $ticket->external_ref, $full['actions'] ?? []);
+                $after = HelpDeskTicketComment::where('ticket_id', $tid)
+                    ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
+                $pushed += max(0, $before - $after);
+            } catch (\Throwable $e) {
+                Log::error('📤 [MOVIDESK HD] Falha na passada de pendentes', ['ticket_id' => $tid, 'error' => $e->getMessage()]);
+            }
+        }
+        if ($pushed > 0) {
+            Log::info('📤 [MOVIDESK HD] Passada de pendentes concluída', ['pushed' => $pushed]);
+        }
+        return $pushed;
     }
 
     /**
@@ -379,7 +428,11 @@ class MovideskHelpDeskImporter
         $s = preg_replace('/[ \t]{2,}/', ' ', $s);       // colapsa espaços repetidos
         $s = preg_replace('/[ \t]*\n[ \t]*/', "\n", $s); // limpa espaços em volta das quebras
         $s = preg_replace("/\n{3,}/", "\n\n", $s);       // no máximo 1 linha em branco
-        return trim($s);
+        $s = trim($s);
+        // O Movidesk renderiza `description` como HTML → \n colapsa em espaço (as linhas ficavam
+        // grudadas). Escapa o texto e converte as quebras em <br> para quebrar de verdade.
+        $s = htmlspecialchars($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return str_replace("\n", '<br>', $s);
     }
 
     /** Importa as ações do Movidesk como interações do HD (dedup por external_action_id). */
