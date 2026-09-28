@@ -1944,6 +1944,7 @@ Route::prefix('v1')->group(function () {
         // De-para de status HD ↔ Movidesk (vínculo, por empresa)
         Route::get('/help-desk/movidesk-status-map',     [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'index']);
         Route::put('/help-desk/movidesk-status-map',     [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'save']);
+        Route::post('/help-desk/movidesk-status-map/refresh', [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'refreshCatalog']);
         // Vínculo de cliente (organização Movidesk → cliente Minutor)
         Route::get('/help-desk/movidesk-customers',      [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'customersIndex']);
         Route::put('/help-desk/movidesk-customers',      [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'customersSave']);

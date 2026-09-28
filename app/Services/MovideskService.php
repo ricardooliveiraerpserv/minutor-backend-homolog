@@ -1615,6 +1615,34 @@ class MovideskService
     }
 
     /**
+     * Catálogo COMPLETO de status configurados no Movidesk (GET /public/v1/statuses).
+     * Retorna a lista de nomes exatos (ex.: "Novo", "Pendente Terceiros", "Agendado"), sem duplicar.
+     * SOMENTE LEITURA. Usado para popular o de-para de status com os valores reais (não só os já vistos).
+     * @return string[]
+     */
+    public function fetchStatuses(): array
+    {
+        try {
+            $url = "{$this->baseUrl()}/statuses?token=" . urlencode($this->token());
+            $response = Http::timeout(20)->get($url);
+            if (!$response->successful()) {
+                Log::warning('📋 [MOVIDESK] Erro ao listar status', ['status' => $response->status()]);
+                return [];
+            }
+            $names = [];
+            foreach ((array) $response->json() as $s) {
+                $n = trim((string) ($s['name'] ?? ''));
+                if ($n !== '' && !in_array($n, $names, true)) $names[] = $n;
+            }
+            sort($names, SORT_NATURAL | SORT_FLAG_CASE);
+            return $names;
+        } catch (\Throwable $e) {
+            Log::error('📋 [MOVIDESK] Exceção ao listar status', ['error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /**
      * Busca organizações do Movidesk via /persons com businessName e cpfCnpj.
      * Retorna array indexado por businessName (lowercase) => ['cpfCnpj' => ..., 'id' => ...]
      */

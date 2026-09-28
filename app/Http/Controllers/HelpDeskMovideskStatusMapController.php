@@ -6,6 +6,8 @@ use App\Models\Customer;
 use App\Models\HelpDeskMovideskStatusMap;
 use App\Models\HelpDeskStatus;
 use App\Models\MovideskOrganization;
+use App\Models\SystemSetting;
+use App\Services\MovideskService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -36,13 +38,34 @@ class HelpDeskMovideskStatusMapController extends Controller
             ->when($companyId !== null, fn ($q) => $q->where('company_id', $companyId))
             ->get(['id', 'helpdesk_status_id', 'movidesk_base_status', 'movidesk_status_text', 'is_outbound_default']);
 
-        // Sub-status conhecidos do Movidesk (sugestões nos selects) — a partir do cache de tickets.
-        $texts = DB::table('movidesk_tickets')
+        // Base conhecida por nome de sub-status (a partir do cache de tickets) — usada p/ auto-preencher a base.
+        $baseByName = [];
+        DB::table('movidesk_tickets')
             ->whereNotNull('status')->where('status', '!=', '')
-            ->select('base_status', 'status')
-            ->distinct()->orderBy('base_status')->orderBy('status')->get()
-            ->map(fn ($r) => ['base' => $r->base_status, 'text' => trim((string) $r->status)])
-            ->filter(fn ($r) => $r['text'] !== '')->values();
+            ->select('base_status', 'status')->distinct()->get()
+            ->each(function ($r) use (&$baseByName) {
+                $name = mb_strtolower(trim((string) $r->status));
+                if ($name !== '' && !isset($baseByName[$name]) && $r->base_status) {
+                    $baseByName[$name] = (string) $r->base_status;
+                }
+            });
+
+        // Catálogo COMPLETO de status do Movidesk (todos os configurados, não só os já vistos).
+        $catalog = $this->statusCatalog(false);
+        $texts = collect($catalog)
+            ->map(fn ($name) => ['base' => $baseByName[mb_strtolower(trim($name))] ?? '', 'text' => trim($name)])
+            ->values();
+
+        // Garante que sub-status já presentes no de-para (mas fora do catálogo atual) não sumam do select.
+        $known = $texts->pluck('text')->map(fn ($t) => mb_strtolower($t))->flip();
+        foreach ($rows as $r) {
+            $t = trim((string) $r->movidesk_status_text);
+            if ($t !== '' && !$known->has(mb_strtolower($t))) {
+                $texts->push(['base' => (string) $r->movidesk_base_status, 'text' => $t]);
+                $known->put(mb_strtolower($t), true);
+            }
+        }
+        $texts = $texts->sortBy('text', SORT_NATURAL | SORT_FLAG_CASE)->values();
 
         return response()->json([
             'data' => [
@@ -54,6 +77,36 @@ class HelpDeskMovideskStatusMapController extends Controller
                 'outbound'     => $rows->where('is_outbound_default', true)->values(),
             ],
         ]);
+    }
+
+    /**
+     * Catálogo de status do Movidesk com cache em SystemSetting (evita bater na API a cada carga).
+     * $force = busca ao vivo no Movidesk e regrava o cache.
+     * @return string[]
+     */
+    private function statusCatalog(bool $force): array
+    {
+        if (!$force) {
+            $cached = SystemSetting::get('movidesk_status_catalog', null);
+            if (is_string($cached)) $cached = json_decode($cached, true);
+            if (is_array($cached) && $cached) return $cached;
+        }
+        $names = app(MovideskService::class)->fetchStatuses();
+        if ($names) {
+            SystemSetting::set('movidesk_status_catalog', $names, 'json', 'movidesk', 'Catálogo de status do Movidesk (cache)');
+            return $names;
+        }
+        // Falha na API: usa o último cache, se houver.
+        $cached = SystemSetting::get('movidesk_status_catalog', null);
+        if (is_string($cached)) $cached = json_decode($cached, true);
+        return is_array($cached) ? $cached : [];
+    }
+
+    /** Botão "Atualizar do Movidesk": força a releitura do catálogo de status e devolve a tela. */
+    public function refreshCatalog(Request $request): JsonResponse
+    {
+        $this->statusCatalog(true);
+        return $this->index($request);
     }
 
     /**
