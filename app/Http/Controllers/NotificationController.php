@@ -467,9 +467,12 @@ class NotificationController extends Controller
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         abort_if($notification->is_template, 422, 'Modelos não podem ser reenviados — use "Usar modelo" para publicar.');
-        // channel: 'popup' = só reabre o pop-up (sem e-mail); qualquer outro (padrão) = e-mail + pop-up.
-        $sendEmail = $request->input('channel') !== 'popup';
-        $emailed = $this->fire($notification, [], $sendEmail);
+        // channel: 'popup' = só reabre o pop-up (sem e-mail); 'email_only' = só reenvia o e-mail
+        // (NÃO reabre o pop-up nem zera leituras); qualquer outro (padrão) = e-mail + pop-up.
+        $channel = $request->input('channel');
+        $sendEmail   = $channel !== 'popup';
+        $reopenPopup = $channel !== 'email_only';
+        $emailed = $this->fire($notification, [], $sendEmail, $reopenPopup);
         return response()->json(['data' => array_merge($notification->fresh('poll.options')->toArray(), ['emailed' => $emailed])]);
     }
 
@@ -478,18 +481,23 @@ class NotificationController extends Controller
      * fim do dia, marca resent_at (o pop-up reaparece) e reenvia o e-mail. Reusado pelo reenvio
      * manual e pela recorrência. Retorna nº de e-mails enviados.
      */
-    public function fire(AppNotification $n, array $extraBcc = [], bool $sendEmail = true): int
+    public function fire(AppNotification $n, array $extraBcc = [], bool $sendEmail = true, bool $reopenPopup = true): int
     {
-        // Reabre SÓ para quem ainda não decidiu/leu. Quem já confirmou leitura (ack_at) OU
-        // respondeu um botão de decisão (Confirmo presença / Não poderei ir — respond também
-        // grava ack_at) NÃO é incomodado de novo: a decisão persiste entre recorrências.
-        // Reads apenas "vistos" (viewed_at sem ack_at) são apagados → o usuário é re-perguntado.
-        NotificationRead::where('notification_id', $n->id)->whereNull('ack_at')->delete();
-        $n->forceFill([
-            'resent_at'     => now(),
-            'last_fired_at' => now(),
-            'expires_at'    => $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->endOfDay(),
-        ])->save();
+        if ($reopenPopup) {
+            // Reabre SÓ para quem ainda não decidiu/leu. Quem já confirmou leitura (ack_at) OU
+            // respondeu um botão de decisão (Confirmo presença / Não poderei ir — respond também
+            // grava ack_at) NÃO é incomodado de novo: a decisão persiste entre recorrências.
+            // Reads apenas "vistos" (viewed_at sem ack_at) são apagados → o usuário é re-perguntado.
+            NotificationRead::where('notification_id', $n->id)->whereNull('ack_at')->delete();
+            $n->forceFill([
+                'resent_at'     => now(),
+                'last_fired_at' => now(),
+                'expires_at'    => $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->endOfDay(),
+            ])->save();
+        } else {
+            // Somente e-mail: NÃO reabre o pop-up nem zera leituras — só registra o disparo.
+            $n->forceFill(['last_fired_at' => now()])->save();
+        }
         // $sendEmail = false → só re-dispara o pop-up (zera leituras), sem reenviar e-mail.
         return $sendEmail ? $this->emailNotification($n->fresh('poll.options'), $extraBcc) : 0;
     }
