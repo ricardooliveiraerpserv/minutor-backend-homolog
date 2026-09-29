@@ -158,6 +158,9 @@ class MovideskHelpDeskImporter
         // independente de o chamado ter entrado na varredura por lastUpdate. Sem isto, uma
         // interação criada só no Minutor só ia pro Movidesk quando o chamado mudasse lá.
         $stats['pushed'] = $this->pushPendingComments();
+        // PASSADA DEDICADA DE STATUS: mudança de status no Minutor vai pro Movidesk sozinha,
+        // independente do chamado ter entrado na varredura por lastUpdate.
+        $stats['status_pushed'] = $this->pushPendingStatuses();
 
         Log::info('📥 [MOVIDESK HD] Import concluído', $stats);
         return $stats;
@@ -203,6 +206,57 @@ class MovideskHelpDeskImporter
         }
         if ($pushed > 0) {
             Log::info('📤 [MOVIDESK HD] Passada de pendentes concluída', ['pushed' => $pushed]);
+        }
+        return $pushed;
+    }
+
+    /**
+     * Varre chamados espelhados cujo STATUS do Minutor difere da sombra (external_status) e empurra
+     * o status ao Movidesk — independe do sync por lastUpdate. Só empurra status com mapeamento
+     * outbound_default que tenha texto E justificativa (Movidesk exige justificativa p/ pausar).
+     * Não age quando não há divergência (idempotente) nem quando o Movidesk é quem mudou (o sync
+     * completo reconcilia esse caso comparando as 3 vias).
+     */
+    public function pushPendingStatuses(): int
+    {
+        if (!$this->writebackEnabled()) {
+            return 0;
+        }
+        // Candidatos via join: mapeamento outbound_default do status do ticket, com texto+justificativa,
+        // cuja assinatura (base|texto) difere da sombra external_status → Minutor está à frente.
+        $rows = DB::table('helpdesk_tickets as t')
+            ->join('helpdesk_movidesk_status_map as m', function ($j) {
+                $j->on('m.helpdesk_status_id', '=', 't.status_id')
+                  ->on('m.company_id', '=', 't.company_id')
+                  ->where('m.is_outbound_default', true);
+            })
+            ->where('t.source_system', 'movidesk')
+            ->whereNotNull('t.external_ref')
+            ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
+            ->whereNotNull('m.movidesk_justification')->where('m.movidesk_justification', '<>', '')
+            ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
+            ->select('t.id', 't.external_ref', 't.external_status', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text', 'm.movidesk_justification as justification')
+            ->limit(200)
+            ->get();
+        if ($rows->isEmpty()) {
+            return 0;
+        }
+        $pushed = 0;
+        foreach ($rows as $r) {
+            $sig = trim(($r->base ?? '') . '|' . ($r->text ?? ''));
+            $patch = ['status' => $r->text, 'justification' => $r->justification];
+            if (!empty($r->base)) { $patch['baseStatus'] = $r->base; }
+            try {
+                if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
+                    HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
+                    $pushed++;
+                }
+            } catch (\Throwable $e) {
+                Log::error('📤 [MOVIDESK HD] Falha no push de status', ['ticket_id' => $r->id, 'error' => $e->getMessage()]);
+            }
+        }
+        if ($pushed > 0) {
+            Log::info('📤 [MOVIDESK HD] Passada de status concluída', ['pushed' => $pushed]);
         }
         return $pushed;
     }
