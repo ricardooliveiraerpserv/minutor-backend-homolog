@@ -8,6 +8,9 @@ RUN apk add --no-cache \
     git \
     curl \
     libpng-dev \
+    libjpeg-turbo-dev \
+    libwebp-dev \
+    freetype-dev \
     oniguruma-dev \
     libxml2-dev \
     libzip-dev \
@@ -16,8 +19,9 @@ RUN apk add --no-cache \
     postgresql-dev \
     supervisor
 
-# Extensões PHP
-RUN docker-php-ext-install \
+# Extensões PHP — GD com JPEG/WebP/FreeType (necessário p/ otimizar imagens embutidas em e-mails)
+RUN docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype \
+    && docker-php-ext-install \
     pdo pdo_pgsql pdo_mysql \
     mbstring exif pcntl bcmath gd zip opcache
 

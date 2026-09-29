@@ -543,10 +543,11 @@ class HelpDeskMailComposer
             function ($m) use (&$atts, &$i) {
                 $bytes = base64_decode($m[2], true);
                 if ($bytes === false || $bytes === '') return '';
+                [$bytes, $mime, $ext] = self::optimizeInlineImage($bytes, strtolower($m[1]));
+                if ($bytes === '') return '';   // imagem grande demais e não otimizável → descarta p/ o e-mail sair
                 $i++;
-                $ext = match (strtolower($m[1])) { 'image/png' => 'png', 'image/jpeg', 'image/jpg' => 'jpg', 'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img' };
                 $cid = "ticketimg{$i}@minutor";
-                $atts[] = ['name' => "img{$i}.{$ext}", 'mime' => strtolower($m[1]), 'bytes' => $bytes, 'cid' => $cid];
+                $atts[] = ['name' => "img{$i}.{$ext}", 'mime' => $mime, 'bytes' => $bytes, 'cid' => $cid];
                 // preserva o resto da tag <img> trocando só o src
                 $tag = preg_replace('/\bsrc=["\']data:[^"\']*["\']/i', 'src="cid:' . $cid . '"', $m[0]) ?? ('<img src="cid:' . $cid . '" style="max-width:100%">');
                 return $tag;
@@ -561,10 +562,11 @@ class HelpDeskMailComposer
             function ($m) use (&$atts, &$i) {
                 $bytes = base64_decode($m[3], true);
                 if ($bytes === false || $bytes === '') return $m[0];
+                [$bytes, $mime, $ext] = self::optimizeInlineImage($bytes, strtolower($m[2]));
+                if ($bytes === '') return 'background-image:none';   // grande demais e não otimizável
                 $i++;
-                $ext = match (strtolower($m[2])) { 'image/png' => 'png', 'image/jpeg', 'image/jpg' => 'jpg', 'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img' };
                 $cid = "ticketbg{$i}@minutor";
-                $atts[] = ['name' => "bg{$i}.{$ext}", 'mime' => strtolower($m[2]), 'bytes' => $bytes, 'cid' => $cid];
+                $atts[] = ['name' => "bg{$i}.{$ext}", 'mime' => $mime, 'bytes' => $bytes, 'cid' => $cid];
                 return "background-image:url('cid:{$cid}')";
             },
             $html
@@ -585,5 +587,65 @@ class HelpDeskMailComposer
             $atts[] = $logo;
         }
         return [$html, $atts];
+    }
+
+    /**
+     * Otimiza uma imagem embutida (data:) para o e-mail: redimensiona fotos grandes e recomprime,
+     * para o payload do Graph não estourar/travar (era o motivo de "enviou e não chegou" em avisos
+     * com imagem colada de ~700KB). Requer GD com JPEG (habilitado no Dockerfile).
+     *
+     * @return array{0:string,1:string,2:string} [bytes, mime, ext] — bytes='' = descartar (grande demais e não otimizável)
+     */
+    private static function optimizeInlineImage(string $bytes, string $mime): array
+    {
+        $extFor  = fn (string $mm): string => match ($mm) {
+            'image/png' => 'png', 'image/jpeg', 'image/jpg' => 'jpg',
+            'image/gif' => 'gif', 'image/webp' => 'webp', default => 'img',
+        };
+        $ext = $extFor($mime);
+
+        $SOFT = 150 * 1024;   // abaixo disso não mexe
+        $HARD = 3 * 1024 * 1024; // teto absoluto do payload por imagem
+        if (strlen($bytes) <= $SOFT) return [$bytes, $mime, $ext];
+        if (!function_exists('imagecreatefromstring')) {
+            return strlen($bytes) > $HARD ? ['', $mime, $ext] : [$bytes, $mime, $ext];
+        }
+
+        $img = @imagecreatefromstring($bytes);
+        if ($img === false) {
+            // GD não conseguiu decodificar (formato sem suporte / corrompido).
+            return strlen($bytes) > $HARD ? ['', $mime, $ext] : [$bytes, $mime, $ext];
+        }
+
+        $w = imagesx($img); $h = imagesy($img);
+        $maxW = 1400;
+        if ($w > $maxW && $w > 0) {
+            $nh = max(1, (int) round($h * $maxW / $w));
+            $dst = imagecreatetruecolor($maxW, $nh);
+            imagealphablending($dst, false);
+            imagesavealpha($dst, true);
+            imagecopyresampled($dst, $img, 0, 0, 0, 0, $maxW, $nh, $w, $h);
+            imagedestroy($img);
+            $img = $dst;
+        }
+
+        // Fotos (jpeg/gif) → JPEG q78; formatos com transparência (png/webp) → PNG comprimido.
+        $hasAlpha = ($mime === 'image/png' || $mime === 'image/webp');
+        ob_start();
+        if ($hasAlpha && function_exists('imagepng')) {
+            imagepng($img, null, 6); $newMime = 'image/png'; $newExt = 'png';
+        } elseif (function_exists('imagejpeg')) {
+            imagejpeg($img, null, 78); $newMime = 'image/jpeg'; $newExt = 'jpg';
+        } else {
+            ob_end_clean(); imagedestroy($img);
+            return strlen($bytes) > $HARD ? ['', $mime, $ext] : [$bytes, $mime, $ext];
+        }
+        $out = (string) ob_get_clean();
+        imagedestroy($img);
+
+        // Usa o menor entre otimizado e original; aplica o teto absoluto.
+        $best = ($out !== '' && strlen($out) < strlen($bytes)) ? [$out, $newMime, $newExt] : [$bytes, $mime, $ext];
+        if (strlen($best[0]) > $HARD) return ['', $best[1], $best[2]];
+        return $best;
     }
 }
