@@ -117,7 +117,7 @@ class GraphMailSender
                 $bytes = (string) ($a['bytes'] ?? '');
                 if ($bytes === '') continue;
                 $len = strlen($bytes);
-                if ($len > GraphMailer::MAX_ATTACHMENT_BYTES) {
+                if ($len > GraphMailer::MAX_TOTAL_ATTACHMENTS_BYTES) {
                     $mb = round($len / 1048576, 1);
                     return [false, "O anexo '" . ($a['name'] ?? 'arquivo') . "' tem {$mb} MB; o limite por arquivo é 25 MB."];
                 }
