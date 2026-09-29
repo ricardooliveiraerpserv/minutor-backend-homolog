@@ -18,6 +18,7 @@ class Customer extends Model
      * @var array<int, string>
      */
     protected $fillable = [
+        'has_contract',
         'name',
         'company_name',
         'cgc',
@@ -29,6 +30,8 @@ class Customer extends Model
         'fechamento_email',
         'emails_administrativos',
         'secondary_cgcs',
+        // Perfil de acesso do Help Desk PADRÃO deste cliente (aplicado ao pré-cadastrar pessoa-cliente).
+        'helpdesk_default_access_profile_id',
     ];
 
     /**
@@ -37,6 +40,7 @@ class Customer extends Model
      * @var array<string, string>
      */
     protected $casts = [
+        'has_contract' => 'boolean',
         'active' => 'boolean',
         'is_bizify_customer' => 'boolean',
         'emails_administrativos' => 'array',
@@ -213,6 +217,12 @@ class Customer extends Model
     public function costCenters(): HasMany
     {
         return $this->hasMany(CostCenter::class);
+    }
+
+    /** Fontes Git autorizadas do cliente (Solicitação de código-fonte / Central Fontes). */
+    public function sourceRepos(): HasMany
+    {
+        return $this->hasMany(\App\Models\ClientSourceRepo::class);
     }
 
     /**

@@ -312,3 +312,44 @@ Schedule::command('movidesk:reresolve-defaults --execute --limit=40')
   ->description('Re-resolve apontamentos parados no cliente padrão do Movidesk (corrige cliente+projeto)')
   ->withoutOverlapping(120)
   ->runInBackground();
+
+// ============= HELP DESK + integração Movidesk (inerte: gated por flags) =============
+Schedule::command('movidesk:hd-import')
+  ->cron('*/5 * * * *')
+  ->name('movidesk-hd-import')
+  ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
+  ->withoutOverlapping(30)
+  ->runInBackground();
+
+Schedule::command('help-desk:ingest-emails --limit=25')
+  ->cron('* * * * *')
+  ->name('help-desk-ingest-emails')
+  ->description('Ingere e-mails da caixa do Help Desk e abre/atualiza chamados')
+  ->withoutOverlapping(10);
+
+Schedule::command('help-desk:resume-scheduled')
+  ->cron('*/5 * * * *')
+  ->name('help-desk-resume-scheduled')
+  ->description('Retoma o SLA de chamados agendados cuja data/hora já passou')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
+Schedule::command('help-desk:run-scheduled-reopens')
+  ->cron('*/5 * * * *')
+  ->name('help-desk-run-scheduled-reopens')
+  ->description('Reabre chamados resolvidos/encerrados com reabertura agendada vencida')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
+Schedule::command('help-desk:run-idle-triggers')
+  ->hourly()
+  ->name('help-desk-run-idle-triggers')
+  ->description('Dispara gatilhos por tempo parado (aviso/auto-encerramento por inatividade)')
+  ->withoutOverlapping(10)
+  ->runInBackground();
+
+Schedule::command('help-desk:remind-dev-delivery')
+  ->dailyAt('08:10')
+  ->timezone('America/Sao_Paulo')
+  ->name('help-desk-remind-dev-delivery')
+  ->description('Lembretes de prazo de entrega em homologação (Em Desenvolvimento)');

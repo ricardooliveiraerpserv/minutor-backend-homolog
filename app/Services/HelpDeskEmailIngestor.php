@@ -1,0 +1,580 @@
+<?php
+
+namespace App\Services;
+
+use App\Attachments\AttachmentService;
+use App\Attachments\Storage\StorageProvider;
+use App\Models\CustomerContact;
+use App\Models\HelpDeskAssociationRule;
+use App\Models\HelpDeskEmailAccount;
+use App\Models\HelpDeskIngestedEmail;
+use App\Models\HelpDeskStatus;
+use App\Models\HelpDeskTicket;
+use App\Models\HelpDeskTicketEvent;
+use App\Models\User;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+
+/**
+ * Ingestão de e-mails → chamados do Help Desk.
+ *
+ * Lê a inbox via Microsoft Graph (app-only, Mail.Read), aplica as regras da conta
+ * (accept_from + Regras de Associação) e abre um chamado novo ou anexa a resposta a
+ * um chamado existente — reusando o fluxo oficial (status default, SLA, evento).
+ *
+ * Dedup: ledger helpdesk_ingested_emails (message_id único por conta). Como só temos
+ * Mail.Read, não dá pra marcar lido/mover no Graph — o ledger é a fonte da verdade.
+ *
+ * Hoje só o provedor microsoft365 (Graph) é suportado; contas IMAP são puladas
+ * (a busca IMAP real ainda não foi implementada).
+ */
+class HelpDeskEmailIngestor
+{
+    private ?User $actor = null;
+
+    public function __construct(
+        private HelpDeskSlaService $sla,
+        private AttachmentService $attachments,
+        private StorageProvider $storage,
+    ) {
+    }
+
+    /**
+     * @return array{accounts:int, fetched:int, tickets:int, comments:int, ignored:int, errors:int, details:array<int,string>}
+     */
+    public function run(?int $accountId = null, int $perAccount = 25): array
+    {
+        $sum = ['accounts' => 0, 'fetched' => 0, 'tickets' => 0, 'comments' => 0, 'ignored' => 0, 'errors' => 0, 'details' => []];
+
+        $accounts = HelpDeskEmailAccount::query()
+            ->where('enabled', true)->where('receive_enabled', true)
+            ->when($accountId, fn ($q) => $q->where('id', $accountId))
+            ->get();
+
+        foreach ($accounts as $acc) {
+            if ($acc->provider !== 'microsoft365') {
+                $sum['details'][] = "Conta #{$acc->id} ({$acc->email}): provedor '{$acc->provider}' ainda não suportado na ingestão (só microsoft365).";
+                continue;
+            }
+            $sum['accounts']++;
+
+            // Ingestão roda em job background (cron), SEM empresa corrente. Com o multi-empresa
+            // ligado (homolog), o trait BelongsToCompany carimba company_id e o CompanyScope
+            // escopa numeração/queries pela empresa ATIVA — sem contexto, o ticket nasce órfão
+            // (invisível na UI), casa triggers de forma errada e o número do chamado colide.
+            // Fixa a empresa dona da caixa durante o processamento desta conta (inerte em prod,
+            // onde multiempresa.scoping_enabled = false).
+            $companyCtx = app(\App\Services\CompanyContext::class);
+            $companyCtx->set($acc->company_id);
+            try {
+                $messages = GraphMailReader::recentMessages((string) $acc->email, $perAccount);
+                // Mais antigas primeiro, p/ manter a ordem cronológica das respostas.
+                $messages = array_reverse($messages);
+
+                foreach ($messages as $msg) {
+                    $sum['fetched']++;
+                    try {
+                        $this->processOne($acc, $msg, $sum);
+                    } catch (\Throwable $e) {
+                        $sum['errors']++;
+                        $sum['details'][] = "Conta #{$acc->id}: erro em '" . ($msg['id'] ?? '?') . "': " . $e->getMessage();
+                    }
+                }
+            } finally {
+                $companyCtx->forget();
+            }
+        }
+
+        return $sum;
+    }
+
+    /** @param array<string,mixed> $msg */
+    private function processOne(HelpDeskEmailAccount $acc, array $msg, array &$sum): void
+    {
+        $messageId = (string) ($msg['id'] ?? '');
+        if ($messageId === '') return;
+
+        // Dedup: já processado? Checagem GLOBAL (bypass do CompanyScope): o graph_message_id é
+        // único por caixa, independe de empresa. Como agora processamos sob o CompanyContext da
+        // conta, escopar o dedup por empresa faria linhas de ledger sem company_id (legado) ou de
+        // outra empresa escaparem da checagem e o e-mail ser reprocessado em loop a cada rodada.
+        if (HelpDeskIngestedEmail::withoutGlobalScopes()->where('email_account_id', $acc->id)->where('graph_message_id', $messageId)->exists()) {
+            return;
+        }
+
+        $fromEmail = strtolower(trim((string) data_get($msg, 'from.emailAddress.address', '')));
+        $fromName  = trim((string) data_get($msg, 'from.emailAddress.name', '')) ?: $fromEmail;
+        $subject   = trim((string) ($msg['subject'] ?? '')) ?: '(sem assunto)';
+        $body      = (string) (data_get($msg, 'body.content') ?: data_get($msg, 'bodyPreview', ''));
+        // Corta o histórico citado: mantém só o que o cliente escreveu ACIMA do marcador do e-mail anterior.
+        $body      = $this->stripQuotedHistory($body);
+        $receivedAt = ($r = data_get($msg, 'receivedDateTime')) ? Carbon::parse($r) : now();
+
+        // Anti-loop: ignora e-mail enviado pela própria caixa (cópia/auto-resposta).
+        if ($fromEmail !== '' && strcasecmp($fromEmail, (string) $acc->email) === 0) {
+            $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'auto_da_propria_caixa', $receivedAt, $sum);
+            return;
+        }
+
+        // Bounces/NDR (MicrosoftExchange/postmaster/mailer-daemon) e auto-respostas NÃO viram chamado.
+        if ($this->looksAutoGenerated($fromEmail, $subject)) {
+            $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'bounce_ou_auto_resposta', $receivedAt, $sum);
+            return;
+        }
+
+        $settings = (array) ($acc->settings ?? []);
+
+        // Janela "importar somente a partir de".
+        if (!empty($settings['import_from'])) {
+            try {
+                if ($receivedAt->lt(Carbon::parse($settings['import_from'])->startOfDay())) {
+                    $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'antes_de_import_from', $receivedAt, $sum);
+                    return;
+                }
+            } catch (\Throwable) { /* import_from inválido → ignora a janela */ }
+        }
+
+        // Resolve cliente/contato pelo remetente (contato cadastrado tem prioridade; senão, regra de associação por domínio).
+        $contact = $fromEmail ? CustomerContact::whereRaw('lower(email) = ?', [$fromEmail])->first() : null;
+        $rule    = $fromEmail ? HelpDeskAssociationRule::matchEmail($fromEmail) : null;
+        $customerId = $contact?->customer_id ?? $rule?->customer_id;
+
+        // Solicitante automático: se a empresa foi identificada (por regra) mas o remetente
+        // ainda não é contato, cadastra-o sob essa empresa — assim vira contato reutilizável.
+        if (!$contact && $customerId && $fromEmail) {
+            $contact = CustomerContact::create(['customer_id' => $customerId, 'name' => $fromName, 'email' => $fromEmail]);
+        }
+
+        // Pré-cadastro de USUÁRIO cliente (paridade Movidesk): remetente identificado por
+        // empresa vira um usuário type=cliente com acesso SÓ ao Help Desk, SEM senha — não
+        // loga até ser convidado (fase 1b). Dedup por e-mail; nunca quebra a ingestão.
+        if ($customerId && $fromEmail) {
+            $this->preRegisterClientUser($fromEmail, $fromName, (int) $customerId, $rule);
+        }
+
+        // Política de abertura (accept_from).
+        $acceptFrom = $settings['accept_from'] ?? 'any';
+        $allowed = match ($acceptFrom) {
+            'none'             => false,
+            'customer'         => (bool) $contact,
+            'customer_or_rule' => (bool) ($contact || $rule),
+            default            => true, // 'any'
+        };
+        if (!$allowed) {
+            $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'accept_from:' . $acceptFrom, $receivedAt, $sum);
+            return;
+        }
+
+        // Anexos: embute as imagens inline (cid) da assinatura/corpo direto no HTML como data:
+        // (preserva a assinatura original ao renderizar); guarda só os anexos REAIS (não-inline).
+        // Inline-only às vezes vem com hasAttachments=false no Graph → busca tb se há cid: no corpo.
+        $inboundFiles = [];
+        if (!empty($msg['hasAttachments']) || str_contains($body, 'cid:')) {
+            $graphAtts = GraphMailReader::messageAttachments((string) $acc->email, $messageId);
+            [$body, $inboundFiles] = $this->embedInlineImages($body, $graphAtts);
+        }
+
+        // Resposta a chamado existente? Threading por token [HD-xxxxxx] tem prioridade
+        // (resposta a uma resposta nossa); senão, por assunto normalizado.
+        $appendExisting     = $settings['append_existing'] ?? true;
+        $associateExisting  = $settings['associate_existing'] ?? 'customer';
+        $existing = $this->matchByTicketToken($subject);
+        if (!$existing && $appendExisting && $associateExisting !== 'new') {
+            $existing = $this->findOpenTicketBySubject($subject, $associateExisting === 'customer' ? $customerId : null);
+        }
+        if ($existing) {
+            $existing->loadMissing('status');
+            // Alvo onde a resposta será anexada. Regra:
+            //  - chamado ABERTO/RESOLVIDO → anexa nele mesmo (e move p/ Em andamento);
+            //  - chamado ENCERRADO com continuação ABERTA → anexa NA continuação (interação, não cria outro);
+            //  - chamado ENCERRADO sem continuação aberta → cria a 1ª continuação + avisa o cliente.
+            $target = $existing;
+            $detail = "↩︎ Resposta anexada ao {$existing->ticket_number} → Em atendimento (de {$fromEmail}).";
+            $ledgerReason = null;
+
+            if (optional($existing->status)->is_terminal) {
+                // Continuação ABERTA já existente deste chamado (respostas seguintes vão pra ela).
+                $active = HelpDeskTicket::where('previous_ticket_id', $existing->id)
+                    ->whereHas('status', fn ($q) => $q->where('is_terminal', false))
+                    ->orderByDesc('id')->first();
+                if (!$active) {
+                    // 1ª resposta a chamado encerrado → abre a continuação e avisa o cliente.
+                    $new = $this->openContinuationTicket($acc, $existing, $subject, $body, $customerId, $contact, $messageId, $receivedAt, $fromEmail, $fromName);
+                    $sum['tickets']++;
+                    $this->storeFiles('HELPDESK_TICKET', $new->id, $inboundFiles);
+                    try {
+                        HelpDeskReplyMailer::sendClosedTicketNotice($acc, $existing, $new, $fromEmail);
+                    } catch (\Throwable $e) {
+                        Log::warning('HelpDesk: aviso de chamado encerrado lançou: ' . $e->getMessage());
+                    }
+                    HelpDeskTriggerEngine::dispatch('ticket_created', $new->fresh(), ['comment_by' => 'client', 'actor_email' => $fromEmail]);
+                    $sum['details'][] = "🔁 {$existing->ticket_number} encerrado → novo {$new->ticket_number} de {$fromEmail}.";
+                    $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', 'continua_' . $existing->ticket_number, $receivedAt, $sum, $new->id);
+                    return;
+                }
+                // Continuação já existe e está aberta → esta resposta é interação NELA.
+                $target = $active;
+                $detail = "↩︎ Resposta ao {$existing->ticket_number} (encerrado) → interação na continuação {$active->ticket_number} (de {$fromEmail}).";
+                $ledgerReason = 'continuacao_' . $existing->ticket_number;
+            }
+
+            // Anexa a resposta no alvo e move para "Em andamento" (reativa o atendimento).
+            $comment = $this->appendClientReply($target, $body, $contact, $messageId, $receivedAt);
+            $sum['comments']++;
+            $this->storeFiles('HELPDESK_TICKET_COMMENT', $comment->id, $inboundFiles);
+            HelpDeskTriggerEngine::dispatch('comment_added', $target->fresh(), ['comment_by' => 'client', 'actor_email' => $fromEmail]);
+            $sum['details'][] = $detail;
+            $this->ledger($acc, $messageId, $fromEmail, $subject, 'comment_appended', $ledgerReason, $receivedAt, $sum, $target->id, $comment->id);
+            return;
+        }
+
+        // Abre chamado novo — mesmo fluxo do store() oficial.
+        $ticket = DB::transaction(function () use ($acc, $subject, $body, $customerId, $contact, $messageId, $receivedAt, $fromEmail, $fromName) {
+            $t = HelpDeskTicket::create([
+                'ticket_number'       => HelpDeskTicketNumber::next(), // mesma numeração configurada do portal
+                'subject'             => mb_substr($subject, 0, 195),
+                'description'         => $body,
+                'customer_id'         => $customerId,
+                'customer_contact_id' => $contact?->id,
+                'requester_name'      => $contact?->name ?: $fromName,
+                'requester_email'     => $fromEmail ?: null,
+                'priority'            => 'normal',
+                'channel'             => 'email',
+                'status_id'           => optional(HelpDeskStatus::default())->id,
+                'team_id'             => $acc->default_team_id,
+                // Âncora do threading: guardamos o id Graph da msg do cliente p/ responder na MESMA
+                // conversa (createReply) — assim confirmação e respostas caem num e-mail único na caixa dele.
+                'graph_thread_msg_id' => $messageId,
+                'source_system'       => 'email:graph',
+                // id do Graph é longo (>120); guardamos um hash curto aqui e o id completo no ledger.
+                'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
+                'last_activity_at'    => $receivedAt,
+            ]);
+            $this->sla->apply($t);
+            HelpDeskTicketEvent::log($t->id, 'created', ['to_value' => $t->subject, 'meta' => ['via' => 'email', 'from' => $fromEmail]]);
+            return $t;
+        });
+        $sum['tickets']++;
+        $this->storeFiles('HELPDESK_TICKET', $ticket->id, $inboundFiles);
+        // Sem actor_email: num ticket aberto por e-mail o "cliente" É quem disparou; com
+        // actor_email o skip_actor do trigger de confirmação (#1) zerava os destinatários e
+        // o cliente nunca recebia o e-mail com o nº do chamado. (comment_added mantém actor_email.)
+        HelpDeskTriggerEngine::dispatch('ticket_created', $ticket->fresh(), ['comment_by' => 'client']);
+        $sum['details'][] = "✅ Chamado {$ticket->ticket_number} aberto de {$fromEmail}: \"{$subject}\".";
+        $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
+    }
+
+    /** Anexa a resposta do cliente (e-mail) como interação no chamado alvo e reativa (Em andamento). */
+    private function appendClientReply(HelpDeskTicket $ticket, string $body, ?CustomerContact $contact, string $messageId, Carbon $receivedAt): \App\Models\HelpDeskTicketComment
+    {
+        return DB::transaction(function () use ($ticket, $body, $contact, $messageId, $receivedAt) {
+            $c = $ticket->comments()->create([
+                'author_contact_id' => $contact?->id,
+                'body'              => $body,
+                'visibility'        => 'customer',
+                'channel'           => 'email',
+                'idempotency_key'   => 'email:' . substr(sha1($messageId), 0, 40), // id do Graph não cabe em varchar(80)
+            ]);
+            // Atualiza a âncora p/ a última msg do cliente → futuras respostas threadam nela.
+            $ticket->update(['last_activity_at' => $receivedAt, 'graph_thread_msg_id' => $messageId]);
+            HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'visibility' => 'customer', 'via' => 'email']]);
+            $this->moveToEmAndamento($ticket); // resposta do cliente reativa o chamado
+            return $c;
+        });
+    }
+
+    /** Detecta bounces/NDR e auto-respostas (não devem virar chamado nem resposta). */
+    private function looksAutoGenerated(string $fromEmail, string $subject): bool
+    {
+        $from = strtolower(trim($fromEmail));
+        if ($from !== '' && (
+            str_contains($from, 'microsoftexchange') ||
+            str_starts_with($from, 'postmaster@') ||
+            str_starts_with($from, 'mailer-daemon') ||
+            str_contains($from, 'no-reply@microsoft') ||
+            str_starts_with($from, 'noreply@')
+        )) {
+            return true;
+        }
+        // Padrões de NDR (falha de entrega) e auto-resposta no assunto (PT/EN).
+        $s = trim($subject);
+        return (bool) preg_match(
+            '/^\s*(n[ãa]o\s+é?\s*poss[íi]vel\s+entregar|undeliverable|delivery\s+status\s+notification|mail\s+delivery|returned\s+mail|failure\s+notice|automatic\s+reply|resposta\s+autom[áa]tica|out\s+of\s+office|aus[êe]ncia\s+do\s+escrit[óo]rio)\b/i',
+            $s
+        );
+    }
+
+    /** Move o chamado para "Em andamento" quando o cliente responde por e-mail. Se estava RESOLVIDO,
+     *  faz a reabertura (reopen_count/reopened_at) como no fluxo de recusa do portal. */
+    private function moveToEmAndamento(HelpDeskTicket $t): void
+    {
+        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        if (!$em || $t->status_id === $em->id) return;
+        $old = $t->status;
+        $wasResolved = (bool) optional($old)->is_resolved;
+        $t->status_id = $em->id;
+        if ($wasResolved) {
+            $t->reopened_at   = now();
+            $t->resolved_at   = null;
+            $t->reopen_count  = (int) $t->reopen_count + 1;
+        }
+        $this->sla->computeBreaches($t);
+        $t->save();
+        if ($wasResolved) {
+            HelpDeskTicketEvent::log($t->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'email']]);
+        }
+        HelpDeskTicketEvent::log($t->id, 'status_changed', ['field' => 'status', 'from_value' => optional($old)->key, 'to_value' => $em->key, 'meta' => ['via' => 'email']]);
+    }
+
+    /** Abre um chamado NOVO como continuação de um chamado ENCERRADO (resposta de e-mail a fechado).
+     *  Liga por previous_ticket_id — a UI mostra o banner/botão de "continuação do chamado de origem". */
+    private function openContinuationTicket(
+        HelpDeskEmailAccount $acc, HelpDeskTicket $prev, string $subject, string $body,
+        ?int $customerId, ?CustomerContact $contact, string $messageId, Carbon $receivedAt,
+        string $fromEmail, string $fromName
+    ): HelpDeskTicket {
+        return DB::transaction(function () use ($acc, $prev, $subject, $body, $customerId, $contact, $messageId, $receivedAt, $fromEmail, $fromName) {
+            $t = HelpDeskTicket::create([
+                'ticket_number'       => HelpDeskTicketNumber::next(),
+                'previous_ticket_id'  => $prev->id,
+                'subject'             => mb_substr($subject, 0, 195),
+                'description'         => $body,
+                'customer_id'         => $customerId ?? $prev->customer_id,
+                'customer_contact_id' => $contact?->id ?? $prev->customer_contact_id,
+                'requester_name'      => ($contact?->name ?: $fromName) ?: $prev->requester_name,
+                'requester_email'     => $fromEmail ?: $prev->requester_email,
+                'priority'            => $prev->priority ?: 'normal',
+                'channel'             => 'email',
+                'status_id'           => optional(HelpDeskStatus::default())->id,
+                'team_id'             => $prev->team_id ?: $acc->default_team_id,
+                'graph_thread_msg_id' => $messageId, // âncora do threading (continuação)
+                'source_system'       => 'email:graph',
+                'external_ref'        => 'gm:' . substr(sha1($messageId), 0, 40),
+                'last_activity_at'    => $receivedAt,
+            ]);
+            $this->sla->apply($t);
+            HelpDeskTicketEvent::log($t->id, 'created', ['to_value' => $t->subject, 'meta' => ['via' => 'email', 'from' => $fromEmail, 'continua' => $prev->ticket_number]]);
+            // Evento evidente no TIMELINE dos dois chamados (o "workflow" da continuação):
+            //  - no chamado NOVO: aberto como continuação do chamado de origem (encerrado);
+            //  - no chamado ANTERIOR: cliente respondeu após o encerramento → aberto o novo chamado.
+            HelpDeskTicketEvent::log($t->id, 'continuacao_aberta', ['to_value' => $prev->ticket_number, 'meta' => ['via' => 'email', 'origem_id' => $prev->id]]);
+            HelpDeskTicketEvent::log($prev->id, 'continuacao_gerada', ['to_value' => $t->ticket_number, 'meta' => ['via' => 'email', 'novo_id' => $t->id]]);
+            return $t;
+        });
+    }
+
+    /** Threading explícito: token [NUMERO] no assunto aponta direto pro chamado (qualquer formato). */
+    private function matchByTicketToken(string $subject): ?HelpDeskTicket
+    {
+        // Aceita "[HD-000168]" (legado) e "[000169]" (novo formato Movidesk).
+        if (preg_match('/\[((?:[A-Za-z]{1,8}-)?\d{3,})\]/', $subject, $m)) {
+            return HelpDeskTicket::whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->first();
+        }
+        return null;
+    }
+
+    /** Procura chamado aberto com o mesmo assunto (ignorando prefixos Re:/Fwd:). */
+    private function findOpenTicketBySubject(string $subject, ?int $customerId): ?HelpDeskTicket
+    {
+        $clean = $this->stripReplyPrefix($subject);
+        if ($clean === '') return null;
+
+        // Compara sem prefixos de resposta dos DOIS lados: o assunto salvo também pode ter "Re:".
+        return HelpDeskTicket::query()
+            ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
+            ->whereRaw("regexp_replace(lower(subject), '^((re|res|fwd|fw|enc)\\s*:\\s*)+', '') = ?", [mb_strtolower($clean)])
+            ->whereHas('status', fn ($q) => $q->where('is_terminal', false))
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    /** Remove prefixos de resposta/encaminhamento repetidos (Re:, Fwd:, Enc:, Res:, Fw:). */
+    private function stripReplyPrefix(string $subject): string
+    {
+        $s = trim($subject);
+        do {
+            $prev = $s;
+            $s = preg_replace('/^\s*(re|res|fwd|fw|enc)\s*:\s*/i', '', $s) ?? $s;
+        } while ($s !== $prev);
+        return trim($s);
+    }
+
+    /**
+     * Embute as imagens inline referenciadas por cid no corpo (assinatura/logos) como data:,
+     * preservando a aparência original ao renderizar. Devolve [corpoReescrito, anexosReais].
+     *
+     * @param array<int, array{name:string,mime:string,bytes:string,inline:bool,contentId:string}> $graphAtts
+     * @return array{0: string, 1: array<int, array<string,mixed>>}
+     */
+    private function embedInlineImages(string $body, array $graphAtts): array
+    {
+        $regular = [];
+        foreach ($graphAtts as $f) {
+            $cid = (string) ($f['contentId'] ?? '');
+            // Inline referenciado no corpo (cid:...) → embute como data: e NÃO vira anexo.
+            if ($cid !== '' && str_contains($body, 'cid:' . $cid)) {
+                $data = 'data:' . $f['mime'] . ';base64,' . base64_encode((string) $f['bytes']);
+                $body = str_replace('cid:' . $cid, $data, $body);
+                continue;
+            }
+            $regular[] = $f; // anexo real (arquivo enviado pelo usuário)
+        }
+        return [$body, $regular];
+    }
+
+    /**
+     * Registra os anexos REAIS (não-inline) no chamado/resposta via AttachmentService.
+     *
+     * @param array<int, array<string,mixed>> $files
+     */
+    private function storeFiles(string $entityType, int $entityId, array $files): void
+    {
+        if (empty($files)) return;
+        $actor = $this->systemActor();
+        if (!$actor) return;
+
+        foreach ($files as $file) {
+            try {
+                $name     = $this->safeFileName((string) $file['name']);
+                $category = str_starts_with((string) $file['mime'], 'image/') ? 'image' : 'attachment';
+                $key      = sprintf('attachments/%s/%d/%s_%s', strtolower($entityType), $entityId, substr((string) Str::uuid(), 0, 8), $name);
+
+                $this->storage->put($key, (string) $file['bytes'], (string) $file['mime']);
+                $this->attachments->registerExisting($actor, [
+                    'entity_type'   => $entityType,
+                    'entity_id'     => $entityId,
+                    'category'      => $category,
+                    'storage_path'  => $key,
+                    'original_name' => $name,
+                    'mime_type'     => (string) $file['mime'],
+                    'metadata'      => ['source' => 'email:graph'],
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning("HelpDesk: falha ao salvar anexo de e-mail ({$entityType} #{$entityId}): " . $e->getMessage());
+            }
+        }
+    }
+
+    /** Nome de arquivo seguro com extensão (default .bin). */
+    private function safeFileName(string $name): string
+    {
+        $name = preg_replace('/[^A-Za-z0-9._-]+/', '_', trim($name)) ?: 'anexo';
+        if (!str_contains($name, '.')) $name .= '.bin';
+        return mb_substr($name, 0, 120);
+    }
+
+    /** Ator do sistema p/ uploaded_by dos anexos recebidos (1º admin; senão 1º usuário). */
+    private function systemActor(): ?User
+    {
+        return $this->actor ??= (User::where('type', 'admin')->orderBy('id')->first() ?? User::orderBy('id')->first());
+    }
+
+    /**
+     * Pré-cadastro de usuário cliente a partir do e-mail (fase 1a).
+     *
+     * Cria um `users` type=cliente, vinculado à empresa (customer) identificada pelo
+     * domínio, com acesso SÓ ao Help Desk (allowed_modules=['help_desk']) e SEM senha
+     * (coluna nullable) — `enabled=false`. Não loga até o convite (fase 1b) definir senha.
+     *
+     * Idempotente por e-mail: se já existe QUALQUER usuário com esse e-mail (cliente ou
+     * interno), não faz nada — nunca sobrescreve. Envolto em try/catch: falha aqui não
+     * pode derrubar a ingestão do e-mail/ticket.
+     */
+    private function preRegisterClientUser(string $email, ?string $name, int $customerId, ?HelpDeskAssociationRule $rule): void
+    {
+        try {
+            if (User::where('email', $email)->exists()) {
+                return; // já existe — não mexe (inclusive usuários internos)
+            }
+
+            $companyId = $rule?->company_id ?? 1;
+            // Perfil: regra de associação → senão o PADRÃO DO CLIENTE (customers.helpdesk_default_access_profile_id).
+            // (Antes caía no default GLOBAL por tipo; agora é definido por cliente.)
+            $profileId = $rule?->access_profile_id
+                ?? optional(\App\Models\Customer::find($customerId))->helpdesk_default_access_profile_id;
+
+            $user = new User();
+            $user->forceFill([
+                'name'                       => $name ?: $email,
+                'email'                      => $email,
+                'type'                       => 'cliente',
+                'customer_id'                => $customerId,
+                'allowed_modules'            => ['help_desk'],
+                'helpdesk_access_profile_id' => $profileId,
+                'home_company_id'            => $companyId,
+                'current_company_id'         => $companyId,
+                'enabled'                    => false, // pendente: sem senha, aguarda convite (1b)
+                // password OMITIDO => NULL (coluna nullable) => verifyPassword() barra o login
+            ])->save();
+
+            \Log::info('🆕 [HD INGEST] Usuário cliente pré-cadastrado (sem senha)', [
+                'user_id' => $user->id, 'email' => $email, 'customer_id' => $customerId,
+                'company_id' => $companyId, 'helpdesk_access_profile_id' => $profileId,
+            ]);
+        } catch (\Throwable $e) {
+            \Log::warning('⚠️ [HD INGEST] Falha ao pré-cadastrar usuário cliente', [
+                'email' => $email, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Corta o histórico citado das respostas de e-mail: quando o cliente responde a um e-mail de
+     * atualização, tudo a partir do marcador "não escreva abaixo desta linha" é o e-mail anterior
+     * (nosso cabeçalho + thread) e deve ser descartado — só o texto NOVO (acima) vira interação.
+     * Abertura nova (sem o marcador) é no-op.
+     */
+    private function stripQuotedHistory(string $html): string
+    {
+        if ($html === '') return $html;
+        // Corta no PRIMEIRO marcador de "início do histórico citado" que aparecer. Além do nosso
+        // "não escreva abaixo desta linha", inclui os separadores do Outlook (desktop/web/mobile),
+        // que empurravam a thread inteira (com imagens base64) para a descrição da continuação.
+        $markers = [
+            '/n[aã]o\s+escreva\s+abaixo\s+desta\s+linha/iu',
+            '/<div\b[^>]*\bid=["\']appendonsend["\']/i',                 // Outlook web/desktop: início do original
+            '/<div\b[^>]*\bid=["\']divRplyFwdMsg["\']/i',               // Outlook: bloco "De:/Enviada:/Para:"
+            '/<div\b[^>]*\bid=["\']mail-editor-reference-message-container["\']/i',
+            '/<hr\b[^>]*\bid=["\']stopSpelling["\']/i',                 // Outlook desktop: <hr> antes do original
+            '/<blockquote\b/i',                                          // citação genérica (Gmail/Apple)
+        ];
+        $cutAt = null;
+        foreach ($markers as $re) {
+            if (preg_match($re, $html, $m, PREG_OFFSET_CAPTURE)) {
+                $pos = (int) $m[0][1];
+                if ($cutAt === null || $pos < $cutAt) $cutAt = $pos;
+            }
+        }
+        if ($cutAt !== null) {
+            $cut = substr($html, 0, $cutAt);
+            // recua até o início da tag que contém o marcador, p/ não deixar tag meia-aberta
+            $lastLt = strrpos($cut, '<');
+            if ($lastLt !== false && strpos($cut, '>', $lastLt) === false) {
+                $cut = substr($cut, 0, $lastLt);
+            }
+            $html = rtrim($cut);
+        }
+        return $html;
+    }
+
+    private function ledger(
+        HelpDeskEmailAccount $acc, string $messageId, ?string $fromEmail, string $subject,
+        string $action, ?string $reason, Carbon $receivedAt, array &$sum,
+        ?int $ticketId = null, ?int $commentId = null
+    ): void {
+        HelpDeskIngestedEmail::create([
+            'email_account_id' => $acc->id,
+            'graph_message_id' => $messageId,
+            'from_email'       => $fromEmail ? mb_substr($fromEmail, 0, 190) : null,
+            'subject'          => mb_substr($subject, 0, 300),
+            'action'           => $action,
+            'reason'           => $reason,
+            'ticket_id'        => $ticketId,
+            'comment_id'       => $commentId,
+            'received_at'      => $receivedAt,
+        ]);
+        if ($action === 'ignored') $sum['ignored']++;
+    }
+}

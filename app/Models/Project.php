@@ -106,6 +106,7 @@ class Project extends Model
         'kanban_coordinator_override_id',
         'movidesk_integration_enabled',
         'movidesk_integration_since',
+        'helpdesk_integration_enabled',
     ];
 
     /**
@@ -147,6 +148,7 @@ class Project extends Model
         'client_follows_timesheets' => 'boolean',
         'extrato_visivel_cliente' => 'boolean',
         'is_investimento_comercial' => 'boolean',
+        'helpdesk_integration_enabled' => 'boolean',
         'is_rateio' => 'boolean',
         'movidesk_integration_enabled' => 'boolean',
         'movidesk_integration_since' => 'date:Y-m-d',

@@ -90,5 +90,9 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perHour(20)->by('fp-ip:' . $request->ip()),
             ];
         });
+
+        // Help Desk — throttle de envio de e-mail por caixa (evita bater no teto do provedor).
+        // Ajustável via HELPDESK_EMAIL_PER_MINUTE (default 20/min, abaixo do teto ~30/min por caixa).
+        RateLimiter::for('helpdesk-email', fn () => Limit::perMinute((int) env('HELPDESK_EMAIL_PER_MINUTE', 20)));
     }
 }

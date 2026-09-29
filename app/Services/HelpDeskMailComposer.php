@@ -23,52 +23,196 @@ class HelpDeskMailComposer
         'assignee'     => 'Dados do responsável',
         'sla'          => 'SLA',
         'button'       => 'Botão "Abrir chamado"',
+        'assignee_signature' => 'Assinatura do consultor',
     ];
 
     /**
      * Logo via cid (e-mail) ou data: (prévia). $audience define a quem é a saudação:
      * 'responsavel' → cumprimenta o agente; senão → o solicitante/cliente (NÃO o agente).
      */
-    public static function compose(string $message, array $blocks, HelpDeskTicket $ticket, ?string $logoSrc = null, string $audience = 'cliente'): string
+    public static function compose(string $message, array $blocks, HelpDeskTicket $ticket, ?string $logoSrc = null, string $audience = 'cliente', ?string $notifTitle = null, ?string $notifSubtitle = null): string
     {
         $tpl   = HelpDeskCommTemplate::current();
         $logo  = $logoSrc ?? ('cid:' . HelpDeskMailFooter::LOGO_CID);
         $color = $tpl->primary_color ?: '#7c3aed';
         $font  = $tpl->font ?: 'Arial, Helvetica, sans-serif';
+        // Saudação: cliente → nome do solicitante; responsável → nome do agente; interno → genérica.
         $greetName = $audience === 'responsavel'
             ? trim((string) optional($ticket->assignee)->name)
-            : trim((string) ($ticket->solicitanteName() ?? ''));
+            : ($audience === 'cliente' ? trim((string) ($ticket->solicitanteName() ?? '')) : '');
         $greeting = $greetName !== '' ? 'Olá ' . e($greetName) . ',' : 'Olá,';
         $msgHtml  = nl2br(e(HelpDeskTriggerEngine::render($message, $ticket)));
+        $hasMsg   = trim(strip_tags((string) $msgHtml)) !== '';
 
+        // Blocos opcionais do admin. O 'button' vira o CTA fixo abaixo — não duplicamos aqui.
         $blocksHtml = '';
         foreach ($blocks as $b) {
+            if ((string) $b === 'button') continue;
             $blocksHtml .= self::renderBlock((string) $b, $ticket, $color);
         }
 
-        $minutor = $tpl->show_minutor
-            ? '<div style="font-size:11px;color:#9ca3af;margin-top:4px">Mensagem automática · enviada via <span style="color:#6b7280;font-weight:600">Minutor</span></div>'
-            : '';
+        // Histórico COMPLETO da conversa — anexado em TODO card (qualquer situação/gatilho), como
+        // no e-mail de resposta. Vazio (chamado sem histórico) → não renderiza a linha.
+        $historyHtml = self::conversationHistoryHtml($ticket);
 
+        // Dados do chamado (chrome do card — placeholders/mensagem NÃO mudam).
+        $company    = e($tpl->company_name);
+        $num        = e($ticket->ticket_number ?: ('#' . $ticket->id));
+        $sm         = self::statusMeta($ticket);
+        $barColor   = $sm['breached'] ? '#ef4444' : $sm['color'];
+        $clienteVal = optional($ticket->customer)->name;
+        $agenteVal  = optional($ticket->assignee)->name;
+        // Servidor roda em UTC; exibe no fuso de São Paulo (mesma convenção do HelpDeskTicketController).
+        $atualizado = $ticket->updated_at ? $ticket->updated_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : null;
+        $aberto     = $ticket->created_at ? $ticket->created_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : null;
+        $ctaUrl     = HelpDeskTriggerEngine::render('{ticket.url}', $ticket);
+        $ctaLabel   = e($tpl->button_label ?: 'Acompanhar chamado');
+
+        // Chamado RESOLVIDO (aguardando aceite): botões Aceitar (verde) / Recusar (vermelho) via link
+        // assinado — o cliente decide direto do e-mail, SEM login. Encerra ou reabre "Em atendimento".
+        $acceptReject = '';
+        if (optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal) {
+            $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept');
+            $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject');
+            $acceptReject = '<tr><td align="center" style="padding:22px 28px 0">'
+                . '<div style="font-size:13px;color:#4b5563;margin-bottom:12px">A solução resolveu? Você pode responder direto por aqui:</div>'
+                . '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+                . '<td style="padding:0 6px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#16a34a" style="border-radius:8px"><a href="' . e($aUrl) . '" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px">&#10003; Aceitar e encerrar</a></td></tr></table></td>'
+                . '<td style="padding:0 6px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#ef4444" style="border-radius:8px"><a href="' . e($rUrl) . '" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px">&#10007; Recusar solução</a></td></tr></table></td>'
+                . '</tr></table>'
+                . '</td></tr>';
+        }
+        $minutor    = $tpl->show_minutor
+            ? '<div style="font-size:11px;line-height:1.5;color:#9ca3af;margin-top:4px">Mensagem automática enviada pelo Minutor.</div>' : '';
+
+        // Layout SaaS premium (TOTVS/Zendesk/Jira-like), identidade ERPSERV: tabelas + estilos inline
+        // p/ máxima compatibilidade (Outlook/Gmail/Apple Mail/Thunderbird/mobile).
         return ''
-        . '<div style="margin:0;padding:0;background:#f3f4f6">'
-        .   '<div style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' . $font . ';color:#1f2937">'
-        .     '<div style="height:6px;background:' . $color . '"></div>'
-        .     '<div style="padding:20px 24px;border-bottom:1px solid #eef0f3">'
-        .       '<img src="' . $logo . '" alt="' . e($tpl->company_name) . '" style="height:40px;width:auto;display:block;border:0" />'
-        .     '</div>'
-        .     '<div style="padding:22px 24px">'
-        .       '<p style="margin:0 0 12px;font-size:15px">' . $greeting . '</p>'
-        .       '<div style="font-size:14px;line-height:1.6">' . $msgHtml . '</div>'
-        .       $blocksHtml
-        .       '<p style="margin:22px 0 0;font-size:14px;color:#374151">' . e($tpl->signature) . '<br><b>' . e($tpl->company_name) . '</b></p>'
-        .     '</div>'
-        .     '<div style="padding:14px 24px;background:#fafafa;border-top:1px solid #eef0f3">'
-        .       '<div style="font-size:12px;color:#6b7280">' . e($tpl->footer_text) . '</div>'
+        . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f5f7"><tr><td align="center" style="padding:24px 12px">'
+        .   '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e6e8ec;border-radius:12px;font-family:' . $font . ';color:#1f2937">'
+        // ── CABEÇALHO compacto: logo + título/subtítulo + linha inferior discreta ──
+        .     '<tr><td style="padding:18px 28px;border-bottom:1px solid #eef0f3">'
+        .       '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        .         '<td valign="middle" style="padding-right:14px"><img src="' . $logo . '" alt="' . $company . '" height="34" style="height:34px;width:auto;display:block;border:0" /></td>'
+        .         '<td valign="middle" style="padding-left:14px;border-left:1px solid #e6e8ec">'
+        .           '<div style="font-size:15px;font-weight:700;color:#111827;line-height:1.2">Central de Atendimento</div>'
+        .           '<div style="font-size:12px;color:#6b7280;line-height:1.3;margin-top:2px">Minutor Help Desk</div>'
+        .         '</td>'
+        .       '</tr></table>'
+        .     '</td></tr>'
+        // ── SAUDAÇÃO + BLOCO DE NOTIFICAÇÃO (ícone + título + descrição) — o "porquê" em 2 segundos ──
+        .     '<tr><td style="padding:24px 28px 4px">'
+        .       ($greeting !== 'Olá,' ? '<p style="margin:0 0 14px;font-size:15px;font-weight:600;color:#4b5563">' . $greeting . '</p>' : '')
+        .       (($notifTitle !== null && trim($notifTitle) !== '')
+                    ? '<div style="font-size:22px;font-weight:800;line-height:1.25;color:#111827">' . e($notifTitle) . '</div>'
+                        . (($notifSubtitle !== null && trim($notifSubtitle) !== '') ? '<div style="margin-top:6px;font-size:14px;line-height:1.55;color:#6b7280">' . e($notifSubtitle) . '</div>' : '')
+                        . '<div style="border-top:1px solid #eef0f3;margin-top:18px;line-height:0;font-size:0">&nbsp;</div>'
+                    : '')
+        .     '</td></tr>'
+        // ── ACEITE / RECUSA NO TOPO (logo após a saudação) — decide direto do e-mail, sem login ──
+        .     $acceptReject
+        // ── CARD DO CHAMADO: card único, barra de status à esquerda, 2 colunas ──
+        .     '<tr><td style="padding:18px 28px 4px">'
+        .       '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+        .         '<td width="4" bgcolor="' . $barColor . '" style="width:4px;background:' . $barColor . ';border-radius:10px 0 0 10px;font-size:0;line-height:0">&nbsp;</td>'
+        .         '<td style="padding:18px 20px;background:#f8f9fb;border:1px solid #e6e8ec;border-left:0;border-radius:0 10px 10px 0">'
+        .           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+        .             '<td valign="top">'
+        .               '<div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#8a94a6;font-weight:700;margin-bottom:2px">Chamado</div>'
+        .               '<div style="font-size:24px;line-height:1.1;font-weight:800;color:#111827">' . $num . '</div>'
+        .             '</td>'
+        .             '<td valign="top" align="right">' . self::statusBadge($sm) . '</td>'
+        .           '</tr></table>'
+        .           '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:14px">'
+        .             '<tr><td width="50%" valign="top" style="padding:7px 12px 7px 0">' . self::cardCell('Cliente', $clienteVal) . '</td>'
+        .                 '<td width="50%" valign="top" style="padding:7px 0">' . self::cardCell('Consultor', $agenteVal) . '</td></tr>'
+        .             '<tr><td width="50%" valign="top" style="padding:7px 12px 7px 0">' . self::cardCell('Última atualização', $atualizado) . '</td>'
+        .                 '<td width="50%" valign="top" style="padding:7px 0">' . self::cardCell('Data de abertura', $aberto) . '</td></tr>'
+        .           '</table>'
+        .         '</td>'
+        .       '</tr></table>'
+        .     '</td></tr>'
+        // ── MENSAGEM DO GATILHO (só quando há texto) + blocos opcionais ──
+        .     (($hasMsg || $blocksHtml !== '')
+                ? '<tr><td style="padding:16px 28px 4px">'
+                    . ($hasMsg
+                        ? '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+                            . '<td width="4" bgcolor="' . $color . '" style="width:4px;background:' . $color . ';border-radius:10px 0 0 10px;font-size:0;line-height:0">&nbsp;</td>'
+                            . '<td style="padding:16px 18px;background:#f8f9fb;border:1px solid #e6e8ec;border-left:0;border-radius:0 10px 10px 0;font-size:14px;line-height:1.65;color:#1f2937">' . $msgHtml . '</td>'
+                            . '</tr></table>'
+                        : '')
+                    . $blocksHtml
+                    . '</td></tr>'
+                : '')
+        // (Aceite/Recusa foi movido para o TOPO, logo após a saudação.)
+        // ── BOTÃO CTA grande e centralizado ──
+        .     '<tr><td align="center" style="padding:24px 28px 6px">'
+        .       '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+        .         '<td align="center" bgcolor="' . $color . '" style="border-radius:8px">'
+        .           '<a href="' . e($ctaUrl) . '" style="display:inline-block;padding:14px 34px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px">' . $ctaLabel . '</a>'
+        .         '</td>'
+        .       '</tr></table>'
+        .       '<div style="font-size:12px;line-height:1.5;color:#9ca3af;margin-top:10px">Ou responda diretamente a este e-mail.</div>'
+        .     '</td></tr>'
+        // ── HISTÓRICO DA CONVERSA (fio completo em todo card) ──
+        .     ($historyHtml !== '' ? '<tr><td style="padding:6px 28px 0">' . $historyHtml . '</td></tr>' : '')
+        // ── ASSINATURA enxuta ──
+        .     '<tr><td style="padding:18px 28px 22px">'
+        .       '<div style="padding-top:16px;border-top:1px solid #eef0f3;font-size:14px;line-height:1.6;color:#374151">'
+        .         '<b style="color:#111827">' . e($tpl->signature) . '</b><br>' . $company . ' Consultoria<br>'
+        .         '<a href="https://www.erpserv.com.br" style="color:' . $color . ';text-decoration:none">www.erpserv.com.br</a>'
+        .       '</div>'
+        .     '</td></tr>'
+        // ── RODAPÉ pequeno (sem logo) ──
+        .     '<tr><td style="padding:16px 28px;background:#fafbfc;border-top:1px solid #eef0f3;border-radius:0 0 12px 12px">'
+        .       '<div style="font-size:12px;line-height:1.5;color:#6b7280;font-weight:600">' . $company . ' Consultoria</div>'
+        .       '<div style="font-size:12px;line-height:1.5;color:#9ca3af">Central de Atendimento</div>'
         .       $minutor
-        .     '</div>'
-        .   '</div>'
-        . '</div>';
+        .     '</td></tr>'
+        .   '</table>'
+        . '</td></tr></table>';
+    }
+
+    /** Célula rótulo+valor do card do chamado (rótulo pequeno em maiúsculas + valor). */
+    private static function cardCell(string $label, ?string $value): string
+    {
+        $v = ($value !== null && trim($value) !== '') ? e($value) : '—';
+        return '<div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:#8a94a6;font-weight:700;margin-bottom:2px">' . e($label) . '</div>'
+            . '<div style="font-size:14px;color:#1f2937;font-weight:600;line-height:1.4">' . $v . '</div>';
+    }
+
+    /** Cor + emoji + rótulo do status (barra do card e badge). SLA estourado sinaliza vermelho. */
+    private static function statusMeta(HelpDeskTicket $ticket): array
+    {
+        $st    = $ticket->status;
+        $key   = (string) optional($st)->key;
+        $label = trim((string) optional($st)->label) ?: '—';
+        $map = [
+            'novo'               => ['#3b82f6', '🔵'],
+            'em_andamento'       => ['#3b82f6', '🔵'],
+            'em_desenvolvimento' => ['#3b82f6', '🔵'],
+            'planejamento_gmud'  => ['#8b5cf6', '🟣'],
+            'solucao_gmud'       => ['#8b5cf6', '🟣'],
+            'aguardando_cliente' => ['#f59e0b', '🟠'],
+            'pendente_terceiros' => ['#f59e0b', '🟠'],
+            'resolvido'          => ['#16a34a', '🟢'],
+            'fechado'            => ['#6b7280', '⚫'],
+            'cancelado'          => ['#6b7280', '⚫'],
+        ];
+        [$c, $emoji] = $map[$key] ?? [(string) (optional($st)->color ?: '#6b7280'), '🔵'];
+        $breached = (!optional($st)->is_resolved && !optional($st)->is_terminal) ? (bool) $ticket->resolution_breached : false;
+        return ['color' => $c, 'emoji' => $emoji, 'label' => $label, 'breached' => $breached];
+    }
+
+    /** Badge de status (pílula com borda na cor + emoji) + badge extra "SLA estourado" quando aplicável. */
+    private static function statusBadge(array $sm): string
+    {
+        $c = $sm['color'];
+        $badge = '<span style="display:inline-block;background:#ffffff;border:1px solid ' . $c . ';color:' . $c . ';border-radius:999px;padding:5px 12px;font-size:12px;font-weight:700;line-height:1;white-space:nowrap">' . $sm['emoji'] . ' ' . e($sm['label']) . '</span>';
+        if (!empty($sm['breached'])) {
+            $badge .= '<br><span style="display:inline-block;margin-top:6px;background:#fef2f2;border:1px solid #ef4444;color:#ef4444;border-radius:999px;padding:4px 10px;font-size:11px;font-weight:700;line-height:1;white-space:nowrap">🔴 SLA estourado</span>';
+        }
+        return $badge;
     }
 
     /**
@@ -77,7 +221,146 @@ class HelpDeskMailComposer
      * é invertida pelos clientes e o logo é imagem). Corpo claro com tema ESCURO intencional via
      * media query (clientes que honram). Default do logo = cid do logo branco.
      */
-    public static function composeSimple(string $title, string $messageHtml, ?string $logoSrc = null): string
+    /** Marcador de corte: o cliente escreve ACIMA desta linha; o ingestor descarta o que vier abaixo. */
+    public const REPLY_DELIMITER = '##– Não escreva abaixo desta linha –##';
+
+    /**
+     * Cabeçalho de status do e-mail de ATUALIZAÇÃO (estilo portal TOTVS/Movidesk): marcador de
+     * "não escreva abaixo desta linha" + nº, data de abertura e último status + "sua solicitação
+     * foi atualizada". Vai no TOPO do e-mail — assim, quando o cliente responder, o texto novo
+     * dele fica acima do marcador e o histórico citado é cortado na ingestão.
+     */
+    public static function updateHeaderHtml(HelpDeskTicket $ticket): string
+    {
+        $tz       = 'America/Sao_Paulo';
+        $num      = e((string) ($ticket->ticket_number ?: ('#' . $ticket->id)));
+        $abertura = $ticket->created_at ? $ticket->created_at->copy()->timezone($tz)->format('d/m/Y \à\s H:i') . ' BRT' : '—';
+        $status   = e((string) (optional($ticket->status)->label ?: '—'));
+        $resp     = e((string) (optional($ticket->assignee)->name ?: 'Não atribuído'));
+        $ref      = trim((string) $ticket->external_ticket_ref);
+        $stKey    = (string) optional($ticket->status)->key;
+        // Prazo de entrega = data informada no chamado (agendamento). All-day → só a data.
+        $schedTxt = $ticket->scheduled_until
+            ? \Illuminate\Support\Carbon::parse($ticket->scheduled_until)->timezone('America/Sao_Paulo')->format($ticket->scheduled_all_day ? 'd/m/Y' : 'd/m/Y \à\s H:i') . ($ticket->scheduled_all_day ? '' : ' BRT')
+            : '';
+        // Aviso automático ao cliente conforme o status — mesma caixa destacada.
+        $avStyle = 'font-size:14px;color:#374151;background:#f5f3ff;border-left:3px solid #7c3aed;padding:10px 12px;border-radius:6px;margin:0 0 16px';
+        $fornec  = $ref !== '' ? trim((string) preg_replace('/\s*#.*$/', '', $ref)) : '';
+        $aviso = '';
+        if ($stKey === 'aguardando_cliente') {
+            $aviso = '<div style="' . $avStyle . '">⏳ <strong>Aguardamos o seu retorno</strong> para darmos continuidade ao atendimento do seu chamado.</div>';
+        } elseif ($stKey === 'em_desenvolvimento') {
+            $aviso = '<div style="' . $avStyle . '">🛠️ Sua solicitação está <strong>em desenvolvimento</strong>.'
+                . ($schedTxt !== '' ? ' A previsão de entrega é <strong>' . e($schedTxt) . '</strong>.' : '')
+                . '</div>';
+        }
+        // Obs.: "Pendente terceiros" NÃO tem aviso de cabeçalho — a mensagem (caixa) já é a própria
+        // interação enviada pelo fluxo de fornecedor (evita a mensagem em dobro).
+        $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
+
+        return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
+            . '<div style="color:#9ca3af;font-size:11px;margin:0 0 12px">' . e(self::REPLY_DELIMITER) . '</div>'
+            . '<div style="font-size:13px;color:#374151;line-height:1.6;margin:0 0 10px">'
+            .   '<strong>Solicitação nº:</strong> ' . $num . '<br>'
+            .   '<strong>Data de abertura:</strong> ' . e($abertura) . '<br>'
+            .   '<strong>Último status:</strong> ' . $status . '<br>'
+            .   '<strong>Responsável:</strong> ' . $resp
+            .   (($ref !== '' && $stKey === 'pendente_terceiros') ? '<br><strong>Fornecedor:</strong> ' . e($ref) : '')
+            . '</div>'
+            . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
+            . '<div style="font-size:14px;font-weight:bold;color:#111827;margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #e5e7eb">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
+            . $aviso
+            . '</div>';
+    }
+
+    /** Botões Aceitar/Recusar quando o chamado está RESOLVIDO (aguardando aceite) — o cliente decide do e-mail, sem login. */
+    public static function acceptButtonsHtml(HelpDeskTicket $ticket): string
+    {
+        if (!(optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal)) return '';
+        $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept');
+        $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject');
+        return '<div style="margin:22px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px">'
+            . '<div style="font-size:13px;color:#4b5563;margin:0 0 12px">A solução resolveu o seu chamado? Você pode responder direto por aqui:</div>'
+            . '<a href="' . e($aUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#16a34a;text-decoration:none;border-radius:8px;margin:0 8px 8px 0">&#10003; Aceitar e encerrar</a>'
+            . '<a href="' . e($rUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#ef4444;text-decoration:none;border-radius:8px;margin:0 8px 8px 0">&#10007; Recusar solução</a>'
+            . '</div>';
+    }
+
+    /**
+     * Link de ACESSO ao chamado — vai em TODA resposta ao cliente. Aponta para o PORTAL do cliente
+     * (sem login interno), mesmo padrão do aviso de chamado encerrado. Botão discreto e centralizado.
+     */
+    public static function ticketLinkHtml(HelpDeskTicket $ticket): string
+    {
+        $url = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $ticket->id;
+        return '<div style="margin:20px 0 4px;padding-top:16px;border-top:1px solid #e5e7eb;text-align:center">'
+            . '<a href="' . e($url) . '" style="display:inline-block;padding:12px 26px;font-size:14px;font-weight:700;color:#ffffff;background:#7c3aed;text-decoration:none;border-radius:8px">Acessar o chamado &rarr;</a>'
+            . '<div style="font-size:12px;color:#9ca3af;margin-top:8px">Acompanhe o histórico completo pelo portal.</div>'
+            . '</div>';
+    }
+
+    /**
+     * Histórico da conversa visível ao cliente (abertura + interações públicas), do mais recente
+     * ao mais antigo, para embutir no corpo do e-mail de atualização (estilo Movidesk: "um e-mail
+     * único mantendo o histórico"). Datas no fuso de São Paulo. Exclui o comentário atual, se dado.
+     */
+    public static function conversationHistoryHtml(HelpDeskTicket $ticket, ?int $excludeCommentId = null): string
+    {
+        // Chamado de CONTINUAÇÃO (aberto ao responder um encerrado): é um chamado NOVO — NÃO repete o
+        // histórico do original. Mostra um LINK para consultar o chamado anterior.
+        if ($ticket->previous_ticket_id) {
+            $prev = $ticket->relationLoaded('previousTicket') ? $ticket->previousTicket : $ticket->previousTicket()->first();
+            if ($prev) {
+                $url = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $prev->id;
+                return '<div style="margin:22px 0 0;border-top:1px solid #e5e7eb;padding-top:14px">'
+                    . '<div style="font-size:13px;color:#4b5563">Este chamado dá continuidade ao chamado anterior <b>' . e((string) $prev->ticket_number) . '</b>.</div>'
+                    . '<div style="margin-top:8px"><a href="' . e($url) . '" style="display:inline-block;color:#1d4ed8;text-decoration:underline;font-size:13px">🔗 Consultar o chamado anterior</a></div>'
+                    . '</div>';
+            }
+        }
+
+        $tz = 'America/Sao_Paulo';
+        $items = [];
+
+        // Abertura (mensagem original do cliente).
+        if (trim(strip_tags((string) $ticket->description)) !== '') {
+            $items[] = [
+                'when' => $ticket->created_at,
+                'who'  => (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente'),
+                'html' => self::richHtml((string) $ticket->description),
+            ];
+        }
+
+        // Interações visíveis ao cliente (agente e cliente).
+        // Histórico COMPLETO (sem cap). O que estourava as 250 partes do Exchange eram as IMAGENS
+        // (cada logo/assinatura antigo virava anexo inline); com noImg abaixo, texto integral é seguro.
+        $comments = $ticket->comments()->where('visibility', 'customer')->orderBy('created_at')->orderBy('id')->get();
+        foreach ($comments as $c) {
+            if ($excludeCommentId && (int) $c->id === (int) $excludeCommentId) continue;
+            $who = $c->author_user_id
+                ? (optional(\App\Models\User::find($c->author_user_id))->name ?: 'Suporte ERPSERV')
+                : (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente');
+            $items[] = ['when' => $c->created_at, 'who' => $who, 'html' => self::richHtml((string) $c->body)];
+        }
+
+        if (empty($items)) return '';
+        $items = array_reverse($items); // mais recente primeiro
+
+        $rows = '';
+        foreach ($items as $it) {
+            $ts = $it['when'] ? $it['when']->copy()->timezone($tz)->format('d/m/Y H:i') : '';
+            $rows .= '<div style="border-left:3px solid #e5e7eb;padding:6px 0 6px 12px;margin:0 0 12px">'
+                . '<div style="font-size:12px;color:#6b7280;margin:0 0 4px"><strong style="color:#374151">' . e($it['who']) . '</strong> · ' . e($ts) . '</div>'
+                . '<div style="font-size:14px;color:#111827;line-height:1.5">' . $it['html'] . '</div>'
+                . '</div>';
+        }
+
+        return '<div style="margin:22px 0 0;border-top:1px solid #e5e7eb;padding-top:14px">'
+            . '<div style="font-size:12px;font-weight:bold;color:#374151;text-transform:uppercase;letter-spacing:.05em;margin:0 0 12px">Histórico da conversa</div>'
+            . $rows . '</div>';
+    }
+
+    public static function composeSimple(string $title, string $messageHtml, ?string $logoSrc = null, ?string $headerSubtitle = null): string
     {
         $tpl   = HelpDeskCommTemplate::current();
         $logo  = $logoSrc ?? ('cid:' . HelpDeskMailFooter::LOGO_WHITE_CID);
@@ -85,11 +368,15 @@ class HelpDeskMailComposer
         $font  = $tpl->font ?: 'Arial, Helvetica, sans-serif';
         $minutor = $tpl->show_minutor
             ? '<div class="hde-foot" style="font-size:11px;color:#9ca3af;margin-top:4px">Mensagem automática · enviada via <span style="color:#6b7280;font-weight:600">Minutor</span></div>' : '';
+        // Subtítulo opcional na FAIXA ROXA (ex.: nº do chamado + título) — texto branco abaixo do logo.
+        $subHtml = ($headerSubtitle !== null && trim($headerSubtitle) !== '')
+            ? '<div style="margin-top:10px;color:#ffffff;font-size:14px;font-weight:700;line-height:1.3">' . e($headerSubtitle) . '</div>'
+            : '';
 
         $inner = '<div class="hde-outer" style="margin:0;padding:0;background:#f3f4f6">'
             . '<div class="hde-card" style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' . $font . ';color:#1f2937;border-radius:10px;overflow:hidden;border:1px solid #e9ebef">'
             // Cabeçalho colorido (marca) + logo branco — legível em claro e escuro.
-            .   '<div class="hde-head" style="background:' . $color . ';padding:18px 24px" bgcolor="' . $color . '"><img src="' . $logo . '" alt="' . e($tpl->company_name) . '" style="height:30px;width:auto;display:block;border:0" /></div>'
+            .   '<div class="hde-head" style="background:' . $color . ';padding:18px 24px" bgcolor="' . $color . '"><img src="' . $logo . '" alt="' . e($tpl->company_name) . '" style="height:30px;width:auto;display:block;border:0" />' . $subHtml . '</div>'
             .   '<div style="padding:22px 24px">'
             .     '<h2 class="hde-title" style="margin:0 0 12px;font-size:18px;color:#111827">' . e($title) . '</h2>'
             .     '<div class="hde-text" style="font-size:14px;line-height:1.6;color:#1f2937">' . $messageHtml . '</div>'
@@ -161,13 +448,25 @@ class HelpDeskMailComposer
                 'Equipe' => (string) optional($ticket->team)->name,
             ]),
             'sla' => self::blockTable('SLA', [
-                '1ª resposta' => $ticket->first_response_due_at ? $ticket->first_response_due_at->format('d/m/Y H:i') : '—',
-                'Resolução'   => $ticket->resolution_due_at ? $ticket->resolution_due_at->format('d/m/Y H:i') : '—',
+                '1ª resposta' => $ticket->first_response_due_at ? $ticket->first_response_due_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—',
+                'Resolução'   => $ticket->resolution_due_at ? $ticket->resolution_due_at->copy()->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—',
                 'Situação'    => $ticket->resolution_breached ? 'SLA vencido' : 'Dentro do prazo',
             ]),
             'button' => self::blockButton($ticket, $color),
+            'assignee_signature' => self::assigneeSignature($ticket),
             default  => '',
         };
+    }
+
+    /** Assinatura do consultor responsável (rica) — usada quando a interação é da equipe. */
+    private static function assigneeSignature(HelpDeskTicket $ticket): string
+    {
+        $u = $ticket->assignee;
+        if (!$u) return '';
+        $data = \App\Services\SignatureRenderer::resolveFor($u);
+        if (!\App\Services\SignatureRenderer::hasData($data)) return '';
+        $html = \App\Services\SignatureRenderer::render($data, 'data', true, 'light', false);
+        return '<div style="margin-top:16px;padding-top:14px;border-top:1px solid #eef0f3">' . $html . '</div>';
     }
 
     private static function blockTitle(string $t): string
@@ -232,6 +531,12 @@ class HelpDeskMailComposer
      */
     public static function inlineImages(string $html): array
     {
+        // Vide treatBody: corpos grandes (muitos prints base64) faziam o PCRE JIT falhar (null) e as
+        // imagens saíam cruas. Sobe limites e desliga o JIT p/ as conversões não falharem em silêncio.
+        @ini_set('pcre.backtrack_limit', '100000000');
+        @ini_set('pcre.recursion_limit', '100000000');
+        @ini_set('pcre.jit', '0');
+
         $atts = []; $i = 0;
         $html = preg_replace_callback(
             '/<img\b[^>]*\bsrc=["\']data:(image\/[a-zA-Z0-9.+-]+);base64,([^"\']+)["\'][^>]*>/i',
@@ -264,6 +569,21 @@ class HelpDeskMailComposer
             },
             $html
         ) ?? $html;
+        // 3) Imagens com src RELATIVO (não cid:/http(s):/data:) → logo ERPSERV inline (cid).
+        //    É o caso do "/logo.png" do cabeçalho do Detalhamento da Solução: em e-mail de gatilho
+        //    (compose/composeSimple) o caminho relativo não tem host e quebrava (ícone "?").
+        $usedLogo = false;
+        $html = preg_replace_callback(
+            '/<img\b([^>]*?)\bsrc=["\'](?!cid:|https?:|data:)[^"\']*["\']([^>]*)>/i',
+            function ($m) use (&$usedLogo) {
+                $usedLogo = true;
+                return '<img' . $m[1] . ' src="cid:' . HelpDeskMailFooter::LOGO_CID . '"' . $m[2] . '>';
+            },
+            $html
+        ) ?? $html;
+        if ($usedLogo && ($logo = HelpDeskMailFooter::inlineLogo())) {
+            $atts[] = $logo;
+        }
         return [$html, $atts];
     }
 }

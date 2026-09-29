@@ -114,6 +114,9 @@ class PermissionService
         // Banco de Competências
         'competencias.view', 'competencias.manage', 'competencias.view_team',
         'competencias.respond', 'competencias.reports.view',
+        // Help Desk — acende o módulo no menu (sidebar). O acesso ao chamado em si
+        // é decidido pelo HelpDeskAccessPolicy, não por esta chave.
+        'help_desk.tickets.view',
         // Sistema
         'settings.view',
     ];

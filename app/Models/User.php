@@ -35,6 +35,7 @@ class User extends Authenticatable
         'coordinator_type',
         'can_timesheet_sustentacao',
         'extra_permissions',
+        'helpdesk_access_profile_id',
     ];
 
     /**
@@ -74,6 +75,7 @@ class User extends Authenticatable
         'has_temporary_password',
         'temporary_password_expires_at',
         'customer_id',
+        'allowed_modules',
         'partner_id',
         'signature',
         'birth_date',
@@ -172,6 +174,7 @@ class User extends Authenticatable
             'extra_permissions'     => 'array',
             'segments' => 'array',
             'extra_permissions' => 'array',
+            'allowed_modules' => 'array',
             'signature' => 'array',
             'birth_date' => 'date',
             // Criptografa em repouso com APP_KEY; descriptografa na leitura.
@@ -262,6 +265,18 @@ class User extends Authenticatable
                 );
                 $u->is_bizify = $bizId !== null && (int) $u->home_company_id === (int) $bizId;
             }
+        });
+
+        // FAIL-SAFE (LGPD): NENHUM usuário com acesso ao Help Desk pode ser salvo SEM perfil de acesso.
+        // Cobre TODOS os fluxos (portal/e-mail, cadastro manual, importação). Cliente → perfil PADRÃO do
+        // seu customer (senão a âncora is_default de cliente). Agente → âncora is_default de agente.
+        static::saving(function (User $u) {
+            $mods = (array) ($u->allowed_modules ?? []);
+            if (!in_array('help_desk', $mods, true) || !empty($u->helpdesk_access_profile_id)) return;
+            $u->helpdesk_access_profile_id = $u->type === 'cliente'
+                ? (optional(\App\Models\Customer::find($u->customer_id))->helpdesk_default_access_profile_id
+                    ?? \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')->where('is_default', true)->value('id'))
+                : \App\Models\HelpDeskAccessProfile::where('kind', 'agent')->where('is_default', true)->value('id');
         });
 
         // A empresa da folha tem que ser uma das empresas VINCULADAS — garante o vínculo.
@@ -356,6 +371,19 @@ class User extends Authenticatable
         return [$type];
     }
     public function isParceiroAdmin(): bool { return $this->effectiveType() === 'parceiro_admin'; }
+
+    /** Help Desk: é agente (perfil de acesso kind=agent OU membro de alguma equipe HD). */
+    public function isHelpDeskAgent(): bool
+    {
+        if ($this->helpdesk_access_profile_id
+            && \App\Models\HelpDeskAccessProfile::whereKey($this->helpdesk_access_profile_id)
+                ->where('kind', 'agent')->exists()) {
+            return true;
+        }
+        return \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
+            ->where('user_id', $this->id)
+            ->exists();
+    }
 
     // ── BOT: equipe e clientes acessíveis ─────────────────────────────
     // Usados pelo BotAccessControl quando bot_visibility = 'team'.

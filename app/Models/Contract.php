@@ -26,10 +26,12 @@ class Contract extends Model
         // Aditivo: altera um projeto pai/independente (não gera projeto novo)
         'is_aditivo', 'aditivo_project_id', 'aditivo_field', 'aditivo_effective_from', 'aditivo_old_value',
         'aditivo_changes',
+        'helpdesk_integration_enabled',
     ];
 
     protected $casts = [
         'aditivo_changes'        => 'array',
+        'helpdesk_integration_enabled' => 'boolean',
         'cobra_despesa_cliente'  => 'boolean',
         'expectativa_inicio'     => 'date:Y-m-d',
         'generated_at'           => 'datetime',

@@ -44,6 +44,29 @@ class MovideskService
         return 'https://api.movidesk.com/public/v1';
     }
 
+    /**
+     * Resolve o id da PESSOA no Movidesk pelo e-mail (agente OU contato). Usado para atribuir o
+     * autor (createdBy) de uma ação empurrada pelo Minutor. Retorna null se não achar.
+     */
+    public function findPersonIdByEmail(?string $email): ?string
+    {
+        $email = trim((string) $email);
+        if ($email === '' || !$this->token()) return null;
+        try {
+            $filter = "emails/any(e: e/email eq '" . str_replace("'", "''", $email) . "')";
+            $url = "{$this->baseUrl()}/persons?token=" . urlencode($this->token())
+                . '&$select=id&$top=1&$filter=' . rawurlencode($filter);
+            $resp = Http::timeout(20)->get($url);
+            if (!$resp->successful()) return null;
+            $data = $resp->json();
+            $id = is_array($data) && isset($data[0]['id']) ? (string) $data[0]['id'] : null;
+            return $id ?: null;
+        } catch (\Throwable $e) {
+            Log::warning('📤 [MOVIDESK] findPersonIdByEmail falhou', ['email' => $email, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     // API
     // ─────────────────────────────────────────────────────────────
@@ -58,7 +81,7 @@ class MovideskService
             $response = Http::timeout(12)->retry(2, 500)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+                '$expand' => 'customFieldValues($expand=items),clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {
@@ -159,6 +182,66 @@ class MovideskService
 
             } catch (\Throwable $e) {
                 Log::error('📦 [MOVIDESK SYNC] Exceção na listagem', ['error' => $e->getMessage()]);
+                break;
+            }
+        } while (true);
+
+        return $tickets;
+    }
+
+    /**
+     * Lista LEVE de tickets para o HELP DESK (espelhamento Promax → Minutor).
+     * EXCLUI por EQUIPE dona (ownerTeam) — os chamados que a Promax mantém nas equipes DELA
+     * (ex.: Manutenção Promax, Promax Bardahl) NÃO são espelhados; só o que é transferido para
+     * as nossas equipes. Filtra também por lastUpdate, trazendo os campos mínimos p/ decidir o import.
+     * Somente LEITURA (GET). Retorna [{id, ownerTeam, baseStatus, status, lastUpdate}, ...].
+     *
+     * @param string[] $teams Nomes de equipe (ownerTeam) a EXCLUIR. Vazio => não filtra por equipe.
+     */
+    public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = []): array
+    {
+        $tickets = [];
+        $top     = 50;
+        $skip    = 0;
+
+        // Filtro base por data. A comparação de equipe é feita em PHP (nomes com espaço/acentos
+        // no $filter OData do Movidesk são frágeis) — o $select traz ownerTeam para isso.
+        $filter = "lastUpdate gt " . $since->utc()->format('Y-m-d\TH:i:s\Z');
+        // BLACKLIST: exclui chamados AINDA em poder das equipes da PROMAX (ex.: Manutenção Promax,
+        // Promax Bardahl) — só espelhamos o que a Promax transfere para as NOSSAS equipes.
+        $blocked = array_map(fn ($t) => mb_strtolower(trim((string) $t)), $teams);
+
+        do {
+            try {
+                $url = "{$this->baseUrl()}/tickets"
+                    . '?token=' . urlencode($this->token())
+                    . '&$filter=' . urlencode($filter)
+                    . '&$select=' . urlencode('id,ownerTeam,baseStatus,status,lastUpdate')
+                    . '&$orderby=' . urlencode('lastUpdate asc')
+                    . '&$top=' . $top
+                    . '&$skip=' . $skip;
+
+                $response = Http::timeout(30)->get($url);
+                if (!$response->successful()) {
+                    Log::warning('📥 [MOVIDESK HD] Erro na listagem', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                    break;
+                }
+
+                $page = $response->json();
+                if (empty($page)) break;
+                if (isset($page['id'])) $page = [$page];
+
+                foreach ($page as $t) {
+                    if ($blocked && in_array(mb_strtolower(trim((string) ($t['ownerTeam'] ?? ''))), $blocked, true)) {
+                        continue; // ainda em poder da equipe da PROMAX → não espelhar/interagir
+                    }
+                    $tickets[] = $t;
+                }
+
+                $skip += $top;
+                if (count($page) < $top) break;
+            } catch (\Throwable $e) {
+                Log::error('📥 [MOVIDESK HD] Exceção na listagem', ['error' => $e->getMessage()]);
                 break;
             }
         } while (true);
@@ -1555,6 +1638,88 @@ class MovideskService
         } while (true);
 
         return $tickets;
+    }
+
+    /**
+     * ESCRITA no Movidesk (Fase 2): atualiza CAMPOS de classificação do chamado via PATCH.
+     * IMPORTANTE: só metadado (category, urgency, serviceFull, customFieldValues, status/baseStatus).
+     * NUNCA envia `actions` — não gera interação/e-mail ao cliente (respeita a regra Promax).
+     * @param array $payload corpo do PATCH (ex.: ['category'=>'Dúvida','urgency'=>'Média']).
+     * @return bool sucesso.
+     */
+    /**
+     * ESCRITA de INTERAÇÕES no Movidesk: adiciona ações ao chamado (PATCH com actions[]).
+     * type: 1 = interna | 2 = pública (chega ao cliente). `description` é TEXTO (htmlDescription é read-only).
+     * @param array $actions ex.: [['type'=>1,'description'=>'...']]
+     * @return bool sucesso.
+     */
+    public function addActions(int $ticketId, array $actions): bool
+    {
+        if (empty($actions)) return true;
+        try {
+            $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&id=' . $ticketId;
+            $response = Http::timeout(30)->withHeaders(['Content-Type' => 'application/json'])
+                ->patch($url, ['actions' => array_values($actions)]);
+            if (!$response->successful()) {
+                Log::warning('📤 [MOVIDESK WB] addActions falhou', ['id' => $ticketId, 'status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                return false;
+            }
+            Log::info('📤 [MOVIDESK WB] addActions ok', ['id' => $ticketId, 'n' => count($actions)]);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção em addActions', ['id' => $ticketId, 'error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    public function patchTicket(int $ticketId, array $payload): bool
+    {
+        if (empty($payload)) return true;
+        // Trava de segurança: nunca escrever ações/mensagens por aqui.
+        unset($payload['actions']);
+        try {
+            $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&id=' . $ticketId;
+            $response = Http::timeout(30)
+                ->withHeaders(['Content-Type' => 'application/json'])
+                ->patch($url, $payload);
+            if (!$response->successful()) {
+                Log::warning('📤 [MOVIDESK WB] PATCH falhou', ['id' => $ticketId, 'status' => $response->status(), 'body' => substr($response->body(), 0, 300), 'payload' => $payload]);
+                return false;
+            }
+            Log::info('📤 [MOVIDESK WB] PATCH ok', ['id' => $ticketId, 'campos' => array_keys($payload)]);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção no PATCH', ['id' => $ticketId, 'error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    /**
+     * Catálogo COMPLETO de status configurados no Movidesk (GET /public/v1/statuses).
+     * Retorna a lista de nomes exatos (ex.: "Novo", "Pendente Terceiros", "Agendado"), sem duplicar.
+     * SOMENTE LEITURA. Usado para popular o de-para de status com os valores reais (não só os já vistos).
+     * @return string[]
+     */
+    public function fetchStatuses(): array
+    {
+        try {
+            $url = "{$this->baseUrl()}/statuses?token=" . urlencode($this->token());
+            $response = Http::timeout(20)->get($url);
+            if (!$response->successful()) {
+                Log::warning('📋 [MOVIDESK] Erro ao listar status', ['status' => $response->status()]);
+                return [];
+            }
+            $names = [];
+            foreach ((array) $response->json() as $s) {
+                $n = trim((string) ($s['name'] ?? ''));
+                if ($n !== '' && !in_array($n, $names, true)) $names[] = $n;
+            }
+            sort($names, SORT_NATURAL | SORT_FLAG_CASE);
+            return $names;
+        } catch (\Throwable $e) {
+            Log::error('📋 [MOVIDESK] Exceção ao listar status', ['error' => $e->getMessage()]);
+            return [];
+        }
     }
 
     /**
