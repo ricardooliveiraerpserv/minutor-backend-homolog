@@ -220,11 +220,13 @@ class MovideskHelpDeskImporter
      */
     public function pushPendingStatuses(): int
     {
-        if (!$this->writebackEnabled()) {
-            return 0;
+        $just = $this->statusJustification();
+        if (!$this->writebackEnabled() || empty($just)) {
+            return 0; // sem justificativa global configurada → não empurra status
         }
-        // Candidatos via join: mapeamento outbound_default do status do ticket, com texto+justificativa,
+        // Candidatos via join: mapeamento outbound_default do status do ticket (com texto),
         // cuja assinatura (base|texto) difere da sombra external_status → Minutor está à frente.
+        // A justificativa NÃO é por status: usamos uma única global (associada a todos os status).
         $rows = DB::table('helpdesk_tickets as t')
             ->join('helpdesk_movidesk_status_map as m', function ($j) {
                 $j->on('m.helpdesk_status_id', '=', 't.status_id')
@@ -234,9 +236,8 @@ class MovideskHelpDeskImporter
             ->where('t.source_system', 'movidesk')
             ->whereNotNull('t.external_ref')
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
-            ->whereNotNull('m.movidesk_justification')->where('m.movidesk_justification', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
-            ->select('t.id', 't.external_ref', 't.external_status', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text', 'm.movidesk_justification as justification')
+            ->select('t.id', 't.external_ref', 't.external_status', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
             ->limit(200)
             ->get();
         if ($rows->isEmpty()) {
@@ -245,7 +246,7 @@ class MovideskHelpDeskImporter
         $pushed = 0;
         foreach ($rows as $r) {
             $sig = trim(($r->base ?? '') . '|' . ($r->text ?? ''));
-            $patch = ['status' => $r->text, 'justification' => $r->justification];
+            $patch = ['status' => $r->text, 'justification' => $just];
             if (!empty($r->base)) { $patch['baseStatus'] = $r->base; }
             try {
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
@@ -388,14 +389,17 @@ class MovideskHelpDeskImporter
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
         } elseif ($hdSig !== null && $hdSig !== $ticket->external_status) {
-            // Minutor mudou o status. Só empurra se houver justificativa (senão o Movidesk rejeita).
-            if (!empty($hdOut['justification']) && !empty($hdOut['text'])) {
+            // Minutor mudou o status → empurra pro Movidesk. O Movidesk exige justificativa em TODA
+            // troca de status; usamos UMA justificativa global (SystemSetting) associada a todos os
+            // status no Movidesk. Sem ela configurada, não empurra (evita 400).
+            $just = $this->statusJustification();
+            if (!empty($hdOut['text']) && !empty($just)) {
                 $patch['status'] = $hdOut['text'];
                 if (!empty($hdOut['base'])) { $patch['baseStatus'] = $hdOut['base']; }
-                $patch['justification'] = $hdOut['justification'];
+                $patch['justification'] = $just;
                 $pushShadow['external_status'] = $hdSig;
             }
-            // sem justificativa: não empurra e não puxa (mantém o status do Minutor).
+            // sem justificativa global: não empurra e não puxa (mantém o status do Minutor).
         } elseif ($mdSig !== $ticket->external_status) {
             // Só o Movidesk mudou → puxa p/ o Minutor.
             $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
@@ -577,6 +581,17 @@ class MovideskHelpDeskImporter
     private function writebackEnabled(): bool
     {
         return (bool) SystemSetting::get('movidesk_hd_writeback_enabled', false);
+    }
+
+    /**
+     * Justificativa ÚNICA global usada em TODA troca de status enviada ao Movidesk (que exige uma
+     * justificativa cadastrada e associada ao status). Deve existir no Movidesk e estar associada a
+     * todos os status que a integração empurra. Vazio → push de status desligado.
+     */
+    private function statusJustification(): ?string
+    {
+        $v = trim((string) SystemSetting::get('movidesk_hd_status_justification', ''));
+        return $v !== '' ? $v : null;
     }
 
     /** Empurrar INTERAÇÕES (comentários) do Minutor como ações no Movidesk? */
