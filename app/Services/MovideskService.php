@@ -191,11 +191,12 @@ class MovideskService
 
     /**
      * Lista LEVE de tickets para o HELP DESK (espelhamento Promax → Minutor).
-     * Filtra por EQUIPE dona (ownerTeam) — só os chamados direcionados às nossas equipes de
-     * atendimento Promax — e por lastUpdate, trazendo os campos mínimos para decidir o import.
+     * EXCLUI por EQUIPE dona (ownerTeam) — os chamados que a Promax mantém nas equipes DELA
+     * (ex.: Manutenção Promax, Promax Bardahl) NÃO são espelhados; só o que é transferido para
+     * as nossas equipes. Filtra também por lastUpdate, trazendo os campos mínimos p/ decidir o import.
      * Somente LEITURA (GET). Retorna [{id, ownerTeam, baseStatus, status, lastUpdate}, ...].
      *
-     * @param string[] $teams Nomes de equipe (ownerTeam) a incluir. Vazio => não filtra por equipe.
+     * @param string[] $teams Nomes de equipe (ownerTeam) a EXCLUIR. Vazio => não filtra por equipe.
      */
     public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = []): array
     {
@@ -206,7 +207,9 @@ class MovideskService
         // Filtro base por data. A comparação de equipe é feita em PHP (nomes com espaço/acentos
         // no $filter OData do Movidesk são frágeis) — o $select traz ownerTeam para isso.
         $filter = "lastUpdate gt " . $since->utc()->format('Y-m-d\TH:i:s\Z');
-        $wanted = array_map(fn ($t) => mb_strtolower(trim((string) $t)), $teams);
+        // BLACKLIST: exclui chamados AINDA em poder das equipes da PROMAX (ex.: Manutenção Promax,
+        // Promax Bardahl) — só espelhamos o que a Promax transfere para as NOSSAS equipes.
+        $blocked = array_map(fn ($t) => mb_strtolower(trim((string) $t)), $teams);
 
         do {
             try {
@@ -229,8 +232,8 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $t) {
-                    if ($wanted && !in_array(mb_strtolower(trim((string) ($t['ownerTeam'] ?? ''))), $wanted, true)) {
-                        continue; // equipe fora do escopo Promax
+                    if ($blocked && in_array(mb_strtolower(trim((string) ($t['ownerTeam'] ?? ''))), $blocked, true)) {
+                        continue; // ainda em poder da equipe da PROMAX → não espelhar/interagir
                     }
                     $tickets[] = $t;
                 }
