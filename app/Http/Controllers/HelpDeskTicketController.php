@@ -255,6 +255,8 @@ class HelpDeskTicketController extends Controller
             })
             // Filtro DEDICADO por número do chamado (campo separado da busca geral).
             ->when($request->filled('ticket'), fn ($q) => $q->where('ticket_number', 'ilike', '%' . $request->ticket . '%'))
+            // Filtro por número do chamado TOTVS — traz o chamado que tenha QUALQUER interação com esse número.
+            ->when($request->filled('totvs_ticket_number'), fn ($q) => $q->whereHas('comments', fn ($c) => $c->where('totvs_ticket_number', 'ilike', '%' . $request->input('totvs_ticket_number') . '%')))
             ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
             // ESCALA: filtro de DATA no banco (usa índice created_at) — a fila deixa de carregar "os N
             // mais recentes de toda a história" e passa a varrer só o período pedido.
@@ -1383,12 +1385,18 @@ class HelpDeskTicketController extends Controller
     {
         $v = $request->validate([
             'status_id'        => 'required|exists:helpdesk_statuses,id',
-            'note'             => 'nullable|string|max:500',
+            'note'             => 'nullable|string|max:2000',
             'justification_id' => 'nullable|exists:helpdesk_ticket_justifications,id', // motivo vinculado ao status
             'dev_delivery_at'  => 'nullable|date_format:Y-m-d', // previsão de entrega em homologação (Em Desenvolvimento)
+            'totvs_ticket_number' => 'nullable|string|max:60',  // nº do chamado TOTVS (obrigatório p/ Pendente TOTVS)
+            'visibility'       => 'nullable|in:internal,customer', // visibilidade da interação criada (Pendente TOTVS)
         ]);
         abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
         $new = HelpDeskStatus::find($v['status_id']);
+        // "Pendente TOTVS" EXIGE o número do chamado da TOTVS (gravado na interação criada abaixo).
+        if ($new && $new->key === 'pendente_totvs') {
+            abort_if(trim((string) ($v['totvs_ticket_number'] ?? '')) === '', 422, 'Informe o número do chamado da TOTVS.');
+        }
         // Mudança REAL de status? "Manter" (mesmo status) só atualiza a data de entrega, sem disparar gatilho.
         $statusChanged = $new && (int) $new->id !== (int) $ticket->status_id;
         // "Em Desenvolvimento" EXIGE a data de entrega prevista em homologação (vira legenda + comunicação ao cliente).
@@ -1436,6 +1444,23 @@ class HelpDeskTicketController extends Controller
                 'is_system'      => true,
             ]);
             HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'close']]);
+        }
+        // Pendente TOTVS → cria a INTERAÇÃO do consultor já com o número do chamado TOTVS (gravado
+        // também na coluna totvs_ticket_number da interação, para permitir o filtro depois).
+        if ($new && $new->key === 'pendente_totvs') {
+            $totvs   = trim((string) $v['totvs_ticket_number']);
+            $noteTxt = trim((string) ($v['note'] ?? ''));
+            $vis     = ($v['visibility'] ?? 'internal') === 'customer' ? 'customer' : 'internal';
+            $body    = $noteTxt !== '' ? nl2br(e($noteTxt)) : '';
+            $body   .= ($body !== '' ? '<br><br>' : '') . '📞 Chamado TOTVS: <b>' . e($totvs) . '</b>';
+            $c = $ticket->comments()->create([
+                'author_user_id'      => $u?->id,
+                'body'                => $body,
+                'visibility'          => $vis,
+                'channel'             => 'interno',
+                'totvs_ticket_number' => $totvs,
+            ]);
+            HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'via' => 'pendente_totvs', 'totvs' => $totvs]]);
         }
         if ($statusChanged) {
             \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);

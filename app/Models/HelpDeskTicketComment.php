@@ -24,6 +24,8 @@ class HelpDeskTicketComment extends Model
     protected $fillable = [
         'ticket_id', 'origin_ticket_id', 'author_user_id', 'author_contact_id',
         'body', 'visibility', 'is_system', 'channel', 'idempotency_key',
+        // Número do chamado na TOTVS (informado na interação ao mover p/ "Pendente TOTVS")
+        'totvs_ticket_number',
         // Integração Movidesk (espelhamento Promax) — origem da interação + id da action externa.
         'source', 'external_action_id',
         // Tempo trabalhado por interação (movimenta horas como o Movidesk)
