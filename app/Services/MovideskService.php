@@ -44,6 +44,29 @@ class MovideskService
         return 'https://api.movidesk.com/public/v1';
     }
 
+    /**
+     * Resolve o id da PESSOA no Movidesk pelo e-mail (agente OU contato). Usado para atribuir o
+     * autor (createdBy) de uma ação empurrada pelo Minutor. Retorna null se não achar.
+     */
+    public function findPersonIdByEmail(?string $email): ?string
+    {
+        $email = trim((string) $email);
+        if ($email === '' || !$this->token()) return null;
+        try {
+            $filter = "emails/any(e: e/email eq '" . str_replace("'", "''", $email) . "')";
+            $url = "{$this->baseUrl()}/persons?token=" . urlencode($this->token())
+                . '&$select=id&$top=1&$filter=' . rawurlencode($filter);
+            $resp = Http::timeout(20)->get($url);
+            if (!$resp->successful()) return null;
+            $data = $resp->json();
+            $id = is_array($data) && isset($data[0]['id']) ? (string) $data[0]['id'] : null;
+            return $id ?: null;
+        } catch (\Throwable $e) {
+            Log::warning('📤 [MOVIDESK] findPersonIdByEmail falhou', ['email' => $email, 'error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────
     // API
     // ─────────────────────────────────────────────────────────────

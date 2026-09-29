@@ -455,12 +455,9 @@ class MovideskHelpDeskImporter
             }
             $type = $c->visibility === 'customer' ? 2 : 1; // 2=pública (chega ao cliente), 1=interna
             $action = ['type' => $type, 'description' => $text];
-            // Atribui o AUTOR da ação no Movidesk (senão fica sem nome/avatar). Mapeia o usuário
-            // do Minutor → agente Movidesk (movidesk_agents.user_id → movidesk_id).
-            $agentId = $c->author_user_id
-                ? MovideskAgent::where('user_id', $c->author_user_id)->whereNotNull('movidesk_id')->value('movidesk_id')
-                : null;
-            if ($agentId) { $action['createdBy'] = ['id' => (string) $agentId]; }
+            // Atribui o AUTOR da ação no Movidesk (senão fica sem nome/avatar).
+            $personId = $this->authorMovideskId($c->author_user_id);
+            if ($personId) { $action['createdBy'] = ['id' => (string) $personId]; }
             $ok = $this->movidesk->addActions($externalId, [$action]);
             if ($ok) {
                 $c->external_action_id = (string) (++$maxId); // id sequencial da ação recém-criada
@@ -583,6 +580,29 @@ class MovideskHelpDeskImporter
     }
 
     /** Empurrar INTERAÇÕES (comentários) do Minutor como ações no Movidesk? */
+    /** Cache por execução: user_id → movidesk person id (evita repetir lookup/API). */
+    private array $authorMdCache = [];
+
+    /**
+     * Id da PESSOA no Movidesk do autor (p/ createdBy da ação):
+     * 1) movidesk_agents.user_id; 2) movidesk_agents por e-mail; 3) pessoa no Movidesk por e-mail (API).
+     * null → ação vai sem autor (comportamento antigo).
+     */
+    private function authorMovideskId(?int $userId): ?string
+    {
+        if (!$userId) return null;
+        if (array_key_exists($userId, $this->authorMdCache)) return $this->authorMdCache[$userId];
+        $id = MovideskAgent::where('user_id', $userId)->whereNotNull('movidesk_id')->value('movidesk_id');
+        if (!$id) {
+            $email = User::where('id', $userId)->value('email');
+            if ($email) {
+                $id = MovideskAgent::where('email', $email)->whereNotNull('movidesk_id')->value('movidesk_id')
+                    ?: $this->movidesk->findPersonIdByEmail($email);
+            }
+        }
+        return $this->authorMdCache[$userId] = ($id ? (string) $id : null);
+    }
+
     private function pushCommentsEnabled(): bool
     {
         return (bool) SystemSetting::get('movidesk_hd_push_comments_enabled', false);
