@@ -61,7 +61,11 @@ class ContractController extends Controller
             'contractType:id,name',
             'serviceType:id,name',
             'architect:id,name',
-            'project:id,code,name,sold_hours,hour_contribution,status',
+            // Projeto COMPLETO (sem select restrito): managementBreakdown() precisa de
+            // accumulated_sold_hours, contract_type_id, start_date, encerramento_date e
+            // initial_hours_consumed. Com colunas restritas, esses vinham nulos e o saldo de
+            // Banco de Horas Mensal ficava errado (ex.: PRS010-21 mostrava -286,6h em vez de +223,4h).
+            'project',
         ])
             ->when($request->query('status'), fn($q) => $q->where('status', $request->query('status')))
             ->when($request->query('customer_id'), fn($q) => $q->where('customer_id', $request->query('customer_id')))
