@@ -6,6 +6,7 @@ use App\Models\HelpDeskMovideskStatusMap;
 use App\Models\HelpDeskStatus;
 use App\Models\HelpDeskTicket;
 use App\Models\HelpDeskTicketComment;
+use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\SystemSetting;
 use App\Models\User;
@@ -439,7 +440,7 @@ class MovideskHelpDeskImporter
             ->where('is_system', false)
             ->whereNull('external_action_id')
             ->orderBy('id')
-            ->get(['id', 'body', 'visibility']);
+            ->get(['id', 'body', 'visibility', 'author_user_id']);
         if ($pending->isEmpty()) return;
 
         // id da última ação no Movidesk — as novas recebem ids sequenciais a partir daqui.
@@ -453,7 +454,14 @@ class MovideskHelpDeskImporter
                 continue;
             }
             $type = $c->visibility === 'customer' ? 2 : 1; // 2=pública (chega ao cliente), 1=interna
-            $ok = $this->movidesk->addActions($externalId, [['type' => $type, 'description' => $text]]);
+            $action = ['type' => $type, 'description' => $text];
+            // Atribui o AUTOR da ação no Movidesk (senão fica sem nome/avatar). Mapeia o usuário
+            // do Minutor → agente Movidesk (movidesk_agents.user_id → movidesk_id).
+            $agentId = $c->author_user_id
+                ? MovideskAgent::where('user_id', $c->author_user_id)->whereNotNull('movidesk_id')->value('movidesk_id')
+                : null;
+            if ($agentId) { $action['createdBy'] = ['id' => (string) $agentId]; }
+            $ok = $this->movidesk->addActions($externalId, [$action]);
             if ($ok) {
                 $c->external_action_id = (string) (++$maxId); // id sequencial da ação recém-criada
                 $c->save();
@@ -470,6 +478,10 @@ class MovideskHelpDeskImporter
     private function htmlToText(string $html): string
     {
         $s = $html;
+        // Remove a ASSINATURA padrão (montada em <table>) — não deve ir pro Movidesk.
+        // Greedy do 1º <table> ao último </table> cobre tabelas aninhadas da assinatura.
+        $stripped = preg_replace('/<table\b.*<\/table>/is', '', $s);
+        if ($stripped !== null) { $s = $stripped; }
         // Células de tabela viram espaço (mantém itens da mesma linha separados).
         $s = preg_replace('/<\s*\/\s*(td|th)\s*>/i', ' ', $s);
         // Quebras explícitas.
