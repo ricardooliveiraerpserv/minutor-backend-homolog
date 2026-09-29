@@ -658,8 +658,15 @@ class NotificationController extends Controller
                 $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
                 $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
                 [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-                \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
-                $sent++;
+                [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+                if ($ok) {
+                    $sent++;
+                } else {
+                    // Antes as falhas do Graph eram engolidas em silêncio ("enviou e não chegou").
+                    \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de publicação (Graph)', [
+                        'notification_id' => $n->id, 'to' => $u->email, 'from' => $from, 'erro' => $err,
+                    ]);
+                }
             }
             return $sent;
         }
@@ -672,7 +679,13 @@ class NotificationController extends Controller
         if (empty($emails)) return 0;
         $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $this->emailBody($n));
         [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-        \App\Services\GraphMailSender::sendAs($from, [$from], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, $emails);
+        [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$from], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, $emails);
+        if (!$ok) {
+            \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de publicação (Graph, BCC)', [
+                'notification_id' => $n->id, 'bcc_count' => count($emails), 'from' => $from, 'erro' => $err,
+            ]);
+            return 0;
+        }
         return count($emails);
     }
 
