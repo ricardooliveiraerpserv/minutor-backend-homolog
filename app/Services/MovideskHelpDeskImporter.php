@@ -420,6 +420,8 @@ class MovideskHelpDeskImporter
         $s = preg_replace('/<\s*\/\s*(td|th)\s*>/i', ' ', $s);
         // Quebras explícitas.
         $s = preg_replace('/<\s*br\s*\/?\s*>/i', "\n", $s);
+        // ABERTURA de tabela → quebra (separa a mensagem da assinatura montada em <table>).
+        $s = preg_replace('/<\s*table[^>]*>/i', "\n", $s);
         // Fim de linha de tabela / tabela / blocos → quebra de linha.
         $s = preg_replace('/<\s*\/\s*(p|div|li|tr|table|h[1-6]|blockquote|section|header|footer)\s*>/i', "\n", $s);
         $s = strip_tags($s);
