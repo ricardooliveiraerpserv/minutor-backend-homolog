@@ -326,9 +326,20 @@ class UserController extends Controller
             'allocated_hours', 'bank_hours_initial_balance', 'bank_hours_start_date',
             'cpf', 'matricula', 'payroll_status', 'birth_date', 'extra_permissions', 'signature',
         ];
-        $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields) {
+        // Batch dos dashboard_types p/ os usuários da página — evita N+1
+        // (antes: 1 query por usuário via getAllowedDashboardTypes(); com 100/página isso
+        //  eram 100 idas ao banco ~3s. Agora 1 query só.)
+        $pageUserIds = collect($users->items())->pluck('id')->all();
+        $dashByUser = \DB::table('user_dashboard_types')
+            ->whereIn('user_id', $pageUserIds)
+            ->get(['user_id', 'dashboard_type'])
+            ->groupBy('user_id');
+
+        $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields, $dashByUser) {
             $userData = $user->toArray();
-            $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            $userData['dashboard_types'] = isset($dashByUser[$user->id])
+                ? $dashByUser[$user->id]->pluck('dashboard_type')->all()
+                : [];
             $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
             if (!$canSeeFolha) {
                 foreach ($folhaFields as $f) unset($userData[$f]);
