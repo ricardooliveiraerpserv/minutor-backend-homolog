@@ -113,7 +113,7 @@ Schedule::command('movidesk:portal-sync')
   ->cron("*/{$portalSyncInterval} * * * *")
   ->name('movidesk-portal-sync')
   ->description('Sincroniza tickets do Movidesk para o Portal de Sustentação')
-  ->withoutOverlapping(60)
+  ->withoutOverlapping(180)
   ->runInBackground();
 
 // Sync de organizações do Movidesk — popula CNPJ e customer_id nos tickets
@@ -123,7 +123,7 @@ Schedule::command('movidesk:sync-orgs')
   ->cron("*/{$syncOrgsInterval} * * * *")
   ->name('movidesk-sync-orgs')
   ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
-  ->withoutOverlapping(60)
+  ->withoutOverlapping(180)
   ->runInBackground();
 
 // Normalização de snapshots de contratos — detecta e corrige divergências
