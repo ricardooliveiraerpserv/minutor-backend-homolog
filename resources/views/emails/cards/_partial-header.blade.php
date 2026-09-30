@@ -10,8 +10,8 @@
       <tr>
         <td align="center">
           <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('conecta-logo-negative.png'))) }}"
-            alt="Conecta" height="56"
-            style="display:inline-block;height:56px;width:auto;border:0;" />
+            alt="Conecta ERP" height="84"
+            style="display:inline-block;height:84px;width:auto;border:0;" />
         </td>
       </tr>
     </table>
