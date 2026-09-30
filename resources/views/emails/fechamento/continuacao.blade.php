@@ -19,7 +19,7 @@
               <div style="border-top:1px solid #E5E7EB;padding-top:14px;font-size:13px;color:#4B5563;line-height:1.5;">
                 Atenciosamente,<br>
                 <strong style="color:#111827;">{{ $senderName }}</strong><br>
-                ERPSERV Consultoria
+                {{ \App\Support\Brand::name() }}
               </div>
             </td>
           </tr>

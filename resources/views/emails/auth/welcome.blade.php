@@ -6,7 +6,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="color-scheme" content="dark">
   <meta name="supported-color-schemes" content="dark">
-  <title>Bem-vindo(a) ao Minutor — ERPServ Consultoria</title>
+  <title>Bem-vindo(a) ao Minutor — {{ \App\Support\Brand::name() }}</title>
   <!--[if mso]>
   <noscript>
     <xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
@@ -53,8 +53,8 @@
                 <tr>
                   <td align="center">
                     <a href="https://erpserv.com.br" target="_blank" style="text-decoration:none;">
-                      <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('logo-erpserv-white.png'))) }}"
-                        alt="ERPServ Consultoria"
+                      <img src="data:image/png;base64,{{ base64_encode(file_get_contents(\App\Support\Brand::darkLogoPath())) }}"
+                        alt="{{ \App\Support\Brand::name() }}"
                         width="140" height="auto"
                         style="display:inline-block;width:140px;height:auto;opacity:0.85;" />
                     </a>
@@ -79,7 +79,7 @@
                       Minutor
                     </div>
                     <div style="margin-top:4px;font-size:13px;color:rgba(255,255,255,0.38);font-weight:400;font-family:'Segoe UI',Arial,sans-serif;">
-                      Controle de horas e contratos em um só lugar
+                      {{ \App\Support\Brand::tagline() }}
                     </div>
                   </td>
                 </tr>
@@ -239,7 +239,7 @@
                       style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:600;
                         color:#FFFFFF;text-decoration:none;font-family:'Segoe UI',Arial,sans-serif;
                         letter-spacing:0.2px;">
-                      Acessar o Minutor &rarr;
+                      Acessar o {{ \App\Support\Brand::appName() }} &rarr;
                     </a>
                   </td>
                 </tr>
@@ -287,7 +287,7 @@
           <tr>
             <td align="center" style="padding:24px 40px 32px;">
               <span style="font-size:11px;color:rgba(255,255,255,0.18);font-family:'Segoe UI',Arial,sans-serif;letter-spacing:0.02em;">
-                &copy; {{ date('Y') }} ERPServ Consultoria &middot; Todos os direitos reservados
+                &copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} &middot; Todos os direitos reservados
               </span>
             </td>
           </tr>

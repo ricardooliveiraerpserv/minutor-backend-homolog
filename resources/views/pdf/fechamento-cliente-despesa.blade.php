@@ -46,9 +46,9 @@
     <tr>
       <td class="hd-logo">
         @if(!empty($logoDataUri))
-          <img src="{{ $logoDataUri }}" alt="ERPSERV Consultoria" />
+          <img src="{{ $logoDataUri }}" alt="{{ \App\Support\Brand::name() }}" />
         @else
-          <span class="brand">ERPSERV Consultoria</span>
+          <span class="brand">{{ \App\Support\Brand::name() }}</span>
         @endif
       </td>
       <td class="hd-meta">

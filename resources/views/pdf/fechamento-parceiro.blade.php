@@ -40,11 +40,11 @@
 <body>
   <div class="header">
     @if(!empty($logoDataUri))
-      <img src="{{ $logoDataUri }}" alt="ERPSERV Consultoria" style="height:44px;width:auto;display:block;margin-bottom:6px;">
+      <img src="{{ \App\Support\Brand::isConecta() ? 'data:image/png;base64,'.base64_encode(file_get_contents(\App\Support\Brand::lightLogoPath())) : $logoDataUri }}" alt="{{ \App\Support\Brand::name() }}" style="height:44px;width:auto;display:block;margin-bottom:6px;">
     @else
-      <div class="brand">ERPSERV Consultoria</div>
+      <div class="brand">{{ \App\Support\Brand::name() }}</div>
     @endif
-    <div class="brand-sub">Minutor — Controle de horas e contratos</div>
+    <div class="brand-sub">{{ \App\Support\Brand::isConecta() ? 'Conecta ERP — ERP para a era digital.' : 'Minutor — Controle de horas e contratos' }}</div>
     <div class="doc-title">Fechamento de Parceiro</div>
     <div class="doc-meta">{{ $parceiroName }} &nbsp;·&nbsp; Período: {{ $periodo }}@if(!empty($recebedorName)) &nbsp;·&nbsp; Recebedor: {{ $recebedorName }}@endif</div>
   </div>
