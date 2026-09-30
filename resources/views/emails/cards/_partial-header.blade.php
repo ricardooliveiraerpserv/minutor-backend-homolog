@@ -5,23 +5,13 @@
   <td align="left" style="padding:36px 40px 28px;background:#000000;border-bottom:1px solid rgba(255,255,255,0.06);">
 
   @if($__isConecta)
-    {{-- CONECTA — ícone (imagem nítida) + wordmark/slogan em TEXTO (nítido em qualquer tamanho), centralizado --}}
+    {{-- CONECTA — logo OFICIAL dark (alta resolução 3642×900, fundo preto = fundo do e-mail), centralizado --}}
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
       <tr>
         <td align="center">
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="vertical-align:middle;padding-right:16px;">
-                <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('conecta-icon.png'))) }}"
-                  alt="Conecta ERP" width="56" height="56"
-                  style="display:block;width:56px;height:56px;border:0;" />
-              </td>
-              <td style="vertical-align:middle;">
-                <div style="font-size:30px;font-weight:700;letter-spacing:0.12em;color:#FFFFFF;line-height:1;font-family:'Segoe UI',Arial,sans-serif;">conecta</div>
-                <div style="margin-top:6px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.55);font-family:'Segoe UI',Arial,sans-serif;">ERP para a era digital.</div>
-              </td>
-            </tr>
-          </table>
+          <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('conecta-logo-dark.png'))) }}"
+            alt="Conecta ERP" height="92"
+            style="display:inline-block;height:92px;width:auto;border:0;" />
         </td>
       </tr>
     </table>
