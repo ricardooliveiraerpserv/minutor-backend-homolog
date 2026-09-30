@@ -1,7 +1,21 @@
-{{-- Card header com logo ERPServ branco + Minutor. Compartilhado entre todos templates de card. --}}
+{{-- Card header — marca POR TENANT. Conecta: logo negativo. Grupo/ERPServ: logo ERPServ branco + Minutor.
+     Compartilhado entre todos os templates de card/workflow. --}}
+@php $__isConecta = optional(\Spatie\Multitenancy\Models\Tenant::current())->slug === 'conecta'; @endphp
 <tr>
   <td align="left" style="padding:36px 40px 28px;background:#000000;border-bottom:1px solid rgba(255,255,255,0.06);">
 
+  @if($__isConecta)
+    {{-- CONECTA — logo negativo (ícone + "conecta" + slogan), centralizado --}}
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center">
+          <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('conecta-logo-negative.png'))) }}"
+            alt="Conecta" height="56"
+            style="display:inline-block;height:56px;width:auto;border:0;" />
+        </td>
+      </tr>
+    </table>
+  @else
     {{-- ERPServ — logo centralizado --}}
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
       <tr>
@@ -34,6 +48,7 @@
         </td>
       </tr>
     </table>
+  @endif
 
   </td>
 </tr>
