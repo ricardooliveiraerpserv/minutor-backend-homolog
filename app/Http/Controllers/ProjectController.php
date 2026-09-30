@@ -3945,7 +3945,8 @@ class ProjectController extends Controller
      * - Setando o override → contract muda pra coluna do coord (alocado + kanban_coordinator_id)
      *   e zera sustentacao_column. Card sai das colunas sust_* do Kanban.
      * - Limpando o override → recalcula sustentacao_column pelo tipo de contrato e devolve
-     *   o card pra fila correta. Zera kanban_coordinator_id e kanban_status.
+     *   o card pra fila correta. Zera kanban_coordinator_id e, se estava em 'alocado',
+     *   devolve o kanban_status pro valor canônico de sustentação ('inicio_autorizado').
      */
     private function syncContractKanbanForOverride(Project $project): void
     {
@@ -4001,7 +4002,12 @@ class ProjectController extends Controller
             $sustColumn = 'sust_cloud';
         }
 
-        $expectedStatus = $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO ? null : $contract->kanban_status;
+        // kanban_status é NOT NULL (default 'novo'); ao sair da coluna do coordenador
+        // ('alocado'), o card de sustentação volta com o status canônico das filas sust_*
+        // ('inicio_autorizado'). Nunca gravar null aqui — viola a constraint (SQLSTATE 23502).
+        $expectedStatus = $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO
+            ? \App\Models\Contract::KANBAN_INICIO_AUTORIZADO
+            : $contract->kanban_status;
         $needsUpdate = $contract->kanban_status !== $expectedStatus
             || $contract->kanban_coordinator_id !== null
             || $contract->sustentacao_column !== $sustColumn;
