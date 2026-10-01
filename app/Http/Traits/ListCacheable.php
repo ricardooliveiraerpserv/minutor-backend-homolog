@@ -24,13 +24,9 @@ use Illuminate\Support\Facades\Auth;
  */
 trait ListCacheable
 {
-    protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60, ?string $scopeOverride = null): mixed
+    protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60): mixed
     {
-        // $scopeOverride: quando vários usuários enxergam EXATAMENTE a mesma resposta
-        // (ex.: admins na lista de Gestão, que veem todos os projetos), passar um escopo
-        // compartilhado (ex.: 'admin') colapsa N recálculos pesados em 1 só por TTL.
-        // Só usar quando a resposta é comprovadamente idêntica entre esses usuários.
-        $userId    = $scopeOverride ?? (Auth::id() ?? 'guest');
+        $userId    = Auth::id() ?? 'guest';
         // Multi-empresa: a empresa ativa ENTRA na chave — senão o mesmo user/query
         // em empresas diferentes reusa o cache da outra (vazamento entre empresas).
         $companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
@@ -59,8 +55,32 @@ trait ListCacheable
         }
     }
 
+    /**
+     * "Geração" do resource — contador simples que incrementa a cada invalidação.
+     * Usado por caches de STRING (ex.: JSON do Gestão de Projetos) que embutem a
+     * geração na chave: ao invalidar, a geração muda → a chave antiga fica órfã
+     * (expira por TTL) e a próxima leitura recomputa. Evita cachear objetos pesados.
+     */
+    protected function listGeneration(string $resource): int
+    {
+        try {
+            return (int) (Cache::get("listgen:{$resource}") ?? 1);
+        } catch (\Throwable) {
+            return 1;
+        }
+    }
+
     protected function invalidateListCache(string $resource): void
     {
+        // Bump da geração (invalida caches de string que embutem listgen na chave)
+        try {
+            if (Cache::get("listgen:{$resource}") === null) {
+                Cache::forever("listgen:{$resource}", 2);
+            } else {
+                Cache::increment("listgen:{$resource}");
+            }
+        } catch (\Throwable) {}
+
         // Invalida Redis tags
         try {
             if ($this->redisAvailable()) {

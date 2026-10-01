@@ -586,18 +586,7 @@ class ProjectController extends Controller
         $gestaoMonths = $gestaoMonthsRaw
             ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
             : [];
-        // Gestão de Projetos: a resposta é pesada (~7s: hidrata ~1000 projetos + relações).
-        // (1) TTL maior — visão gerencial tolera alguns minutos de staleness no saldo/consumo.
-        // (2) Escopo COMPARTILHADO entre admins — todos os admins veem o MESMO conjunto
-        //     (todos os projetos; node_state/coordinator_is_direct são constantes p/ admin),
-        //     então 1 cálculo serve todos em vez de recomputar por usuário. Coordenadores
-        //     (visão restrita por escopo) seguem com chave por-usuário (null). Invalidação
-        //     por edição de projeto/aporte continua valendo (flush da tag 'projects').
-        $gestaoTtl   = $gestaoMode ? 300 : 60;
-        $gestaoScope = ($gestaoMode && $currentUserForTransform && $currentUserForTransform->isAdmin())
-            ? 'admin'
-            : null;
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
+        $compute = function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -917,7 +906,42 @@ class ProjectController extends Controller
             'hasNext' => $projects->hasMorePages(),
             'items'   => $projects->items(),
         ];
-        }, $gestaoTtl, $gestaoScope); // fim cachedList
+        }; // fim $compute
+
+        // Gestão de Projetos: resposta MUITO pesada (~5-7s: hidrata ~1000 projetos+relações).
+        // O cache de MODELS (cachedList) não ajuda aqui — reconstruir ~1000 Eloquent do cache
+        // custa quase tanto quanto recomputar. Então cacheamos a STRING JSON final:
+        //  - hit = ler a string e devolver (milissegundos), sem reidratar nada;
+        //  - escopo 'admin' COMPARTILHADO (todos os admins veem o mesmo conjunto → 1 cálculo
+        //    serve todos, em vez de N recálculos concorrentes saturando os 2 vCPUs no fechamento);
+        //  - coordenador/consultor: chave por-usuário (visão restrita por escopo);
+        //  - invalidação por "geração": edição de projeto/aporte chama invalidateListCache('projects'),
+        //    que incrementa listgen:projects → a chave muda → recomputa na próxima. TTL 300s de teto.
+        if ($gestaoMode) {
+            $scope = ($currentUserForTransform && $currentUserForTransform->isAdmin())
+                ? 'admin'
+                : ('u' . (optional($currentUserForTransform)->id ?? 'guest'));
+            $companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
+            $gen = $this->listGeneration('projects');
+            $jsonKey = "gestaojson:g{$gen}:{$scope}:c{$companyId}:" . md5($request->getQueryString() ?? '');
+
+            try {
+                $hit = \Illuminate\Support\Facades\Cache::get($jsonKey);
+                if (is_string($hit) && $hit !== '') {
+                    return response($hit, 200)->header('Content-Type', 'application/json');
+                }
+            } catch (\Throwable $e) { /* cache indisponível → computa */ }
+
+            $result = $compute();
+            $json = json_encode($result);
+            if ($json !== false) {
+                try { \Illuminate\Support\Facades\Cache::put($jsonKey, $json, 300); } catch (\Throwable $e) {}
+                return response($json, 200)->header('Content-Type', 'application/json');
+            }
+            return response()->json($result);
+        }
+
+        $result = $this->cachedList($request, 'projects', $compute);
         return response()->json($result);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('ProjectController@index error', [
