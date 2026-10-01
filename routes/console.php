@@ -97,6 +97,11 @@ Schedule::command('movidesk:sync')
   ->withoutOverlapping(30)
   ->runInBackground();
 
+// ── Syncs de TICKET/ORG do Movidesk — PAUSÁVEIS por ambiente (flag SystemSetting).
+// Em PROD ficam DESLIGADOS até o upgrade do servidor; só o sync de APONTAMENTOS (acima) roda.
+// Default LIGADO → dev/homolog inalterados. Para desligar: system_settings.movidesk_ticket_syncs_enabled = '0'.
+if (\App\Models\SystemSetting::get('movidesk_ticket_syncs_enabled', '1') !== '0') {
+
 // Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
 // aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
 Schedule::command('movidesk:retry-problem-tickets')
@@ -125,6 +130,8 @@ Schedule::command('movidesk:sync-orgs')
   ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
   ->withoutOverlapping(180)
   ->runInBackground();
+
+} // ── fim dos syncs de TICKET/ORG (pausáveis via movidesk_ticket_syncs_enabled)
 
 // Normalização de snapshots de contratos — detecta e corrige divergências
 Schedule::job(new NormalizeContractStateJob)

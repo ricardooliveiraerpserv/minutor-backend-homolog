@@ -105,6 +105,9 @@ class NotificationController extends Controller
         $u = $request->user();
         abort_unless($u, 401);
 
+        // Polling de alta frequência (menu). Cache por-usuário de 15s alivia drasticamente a carga
+        // de DB no pico de fechamento (contagens repetidas a cada poll × muitos usuários).
+        $data = \Illuminate\Support\Facades\Cache::remember("badges:{$u->id}", 15, function () use ($u) {
         $today   = now()->toDateString();
         $nowTime = now()->format('H:i:s');
         $taskBase = \App\Models\Task::where('assigned_to', $u->id)->where('completed', false);
@@ -130,13 +133,16 @@ class NotificationController extends Controller
         $atrasos = \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
             ->whereNull('deleted_at')->count();
 
-        return response()->json(['data' => [
+        return [
             'pending_tasks'        => $pendingTasks,
             'overdue_tasks'        => $overdueTasks,
             'unread_notifications' => $unread,
             'atrasos'              => $atrasos,
             'critical'             => $overdueTasks > 0,
-        ]]);
+        ];
+        });
+
+        return response()->json(['data' => $data]);
     }
 
     /** Query base de notificações VISÍVEIS ao usuário (não-expiradas + alvo). Reusada por index/stream. */
