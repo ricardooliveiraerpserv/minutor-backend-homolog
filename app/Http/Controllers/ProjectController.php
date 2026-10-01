@@ -233,6 +233,11 @@ class ProjectController extends Controller
         $withRelations = ['customer', 'contractType', 'serviceType'];
         if (!$gestaoMode) {
             $withRelations[] = 'parentProject';
+        } else {
+            // Identificação Pai/Filho/Independente na lista de Gestão de Contratos:
+            // o FE precisa do código+nome do pai para o badge "Filho de ...". Carga leve
+            // (só 3 colunas) — childProjects já é carregado abaixo (conta p/ "Pai (N filhos)").
+            $withRelations['parentProject'] = fn ($q) => $q->select('id', 'name', 'code');
         }
         $withRelations[] = 'hourContributions';
         // Em gestao simples (sem parentProjectsOnly), carrega equipe para indicadores
