@@ -24,9 +24,13 @@ use Illuminate\Support\Facades\Auth;
  */
 trait ListCacheable
 {
-    protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60): mixed
+    protected function cachedList(Request $request, string $resource, callable $query, int $ttl = 60, ?string $scopeOverride = null): mixed
     {
-        $userId    = Auth::id() ?? 'guest';
+        // $scopeOverride: quando vários usuários enxergam EXATAMENTE a mesma resposta
+        // (ex.: admins na lista de Gestão, que veem todos os projetos), passar um escopo
+        // compartilhado (ex.: 'admin') colapsa N recálculos pesados em 1 só por TTL.
+        // Só usar quando a resposta é comprovadamente idêntica entre esses usuários.
+        $userId    = $scopeOverride ?? (Auth::id() ?? 'guest');
         // Multi-empresa: a empresa ativa ENTRA na chave — senão o mesmo user/query
         // em empresas diferentes reusa o cache da outra (vazamento entre empresas).
         $companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';

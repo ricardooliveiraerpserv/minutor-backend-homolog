@@ -586,6 +586,17 @@ class ProjectController extends Controller
         $gestaoMonths = $gestaoMonthsRaw
             ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
             : [];
+        // Gestão de Projetos: a resposta é pesada (~7s: hidrata ~1000 projetos + relações).
+        // (1) TTL maior — visão gerencial tolera alguns minutos de staleness no saldo/consumo.
+        // (2) Escopo COMPARTILHADO entre admins — todos os admins veem o MESMO conjunto
+        //     (todos os projetos; node_state/coordinator_is_direct são constantes p/ admin),
+        //     então 1 cálculo serve todos em vez de recomputar por usuário. Coordenadores
+        //     (visão restrita por escopo) seguem com chave por-usuário (null). Invalidação
+        //     por edição de projeto/aporte continua valendo (flush da tag 'projects').
+        $gestaoTtl   = $gestaoMode ? 300 : 60;
+        $gestaoScope = ($gestaoMode && $currentUserForTransform && $currentUserForTransform->isAdmin())
+            ? 'admin'
+            : null;
         $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
@@ -906,7 +917,7 @@ class ProjectController extends Controller
             'hasNext' => $projects->hasMorePages(),
             'items'   => $projects->items(),
         ];
-        }); // fim cachedList
+        }, $gestaoTtl, $gestaoScope); // fim cachedList
         return response()->json($result);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('ProjectController@index error', [
