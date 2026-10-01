@@ -257,6 +257,14 @@ class ProjectController extends Controller
         // childProjects: sempre carregado em gestaoMode (para calcular closedChildrenHours)
         // e no modo completo; em multicontratual também carrega coordinators
         $withRelations[] = 'childProjects.contractType';
+        if ($gestaoMode) {
+            // N+1 FIX (incidente fechamento 10/2026): o loop de consumo dos filhos
+            // (children_consumption_breakdown) chama $child->getTotalAvailableHours(),
+            // que precisa de hourContributions. Sem este eager-load era 1 query por filho
+            // × todos os projetos (per_page=1000) → /projects?gestao=true estourava 504
+            // e prendia os workers php-fpm (lentidão global, CPU ociosa).
+            $withRelations[] = 'childProjects.hourContributions';
+        }
         if (!$gestaoMode || $parentProjectsOnly) {
             // Em modo pai/filho carrega coordenadores dos pais e dos filhos para marcar node_state
             if ($parentProjectsOnly) {
