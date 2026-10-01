@@ -100,7 +100,10 @@ Schedule::command('movidesk:sync')
 // ── Syncs de TICKET/ORG do Movidesk — PAUSÁVEIS por ambiente (flag SystemSetting).
 // Em PROD ficam DESLIGADOS até o upgrade do servidor; só o sync de APONTAMENTOS (acima) roda.
 // Default LIGADO → dev/homolog inalterados. Para desligar: system_settings.movidesk_ticket_syncs_enabled = '0'.
-if (\App\Models\SystemSetting::get('movidesk_ticket_syncs_enabled', '1') !== '0') {
+// try/catch: no BUILD (package:discover) não há DB → assume ligado, não quebra o build.
+try { $ticketSyncsOn = \App\Models\SystemSetting::get('movidesk_ticket_syncs_enabled', '1') !== '0'; }
+catch (\Throwable $e) { $ticketSyncsOn = true; }
+if ($ticketSyncsOn) {
 
 // Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
 // aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
@@ -321,12 +324,15 @@ Schedule::command('movidesk:reresolve-defaults --execute --limit=40')
   ->runInBackground();
 
 // ============= HELP DESK + integração Movidesk (inerte: gated por flags) =============
+// Import de tickets do HD — também sob a flag movidesk_ticket_syncs_enabled (OFF em prod até o upgrade).
+if (($ticketSyncsOn ?? true)) {
 Schedule::command('movidesk:hd-import')
   ->cron('*/5 * * * *')
   ->name('movidesk-hd-import')
   ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
   ->withoutOverlapping(30)
   ->runInBackground();
+} // fim hd-import gated
 
 Schedule::command('help-desk:ingest-emails --limit=25')
   ->cron('* * * * *')
