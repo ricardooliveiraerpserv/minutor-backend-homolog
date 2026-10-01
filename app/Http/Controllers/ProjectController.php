@@ -928,7 +928,7 @@ class ProjectController extends Controller
             try {
                 $hit = \Illuminate\Support\Facades\Cache::get($jsonKey);
                 if (is_string($hit) && $hit !== '') {
-                    return response($hit, 200)->header('Content-Type', 'application/json');
+                    return new \Illuminate\Http\JsonResponse($hit, 200, [], true);
                 }
             } catch (\Throwable $e) { /* cache indisponível → computa */ }
 
@@ -936,7 +936,7 @@ class ProjectController extends Controller
             $json = json_encode($result);
             if ($json !== false) {
                 try { \Illuminate\Support\Facades\Cache::put($jsonKey, $json, 300); } catch (\Throwable $e) {}
-                return response($json, 200)->header('Content-Type', 'application/json');
+                return new \Illuminate\Http\JsonResponse($json, 200, [], true);
             }
             return response()->json($result);
         }
