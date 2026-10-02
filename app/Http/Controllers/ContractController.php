@@ -2514,11 +2514,18 @@ class ContractController extends Controller
      * usa o executivo Bizify do cliente (o executivo_conta_id gravado é o da ERPSERV).
      * Sem Bizify: usa o executivo gravado no projeto/contrato, senão o executivo ERPSERV do cliente.
      */
+    /** Memo do "empresa ativa é Bizify?" — evita 1 query (Company exists) POR CARD no kanban. */
+    private ?bool $bizifyActiveMemo = null;
+
     private function cardExecutivoContaName(?\App\Models\Customer $customer, ?\App\Models\User $stored): ?string
     {
         if (config('multiempresa.scoping_enabled')) {
-            $activeId = app(\App\Services\CompanyContext::class)->id();
-            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+            if ($this->bizifyActiveMemo === null) {
+                $activeId = app(\App\Services\CompanyContext::class)->id();
+                $this->bizifyActiveMemo = (bool) ($activeId
+                    && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists());
+            }
+            if ($this->bizifyActiveMemo) {
                 return $customer?->executiveBizify?->name;
             }
         }
