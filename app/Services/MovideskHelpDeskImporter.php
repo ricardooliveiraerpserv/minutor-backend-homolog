@@ -528,17 +528,35 @@ class MovideskHelpDeskImporter
 
         // Dedup por external_action_id em QUALQUER origem — inclui comentários NATIVOS que já
         // empurramos p/ o Movidesk (guardam o id da ação criada) → evita reimportar (eco).
-        $existing = HelpDeskTicketComment::withTrashed()
-            ->where('ticket_id', $ticket->id)
-            ->whereNotNull('external_action_id')
-            ->pluck('external_action_id')
-            ->filter()->map(fn ($v) => (string) $v)->flip();
+        $ticketComments = HelpDeskTicketComment::withTrashed()->where('ticket_id', $ticket->id)->get();
+        $existing = $ticketComments->whereNotNull('external_action_id')
+            ->pluck('external_action_id')->filter()->map(fn ($v) => (string) $v)->flip();
+
+        // RECONCILIAÇÃO dos históricos (migração dev1 veio SEM external_action_id): indexa os
+        // comentários ainda SEM id por created_at (= createdDate da ação, idêntico ao segundo).
+        // Ao reencontrar a ação, faz BACKFILL do external_action_id no comentário existente em vez
+        // de duplicar. Evita a duplicação de interações ao re-sincronizar tickets já migrados.
+        $byDate = $ticketComments->whereNull('external_action_id')
+            ->groupBy(fn ($c) => \Carbon\Carbon::parse($c->created_at)->format('Y-m-d H:i:s'));
 
         $n = 0;
         foreach ($actions as $a) {
             $aid = (string) ($a['id'] ?? '');
             if ($aid === '' || $existing->has($aid)) continue;
             if ($skipActionId !== null && $aid === $skipActionId) continue; // abertura = descrição, não duplicar
+
+            // Reconciliação: já existe um comentário histórico desta ação (mesmo created_at)?
+            $createdKey = isset($a['createdDate']) ? \Carbon\Carbon::parse($a['createdDate'])->format('Y-m-d H:i:s') : null;
+            if ($createdKey && $byDate->has($createdKey) && $byDate->get($createdKey)->isNotEmpty()) {
+                $match = $byDate->get($createdKey)->shift(); // consome (não reusar p/ outra ação)
+                $match->external_action_id = $aid;
+                if (empty($match->idempotency_key)) {
+                    $match->idempotency_key = 'movidesk-' . $ticket->external_ref . '-a' . $aid;
+                }
+                $match->saveQuietly(); // sem observers (não re-empurrar nada)
+                $existing->put($aid, true);
+                continue; // NÃO cria duplicata
+            }
 
             $body = (string) ($a['htmlDescription'] ?? '');
             if (trim(strip_tags($body)) === '' && empty($a['attachments'])) continue; // ação vazia
