@@ -366,3 +366,12 @@ Schedule::command('help-desk:remind-dev-delivery')
   ->timezone('America/Sao_Paulo')
   ->name('help-desk-remind-dev-delivery')
   ->description('Lembretes de prazo de entrega em homologação (Em Desenvolvimento)');
+
+// Mantém quente o cache da tela "Gestão de Contratos" (/projects?gestao=true) — evita o
+// miss frio (~vários segundos). Recompute forçado a cada 3min renova o TTL (300s) antes de
+// expirar; após edição de projeto/aporte, a próxima rodada reaquece em até 3min.
+Schedule::command('projects:warm-gestao-cache')
+  ->cron('*/3 * * * *')
+  ->withoutOverlapping(10)
+  ->name('warm-gestao-cache')
+  ->description('Aquece o cache da Gestão de Contratos (evita miss frio)');

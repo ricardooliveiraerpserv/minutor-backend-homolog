@@ -958,12 +958,19 @@ class ProjectController extends Controller
             $gen = $this->listGeneration('projects');
             $jsonKey = "gestaojson:g{$gen}:{$scope}:c{$companyId}:" . md5($request->getQueryString() ?? '');
 
-            try {
-                $hit = \Illuminate\Support\Facades\Cache::get($jsonKey);
-                if (is_string($hit) && $hit !== '') {
-                    return \Illuminate\Http\JsonResponse::fromJsonString($hit);
-                }
-            } catch (\Throwable $e) { /* cache indisponível → computa */ }
+            // X-Cache-Warm: 1 → pula a leitura e FORÇA recompute+gravação (renova o TTL).
+            // Usado só pelo job projects:warm-gestao-cache; o FE nunca envia esse header,
+            // e ele NÃO entra na chave (que é só query string + escopo), então o warm
+            // popula exatamente a mesma entrada que o usuário real lê.
+            $forceWarm = $request->header('X-Cache-Warm') === '1';
+            if (!$forceWarm) {
+                try {
+                    $hit = \Illuminate\Support\Facades\Cache::get($jsonKey);
+                    if (is_string($hit) && $hit !== '') {
+                        return \Illuminate\Http\JsonResponse::fromJsonString($hit);
+                    }
+                } catch (\Throwable $e) { /* cache indisponível → computa */ }
+            }
 
             $result = $compute();
             $json = json_encode($result);
