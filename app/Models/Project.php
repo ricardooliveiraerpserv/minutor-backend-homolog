@@ -533,6 +533,11 @@ class Project extends Model
      */
     public function hasChildProjects(): bool
     {
+        // Usa a relação já carregada quando disponível (evita 1 query/projeto em telas
+        // que eager-loadam childProjects — ex.: Kanban de Contratos chamando managementBreakdown).
+        if ($this->relationLoaded('childProjects')) {
+            return $this->childProjects->isNotEmpty();
+        }
         return $this->childProjects()->exists();
     }
 

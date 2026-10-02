@@ -1422,6 +1422,12 @@ class ContractController extends Controller
             'kanbanLogs:id,project_id,to_status,created_at',
             'contractRequest:id,nivel_urgencia',                     // link projects.contract_request_id (raro)
             'originRequest:id,linked_project_id,nivel_urgencia',     // link contract_requests.linked_project_id (o usado)
+            // N+1 FIX: formatProjectCard chama managementBreakdown(), que lê hourContributions,
+            // childProjects e childProjects.contractType/hourContributions. Sem eager-load era
+            // ~3 queries/projeto (centenas no total). Ver hasChildProjects() que usa a relação carregada.
+            'hourContributions',
+            'childProjects.contractType',
+            'childProjects.hourContributions',
         ])
         // Investimento (comercial/interno + lead-projeto) NÃO gera card no pipeline — mora em "Investimento Interno".
         ->where(fn ($iq) => $iq->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
@@ -1536,6 +1542,10 @@ class ContractController extends Controller
                 'project.coordinators',
                 'project.consultants',
                 'project.contractType:id,name',
+                // N+1 FIX: formatProjectCard($c->project) chama managementBreakdown() (mesmo caso do projectQuery acima)
+                'project.hourContributions',
+                'project.childProjects.contractType',
+                'project.childProjects.hourContributions',
                 'project.contract:id,project_name,project_code_preview,parent_contract_id',
                 'project.contract.parentContract:id,project_code_preview',
                 'project.contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento,contract_type_id',
