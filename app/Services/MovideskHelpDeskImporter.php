@@ -405,10 +405,13 @@ class MovideskHelpDeskImporter
                 ?? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id;
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
-        } elseif ($hdSig !== null && $hdSig !== $ticket->external_status) {
+        } elseif ($hdSig !== null && !empty($ticket->external_status) && $hdSig !== $ticket->external_status) {
             // Minutor mudou o status → empurra pro Movidesk. O Movidesk exige justificativa em TODA
             // troca de status; usamos UMA justificativa global (SystemSetting) associada a todos os
             // status no Movidesk. Sem ela configurada, não empurra (evita 400).
+            // NB: só entra aqui com SOMBRA preenchida. Tickets migrados do dev1 vêm com external_status
+            // vazio; sem este guard, hdSig!='' sempre "parecia" edição do Minutor e o status do Movidesk
+            // (ex.: Cancelado) nunca era puxado. Com sombra vazia, cai no branch abaixo (puxa + backfilla).
             $just = $this->statusJustification();
             if (!empty($hdOut['text']) && !empty($just)) {
                 $patch['status'] = $hdOut['text'];
