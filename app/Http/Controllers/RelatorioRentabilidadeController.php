@@ -26,6 +26,22 @@ class RelatorioRentabilidadeController extends Controller
         $from = $request->query('from') ?: Carbon::create($y, $m, 1)->startOfMonth()->toDateString();
         $to   = $request->query('to')   ?: Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
 
+        // CACHE: o relatório é de meses FECHADOS (o FE nunca inclui o mês atual) e NÃO filtra por
+        // usuário no backend (filtros são client-side) → dados estáveis e chave simples. O FE busca
+        // 1 request POR MÊS (vários em paralelo); cachear evita recomputar ~149 queries/mês a cada
+        // abertura/revisita. Chave por mês+intervalo+empresa+escopo. X-Cache-Warm=1 força recompute.
+        $__companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
+        $__scope     = optional(\Illuminate\Support\Facades\Auth::user())->isAdmin() ? 'admin' : ('u' . (\Illuminate\Support\Facades\Auth::id() ?? 'g'));
+        $__cacheKey  = "rentab:{$yearMonth}:{$from}:{$to}:c{$__companyId}:{$__scope}";
+        if ($request->header('X-Cache-Warm') !== '1') {
+            try {
+                $__hit = \Illuminate\Support\Facades\Cache::get($__cacheKey);
+                if (is_string($__hit) && $__hit !== '') {
+                    return \Illuminate\Http\JsonResponse::fromJsonString($__hit);
+                }
+            } catch (\Throwable $e) { /* cache indisponível → computa */ }
+        }
+
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
                 'user.partner:id,pricing_type,hourly_rate',
@@ -266,7 +282,13 @@ class RelatorioRentabilidadeController extends Controller
             unset($r);
         }
 
-        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados, 'fixos_extras' => $fixosExtras]]);
+        $__payload = ['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados, 'fixos_extras' => $fixosExtras]];
+        $__json = json_encode($__payload);
+        if ($__json !== false) {
+            try { \Illuminate\Support\Facades\Cache::put($__cacheKey, $__json, 1800); } catch (\Throwable $e) {}
+            return \Illuminate\Http\JsonResponse::fromJsonString($__json);
+        }
+        return response()->json($__payload);
     }
 
     /**
