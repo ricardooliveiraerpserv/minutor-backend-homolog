@@ -324,6 +324,9 @@ class MovideskHelpDeskImporter
         $customerId = $this->resolveCustomer($orgId);
         $reqName  = (string) ($client['businessName'] ?? '');
         $reqEmail = $this->firstEmail($client);
+        // Nome da organização do Movidesk (para clientes legados sem cadastro no Minutor).
+        $orgName  = trim((string) ($client['organization']['businessName'] ?? ''));
+        if ($orgName === '' && $orgId) { $orgName = trim((string) (optional($this->orgFor($orgId))->name ?? '')); }
 
         if (!$ticket) {
             $ticket = new HelpDeskTicket();
@@ -343,7 +346,13 @@ class MovideskHelpDeskImporter
             // descrição inicial = primeira ação (mensagem de abertura do cliente), se houver.
             $ticket->description = $this->firstActionBody($md);
         }
-        if ($customerId) { $ticket->customer_id = $customerId; }
+        if ($customerId) {
+            // Org VINCULADA por CNPJ → cliente do Minutor.
+            $ticket->customer_id = $customerId;
+        } elseif ($orgName !== '') {
+            // Org NÃO vinculada (cliente legado, sem cadastro no Minutor desde 2017) → mostra o nome do Movidesk.
+            $ticket->historical_customer_name = mb_substr($orgName, 0, 255);
+        }
         if ($reqName)  { $ticket->requester_name = mb_substr($reqName, 0, 255); }
         if ($reqEmail) { $ticket->requester_email = mb_substr($reqEmail, 0, 255); }
 
