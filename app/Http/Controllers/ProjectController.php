@@ -901,6 +901,39 @@ class ProjectController extends Controller
             }
         }
 
+        // PERF: enxuga a serialização do payload (SEM mudar o que a tela exibe).
+        // A serialização dominava o tempo (~5-7s) por causa de: (1) os accessors de
+        // $appends (status_display/contract_type_display já viram atributo acima) re-rodando
+        // por modelo; (2) relações de usuário serializando ~40 colunas + o N+1 do
+        // profile_photo_url (1 query/usuário); (3) o array cru de hourContributions (a lista
+        // só lê o total, já computado). Mantemos id/name/email (+pivot do consultor) e todos
+        // os campos/relações que a tela usa.
+        $slimUser = function ($u) { if ($u) $u->setVisible(['id', 'name', 'email']); };
+        $slimConsultant = function ($u) { if ($u) $u->setVisible(['id', 'name', 'email', 'pivot']); };
+        $projects->getCollection()->each(function ($p) use ($slimUser, $slimConsultant) {
+            $p->setAppends([]); // status_display/contract_type_display já estão setados como atributo
+            if ($p->relationLoaded('coordinators')) $p->coordinators->each($slimUser);
+            if ($p->relationLoaded('consultants'))  $p->consultants->each($slimConsultant);
+            foreach (['executivoConta', 'kanbanOverrideCoordinator'] as $r) {
+                if ($p->relationLoaded($r) && $p->$r) $slimUser($p->$r);
+            }
+            if ($p->relationLoaded('consultantGroups')) {
+                $p->consultantGroups->each(function ($g) use ($slimUser) {
+                    if ($g->relationLoaded('users')) $g->users->each($slimUser);
+                });
+            }
+            $p->unsetRelation('hourContributions');
+            if ($p->relationLoaded('childProjects')) {
+                $p->childProjects->each(function ($c) {
+                    // preserva os displays do filho (a lista usa a MESMA renderização) antes de limpar os appends
+                    $c->status_display = $c->status_display;
+                    $c->contract_type_display = $c->contract_type_display;
+                    $c->setAppends([]);
+                    $c->unsetRelation('hourContributions');
+                });
+            }
+        });
+
         // Resposta PO-UI
         return [
             'hasNext' => $projects->hasMorePages(),
