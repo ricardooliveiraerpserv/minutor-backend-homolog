@@ -1,6 +1,6 @@
 {{-- Card header — marca POR TENANT. Conecta: logo negativo. Grupo/ERPServ: logo ERPServ branco + Minutor.
      Compartilhado entre todos os templates de card/workflow. --}}
-@php $__isConecta = optional(\Spatie\Multitenancy\Models\Tenant::current())->slug === 'conecta'; @endphp
+@php $__isConecta = false; /* ERPServ base: marca sempre ERPServ. Conecta vive em repo/infra próprios. */ @endphp
 <tr>
   <td align="left" style="padding:36px 40px 28px;background:#000000;border-bottom:1px solid rgba(255,255,255,0.06);">
 

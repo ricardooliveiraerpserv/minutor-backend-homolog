@@ -37,7 +37,7 @@
 
     <tr>
       <td style="padding:24px 40px 8px;background:#000000;">
-        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $accent ?? '#22C55E' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Acessar o {{ optional(\Spatie\Multitenancy\Models\Tenant::current())->slug === 'conecta' ? 'Conecta ERP' : 'Minutor' }}</a>
+        <a href="{{ $cardUrl }}" style="display:inline-block;background:{{ $accent ?? '#22C55E' }};color:#000000;text-decoration:none;font-weight:800;font-size:13px;padding:13px 26px;border-radius:8px;">Acessar o Minutor</a>
       </td>
     </tr>
 
@@ -45,7 +45,7 @@
       <td style="padding:24px 40px 32px;background:#000000;color:#D4D4D8;font-size:12px;line-height:1.7;border-top:1px solid #3F3F46;">
         {{ $rodape }}
         <br><br>
-        <span style="color:#71717A;">&copy; {{ date('Y') }} {{ optional(\Spatie\Multitenancy\Models\Tenant::current())->slug === 'conecta' ? 'Conecta ERP' : 'ERPServ Consultoria' }} · Todos os direitos reservados</span>
+        <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
       </td>
     </tr>
   </table>

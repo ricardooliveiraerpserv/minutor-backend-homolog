@@ -13,7 +13,10 @@ class Brand
 {
     public static function isConecta(): bool
     {
-        return optional(Tenant::current())->slug === 'conecta';
+        // CONECTA migrou para repositório/infra próprios (VPS Leandro). Nesta base
+        // (ERPServ) a marca é SEMPRE ERPServ/Minutor — nenhuma mudança da Conecta
+        // pode impactar o ERPServ. NÃO religar este gate nesta base.
+        return false;
     }
 
     /** Nome legal (rodapé/copyright/alt). */

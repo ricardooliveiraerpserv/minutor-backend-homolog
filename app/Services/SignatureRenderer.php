@@ -90,8 +90,9 @@ class SignatureRenderer
     /** Marca da assinatura pelo TENANT ativo (spatie). CONECTA (schema próprio) → 'conecta'. Senão ''. */
     public static function brandForTenant(): string
     {
-        $t = \Spatie\Multitenancy\Models\Tenant::current();
-        return $t && (string) $t->getAttribute('slug') === 'conecta' ? 'conecta' : '';
+        // ERPServ base: assinatura é SEMPRE ERPServ. Conecta migrou p/ repo/infra próprios;
+        // nenhuma marca Conecta pode renderizar nesta base. NÃO religar nesta base.
+        return '';
     }
 
     /** data:URI do logo/símbolo CONECTA (public/conecta-sig-logo.png) p/ a assinatura. */
