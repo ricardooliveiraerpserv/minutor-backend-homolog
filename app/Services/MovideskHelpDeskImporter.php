@@ -143,9 +143,12 @@ class MovideskHelpDeskImporter
                 if (!$full) { $stats['skipped']++; continue; }
                 // Filtro de teste por domínio do solicitante (ex.: erpserv.com.br).
                 if (!$this->domainAllowed($full)) { $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue; }
-                // Só age para ORGS VINCULADAS no Help Desk (hd_customer_id). Org sem vínculo → ignora.
+                // Só age para ORGS VINCULADAS no Help Desk (hd_customer_id). Org sem vínculo → ignora
+                // APENAS tickets NOVOS. Chamados JÁ espelhados (ex.: carga histórica do dev1, cujas
+                // orgs não foram vinculadas) continuam recebendo atualização de status/interações —
+                // o update não altera customer_id quando a org é nula (resolveCustomer→null), então é seguro.
                 $org = $this->orgFor($this->extractOrgId($full));
-                if ($this->requireLinkedOrg() && !($org && $org->hd_customer_id)) {
+                if ($this->requireLinkedOrg() && !$exists && !($org && $org->hd_customer_id)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
                 // "A partir do vínculo apenas": ignora chamados CRIADOS antes de a org ser vinculada.
