@@ -1485,17 +1485,21 @@ class ContractController extends Controller
         // Sem override, ele pertence à coluna de sustentação do seu tipo de contrato —
         // tenha ou não um Contract gerado. Particiona aqui; o merge nas colunas de
         // sustentação acontece logo abaixo (bloco $sustentacaoGroups).
+        // N+1 FIX (x267): soma ponderada de minutos (effort × (1+%cliente)) em UMA query p/ todos
+        // os projetos + filhos, injetada no managementBreakdown() (evita 1 query/projeto no card).
+        $weightedMap = $this->weightedConsumedMinutesMap($projects);
+
         $projectCards         = collect();
         $sustProjectsByColumn = [];
         foreach ($projects as $p) {
             $logged  = (float) ($timesheetSums[$p->id] ?? 0);
             $sustCol = (!$isConsultor && !$isCliente) ? $this->sustColumnForProject($p) : null;
             if ($sustCol && $p->kanban_coordinator_override_id === null) {
-                $formatted = $this->formatProjectCard($p, $logged);
+                $formatted = $this->formatProjectCard($p, $logged, $weightedMap);
                 $formatted['sustentacao_column'] = $sustCol;
                 $sustProjectsByColumn[$sustCol][] = $formatted;
             } else {
-                $projectCards->push($this->formatProjectCard($p, $logged));
+                $projectCards->push($this->formatProjectCard($p, $logged, $weightedMap));
             }
         }
 
@@ -1555,6 +1559,8 @@ class ContractController extends Controller
             ->orderBy('kanban_order')
             ->get();
 
+            // N+1 FIX (x267): mapa ponderado dos projetos de sustentação (+ filhos) numa query só.
+            $sustWeightedMap = $this->weightedConsumedMinutesMap($sustCards->pluck('project')->filter());
             foreach ($sustCards as $c) {
                 $col = $c->sustentacao_column;
                 if (!$col) {
@@ -1576,7 +1582,7 @@ class ContractController extends Controller
                     }
                 }
                 if ($c->project_id && $c->project) {
-                    $formatted = $this->formatProjectCard($c->project);
+                    $formatted = $this->formatProjectCard($c->project, 0, $sustWeightedMap);
                     $formatted['kanban_order'] = $c->kanban_order;
                 } else {
                     $formatted = $this->formatKanbanCard($c);
@@ -2532,10 +2538,41 @@ class ContractController extends Controller
         return $stored?->name ?? $customer?->executive?->name;
     }
 
-    private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
+    /**
+     * Soma ponderada de minutos (effort × (1+%cliente)) por project_id — em UMA query p/ a lista
+     * toda (projetos + filhos). Injetada no managementBreakdown() p/ matar o N+1 do Kanban.
+     * Usa o model Timesheet (mesmos global scopes — SoftDeletes + Company) que $this->timesheets(),
+     * então o resultado é idêntico ao cálculo por-projeto.
+     *
+     * @param \Illuminate\Support\Collection $projects
+     * @return array<int,float>
+     */
+    private function weightedConsumedMinutesMap($projects): array
+    {
+        $ids = [];
+        foreach ($projects as $p) {
+            if (!$p) continue;
+            $ids[] = $p->id;
+            if ($p->relationLoaded('childProjects')) {
+                foreach ($p->childProjects as $c) { $ids[] = $c->id; }
+            }
+        }
+        $ids = array_values(array_unique(array_filter($ids)));
+        if (empty($ids)) return [];
+
+        return \App\Models\Timesheet::whereIn('project_id', $ids)
+            ->whereIn('status', ['approved', 'pending'])
+            ->groupBy('project_id')
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as wmin')
+            ->pluck('wmin', 'project_id')
+            ->map(fn ($v) => (float) $v)
+            ->toArray();
+    }
+
+    private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0, ?array $weightedMap = null): array
     {
         // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os subprojetos.
-        $b        = $project->managementBreakdown();
+        $b        = $project->managementBreakdown($weightedMap);
         $consumed = round($b['consumed'], 1);
         $saldo    = round($b['balance'], 1);
 

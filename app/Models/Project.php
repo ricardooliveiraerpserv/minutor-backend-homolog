@@ -1065,18 +1065,32 @@ class Project extends Model
      *
      * @return array{available: float, consumed: float, balance: float}
      */
-    public function managementBreakdown(): array
+    /**
+     * @param array<int,float>|null $consumedMinutesMap Mapa project_id => SOMA ponderada de minutos
+     *   (effort_minutes × (1 + %cliente)) já agregada em bulk pelo chamador. Quando fornecido,
+     *   evita 1 query por projeto/filho (N+1 do Kanban). null (default) = comportamento original
+     *   (query por projeto) — não afeta os demais callers.
+     */
+    public function managementBreakdown(?array $consumedMinutesMap = null): array
     {
         $this->loadMissing('contractType', 'childProjects.contractType');
+
+        // Soma ponderada (minutos) consumida por um projeto: usa o mapa bulk se veio, senão consulta.
+        $weightedMinutes = function ($project) use ($consumedMinutesMap): float {
+            if ($consumedMinutesMap !== null) {
+                return (float) ($consumedMinutesMap[$project->id] ?? 0);
+            }
+            return (float) ($project->timesheets()
+                ->whereIn('status', ['approved', 'pending'])
+                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0);
+        };
 
         if ($this->isOnDemand()) {
             // On Demand não tem saldo de banco (available/balance = 0). MAS o consumo —
             // inclusive o CONSUMO INICIAL do sistema anterior (initial_hours_consumed) —
             // deve aparecer, batendo com a lista/gestão que já soma o inicial (antes o
             // detalhe zerava e ignorava as horas consumidas iniciais).
-            $logged  = round((($this->timesheets()
-                ->whereIn('status', ['approved', 'pending'])
-                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
+            $logged  = round($weightedMinutes($this) / 60, 2);
             $initial  = (float) ($this->initial_hours_consumed ?? 0);
             $consumed = round($logged + $initial, 2);
             // CRÉDITO pré-pago por transferência: vira saldo do On Demand (consome o crédito, não
@@ -1091,9 +1105,7 @@ class Project extends Model
         // Consumo FATURÁVEL ao cliente = horas apontadas × (1 + uplift do contrato).
         // O acréscimo mora no apontamento (contract_client_pct); o consultor/pagamento
         // lê effort_minutes cru e não passa por aqui. Contratadas ficam no real.
-        $consumed = round((($this->timesheets()
-            ->whereIn('status', ['approved', 'pending'])
-            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
+        $consumed = round($weightedMinutes($this) / 60, 2);
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
 
         // Consumo dos filhos — mesma regra do ProjectController gestão-mode.
@@ -1110,9 +1122,7 @@ class Project extends Model
                 if ($isClosed || $isBhFixo) {
                     $childrenConsumed += (float) $child->getTotalAvailableHours();
                 } elseif ($isOnDemand) {
-                    $childLogged = round((($child->timesheets()
-                        ->whereIn('status', ['approved', 'pending'])
-                        ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
+                    $childLogged = round($weightedMinutes($child) / 60, 2);
                     $childrenConsumed += round($childLogged + (float) ($child->initial_hours_consumed ?? 0), 2);
                 }
                 // else: filho Projeto / BH-Mensal — ignorado (idêntico à Gestão).
