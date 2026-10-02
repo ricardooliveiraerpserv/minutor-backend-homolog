@@ -45,6 +45,7 @@ class RelatorioRentabilidadeController extends Controller
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
                 'user.partner:id,pricing_type,hourly_rate',
+                'user.partner.hourlyRateChanges', // N+1 FIX: hourlyRateForCompetencia() usa a relação carregada
                 'project:id,name,hourly_rate,customer_id,is_investimento_comercial,service_type_id,contract_type_id',
                 'project.customer:id,name',
                 'project.serviceType:id,name',
@@ -83,7 +84,14 @@ class RelatorioRentabilidadeController extends Controller
         // Metadados de custo por consultor: ['eff' => custo/hora, 'type' => hourly|monthly,
         // 'salary' => salário mensal cheio quando monthly (0 caso contrário)].
         $costMetaCache = [];
-        $costMeta = function ($user) use (&$costMetaCache, $from, $yearMonth) {
+        // N+1 FIX: pré-computa a vigência de rate de TODOS os consultores do mês numa query só
+        // (em vez de 1 query/usuário via effectiveValuesAt). Resultado idêntico ao per-usuário.
+        $rateMap = UserHourlyRateLog::effectiveValuesForUsers(
+            $timesheets->pluck('user')->filter()->unique('id')->values(),
+            $from
+        );
+
+        $costMeta = function ($user) use (&$costMetaCache, $from, $yearMonth, $rateMap) {
             if (!$user) return ['eff' => 0.0, 'type' => 'hourly', 'salary' => 0.0, 'ctype' => null];
             if (isset($costMetaCache[$user->id])) return $costMetaCache[$user->id];
 
@@ -95,7 +103,7 @@ class RelatorioRentabilidadeController extends Controller
                 return $costMetaCache[$user->id] = ['eff' => $r, 'type' => 'hourly', 'salary' => 0.0, 'ctype' => $user->consultant_type];
             }
 
-            $hist = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
+            $hist = $rateMap[$user->id] ?? UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $rate = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
             $type = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
             $ctype = $hist['consultant_type'] ?? $user->consultant_type;
