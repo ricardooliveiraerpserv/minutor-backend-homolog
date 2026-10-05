@@ -177,6 +177,8 @@ class MovideskHelpDeskImporter
         // PASSADA DEDICADA DE STATUS: mudança de status no Minutor vai pro Movidesk sozinha,
         // independente do chamado ter entrado na varredura por lastUpdate.
         $stats['status_pushed'] = $this->pushPendingStatuses();
+        // Re-hospeda imagens inline das interações novas (fora da transação; URL S3 expira em horas).
+        $stats['images'] = $this->rehostPendingImages();
 
         Log::info('📥 [MOVIDESK HD] Import concluído', $stats);
         return $stats;
@@ -295,6 +297,7 @@ class MovideskHelpDeskImporter
         if (!$full) return ['created' => false, 'comments' => 0, 'ticket_id' => null, 'hd_number' => null];
 
         $res = DB::transaction(fn () => $this->upsert($full, $companyId));
+        $this->rehostPendingImages(); // fora da transação
         $hd = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', (string) $externalId)->first(['id', 'ticket_number']);
         return ['created' => $res['created'], 'comments' => $res['comments'], 'ticket_id' => $hd?->id, 'hd_number' => $hd?->ticket_number];
     }
@@ -579,7 +582,7 @@ class MovideskHelpDeskImporter
             $isPublic = (bool) ($a['isPublic'] ?? true);
             $authorId = $this->resolveAgentUser($a['createdBy']['email'] ?? null);
 
-            HelpDeskTicketComment::create([
+            $comment = HelpDeskTicketComment::create([
                 'ticket_id'          => $ticket->id,
                 'author_user_id'     => $authorId, // null => interação de origem externa (cliente)
                 'body'               => $body,
@@ -591,10 +594,102 @@ class MovideskHelpDeskImporter
                 // action.id do Movidesk é sequencial POR ticket (1,2,3…) — a chave precisa do id do ticket.
                 'idempotency_key'    => 'movidesk-' . $ticket->external_ref . '-a' . $aid,
             ]);
+            // Imagem inline (URL S3 Movidesk) vem com assinatura que EXPIRA em horas. Enfileira p/
+            // re-hospedar FORA da transação (download é lento) — baixa agora enquanto a URL é válida.
+            if (preg_match('~s3[.-][^/]*amazonaws\.com/[^?"\']*movidesk~i', $body)) {
+                $this->pendingImageComments[] = ['c' => (int) $comment->id, 't' => (int) $ticket->id];
+            }
             $existing->put($aid, true);
             $n++;
         }
         return $n;
+    }
+
+    /**
+     * Re-hospeda imagens inline (URL S3 do Movidesk) dos comentários recém-criados: baixa enquanto
+     * a URL assinada ainda é válida, salva como anexo da interação (AttachmentService) e reescreve o
+     * <img src> pro nosso endpoint de download. Roda FORA da transação (download lento). Best-effort:
+     * URL expirada (403) ou falha → deixa o <img> como está, sem quebrar o import.
+     */
+    private function rehostPendingImages(): int
+    {
+        if (!$this->pendingImageComments) return 0;
+        $pending = $this->pendingImageComments;
+        $this->pendingImageComments = [];
+        $svc = app(\App\Attachments\AttachmentService::class);
+        $done = 0;
+        foreach ($pending as $p) {
+            $comment = HelpDeskTicketComment::find($p['c']);
+            if (!$comment) continue;
+            try {
+                if ($this->rehostCommentImages($comment, (int) $p['t'], $svc)) $done++;
+            } catch (\Throwable $e) {
+                Log::warning('🖼️ [MOVIDESK HD] rehost de imagens falhou', ['comment' => $p['c'], 'error' => $e->getMessage()]);
+            }
+        }
+        if ($done) Log::info('🖼️ [MOVIDESK HD] imagens inline re-hospedadas', ['comentarios' => $done]);
+        return $done;
+    }
+
+    private function rehostCommentImages(HelpDeskTicketComment $comment, int $ticketId, \App\Attachments\AttachmentService $svc): bool
+    {
+        $body = (string) $comment->body;
+        if (!preg_match_all('/<img\b[^>]*>/i', $body, $tags)) return false;
+        $changed = false;
+        $count = 0;
+        foreach ($tags[0] as $tag) {
+            if ($count >= 10) break; // teto por interação
+            if (!preg_match('/src=(["\'])(.*?)\1/i', $tag, $sm)) continue;
+            $src = html_entity_decode($sm[2]);
+            // só URLs S3 do Movidesk (as que expiram); ignora data:, nossas (/api/...), externas
+            if (!preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $src)) continue;
+            $count++;
+            $resp = \Illuminate\Support\Facades\Http::timeout(25)->get($src);
+            if (!$resp->ok()) continue; // 403 expirada → mantém
+            $ct = strtolower((string) ($resp->header('Content-Type') ?: ''));
+            if (strncmp($ct, 'image/', 6) !== 0) continue;
+            $bytes = $resp->body();
+            if (strlen($bytes) < 64) continue;
+            $ext = match (true) {
+                str_contains($ct, 'png')  => 'png',
+                str_contains($ct, 'gif')  => 'gif',
+                str_contains($ct, 'webp') => 'webp',
+                str_contains($ct, 'svg')  => 'svg',
+                default                   => 'jpg',
+            };
+            $tmp = tempnam(sys_get_temp_dir(), 'mvimg');
+            file_put_contents($tmp, $bytes);
+            try {
+                $uf = new \Illuminate\Http\UploadedFile($tmp, 'movidesk-' . substr(md5($src), 0, 10) . '.' . $ext, $ct, null, true);
+                $att = $svc->store($this->imageActorFor($comment), [
+                    'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
+                    'category'    => 'image',
+                    'visibility'  => $comment->visibility,
+                    'file'        => $uf,
+                ]);
+            } finally {
+                @unlink($tmp);
+            }
+            $url = "/api/v1/help-desk/tickets/{$ticketId}/comments/{$comment->id}/attachments/{$att->id}/download";
+            $newTag = preg_replace('/src=(["\']).*?\1/i', 'src="' . $url . '"', $tag, 1);
+            $body = str_replace($tag, $newTag, $body);
+            $changed = true;
+        }
+        if ($changed) {
+            $comment->body = $body;
+            $comment->saveQuietly();
+        }
+        return $changed;
+    }
+
+    /** Ator (User) p/ uploaded_by do anexo — autor da interação se mapeado, senão 1º usuário (campo de auditoria). */
+    private function imageActorFor(HelpDeskTicketComment $comment): \App\Models\User
+    {
+        if ($comment->author_user_id) {
+            $u = \App\Models\User::find($comment->author_user_id);
+            if ($u) return $u;
+        }
+        return $this->imageActor ??= \App\Models\User::query()->orderBy('id')->firstOrFail();
     }
 
     // ── Resolução de entidades ────────────────────────────────────────────────
@@ -647,6 +742,9 @@ class MovideskHelpDeskImporter
     /** Empurrar INTERAÇÕES (comentários) do Minutor como ações no Movidesk? */
     /** Cache por execução: user_id → movidesk person id (evita repetir lookup/API). */
     private array $authorMdCache = [];
+    /** Comentários novos com imagem inline S3 a re-hospedar (fora da transação). [{c:commentId,t:ticketId}] */
+    private array $pendingImageComments = [];
+    private ?\App\Models\User $imageActor = null;
 
     /**
      * Id da PESSOA no Movidesk do autor (p/ createdBy da ação):
