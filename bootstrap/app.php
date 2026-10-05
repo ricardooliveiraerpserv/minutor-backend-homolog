@@ -39,6 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'permission.or.admin' => \App\Http\Middleware\CheckPermissionOrAdmin::class,
             'permission'          => \App\Http\Middleware\CheckPermission::class,
+            'connector.agent'     => \App\Http\Middleware\VerifyAgentSignature::class,   // Prosight Connector-0 (Ed25519 AGENT-V1)
             'block.cliente'       => \App\Http\Middleware\BlockCliente::class,
             'block.swagger.prod'  => \App\Http\Middleware\BlockSwaggerInProduction::class,
             'screen.action'       => \App\Http\Middleware\ScreenActionAccess::class,
