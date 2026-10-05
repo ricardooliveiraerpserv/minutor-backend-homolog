@@ -670,11 +670,11 @@ class MovideskHelpDeskImporter
             } finally {
                 @unlink($tmp);
             }
-            // Usa data-att-id (NÃO src direto): o FE (HdRichHtml) resolve via fetch autenticado de
-            // /api/v1/attachments/{id}/download → blob. Um <img src="/api/..."> puro não carrega o
-            // token → 401. Remove o src S3 (expira) e marca com data-att-id.
-            $newTag = preg_replace('/\s*src=(["\']).*?\1/i', '', $tag, 1);
-            $newTag = preg_replace('/<img\b/i', '<img data-att-id="' . $att->id . '"', $newTag, 1);
+            // Usa <img src> DIRETO pro endpoint de download da interação (mesmo mecanismo do preview
+            // de anexo, que carrega no navegador via sessão/cookie). O src S3 original expira; troca
+            // pelo nosso endpoint estável. (data-att-id exigiria o bundle FE novo + fetch autenticado.)
+            $url = "/api/v1/help-desk/tickets/{$ticketId}/comments/{$comment->id}/attachments/{$att->id}/download";
+            $newTag = preg_replace('/src=(["\']).*?\1/i', 'src="' . $url . '"', $tag, 1);
             $body = str_replace($tag, $newTag, $body);
             $changed = true;
         }
