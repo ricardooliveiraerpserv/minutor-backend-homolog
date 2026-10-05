@@ -43,15 +43,24 @@ class MovideskHelpDeskImporter
         return array_values(array_filter(array_map('trim', (array) $raw)));
     }
 
-    /** ownerTeam do chamado está numa equipe bloqueada (Promax)? (case-insensitive) */
-    private function isBlockedTeam(?string $ownerTeam): bool
+    /** Modo do filtro de equipe (SystemSetting 'movidesk_hd_team_filter_mode'):
+     *   - 'exclude' (PADRÃO, hoje): espelha TUDO menos as equipes da lista (exclui Promax = traz o
+     *     legado ERPServ pro Minutor).
+     *   - 'include' (FUTURO): espelha SÓ as equipes da lista (ex.: só Promax) — para quando o Movidesk
+     *     for desligado p/ ERPServ (que passa a abrir nativo no Minutor) e sobrar só a Promax no Movidesk.
+     *  A virada é só mudar este setting — sem redeploy. */
+    private function teamFilterMode(): string
+    {
+        return SystemSetting::get('movidesk_hd_team_filter_mode', 'exclude') === 'include' ? 'include' : 'exclude';
+    }
+
+    /** Deve PULAR (não espelhar/interagir) este chamado pela equipe, respeitando o modo:
+     *  exclude → pula se a equipe ESTÁ na lista; include → pula se NÃO está (mantém só as da lista). */
+    private function shouldSkipTeam(?string $ownerTeam): bool
     {
         $t = mb_strtolower(trim((string) $ownerTeam));
-        if ($t === '') return false;
-        foreach ($this->blockedTeams() as $b) {
-            if (mb_strtolower(trim($b)) === $t) return true;
-        }
-        return false;
+        $inList = $t !== '' && in_array($t, array_map(fn ($b) => mb_strtolower(trim($b)), $this->blockedTeams()), true);
+        return $this->teamFilterMode() === 'include' ? !$inList : $inList;
     }
 
     /**
@@ -114,12 +123,12 @@ class MovideskHelpDeskImporter
             return $stats;
         }
 
-        $teams     = $this->blockedTeams(); // equipes da Promax a EXCLUIR do espelhamento
+        $teams     = $this->blockedTeams(); // lista de equipes (exclude: excluir; include: manter só estas)
         $companyId = $this->companyId();
         $since     = $sinceOverride ?: $this->cursor();
         $stats['since'] = $since->toIso8601String();
 
-        $list = $this->movidesk->fetchHelpDeskTicketsSince($since, $teams);
+        $list = $this->movidesk->fetchHelpDeskTicketsSince($since, $teams, $this->teamFilterMode());
         $maxUpdate = $since;
 
         foreach ($list as $lite) {
@@ -213,7 +222,7 @@ class MovideskHelpDeskImporter
                 $full = $this->movidesk->fetchTicket((int) $ticket->external_ref);
                 if (!$full) { continue; }
                 // Em poder de equipe da Promax → não interage (não empurra comentário).
-                if ($this->isBlockedTeam($full['ownerTeam'] ?? null)) { continue; }
+                if ($this->shouldSkipTeam($full['ownerTeam'] ?? null)) { continue; }
                 $before = HelpDeskTicketComment::where('ticket_id', $tid)
                     ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
                 $this->pushComments($ticket, (int) $ticket->external_ref, $full['actions'] ?? []);
@@ -270,7 +279,7 @@ class MovideskHelpDeskImporter
             try {
                 // Em poder de equipe da Promax → não interage (não empurra status).
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
-                if ($full && $this->isBlockedTeam($full['ownerTeam'] ?? null)) { continue; }
+                if ($full && $this->shouldSkipTeam($full['ownerTeam'] ?? null)) { continue; }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
                     HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;

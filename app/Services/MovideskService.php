@@ -198,7 +198,7 @@ class MovideskService
      *
      * @param string[] $teams Nomes de equipe (ownerTeam) a EXCLUIR. Vazio => não filtra por equipe.
      */
-    public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = []): array
+    public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = [], string $mode = 'exclude'): array
     {
         $tickets = [];
         $top     = 50;
@@ -232,8 +232,12 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $t) {
-                    if ($blocked && in_array(mb_strtolower(trim((string) ($t['ownerTeam'] ?? ''))), $blocked, true)) {
-                        continue; // ainda em poder da equipe da PROMAX → não espelhar/interagir
+                    $team   = mb_strtolower(trim((string) ($t['ownerTeam'] ?? '')));
+                    $inList = in_array($team, $blocked, true);
+                    if ($mode === 'include') {
+                        if (!$inList) continue;              // INCLUDE: mantém SÓ as equipes da lista (ex.: só Promax)
+                    } elseif ($blocked && $inList) {
+                        continue;                            // EXCLUDE (padrão): tira as equipes da lista (Promax)
                     }
                     $tickets[] = $t;
                 }
