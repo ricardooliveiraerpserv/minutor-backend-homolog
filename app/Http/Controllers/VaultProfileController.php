@@ -136,9 +136,11 @@ class VaultProfileController extends Controller
         ]));
 
         // Mantém os scopes padrão (exchangeCode reenvia os mesmos na troca do code);
-        // só força prompt=login pra re-autenticação fresca.
+        // força re-autenticação FRESCA: prompt=login (re-entra credenciais) +
+        // max_age=0 (idade máx. da auth = 0s → o Entra re-desafia o 2º fator/MFA).
         return response()->json(['authorize_url' => MicrosoftCalendarService::authorizeUrl($state, [
-            'prompt' => 'login',
+            'prompt'  => 'login',
+            'max_age' => 0,
         ])]);
     }
 

@@ -34,11 +34,13 @@ class MicrosoftCalendarService
     }
 
     /** URL de consentimento (redireciona o usuário). $state amarra o callback ao usuário. */
-    public static function authorizeUrl(string $state): string
+    public static function authorizeUrl(string $state, array $extra = []): string
     {
         $c = self::cfg();
         $tenant = $c['tenant_id'] ?: 'common';
-        $params = http_build_query([
+        // $extra sobrescreve os defaults — ex. o step-up do Cofre força
+        // prompt=login + max_age=0 (re-autenticação fresca → desafia o 2º fator).
+        $params = http_build_query(array_merge([
             'client_id'     => $c['client_id'],
             'response_type' => 'code',
             'redirect_uri'  => $c['redirect_uri'],
@@ -46,7 +48,7 @@ class MicrosoftCalendarService
             'scope'         => $c['scopes'],
             'state'         => $state,
             'prompt'        => 'select_account',
-        ]);
+        ], $extra));
         return "https://login.microsoftonline.com/{$tenant}/oauth2/v2.0/authorize?{$params}";
     }
 
