@@ -427,6 +427,31 @@ class VaultProfileController extends Controller
     }
 
     /**
+     * TODOS os usuários internos (exceto clientes) p/ a tela de alocação — inclusive quem
+     * ainda NÃO configurou o cofre (vem com public_key=null, configured=false). O FE lista
+     * todos com busca; só os `configured` podem de fato receber o wrap da chave.
+     */
+    public function allocatableUsers(Request $request): JsonResponse
+    {
+        $this->guardInternal($request);
+        $rows = DB::table('users')
+            ->leftJoin('vault_user_keys as vk', 'vk.user_id', '=', 'users.id')
+            ->whereIn('users.type', self::INTERNAL_TYPES)
+            ->where('users.enabled', true)
+            ->orderBy('users.name')
+            ->get(['users.id as user_id', 'users.name', 'users.email', 'vk.public_key', 'vk.auth_hash'])
+            ->map(fn ($u) => [
+                'user_id'    => (int) $u->user_id,
+                'name'       => $u->name,
+                'email'      => $u->email,
+                'public_key' => $u->public_key,
+                'configured' => ! empty($u->public_key) && ! empty($u->auth_hash),
+            ]);
+
+        return response()->json($rows);
+    }
+
+    /**
      * Equipes (Grupos de Consultores) para adicionar vários membros ao cofre de uma vez.
      * Para cada grupo, devolve os membros INTERNOS que já configuraram o cofre (têm chave
      * pública, aptos a receber o wrap) + a contagem total (p/ avisar quantos ficam de fora).
