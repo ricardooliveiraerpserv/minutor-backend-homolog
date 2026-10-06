@@ -109,7 +109,7 @@ class VaultProfileController extends Controller
         abort_unless($user->isAdmin(), 403);
 
         $data = $request->validate([
-            'minutes' => 'required|integer|in:1,5,15,30',
+            'minutes' => 'required|integer|in:1,5,10,15,30',
         ]);
 
         SystemSetting::set('vault_lock_timeout_min', $data['minutes'], 'integer', 'vault', 'Auto-lock do cofre (minutos) — regra global');
