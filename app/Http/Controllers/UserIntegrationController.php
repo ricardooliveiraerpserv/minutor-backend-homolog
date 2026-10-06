@@ -59,9 +59,18 @@ class UserIntegrationController extends Controller
             $code = (string) $request->query('code');
             abort_if($uid <= 0 || $code === '', 400);
 
+            $flow = (string) ($payload['flow'] ?? 'outlook');
+
             $tok = MicrosoftCalendarService::exchangeCode($code);
             if (!empty($tok['error']) || empty($tok['access_token'])) {
-                return redirect()->away($front . '?outlook=error');
+                return redirect()->away($front . ($flow === 'vault' ? '?vault=error' : '?outlook=error'));
+            }
+
+            // 2º fator do Cofre (step-up Microsoft): NÃO conecta Outlook — só grava o
+            // step-up (pina a conta + TTL). O FE conclui por polling em /vault/ms/status.
+            if ($flow === 'vault') {
+                $ok = \App\Services\VaultStepUp::completeFromTokens($uid, $tok);
+                return redirect()->away($front . ($ok ? '?vault=stepup' : '?vault=error'));
             }
 
             UserIntegration::updateOrCreate(
