@@ -640,42 +640,6 @@ class MovideskHelpDeskImporter
         return $done;
     }
 
-    /** @var array<string,bool> cache em memória dos hashes-assinatura (md5 dos bytes) */
-    private array $sigHashes = [];
-    private bool $sigLoaded = false;
-
-    /**
-     * A imagem (md5 dos bytes) é uma ASSINATURA de e-mail? Assinaturas se repetem MUITO
-     * (logo/banner do consultor em toda resposta); conteúdo real raramente repete.
-     * Lista durável em SystemSetting 'movidesk_hd_signature_hashes' (semeada por detecção) +
-     * auto-aprendizado: md5 visto >=4x (cache 30d) vira assinatura e é persistido.
-     */
-    private function isSignatureImage(string $md5): bool
-    {
-        if (!$this->sigLoaded) {
-            $raw = SystemSetting::get('movidesk_hd_signature_hashes', []);
-            foreach ((is_array($raw) ? $raw : []) as $h) $this->sigHashes[(string) $h] = true;
-            $this->sigLoaded = true;
-        }
-        if (isset($this->sigHashes[$md5])) return true;
-
-        $key = 'mvsig:' . $md5;
-        $freq = \Illuminate\Support\Facades\Cache::add($key, 1, now()->addDays(30))
-            ? 1
-            : (int) \Illuminate\Support\Facades\Cache::increment($key);
-        if ($freq >= 4) {
-            $this->sigHashes[$md5] = true;
-            $list = SystemSetting::get('movidesk_hd_signature_hashes', []);
-            $list = is_array($list) ? $list : [];
-            if (!in_array($md5, $list, true)) {
-                $list[] = $md5;
-                SystemSetting::set('movidesk_hd_signature_hashes', $list, 'json', 'movidesk');
-            }
-            return true;
-        }
-        return false;
-    }
-
     private function rehostCommentImages(HelpDeskTicketComment $comment, int $ticketId, \App\Attachments\AttachmentService $svc): bool
     {
         $body = (string) $comment->body;
@@ -695,13 +659,6 @@ class MovideskHelpDeskImporter
             if (strncmp($ct, 'image/', 6) !== 0) continue;
             $bytes = $resp->body();
             if (strlen($bytes) < 64) continue;
-            // Assinatura de e-mail (imagem recorrente) → NÃO rehospeda; remove a <img>.
-            // É ruído no chamado (logo/banner do consultor) e aparecia até na descrição do cliente.
-            if ($this->isSignatureImage(md5($bytes))) {
-                $body = str_replace($tag, '', $body);
-                $changed = true;
-                continue;
-            }
             $ext = match (true) {
                 str_contains($ct, 'png')  => 'png',
                 str_contains($ct, 'gif')  => 'gif',
@@ -956,21 +913,32 @@ class MovideskHelpDeskImporter
 
     private function firstActionBody(array $md): ?string
     {
+        $a = $this->openingClientAction($md);
+        return $a ? (string) ($a['htmlDescription'] ?? '') : null;
+    }
+
+    /** id da ação de ABERTURA (a mesma usada como descrição inicial) — para não duplicar como interação. */
+    /**
+     * Primeira ação NÃO-vazia escrita pelo CLIENTE (autor NÃO é agente). Se a abertura
+     * foi feita por um AGENTE (ex. chamado aberto pelo consultor PARA o cliente), retorna
+     * null → essa ação NÃO vira "descrição do cliente": entra como interação normal,
+     * atribuída ao agente (igual ao Movidesk: "Flavio Augusto · Ação pública").
+     */
+    private function openingClientAction(array $md): ?array
+    {
         foreach (($md['actions'] ?? []) as $a) {
             $b = (string) ($a['htmlDescription'] ?? '');
-            if (trim(strip_tags($b)) !== '') return $b;
+            if (trim(strip_tags($b)) === '') continue;
+            if ($this->resolveAgentUser($a['createdBy']['email'] ?? null)) continue; // autor é agente → não é descrição do cliente
+            return $a;
         }
         return null;
     }
 
-    /** id da ação de ABERTURA (a mesma usada como descrição inicial) — para não duplicar como interação. */
     private function openingActionId(array $md): ?string
     {
-        foreach (($md['actions'] ?? []) as $a) {
-            $b = (string) ($a['htmlDescription'] ?? '');
-            if (trim(strip_tags($b)) !== '') return (string) ($a['id'] ?? '') ?: null;
-        }
-        return null;
+        $a = $this->openingClientAction($md);
+        return $a ? ((string) ($a['id'] ?? '') ?: null) : null;
     }
 
     // ── Cursor ────────────────────────────────────────────────────────────────
