@@ -37,6 +37,13 @@ class AppServiceProvider extends ServiceProvider
         // Empresa ativa do request (multi-empresa) — 1 instância por request,
         // compartilhada entre o middleware e o global scope BelongsToCompany.
         $this->app->scoped(\App\Services\CompanyContext::class);
+
+        // Repositórios de código do cliente (GitHub App read-only) — contrato → concreto.
+        // Usado por GitHubSourceService (/customers/{id}/source-repos).
+        $this->app->bind(
+            \App\SourceCode\Contracts\SourceProvider::class,
+            \App\SourceCode\Providers\GithubAppProvider::class,
+        );
     }
 
     /**
@@ -94,5 +101,14 @@ class AppServiceProvider extends ServiceProvider
         // Help Desk — throttle de envio de e-mail por caixa (evita bater no teto do provedor).
         // Ajustável via HELPDESK_EMAIL_PER_MINUTE (default 20/min, abaixo do teto ~30/min por caixa).
         RateLimiter::for('helpdesk-email', fn () => Limit::perMinute((int) env('HELPDESK_EMAIL_PER_MINUTE', 20)));
+
+        // Cofre — destravamento: anti-brute-force da master password, por usuário
+        // (ou IP se não autenticado). A rota /vault/unlock usa throttle:vault-unlock.
+        RateLimiter::for('vault-unlock', function (Request $request) {
+            $u = $request->user();
+            return [
+                Limit::perMinute(10)->by($u ? 'vault:' . $u->id : 'vault-ip:' . $request->ip()),
+            ];
+        });
     }
 }
