@@ -153,7 +153,9 @@ class ImpersonationController extends Controller
             }
         }
 
-        $users = $query->orderBy('name')->limit(30)
+        // Teto generoso: sem busca, lista "todos" (clientes podem passar de 30). A busca
+        // por tokens continua estreitando. 30 era baixo demais p/ navegar a lista de clientes.
+        $users = $query->orderBy('name')->limit(500)
             ->get(['id', 'name', 'email', 'type', 'consultant_type', 'customer_id', 'partner_id']);
 
         $data = $users->map(fn (User $u) => [
