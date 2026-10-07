@@ -537,9 +537,15 @@ class UserController extends Controller
      */
     public function cnpjLookup(string $cnpj, ReceitaCnpjService $receita): JsonResponse
     {
-        $data = $receita->lookup($cnpj);
+        try {
+            $data = $receita->lookup($cnpj);
+        } catch (\App\Exceptions\ReceitaUnavailableException $e) {
+            return response()->json([
+                'message' => 'Serviço da Receita indisponível no momento. Tente novamente em instantes.',
+            ], 503);
+        }
         if (! $data) {
-            return response()->json(['message' => 'CNPJ inválido ou não encontrado na Receita.'], 422);
+            return response()->json(['message' => 'CNPJ não encontrado na Receita. Confira o número.'], 422);
         }
         return response()->json($data);
     }

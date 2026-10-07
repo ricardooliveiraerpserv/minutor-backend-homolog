@@ -38,11 +38,17 @@ class ClassificarRegimeConsultores extends Command
         $contagem = ['mei' => 0, 'simples_nacional' => 0, 'lucro_presumido' => 0];
 
         foreach ($users as $u) {
-            $data = $receita->lookup($u->cnpj);
+            try {
+                $data = $receita->lookup($u->cnpj);
+            } catch (\App\Exceptions\ReceitaUnavailableException $e) {
+                $fail++;
+                $this->warn("  [indisponível] {$u->name} — CNPJ {$u->cnpj} (rode de novo depois)");
+                continue;
+            }
 
             if (! $data) {
                 $fail++;
-                $this->warn("  [falha]  {$u->name} — CNPJ {$u->cnpj}");
+                $this->warn("  [não encontrado] {$u->name} — CNPJ {$u->cnpj}");
                 continue;
             }
 
