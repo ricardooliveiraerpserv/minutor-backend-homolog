@@ -330,10 +330,16 @@ class AttachmentService
     public function downloadStream(Attachment $att, User $actor, ?Request $request = null): StreamedResponse
     {
         $this->ensureCanAccess($att, $actor, 'view');
-        $stream = $this->storage->downloadStream($att->storage_path);
         $this->logEvent($att, AttachmentEvent::TYPE_DOWNLOADED, $actor, $request);
 
         $name = $att->original_name ?: ($att->file_name ?: 'arquivo');
+
+        // ?view=1 → abre inline (PDF/imagem/texto) ou converte Office p/ PDF (Gotenberg).
+        if ($request && $request->boolean('view')) {
+            return app(\App\Services\AttachmentPreviewResponder::class)->respond($att->storage_path, $name, $att->mime_type, true);
+        }
+
+        $stream = $this->storage->downloadStream($att->storage_path);
         $fallback = preg_replace('/[^A-Za-z0-9._-]+/', '_', $name) ?: 'arquivo';
         $stream->headers->set('Content-Type', $att->mime_type ?: 'application/octet-stream');
         $stream->headers->set('Content-Disposition', \Symfony\Component\HttpFoundation\HeaderUtils::makeDisposition(
