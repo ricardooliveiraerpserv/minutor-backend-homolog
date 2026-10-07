@@ -324,12 +324,33 @@ class AttachmentService
     /**
      * Stream pra download. AttachmentController seta os headers de Content-Disposition.
      */
-    public function downloadStream(Attachment $att, User $actor, ?Request $request = null): StreamedResponse
+    public function downloadStream(Attachment $att, User $actor, ?Request $request = null): \Symfony\Component\HttpFoundation\Response
     {
         $this->ensureCanAccess($att, $actor, 'view');
-        $stream = $this->storage->downloadStream($att->storage_path);
         $this->logEvent($att, AttachmentEvent::TYPE_DOWNLOADED, $actor, $request);
-        return $stream;
+
+        $name = $att->original_name ?: ($att->file_name ?: 'arquivo');
+
+        // ?view=1 → inline (PDF/imagem/texto) ou converte Office p/ PDF (Gotenberg), lendo pelo
+        // StorageProvider (funciona em qualquer provider: local, S3, Supabase).
+        if ($request && $request->boolean('view')) {
+            $prev = app(\App\Services\AttachmentPreviewResponder::class);
+            if ($prev->isInline($name)) {
+                $s = $this->storage->downloadStream($att->storage_path);
+                $s->headers->set('Content-Type', $att->mime_type ?: 'application/octet-stream');
+                $s->headers->set('Content-Disposition', $prev->inlineDisposition($name));
+                return $s;
+            }
+            if ($prev->isOffice($name)) {
+                $pdf = $prev->officeToPdf($this->storage->get($att->storage_path), $name);
+                if ($pdf !== null) {
+                    return $prev->pdfResponse($pdf, $name);
+                }
+            }
+            // tipo sem preview / conversão falhou → segue para download normal
+        }
+
+        return $this->storage->downloadStream($att->storage_path);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
