@@ -166,6 +166,7 @@ class UserController extends Controller
             if ($request->filled('work_bond'))       { $query->whereIn('work_bond', array_filter(array_map('trim', explode(',', (string) $request->work_bond)))); }
             if ($request->filled('contract_type'))   { $query->whereIn('contract_type', array_filter(array_map('trim', explode(',', (string) $request->contract_type)))); }
             if ($request->filled('consultant_type')) { $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type)))); }
+            if ($request->filled('tax_regime'))       { $query->whereIn('tax_regime', array_filter(array_map('trim', explode(',', (string) $request->tax_regime)))); }
             if ($request->filled('sustentacao'))     { $query->where('can_timesheet_sustentacao', in_array($request->input('sustentacao'), ['1', 1, true], true)); }
             if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
             if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
@@ -260,6 +261,9 @@ class UserController extends Controller
         if ($request->filled('consultant_type')) {
             $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type))));
         }
+        if ($request->filled('tax_regime')) {
+            $query->whereIn('tax_regime', array_filter(array_map('trim', explode(',', (string) $request->tax_regime))));
+        }
         // Liberação da sustentação (can_timesheet_sustentacao): '1' liberado | '0' bloqueado.
         if ($request->filled('sustentacao')) {
             $query->where('can_timesheet_sustentacao', $request->input('sustentacao') === '1' || $request->input('sustentacao') === 1 || $request->input('sustentacao') === true);
@@ -304,7 +308,7 @@ class UserController extends Controller
                     $field = substr($field, 1);
                 }
 
-                $allowedFields = ['name', 'email', 'created_at', 'updated_at', 'type', 'contract_type', 'consultant_type', 'work_bond', 'enabled', 'can_timesheet_sustentacao'];
+                $allowedFields = ['name', 'email', 'created_at', 'updated_at', 'type', 'contract_type', 'consultant_type', 'work_bond', 'enabled', 'can_timesheet_sustentacao', 'tax_regime'];
                 if (in_array($field, $allowedFields)) {
                     // Qualifica users.* — campo pode ser ambíguo se algum filtro
                     // anterior adicionou leftJoin com partners (mesma coluna name/email/timestamps).
