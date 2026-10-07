@@ -419,7 +419,13 @@ class HelpDeskEmailIngestor
                 $body = str_replace('cid:' . $cid, $data, $body);
                 continue;
             }
-            $regular[] = $f; // anexo real (arquivo enviado pelo usuário)
+            // Imagem marcada como inline pelo Graph (assinatura, logos, print colado no corpo) —
+            // NÃO vira anexo mesmo sem casar o cid. Continua renderizando no corpo; só não duplica
+            // como arquivo. Pedido: "se foi um print (inline) não deve ser anexo".
+            if (!empty($f['inline'])) {
+                continue;
+            }
+            $regular[] = $f; // anexo real (arquivo de fato enviado pelo usuário)
         }
         return [$body, $regular];
     }
