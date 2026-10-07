@@ -1541,10 +1541,6 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/consultants/available', [\App\Http\Controllers\ProjectTeamController::class, 'availableConsultants'])->name('projects.consultants.available');
             Route::post('/projects/{project}/consultants', [\App\Http\Controllers\ProjectTeamController::class, 'addConsultant'])->name('projects.consultants.add');
             Route::delete('/projects/{project}/consultants/{user}', [\App\Http\Controllers\ProjectTeamController::class, 'removeConsultant'])->name('projects.consultants.remove');
-            Route::get('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'index'])->name('projects.client-viewers.index');
-            Route::get('/projects/{project}/client-viewers/available', [ProjectClientViewerController::class, 'available'])->name('projects.client-viewers.available');
-            Route::post('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'store'])->name('projects.client-viewers.store');
-            Route::delete('/projects/{project}/client-viewers/{user}', [ProjectClientViewerController::class, 'destroy'])->name('projects.client-viewers.destroy');
             Route::post('/deliveries/{delivery}/approve', [StageDeliveryController::class, 'approve'])->name('deliveries.approve');
             Route::post('/deliveries/{delivery}/reject', [StageDeliveryController::class, 'reject'])->name('deliveries.reject');
             // Removido (Fase 4 — ADR 0007): POST /stages/{stage}/allocations.
@@ -1556,6 +1552,14 @@ Route::prefix('v1')->group(function () {
             Route::patch('/allocations/{allocation}', [StageAllocationController::class, 'update'])->name('allocations.update');
             Route::delete('/allocations/{allocation}', [StageAllocationController::class, 'destroy'])->name('allocations.destroy');
         });
+
+        // Participantes do projeto (clientes com visão do card). FORA de block.cliente:
+        // o gestor do cliente também pode gerir. Autorização completa em ensureCanManage
+        // (admin/coordenador/gestor-do-cliente do mesmo customer).
+        Route::get('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'index'])->name('projects.client-viewers.index');
+        Route::get('/projects/{project}/client-viewers/available', [ProjectClientViewerController::class, 'available'])->name('projects.client-viewers.available');
+        Route::post('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'store'])->name('projects.client-viewers.store');
+        Route::delete('/projects/{project}/client-viewers/{user}', [ProjectClientViewerController::class, 'destroy'])->name('projects.client-viewers.destroy');
 
         // 💰 HOUR CONTRIBUTIONS - Aportes de Horas (vinculados a projetos)
         Route::middleware('permission.or.admin:projects.view')->group(function () {

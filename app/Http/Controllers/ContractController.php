@@ -1310,6 +1310,11 @@ class ContractController extends Controller
 
             if ($isCliente && $user->customer_id) {
                 $demandQuery->where('customer_id', $user->customer_id);
+                // Cliente comum (não-gestor) não vê demandas pré-projeto: só enxerga
+                // os cards de projeto em que foi convidado. Gestor do cliente vê tudo.
+                if (!$user->is_customer_manager) {
+                    $demandQuery->whereRaw('1 = 0');
+                }
             }
 
             $demandCards = $demandQuery->get()->map(fn($c) => $this->formatKanbanCard($c));
@@ -1376,6 +1381,11 @@ class ContractController extends Controller
             $projectQuery->whereHas('consultants', fn($q) => $q->where('users.id', $user->id));
         } elseif ($isCliente && $user->customer_id) {
             $projectQuery->where('customer_id', $user->customer_id);
+            // Cliente comum: só os projetos em que foi convidado (project_client_viewers).
+            // Gestor do cliente enxerga todos os projetos da sua empresa.
+            if (!$user->is_customer_manager) {
+                $projectQuery->whereHas('clientViewers', fn($q) => $q->where('users.id', $user->id));
+            }
         } elseif ($user?->isCoordenador()) {
             $projectQuery->where(function ($q) {
                 $q->whereDoesntHave('serviceType')
@@ -1516,6 +1526,10 @@ class ContractController extends Controller
 
             if ($isCliente && $user->customer_id) {
                 $reqQuery->where('customer_id', $user->customer_id);
+                // Cliente comum só vê as requisições que ele mesmo abriu; gestor vê todas da empresa.
+                if (!$user->is_customer_manager) {
+                    $reqQuery->where('created_by_id', $user->id);
+                }
             }
 
             $requestCards = $reqQuery->orderBy('created_at', 'desc')->get()->map(fn($r) => [
@@ -1559,7 +1573,15 @@ class ContractController extends Controller
                 ->orderByDesc('contributed_at');
 
             if ($isCliente && $user->customer_id) {
-                $aporteQuery->whereHas('project', fn($q) => $q->where('customer_id', $user->customer_id));
+                $uid = $user->id;
+                $isManager = $user->is_customer_manager;
+                $aporteQuery->whereHas('project', function ($q) use ($user, $uid, $isManager) {
+                    $q->where('customer_id', $user->customer_id);
+                    // Cliente comum só vê aportes dos projetos em que foi convidado.
+                    if (!$isManager) {
+                        $q->whereHas('clientViewers', fn($v) => $v->where('users.id', $uid));
+                    }
+                });
             }
 
             // FASE 11.7 — proposta agora vive na camada Attachment (HOUR_CONTRIBUTION.proposal).

@@ -13,8 +13,10 @@ use Illuminate\Http\Request;
  */
 class ProjectClientViewerController extends Controller
 {
-    public function index(Project $project): JsonResponse
+    public function index(Project $project, Request $request): JsonResponse
     {
+        if (($err = $this->ensureCanManage($request, $project)) !== null) return $err;
+
         $items = $project->clientViewers()
             ->select('users.id', 'users.name', 'users.email')
             ->orderBy('users.name')
@@ -27,8 +29,10 @@ class ProjectClientViewerController extends Controller
      * Clientes ELEGÍVEIS: só os do MESMO customer do projeto, ainda não vinculados.
      * Impede vincular um cliente de outro customer (vazamento entre clientes).
      */
-    public function available(Project $project): JsonResponse
+    public function available(Project $project, Request $request): JsonResponse
     {
+        if (($err = $this->ensureCanManage($request, $project)) !== null) return $err;
+
         if (!$project->customer_id) {
             return response()->json(['items' => []]);
         }
@@ -46,7 +50,7 @@ class ProjectClientViewerController extends Controller
 
     public function store(Project $project, Request $request): JsonResponse
     {
-        if (($err = $this->ensureCanManage($request)) !== null) return $err;
+        if (($err = $this->ensureCanManage($request, $project)) !== null) return $err;
 
         $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
 
@@ -69,22 +73,32 @@ class ProjectClientViewerController extends Controller
 
     public function destroy(Project $project, User $user, Request $request): JsonResponse
     {
-        if (($err = $this->ensureCanManage($request)) !== null) return $err;
+        if (($err = $this->ensureCanManage($request, $project)) !== null) return $err;
 
         $project->clientViewers()->detach($user->id);
 
         return response()->json(['detached' => true]);
     }
 
-    private function ensureCanManage(Request $request): ?JsonResponse
+    /**
+     * Quem pode gerir os participantes do projeto:
+     *  - admin e coordenador (equipe interna);
+     *  - gestor do cliente (is_customer_manager) do MESMO customer do projeto.
+     */
+    private function ensureCanManage(Request $request, Project $project): ?JsonResponse
     {
         $u = $request->user();
-        $can = $u && (
+        $isTeam = $u && (
             (method_exists($u, 'isAdmin') && $u->isAdmin())
             || (method_exists($u, 'isCoordenador') && $u->isCoordenador())
         );
-        if (!$can) {
-            return response()->json(['message' => 'Apenas coordenador ou admin podem gerir os participantes do projeto.'], 403);
+        $isClientManager = $u
+            && method_exists($u, 'isCliente') && $u->isCliente()
+            && $u->is_customer_manager
+            && (int) $u->customer_id === (int) $project->customer_id;
+
+        if (!$isTeam && !$isClientManager) {
+            return response()->json(['message' => 'Apenas coordenador, admin ou gestor do cliente podem gerir os participantes do projeto.'], 403);
         }
         return null;
     }

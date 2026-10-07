@@ -72,6 +72,8 @@ class User extends Authenticatable
         'has_temporary_password',
         'temporary_password_expires_at',
         'customer_id',
+        // Gestor do cliente: usuário cliente que vê TODOS os projetos da sua empresa.
+        'is_customer_manager',
         // Acesso a módulos por usuário (cliente): ['projetos','help_desk']. NULL = todos.
         // Não é vetor de escalada: só RESTRINGE o próprio cliente. Ver EnsureClienteModule.
         'allowed_modules',
@@ -160,6 +162,7 @@ class User extends Authenticatable
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
             'is_coordinator' => 'boolean',
+            'is_customer_manager' => 'boolean',
             'is_crm_responsavel' => 'boolean',
             'is_bizify' => 'boolean',
             'is_bizify_coordinator' => 'boolean',

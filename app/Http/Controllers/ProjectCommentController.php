@@ -138,9 +138,18 @@ class ProjectCommentController extends Controller
                 $ids->push($project->customer->executive_id);
             }
         } else {
-            $ids = User::where('type', 'cliente')
-                ->where('customer_id', $project->customer_id)
-                ->where('enabled', true)->pluck('id');
+            // Clientes notificados: APENAS os convidados ao projeto (project_client_viewers)
+            // + os gestores do cliente (que enxergam todos os projetos da empresa).
+            // Evita vazar comentário interno para todos os clientes do customer.
+            $ids = $project->clientViewers()
+                ->where('users.enabled', true)
+                ->pluck('users.id')
+                ->merge(
+                    User::where('type', 'cliente')
+                        ->where('customer_id', $project->customer_id)
+                        ->where('is_customer_manager', true)
+                        ->where('enabled', true)->pluck('id')
+                );
         }
 
         $recipients = $ids->merge($mentionedIds)->filter()
@@ -193,8 +202,11 @@ class ProjectCommentController extends Controller
                 ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => 'executivo'])
             : collect();
 
+        // Só é possível mencionar clientes convidados ao projeto (viewers) ou gestores do cliente.
+        $viewerIds = $project->clientViewers()->where('users.enabled', true)->pluck('users.id');
         $clientes = User::query()->where('type', 'cliente')
             ->where('customer_id', $project->customer_id)->where('enabled', true)
+            ->where(fn ($q) => $q->whereIn('id', $viewerIds)->orWhere('is_customer_manager', true))
             ->select('id', 'name')->get()
             ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'role' => 'cliente']);
 
