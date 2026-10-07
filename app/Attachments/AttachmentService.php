@@ -327,16 +327,30 @@ class AttachmentService
      * Sem isso o Supabase (homolog) devolvia octet-stream sem filename → o navegador salvava como
      * "download" sem extensão; e Local/S3 nomeavam pelo UUID de storage.
      */
-    public function downloadStream(Attachment $att, User $actor, ?Request $request = null): StreamedResponse
+    public function downloadStream(Attachment $att, User $actor, ?Request $request = null): \Symfony\Component\HttpFoundation\Response
     {
         $this->ensureCanAccess($att, $actor, 'view');
         $this->logEvent($att, AttachmentEvent::TYPE_DOWNLOADED, $actor, $request);
 
         $name = $att->original_name ?: ($att->file_name ?: 'arquivo');
 
-        // ?view=1 → abre inline (PDF/imagem/texto) ou converte Office p/ PDF (Gotenberg).
+        // ?view=1 → inline (PDF/imagem/texto) ou converte Office p/ PDF (Gotenberg). Lê pelo
+        // StorageProvider — anexos de HD ficam no Supabase, não no disco 'public' local.
         if ($request && $request->boolean('view')) {
-            return app(\App\Services\AttachmentPreviewResponder::class)->respond($att->storage_path, $name, $att->mime_type, true);
+            $prev = app(\App\Services\AttachmentPreviewResponder::class);
+            if ($prev->isInline($name)) {
+                $s = $this->storage->downloadStream($att->storage_path);
+                $s->headers->set('Content-Type', $att->mime_type ?: 'application/octet-stream');
+                $s->headers->set('Content-Disposition', $prev->inlineDisposition($name));
+                return $s;
+            }
+            if ($prev->isOffice($name)) {
+                $pdf = $prev->officeToPdf($this->storage->get($att->storage_path), $name);
+                if ($pdf !== null) {
+                    return $prev->pdfResponse($pdf, $name);
+                }
+            }
+            // tipo sem preview / conversão falhou → segue para download normal
         }
 
         $stream = $this->storage->downloadStream($att->storage_path);
