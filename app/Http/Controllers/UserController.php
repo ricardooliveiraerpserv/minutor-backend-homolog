@@ -545,7 +545,7 @@ class UserController extends Controller
             ], 503);
         }
         if (! $data) {
-            return response()->json(['message' => 'CNPJ não encontrado na Receita. Confira o número.'], 422);
+            return response()->json(['message' => 'CNPJ inválido ou não encontrado na Receita. Confira o número.'], 422);
         }
         return response()->json($data);
     }

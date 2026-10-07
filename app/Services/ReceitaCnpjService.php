@@ -31,7 +31,8 @@ class ReceitaCnpjService
     public function lookup(string $cnpj): ?array
     {
         $digits = preg_replace('/\D/', '', $cnpj);
-        if (strlen($digits) !== 14) {
+        // CNPJ malformado/dígito verificador inválido → nem chama a API (seria 400).
+        if (strlen($digits) !== 14 || ! $this->isValidCnpjDigits($digits)) {
             return null;
         }
 
@@ -106,8 +107,8 @@ class ReceitaCnpjService
             throw new ReceitaUnavailableException("CNPJa: {$e->getMessage()}");
         }
 
-        if ($res->status() === 404) {
-            return null;
+        if ($res->status() === 404 || $res->status() === 400) {
+            return null; // 400 do CNPJa = CNPJ inválido, não indisponibilidade
         }
         if (! $res->successful()) {
             throw new ReceitaUnavailableException("CNPJa HTTP {$res->status()}");
@@ -124,6 +125,28 @@ class ReceitaCnpjService
             simples: $simples,
             situacao: data_get($d, 'status.text'),
         );
+    }
+
+    /** Valida os dígitos verificadores do CNPJ (algoritmo oficial). */
+    private function isValidCnpjDigits(string $c): bool
+    {
+        if (strlen($c) !== 14 || preg_match('/^(\d)\1{13}$/', $c)) {
+            return false;
+        }
+        $dv = function (int $len) use ($c): int {
+            $sum = 0;
+            $pos = $len - 7;
+            for ($i = 0; $i < $len; $i++) {
+                $sum += ((int) $c[$i]) * $pos--;
+                if ($pos < 2) {
+                    $pos = 9;
+                }
+            }
+            $r = $sum % 11;
+            return $r < 2 ? 0 : 11 - $r;
+        };
+
+        return $dv(12) === (int) $c[12] && $dv(13) === (int) $c[13];
     }
 
     private function normalize(?string $razao, ?string $porte, bool $mei, bool $simples, ?string $situacao): array
