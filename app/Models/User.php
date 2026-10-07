@@ -67,6 +67,7 @@ class User extends Authenticatable
         'full_name',
         'cpf',
         'cnpj',
+        'razao_social',
         'tax_regime',
         'tax_regime_checked_at',
         'matricula',
