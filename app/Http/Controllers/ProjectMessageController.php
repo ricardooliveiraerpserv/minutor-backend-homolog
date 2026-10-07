@@ -270,7 +270,8 @@ class ProjectMessageController extends Controller
             return response()->json(['message' => 'Anexo não encontrado'], 404);
         }
 
-        return Storage::disk('public')->download($attachment->storage_path, $attachment->original_name);
+        return app(\App\Services\AttachmentPreviewResponder::class)
+            ->respond($attachment->storage_path, $attachment->original_name, $attachment->mime_type, $request->boolean('view'));
     }
 
     public function markRead(Request $request, Project $project): JsonResponse

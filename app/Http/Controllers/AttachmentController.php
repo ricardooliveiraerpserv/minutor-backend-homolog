@@ -85,17 +85,20 @@ class AttachmentController extends Controller
         });
     }
 
-    public function download(Request $request, int $id): StreamedResponse|JsonResponse
+    public function download(Request $request, int $id): \Symfony\Component\HttpFoundation\Response|JsonResponse
     {
         try {
             $att = $this->service->get($id, $request->user());
-            $stream = $this->service->downloadStream($att, $request->user(), $request);
-            $stream->headers->set('Content-Disposition', sprintf(
-                'attachment; filename="%s"',
-                addslashes($att->original_name),
-            ));
-            $stream->headers->set('Content-Type', $att->mime_type);
-            return $stream;
+            $resp = $this->service->downloadStream($att, $request->user(), $request);
+            // ?view=1 → o service já devolve inline (ou PDF do Office); só força "attachment" no download.
+            if (! $request->boolean('view')) {
+                $resp->headers->set('Content-Disposition', sprintf(
+                    'attachment; filename="%s"',
+                    addslashes($att->original_name),
+                ));
+                $resp->headers->set('Content-Type', $att->mime_type);
+            }
+            return $resp;
         } catch (\Throwable $e) {
             return $this->translateException($e);
         }

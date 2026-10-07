@@ -4707,7 +4707,7 @@ class ProjectController extends Controller
         return response()->json($attachment, 201);
     }
 
-    public function downloadAttachment(Project $project, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    public function downloadAttachment(\Illuminate\Http\Request $request, Project $project, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\Response
     {
         // FASE 11.7 (PR 7b) — aceita anexos PROJECT direto OU CONTRACT do contrato vinculado.
         $isProjectOwn  = $attachment->entity_type === 'PROJECT'  && (int) $attachment->entity_id === (int) $project->id;
@@ -4715,6 +4715,19 @@ class ProjectController extends Controller
                          && (int) $attachment->entity_id === (int) $project->contract_id;
         abort_unless($isProjectOwn || $isLinkedCont, 404);
         abort_unless(Storage::exists($attachment->storage_path), 404, 'Arquivo não encontrado.');
+
+        $prev = app(\App\Services\AttachmentPreviewResponder::class);
+        if ($request->boolean('view')) {
+            if ($prev->isInline($attachment->original_name)) {
+                return Storage::response($attachment->storage_path, $attachment->original_name, ['Content-Disposition' => $prev->inlineDisposition($attachment->original_name)]);
+            }
+            if ($prev->isOffice($attachment->original_name)) {
+                $pdf = $prev->officeToPdf(Storage::get($attachment->storage_path), $attachment->original_name);
+                if ($pdf !== null) {
+                    return $prev->pdfResponse($pdf, $attachment->original_name);
+                }
+            }
+        }
         return Storage::download($attachment->storage_path, $attachment->original_name);
     }
 
