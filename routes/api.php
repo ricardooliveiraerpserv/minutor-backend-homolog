@@ -1530,6 +1530,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/users/export', [UserController::class, 'exportUsers'])->name('users.export');
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::get('/users/counts', [UserController::class, 'counts'])->name('users.counts'); // ANTES de /users/{user}
+        // Consulta de regime tributário por CNPJ (Receita/BrasilAPI). 2 segmentos → não colide com /users/{user}.
+        Route::get('/users/cnpj-lookup/{cnpj}', [UserController::class, 'cnpjLookup'])->name('users.cnpj-lookup');
         Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
 
         Route::middleware(['permission.or.admin:users.create', 'screen.action:/users,create'])->group(function () {

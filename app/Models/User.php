@@ -66,6 +66,9 @@ class User extends Authenticatable
         // Folha de pagamento (planilha de importação)
         'full_name',
         'cpf',
+        'cnpj',
+        'tax_regime',
+        'tax_regime_checked_at',
         'matricula',
         'payroll_status',
         'bank_hours_start_date',
@@ -177,6 +180,7 @@ class User extends Authenticatable
             'allowed_modules' => 'array',
             'signature' => 'array',
             'birth_date' => 'date',
+            'tax_regime_checked_at' => 'datetime',
             // Criptografa em repouso com APP_KEY; descriptografa na leitura.
             'smtp_app_password' => 'encrypted',
         ];

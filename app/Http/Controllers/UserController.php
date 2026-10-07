@@ -20,6 +20,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use App\Notifications\TemporaryPasswordNotification;
 use App\Notifications\WelcomeNotification;
+use App\Services\ReceitaCnpjService;
 
 /**
  * @OA\Tag(
@@ -529,6 +530,20 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Consulta um CNPJ na Receita (BrasilAPI) e devolve o regime tributário
+     * inferido (MEI / Simples Nacional / demais), para preencher a ficha do
+     * consultor. Usado pelo botão "Consultar Receita" no cadastro.
+     */
+    public function cnpjLookup(string $cnpj, ReceitaCnpjService $receita): JsonResponse
+    {
+        $data = $receita->lookup($cnpj);
+        if (! $data) {
+            return response()->json(['message' => 'CNPJ inválido ou não encontrado na Receita.'], 422);
+        }
+        return response()->json($data);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -557,6 +572,8 @@ class UserController extends Controller
             'contract_type' => 'nullable|in:cooperado,clt,pj',
             'full_name'      => 'nullable|string|max:255',
             'cpf'            => 'nullable|string|max:20',
+            'cnpj'           => 'nullable|string|max:18',
+            'tax_regime'     => 'nullable|in:mei,simples_nacional,lucro_presumido,lucro_real,nao_aplica',
             'matricula'      => 'nullable|string|max:30',
             'payroll_status' => 'nullable|string|max:40',
             'phone'          => 'nullable|string|max:40',
@@ -849,6 +866,8 @@ class UserController extends Controller
             'contract_type' => 'nullable|in:cooperado,clt,pj',
             'full_name'      => 'nullable|string|max:255',
             'cpf'            => 'nullable|string|max:20',
+            'cnpj'           => 'nullable|string|max:18',
+            'tax_regime'     => 'nullable|in:mei,simples_nacional,lucro_presumido,lucro_real,nao_aplica',
             'matricula'      => 'nullable|string|max:30',
             'payroll_status' => 'nullable|string|max:40',
             'phone'          => 'nullable|string|max:40',
