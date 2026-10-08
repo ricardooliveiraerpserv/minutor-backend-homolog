@@ -1561,6 +1561,12 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects/{project}/client-viewers', [ProjectClientViewerController::class, 'store'])->name('projects.client-viewers.store');
         Route::delete('/projects/{project}/client-viewers/{user}', [ProjectClientViewerController::class, 'destroy'])->name('projects.client-viewers.destroy');
 
+        // Participantes da REQUISIÇÃO (pré-projeto). Mesma autorização (admin/coord/gestor).
+        Route::get('/contract-requests/{contractRequest}/client-viewers', [\App\Http\Controllers\ContractRequestViewerController::class, 'index'])->name('contract-requests.client-viewers.index');
+        Route::get('/contract-requests/{contractRequest}/client-viewers/available', [\App\Http\Controllers\ContractRequestViewerController::class, 'available'])->name('contract-requests.client-viewers.available');
+        Route::post('/contract-requests/{contractRequest}/client-viewers', [\App\Http\Controllers\ContractRequestViewerController::class, 'store'])->name('contract-requests.client-viewers.store');
+        Route::delete('/contract-requests/{contractRequest}/client-viewers/{user}', [\App\Http\Controllers\ContractRequestViewerController::class, 'destroy'])->name('contract-requests.client-viewers.destroy');
+
         // 💰 HOUR CONTRIBUTIONS - Aportes de Horas (vinculados a projetos)
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects/{project}/hour-contributions', [HourContributionController::class, 'index'])->name('hour-contributions.index');

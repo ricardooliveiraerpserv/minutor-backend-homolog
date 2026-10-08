@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class ContractRequest extends Model
@@ -81,6 +82,12 @@ class ContractRequest extends Model
     public function linkedContract(): BelongsTo   { return $this->belongsTo(Contract::class, 'linked_contract_id'); }
     public function linkedCoordinator(): BelongsTo{ return $this->belongsTo(User::class, 'linked_coordinator_id'); }
     public function linkedProject(): BelongsTo    { return $this->belongsTo(Project::class, 'linked_project_id'); }
+
+    /** Clientes convidados a ver esta requisição (pré-projeto). */
+    public function clientViewers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'contract_request_viewers')->withTimestamps();
+    }
 
     public function messages(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
