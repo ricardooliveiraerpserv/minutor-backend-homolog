@@ -18,6 +18,7 @@ class ProjectClientViewerController extends Controller
         if (($err = $this->ensureCanManage($request, $project)) !== null) return $err;
 
         $items = $project->clientViewers()
+            ->where('users.enabled', true)   // só exibe participantes ativos
             ->select('users.id', 'users.name', 'users.email')
             ->orderBy('users.name')
             ->get();
@@ -41,6 +42,7 @@ class ProjectClientViewerController extends Controller
 
         $items = User::where('type', 'cliente')
             ->where('customer_id', $project->customer_id)
+            ->where('enabled', true)   // só clientes ativos podem ser convidados
             ->whereNotIn('id', $already)
             ->orderBy('name')
             ->get(['id', 'name', 'email']);
@@ -57,6 +59,9 @@ class ProjectClientViewerController extends Controller
         $user = User::find($data['user_id']);
         if (!$user || !$user->isCliente()) {
             return response()->json(['message' => 'Só usuários do tipo cliente podem ter visão global do projeto.'], 422);
+        }
+        if (!$user->enabled) {
+            return response()->json(['message' => 'Este cliente está inativo e não pode ser convidado.'], 422);
         }
 
         // Guard: o cliente precisa ser do MESMO customer do projeto.
