@@ -285,6 +285,11 @@ class UserController extends Controller
             $query->where('customer_id', $request->customer_id);
         }
 
+        // Filtro "só gestores do cliente".
+        if ($request->filled('is_customer_manager') && $request->boolean('is_customer_manager')) {
+            $query->where('is_customer_manager', true);
+        }
+
         // Filtro por status (ativo/inativo) usando campo enabled
         $status = $request->get('status');
         if ($status === 'active') {
