@@ -2988,6 +2988,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/ms/start',            [\App\Http\Controllers\VaultProfileController::class, 'msStart'])->middleware('throttle:10,1')->name('vault.ms.start');
             Route::get('/ms/status',            [\App\Http\Controllers\VaultProfileController::class, 'msStatus'])->name('vault.ms.status');
             Route::post('/profile/setup',       [\App\Http\Controllers\VaultProfileController::class, 'setup'])->name('vault.profile.setup');
+            // Recomeçar o cofre do zero (perdeu senha mestra + recovery key). Apaga cofre pessoal.
+            Route::post('/profile/reset',       [\App\Http\Controllers\VaultProfileController::class, 'reset'])->middleware('throttle:5,15')->name('vault.profile.reset');
             Route::post('/unlock',              [\App\Http\Controllers\VaultProfileController::class, 'unlock'])->middleware('throttle:vault-unlock')->name('vault.unlock');
             Route::post('/master-password',     [\App\Http\Controllers\VaultProfileController::class, 'changeMasterPassword'])->middleware('throttle:10,1')->name('vault.master-password');
             Route::post('/recovery/unlock',     [\App\Http\Controllers\VaultProfileController::class, 'recoveryUnlock'])->middleware('throttle:5,15')->name('vault.recovery.unlock');

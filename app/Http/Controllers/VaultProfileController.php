@@ -248,6 +248,52 @@ class VaultProfileController extends Controller
     }
 
     /**
+     * RECOMEÇAR O COFRE DO ZERO — para quem perdeu a master password E a recovery key.
+     * Como é zero-knowledge, os itens são indecifráveis e serão APAGADOS (cofre pessoal).
+     * Exige o 2º fator (prova identidade sem a master password) — mesmo gate do setup.
+     * Depois disso, o usuário refaz o setup (nova master password + nova recovery key).
+     */
+    public function reset(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $keys = $this->keysFor($user);
+
+        if (! $keys->isConfigured()) {
+            return response()->json(['message' => 'Cofre ainda não configurado — nada a recomeçar.'], 409);
+        }
+        // Confirmação explícita digitada no front (anti-acidente).
+        $request->validate(['confirm' => 'required|in:RECOMECAR,RECOMEÇAR']);
+        // 2º fator OBRIGATÓRIO: é o que prova a identidade sem a senha mestra.
+        if (! $this->secondFactorReady($keys)) {
+            return response()->json(['message' => 'Valide o 2º fator (Microsoft ou autenticador) para recomeçar.'], 422);
+        }
+        if (! $this->checkSecondFactor($keys, $request)) {
+            return response()->json(['message' => 'Verificação do 2º fator falhou.'], 422);
+        }
+
+        DB::transaction(function () use ($user, $keys) {
+            // Apaga o(s) cofre(s) PESSOAL(is) do usuário — itens e membros em cascata.
+            Vault::where('type', 'personal')->where('created_by', $user->id)->get()->each->delete();
+            // Zera o perfil criptográfico → isConfigured() = false → permite refazer o setup.
+            // Mantém o 2º fator (TOTP/Microsoft) configurado. Acesso a cofres COMPARTILHADOS
+            // fica stale (precisa ser recompartilhado por um admin com a nova chave pública).
+            $keys->forceFill([
+                'auth_hash'                 => null,
+                'encrypted_symmetric_key'   => null,
+                'public_key'                => null,
+                'encrypted_private_key'     => null,
+                'recovery_symmetric_key'    => null,
+                'recovery_token_hash'       => null,
+                'recovery_token_expires_at' => null,
+            ])->save();
+        });
+
+        VaultAccessLog::record($request, 'profile_reset');
+
+        return response()->json(['reset' => true]);
+    }
+
+    /**
      * Unlock: auth_hash + TOTP válidos => devolve os blobs cifrados.
      * Erro é sempre GENÉRICO (não revelar se falhou hash ou TOTP).
      */
