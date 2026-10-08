@@ -196,6 +196,13 @@ class EnvironmentController extends Controller
             'name'        => $env->name,
             'type'        => $env->type,
             'status'      => $env->status,
+            // Ambiente usado pela SUSTENTAÇÃO do cliente (base do suporte).
+            'is_support_base' => (bool) $env->is_support_base,
+            // Projetos em desenvolvimento NESTE ambiente (legenda "projeto X neste ambiente").
+            'projects'    => $env->projects()
+                ->whereNotIn('projects.status', ['finished', 'cancelled'])
+                ->get(['projects.id', 'projects.code', 'projects.name', 'projects.status'])
+                ->map(fn ($p) => ['id' => $p->id, 'code' => $p->code, 'name' => $p->name, 'status' => $p->status]),
             'inventory'   => $env->inventory,
             'notes'       => $env->notes,
             'rdp_host'    => $env->rdp_host,
@@ -215,6 +222,7 @@ class EnvironmentController extends Controller
             'name'                => 'sometimes|string|max:120',
             'type'                => 'sometimes|in:prod,homolog,dev,dr',
             'status'              => 'sometimes|in:online,offline,unknown,maintenance',
+            'is_support_base'     => 'sometimes|boolean',
             'inventory'           => 'sometimes|array',
             'notes'               => 'nullable|string|max:5000',
             'responsible_user_id' => 'nullable|integer|exists:users,id',
@@ -222,6 +230,11 @@ class EnvironmentController extends Controller
             'rdp_port'            => 'nullable|integer|min:1|max:65535',
         ]);
         $env->update($data);
+        // Base da sustentação é única por cliente: ao marcar este, desmarca os demais.
+        if (array_key_exists('is_support_base', $data) && $data['is_support_base']) {
+            EnvEnvironment::where('customer_id', $env->customer_id)
+                ->where('id', '!=', $env->id)->update(['is_support_base' => false]);
+        }
         EnvAccessLog::record($request, 'env_update', ['environment_id' => $env->id, 'item_label' => $env->name]);
 
         return response()->json(['updated' => true]);

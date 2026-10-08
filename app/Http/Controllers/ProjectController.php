@@ -997,6 +997,19 @@ class ProjectController extends Controller
      *     @OA\Response(response=403, description="Sem permissão")
      * )
      */
+    /**
+     * Ambientes do cofre de um cliente — para o seletor de "ambiente(s) do projeto".
+     * Leitura leve (id/nome/tipo); gated por projects.view.
+     */
+    public function customerEnvironments(Request $request): JsonResponse
+    {
+        $data = $request->validate(['customer_id' => 'required|integer|exists:customers,id']);
+        $items = \App\Models\EnvEnvironment::where('customer_id', $data['customer_id'])
+            ->orderBy('name')
+            ->get(['id', 'name', 'type', 'is_support_base']);
+        return response()->json(['items' => $items]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
@@ -1037,6 +1050,9 @@ class ProjectController extends Controller
             'consultant_ids.*' => 'exists:users,id',
             'coordinator_ids' => 'nullable|array|max:1',
             'coordinator_ids.*' => 'exists:users,id',
+            // Ambiente(s) do cofre em que o projeto é desenvolvido (filtrados por customer no sync).
+            'environment_ids' => 'nullable|array',
+            'environment_ids.*' => 'exists:env_environments,id',
             'consultant_group_ids' => 'nullable|array',
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
             // Contract-origin fields
@@ -1139,7 +1155,8 @@ class ProjectController extends Controller
         $consultantIds      = $validated['consultant_ids'] ?? [];
         $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? [];
         $consultantGroupIds = $validated['consultant_group_ids'] ?? [];
-        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids']);
+        $environmentIds     = $validated['environment_ids'] ?? [];
+        unset($validated['consultant_ids'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['environment_ids']);
 
         // Pilar 1: projeto operacional não aceita alocação direta (consultants)
         // — aloca via /stages/{id}/allocations. ADR 0007. Contratos (Investimento,
@@ -1247,6 +1264,13 @@ class ProjectController extends Controller
             $project->consultantGroups()->sync($consultantGroupIds);
         }
 
+        // Vincular ambiente(s) do cofre — só os do MESMO cliente do projeto.
+        if (!empty($environmentIds)) {
+            $validEnvIds = \App\Models\EnvEnvironment::whereIn('id', $environmentIds)
+                ->where('customer_id', $project->customer_id)->pluck('id')->all();
+            $project->environments()->sync($validEnvIds);
+        }
+
         // Registrar histórico inicial de sold_hours para Banco de Horas Mensal
         $project->loadMissing('contractType');
         if ($project->isBankHoursMonthly() && $project->sold_hours) {
@@ -1319,7 +1343,7 @@ class ProjectController extends Controller
         // Coordenador tem ACESSO FULL ao detalhe de qualquer projeto (sem gate aqui).
 
         // Carregar relacionamentos essenciais
-        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups.consultants', 'parentProject', 'childProjects', 'hourContributions']);
+        $project->load(['customer', 'serviceType', 'contractType', 'consultants', 'coordinators', 'consultantGroups.consultants', 'parentProject', 'childProjects', 'hourContributions', 'environments:id,name,type,is_support_base,customer_id']);
 
         // Detalhes do contrato (Vendedor, Arquiteto, Executivo de Conta) — usados
         // pelo ProjectViewModal pra exibir os campos herdados na visão geral.
@@ -1611,6 +1635,8 @@ class ProjectController extends Controller
             'real_projects_by_consultant.*.*' => 'integer|exists:projects,id',
             'coordinator_ids' => 'nullable|array|max:1',
             'coordinator_ids.*' => 'exists:users,id',
+            'environment_ids' => 'nullable|array',
+            'environment_ids.*' => 'exists:env_environments,id',
             'consultant_group_ids' => 'nullable|array',
             'consultant_group_ids.*' => 'exists:consultant_groups,id',
             // Contract-origin fields
@@ -1801,6 +1827,8 @@ class ProjectController extends Controller
             : false;
         $coordinatorIds     = $validated['coordinator_ids'] ?? $validated['approver_ids'] ?? null;
         $consultantGroupIds = array_key_exists('consultant_group_ids', $validated) ? $validated['consultant_group_ids'] : false;
+        // false = não enviado (não mexe); array (mesmo vazio) = sincronizar.
+        $environmentIds     = array_key_exists('environment_ids', $validated) ? ($validated['environment_ids'] ?? []) : false;
 
         // Pilar 1: bloqueia alocação direta em projeto operacional (ADR 0007).
         // Linhas existentes não são deletadas — apenas writes novos são rejeitados.
@@ -1820,7 +1848,7 @@ class ProjectController extends Controller
             ? Carbon::parse($validated['hourly_rate_effective_from'])->startOfMonth()->toDateString()
             : null;
         $previousHourlyRate = $project->hourly_rate;
-        unset($validated['consultant_ids'], $validated['real_projects_by_consultant'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
+        unset($validated['consultant_ids'], $validated['real_projects_by_consultant'], $validated['coordinator_ids'], $validated['approver_ids'], $validated['consultant_group_ids'], $validated['environment_ids'], $validated['sold_hours_effective_from'], $validated['hourly_rate_effective_from']);
 
         // Detectar mudança de sold_hours para registrar histórico (Banco de Horas Mensal)
         $previousSoldHours = (float) ($project->sold_hours ?? 0);
@@ -2007,6 +2035,17 @@ class ProjectController extends Controller
                 $project->consultantGroups()->sync($consultantGroupIds ?? []);
             } catch (\Exception $e) {
                 \Log::warning('ProjectController@update: falha ao sincronizar consultant_groups', ['error' => $e->getMessage(), 'project_id' => $project->id]);
+            }
+        }
+
+        // Atualizar ambiente(s) do cofre se fornecido — só os do MESMO cliente do projeto.
+        if ($environmentIds !== false) {
+            try {
+                $validEnvIds = \App\Models\EnvEnvironment::whereIn('id', $environmentIds ?: [])
+                    ->where('customer_id', $project->customer_id)->pluck('id')->all();
+                $project->environments()->sync($validEnvIds);
+            } catch (\Throwable $e) {
+                \Log::warning('ProjectController@update: falha ao sincronizar environments', ['error' => $e->getMessage(), 'project_id' => $project->id]);
             }
         }
 

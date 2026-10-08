@@ -297,6 +297,13 @@ class Project extends Model
                     ->withTimestamps();
     }
 
+    /** Ambiente(s) do cofre em que o projeto está sendo desenvolvido (pivot project_environment). */
+    public function environments(): BelongsToMany
+    {
+        return $this->belongsToMany(EnvEnvironment::class, 'project_environment', 'project_id', 'environment_id')
+                    ->withTimestamps();
+    }
+
     /**
      * Clientes com VISÃO GLOBAL do projeto (nível projeto). Enxergam o projeto
      * inteiro em dias; restrições de card continuam por atividade.

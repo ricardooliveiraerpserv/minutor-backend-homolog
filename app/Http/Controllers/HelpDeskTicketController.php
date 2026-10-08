@@ -1023,7 +1023,50 @@ class HelpDeskTicketController extends Controller
         ]);
         $events = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
         $data = $this->enrichTicketFlags($ticket, $this->decorate($ticket, $events), \Illuminate\Support\Facades\Auth::user());
+        if (is_array($data)) {
+            $data['env_context'] = $this->buildEnvContext($ticket);
+        }
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Contexto de AMBIENTE/BASE para o chamado: qual base a sustentação usa e quais
+     * projetos ativos do cliente rodam em cada ambiente. Usado no banner do chamado:
+     * projeto na MESMA base da sustentação → "fale com o coordenador antes de qualquer
+     * atividade"; projeto em OUTRA base → aviso informativo.
+     */
+    private function buildEnvContext(HelpDeskTicket $ticket): ?array
+    {
+        $cid = $ticket->customer_id;
+        if (!$cid) return null;
+
+        $supportEnv = \App\Models\EnvEnvironment::where('customer_id', $cid)
+            ->where('is_support_base', true)->first(['id', 'name', 'type']);
+        $supportEnvId = $supportEnv?->id;
+
+        $projects = \App\Models\Project::where('customer_id', $cid)
+            ->whereNotIn('status', ['finished', 'cancelled'])
+            ->whereHas('environments')
+            ->with(['environments:id,name,type'])
+            ->get(['id', 'code', 'name', 'status']);
+
+        if (!$supportEnv && $projects->isEmpty()) return null;
+
+        $rows = $projects->map(function ($p) use ($supportEnvId) {
+            $sameBase = $supportEnvId && $p->environments->contains('id', $supportEnvId);
+            return [
+                'id' => $p->id, 'code' => $p->code, 'name' => $p->name, 'status' => $p->status,
+                'same_base' => (bool) $sameBase,
+                'environments' => $p->environments->map(fn ($e) => ['id' => $e->id, 'name' => $e->name, 'type' => $e->type])->values(),
+            ];
+        })->values();
+
+        return [
+            'support_environment' => $supportEnv ? ['id' => $supportEnv->id, 'name' => $supportEnv->name, 'type' => $supportEnv->type] : null,
+            'projects'       => $rows,
+            'has_same_base'  => $rows->contains(fn ($r) => $r['same_base']),
+            'has_other_base' => $rows->contains(fn ($r) => !$r['same_base']),
+        ];
     }
 
     /**
