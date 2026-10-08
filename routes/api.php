@@ -1786,6 +1786,8 @@ Route::prefix('v1')->group(function () {
 
         // Atualização em massa do tipo de contrato (cooperado/clt/pj)
         Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
+        // Gestor do cliente: admin E coordenador podem definir (autorização no controller).
+        Route::patch('/users/{user}/customer-manager', [UserController::class, 'setCustomerManager'])->name('users.customer-manager');
 
         Route::middleware(['permission.or.admin:users.delete', 'screen.action:/users,delete'])->group(function () {
             Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');

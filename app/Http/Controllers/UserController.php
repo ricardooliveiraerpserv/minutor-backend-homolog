@@ -350,6 +350,38 @@ class UserController extends Controller
      * Respeita a trava: consultor vinculado a parceiro é pulado (herda do parceiro);
      * se um parceiro_admin estiver na seleção, propaga p/ todos os usuários daquele parceiro.
      */
+    /**
+     * Define/retira o "gestor do cliente" (is_customer_manager) de um usuário cliente.
+     * Permitido a admin E coordenador (escopo restrito — não dá poder de edição geral).
+     */
+    public function setCustomerManager(Request $request, User $user): JsonResponse
+    {
+        $me = $request->user();
+        $can = $me && (
+            (method_exists($me, 'isAdmin') && $me->isAdmin())
+            || (method_exists($me, 'isCoordenador') && $me->isCoordenador())
+        );
+        if (!$can) {
+            return response()->json(['message' => 'Apenas admin ou coordenador podem definir gestores do cliente.'], 403);
+        }
+        if (!$user->isCliente()) {
+            return response()->json(['message' => 'Só usuários do tipo cliente podem ser gestores.'], 422);
+        }
+
+        $data = $request->validate(['is_customer_manager' => 'required|boolean']);
+        $user->is_customer_manager = (bool) $data['is_customer_manager'];
+
+        if ($user->is_customer_manager) {
+            $mods = $user->allowed_modules;
+            if (is_array($mods) && !in_array('projetos', $mods, true)) {
+                $user->allowed_modules = array_values(array_merge($mods, ['projetos']));
+            }
+        }
+        $user->save();
+
+        return response()->json(['id' => $user->id, 'is_customer_manager' => $user->is_customer_manager]);
+    }
+
     public function bulkContractType(Request $request): JsonResponse
     {
         $currentUser = Auth::user();
