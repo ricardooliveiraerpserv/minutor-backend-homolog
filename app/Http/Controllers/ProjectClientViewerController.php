@@ -69,6 +69,9 @@ class ProjectClientViewerController extends Controller
             return response()->json(['message' => 'Este cliente é de outro cliente/empresa e não pode ver este projeto.'], 422);
         }
 
+        // Só notifica quando é um convite NOVO (evita e-mail repetido ao re-adicionar).
+        $alreadyViewer = $project->clientViewers()->where('users.id', $user->id)->exists();
+
         $project->clientViewers()->syncWithoutDetaching([$user->id]);
 
         // Convidar implica acesso ao módulo Projetos — senão o cliente não enxerga o card
@@ -79,9 +82,50 @@ class ProjectClientViewerController extends Controller
             $user->save();
         }
 
+        if (!$alreadyViewer) {
+            $this->notifyInvite($project, $user, $request->user());
+        }
+
         return response()->json([
             'item' => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
         ], 201);
+    }
+
+    /**
+     * E-mail + notificação ao cliente recém-convidado: nome/código do projeto, onde fica
+     * a rotina (Demandas e Projetos) e link direto para ela no Minutor.
+     */
+    private function notifyInvite(Project $project, User $invited, ?User $inviter): void
+    {
+        try {
+            $base = rtrim((string) config('app.frontend_url', config('app.url')), '/');
+            $url  = $base . '/contratos/pipeline?project=' . $project->id;
+            $nome = $project->name ?: ('Projeto #' . $project->id);
+            $cod  = $project->code ?: '';
+            $titulo = $cod ? ($nome . ' (' . $cod . ')') : $nome;
+
+            $n = \App\Models\AppNotification::create([
+                'title'        => 'Você foi convidado para um projeto',
+                'message'      => e($inviter?->name ?? 'A equipe')
+                    . ' convidou você para acompanhar o projeto <b>' . e($titulo) . '</b>.'
+                    . ' Acesse em <b>Demandas e Projetos</b> no Minutor para visualizar o andamento.',
+                'type'         => 'info',
+                'priority'     => 'medium',
+                'target_users' => [$invited->id],
+                'send_email'   => true,
+                'visible'      => true,
+                'cta_label'    => 'Abrir Demandas e Projetos',
+                'cta_url'      => $url,
+                'created_by'   => $inviter?->id,
+                'expires_at'   => now()->addDays(30),
+            ]);
+
+            app(\App\Http\Controllers\NotificationController::class)->emailNotification($n);
+        } catch (\Throwable $e) {
+            \Log::warning('convite viewer: e-mail falhou', [
+                'project_id' => $project->id, 'user_id' => $invited->id, 'err' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function destroy(Project $project, User $user, Request $request): JsonResponse
