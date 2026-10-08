@@ -225,6 +225,10 @@ class UserController extends Controller
                     $query->leftJoin('partners', 'partners.id', '=', 'users.partner_id')
                           ->orderBy('partners.name', $direction)
                           ->select('users.*');
+                } elseif ($field === 'customer_name') {
+                    $query->leftJoin('customers', 'customers.id', '=', 'users.customer_id')
+                          ->orderBy('customers.name', $direction)
+                          ->select('users.*');
                 }
             }
         }
