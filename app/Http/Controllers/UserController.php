@@ -216,7 +216,7 @@ class UserController extends Controller
                     $field = substr($field, 1);
                 }
 
-                $allowedFields = ['name', 'email', 'created_at', 'updated_at'];
+                $allowedFields = ['name', 'email', 'created_at', 'updated_at', 'is_customer_manager'];
                 if (in_array($field, $allowedFields)) {
                     // Qualifica users.* — campo pode ser ambíguo se algum filtro
                     // anterior adicionou leftJoin com partners (mesma coluna name/email/timestamps).
