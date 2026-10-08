@@ -1439,6 +1439,9 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware('permission.or.admin:projects.update')->group(function () {
+            // Ambientes do cofre vinculados ao projeto (gestão pelo card de Demandas e Projetos).
+            Route::get('/projects/{project}/environments', [ProjectController::class, 'projectEnvironments'])->name('projects.environments.index');
+            Route::post('/projects/{project}/environments', [ProjectController::class, 'syncProjectEnvironments'])->name('projects.environments.sync');
             Route::patch('/projects/{project}/status', [ProjectController::class, 'updateStatus'])->name('projects.update-status');
             Route::get('/projects/{project}/saving', [ProjectController::class, 'saving'])->name('projects.saving');
             Route::post('/projects/{project}/send-saving', [ProjectController::class, 'sendSaving'])->name('projects.send-saving');

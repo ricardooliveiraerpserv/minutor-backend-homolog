@@ -1010,6 +1010,36 @@ class ProjectController extends Controller
         return response()->json(['items' => $items]);
     }
 
+    /**
+     * Ambientes do cliente do projeto + quais estão vinculados (gestão pelo card do quadro).
+     */
+    public function projectEnvironments(Project $project): JsonResponse
+    {
+        $selected = $project->environments()->pluck('env_environments.id')->all();
+        $items = \App\Models\EnvEnvironment::where('customer_id', $project->customer_id)
+            ->orderBy('name')
+            ->get(['id', 'name', 'type', 'is_support_base'])
+            ->map(fn ($e) => [
+                'id' => $e->id, 'name' => $e->name, 'type' => $e->type,
+                'is_support_base' => (bool) $e->is_support_base,
+                'selected' => in_array($e->id, $selected, true),
+            ]);
+        return response()->json(['items' => $items, 'selected_ids' => $selected]);
+    }
+
+    /** Sincroniza os ambientes do projeto (só os do MESMO cliente). */
+    public function syncProjectEnvironments(Project $project, Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'environment_ids'   => 'present|array',
+            'environment_ids.*' => 'integer|exists:env_environments,id',
+        ]);
+        $validEnvIds = \App\Models\EnvEnvironment::whereIn('id', $data['environment_ids'])
+            ->where('customer_id', $project->customer_id)->pluck('id')->all();
+        $project->environments()->sync($validEnvIds);
+        return response()->json(['selected_ids' => $validEnvIds]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
