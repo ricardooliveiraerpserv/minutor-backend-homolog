@@ -71,6 +71,14 @@ class ProjectClientViewerController extends Controller
 
         $project->clientViewers()->syncWithoutDetaching([$user->id]);
 
+        // Convidar implica acesso ao módulo Projetos — senão o cliente não enxerga o card
+        // no menu e o EnsureClienteModule bloquearia a rota. null = todos já inclui projetos.
+        $mods = $user->allowed_modules;
+        if (is_array($mods) && !in_array('projetos', $mods, true)) {
+            $user->allowed_modules = array_values(array_merge($mods, ['projetos']));
+            $user->save();
+        }
+
         return response()->json([
             'item' => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email],
         ], 201);
