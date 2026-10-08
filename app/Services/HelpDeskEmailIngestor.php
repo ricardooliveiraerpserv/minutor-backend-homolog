@@ -108,8 +108,9 @@ class HelpDeskEmailIngestor
         $fromName  = trim((string) data_get($msg, 'from.emailAddress.name', '')) ?: $fromEmail;
         $subject   = trim((string) ($msg['subject'] ?? '')) ?: '(sem assunto)';
         $body      = (string) (data_get($msg, 'body.content') ?: data_get($msg, 'bodyPreview', ''));
-        // Corta o histórico citado: mantém só o que o cliente escreveu ACIMA do marcador do e-mail anterior.
-        $body      = $this->stripQuotedHistory($body);
+        // NÃO corta o histórico aqui: ao ABRIR chamado (inclusive e-mail ENCAMINHADO), toda a
+        // thread encaminhada deve ir INTEIRA para a 1ª interação (description). O corte do
+        // histórico citado é aplicado APENAS em RESPOSTA a chamado existente (appendClientReply).
         $receivedAt = ($r = data_get($msg, 'receivedDateTime')) ? Carbon::parse($r) : now();
 
         // Anti-loop: ignora e-mail enviado pela própria caixa (cópia/auto-resposta).
@@ -269,6 +270,9 @@ class HelpDeskEmailIngestor
     /** Anexa a resposta do cliente (e-mail) como interação no chamado alvo e reativa (Em andamento). */
     private function appendClientReply(HelpDeskTicket $ticket, string $body, ?CustomerContact $contact, string $messageId, Carbon $receivedAt): \App\Models\HelpDeskTicketComment
     {
+        // Resposta a chamado existente: corta o histórico citado, mantendo só o que o
+        // cliente escreveu ACIMA do marcador do e-mail anterior (a abertura preserva tudo).
+        $body = $this->stripQuotedHistory($body);
         return DB::transaction(function () use ($ticket, $body, $contact, $messageId, $receivedAt) {
             $c = $ticket->comments()->create([
                 'author_contact_id' => $contact?->id,
