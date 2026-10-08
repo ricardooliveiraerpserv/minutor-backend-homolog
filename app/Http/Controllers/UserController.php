@@ -599,6 +599,7 @@ class UserController extends Controller
             'bank_hours_initial_balance' => 'nullable|numeric|min:-100000|max:100000',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
             'customer_id'  => 'nullable|exists:customers,id',
+            'is_customer_manager' => 'sometimes|boolean',
             'partner_id'   => 'nullable|exists:partners,id',
             'is_executive' => 'sometimes|boolean',
             'is_coordinator' => 'sometimes|boolean',
@@ -680,6 +681,15 @@ class UserController extends Controller
                         }
                     }
                 }
+            }
+
+            // Gestor do cliente precisa enxergar projetos — garante o módulo 'projetos'
+            // no allowed_modules (se é lista explícita). null = todos já inclui projetos.
+            if (!empty($userData['is_customer_manager'])
+                && array_key_exists('allowed_modules', $userData)
+                && is_array($userData['allowed_modules'])
+                && !in_array('projetos', $userData['allowed_modules'], true)) {
+                $userData['allowed_modules'][] = 'projetos';
             }
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
@@ -894,6 +904,7 @@ class UserController extends Controller
             'bank_hours_initial_balance' => 'nullable|numeric|min:-100000|max:100000',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
             'customer_id'  => 'nullable|exists:customers,id',
+            'is_customer_manager' => 'sometimes|boolean',
             'partner_id'   => 'nullable|exists:partners,id',
             'is_executive' => 'sometimes|boolean',
             'is_coordinator' => 'sometimes|boolean',
@@ -974,6 +985,19 @@ class UserController extends Controller
             // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
             $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
             unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password']);
+
+            // Gestor do cliente precisa enxergar projetos — garante o módulo 'projetos'
+            // no allowed_modules quando a lista é explícita. Vale o valor efetivo da flag
+            // (payload tem prioridade; senão o atual do usuário).
+            $willBeManager = array_key_exists('is_customer_manager', $updateData)
+                ? (bool) $updateData['is_customer_manager']
+                : (bool) $user->is_customer_manager;
+            if ($willBeManager
+                && array_key_exists('allowed_modules', $updateData)
+                && is_array($updateData['allowed_modules'])
+                && !in_array('projetos', $updateData['allowed_modules'], true)) {
+                $updateData['allowed_modules'][] = 'projetos';
+            }
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));

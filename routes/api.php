@@ -1017,6 +1017,13 @@ Route::prefix('v1')->group(function () {
             Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])->name('projects.destroy');
         });
 
+        // Participantes do projeto (clientes convidados a ver o card). Autorização completa
+        // em ProjectClientViewerController::ensureCanManage (admin/coordenador/gestor-do-cliente).
+        Route::get('/projects/{project}/client-viewers', [\App\Http\Controllers\ProjectClientViewerController::class, 'index'])->name('projects.client-viewers.index');
+        Route::get('/projects/{project}/client-viewers/available', [\App\Http\Controllers\ProjectClientViewerController::class, 'available'])->name('projects.client-viewers.available');
+        Route::post('/projects/{project}/client-viewers', [\App\Http\Controllers\ProjectClientViewerController::class, 'store'])->name('projects.client-viewers.store');
+        Route::delete('/projects/{project}/client-viewers/{user}', [\App\Http\Controllers\ProjectClientViewerController::class, 'destroy'])->name('projects.client-viewers.destroy');
+
         // 💰 HOUR CONTRIBUTIONS - Aportes de Horas (vinculados a projetos)
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects/{project}/hour-contributions', [HourContributionController::class, 'index'])->name('hour-contributions.index');

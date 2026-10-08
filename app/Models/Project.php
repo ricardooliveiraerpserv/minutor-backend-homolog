@@ -263,6 +263,16 @@ class Project extends Model
     }
 
     /**
+     * Clientes com VISÃO GLOBAL do projeto (nível projeto). Enxergam o projeto
+     * inteiro em dias; restrições de card continuam por atividade.
+     */
+    public function clientViewers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'project_client_viewers')
+                    ->withTimestamps();
+    }
+
+    /**
      * @deprecated Use coordinators()
      */
     public function approvers(): BelongsToMany
