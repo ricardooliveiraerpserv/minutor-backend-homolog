@@ -1046,6 +1046,25 @@ class ContractController extends Controller
         return response()->json($contract->fresh());
     }
 
+    /**
+     * Herda os participantes (clientes convidados) de uma REQUISIÇÃO para o PROJETO
+     * recém-gerado — "ao virar projeto continua envolvido". Idempotente.
+     */
+    private function inheritRequestViewers(?\App\Models\ContractRequest $req, ?\App\Models\Project $project): void
+    {
+        if (!$req || !$project) return;
+        try {
+            $ids = $req->clientViewers()->pluck('users.id')->all();
+            if (!empty($ids)) {
+                $project->clientViewers()->syncWithoutDetaching($ids);
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('herdar viewers requisição→projeto falhou', [
+                'contract_request_id' => $req->id, 'project_id' => $project->id, 'err' => $e->getMessage(),
+            ]);
+        }
+    }
+
     public function generateProject(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
@@ -1099,6 +1118,12 @@ class ContractController extends Controller
                 'executivo_conta_id'    => $contract->executivo_conta_id,
                 'vendedor_id'           => $contract->vendedor_id,
             ]));
+
+            // Herda participantes da requisição vinculada (ao virar projeto continua envolvido).
+            $this->inheritRequestViewers(
+                \App\Models\ContractRequest::where('linked_contract_id', $contract->id)->first(),
+                $project
+            );
 
             // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
             // se o cliente ainda não tem nenhum projeto flagado, ativa neste
@@ -1636,9 +1661,14 @@ class ContractController extends Controller
 
             if ($isCliente && $user->customer_id) {
                 $reqQuery->where('customer_id', $user->customer_id);
-                // Cliente comum só vê as requisições que ele mesmo abriu; gestor vê todas da empresa.
+                // Cliente comum só vê as requisições que ele mesmo abriu OU foi convidado a ver;
+                // gestor vê todas da empresa.
                 if (!$user->is_customer_manager) {
-                    $reqQuery->where('created_by_id', $user->id);
+                    $uid = $user->id;
+                    $reqQuery->where(function ($q) use ($uid) {
+                        $q->where('created_by_id', $uid)
+                          ->orWhereHas('clientViewers', fn($v) => $v->where('users.id', $uid));
+                    });
                 }
             }
 
@@ -2271,6 +2301,9 @@ class ContractController extends Controller
                         'vendedor_id'            => $contract->vendedor_id,
                     ]));
 
+                    // Herda participantes da requisição (ao virar projeto continua envolvido).
+                    $this->inheritRequestViewers($contractRequest, $project);
+
                     foreach ($contract->contacts as $c) {
                         \App\Models\ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
                     }
@@ -2748,6 +2781,9 @@ class ContractController extends Controller
             'executivo_conta_id'     => $contract->executivo_conta_id,
             'vendedor_id'            => $contract->vendedor_id,
         ]));
+
+        // Herda participantes da requisição de origem (ao virar projeto continua envolvido).
+        $this->inheritRequestViewers(\App\Models\ContractRequest::find($originRequestId), $project);
 
         foreach ($contract->contacts as $c) {
             ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
