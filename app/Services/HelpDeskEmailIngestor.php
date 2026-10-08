@@ -113,6 +113,16 @@ class HelpDeskEmailIngestor
         // histórico citado é aplicado APENAS em RESPOSTA a chamado existente (appendClientReply).
         $receivedAt = ($r = data_get($msg, 'receivedDateTime')) ? Carbon::parse($r) : now();
 
+        // Backup de dedup: se um run ANTERIOR já ABRIU um chamado com ESTE e-mail (external_ref),
+        // mas falhou ao gravar o ledger (ex.: timeout no storeFiles/trigger com corpo gigante),
+        // não reprocessar — senão o mesmo e-mail viraria um comentário duplicado. O external_ref
+        // é gravado na MESMA transação do ticket, então é garantido quando o chamado existe.
+        $extRef = 'gm:' . substr(sha1($messageId), 0, 40);
+        if (HelpDeskTicket::withoutGlobalScopes()->where('external_ref', $extRef)->exists()) {
+            $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'ticket_ja_aberto_deste_email', $receivedAt, $sum);
+            return;
+        }
+
         // Anti-loop: ignora e-mail enviado pela própria caixa (cópia/auto-resposta).
         if ($fromEmail !== '' && strcasecmp($fromEmail, (string) $acc->email) === 0) {
             $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'auto_da_propria_caixa', $receivedAt, $sum);
@@ -258,13 +268,16 @@ class HelpDeskEmailIngestor
             return $t;
         });
         $sum['tickets']++;
+        // Grava o ledger (marca de dedup) IMEDIATAMENTE após criar o chamado — ANTES de
+        // storeFiles/trigger, que podem falhar/estourar (corpo gigante) e deixariam o e-mail
+        // sem marca → reprocessado e duplicado na rodada seguinte.
+        $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
         $this->storeFiles('HELPDESK_TICKET', $ticket->id, $inboundFiles);
         // Sem actor_email: num ticket aberto por e-mail o "cliente" É quem disparou; com
         // actor_email o skip_actor do trigger de confirmação (#1) zerava os destinatários e
         // o cliente nunca recebia o e-mail com o nº do chamado. (comment_added mantém actor_email.)
         HelpDeskTriggerEngine::dispatch('ticket_created', $ticket->fresh(), ['comment_by' => 'client']);
         $sum['details'][] = "✅ Chamado {$ticket->ticket_number} aberto de {$fromEmail}: \"{$subject}\".";
-        $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
     }
 
     /** Anexa a resposta do cliente (e-mail) como interação no chamado alvo e reativa (Em andamento). */
