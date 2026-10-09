@@ -1835,6 +1835,63 @@ class UserController extends Controller
     }
 
     /**
+     * Edita um registro do histórico de horas garantidas — corrigir o VALOR ou a VIGÊNCIA
+     * de uma linha já lançada (sem criar nova). PUT /api/v1/users/{user}/guaranteed-hours-history/{logId}
+     */
+    public function updateGuaranteedHoursLog(Request $request, int $id, int $logId): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        $canEdit = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.update');
+        if (!$canEdit) {
+            return $this->accessDeniedResponse('Você não tem permissão para editar este histórico');
+        }
+
+        $log = UserGuaranteedHoursLog::where('user_id', $id)->find($logId);
+        if (!$log) {
+            return $this->notFoundResponse('Registro de histórico não encontrado');
+        }
+
+        $validated = $request->validate([
+            'new_guaranteed_hours' => 'nullable|numeric|min:0|max:744',
+            'effective_from'       => 'nullable|date',
+        ]);
+
+        if (array_key_exists('new_guaranteed_hours', $validated)) {
+            // null = piso removido a partir da vigência (mantém a semântica de "sem piso").
+            $log->new_guaranteed_hours = $validated['new_guaranteed_hours'];
+        }
+        if (array_key_exists('effective_from', $validated)) {
+            $log->effective_from = $validated['effective_from']
+                ? \Carbon\Carbon::parse($validated['effective_from'])->startOfMonth()->toDateString()
+                : null;
+        }
+        $log->save();
+
+        // Se este passou a ser o log de MAIOR vigência do usuário, sincroniza o valor "atual"
+        // (guaranteed_hours é o fallback pós-última vigência — mantém cadastro/relatórios coerentes).
+        $latest = $user->guaranteedHoursLogs()
+            ->orderByRaw('effective_from IS NULL, effective_from DESC')
+            ->orderByDesc('id')
+            ->first();
+        if ($latest && (int) $latest->id === (int) $log->id) {
+            $user->guaranteed_hours = $log->new_guaranteed_hours;
+            $user->save();
+        }
+
+        $log->changed_by_user = $log->changedBy;
+        unset($log->changedBy);
+
+        return response()->json(['message' => 'Histórico atualizado', 'item' => $log]);
+    }
+
+    /**
      * @OA\Get(
      *     path="/api/v1/users/approvers",
      *     summary="Listar usuários que podem aprovar",
