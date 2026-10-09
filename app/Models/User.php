@@ -564,6 +564,11 @@ class User extends Authenticatable
         return $this->hasMany(UserHourlyRateLog::class, 'user_id');
     }
 
+    public function guaranteedHoursLogs(): HasMany
+    {
+        return $this->hasMany(UserGuaranteedHoursLog::class, 'user_id');
+    }
+
     /**
      * Relacionamento com logs de alterações feitas por este usuário
      */

@@ -1581,6 +1581,7 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
+        Route::get('/users/{user}/guaranteed-hours-history', [UserController::class, 'getGuaranteedHoursHistory'])->name('users.guaranteed-hours-history');
 
         // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
         Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');

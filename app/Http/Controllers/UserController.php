@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
+use App\Models\UserGuaranteedHoursLog;
 use App\Exports\UsersExport;
 use App\Services\AccessControl;
 use Maatwebsite\Excel\Facades\Excel;
@@ -640,6 +641,7 @@ class UserController extends Controller
             'bank_hours_start_date' => 'nullable|date',
             'bank_hours_initial_balance' => 'nullable|numeric|min:-100000|max:100000',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
+            'guaranteed_hours_effective_from' => 'nullable|date',
             'customer_id'  => 'nullable|exists:customers,id',
             'is_customer_manager' => 'sometimes|boolean',
             'partner_id'   => 'nullable|exists:partners,id',
@@ -945,6 +947,7 @@ class UserController extends Controller
             'bank_hours_start_date' => 'nullable|date',
             'bank_hours_initial_balance' => 'nullable|numeric|min:-100000|max:100000',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
+            'guaranteed_hours_effective_from' => 'nullable|date',
             'customer_id'  => 'nullable|exists:customers,id',
             'is_customer_manager' => 'sometimes|boolean',
             'partner_id'   => 'nullable|exists:partners,id',
@@ -1009,12 +1012,19 @@ class UserController extends Controller
             $oldHourlyRate     = $user->hourly_rate;
             $oldRateType       = $user->rate_type;
             $oldConsultantType = $user->consultant_type;
+            // Horas garantidas (piso): vigência própria, independente do valor/hora. null = sem piso.
+            $oldGuaranteedHours = $user->guaranteed_hours !== null ? (float) $user->guaranteed_hours : null;
 
             $hourlyRateChanged     = isset($updateData['hourly_rate'])     && $updateData['hourly_rate']     != $oldHourlyRate;
             $rateTypeChanged       = isset($updateData['rate_type'])        && $updateData['rate_type']        != $oldRateType;
             $consultantTypeChanged = isset($updateData['consultant_type'])  && $updateData['consultant_type']  != $oldConsultantType;
 
             $shouldLog = $hourlyRateChanged || $rateTypeChanged || $consultantTypeChanged;
+
+            $newGuaranteedHoursVal = array_key_exists('guaranteed_hours', $updateData)
+                ? (($updateData['guaranteed_hours'] !== null && $updateData['guaranteed_hours'] !== '') ? (float) $updateData['guaranteed_hours'] : null)
+                : $oldGuaranteedHours;
+            $guaranteedHoursChanged = array_key_exists('guaranteed_hours', $updateData) && $newGuaranteedHoursVal !== $oldGuaranteedHours;
 
             // Hash da senha se fornecida
             if (isset($updateData['password'])) {
@@ -1026,7 +1036,7 @@ class UserController extends Controller
             // smtp_app_password: setado explicitamente após o update (fora do mass-assignment);
             // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
             $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
-            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password']);
+            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['guaranteed_hours_effective_from'], $updateData['smtp_app_password']);
 
             // Gestor do cliente precisa enxergar projetos — garante o módulo 'projetos'
             // no allowed_modules quando a lista é explícita. Vale o valor efetivo da flag
@@ -1099,6 +1109,38 @@ class UserController extends Controller
                         'new_consultant_type'  => $fresh->consultant_type,
                         'reason'               => $request->input('rate_change_reason'),
                         'effective_from'       => $newEffectiveFrom,
+                    ]);
+                }
+            }
+
+            // Log de vigência das HORAS GARANTIDAS (piso) — independente do valor/hora.
+            // null = piso REMOVIDO a partir da vigência; meses anteriores mantêm o valor do período.
+            if ($guaranteedHoursChanged) {
+                $ghEffectiveFrom = $request->input('guaranteed_hours_effective_from')
+                    ? \Carbon\Carbon::parse($request->input('guaranteed_hours_effective_from'))->startOfMonth()->toDateString()
+                    : null;
+
+                $todayGhLog = UserGuaranteedHoursLog::where('user_id', $user->id)
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($todayGhLog) {
+                    $todayGhLog->new_guaranteed_hours = $newGuaranteedHoursVal;
+                    $todayGhLog->changed_by           = $currentUser->id;
+                    $todayGhLog->reason               = $request->input('rate_change_reason');
+                    if ($ghEffectiveFrom !== null) {
+                        $todayGhLog->effective_from = $ghEffectiveFrom;
+                    }
+                    $todayGhLog->save();
+                } else {
+                    UserGuaranteedHoursLog::create([
+                        'user_id'              => $user->id,
+                        'changed_by'           => $currentUser->id,
+                        'old_guaranteed_hours' => $oldGuaranteedHours,
+                        'new_guaranteed_hours' => $newGuaranteedHoursVal,
+                        'reason'               => $request->input('rate_change_reason'),
+                        'effective_from'       => $ghEffectiveFrom,
                     ]);
                 }
             }
@@ -1748,6 +1790,47 @@ class UserController extends Controller
         return response()->json([
             'hasNext' => $logs->hasMorePages(),
             'items' => $transformedItems
+        ]);
+    }
+
+    /**
+     * Histórico de vigência das HORAS GARANTIDAS / mês (piso). Espelha getHourlyRateHistory.
+     */
+    public function getGuaranteedHoursHistory(Request $request, int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        $canViewUser = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.view_all')
+            || $currentUser->hasAccess('users.update')
+            || $currentUser->hasAccess('users.reset_password')
+            || $currentUser->hasAccess('users.create')
+            || $user->id === $currentUser->id;
+        if (!$canViewUser) {
+            return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
+        }
+
+        $pageSize = min((int) $request->get('pageSize', 20), 100);
+        $page = (int) $request->get('page', 1);
+
+        $query = $user->guaranteedHoursLogs()->with(['changedBy:id,name,email'])->latest();
+        $logs = $query->paginate($pageSize, ['*'], 'page', $page);
+
+        $transformedItems = $logs->items();
+        foreach ($transformedItems as $item) {
+            $item->changed_by_user = $item->changedBy;
+            unset($item->changedBy);
+        }
+
+        return response()->json([
+            'hasNext' => $logs->hasMorePages(),
+            'items' => $transformedItems,
         ]);
     }
 

@@ -232,7 +232,8 @@ class FechamentoConsultorController extends Controller
         // Vínculo VIGENTE na competência (via log de vigência), não o atual.
         switch ($hist['consultant_type'] ?? $user->consultant_type) {
             case 'horista':
-                $guaranteedHours    = (float) ($user->guaranteed_hours ?? 0);
+                // Piso de horas garantidas VIGENTE na competência (null = sem piso = apagado).
+                $guaranteedHours    = (float) (\App\Models\UserGuaranteedHoursLog::effectiveValueAt($user->id, $user, $from) ?? 0);
                 $guaranteedProrated = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
                 $horasMinimas       = $guaranteedProrated > 0 ? max($horasTrabalhadas, $guaranteedProrated) : $horasTrabalhadas;
                 return [
@@ -1588,7 +1589,8 @@ class FechamentoConsultorController extends Controller
             // trocar o tipo de contrato só reflete a partir do mês escolhido, sem mexer no passado.
             switch ($hist['consultant_type'] ?? $user->consultant_type) {
                 case 'horista':
-                    $guaranteedHours         = (float) ($user->guaranteed_hours ?? 0);
+                    // Piso de horas garantidas VIGENTE na competência (null = sem piso = apagado).
+                    $guaranteedHours         = (float) (\App\Models\UserGuaranteedHoursLog::effectiveValueAt($user->id, $user, $from) ?? 0);
                     $guaranteedProrated      = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
                     $horasMinimas            = $guaranteedProrated > 0
                         ? max($horasTrabalhadas, $guaranteedProrated)
