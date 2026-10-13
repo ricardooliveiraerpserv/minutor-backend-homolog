@@ -89,7 +89,11 @@ class OnDemandBillingReleaseController extends Controller
         $userIsSustCoord = ($user->coordinator_type === 'sustentacao')
             && ($user->type === 'coordenador' || $user->is_coordinator);
 
-        $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user, $sustCoordNames, $userIsSustCoord) {
+        // A liberação vale DESTE MÊS PARA FRENTE. Competências anteriores já foram
+        // faturadas → tratadas como JÁ LIBERADAS (sem exigir ação / sem bloquear envio).
+        $isPast = $yearMonth < now()->format('Y-m');
+
+        $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user, $sustCoordNames, $userIsSustCoord, $isPast) {
             // Horas do CONTRATO = projeto pai + filhos.
             $ids = collect([$p->id])
                 ->merge(Project::where('parent_project_id', $p->id)->pluck('id'))
@@ -113,11 +117,14 @@ class OnDemandBillingReleaseController extends Controller
             // Coordenador EFETIVO para exibição: override do Kanban vence; senão M2M;
             // senão, se for contrato de SUSTENTAÇÃO, os coordenadores de sustentação.
             $isSust = ($p->serviceType?->code === 'sustentacao');
-            $coordNames = $p->kanbanOverrideCoordinator
-                ? collect([$p->kanbanOverrideCoordinator->name])
-                : ($p->coordinators->isNotEmpty()
-                    ? $p->coordinators->pluck('name')
-                    : ($isSust ? $sustCoordNames : collect()));
+            $coordNames = collect();
+            if ($p->kanbanOverrideCoordinator) {
+                $coordNames = collect([$p->kanbanOverrideCoordinator->name]);
+            } elseif ($p->coordinators && $p->coordinators->isNotEmpty()) {
+                $coordNames = $p->coordinators->pluck('name');
+            } elseif ($isSust) {
+                $coordNames = $sustCoordNames ?? collect();
+            }
 
             return [
                 'project_id'      => $p->id,
@@ -135,12 +142,13 @@ class OnDemandBillingReleaseController extends Controller
                 'pct_aprovado'    => ($aprovarMin + $ajusteMin + $aprovadasMin) > 0
                                      ? (int) round($aprovadasMin / ($aprovarMin + $ajusteMin + $aprovadasMin) * 100)
                                      : 0,
-                'released'        => (bool) $rel,
-                'released_by'     => $rel?->releasedBy?->name,
-                'released_at'     => $rel?->released_at,
-                'can_release'     => $user->isAdmin() || $user->isAdministrativo()
+                'released'        => $isPast ? true : (bool) $rel,
+                'released_by'     => $isPast ? null : $rel?->releasedBy?->name,
+                'released_at'     => $isPast ? null : $rel?->released_at,
+                'auto_released'   => $isPast, // mês anterior = já faturado (liberado automático)
+                'can_release'     => !$isPast && ($user->isAdmin() || $user->isAdministrativo()
                                      || self::isEffectiveCoordinator($p, (int) $user->id)
-                                     || ($isSust && $userIsSustCoord),
+                                     || ($isSust && $userIsSustCoord)),
             ];
         })->values();
 

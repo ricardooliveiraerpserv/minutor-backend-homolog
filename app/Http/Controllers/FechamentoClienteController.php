@@ -1829,7 +1829,9 @@ class FechamentoClienteController extends Controller
         // contrato On Demand nesta competência antes do envio ao cliente. Só no modo
         // serviços (apontamentos). À prova de falha: só bloqueia contrato On Demand que
         // TEM horas no mês e NÃO está liberado; demais clientes/tipos não são afetados.
-        if ($mode === 'servicos') {
+        // A regra vale DESTE MÊS PARA FRENTE — competências anteriores já foram faturadas
+        // e não são bloqueadas.
+        if ($mode === 'servicos' && $yearMonth >= now()->format('Y-m')) {
             $gateStart = $yearMonth . '-01';
             $gateEnd   = Carbon::parse($gateStart)->endOfMonth()->toDateString();
             $odQuery = $customer->projects()
