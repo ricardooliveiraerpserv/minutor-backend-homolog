@@ -1700,6 +1700,9 @@ Route::prefix('v1')->group(function () {
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-contrato', [\App\Http\Controllers\FechamentoContratoController::class, 'index']);
             Route::post('/on-demand/invoiced', [\App\Http\Controllers\OnDemandInvoicedController::class, 'toggle']);
+            // Tela gerencial de contratos On Demand + liberação de faturamento por competência.
+            Route::get('/on-demand/billing-release',  [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'index']);
+            Route::post('/on-demand/billing-release', [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'toggle']);
         });
 
         // 🧾 FECHAMENTO CLIENTE

@@ -1824,6 +1824,58 @@ class FechamentoClienteController extends Controller
         $projectId    = $mode === 'servicos' && $request->filled('project_id')
             ? (int) $request->input('project_id')
             : null;
+
+        // ── GATE ON DEMAND: o coordenador responsável precisa LIBERAR o faturamento do
+        // contrato On Demand nesta competência antes do envio ao cliente. Só no modo
+        // serviços (apontamentos). À prova de falha: só bloqueia contrato On Demand que
+        // TEM horas no mês e NÃO está liberado; demais clientes/tipos não são afetados.
+        if ($mode === 'servicos') {
+            $gateStart = $yearMonth . '-01';
+            $gateEnd   = Carbon::parse($gateStart)->endOfMonth()->toDateString();
+            $odQuery = $customer->projects()
+                ->whereNull('parent_project_id')
+                ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'))
+                ->where(function ($w) {
+                    $w->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+                });
+            if ($projectId) {
+                $odQuery->where('id', $projectId);
+            }
+            $odContratos = $odQuery->get(['id', 'code', 'name']);
+            if ($odContratos->isNotEmpty()) {
+                $liberados = \App\Models\OnDemandBillingRelease::where('year_month', $yearMonth)
+                    ->whereIn('project_id', $odContratos->pluck('id'))
+                    ->pluck('project_id')->all();
+                $bloqueados = $odContratos->filter(function ($p) use ($liberados, $gateStart, $gateEnd) {
+                    if (in_array($p->id, $liberados, true)) {
+                        return false; // já liberado
+                    }
+                    $ids = collect([$p->id])
+                        ->merge(\App\Models\Project::where('parent_project_id', $p->id)->pluck('id'))
+                        ->all();
+                    $min = (float) \App\Models\Timesheet::whereIn('project_id', $ids)
+                        ->whereBetween('date', [$gateStart, $gateEnd])
+                        ->whereNotIn('status', [
+                            \App\Models\Timesheet::STATUS_REJECTED,
+                            \App\Models\Timesheet::STATUS_CONFLICTED,
+                            \App\Models\Timesheet::STATUS_INTERNAL,
+                            \App\Models\Timesheet::STATUS_LATE,
+                        ])
+                        ->sum('effort_minutes');
+                    return $min > 0; // tem horas no mês e não liberado => bloqueia
+                })->values();
+                if ($bloqueados->isNotEmpty()) {
+                    return response()->json([
+                        'success' => false,
+                        'code'    => 'ON_DEMAND_NAO_LIBERADO',
+                        'message' => 'Contrato On Demand não liberado para faturar nesta competência pelo coordenador responsável: '
+                            . $bloqueados->pluck('code')->implode(', ')
+                            . '. Libere em "Faturamento On Demand" antes de enviar o fechamento.',
+                    ], 422);
+                }
+            }
+        }
+
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
         $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);

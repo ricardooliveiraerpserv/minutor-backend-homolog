@@ -1,0 +1,165 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\OnDemandBillingRelease;
+use App\Models\Project;
+use App\Models\Timesheet;
+use App\Models\User;
+use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+
+/**
+ * Tela gerencial de CONTRATOS ON DEMAND + liberação de faturamento por competência.
+ *
+ * - index(): uma linha por contrato On Demand (projeto PAI, code 'on_demand', não
+ *   investimento comercial), com horas A APROVAR e APROVADAS no mês e o status de
+ *   liberação. Escopo de visibilidade = MESMA regra de Demandas/Projetos (coordenador
+ *   efetivo via override Kanban OU M2M; sustentação enxerga tudo de sustentação).
+ * - toggle(): o COORDENADOR RESPONSÁVEL do contrato (ou admin) marca "liberado para
+ *   faturar". A existência da linha (project_id, year_month) = liberado.
+ *
+ * O gate que bloqueia o ENVIO do fechamento ao cliente vive em
+ * FechamentoClienteController@enviarEmail (consulta esta mesma liberação).
+ */
+class OnDemandBillingReleaseController extends Controller
+{
+    public function index(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $yearMonth = (string) $request->query('year_month', '');
+        if (!preg_match('/^\d{4}-\d{2}$/', $yearMonth)) {
+            $yearMonth = now()->format('Y-m');
+        }
+        $monthStart = $yearMonth . '-01';
+        $monthEnd   = Carbon::parse($monthStart)->endOfMonth()->toDateString();
+
+        // Base: contratos On Demand REAIS = projeto PAI, contractType on_demand,
+        // exclui buckets de investimento comercial interno. (mesma regra do FechamentoCliente)
+        $query = Project::query()
+            ->whereNull('parent_project_id')
+            ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))
+            ->where(function ($q) {
+                $q->where('is_investimento_comercial', false)
+                  ->orWhereNull('is_investimento_comercial');
+            })
+            ->with([
+                'customer:id,name,company_name',
+                'coordinators:id,name',
+                'serviceType:id,code',
+            ]);
+
+        // Escopo de coordenador — idêntico a Demandas/Projetos (ProjectController@index).
+        // Admin/administrativo veem tudo; coordenador vê onde é coordenador efetivo
+        // (pai ou filhos) e, se for de SUSTENTAÇÃO, tudo com serviceType sustentação.
+        if ($user && $user->isCoordenador() && !$user->isAdmin() && !$user->isAdministrativo()) {
+            $isSustentacao = $user->coordinator_type === 'sustentacao';
+            $query->where(function ($q) use ($user, $isSustentacao) {
+                $effClosure = function ($eff) use ($user) {
+                    $eff->where('kanban_coordinator_override_id', $user->id)
+                        ->orWhere(function ($m2m) use ($user) {
+                            $m2m->whereNull('kanban_coordinator_override_id')
+                                ->whereHas('coordinators', fn ($sq) => $sq->where('users.id', $user->id));
+                        });
+                };
+                $q->where($effClosure)
+                  ->orWhereHas('childProjects', $effClosure);
+                if ($isSustentacao) {
+                    $q->orWhereHas('serviceType', fn ($sq) => $sq->where('code', 'sustentacao'))
+                      ->orWhere(fn ($sq) => $sq->where('is_investimento_comercial', true)
+                                               ->where('categoria_interna', 'Suporte'));
+                }
+            });
+        }
+
+        $projects = $query->orderBy('code')->get();
+        $releases = OnDemandBillingRelease::mapFor($yearMonth);
+
+        $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user) {
+            // Horas do CONTRATO = projeto pai + filhos.
+            $ids = collect([$p->id])
+                ->merge(Project::where('parent_project_id', $p->id)->pluck('id'))
+                ->all();
+
+            $base = Timesheet::whereIn('project_id', $ids)
+                ->whereBetween('date', [$monthStart, $monthEnd]);
+
+            $aprovarMin = (float) (clone $base)
+                ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
+                ->sum('effort_minutes');
+            $aprovadasMin = (float) (clone $base)
+                ->where('status', Timesheet::STATUS_APPROVED)
+                ->sum('effort_minutes');
+
+            $rel = $releases[$p->id] ?? null;
+
+            return [
+                'project_id'      => $p->id,
+                'contract_code'   => $p->code,
+                'contract_name'   => $p->name,
+                'customer'        => $p->customer?->name ?? $p->customer?->company_name,
+                'customer_id'     => $p->customer?->id,
+                'coordinators'    => $p->coordinators->pluck('name')->values(),
+                'horas_a_aprovar' => round($aprovarMin / 60, 2),
+                'horas_aprovadas' => round($aprovadasMin / 60, 2),
+                'horas_total'     => round(($aprovarMin + $aprovadasMin) / 60, 2),
+                'released'        => (bool) $rel,
+                'released_by'     => $rel?->releasedBy?->name,
+                'released_at'     => $rel?->released_at,
+                'can_release'     => $user->isAdmin() || $user->isAdministrativo()
+                                     || self::isEffectiveCoordinator($p, (int) $user->id),
+            ];
+        })->values();
+
+        return response()->json(['data' => $rows, 'year_month' => $yearMonth]);
+    }
+
+    public function toggle(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $data = $request->validate([
+            'project_id' => 'required|integer|exists:projects,id',
+            'year_month' => ['required', 'regex:/^\d{4}-\d{2}$/'],
+            'released'   => 'required|boolean',
+            'reason'     => 'nullable|string|max:500',
+        ]);
+
+        $project = Project::with('coordinators:id')->findOrFail($data['project_id']);
+
+        $canRelease = $user->isAdmin() || $user->isAdministrativo()
+            || self::isEffectiveCoordinator($project, (int) $user->id);
+        if (!$canRelease) {
+            return response()->json([
+                'message' => 'Apenas o coordenador responsável deste contrato (ou admin) pode liberar o faturamento.',
+            ], 403);
+        }
+
+        if ($data['released']) {
+            OnDemandBillingRelease::updateOrCreate(
+                ['project_id' => $data['project_id'], 'year_month' => $data['year_month']],
+                ['released_at' => now(), 'released_by' => $user->id, 'reason' => $data['reason'] ?? null],
+            );
+        } else {
+            OnDemandBillingRelease::where('project_id', $data['project_id'])
+                ->where('year_month', $data['year_month'])
+                ->delete();
+        }
+
+        return response()->json(['success' => true, 'released' => (bool) $data['released']]);
+    }
+
+    /** Coordenador EFETIVO: override do Kanban vence; senão, M2M coordinators. */
+    public static function isEffectiveCoordinator(Project $project, int $userId): bool
+    {
+        if ($project->kanban_coordinator_override_id) {
+            return (int) $project->kanban_coordinator_override_id === $userId;
+        }
+        if (!$project->relationLoaded('coordinators')) {
+            $project->load('coordinators:id');
+        }
+        return $project->coordinators->contains('id', $userId);
+    }
+}
