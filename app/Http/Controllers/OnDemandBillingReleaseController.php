@@ -89,7 +89,7 @@ class OnDemandBillingReleaseController extends Controller
         $userIsSustCoord = ($user->coordinator_type === 'sustentacao')
             && ($user->type === 'coordenador' || $user->is_coordinator);
 
-        $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user) {
+        $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user, $sustCoordNames, $userIsSustCoord) {
             // Horas do CONTRATO = projeto pai + filhos.
             $ids = collect([$p->id])
                 ->merge(Project::where('parent_project_id', $p->id)->pluck('id'))
