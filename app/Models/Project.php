@@ -997,12 +997,15 @@ class Project extends Model
         // Horas de coordenação sobre as horas apontadas deste projeto
         $coordinationHours = $this->calculateCoordinationHours($totalLoggedHours);
 
-        $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
         // initial_hours_consumed: horas já consumidas antes do projeto entrar no Minutor (saldo
         // já queimado pelo cliente). Sem essa subtração o show() devolvia o saldo inflado e o
         // modal de subprojeto autorizava criação acima do realmente disponível.
-        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) + $initialBalance - $initialConsumed;
+        // initial_hours_balance (Saldo Inicial, campo LEGADO anterior ao "Consumo inicial") é
+        // IGNORADO de propósito — saldo positivo só via aporte; consumo inicial via o campo
+        // próprio. A Gestão/grid, o Portal e o BH Fixo já o ignoram; aqui completa a unificação.
+        // Regra única p/ todos os contratos: contratadas + aporte − consumo inicial − apontadas.
+        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -1043,10 +1046,9 @@ class Project extends Model
                     $childLoggedHours = round(($childQuery->sum('effort_minutes') ?? 0) / 60, 2);
                     $childCoordinationHours = $childProject->calculateCoordinationHours($childLoggedHours);
 
-                    $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
+                    // initial_hours_balance (legado) ignorado — ver nota no saldo do projeto pai.
                     $childBalance = ($childSoldHours + $childContributionHours)
-                        - ($childLoggedHours + $childCoordinationHours)
-                        + $childInitialBalance;
+                        - ($childLoggedHours + $childCoordinationHours);
                     $balance -= $childBalance;
                 } else {
                     // Demais tipos: subtrai apenas o efetivamente apontado + initial_consumed
@@ -1212,9 +1214,9 @@ class Project extends Model
 
         // Calcular saldo base do projeto atual
         // IMPORTANTE: Para Banco de Horas Mensal, soldHours já é accumulated até o mês anterior
-        $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
+        // initial_hours_balance (legado) IGNORADO — regra única; ver nota em getGeneralHoursBalance.
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
-        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance - $initialConsumed;
+        $balance = ($soldHours + $contributionHours) - $totalLoggedHours - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -1257,9 +1259,9 @@ class Project extends Model
                     $childLoggedMinutes = $childQuery->sum('effort_minutes') ?? 0;
                     $childLoggedHours = round($childLoggedMinutes / 60, 2);
                     
-                    // Subtrair o saldo do filho: (accumulated_sold_hours até mês anterior + aportes + saldo inicial) - horas apontadas até mês anterior
-                    $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
-                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
+                    // Subtrair o saldo do filho: (accumulated_sold_hours até mês anterior + aportes) - horas apontadas até mês anterior
+                    // initial_hours_balance (legado) ignorado — regra única.
+                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours;
                     $balance -= $childBalance;
                 } else {
                     // Para outros tipos (inclui Banco de Horas Fixo): subtrair apontadas + initial_hours_consumed
