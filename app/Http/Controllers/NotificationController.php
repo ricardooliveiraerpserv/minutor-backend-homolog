@@ -950,7 +950,9 @@ class NotificationController extends Controller
     <button type="button" onclick="addRow()" style="margin:4px 0 16px;padding:8px 14px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;font-size:13px;cursor:pointer">+ Adicionar acompanhante</button>
     <button type="submit" style="display:block;width:100%;padding:12px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer">Salvar acompanhantes</button>
     <button type="button" formnovalidate onclick="goAlone(this)" style="display:block;width:100%;margin-top:8px;padding:11px;background:transparent;color:#9ca3af;border:1px solid #374151;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer">Vou sozinho(a) &mdash; sem acompanhantes</button>
-    <p style="font-size:12px;color:#6b7280;margin:14px 0 0;text-align:center">Sua presença já está confirmada. Adicione acompanhantes ou escolha "Vou sozinho(a)".</p>
+    <div style="margin:18px 0 0;padding:16px 18px;background:rgba(6,182,212,.12);border:1px solid #06b6d4;border-radius:12px;text-align:center">
+      <p style="margin:0;font-size:17px;font-weight:700;color:#e5e7eb;line-height:1.45">Se não levará ninguém, pode fechar esta janela &mdash; sua presença já está confirmada.</p>
+    </div>
   </form>
 </div>
 <script>
