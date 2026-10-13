@@ -359,6 +359,61 @@ class NotificationController extends Controller
         ]]);
     }
 
+    /**
+     * REVOGA a resposta de UM destinatário: limpa decisão/ack (e acompanhantes) → ele volta a
+     * ficar PENDENTE (pop-up reabre + volta a receber o e-mail nas recorrências). Reenvia o
+     * e-mail de decisão na hora para esse usuário (best-effort) quando a publicação envia e-mail.
+     */
+    public function revoke(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        $uid  = (int) $data['user_id'];
+
+        $read = NotificationRead::where('notification_id', $notification->id)->where('user_id', $uid)->first();
+        if ($read) {
+            $read->response_action = null;
+            $read->response_source = null;
+            $read->ack_at          = null;   // volta a pendente → pop-up reabre e recebe de novo
+            $read->acked_version   = null;
+            $read->save();
+        }
+        // Remove os acompanhantes que havia informado.
+        \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
+
+        // "Volta a receber": reenvia o e-mail de decisão só para esse usuário (não quebra se falhar).
+        $resent = false;
+        $user = \App\Models\User::find($uid);
+        if ($user) {
+            try { $resent = $this->sendActionEmail($notification, $user); } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail após revogar', [
+                    'notification_id' => $notification->id, 'user_id' => $uid, 'erro' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent]]);
+    }
+
+    /** Envia o e-mail de decisão (com botões de 1 clique) para UM usuário. Retorna se enviou. */
+    private function sendActionEmail(AppNotification $n, \App\Models\User $u): bool
+    {
+        if (!$n->send_email || !\App\Services\GraphMailSender::enabled() || empty($n->actions) || !filled($u->email)) {
+            return false;
+        }
+        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
+            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        if (!$from) {
+            return false;
+        }
+        $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
+        $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
+        $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
+        [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
+        [$ok] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+        return (bool) $ok;
+    }
+
     /** Usuários destinatários (perfis + usuários + contratação + cliente) — base do LOG. */
     private function resolveRecipientUsers(AppNotification $n)
     {
