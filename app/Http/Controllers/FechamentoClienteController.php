@@ -97,12 +97,14 @@ class FechamentoClienteController extends Controller
             \App\Models\FechamentoSendStatus::TIPO_CLIENTE, $yearMonth, $customers->pluck('id')->all(),
         );
 
-        $data = $customers->map(function ($customer) use ($fechamentos, $envioMap) {
+        $data = $customers->map(function ($customer) use ($fechamentos, $envioMap, $yearMonth) {
             $f = $fechamentos->get($customer->id);
             return [
                 'customer_id'    => $customer->id,
                 'nome'           => $customer->name ?: $customer->company_name, // nome fantasia (não a razão social)
                 'status'         => $f?->status ?? 'sem_registro',
+                // Liberação de faturamento On Demand (coordenador): bloqueado = não pode enviar.
+                'on_demand_status' => $yearMonth ? $this->onDemandBillingStatus($customer, $yearMonth) : null,
                 'total_servicos' => (float) ($f?->total_servicos ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
                 'total_geral'    => (float) ($f?->total_geral ?? 0),
@@ -118,6 +120,61 @@ class FechamentoClienteController extends Controller
         });
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Status de liberação de faturamento On Demand do cliente na competência:
+     *   'liberado'  → pode enviar; 'bloqueado' → coordenador ainda não liberou (não envia);
+     *   null        → cliente sem contrato On Demand com horas no mês (não se aplica).
+     * Regra: meses ANTERIORES ao atual já foram faturados → sempre liberado.
+     */
+    private function onDemandBillingStatus($customer, string $yearMonth): ?string
+    {
+        $odQuery = $customer->projects()
+            ->whereNull('parent_project_id')
+            ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'))
+            ->where(function ($w) {
+                $w->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+            });
+
+        if ($yearMonth < now()->format('Y-m')) {
+            return $odQuery->exists() ? 'liberado' : null;
+        }
+
+        $od = $odQuery->get(['id', 'code']);
+        if ($od->isEmpty()) {
+            return null;
+        }
+
+        $start = $yearMonth . '-01';
+        $end   = Carbon::parse($start)->endOfMonth()->toDateString();
+        $liberados = \App\Models\OnDemandBillingRelease::where('year_month', $yearMonth)
+            ->whereIn('project_id', $od->pluck('id'))->pluck('project_id')->all();
+
+        $temHoras = false;
+        $bloqueado = false;
+        foreach ($od as $p) {
+            $ids = collect([$p->id])
+                ->merge(Project::where('parent_project_id', $p->id)->pluck('id'))
+                ->all();
+            $min = (float) Timesheet::whereIn('project_id', $ids)
+                ->whereBetween('date', [$start, $end])
+                ->whereNotIn('status', [
+                    Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED,
+                    Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE,
+                ])
+                ->sum('effort_minutes');
+            if ($min > 0) {
+                $temHoras = true;
+                if (!in_array($p->id, $liberados, true)) {
+                    $bloqueado = true;
+                }
+            }
+        }
+        if (!$temHoras) {
+            return null;
+        }
+        return $bloqueado ? 'bloqueado' : 'liberado';
     }
 
     /**
