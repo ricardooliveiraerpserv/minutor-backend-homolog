@@ -848,6 +848,8 @@ Route::prefix('v1')->group(function () {
             // Centro de custo — leitura (template + lista por cliente). ANTES de /customers/{customer}.
             Route::get('/cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('cost-centers.template');
             Route::get('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'index'])->name('customers.cost-centers.index');
+            // Visão Cliente × Executivo — ANTES de /customers/{customer} (rota literal).
+            Route::get('/customers/executives-overview', [CustomerController::class, 'executivesOverview'])->name('customers.executives-overview');
             Route::get('/customers/{customer}', [CustomerController::class, 'show'])->name('customers.show');
         });
 
@@ -856,6 +858,9 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware('permission.or.admin:customers.update')->group(function () {
+            // Executivo em MASSA (rota literal ANTES de /customers/{customer}); escrita é admin-only (checado no controller).
+            Route::post('/customers/executives/bulk', [CustomerController::class, 'bulkExecutive'])->name('customers.executives.bulk');
+            Route::patch('/customers/{customer}/executive', [CustomerController::class, 'updateExecutive'])->name('customers.executive.update');
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
             // Centro de custo — escrita (criar/importar por cliente, editar/excluir).
             Route::post('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'store'])->name('customers.cost-centers.store');
