@@ -46,7 +46,8 @@ class OnDemandBillingReleaseController extends Controller
                   ->orWhereNull('is_investimento_comercial');
             })
             ->with([
-                'customer:id,name,company_name',
+                'customer:id,name,company_name,executive_id',
+                'customer.executive:id,name',
                 'coordinators:id,name',
                 'kanbanOverrideCoordinator:id,name',
                 'serviceType:id,code',
@@ -124,6 +125,7 @@ class OnDemandBillingReleaseController extends Controller
                 'contract_name'   => $p->name,
                 'customer'        => $p->customer?->name ?? $p->customer?->company_name,
                 'customer_id'     => $p->customer?->id,
+                'executivo'       => $p->customer?->executive?->name,
                 'coordinators'    => $coordNames->filter()->values(),
                 'horas_a_aprovar' => round($aprovarMin / 60, 2),
                 'horas_ajuste'    => round($ajusteMin / 60, 2),
