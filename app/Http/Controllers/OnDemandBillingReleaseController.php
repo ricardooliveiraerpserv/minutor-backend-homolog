@@ -150,7 +150,10 @@ class OnDemandBillingReleaseController extends Controller
                                      || self::isEffectiveCoordinator($p, (int) $user->id)
                                      || ($isSust && $userIsSustCoord)),
             ];
-        })->values();
+        })
+        // Só contratos COM movimento no mês (horas > 0); sem movimento não é listado.
+        ->filter(fn ($r) => $r['horas_total'] > 0)
+        ->values();
 
         return response()->json(['data' => $rows, 'year_month' => $yearMonth]);
     }

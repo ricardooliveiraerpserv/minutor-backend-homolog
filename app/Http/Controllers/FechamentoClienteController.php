@@ -172,7 +172,7 @@ class FechamentoClienteController extends Controller
             }
         }
         if (!$temHoras) {
-            return 'sem_movimento'; // tem contrato On Demand mas 0 horas no mês
+            return null; // sem movimento no mês → sem indicação
         }
         return $bloqueado ? 'bloqueado' : 'liberado';
     }
