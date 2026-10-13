@@ -53,6 +53,11 @@ class OnDemandBillingReleaseController extends Controller
                 'serviceType:id,code',
             ]);
 
+        // Portal de Sustentação: trazer SÓ contratos On Demand de sustentação.
+        if ($request->boolean('only_sustentacao')) {
+            $query->whereHas('serviceType', fn ($q) => $q->where('code', 'sustentacao'));
+        }
+
         // Escopo de coordenador — idêntico a Demandas/Projetos (ProjectController@index).
         // Admin/administrativo veem tudo; coordenador vê onde é coordenador efetivo
         // (pai ou filhos) e, se for de SUSTENTAÇÃO, tudo com serviceType sustentação.
