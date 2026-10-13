@@ -48,6 +48,7 @@ class OnDemandBillingReleaseController extends Controller
             ->with([
                 'customer:id,name,company_name',
                 'coordinators:id,name',
+                'kanbanOverrideCoordinator:id,name',
                 'serviceType:id,code',
             ]);
 
@@ -87,7 +88,10 @@ class OnDemandBillingReleaseController extends Controller
                 ->whereBetween('date', [$monthStart, $monthEnd]);
 
             $aprovarMin = (float) (clone $base)
-                ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
+                ->where('status', Timesheet::STATUS_PENDING)
+                ->sum('effort_minutes');
+            $ajusteMin = (float) (clone $base)
+                ->where('status', Timesheet::STATUS_ADJUSTMENT_REQUESTED)
                 ->sum('effort_minutes');
             $aprovadasMin = (float) (clone $base)
                 ->where('status', Timesheet::STATUS_APPROVED)
@@ -95,16 +99,22 @@ class OnDemandBillingReleaseController extends Controller
 
             $rel = $releases[$p->id] ?? null;
 
+            // Coordenador EFETIVO para exibição: override do Kanban vence; senão M2M.
+            $coordNames = $p->kanbanOverrideCoordinator
+                ? collect([$p->kanbanOverrideCoordinator->name])
+                : $p->coordinators->pluck('name');
+
             return [
                 'project_id'      => $p->id,
                 'contract_code'   => $p->code,
                 'contract_name'   => $p->name,
                 'customer'        => $p->customer?->name ?? $p->customer?->company_name,
                 'customer_id'     => $p->customer?->id,
-                'coordinators'    => $p->coordinators->pluck('name')->values(),
+                'coordinators'    => $coordNames->filter()->values(),
                 'horas_a_aprovar' => round($aprovarMin / 60, 2),
+                'horas_ajuste'    => round($ajusteMin / 60, 2),
                 'horas_aprovadas' => round($aprovadasMin / 60, 2),
-                'horas_total'     => round(($aprovarMin + $aprovadasMin) / 60, 2),
+                'horas_total'     => round(($aprovarMin + $ajusteMin + $aprovadasMin) / 60, 2),
                 'released'        => (bool) $rel,
                 'released_by'     => $rel?->releasedBy?->name,
                 'released_at'     => $rel?->released_at,
