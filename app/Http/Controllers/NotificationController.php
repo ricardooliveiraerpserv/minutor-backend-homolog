@@ -758,6 +758,18 @@ class NotificationController extends Controller
         elseif ($expired)   { $ok = false; $msg = 'O prazo para responder já encerrou.'; }
         else                { $ok = true;  $msg = 'Sua resposta <b>“' . e($action) . '”</b> foi registrada. Obrigado!'; }
 
+        // allow_guests + resposta AFIRMATIVA (1ª ação) recém-registrada → em vez do agradecimento
+        // simples, pergunta os acompanhantes/familiares (mesma pergunta do pop-up da Central).
+        // A presença já ficou confirmada acima; o formulário só ACRESCENTA os acompanhantes.
+        $actionsList = array_values(array_filter(
+            array_map(fn ($a) => trim((string) $a), (array) ($notification->actions ?? [])),
+            fn ($a) => $a !== ''
+        ));
+        if ($ok && $u && $notification->allow_guests && isset($actionsList[0]) && $action === $actionsList[0]) {
+            return response($this->guestFormPage($notification, $u), 200)
+                ->header('Content-Type', 'text/html; charset=UTF-8');
+        }
+
         $title = e($notification->title);
         $color = $ok ? '#06b6d4' : '#b91c1c';
         // Já respondida → título "Pergunta já respondida" em vermelho; demais estados mantêm o título da notificação.
@@ -775,6 +787,128 @@ class NotificationController extends Controller
             . '<p style="font-size:12px;color:#6b7280;margin:18px 0 0">Você já pode fechar esta janela.</p>'
             . '</div></body></html>';
         return response($page, 200)->header('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    /** Página simples de resultado (dark) reutilizada pelos fluxos de e-mail. */
+    private function simpleResultPage(AppNotification $n, bool $ok, string $msg): string
+    {
+        $heading = e($n->title);
+        $color   = $ok ? '#06b6d4' : '#b91c1c';
+        return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>' . $heading . '</title></head>'
+            . '<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center">'
+            . '<div style="max-width:440px;padding:32px;text-align:center;background:#111827;border:1px solid #1f2937;border-radius:16px">'
+            . '<div style="font-size:34px;margin-bottom:8px;color:' . $color . '">' . ($ok ? '&#10003;' : '&#9888;') . '</div>'
+            . '<h1 style="font-size:18px;margin:0 0 6px;color:#fff">' . $heading . '</h1>'
+            . '<p style="font-size:14px;color:#9ca3af;margin:0">' . $msg . '</p>'
+            . '<p style="font-size:12px;color:#6b7280;margin:18px 0 0">Você já pode fechar esta janela.</p>'
+            . '</div></body></html>';
+    }
+
+    /**
+     * Página de ACOMPANHANTES exibida após o convidado confirmar presença pelo e-mail (1 clique).
+     * A presença já foi registrada; aqui ele adiciona (opcionalmente) os familiares, que vão
+     * via POST assinado para respondEmailGuests. Mesma regra do pop-up da Central.
+     */
+    private function guestFormPage(AppNotification $n, \App\Models\User $u): string
+    {
+        $expires = $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->addDay();
+        $postUrl = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+            'notifications.respond-email-guests', $expires,
+            ['notification' => $n->id, 'user' => $u->id]
+        );
+        $title  = e($n->title);
+        $action = e($postUrl);
+
+        return <<<HTML
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{$title}</title></head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px">
+<div style="max-width:520px;width:100%;padding:28px;background:#111827;border:1px solid #1f2937;border-radius:16px">
+  <div style="font-size:30px;margin-bottom:6px;color:#06b6d4;text-align:center">&#10003;</div>
+  <h1 style="font-size:18px;margin:0 0 4px;color:#fff;text-align:center">Presença confirmada!</h1>
+  <p style="font-size:14px;color:#9ca3af;margin:0 0 18px;text-align:center">Vai levar acompanhantes/familiares? <span style="color:#6b7280">(opcional)</span></p>
+  <form method="POST" action="{$action}">
+    <div id="rows"></div>
+    <button type="button" onclick="addRow()" style="margin:4px 0 16px;padding:8px 14px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;font-size:13px;cursor:pointer">+ Adicionar acompanhante</button>
+    <button type="submit" style="display:block;width:100%;padding:12px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer">Salvar acompanhantes</button>
+    <p style="font-size:12px;color:#6b7280;margin:14px 0 0;text-align:center">Se não levará ninguém, pode fechar esta janela &mdash; sua presença já está confirmada.</p>
+  </form>
+</div>
+<script>
+var i = 0;
+function addRow() {
+  var wrap = document.getElementById('rows');
+  var idx = i++;
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap';
+  row.innerHTML =
+    '<input name="guests['+idx+'][nome]" placeholder="Nome" required style="flex:2 1 160px;min-width:0;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+    '<select name="guests['+idx+'][parentesco]" onchange="toggleIdade(this)" style="flex:1 1 120px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+      '<option value="">Parentesco</option><option value="Cônjuge">Cônjuge</option><option value="Filho(a)">Filho(a)</option><option value="Outro">Outro</option>' +
+    '</select>' +
+    '<input name="guests['+idx+'][idade]" type="number" min="0" max="120" placeholder="Idade" style="display:none;flex:0 1 90px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+    '<button type="button" onclick="this.parentNode.remove()" title="Remover" style="flex:0 0 auto;padding:0 12px;background:#1f2937;border:1px solid #374151;border-radius:8px;color:#9ca3af;cursor:pointer">&times;</button>';
+  wrap.appendChild(row);
+}
+function toggleIdade(sel) {
+  var idade = sel.parentNode.querySelector('input[type=number]');
+  idade.style.display = /filho/i.test(sel.value) ? 'block' : 'none';
+  if (!/filho/i.test(sel.value)) idade.value = '';
+}
+addRow();
+</script>
+</body></html>
+HTML;
+    }
+
+    /**
+     * Grava os acompanhantes informados na página pós-confirmação do e-mail (POST assinado).
+     * Só grava se o usuário JÁ confirmou presença (resposta afirmativa). Regrava a lista (idempotente).
+     */
+    public function respondEmailGuests(Request $request, AppNotification $notification)
+    {
+        $u = \App\Models\User::find((int) $request->query('user'));
+        $actions = array_values(array_filter(
+            array_map(fn ($a) => trim((string) $a), (array) ($notification->actions ?? [])),
+            fn ($a) => $a !== ''
+        ));
+        $read = $u ? NotificationRead::where('notification_id', $notification->id)->where('user_id', $u->id)->first() : null;
+        $affirmative = $u && $notification->allow_guests && $read && isset($actions[0]) && $read->response_action === $actions[0];
+
+        if (!$affirmative) {
+            return response($this->simpleResultPage(
+                $notification, false,
+                'Não foi possível registrar os acompanhantes. Confirme a presença primeiro ou acesse a Central de Notificações no Minutor.'
+            ), 200)->header('Content-Type', 'text/html; charset=UTF-8');
+        }
+
+        // Regrava a lista do respondente (idempotente) — mesma regra do respond() da Central.
+        \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $u->id)->delete();
+        $guests = collect((array) $request->input('guests', []))
+            ->map(function ($g) {
+                $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
+                $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
+                $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
+                if (stripos($par, 'filho') === false) $idade = null;
+                return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade];
+            })
+            ->filter(fn ($g) => $g['nome'] !== '')
+            ->take(30)
+            ->map(fn ($g) => [
+                'notification_id' => $notification->id, 'user_id' => $u->id,
+                'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
+                'idade' => $g['idade'],
+                'created_at' => now(), 'updated_at' => now(),
+            ])->values()->all();
+        if ($guests) \App\Models\NotificationGuest::insert($guests);
+
+        $cnt = count($guests);
+        $msg = $cnt > 0
+            ? 'Presença confirmada com <b>' . $cnt . '</b> acompanhante(s). Obrigado!'
+            : 'Presença confirmada, sem acompanhantes. Obrigado!';
+        return response($this->simpleResultPage($notification, true, $msg), 200)
+            ->header('Content-Type', 'text/html; charset=UTF-8');
     }
 
     /** Corpo do e-mail: mensagem da notificação ou, em enquete, pergunta + opções + chamada p/ votar. */

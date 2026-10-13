@@ -131,6 +131,9 @@ Route::prefix('v1')->group(function () {
     // Resposta de 1 clique vinda do e-mail (link assinado, sem login) — botões de decisão no e-mail.
     Route::get('/notifications/{notification}/respond-email', [\App\Http\Controllers\NotificationController::class, 'respondEmail'])
         ->middleware('signed')->name('notifications.respond-email');
+    // Grava os acompanhantes informados na página pós-confirmação do e-mail (POST assinado, sem login).
+    Route::post('/notifications/{notification}/respond-email-guests', [\App\Http\Controllers\NotificationController::class, 'respondEmailGuests'])
+        ->middleware('signed')->name('notifications.respond-email-guests');
     // 🔗 Callback OAuth Microsoft 365 (público — o browser é redirecionado pela Microsoft;
     // o usuário é identificado pelo `state` assinado, não pelo bearer token).
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
