@@ -319,42 +319,49 @@ class NotificationController extends Controller
     public function log(Request $request, AppNotification $notification): JsonResponse
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
-        $recipients = $this->resolveRecipientUsers($notification);
+        // Inclui os convites CANCELADOS (excluded_user_ids) p/ exibi-los marcados no Log (com opção de reativar).
+        $recipients = $this->resolveRecipientUsers($notification, true);
+        $cancelledIds = array_map('intval', (array) ($notification->excluded_user_ids ?? []));
         $reads = NotificationRead::where('notification_id', $notification->id)->get()->keyBy('user_id');
         // Acompanhantes/familiares por respondente (só quando a notificação permite).
         $guestsByUser = $notification->allow_guests
             ? \App\Models\NotificationGuest::where('notification_id', $notification->id)->get()->groupBy('user_id')
             : collect();
 
-        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser) {
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds) {
             $r = $reads->get($usr->id);
+            $cancelled = in_array((int) $usr->id, $cancelledIds, true);
             return [
                 'user_id'      => $usr->id,
                 'user_name'    => $usr->name,
                 'user_email'   => $usr->email,
-                'viewed_at'    => $r?->viewed_at?->toIso8601String(),
-                'response'     => $r?->response_action,
-                'response_source' => $r && $r->response_action ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
-                'responded_at' => $r && $r->response_action ? $r->ack_at?->toIso8601String() : null,
-                'guests'       => ($guestsByUser->get($usr->id) ?? collect())
+                'cancelled'    => $cancelled, // convite cancelado (não recebe)
+                'viewed_at'    => $cancelled ? null : $r?->viewed_at?->toIso8601String(),
+                'response'     => $cancelled ? null : $r?->response_action,
+                'response_source' => (!$cancelled && $r && $r->response_action) ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
+                'responded_at' => (!$cancelled && $r && $r->response_action) ? $r->ack_at?->toIso8601String() : null,
+                'guests'       => $cancelled ? collect() : ($guestsByUser->get($usr->id) ?? collect())
                     ->map(fn ($g) => ['nome' => $g->nome, 'parentesco' => $g->parentesco, 'idade' => $g->idade])->values(),
             ];
         })->sortBy('user_name')->values();
 
+        // Contadores desconsideram os convites cancelados.
+        $active = $rows->where('cancelled', false);
         $actions = (array) ($notification->actions ?? []);
         $byAction = [];
-        foreach ($actions as $a) $byAction[$a] = $rows->where('response', $a)->count();
+        foreach ($actions as $a) $byAction[$a] = $active->where('response', $a)->count();
 
         return response()->json(['data' => [
             'recipients' => $rows,
             'summary'    => [
-                'total'        => $rows->count(),
-                'viewed'       => $rows->whereNotNull('viewed_at')->count(),
-                'responded'    => $rows->whereNotNull('response')->count(),
-                'actions'      => $actions,
-                'by_action'    => $byAction,
-                'allow_guests' => (bool) $notification->allow_guests,
-                'guests_total' => $rows->sum(fn ($x) => count($x['guests'])),
+                'total'          => $active->count(),
+                'viewed'         => $active->whereNotNull('viewed_at')->count(),
+                'responded'      => $active->whereNotNull('response')->count(),
+                'cancelled'      => $rows->where('cancelled', true)->count(),
+                'actions'        => $actions,
+                'by_action'      => $byAction,
+                'allow_guests'   => (bool) $notification->allow_guests,
+                'guests_total'   => $active->sum(fn ($x) => count($x['guests'])),
             ],
         ]]);
     }
@@ -380,6 +387,8 @@ class NotificationController extends Controller
         }
         // Remove os acompanhantes que havia informado.
         \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
+        // Se o convite estava CANCELADO, reativa (tira de excluded_user_ids) — revogar = re-convidar.
+        $this->setInviteExcluded($notification, $uid, false);
 
         // "Volta a receber": reenvia o e-mail de decisão só para esse usuário (não quebra se falhar).
         $resent = false;
@@ -393,6 +402,55 @@ class NotificationController extends Controller
         }
 
         return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent]]);
+    }
+
+    /**
+     * CANCELA o convite de UM destinatário: entra em excluded_user_ids → NÃO recebe mais
+     * (sai do pop-up, do e-mail e da apuração). Limpa decisão/ack e acompanhantes. Para
+     * reativar (voltar a receber), use "revogar". `cancel=false` reativa.
+     */
+    public function cancelInvite(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        $data = $request->validate([
+            'user_id' => 'required|integer|exists:users,id',
+            'cancel'  => 'nullable|boolean',
+        ]);
+        $uid    = (int) $data['user_id'];
+        $cancel = $request->boolean('cancel', true);
+
+        $this->setInviteExcluded($notification, $uid, $cancel);
+
+        if ($cancel) {
+            // Cancelado não conta mais: limpa a resposta/ack e os acompanhantes.
+            $read = NotificationRead::where('notification_id', $notification->id)->where('user_id', $uid)->first();
+            if ($read) {
+                $read->response_action = null;
+                $read->response_source = null;
+                $read->ack_at          = null;
+                $read->acked_version   = null;
+                $read->save();
+            }
+            \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
+        }
+
+        return response()->json(['data' => ['cancelled' => $cancel, 'user_id' => $uid]]);
+    }
+
+    /** Liga/desliga a presença de um usuário em notifications_center.excluded_user_ids. */
+    private function setInviteExcluded(AppNotification $n, int $uid, bool $excluded): void
+    {
+        $ids = array_values(array_unique(array_map('intval', (array) ($n->excluded_user_ids ?? []))));
+        $has = in_array($uid, $ids, true);
+        if ($excluded && !$has) {
+            $ids[] = $uid;
+        } elseif (!$excluded && $has) {
+            $ids = array_values(array_filter($ids, fn ($i) => $i !== $uid));
+        } else {
+            return; // já está no estado desejado
+        }
+        $n->excluded_user_ids = $ids ?: null;
+        $n->save();
     }
 
     /** Envia o e-mail de decisão (com botões de 1 clique) para UM usuário. Retorna se enviou. */
@@ -415,7 +473,7 @@ class NotificationController extends Controller
     }
 
     /** Usuários destinatários (perfis + usuários + contratação + cliente) — base do LOG. */
-    private function resolveRecipientUsers(AppNotification $n)
+    private function resolveRecipientUsers(AppNotification $n, bool $includeExcluded = false)
     {
         $customerIds = array_filter(array_merge(
             (array) ($n->target_customer_ids ?? []),
@@ -431,7 +489,8 @@ class NotificationController extends Controller
                 if ($n->target_bonds)          $w->orWhereIn('work_bond', $n->target_bonds);
                 if ($customerIds)              $w->orWhereIn('customer_id', $customerIds);
             })
-            ->when($n->excluded_user_ids, fn ($q) => $q->whereNotIn('id', $n->excluded_user_ids))
+            // Convites cancelados (excluded_user_ids) saem do envio; o Log pede includeExcluded p/ exibi-los marcados.
+            ->when($n->excluded_user_ids && !$includeExcluded, fn ($q) => $q->whereNotIn('id', $n->excluded_user_ids))
             ->get(['id', 'name', 'email']);
     }
 
@@ -890,7 +949,8 @@ class NotificationController extends Controller
     <div id="rows"></div>
     <button type="button" onclick="addRow()" style="margin:4px 0 16px;padding:8px 14px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;font-size:13px;cursor:pointer">+ Adicionar acompanhante</button>
     <button type="submit" style="display:block;width:100%;padding:12px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer">Salvar acompanhantes</button>
-    <p style="font-size:12px;color:#6b7280;margin:14px 0 0;text-align:center">Se não levará ninguém, pode fechar esta janela &mdash; sua presença já está confirmada.</p>
+    <button type="button" formnovalidate onclick="goAlone(this)" style="display:block;width:100%;margin-top:8px;padding:11px;background:transparent;color:#9ca3af;border:1px solid #374151;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer">Vou sozinho(a) &mdash; sem acompanhantes</button>
+    <p style="font-size:12px;color:#6b7280;margin:14px 0 0;text-align:center">Sua presença já está confirmada. Adicione acompanhantes ou escolha "Vou sozinho(a)".</p>
   </form>
 </div>
 <script>
@@ -913,6 +973,10 @@ function toggleIdade(sel) {
   var idade = sel.parentNode.querySelector('input[type=number]');
   idade.style.display = /filho/i.test(sel.value) ? 'block' : 'none';
   if (!/filho/i.test(sel.value)) idade.value = '';
+}
+function goAlone(btn) {
+  document.getElementById('rows').innerHTML = '';
+  btn.form.submit();
 }
 addRow();
 </script>

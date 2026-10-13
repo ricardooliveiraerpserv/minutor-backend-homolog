@@ -546,6 +546,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/notifications/{notification}/log',   [\App\Http\Controllers\NotificationController::class, 'log']);
         // Revoga a resposta de UM destinatário → volta a pendente e recebe de novo (pop-up + e-mail).
         Route::post('/notifications/{notification}/revoke', [\App\Http\Controllers\NotificationController::class, 'revoke']);
+        // Cancela (ou reativa) o convite de UM destinatário → não recebe mais (excluded_user_ids).
+        Route::post('/notifications/{notification}/cancel-invite', [\App\Http\Controllers\NotificationController::class, 'cancelInvite']);
         Route::post('/notifications/{notification}/resend', [\App\Http\Controllers\NotificationController::class, 'resend']);
         Route::post('/notifications/{notification}/encerrar', [\App\Http\Controllers\NotificationController::class, 'encerrar']);
 
