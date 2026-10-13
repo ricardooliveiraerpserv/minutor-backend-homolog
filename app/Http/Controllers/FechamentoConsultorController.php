@@ -1366,6 +1366,11 @@ class FechamentoConsultorController extends Controller
                 'total_servico'  => $totalServico,
                 'total_despesas' => $totalDespesas,
                 'total_base'     => round($totalServico + $totalDespesas, 2),
+                // Horas APROVADAS (base do valor) + PENDENTES de aprovação (informativo).
+                'horas_trabalhadas' => round((float) ($row['horas_trabalhadas'] ?? 0), 2),
+                'horas_pendentes'   => round((float) ($row['horas_pendentes'] ?? 0), 2),
+                'valor_pendente'    => round((float) ($row['valor_pendente'] ?? 0), 2),
+                'all_approved'      => (bool) ($row['all_approved'] ?? true),
                 'desconto'       => $desconto,
                 'desconto_desc'  => $row['desconto_desc'] ?? null,
                 'adiantamento'   => $adiantamento,
