@@ -25,6 +25,19 @@ class OnDemandInvoicedController extends Controller
             'invoiced'   => 'required|boolean',
         ]);
 
+        // Backstop: não deixa MARCAR faturado se o coordenador não liberou o faturamento
+        // On Demand na competência (regra vale deste mês pra frente; meses anteriores ok).
+        if ($data['invoiced'] && $data['year_month'] >= now()->format('Y-m')) {
+            $liberado = \App\Models\OnDemandBillingRelease::where('project_id', $data['project_id'])
+                ->where('year_month', $data['year_month'])->exists();
+            if (!$liberado) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Faturamento On Demand não liberado pelo coordenador responsável para esta competência. Libere em "Faturamento On Demand" antes de marcar como faturado.',
+                ], 422);
+            }
+        }
+
         if ($data['invoiced']) {
             OnDemandInvoicedMonth::firstOrCreate(
                 ['project_id' => $data['project_id'], 'year_month' => $data['year_month']],
