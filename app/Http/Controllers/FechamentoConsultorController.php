@@ -94,7 +94,7 @@ class FechamentoConsultorController extends Controller
      * Linhas de apontamento do consultor no mês — mesma forma do endpoint apontamentos().
      * Usada tanto pela API quanto pela geração de PDF/XLSX no envio de e-mail.
      */
-    private function buildApontamentosRows(string $userId, string $from, string $to, ?User $user = null): array
+    private function buildApontamentosRows(string $userId, string $from, string $to, ?User $user = null, ?array $onlyStatuses = null): array
     {
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
@@ -116,7 +116,9 @@ class FechamentoConsultorController extends Controller
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->where('timesheets.user_id', $userId)
             ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', $excludeStatuses)
+            ->when($onlyStatuses !== null,
+                fn ($q) => $q->whereIn('timesheets.status', $onlyStatuses),
+                fn ($q) => $q->whereNotIn('timesheets.status', $excludeStatuses))
             ->where('timesheets.consultant_released', true) // atraso não liberado fica fora do pagamento
             ->where('timesheets.is_billable_only', false)
             ->where('timesheets.is_internal_action', false)
@@ -1904,6 +1906,23 @@ class FechamentoConsultorController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
         $apont = $this->buildApontamentosRows($userId, $from, $to);
+
+        return response()->json(['data' => $apont['rows']]);
+    }
+
+    /**
+     * EXATAMENTE os apontamentos contabilizados como pendência de aprovação/ajuste
+     * (mesmo filtro de pendencias_count/pendingHoursBlock): status pendente OU ajuste
+     * solicitado, liberados pelo consultor, não faturáveis/internos. Alimenta o drill-down
+     * clicável do fechamento do consultor.
+     */
+    public function apontamentosPendentes(string $userId, string $yearMonth): JsonResponse
+    {
+        [$from, $to] = $this->period($yearMonth);
+        $apont = $this->buildApontamentosRows($userId, $from, $to, null, [
+            Timesheet::STATUS_PENDING,
+            Timesheet::STATUS_ADJUSTMENT_REQUESTED,
+        ]);
 
         return response()->json(['data' => $apont['rows']]);
     }
