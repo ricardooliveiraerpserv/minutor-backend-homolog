@@ -53,9 +53,29 @@ class OnDemandBillingReleaseController extends Controller
                 'serviceType:id,code',
             ]);
 
-        // Portal de Sustentação: trazer SÓ contratos On Demand de sustentação.
+        // Portal de Sustentação: trazer SÓ contratos cujo COORDENADOR EFETIVO é de
+        // sustentação. (serviceType=sustentacao não basta: ex. ATR001-26 é sustentação mas
+        // tem override p/ coordenador de PROJETO → não entra no portal.)
         if ($request->boolean('only_sustentacao')) {
-            $query->whereHas('serviceType', fn ($q) => $q->where('code', 'sustentacao'));
+            $sustCoordIds = User::where('enabled', true)
+                ->where('coordinator_type', 'sustentacao')
+                ->where(function ($q) { $q->where('type', 'coordenador')->orWhere('is_coordinator', true); })
+                ->pluck('id')->all();
+            $query->where(function ($q) use ($sustCoordIds) {
+                // (a) override do Kanban é um coord de sustentação
+                $q->whereIn('kanban_coordinator_override_id', $sustCoordIds ?: [-1])
+                  // (b) sem override, e tem M2M coordinator de sustentação
+                  ->orWhere(function ($w) use ($sustCoordIds) {
+                      $w->whereNull('kanban_coordinator_override_id')
+                        ->whereHas('coordinators', fn ($sq) => $sq->whereIn('users.id', $sustCoordIds ?: [-1]));
+                  })
+                  // (c) sem override e sem M2M, mas serviceType=sustentacao (gerido pelo coord de sustentação)
+                  ->orWhere(function ($w) {
+                      $w->whereNull('kanban_coordinator_override_id')
+                        ->whereDoesntHave('coordinators')
+                        ->whereHas('serviceType', fn ($sq) => $sq->where('code', 'sustentacao'));
+                  });
+            });
         }
 
         // Escopo de coordenador — idêntico a Demandas/Projetos (ProjectController@index).
