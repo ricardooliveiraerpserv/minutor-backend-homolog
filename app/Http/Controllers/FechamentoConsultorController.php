@@ -1370,6 +1370,8 @@ class FechamentoConsultorController extends Controller
                 'horas_trabalhadas' => round((float) ($row['horas_trabalhadas'] ?? 0), 2),
                 'horas_pendentes'   => round((float) ($row['horas_pendentes'] ?? 0), 2),
                 'valor_pendente'    => round((float) ($row['valor_pendente'] ?? 0), 2),
+                'horas_ajuste'      => round((float) ($row['horas_ajuste'] ?? 0), 2),
+                'valor_ajuste'      => round((float) ($row['valor_ajuste'] ?? 0), 2),
                 'all_approved'      => (bool) ($row['all_approved'] ?? true),
                 'desconto'       => $desconto,
                 'desconto_desc'  => $row['desconto_desc'] ?? null,
@@ -1503,9 +1505,21 @@ class FechamentoConsultorController extends Controller
             ->groupBy('user_id')
             ->pluck('total_hours', 'user_id');
 
-        // Horas PENDENTES de aprovação (pendente + ajuste solicitado) — informativo, não pagas.
+        // Horas PENDENTES de aprovação (status pendente) — informativo, não pagas.
         $pendingHoursByUser = Timesheet::whereBetween('date', [$from, $to])
-            ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
+            ->where('status', Timesheet::STATUS_PENDING)
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereIn('user_id', $users->pluck('id'))
+            ->selectRaw('user_id, SUM(ROUND(effort_minutes / 60.0, 2)) as total_hours')
+            ->groupBy('user_id')
+            ->pluck('total_hours', 'user_id');
+
+        // Horas em AJUSTE SOLICITADO — o consultor precisa corrigir e reenviar.
+        $adjustHoursByUser = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_ADJUSTMENT_REQUESTED)
             ->where('consultant_released', true)
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
@@ -1587,10 +1601,12 @@ class FechamentoConsultorController extends Controller
             // base exibida no relatório linha a linha), pra "Total × Taxa" fechar. Antes
             // era round(Σ minutos/60), que divergia da soma das linhas por até 0,01h.
             $horasTrabalhadas = round((float) ($hoursByUser[$user->id] ?? 0), 2);
-            // Pendentes de aprovação (informativo — não entram no valor).
+            // Pendentes de aprovação + ajuste solicitado (informativo — não entram no valor).
             $horasPendentes   = round((float) ($pendingHoursByUser[$user->id] ?? 0), 2);
             $valorPendente    = round($horasPendentes * $effectiveRate, 2);
-            $pendingCount     = (int) ($pendingCountByUser[$user->id] ?? 0);
+            $horasAjuste      = round((float) ($adjustHoursByUser[$user->id] ?? 0), 2);
+            $valorAjuste      = round($horasAjuste * $effectiveRate, 2);
+            $pendingCount     = (int) ($pendingCountByUser[$user->id] ?? 0); // pendente + ajuste (p/ trava)
 
             $extrasConsultant = round(
                 ($extraTimesheetsByUser->get($user->id, collect()))
@@ -1621,6 +1637,8 @@ class FechamentoConsultorController extends Controller
                 'horas_trabalhadas' => $horasTrabalhadas,
                 'horas_pendentes'   => $horasPendentes,
                 'valor_pendente'    => $valorPendente,
+                'horas_ajuste'      => $horasAjuste,
+                'valor_ajuste'      => $valorAjuste,
                 'all_approved'      => $pendingCount === 0,
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
