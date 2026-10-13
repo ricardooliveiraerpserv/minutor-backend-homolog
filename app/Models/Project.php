@@ -1154,13 +1154,6 @@ class Project extends Model
             $available = (float) $this->getTotalAvailableHours();
         }
 
-        // Saldo inicial A FAVOR (crédito trazido do sistema anterior) ENTRA no disponível —
-        // simétrico ao initial_hours_consumed, que entra no consumido. getGeneralHoursBalance
-        // (regra que governa o BLOQUEIO de apontamento) soma os dois; aqui faltava o
-        // initial_hours_balance, o que inflava o consumo líquido e exibia saldo negativo FALSO
-        // (ex.: projeto com initial_balance = initial_consumed, que deveriam se anular no saldo).
-        $available += (float) ($this->initial_hours_balance ?? 0);
-
         $totalConsumed = round($consumed + $initialConsumed + $childrenConsumed, 2);
         return [
             'available' => round($available, 2),
