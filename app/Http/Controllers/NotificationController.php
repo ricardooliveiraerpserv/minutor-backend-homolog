@@ -275,6 +275,7 @@ class NotificationController extends Controller
         $r = NotificationRead::firstOrNew(['notification_id' => $notification->id, 'user_id' => $u->id]);
         $r->viewed_at       = $r->viewed_at ?? now();
         $r->response_action = $action;
+        $r->response_source = 'app';                        // respondeu pela Central/pop-up
         $r->ack_at          = now();                       // respondeu → não fica mais pendente
         $r->acked_version   = $notification->version;
         $r->ack_ip          = $request->ip();
@@ -333,6 +334,7 @@ class NotificationController extends Controller
                 'user_email'   => $usr->email,
                 'viewed_at'    => $r?->viewed_at?->toIso8601String(),
                 'response'     => $r?->response_action,
+                'response_source' => $r && $r->response_action ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
                 'responded_at' => $r && $r->response_action ? $r->ack_at?->toIso8601String() : null,
                 'guests'       => ($guestsByUser->get($usr->id) ?? collect())
                     ->map(fn ($g) => ['nome' => $g->nome, 'parentesco' => $g->parentesco, 'idade' => $g->idade])->values(),
@@ -745,6 +747,7 @@ class NotificationController extends Controller
             $r = $existing ?: new NotificationRead(['notification_id' => $notification->id, 'user_id' => $u->id]);
             $r->viewed_at       = $r->viewed_at ?? now();
             $r->response_action = $action;
+            $r->response_source = 'email';                      // respondeu pelo link do e-mail (1 clique)
             $r->ack_at          = now();                       // respondeu → sai de pendente (pop-up não reabre)
             $r->acked_version   = $notification->version;
             $r->ack_ip          = $request->ip();
