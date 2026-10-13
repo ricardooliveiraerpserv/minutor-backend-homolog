@@ -18,7 +18,7 @@ class AppNotification extends Model
     protected $fillable = [
         'title', 'message', 'type', 'priority', 'target_roles', 'target_users',
         'target_contract_types', 'target_bonds', 'excluded_user_ids', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
-        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'version', 'created_by', 'expires_at',
+        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'guest_other_user_ids', 'version', 'created_by', 'expires_at',
         'recurrence', 'recurrence_value', 'recurrence_weekdays', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
     ];
 
@@ -30,6 +30,7 @@ class AppNotification extends Model
         'excluded_user_ids'     => 'array',
         'target_customer_ids'   => 'array',
         'actions'               => 'array',
+        'guest_other_user_ids'  => 'array',
         'requires_ack'          => 'boolean',
         'allow_guests'          => 'boolean',
         'send_email'            => 'boolean',

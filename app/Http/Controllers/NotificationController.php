@@ -88,6 +88,9 @@ class NotificationController extends Controller
                 'pending_ack' => $n->requires_ack && !$acked,
                 'ack_at'      => $r?->ack_at,
                 'my_response' => $r?->response_action,   // botão de decisão que o usuário clicou
+                // Pode indicar acompanhante "Outro" (além da família)? (está na lista autorizada)
+                'can_invite_other' => (bool) $n->allow_guests
+                    && in_array((int) $u->id, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true),
                 'poll'        => $poll,
             ]);
         });
@@ -289,23 +292,7 @@ class NotificationController extends Controller
             \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $u->id)->delete();
             $affirmative = isset($actions[0]) && $action === $actions[0];
             if ($affirmative) {
-                $guests = collect((array) $request->input('guests', []))
-                    ->map(function ($g) {
-                        $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
-                        $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
-                        $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
-                        // Idade só faz sentido p/ Filho(a).
-                        if (stripos($par, 'filho') === false) $idade = null;
-                        return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade];
-                    })
-                    ->filter(fn ($g) => $g['nome'] !== '')
-                    ->take(30)
-                    ->map(fn ($g) => [
-                        'notification_id' => $notification->id, 'user_id' => $u->id,
-                        'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
-                        'idade' => $g['idade'],
-                        'created_at' => now(), 'updated_at' => now(),
-                    ])->values()->all();
+                $guests = $this->parseGuests($request->input('guests', []), $notification, $u->id);
                 if ($guests) \App\Models\NotificationGuest::insert($guests);
             }
         }
@@ -322,13 +309,14 @@ class NotificationController extends Controller
         // Inclui os convites CANCELADOS (excluded_user_ids) p/ exibi-los marcados no Log (com opção de reativar).
         $recipients = $this->resolveRecipientUsers($notification, true);
         $cancelledIds = array_map('intval', (array) ($notification->excluded_user_ids ?? []));
+        $otherIds     = array_map('intval', (array) ($notification->guest_other_user_ids ?? []));
         $reads = NotificationRead::where('notification_id', $notification->id)->get()->keyBy('user_id');
         // Acompanhantes/familiares por respondente (só quando a notificação permite).
         $guestsByUser = $notification->allow_guests
             ? \App\Models\NotificationGuest::where('notification_id', $notification->id)->get()->groupBy('user_id')
             : collect();
 
-        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds) {
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds) {
             $r = $reads->get($usr->id);
             $cancelled = in_array((int) $usr->id, $cancelledIds, true);
             return [
@@ -336,6 +324,7 @@ class NotificationController extends Controller
                 'user_name'    => $usr->name,
                 'user_email'   => $usr->email,
                 'cancelled'    => $cancelled, // convite cancelado (não recebe)
+                'can_invite_other' => in_array((int) $usr->id, $otherIds, true), // pode indicar "Outro"
                 'viewed_at'    => $cancelled ? null : $r?->viewed_at?->toIso8601String(),
                 'response'     => $cancelled ? null : $r?->response_action,
                 'response_source' => (!$cancelled && $r && $r->response_action) ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
@@ -374,7 +363,10 @@ class NotificationController extends Controller
     public function revoke(Request $request, AppNotification $notification): JsonResponse
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
-        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        $data = $request->validate([
+            'user_id'          => 'required|integer|exists:users,id',
+            'can_invite_other' => 'nullable|boolean', // define se pode indicar "Outro" ao reconvidar
+        ]);
         $uid  = (int) $data['user_id'];
 
         $read = NotificationRead::where('notification_id', $notification->id)->where('user_id', $uid)->first();
@@ -389,6 +381,10 @@ class NotificationController extends Controller
         \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
         // Se o convite estava CANCELADO, reativa (tira de excluded_user_ids) — revogar = re-convidar.
         $this->setInviteExcluded($notification, $uid, false);
+        // "Pode convidar além da família?" (perguntado no modal de revogar) → liga/desliga "Outro".
+        if ($request->has('can_invite_other')) {
+            $this->setGuestOther($notification, $uid, $request->boolean('can_invite_other'));
+        }
 
         // "Volta a receber": reenvia o e-mail de decisão só para esse usuário (não quebra se falhar).
         $resent = false;
@@ -451,6 +447,52 @@ class NotificationController extends Controller
         }
         $n->excluded_user_ids = $ids ?: null;
         $n->save();
+    }
+
+    /** Liga/desliga a permissão de indicar "Outro" (guest_other_user_ids) p/ um usuário. */
+    private function setGuestOther(AppNotification $n, int $uid, bool $allowed): void
+    {
+        $ids = array_values(array_unique(array_map('intval', (array) ($n->guest_other_user_ids ?? []))));
+        $has = in_array($uid, $ids, true);
+        if ($allowed && !$has) {
+            $ids[] = $uid;
+        } elseif (!$allowed && $has) {
+            $ids = array_values(array_filter($ids, fn ($i) => $i !== $uid));
+        } else {
+            return;
+        }
+        $n->guest_other_user_ids = $ids ?: null;
+        $n->save();
+    }
+
+    /**
+     * Normaliza a lista de acompanhantes (pop-up ou e-mail). Regras:
+     * - idade mantida p/ Filho(a) e p/ "Outro" (quando criança); zerada p/ Cônjuge.
+     * - "Outro" só aceito de quem pode indicar além da família (guest_other_user_ids); senão descarta.
+     * - nome vazio descartado; máx. 30. (Obrigatoriedade de idade é validada no FE.)
+     */
+    private function parseGuests($raw, AppNotification $n, int $uid): array
+    {
+        $canOther = in_array($uid, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true);
+        return collect((array) $raw)
+            ->map(function ($g) {
+                $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
+                $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
+                $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
+                $isOutro = stripos($par, 'outro') !== false;
+                $isFilho = stripos($par, 'filho') !== false;
+                if (!$isFilho && !$isOutro) $idade = null; // só Filho(a)/Outro têm idade
+                return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade, 'is_outro' => $isOutro];
+            })
+            ->filter(fn ($g) => $g['nome'] !== '')
+            ->reject(fn ($g) => $g['is_outro'] && !$canOther) // "Outro" só de quem é autorizado
+            ->take(30)
+            ->map(fn ($g) => [
+                'notification_id' => $n->id, 'user_id' => $uid,
+                'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
+                'idade' => $g['idade'],
+                'created_at' => now(), 'updated_at' => now(),
+            ])->values()->all();
     }
 
     /** Envia o e-mail de decisão (com botões de 1 clique) para UM usuário. Retorna se enviou. */
@@ -723,6 +765,9 @@ class NotificationController extends Controller
             'actions.*'    => 'string|max:80',
             // Confirmar presença: permite ao respondente informar acompanhantes/familiares.
             'allow_guests' => 'nullable|boolean',
+            // Usuários autorizados a indicar acompanhante "Outro" (além da família).
+            'guest_other_user_ids'   => 'nullable|array',
+            'guest_other_user_ids.*' => 'integer',
             'version'      => 'nullable|integer|min:1',
             'expires_at'   => 'nullable|date',
             // Enquete (quando type=poll)
@@ -936,6 +981,10 @@ class NotificationController extends Controller
         );
         $title  = e($n->title);
         $action = e($postUrl);
+        // Pode indicar "Outro" (além da família)?
+        $canOther = in_array((int) $u->id, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true);
+        $otherOpt   = $canOther ? '<option value="Outro">Outro</option>' : '';
+        $canOtherJs = $canOther ? 'true' : 'false';
 
         return <<<HTML
 <!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -957,24 +1006,43 @@ class NotificationController extends Controller
 </div>
 <script>
 var i = 0;
+var CAN_OTHER = {$canOtherJs};
 function addRow() {
   var wrap = document.getElementById('rows');
   var idx = i++;
   var row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap';
+  row.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center';
   row.innerHTML =
-    '<input name="guests['+idx+'][nome]" placeholder="Nome" required style="flex:2 1 160px;min-width:0;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
-    '<select name="guests['+idx+'][parentesco]" onchange="toggleIdade(this)" style="flex:1 1 120px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
-      '<option value="">Parentesco</option><option value="Cônjuge">Cônjuge</option><option value="Filho(a)">Filho(a)</option><option value="Outro">Outro</option>' +
+    '<input name="guests['+idx+'][nome]" placeholder="Nome" required style="flex:2 1 150px;min-width:0;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+    '<select name="guests['+idx+'][parentesco]" required onchange="toggleRow(this)" style="flex:1 1 120px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+      '<option value="">Parentesco</option><option value="Cônjuge">Cônjuge</option><option value="Filho(a)">Filho(a)</option>{$otherOpt}' +
     '</select>' +
+    '<label class="crianca" style="display:none;align-items:center;gap:4px;font-size:12px;color:#9ca3af;cursor:pointer"><input type="checkbox" onchange="toggleCrianca(this)"> é criança?</label>' +
     '<input name="guests['+idx+'][idade]" type="number" min="0" max="120" placeholder="Idade" style="display:none;flex:0 1 90px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
-    '<button type="button" onclick="this.parentNode.remove()" title="Remover" style="flex:0 0 auto;padding:0 12px;background:#1f2937;border:1px solid #374151;border-radius:8px;color:#9ca3af;cursor:pointer">&times;</button>';
+    '<button type="button" onclick="this.parentNode.remove()" title="Remover" style="flex:0 0 auto;padding:0 12px;height:38px;background:#1f2937;border:1px solid #374151;border-radius:8px;color:#9ca3af;cursor:pointer">&times;</button>';
   wrap.appendChild(row);
 }
-function toggleIdade(sel) {
-  var idade = sel.parentNode.querySelector('input[type=number]');
-  idade.style.display = /filho/i.test(sel.value) ? 'block' : 'none';
-  if (!/filho/i.test(sel.value)) idade.value = '';
+// Mostra/oculta "é criança?" e Idade conforme o parentesco.
+function toggleRow(sel) {
+  var row = sel.parentNode;
+  var crianca = row.querySelector('.crianca');
+  var cb = crianca.querySelector('input[type=checkbox]');
+  var idade = row.querySelector('input[type=number]');
+  var isFilho = /filho/i.test(sel.value);
+  var isOutro = /outro/i.test(sel.value);
+  crianca.style.display = isOutro ? 'inline-flex' : 'none';
+  if (!isOutro) cb.checked = false;
+  // Filho(a): idade obrigatória sempre. Outro: idade só quando "é criança".
+  var showIdade = isFilho || (isOutro && cb.checked);
+  idade.style.display = showIdade ? 'block' : 'none';
+  idade.required = showIdade;
+  if (!showIdade) idade.value = '';
+}
+function toggleCrianca(cb) {
+  var idade = cb.parentNode.parentNode.querySelector('input[type=number]');
+  idade.style.display = cb.checked ? 'block' : 'none';
+  idade.required = cb.checked;
+  if (!cb.checked) idade.value = '';
 }
 function goAlone(btn) {
   document.getElementById('rows').innerHTML = '';
@@ -1009,22 +1077,7 @@ HTML;
 
         // Regrava a lista do respondente (idempotente) — mesma regra do respond() da Central.
         \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $u->id)->delete();
-        $guests = collect((array) $request->input('guests', []))
-            ->map(function ($g) {
-                $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
-                $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
-                $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
-                if (stripos($par, 'filho') === false) $idade = null;
-                return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade];
-            })
-            ->filter(fn ($g) => $g['nome'] !== '')
-            ->take(30)
-            ->map(fn ($g) => [
-                'notification_id' => $notification->id, 'user_id' => $u->id,
-                'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
-                'idade' => $g['idade'],
-                'created_at' => now(), 'updated_at' => now(),
-            ])->values()->all();
+        $guests = $this->parseGuests($request->input('guests', []), $notification, $u->id);
         if ($guests) \App\Models\NotificationGuest::insert($guests);
 
         $cnt = count($guests);
