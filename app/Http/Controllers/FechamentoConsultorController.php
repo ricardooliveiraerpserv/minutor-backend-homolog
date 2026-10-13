@@ -1639,6 +1639,7 @@ class FechamentoConsultorController extends Controller
                 'valor_pendente'    => $valorPendente,
                 'horas_ajuste'      => $horasAjuste,
                 'valor_ajuste'      => $valorAjuste,
+                'pendencias_count'  => $pendingCount, // nº de apontamentos pendentes + ajuste
                 'all_approved'      => $pendingCount === 0,
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
