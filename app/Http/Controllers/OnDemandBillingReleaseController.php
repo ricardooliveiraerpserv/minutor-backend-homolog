@@ -78,6 +78,16 @@ class OnDemandBillingReleaseController extends Controller
         $projects = $query->orderBy('code')->get();
         $releases = OnDemandBillingRelease::mapFor($yearMonth);
 
+        // Coordenadores de SUSTENTAÇÃO (regra de Demandas/Projetos): governam todos os
+        // contratos de sustentação. Usado como "coordenador responsável" dos contratos
+        // On Demand de sustentação que não têm coordenador individual (override/M2M).
+        $sustCoordNames = User::where('enabled', true)
+            ->where('coordinator_type', 'sustentacao')
+            ->where(function ($q) { $q->where('type', 'coordenador')->orWhere('is_coordinator', true); })
+            ->orderBy('name')->pluck('name');
+        $userIsSustCoord = ($user->coordinator_type === 'sustentacao')
+            && ($user->type === 'coordenador' || $user->is_coordinator);
+
         $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user) {
             // Horas do CONTRATO = projeto pai + filhos.
             $ids = collect([$p->id])
@@ -99,10 +109,14 @@ class OnDemandBillingReleaseController extends Controller
 
             $rel = $releases[$p->id] ?? null;
 
-            // Coordenador EFETIVO para exibição: override do Kanban vence; senão M2M.
+            // Coordenador EFETIVO para exibição: override do Kanban vence; senão M2M;
+            // senão, se for contrato de SUSTENTAÇÃO, os coordenadores de sustentação.
+            $isSust = ($p->serviceType?->code === 'sustentacao');
             $coordNames = $p->kanbanOverrideCoordinator
                 ? collect([$p->kanbanOverrideCoordinator->name])
-                : $p->coordinators->pluck('name');
+                : ($p->coordinators->isNotEmpty()
+                    ? $p->coordinators->pluck('name')
+                    : ($isSust ? $sustCoordNames : collect()));
 
             return [
                 'project_id'      => $p->id,
@@ -115,11 +129,16 @@ class OnDemandBillingReleaseController extends Controller
                 'horas_ajuste'    => round($ajusteMin / 60, 2),
                 'horas_aprovadas' => round($aprovadasMin / 60, 2),
                 'horas_total'     => round(($aprovarMin + $ajusteMin + $aprovadasMin) / 60, 2),
+                // % aprovado: só chega a 100% quando pendentes E ajustes = 0.
+                'pct_aprovado'    => ($aprovarMin + $ajusteMin + $aprovadasMin) > 0
+                                     ? (int) round($aprovadasMin / ($aprovarMin + $ajusteMin + $aprovadasMin) * 100)
+                                     : 0,
                 'released'        => (bool) $rel,
                 'released_by'     => $rel?->releasedBy?->name,
                 'released_at'     => $rel?->released_at,
                 'can_release'     => $user->isAdmin() || $user->isAdministrativo()
-                                     || self::isEffectiveCoordinator($p, (int) $user->id),
+                                     || self::isEffectiveCoordinator($p, (int) $user->id)
+                                     || ($isSust && $userIsSustCoord),
             ];
         })->values();
 
@@ -137,10 +156,13 @@ class OnDemandBillingReleaseController extends Controller
             'reason'     => 'nullable|string|max:500',
         ]);
 
-        $project = Project::with('coordinators:id')->findOrFail($data['project_id']);
+        $project = Project::with('coordinators:id', 'serviceType:id,code')->findOrFail($data['project_id']);
 
+        $userIsSustCoord = ($user->coordinator_type === 'sustentacao')
+            && ($user->type === 'coordenador' || $user->is_coordinator);
         $canRelease = $user->isAdmin() || $user->isAdministrativo()
-            || self::isEffectiveCoordinator($project, (int) $user->id);
+            || self::isEffectiveCoordinator($project, (int) $user->id)
+            || (($project->serviceType?->code === 'sustentacao') && $userIsSustCoord);
         if (!$canRelease) {
             return response()->json([
                 'message' => 'Apenas o coordenador responsável deste contrato (ou admin) pode liberar o faturamento.',
