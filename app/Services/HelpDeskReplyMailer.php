@@ -35,6 +35,9 @@ class HelpDeskReplyMailer
         if (!GraphMailSender::enabled()) {
             return [false, 'skip:graph_desligado'];
         }
+        if (!HelpDeskMailGate::allows($ticket)) {
+            return [false, 'skip:trava_homolog_erpserv'];
+        }
 
         $from = self::resolveFromAccount($ticket);
         if (!$from) return [false, 'skip:sem_conta_microsoft365'];
@@ -113,6 +116,7 @@ class HelpDeskReplyMailer
         if (empty($to)) return [false, 'skip:sem_destinatario'];
         if (trim(strip_tags($html)) === '') return [false, 'skip:corpo_vazio'];
         if (!GraphMailSender::enabled()) return [false, 'skip:graph_desligado'];
+        if (!HelpDeskMailGate::allows($ticket)) return [false, 'skip:trava_homolog_erpserv'];
 
         $from = self::resolveFromAccount($ticket);
         if (!$from) return [false, 'skip:sem_conta_microsoft365'];
@@ -309,6 +313,7 @@ class HelpDeskReplyMailer
     {
         if (!$to) return [false, 'skip:sem_destinatario'];
         if (!GraphMailSender::enabled()) return [false, 'skip:graph_desligado'];
+        if (!HelpDeskMailGate::allows($ticket)) return [false, 'skip:trava_homolog_erpserv'];
 
         // O link do E-MAIL aponta sempre para o chamado ATUAL (o novo). O link do chamado ANTERIOR
         // fica só dentro do novo chamado (na plataforma), na descrição — não vai no e-mail.
@@ -347,6 +352,7 @@ class HelpDeskReplyMailer
     public static function sendRejectionNotices(HelpDeskTicket $ticket, string $reason, ?int $excludeCommentId = null): void
     {
         if (!GraphMailSender::enabled()) return;
+        if (!HelpDeskMailGate::allows($ticket)) return;
 
         $from = self::resolveFromAccount($ticket);
         if (!$from) return;

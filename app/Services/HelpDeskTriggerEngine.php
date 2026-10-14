@@ -245,6 +245,7 @@ class HelpDeskTriggerEngine
     private static function actSendEmail(array $params, HelpDeskTicket $ticket, array $context, ?string $triggerName = null): void
     {
         if (!GraphMailSender::enabled()) return;
+        if (!HelpDeskMailGate::allows($ticket)) return; // trava temporária de homologação (só ERPSERV)
 
         $to = [];
         foreach ((array) ($params['to'] ?? []) as $target) {
