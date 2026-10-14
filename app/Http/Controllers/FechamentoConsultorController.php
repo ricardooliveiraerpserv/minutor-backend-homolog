@@ -1822,12 +1822,18 @@ class FechamentoConsultorController extends Controller
         // (home_company_id) igual à ativa. Diretor tem bloco próprio (FechamentoDiretoria), não aqui.
         if (config('multiempresa.scoping_enabled')) {
             $activeCompanyId = (int) app(\App\Services\CompanyContext::class)->id();
+            // Movimento = horas aprovadas OU ajustes financeiros OU PENDÊNCIAS (horas pendentes/
+            // ajuste, ou nº de apontamentos pendentes). Regra do sistema: consultor com apontamento
+            // pendente DEVE aparecer no fechamento (com a legenda de pendência), não some.
             $hasMovement = fn (array $c) =>
                 (float) ($c['horas_trabalhadas'] ?? 0) > 0
                 || (float) ($c['total_despesas'] ?? 0) != 0
                 || (float) ($c['adiantamento'] ?? 0) != 0
                 || (float) ($c['adicional'] ?? 0) != 0
-                || (float) ($c['emprestimo_aporte'] ?? 0) != 0;
+                || (float) ($c['emprestimo_aporte'] ?? 0) != 0
+                || (float) ($c['horas_pendentes'] ?? 0) > 0
+                || (float) ($c['horas_ajuste'] ?? 0) > 0
+                || (int) ($c['pendencias_count'] ?? 0) > 0;
             $horistas   = array_values(array_filter($horistas, $hasMovement));
             $bancoHoras = array_values(array_filter($bancoHoras, $hasMovement));
             $fixos      = array_values(array_filter($fixos, fn (array $c) => (int) ($c['home_company_id'] ?? 0) === $activeCompanyId));
