@@ -88,9 +88,11 @@ class NotificationSurveyController extends Controller
             $base = ['id' => $q->id, 'label' => $q->label, 'type' => $q->type, 'required' => (bool) $q->required];
 
             if ($q->type === 'choice') {
-                $counts = $rows->groupBy(fn ($x) => $x['a']->option_id)->map->count();
+                $byOpt = $rows->groupBy(fn ($x) => $x['a']->option_id);
                 $base['options'] = $q->options->map(fn ($o) => [
-                    'id' => $o->id, 'label' => $o->label, 'count' => (int) ($counts[$o->id] ?? 0),
+                    'id' => $o->id, 'label' => $o->label, 'count' => (int) ($byOpt->get($o->id, collect())->count()),
+                    // Quem votou nesta opção (nomes dos respondentes) p/ a legenda do gráfico.
+                    'voters' => $byOpt->get($o->id, collect())->map(fn ($x) => $respondentName($x['r']))->filter()->values(),
                 ])->values();
             } elseif ($q->type === 'person') {
                 $base['people'] = $rows->groupBy(fn ($x) => $x['a']->answer_user_id)
@@ -98,6 +100,8 @@ class NotificationSurveyController extends Controller
                         'user_id' => (int) $uid,
                         'name'    => optional($grp->first()['a']->answerUser)->name ?? '—',
                         'count'   => $grp->count(),
+                        // Quem votou nesta pessoa (nomes dos respondentes).
+                        'voters'  => $grp->map(fn ($x) => $respondentName($x['r']))->filter()->values(),
                     ])
                     ->sortByDesc('count')->values();
             } else { // text
