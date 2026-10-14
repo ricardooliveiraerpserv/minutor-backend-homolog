@@ -203,44 +203,46 @@ class NotificationSurveyController extends Controller
     public function emailForm(Request $request, NotificationSurvey $survey)
     {
         $u = User::find((int) $request->query('user'));
-        $survey->loadMissing(['questions.options', 'notification:id,title']);
+        $survey->loadMissing(['questions.options', 'notification.company']);
         $title = e($survey->notification?->title ?? 'Pesquisa');
+        $brand = $this->brandAssets($survey);
 
         if (!$u) {
-            return response($this->emailResultPage($title, false, 'Link inválido.'))->header('Content-Type', 'text/html; charset=UTF-8');
+            return response($this->emailResultPage($title, false, 'Link inválido.', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
         }
         if ($survey->isClosed()) {
-            return response($this->emailResultPage($title, false, 'O prazo desta pesquisa já encerrou.'))->header('Content-Type', 'text/html; charset=UTF-8');
+            return response($this->emailResultPage($title, false, 'O prazo desta pesquisa já encerrou.', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
         }
         $already = NotificationSurveyResponse::where('survey_id', $survey->id)->where('user_id', $u->id)->exists();
         $read = NotificationRead::where('notification_id', $survey->notification_id)->where('user_id', $u->id)->first();
         if ($already || ($read && $read->ack_at)) {
-            return response($this->emailResultPage($title, false, 'Você já respondeu esta pesquisa. Obrigado!'))->header('Content-Type', 'text/html; charset=UTF-8');
+            return response($this->emailResultPage($title, false, 'Você já respondeu esta pesquisa. Obrigado!', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
         }
 
-        return response($this->emailFormPage($survey, $u, $title))->header('Content-Type', 'text/html; charset=UTF-8');
+        return response($this->emailFormPage($survey, $u, $title, $brand))->header('Content-Type', 'text/html; charset=UTF-8');
     }
 
     /** Submissão da pesquisa pelo e-mail (POST assinado). */
     public function emailSubmit(Request $request, NotificationSurvey $survey)
     {
         $u = User::find((int) $request->query('user'));
-        $survey->loadMissing(['questions.options', 'notification:id,title']);
+        $survey->loadMissing(['questions.options', 'notification.company']);
         $title = e($survey->notification?->title ?? 'Pesquisa');
+        $brand = $this->brandAssets($survey);
 
         if (!$u || $survey->isClosed()) {
-            return response($this->emailResultPage($title, false, 'Não foi possível registrar (link inválido ou prazo encerrado).'))->header('Content-Type', 'text/html; charset=UTF-8');
+            return response($this->emailResultPage($title, false, 'Não foi possível registrar (link inválido ou prazo encerrado).', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
         }
         $already = NotificationSurveyResponse::where('survey_id', $survey->id)->where('user_id', $u->id)->exists();
         $read = NotificationRead::where('notification_id', $survey->notification_id)->where('user_id', $u->id)->first();
         if ($already || ($read && $read->ack_at)) {
-            return response($this->emailResultPage($title, false, 'Você já respondeu esta pesquisa. Obrigado!'))->header('Content-Type', 'text/html; charset=UTF-8');
+            return response($this->emailResultPage($title, false, 'Você já respondeu esta pesquisa. Obrigado!', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
         }
 
         $this->saveResponse($survey, $u, $this->normalizeEmailAnswers($request, $survey));
         $this->markAck($survey, $u->id);
 
-        return response($this->emailResultPage($title, true, 'Pesquisa respondida. Muito obrigado! ✅'))->header('Content-Type', 'text/html; charset=UTF-8');
+        return response($this->emailResultPage($title, true, 'Pesquisa respondida. Muito obrigado! ✅', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
     }
 
     // ───────────────────────── Helpers ─────────────────────────
@@ -336,27 +338,63 @@ class NotificationSurveyController extends Controller
             ->orderBy('name')->get(['id', 'name']);
     }
 
+    // ── Marca (ERPSERV × BIZIFY) p/ brandar as páginas de e-mail ──
+
+    /** Resolve a marca da pesquisa pela empresa da notificação (slug erpserv/bizify) + logo base64. */
+    private function brandAssets(NotificationSurvey $survey): array
+    {
+        $survey->loadMissing('notification.company');
+        $isBizify = $survey->notification?->company?->slug === 'bizify';
+        $file = $isBizify ? 'logo-bizify.png' : 'logo-erpserv-soft.png';
+        $path = public_path($file);
+        if (!is_file($path)) $path = public_path('logo-erpserv-soft.png');
+        $logo = is_file($path) ? 'data:image/png;base64,' . base64_encode(file_get_contents($path)) : '';
+        return [
+            'is_bizify' => $isBizify,
+            'logo'      => $logo,
+            'name'      => $isBizify ? 'Bizify' : 'ERPSERV Consultoria',
+            'accent'    => $isBizify ? '#7c3aed' : '#06b6d4', // roxo bizify / ciano erpserv
+        ];
+    }
+
+    /** Bloco do logo no header (o logo Bizify tem fundo claro → vai num chip branco). */
+    private function brandLogoHtml(array $brand): string
+    {
+        if (empty($brand['logo'])) return '';
+        if (!empty($brand['is_bizify'])) {
+            return '<div style="display:inline-block;background:#ffffff;padding:9px 20px;border-radius:14px;box-shadow:0 2px 10px rgba(0,0,0,.25)">'
+                . '<img src="' . $brand['logo'] . '" alt="Bizify" style="height:36px;display:block"></div>';
+        }
+        return '<img src="' . $brand['logo'] . '" alt="ERPSERV" style="height:46px;display:block;margin:0 auto">';
+    }
+
     // ── Páginas HTML do e-mail (dark, mesmo estilo das demais) ──
 
-    private function emailResultPage(string $title, bool $ok, string $msg): string
+    private function emailResultPage(string $title, bool $ok, string $msg, array $brand = []): string
     {
-        $color = $ok ? '#06b6d4' : '#b91c1c';
+        $accent = $brand['accent'] ?? '#06b6d4';
+        $color  = $ok ? $accent : '#b91c1c';
+        $logo   = $this->brandLogoHtml($brand);
+        $name   = $brand['name'] ?? '';
         return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             . '<title>' . $title . '</title></head>'
             . '<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px">'
-            . '<div style="max-width:460px;padding:32px;text-align:center;background:#111827;border:1px solid #1f2937;border-radius:16px">'
-            . '<div style="font-size:34px;margin-bottom:8px;color:' . $color . '">' . ($ok ? '&#10003;' : '&#9888;') . '</div>'
+            . '<div style="max-width:460px;width:100%;padding:34px 32px;text-align:center;background:#111827;border:1px solid #1f2937;border-top:4px solid ' . $accent . ';border-radius:16px">'
+            . ($logo ? '<div style="margin:0 0 20px">' . $logo . '</div>' : '')
+            . '<div style="font-size:38px;line-height:1;margin-bottom:10px;color:' . $color . '">' . ($ok ? '&#10003;' : '&#9888;') . '</div>'
             . '<h1 style="font-size:18px;margin:0 0 6px;color:#fff">' . $title . '</h1>'
             . '<p style="font-size:14px;color:#9ca3af;margin:0">' . $msg . '</p>'
-            . '<p style="font-size:12px;color:#6b7280;margin:18px 0 0">Você já pode fechar esta janela.</p>'
+            . ($name ? '<p style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280;margin:18px 0 0">' . $name . '</p>' : '')
+            . '<p style="font-size:12px;color:#6b7280;margin:6px 0 0">Você já pode fechar esta janela.</p>'
             . '</div></body></html>';
     }
 
-    private function emailFormPage(NotificationSurvey $survey, User $u, string $title): string
+    private function emailFormPage(NotificationSurvey $survey, User $u, string $title, array $brand = []): string
     {
         $expires = $survey->expires_at && $survey->expires_at->isFuture() ? $survey->expires_at : now()->addWeek();
         $action = e(URL::temporarySignedRoute('surveys.email-submit', $expires, ['survey' => $survey->id, 'user' => $u->id]));
         $anon = (bool) $survey->anonymous;
+        $accent = $brand['accent'] ?? '#06b6d4';
         $needPeople = $survey->questions->contains(fn ($q) => $q->type === 'person');
         // Itens do combobox de pessoa (busca ao vivo); data-name em minúsculo p/ o filtro.
         $peopleItems = '';
@@ -368,8 +406,8 @@ class NotificationSurveyController extends Controller
         }
 
         $ident = $anon
-            ? '<p style="font-size:13px;color:#9ca3af;margin:0 0 18px">Esta pesquisa é <b>anônima</b> — sua identidade não é registrada.</p>'
-            : '<p style="font-size:13px;color:#9ca3af;margin:0 0 18px">Respondendo como <b>' . e($u->name) . '</b>.</p>';
+            ? '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Esta pesquisa é <b>anônima</b> — sua identidade não é registrada.</p>'
+            : '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Respondendo como <b>' . e($u->name) . '</b>.</p>';
 
         $qsHtml = '';
         foreach ($survey->questions as $idx => $q) {
@@ -394,23 +432,37 @@ class NotificationSurveyController extends Controller
                     $type = $multi ? 'checkbox' : 'radio';
                     $rq = (!$multi && $q->required) ? ' required' : '';
                     $inputs .= '<label style="display:flex;align-items:center;gap:8px;padding:9px 11px;margin:5px 0;background:#0b0f14;border:1px solid #374151;border-radius:8px;cursor:pointer;font-size:14px">'
-                        . '<input type="' . $type . '" name="' . $name . '" value="' . (int) $o->id . '"' . $rq . '> ' . e($o->label) . '</label>';
+                        . '<input type="' . $type . '" name="' . $name . '" value="' . (int) $o->id . '"' . $rq . ' style="accent-color:' . $accent . '"> ' . e($o->label) . '</label>';
                 }
                 $field = $inputs;
             }
             $qsHtml .= '<div style="margin:0 0 20px"><div style="font-size:14px;font-weight:600;color:#fff;margin:0 0 8px">' . ($idx + 1) . '. ' . e($q->label) . $req . '</div>' . $field . '</div>';
         }
 
+        $logoHtml = $this->brandLogoHtml($brand);
+        $brandName = $brand['name'] ?? '';
+        $header = '<div style="text-align:center;margin:0 0 22px">'
+            . ($logoHtml ? '<div style="margin:0 0 12px">' . $logoHtml . '</div>' : '')
+            . ($brandName ? '<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Pesquisa interna · ' . e($brandName) . '</div>' : '')
+            . '</div>';
+        $year = now()->format('Y');
+        $footer = '<p style="text-align:center;font-size:11px;color:#4b5563;margin:20px 0 0">'
+            . ($brandName ? e($brandName) . ' · ' : '') . '© ' . $year . ' · enviado pelo Minutor</p>';
+
         return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             . '<title>' . $title . '</title></head>'
-            . '<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;min-height:100vh;align-items:flex-start;justify-content:center;padding:24px 16px">'
-            . '<div style="max-width:620px;width:100%;padding:28px;background:#111827;border:1px solid #1f2937;border-radius:16px">'
-            . '<h1 style="font-size:20px;margin:0 0 6px;color:#fff">' . $title . '</h1>'
+            . '<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;background-image:radial-gradient(1200px 400px at 50% -8%, ' . $accent . '22, transparent 70%);color:#e5e7eb;display:flex;min-height:100vh;align-items:flex-start;justify-content:center;padding:32px 16px">'
+            . '<div style="max-width:620px;width:100%;padding:30px 28px;background:#111827;border:1px solid #1f2937;border-top:4px solid ' . $accent . ';border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.45)">'
+            . $header
+            . '<h1 style="font-size:21px;margin:0 0 6px;color:#fff;text-align:center">' . $title . '</h1>'
             . $ident
+            . '<div style="height:1px;background:#1f2937;margin:4px 0 20px"></div>'
             . '<form method="POST" action="' . $action . '" onsubmit="return vf(this)">'
             . $qsHtml
-            . '<button type="submit" style="width:100%;padding:13px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer">Enviar respostas</button>'
-            . '</form></div>'
+            . '<button type="submit" style="width:100%;padding:14px;background:' . $accent . ';color:#fff;border:none;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer">Enviar respostas</button>'
+            . '</form>'
+            . $footer
+            . '</div>'
             . '<script>'
             // Filtra a lista do combobox de pessoa ao digitar e a abre.
             . 'function pf(inp){var box=inp.parentNode,list=box.querySelector(".plist"),q=inp.value.toLowerCase();'
