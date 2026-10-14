@@ -554,6 +554,8 @@ Route::prefix('v1')->group(function () {
         // Cancela (ou reativa) o convite de UM destinatário → não recebe mais (excluded_user_ids).
         Route::post('/notifications/{notification}/cancel-invite', [\App\Http\Controllers\NotificationController::class, 'cancelInvite']);
         Route::post('/notifications/{notification}/resend', [\App\Http\Controllers\NotificationController::class, 'resend']);
+        // Reenvia o e-mail da comunicação só p/ UM destinatário (botão Reenviar no log).
+        Route::post('/notifications/{notification}/resend-user', [\App\Http\Controllers\NotificationController::class, 'resendUser']);
         Route::post('/notifications/{notification}/encerrar', [\App\Http\Controllers\NotificationController::class, 'encerrar']);
 
         // Rotina (admin): recorrência dos lembretes de ações não resolvidas.

@@ -667,6 +667,53 @@ class NotificationController extends Controller
     }
 
     /**
+     * Reenvia a comunicação para UM destinatário (admin/dono): reenvia o e-mail SÓ p/ aquela
+     * pessoa (pesquisa = link assinado "Responder pesquisa"; decisão = botões; aviso = corpo).
+     * Não mexe nos demais nem no pop-up/leituras — quem não respondeu já fica pendente no Meu Dia.
+     */
+    public function resendUser(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        abort_if($notification->is_template, 422, 'Modelos não podem ser reenviados.');
+        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        $target = \App\Models\User::find((int) $data['user_id']);
+        abort_unless($target && filled($target->email), 422, 'Destinatário sem e-mail cadastrado.');
+
+        $emailed = $this->emailNotificationToUser($notification->fresh(['poll.options', 'survey']), $target);
+        return response()->json(['data' => ['resent' => true, 'user_id' => $target->id, 'emailed' => $emailed ? 1 : 0]]);
+    }
+
+    /** Reenvia o e-mail da comunicação para UM único destinatário (mesma montagem do emailNotification). */
+    private function emailNotificationToUser(AppNotification $n, \App\Models\User $u): bool
+    {
+        if ($n->is_template || !$n->send_email || !\App\Services\GraphMailSender::enabled() || !filled($u->email)) return false;
+        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
+            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        if (!$from) return false;
+        $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
+
+        if ($n->type === 'survey' && $n->survey) {
+            $link = \App\Http\Controllers\NotificationSurveyController::emailLink($n->survey, $u);
+            $btn = '<div style="margin:18px 0 4px"><a href="' . e($link) . '" target="_blank" '
+                . 'style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;background:#06b6d4;border-radius:8px;text-decoration:none">Responder pesquisa</a></div>'
+                . '<p style="margin:8px 0 0;font-size:12px;color:#6b7280">Clique para abrir o formulário' . ($n->survey->anonymous ? ' (anônimo)' : '') . '. Ou acesse a Central de Notificações no Minutor.</p>';
+            $body = (trim((string) $n->message) !== '' ? '<p style="margin:0 0 10px">' . $n->message . '</p>' : '') . $btn;
+        } elseif (!empty($n->actions)) {
+            $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
+        } else {
+            $body = $this->emailBody($n);
+        }
+        $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
+        [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
+        [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+        if (!$ok) {
+            \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail por usuário (Graph)', ['notification_id' => $n->id, 'to' => $u->email, 'erro' => $err]);
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * "Dispara" um aviso de novo: reabre p/ quem NÃO completou, estende a validade até o
      * fim do dia, marca resent_at (o pop-up reaparece) e reenvia o e-mail. Reusado pelo reenvio
      * manual e pela recorrência. Retorna nº de e-mails enviados.
