@@ -30,12 +30,15 @@ class FolhaPagamentoController extends Controller
     private const RAHO_PARTNER_NAME = 'Raho';
 
     /**
-     * id do parceiro Raho — fechamento dele vai INDIVIDUALMENTE pra cooperativa.
-     * Hardcoded por nome (decisão de negócio: caso específico do Raho).
+     * Regra antiga: fechamento do Raho ia INDIVIDUALMENTE pra cooperativa (uma linha por
+     * consultor). DESATIVADA (2026-10) — o Raho passa a ser tratado como os demais parceiros:
+     * consolida numa ÚNICA linha no recebedor (partners.folha_user_id). Retornar null aqui
+     * desliga tanto o bloco individual quanto a exclusão do Raho na consolidação de parceiros.
+     * (Para reativar a regra, voltar a resolver o id pelo nome.)
      */
     private static function rahoPartnerId(): ?int
     {
-        return \App\Models\Partner::where('name', self::RAHO_PARTNER_NAME)->value('id');
+        return null;
     }
 
     /** Linhas do grid: cooperados regulares + as linhas-sócio fixas (totalmente editáveis). */
