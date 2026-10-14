@@ -1818,6 +1818,59 @@ class UserController extends Controller
     }
 
     /**
+     * Edita uma linha do histórico de valor-hora/tipo (corrigir vigência, valor ou tipo já lançados).
+     * Espelha updateGuaranteedHoursLog. Se for o log de MAIOR vigência, sincroniza o cadastro atual.
+     */
+    public function updateHourlyRateLog(Request $request, int $id, int $logId): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+        $canEdit = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.update');
+        if (!$canEdit) {
+            return $this->accessDeniedResponse('Você não tem permissão para editar este histórico');
+        }
+        $log = UserHourlyRateLog::where('user_id', $id)->find($logId);
+        if (!$log) {
+            return $this->notFoundResponse('Registro de histórico não encontrado');
+        }
+        $validated = $request->validate([
+            'new_hourly_rate'     => 'nullable|numeric|min:0',
+            'new_rate_type'       => 'nullable|in:hourly,monthly',
+            'new_consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
+            'effective_from'      => 'nullable|date',
+        ]);
+        if (array_key_exists('new_hourly_rate', $validated))     { $log->new_hourly_rate = $validated['new_hourly_rate']; }
+        if (array_key_exists('new_rate_type', $validated))       { $log->new_rate_type = $validated['new_rate_type']; }
+        if (array_key_exists('new_consultant_type', $validated)) { $log->new_consultant_type = $validated['new_consultant_type']; }
+        if (array_key_exists('effective_from', $validated)) {
+            $log->effective_from = $validated['effective_from']
+                ? \Carbon\Carbon::parse($validated['effective_from'])->startOfMonth()->toDateString()
+                : null;
+        }
+        $log->save();
+
+        // Se virou o log de MAIOR vigência → sincroniza o cadastro atual (fallback pós-última vigência).
+        $latest = $user->hourlyRateLogs()
+            ->orderByRaw('effective_from IS NULL, effective_from DESC')
+            ->orderByDesc('id')->first();
+        if ($latest && (int) $latest->id === (int) $log->id) {
+            if ($log->new_hourly_rate !== null) { $user->hourly_rate = $log->new_hourly_rate; }
+            if ($log->new_rate_type)            { $user->rate_type = $log->new_rate_type; }
+            if ($log->new_consultant_type)      { $user->consultant_type = $log->new_consultant_type; }
+            $user->save();
+        }
+
+        $log->changed_by_user = $log->changedBy;
+        unset($log->changedBy);
+        return response()->json(['message' => 'Histórico atualizado', 'item' => $log]);
+    }
+
+    /**
      * Histórico de vigência das HORAS GARANTIDAS / mês (piso). Espelha getHourlyRateHistory.
      */
     public function getGuaranteedHoursHistory(Request $request, int $id): JsonResponse
