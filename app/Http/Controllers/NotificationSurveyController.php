@@ -31,9 +31,11 @@ class NotificationSurveyController extends Controller
             : null;
         // Anônima: o vínculo some, mas o ack no notification_reads marca que já respondeu.
         $ackedResponded = false;
+        $repopAt = null; // muda quando o admin revoga (touch no read) → o pop-up reabre só p/ essa pessoa
         if ($u) {
             $read = NotificationRead::where('notification_id', $survey->notification_id)->where('user_id', $u->id)->first();
             $ackedResponded = (bool) ($read && $read->ack_at);
+            $repopAt = $read?->updated_at?->toIso8601String();
         }
 
         // Lista de pessoas p/ perguntas tipo "pessoa" (evita fetch extra no pop-up).
@@ -48,6 +50,7 @@ class NotificationSurveyController extends Controller
             'anonymous'     => (bool) $survey->anonymous,
             'closed'        => $survey->isClosed(),
             'has_responded' => (bool) $myResponse || $ackedResponded,
+            'repop_at'      => $repopAt,
             'people'        => $people,
             'questions'     => $survey->questions->map(fn ($q) => [
                 'id'       => $q->id,
@@ -180,14 +183,29 @@ class NotificationSurveyController extends Controller
         // O vínculo é SEMPRE gravado (mesmo anônima, p/ identificação interna) →
         // dá p/ apagar a resposta por pessoa. (answers caem por cascade.)
         NotificationSurveyResponse::where('survey_id', $survey->id)->where('user_id', $uid)->delete();
-        // Volta a pendente: pop-up reabre e recebe de novo nas recorrências.
+        // Volta a pendente: limpa o ack (bumpa updated_at → repop_at muda → o pop-up reabre SÓ
+        // p/ essa pessoa, sem mexer nos demais) e recebe o e-mail de novo AGORA.
         $read = NotificationRead::where('notification_id', $survey->notification_id)->where('user_id', $uid)->first();
         if ($read) {
             $read->ack_at = null;
             $read->acked_version = null;
+            $read->touch();      // garante updated_at novo mesmo se os campos já estavam null
             $read->save();
         }
-        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid]]);
+
+        // Reenvia o e-mail da pesquisa para essa pessoa imediatamente (best-effort).
+        $resent = false;
+        $user = User::find($uid);
+        if ($user) {
+            try {
+                $resent = app(\App\Http\Controllers\NotificationController::class)
+                    ->emailNotificationToUser($survey->notification->loadMissing('survey'), $user);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail após revogar pesquisa', ['survey_id' => $survey->id, 'user_id' => $uid, 'erro' => $e->getMessage()]);
+            }
+        }
+
+        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent]]);
     }
 
     // ───────────────────────── E-mail (link assinado, sem login) ─────────────────────────

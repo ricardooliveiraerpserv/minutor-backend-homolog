@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\NotificationPoll;
 use App\Models\NotificationPollVote;
+use App\Models\NotificationRead;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -77,6 +78,35 @@ class NotificationPollController extends Controller
     }
 
     /**
+     * REVOGA o voto de UM destinatário (admin/dono): apaga o(s) voto(s), limpa o ack (bumpa
+     * updated_at → repop_at muda → o pop-up reabre SÓ p/ essa pessoa) e reenvia o e-mail AGORA.
+     */
+    public function revoke(Request $request, NotificationPoll $poll): JsonResponse
+    {
+        $admin = $request->user();
+        $n = $poll->notification;
+        $isOwner = $n && (int) $n->created_by === (int) ($admin->id ?? 0);
+        abort_unless($admin && ($admin->isAdmin() || (method_exists($admin, 'isAdministrativo') && $admin->isAdministrativo()) || $isOwner), 403);
+        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        $uid  = (int) $data['user_id'];
+
+        NotificationPollVote::where('poll_id', $poll->id)->where('user_id', $uid)->delete();
+        $read = NotificationRead::where('notification_id', $poll->notification_id)->where('user_id', $uid)->first();
+        if ($read) { $read->ack_at = null; $read->acked_version = null; $read->touch(); $read->save(); }
+
+        $resent = false;
+        $user = User::find($uid);
+        if ($user && $n) {
+            try {
+                $resent = app(\App\Http\Controllers\NotificationController::class)->emailNotificationToUser($n->loadMissing('poll.options'), $user);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail após revogar voto', ['poll_id' => $poll->id, 'user_id' => $uid, 'erro' => $e->getMessage()]);
+            }
+        }
+        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent]]);
+    }
+
+    /**
      * Payload da enquete p/ um usuário: opções com contagem/percentual, total, voto do usuário,
      * flags (encerrada, já votou). REUSADO pelo NotificationController@index.
      *
@@ -92,6 +122,11 @@ class NotificationPollController extends Controller
         $myVotes = $user
             ? NotificationPollVote::where('poll_id', $poll->id)->where('user_id', $user->id)->pluck('option_id')->all()
             : [];
+
+        // repop_at (per-user): muda quando o admin revoga o voto (touch no read) → pop-up reabre só p/ essa pessoa.
+        $repopAt = $user
+            ? optional(NotificationRead::where('notification_id', $poll->notification_id)->where('user_id', $user->id)->first())->updated_at?->toIso8601String()
+            : null;
 
         $options = $poll->options->map(function ($o) use ($counts, $total, $myVotes) {
             $c = (int) ($counts[$o->id] ?? 0);
@@ -118,6 +153,7 @@ class NotificationPollController extends Controller
             'total_votes'       => $total,
             'has_voted'         => count($myVotes) > 0,
             'my_option_ids'     => array_map('intval', $myVotes),
+            'repop_at'          => $repopAt,
         ];
     }
 }

@@ -567,6 +567,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/polls/{poll}/vote',   [\App\Http\Controllers\NotificationPollController::class, 'vote']);
         Route::get('/polls/{poll}/results', [\App\Http\Controllers\NotificationPollController::class, 'resultsEndpoint']);
         Route::get('/polls/{poll}/voters',  [\App\Http\Controllers\NotificationPollController::class, 'voters']);
+        Route::post('/polls/{poll}/revoke', [\App\Http\Controllers\NotificationPollController::class, 'revoke']);
         // Pesquisa (survey): responder (logado) + resultados (admin/dono).
         Route::post('/surveys/{survey}/respond', [\App\Http\Controllers\NotificationSurveyController::class, 'respond']);
         Route::get('/surveys/{survey}/results',  [\App\Http\Controllers\NotificationSurveyController::class, 'results']);

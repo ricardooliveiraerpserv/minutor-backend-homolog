@@ -321,7 +321,11 @@ class NotificationController extends Controller
             : collect();
 
         $isSurvey = $notification->type === 'survey';
-        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds, $isSurvey) {
+        $isPoll   = $notification->type === 'poll';
+        $pollVoterIds = $isPoll && $notification->poll
+            ? array_map('intval', \App\Models\NotificationPollVote::where('poll_id', $notification->poll->id)->distinct()->pluck('user_id')->all())
+            : [];
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds, $isSurvey, $isPoll, $pollVoterIds) {
             $r = $reads->get($usr->id);
             $cancelled = in_array((int) $usr->id, $cancelledIds, true);
             return [
@@ -331,6 +335,7 @@ class NotificationController extends Controller
                 'cancelled'    => $cancelled, // convite cancelado (não recebe)
                 'can_invite_other' => in_array((int) $usr->id, $otherIds, true), // pode indicar "Outro"
                 'survey_responded' => $isSurvey && !$cancelled && $r && $r->ack_at ? true : false, // respondeu a pesquisa
+                'poll_voted'   => $isPoll && !$cancelled && in_array((int) $usr->id, $pollVoterIds, true), // votou na enquete
                 'viewed_at'    => $cancelled ? null : $r?->viewed_at?->toIso8601String(),
                 'response'     => $cancelled ? null : $r?->response_action,
                 'response_source' => (!$cancelled && $r && $r->response_action) ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
@@ -360,6 +365,9 @@ class NotificationController extends Controller
                 'is_survey'      => $isSurvey,
                 'survey_id'      => $isSurvey ? optional($notification->survey)->id : null,
                 'survey_responded' => $isSurvey ? $active->where('survey_responded', true)->count() : 0,
+                'is_poll'        => $isPoll,
+                'poll_id'        => $isPoll ? optional($notification->poll)->id : null,
+                'poll_voted'     => $isPoll ? $active->where('poll_voted', true)->count() : 0,
             ],
         ]]);
     }
@@ -684,7 +692,7 @@ class NotificationController extends Controller
     }
 
     /** Reenvia o e-mail da comunicação para UM único destinatário (mesma montagem do emailNotification). */
-    private function emailNotificationToUser(AppNotification $n, \App\Models\User $u): bool
+    public function emailNotificationToUser(AppNotification $n, \App\Models\User $u): bool
     {
         if ($n->is_template || !$n->send_email || !\App\Services\GraphMailSender::enabled() || !filled($u->email)) return false;
         $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
