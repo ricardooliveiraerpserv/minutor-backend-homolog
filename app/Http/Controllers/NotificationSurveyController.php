@@ -357,12 +357,13 @@ class NotificationSurveyController extends Controller
         $expires = $survey->expires_at && $survey->expires_at->isFuture() ? $survey->expires_at : now()->addWeek();
         $action = e(URL::temporarySignedRoute('surveys.email-submit', $expires, ['survey' => $survey->id, 'user' => $u->id]));
         $anon = (bool) $survey->anonymous;
-        $people = $anon ? collect() : collect(); // pessoas carregadas só se houver pergunta 'person'
         $needPeople = $survey->questions->contains(fn ($q) => $q->type === 'person');
-        $peopleOpts = '';
+        // Itens do combobox de pessoa (busca ao vivo); data-name em minúsculo p/ o filtro.
+        $peopleItems = '';
         if ($needPeople) {
             foreach ($this->internalUsers() as $p) {
-                $peopleOpts .= '<option value="' . (int) $p->id . '">' . e($p->name) . '</option>';
+                $peopleItems .= '<div class="popt" data-id="' . (int) $p->id . '" data-name="' . e(mb_strtolower($p->name)) . '" onclick="pp(this)"'
+                    . ' style="padding:10px 12px;cursor:pointer;color:#e5e7eb;font-size:14px;border-bottom:1px solid #1f2937">' . e($p->name) . '</div>';
             }
         }
 
@@ -378,8 +379,13 @@ class NotificationSurveyController extends Controller
             if ($q->type === 'text') {
                 $field = '<input name="q[' . $q->id . ']" placeholder="Sua resposta"' . $reqAttr . ' style="width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px">';
             } elseif ($q->type === 'person') {
-                $field = '<input type="text" placeholder="Buscar pessoa…" oninput="filterSel(this)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 11px;margin:0 0 6px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">'
-                    . '<select name="q[' . $q->id . ']"' . $reqAttr . ' style="width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px"><option value="">Selecione a pessoa…</option>' . $peopleOpts . '</select>';
+                // Combobox: input de busca + lista filtrável; o valor escolhido vai no hidden q[id].
+                $reqData = $q->required ? ' data-required="1"' : '';
+                $field = '<div class="pcombo"' . $reqData . ' style="position:relative">'
+                    . '<input type="hidden" name="q[' . $q->id . ']" value="">'
+                    . '<input type="text" class="psearch" placeholder="Buscar pessoa…" autocomplete="off" oninput="pf(this)" onfocus="pf(this)" style="width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px">'
+                    . '<div class="plist" style="display:none;position:absolute;left:0;right:0;z-index:5;margin-top:4px;max-height:220px;overflow:auto;background:#0b0f14;border:1px solid #374151;border-radius:8px">' . $peopleItems . '</div>'
+                    . '</div>';
             } else { // choice
                 $multi = (bool) $q->multiple;
                 $inputs = '';
@@ -401,11 +407,21 @@ class NotificationSurveyController extends Controller
             . '<div style="max-width:620px;width:100%;padding:28px;background:#111827;border:1px solid #1f2937;border-radius:16px">'
             . '<h1 style="font-size:20px;margin:0 0 6px;color:#fff">' . $title . '</h1>'
             . $ident
-            . '<form method="POST" action="' . $action . '">'
+            . '<form method="POST" action="' . $action . '" onsubmit="return vf(this)">'
             . $qsHtml
             . '<button type="submit" style="width:100%;padding:13px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer">Enviar respostas</button>'
             . '</form></div>'
-            . '<script>function filterSel(inp){var sel=inp.nextElementSibling;if(!sel||sel.tagName!=="SELECT")return;var q=inp.value.toLowerCase();for(var i=0;i<sel.options.length;i++){var o=sel.options[i];if(o.value==="")continue;o.hidden=q&&o.text.toLowerCase().indexOf(q)===-1;}}</script>'
+            . '<script>'
+            // Filtra a lista do combobox de pessoa ao digitar e a abre.
+            . 'function pf(inp){var box=inp.parentNode,list=box.querySelector(".plist"),q=inp.value.toLowerCase();'
+            . 'list.querySelectorAll(".popt").forEach(function(o){o.style.display=o.getAttribute("data-name").indexOf(q)===-1?"none":"block";});list.style.display="block";}'
+            // Seleciona a pessoa clicada: grava o id no hidden e fecha a lista.
+            . 'function pp(o){var box=o.parentNode.parentNode;box.querySelector("input[type=hidden]").value=o.getAttribute("data-id");box.querySelector(".psearch").value=o.textContent;box.querySelector(".plist").style.display="none";box.querySelector(".psearch").style.borderColor="#374151";}'
+            // Fecha listas ao clicar fora.
+            . 'document.addEventListener("click",function(e){if(!e.target.closest(".pcombo"))document.querySelectorAll(".plist").forEach(function(l){l.style.display="none";});});'
+            // Valida pessoas obrigatórias (hidden não dispara required nativo).
+            . 'function vf(f){var ok=true;f.querySelectorAll(".pcombo[data-required]").forEach(function(c){if(!c.querySelector("input[type=hidden]").value){ok=false;c.querySelector(".psearch").style.borderColor="#f87171";}});if(!ok)alert("Selecione a pessoa nas perguntas obrigatórias.");return ok;}'
+            . '</script>'
             . '</body></html>';
     }
 }
