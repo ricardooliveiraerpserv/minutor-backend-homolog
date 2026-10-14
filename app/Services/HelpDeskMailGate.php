@@ -34,15 +34,32 @@ class HelpDeskMailGate
         }
     }
 
+    /**
+     * Chamado de ORIGEM MOVIDESK (não foi criado direto no Minutor): tem external_ref (nº do
+     * Movidesk) e/ou source_system='movidesk'. A trava NÃO afeta esses — "fica da mesma forma".
+     */
+    private static function isMovidesk(HelpDeskTicket $ticket): bool
+    {
+        return filled($ticket->external_ref) || $ticket->source_system === 'movidesk';
+    }
+
     /** true = pode enviar e-mail deste chamado; false = bloqueado pela trava. */
     public static function allows(?HelpDeskTicket $ticket): bool
     {
         if (!self::enabled()) {
             return true; // trava desligada → envia normal
         }
-        $c = $ticket?->loadMissing('customer')->customer;
+        if (!$ticket) {
+            return false;
+        }
+        // Movidesk fica da mesma forma: segue o fluxo normal (envia), a trava não mexe nele.
+        if (self::isMovidesk($ticket)) {
+            return true;
+        }
+        // Chamado CRIADO DIRETO no Minutor: durante a homologação, só envia se o cliente for ERPSERV.
+        $c = $ticket->loadMissing('customer')->customer;
         if (!$c) {
-            return false; // sem cliente identificado → não envia durante a homologação
+            return false; // nativo sem cliente identificado → não envia na homologação
         }
         return strcasecmp(trim((string) $c->name), 'ERPSERV') === 0
             || (string) $c->cgc === self::ERPSERV_CGC;
