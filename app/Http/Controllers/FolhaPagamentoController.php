@@ -120,7 +120,9 @@ class FolhaPagamentoController extends Controller
             $producaoCalc = $hasFech
                 ? round((float) ($c['recebimento'] ?? $c['total'] ?? 0), 2)  // recebimento (com despesa)
                 : 0.0;
-            $producao     = ($f && $f->producao !== null) ? round((float) $f->producao, 2) : $producaoCalc;
+            // Com vínculo de fechamento a Produção SEMPRE reflete o calculado (serv + ajustes do fechamento),
+            // ignorando override congelado ("prod. editada"). Sem vínculo, mantém o salvo (edição manual).
+            $producao     = $hasFech ? $producaoCalc : (($f && $f->producao !== null) ? round((float) $f->producao, 2) : $producaoCalc);
             $horas        = 160.0; // horas FIXAS (não via apontamento); Produção segue do fechamento
 
             // Valor hora só p/ vínculo por hora; fixo/mensal NÃO traz valor.
@@ -158,6 +160,7 @@ class FolhaPagamentoController extends Controller
                 'valor_hora'         => $valorHora,
                 'producao'           => $producao,
                 'producao_calc'      => $producaoCalc, // valor calculado do fechamento (legenda no FE)
+                'producao_locked'    => $hasFech,      // com vínculo → Produção não editável (vem do fechamento)
                 // Componentes do fechamento do consultor (legenda: serv − desc − adiant + adic + desp = produção).
                 'fech_serv'          => round((float) ($c['total'] ?? 0), 2),
                 'fech_desconto'      => $aj ? (float) $aj->desconto : 0.0,
@@ -218,9 +221,11 @@ class FolhaPagamentoController extends Controller
                 }
 
                 // Atual = salvo (editado) quando houver; senão o calculado (prefill).
+                $rahoHasFech  = !empty($calc); // tem fechamento do mês → Produção sempre do calculado
                 $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $horasCalc;
                 $valorHora    = ($f && $f->valor_hora !== null) ? (float) $f->valor_hora : $valorHoraCalc;
-                $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $producaoCalc;
+                // Com fechamento, Produção SEMPRE reflete o calculado (ignora override congelado).
+                $producao     = $rahoHasFech ? $producaoCalc : (($f && $f->producao !== null) ? (float) $f->producao : $producaoCalc);
                 $variavel     = $f ? (float) $f->variavel : 0.0;
                 $reemb        = $f ? (float) $f->reemb : 0.0;
                 $reembAutoCalc = $isCoop ? 0.0 : $reembAuto; // cooperado: despesa já está na produção
@@ -250,6 +255,7 @@ class FolhaPagamentoController extends Controller
                     'horas_apontamentos' => $horasCalc,
                     'valor_hora'         => $valorHora,
                     'producao'           => $producao,
+                    'producao_locked'    => $rahoHasFech, // com fechamento → Produção não editável
                     // Valores ORIGINAIS calculados (p/ legenda "original" quando alterado).
                     'horas_calc'         => $horasCalc,
                     'valor_hora_calc'    => $valorHoraCalc,
@@ -331,7 +337,8 @@ class FolhaPagamentoController extends Controller
 
             // Atual = salvo (editado) quando houver; senão o calculado (prefill).
             $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $totalHoras;
-            $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $totalApuracao;
+            // Parceiro consolidado SEMPRE reflete a apuração do fechamento (ignora override congelado).
+            $producao     = $totalApuracao;
             $variavel     = $f ? (float) $f->variavel : 0.0;
             $reemb        = $f ? (float) $f->reemb : 0.0;
             $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
@@ -363,6 +370,7 @@ class FolhaPagamentoController extends Controller
                 'horas_apontamentos' => $totalHoras,
                 'valor_hora'         => 0.0, // consolidado: sem valor/hora (FE mostra "—")
                 'producao'           => $producao,
+                'producao_locked'    => true, // parceiro consolidado: Produção vem da apuração do fechamento
                 'horas_calc'         => $totalHoras,
                 'valor_hora_calc'    => 0.0,
                 'producao_calc'      => $totalApuracao,
