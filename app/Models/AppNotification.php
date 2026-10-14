@@ -44,7 +44,7 @@ class AppNotification extends Model
         'resent_at'             => 'datetime',
     ];
 
-    public const TYPES = ['info', 'action', 'require_ack', 'poll', 'aviso', 'formal'];
+    public const TYPES = ['info', 'action', 'require_ack', 'poll', 'survey', 'aviso', 'formal'];
     public const RECURRENCES = ['none', 'every_hours', 'every_days', 'weekly', 'day_of_month', 'business_day'];
     public const PRIORITIES = ['low', 'medium', 'high', 'critical'];
     public const PRIORITY_RANK = ['critical' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
@@ -53,4 +53,5 @@ class AppNotification extends Model
     public function guests(): HasMany { return $this->hasMany(NotificationGuest::class, 'notification_id'); }
     public function createdBy(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
     public function poll(): HasOne { return $this->hasOne(NotificationPoll::class, 'notification_id'); }
+    public function survey(): HasOne { return $this->hasOne(NotificationSurvey::class, 'notification_id'); }
 }

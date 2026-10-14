@@ -134,6 +134,11 @@ Route::prefix('v1')->group(function () {
     // Grava os acompanhantes informados na página pós-confirmação do e-mail (POST assinado, sem login).
     Route::post('/notifications/{notification}/respond-email-guests', [\App\Http\Controllers\NotificationController::class, 'respondEmailGuests'])
         ->middleware('signed')->name('notifications.respond-email-guests');
+    // PESQUISA por e-mail (link assinado, sem login): formulário (GET) + envio (POST).
+    Route::get('/surveys/{survey}/email-form',    [\App\Http\Controllers\NotificationSurveyController::class, 'emailForm'])
+        ->middleware('signed')->name('surveys.email-form');
+    Route::post('/surveys/{survey}/email-submit', [\App\Http\Controllers\NotificationSurveyController::class, 'emailSubmit'])
+        ->middleware('signed')->name('surveys.email-submit');
     // 🔗 Callback OAuth Microsoft 365 (público — o browser é redirecionado pela Microsoft;
     // o usuário é identificado pelo `state` assinado, não pelo bearer token).
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
@@ -560,6 +565,9 @@ Route::prefix('v1')->group(function () {
         Route::post('/polls/{poll}/vote',   [\App\Http\Controllers\NotificationPollController::class, 'vote']);
         Route::get('/polls/{poll}/results', [\App\Http\Controllers\NotificationPollController::class, 'resultsEndpoint']);
         Route::get('/polls/{poll}/voters',  [\App\Http\Controllers\NotificationPollController::class, 'voters']);
+        // Pesquisa (survey): responder (logado) + resultados (admin/dono).
+        Route::post('/surveys/{survey}/respond', [\App\Http\Controllers\NotificationSurveyController::class, 'respond']);
+        Route::get('/surveys/{survey}/results',  [\App\Http\Controllers\NotificationSurveyController::class, 'results']);
 
         // Agenda / Calendário da tela inicial (eventos do mês)
         Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);

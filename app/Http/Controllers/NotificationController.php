@@ -46,7 +46,7 @@ class NotificationController extends Controller
         $u = $this->internalOrAbort($request);
 
         $rows = $this->visibleQuery($u)
-            ->with('poll.options')
+            ->with(['poll.options', 'survey.questions.options'])
             ->orderByRaw("case priority when 'critical' then 4 when 'high' then 3 when 'medium' then 2 else 1 end desc")
             ->orderByDesc('created_at')
             ->get();
@@ -82,6 +82,9 @@ class NotificationController extends Controller
             $poll = $n->type === 'poll' && $n->poll
                 ? \App\Http\Controllers\NotificationPollController::results($n->poll, $u)
                 : null;
+            $survey = $n->type === 'survey' && $n->survey
+                ? \App\Http\Controllers\NotificationSurveyController::formPayload($n->survey, $u)
+                : null;
             return array_merge($n->toArray(), [
                 'viewed'      => $viewed,
                 'acked'       => $acked,
@@ -92,6 +95,7 @@ class NotificationController extends Controller
                 'can_invite_other' => (bool) $n->allow_guests
                     && in_array((int) $u->id, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true),
                 'poll'        => $poll,
+                'survey'      => $survey,
             ]);
         });
 
@@ -579,6 +583,21 @@ class NotificationController extends Controller
                 $arr['poll'] = $n->type === 'poll' && $n->poll
                     ? \App\Http\Controllers\NotificationPollController::results($n->poll, $admin)
                     : null;
+                // Pesquisa: estrutura p/ hidratar o editor (labels) + flag de respostas.
+                $arr['survey'] = null;
+                if ($n->type === 'survey' && $n->survey) {
+                    $n->survey->loadMissing('questions.options');
+                    $arr['survey'] = [
+                        'survey_id'  => $n->survey->id,
+                        'anonymous'  => (bool) $n->survey->anonymous,
+                        'has_responses' => \App\Models\NotificationSurveyResponse::where('survey_id', $n->survey->id)->exists(),
+                        'questions'  => $n->survey->questions->map(fn ($q) => [
+                            'id' => $q->id, 'label' => $q->label, 'type' => $q->type,
+                            'required' => (bool) $q->required, 'multiple' => (bool) $q->multiple,
+                            'options' => $q->options->pluck('label')->values(),
+                        ])->values(),
+                    ];
+                }
                 return $arr;
             });
         return response()->json(['data' => $rows]);
@@ -589,14 +608,16 @@ class NotificationController extends Controller
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         $v = $this->validatePayload($request, false);
         $pollPayload = $v['poll'] ?? null;
-        unset($v['poll']);
+        $surveyPayload = $v['survey'] ?? null;
+        unset($v['poll'], $v['survey']);
         if (array_key_exists('type', $v)) $v['requires_ack'] = $v['type'] === 'require_ack' ? true : (bool) ($v['requires_ack'] ?? $notification->requires_ack);
         if (array_key_exists('actions', $v) && !empty($v['actions'])) $v['requires_ack'] = true;   // botões de decisão exigem resposta
         if (array_key_exists('expires_at', $v)) $v['expires_at'] = $this->normalizeExpiry($v['expires_at']);
         if (array_key_exists('message', $v)) $v['message'] = $v['message'] ?? '';  // coluna NOT NULL (enquete tem msg opcional)
-        \Illuminate\Support\Facades\DB::transaction(function () use ($notification, $v, $pollPayload) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($notification, $v, $pollPayload, $surveyPayload) {
             $notification->update($v);
             if ($notification->type === 'poll' && $pollPayload) $this->savePoll($notification, $pollPayload);
+            if ($notification->type === 'survey' && $surveyPayload) $this->saveSurvey($notification, $surveyPayload);
         });
         return response()->json(['data' => $notification->fresh('poll.options')]);
     }
@@ -673,17 +694,21 @@ class NotificationController extends Controller
         abort_unless($this->canManage($u), 403, 'Apenas administradores, coordenadores e administrativos podem publicar.');
         $v = $this->validatePayload($request, true);
         $pollPayload = $v['poll'] ?? null;
-        unset($v['poll']);
+        $surveyPayload = $v['survey'] ?? null;
+        unset($v['poll'], $v['survey']);
         $v['requires_ack'] = ($v['type'] ?? '') === 'require_ack' ? true : (bool) ($v['requires_ack'] ?? false);
         if (!empty($v['actions'])) $v['requires_ack'] = true;   // botões de decisão exigem resposta
         $v['message'] = $v['message'] ?? '';
         $v['expires_at'] = $this->normalizeExpiry($v['expires_at'] ?? null);
         $v['created_by'] = $u->id;
 
-        $n = \Illuminate\Support\Facades\DB::transaction(function () use ($v, $pollPayload) {
+        $n = \Illuminate\Support\Facades\DB::transaction(function () use ($v, $pollPayload, $surveyPayload) {
             $n = AppNotification::create($v);
             if (($v['type'] ?? '') === 'poll' && $pollPayload) {
                 $this->savePoll($n, $pollPayload);
+            }
+            if (($v['type'] ?? '') === 'survey' && $surveyPayload) {
+                $this->saveSurvey($n, $surveyPayload);
             }
             return $n;
         });
@@ -730,13 +755,51 @@ class NotificationController extends Controller
         }
     }
 
+    /** Cria/atualiza a PESQUISA (survey) + perguntas/opções. Recria as perguntas só se ainda não houver respostas. */
+    private function saveSurvey(AppNotification $n, array $p): void
+    {
+        $survey = \App\Models\NotificationSurvey::updateOrCreate(
+            ['notification_id' => $n->id],
+            [
+                'anonymous'  => (bool) ($p['anonymous'] ?? false),
+                'expires_at' => $p['expires_at'] ?? $n->expires_at,
+            ]
+        );
+
+        $questions = array_values(array_filter((array) ($p['questions'] ?? []), fn ($q) => trim((string) ($q['label'] ?? '')) !== ''));
+        if (empty($questions)) return;
+
+        // Preserva integridade das respostas já dadas — não recria perguntas.
+        if (\App\Models\NotificationSurveyResponse::where('survey_id', $survey->id)->exists()) return;
+
+        $survey->questions()->delete(); // cascade apaga opções
+        foreach ($questions as $i => $q) {
+            $type = in_array(($q['type'] ?? 'text'), ['text', 'person', 'choice'], true) ? $q['type'] : 'text';
+            $question = $survey->questions()->create([
+                'label'    => trim((string) $q['label']),
+                'type'     => $type,
+                'required' => (bool) ($q['required'] ?? true),
+                'multiple' => $type === 'choice' ? (bool) ($q['multiple'] ?? false) : false,
+                'order'    => $i,
+            ]);
+            if ($type === 'choice') {
+                $opts = array_values(array_filter(array_map('trim', (array) ($q['options'] ?? [])), fn ($s) => $s !== ''));
+                foreach ($opts as $j => $label) {
+                    $question->options()->create(['label' => $label, 'order' => $j]);
+                }
+            }
+        }
+    }
+
     private function validatePayload(Request $request, bool $creating): array
     {
         $isPoll = $request->input('type') === 'poll';
+        $isSurvey = $request->input('type') === 'survey';
+        $noMsgRequired = $isPoll || $isSurvey; // enquete/pesquisa: mensagem opcional (o form é o conteúdo)
         return $request->validate([
             'title'        => ($creating ? 'required' : 'sometimes') . '|string|max:200',
-            // Em enquete a mensagem é opcional (a pergunta é o conteúdo principal).
-            'message'      => ($creating && !$isPoll ? 'required' : 'nullable') . '|string',
+            // Em enquete/pesquisa a mensagem é opcional (a pergunta/formulário é o conteúdo principal).
+            'message'      => ($creating && !$noMsgRequired ? 'required' : 'nullable') . '|string',
             'type'         => ($creating ? 'required' : 'sometimes') . '|in:' . implode(',', AppNotification::TYPES),
             'priority'     => ($creating ? 'required' : 'sometimes') . '|in:' . implode(',', AppNotification::PRIORITIES),
             'target_roles'          => 'nullable|array',
@@ -779,6 +842,17 @@ class NotificationController extends Controller
             'poll.expires_at'         => 'nullable|date',
             'poll.options'            => ($creating && $isPoll ? 'required' : 'nullable') . '|array|min:2',
             'poll.options.*'          => 'string|max:200',
+            // Pesquisa (quando type=survey): formulário com várias perguntas.
+            'survey'                     => ($creating && $isSurvey ? 'required' : 'nullable') . '|array',
+            'survey.anonymous'           => 'nullable|boolean',
+            'survey.expires_at'          => 'nullable|date',
+            'survey.questions'           => ($creating && $isSurvey ? 'required' : 'nullable') . '|array|min:1',
+            'survey.questions.*.label'   => 'required_with:survey.questions|string|max:500',
+            'survey.questions.*.type'    => 'nullable|in:text,person,choice',
+            'survey.questions.*.required' => 'nullable|boolean',
+            'survey.questions.*.multiple' => 'nullable|boolean',
+            'survey.questions.*.options'   => 'nullable|array',
+            'survey.questions.*.options.*' => 'string|max:200',
         ]);
     }
 
@@ -817,6 +891,29 @@ class NotificationController extends Controller
         if (!$from) return 0;
 
         $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
+
+        // PESQUISA: cada destinatário recebe o e-mail com um botão "Responder pesquisa" (link assinado por usuário).
+        // Quem já respondeu (ack_at) não recebe de novo nas recorrências.
+        if ($n->type === 'survey' && $n->survey) {
+            $survey = $n->survey;
+            $decidedIds = NotificationRead::where('notification_id', $n->id)->whereNotNull('ack_at')->pluck('user_id')->all();
+            $users = $this->resolveRecipientUsers($n)
+                ->filter(fn ($u) => filled($u->email) && !in_array($u->id, $decidedIds, true));
+            $sent = 0;
+            foreach ($users as $u) {
+                $link = \App\Http\Controllers\NotificationSurveyController::emailLink($survey, $u);
+                $btn = '<div style="margin:18px 0 4px"><a href="' . e($link) . '" target="_blank" '
+                    . 'style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;background:#06b6d4;border-radius:8px;text-decoration:none">Responder pesquisa</a></div>'
+                    . '<p style="margin:8px 0 0;font-size:12px;color:#6b7280">Clique para abrir o formulário' . ($survey->anonymous ? ' (anônimo)' : '') . '. Ou acesse a Central de Notificações no Minutor.</p>';
+                $body = (trim((string) $n->message) !== '' ? '<p style="margin:0 0 10px">' . $n->message . '</p>' : '') . $btn;
+                $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
+                [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
+                [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+                if ($ok) $sent++;
+                else \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de pesquisa (Graph)', ['notification_id' => $n->id, 'to' => $u->email, 'erro' => $err]);
+            }
+            return $sent;
+        }
 
         // COM botões de decisão: cada destinatário recebe o e-mail com SEUS botões de 1 clique (link assinado).
         if (!empty($n->actions)) {
