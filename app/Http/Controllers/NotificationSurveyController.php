@@ -68,8 +68,10 @@ class NotificationSurveyController extends Controller
         $survey->loadMissing(['questions.options', 'responses.user', 'responses.answers.answerUser', 'responses.answers.option']);
         $anon = (bool) $survey->anonymous;
 
-        $respondentName = function (NotificationSurveyResponse $r) use ($anon) {
-            if ($anon || !$r->user_id) return null; // null => "Anônimo" no FE
+        // Admin SEMPRE vê quem respondeu — mesmo em pesquisa anônima (identificação
+        // interna/confidencial; o respondente não sabe que registramos). null só p/
+        // respostas legadas gravadas antes de passarmos a vincular as anônimas.
+        $respondentName = function (NotificationSurveyResponse $r) {
             return $r->user?->name;
         };
 
@@ -118,6 +120,7 @@ class NotificationSurveyController extends Controller
             }
             return [
                 'response_id'  => $r->id,
+                'user_id'      => $r->user_id,
                 'respondent'   => $respondentName($r),
                 'submitted_at' => $r->submitted_at?->toIso8601String(),
                 'answers'      => $ans, // { question_id: "texto exibível" }
@@ -174,10 +177,9 @@ class NotificationSurveyController extends Controller
         $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
         $uid  = (int) $data['user_id'];
 
-        if (!$survey->anonymous) {
-            // Resposta identificada → apaga (answers caem por cascade).
-            NotificationSurveyResponse::where('survey_id', $survey->id)->where('user_id', $uid)->delete();
-        }
+        // O vínculo é SEMPRE gravado (mesmo anônima, p/ identificação interna) →
+        // dá p/ apagar a resposta por pessoa. (answers caem por cascade.)
+        NotificationSurveyResponse::where('survey_id', $survey->id)->where('user_id', $uid)->delete();
         // Volta a pendente: pop-up reabre e recebe de novo nas recorrências.
         $read = NotificationRead::where('notification_id', $survey->notification_id)->where('user_id', $uid)->first();
         if ($read) {
@@ -243,17 +245,20 @@ class NotificationSurveyController extends Controller
 
     // ───────────────────────── Helpers ─────────────────────────
 
-    /** Grava a resposta + respostas de cada pergunta. $userId null quando anônima. */
+    /**
+     * Grava a resposta + respostas de cada pergunta. O user_id é SEMPRE gravado
+     * (mesmo anônima) — rastreio interno/confidencial: o respondente é informado
+     * que é anônima, mas o admin consegue ver quem respondeu nos resultados.
+     */
     private function saveResponse(NotificationSurvey $survey, User $u, array $answersInput): void
     {
         $survey->loadMissing('questions.options');
         $byQuestion = collect($answersInput)->keyBy(fn ($a) => (int) ($a['question_id'] ?? 0));
-        $anon = (bool) $survey->anonymous;
 
-        DB::transaction(function () use ($survey, $u, $byQuestion, $anon) {
+        DB::transaction(function () use ($survey, $u, $byQuestion) {
             $response = NotificationSurveyResponse::create([
                 'survey_id'    => $survey->id,
-                'user_id'      => $anon ? null : $u->id,
+                'user_id'      => $u->id,
                 'submitted_at' => now(),
             ]);
 
