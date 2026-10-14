@@ -320,7 +320,8 @@ class NotificationController extends Controller
             ? \App\Models\NotificationGuest::where('notification_id', $notification->id)->get()->groupBy('user_id')
             : collect();
 
-        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds) {
+        $isSurvey = $notification->type === 'survey';
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds, $isSurvey) {
             $r = $reads->get($usr->id);
             $cancelled = in_array((int) $usr->id, $cancelledIds, true);
             return [
@@ -329,6 +330,7 @@ class NotificationController extends Controller
                 'user_email'   => $usr->email,
                 'cancelled'    => $cancelled, // convite cancelado (não recebe)
                 'can_invite_other' => in_array((int) $usr->id, $otherIds, true), // pode indicar "Outro"
+                'survey_responded' => $isSurvey && !$cancelled && $r && $r->ack_at ? true : false, // respondeu a pesquisa
                 'viewed_at'    => $cancelled ? null : $r?->viewed_at?->toIso8601String(),
                 'response'     => $cancelled ? null : $r?->response_action,
                 'response_source' => (!$cancelled && $r && $r->response_action) ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
@@ -355,6 +357,9 @@ class NotificationController extends Controller
                 'by_action'      => $byAction,
                 'allow_guests'   => (bool) $notification->allow_guests,
                 'guests_total'   => $active->sum(fn ($x) => count($x['guests'])),
+                'is_survey'      => $isSurvey,
+                'survey_id'      => $isSurvey ? optional($notification->survey)->id : null,
+                'survey_responded' => $isSurvey ? $active->where('survey_responded', true)->count() : 0,
             ],
         ]]);
     }

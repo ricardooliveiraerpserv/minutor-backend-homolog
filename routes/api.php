@@ -568,6 +568,7 @@ Route::prefix('v1')->group(function () {
         // Pesquisa (survey): responder (logado) + resultados (admin/dono).
         Route::post('/surveys/{survey}/respond', [\App\Http\Controllers\NotificationSurveyController::class, 'respond']);
         Route::get('/surveys/{survey}/results',  [\App\Http\Controllers\NotificationSurveyController::class, 'results']);
+        Route::post('/surveys/{survey}/revoke',  [\App\Http\Controllers\NotificationSurveyController::class, 'revoke']);
 
         // Agenda / Calendário da tela inicial (eventos do mês)
         Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);

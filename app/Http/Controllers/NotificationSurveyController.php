@@ -163,6 +163,31 @@ class NotificationSurveyController extends Controller
         return response()->json(['data' => self::resultsPayload($survey)]);
     }
 
+    /**
+     * REVOGA a resposta de UM destinatário: apaga a resposta (e respostas por pergunta) e
+     * limpa o ack → ele volta a PENDENTE e pode responder de novo (pop-up/e-mail reaparecem).
+     * Em pesquisa anônima não dá p/ identificar a resposta por pessoa → só limpa o ack.
+     */
+    public function revoke(Request $request, NotificationSurvey $survey): JsonResponse
+    {
+        $this->authorizeAdmin($request, $survey);
+        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        $uid  = (int) $data['user_id'];
+
+        if (!$survey->anonymous) {
+            // Resposta identificada → apaga (answers caem por cascade).
+            NotificationSurveyResponse::where('survey_id', $survey->id)->where('user_id', $uid)->delete();
+        }
+        // Volta a pendente: pop-up reabre e recebe de novo nas recorrências.
+        $read = NotificationRead::where('notification_id', $survey->notification_id)->where('user_id', $uid)->first();
+        if ($read) {
+            $read->ack_at = null;
+            $read->acked_version = null;
+            $read->save();
+        }
+        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid]]);
+    }
+
     // ───────────────────────── E-mail (link assinado, sem login) ─────────────────────────
 
     /** URL assinada do botão "Responder pesquisa" no e-mail (por usuário). */
@@ -348,7 +373,8 @@ class NotificationSurveyController extends Controller
             if ($q->type === 'text') {
                 $field = '<input name="q[' . $q->id . ']" placeholder="Sua resposta"' . $reqAttr . ' style="width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px">';
             } elseif ($q->type === 'person') {
-                $field = '<select name="q[' . $q->id . ']"' . $reqAttr . ' style="width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px"><option value="">Selecione a pessoa…</option>' . $peopleOpts . '</select>';
+                $field = '<input type="text" placeholder="Buscar pessoa…" oninput="filterSel(this)" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 11px;margin:0 0 6px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">'
+                    . '<select name="q[' . $q->id . ']"' . $reqAttr . ' style="width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px"><option value="">Selecione a pessoa…</option>' . $peopleOpts . '</select>';
             } else { // choice
                 $multi = (bool) $q->multiple;
                 $inputs = '';
@@ -373,6 +399,8 @@ class NotificationSurveyController extends Controller
             . '<form method="POST" action="' . $action . '">'
             . $qsHtml
             . '<button type="submit" style="width:100%;padding:13px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer">Enviar respostas</button>'
-            . '</form></div></body></html>';
+            . '</form></div>'
+            . '<script>function filterSel(inp){var sel=inp.nextElementSibling;if(!sel||sel.tagName!=="SELECT")return;var q=inp.value.toLowerCase();for(var i=0;i<sel.options.length;i++){var o=sel.options[i];if(o.value==="")continue;o.hidden=q&&o.text.toLowerCase().indexOf(q)===-1;}}</script>'
+            . '</body></html>';
     }
 }
