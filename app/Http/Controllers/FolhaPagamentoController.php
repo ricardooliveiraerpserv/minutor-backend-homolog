@@ -91,7 +91,12 @@ class FolhaPagamentoController extends Controller
                 ? $q->where('is_bizify', true)
                 : $q->where('is_bizify', false)->orWhereNull('is_bizify'))
             ->orderBy('name')->get();
+        // Janela de pagamento: fora da janela nesta competência → não entra na folha.
+        $coopNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $cooperados->pluck('id')->all(), $yearMonth);
         foreach ($cooperados as $u) {
+            if (in_array((int) $u->id, $coopNon, true)) {
+                continue;
+            }
             if ($u->partner_id) {
                 // Usuários de PARCEIRO não entram como cooperado individual:
                 //  • Raho → linha própria (seção azul abaixo);
@@ -183,7 +188,12 @@ class FolhaPagamentoController extends Controller
                 : collect();
             // Inclui desativados também (aparecem em "afastamento", ocultação manual).
             $rahoUsers = User::where('partner_id', $rahoId)->orderBy('name')->get();
+            // Janela de pagamento: fora da janela nesta competência → não entra na folha.
+            $rahoNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $rahoUsers->pluck('id')->all(), $yearMonth);
             foreach ($rahoUsers as $u) {
+                if (in_array((int) $u->id, $rahoNon, true)) {
+                    continue;
+                }
                 $uid  = $u->id;
                 $f    = $folhaByUser[$uid] ?? null;
                 $calc = $rahoCalc[$uid] ?? [];
@@ -271,7 +281,12 @@ class FolhaPagamentoController extends Controller
         $partners = $isBizify ? collect() : \App\Models\Partner::query()
             ->when($rahoId, fn ($q) => $q->where('id', '!=', $rahoId))
             ->orderBy('name')->get();
+        // Janela de pagamento do PARCEIRO: fora da janela nesta competência → não entra na folha.
+        $partnerNon = \App\Models\PayrollBillingWindow::nonPayableIds('partner', $partners->pluck('id')->all(), $yearMonth);
         foreach ($partners as $partner) {
+            if (in_array((int) $partner->id, $partnerNon, true)) {
+                continue;
+            }
             // Representante do parceiro na folha ("quem sobe pra folha"): escolha EXPLÍCITA
             // no cadastro do parceiro (folha_user_id) → fallback is_executive (legado).
             $admin = null;
@@ -433,7 +448,13 @@ class FolhaPagamentoController extends Controller
                 : $q->where('is_bizify', false)->orWhereNull('is_bizify'))
             ->whereNotIn('id', $jaIncluidos)
             ->get();
+        // Janela de pagamento: inativo FORA da janela nesta competência não aparece mais (ex.: Leandro
+        // pago até mês X → some de X+1 em diante). Sem janela cadastrada segue aparecendo (legado).
+        $inativosNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $inativos->pluck('id')->all(), $yearMonth);
         foreach ($inativos as $u) {
+            if (in_array((int) $u->id, $inativosNon, true)) {
+                continue;
+            }
             $f = $folhaByUser[$u->id] ?? null;
             $valorHora    = ($u->rate_type === 'hourly') ? round((float) $u->hourly_rate, 4) : 0.0;
             $producao     = $f && $f->producao !== null ? (float) $f->producao : 0.0;
@@ -491,6 +512,11 @@ class FolhaPagamentoController extends Controller
             return $rows;
         }
         $headers = \App\Models\FechamentoDiretoria::where('year_month', $yearMonth)->get();
+        // Janela de pagamento do DIRETOR: diretor fora da janela nesta competência não vai p/ a folha.
+        $dirNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $headers->pluck('user_id')->filter()->all(), $yearMonth);
+        if ($dirNon) {
+            $headers = $headers->reject(fn ($h) => $h->user_id && in_array((int) $h->user_id, $dirNon, true))->values();
+        }
         if ($headers->isEmpty()) {
             return $rows;
         }

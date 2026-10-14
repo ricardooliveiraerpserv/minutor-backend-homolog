@@ -1493,6 +1493,12 @@ class FechamentoConsultorController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours', 'is_bizify', 'home_company_id']);
 
+        // Janela de pagamento: exclui quem está fora da janela nesta competência (inativado até mês < comp.).
+        $nonPayable = \App\Models\PayrollBillingWindow::nonPayableIds('user', $users->pluck('id')->all(), $yearMonth);
+        if ($nonPayable) {
+            $users = $users->reject(fn ($u) => in_array((int) $u->id, $nonPayable, true))->values();
+        }
+
         // PAGAMENTO = SÓ HORAS APROVADAS. Pendentes (pending/adjustment_requested) NÃO entram
         // no valor a receber — ficam separadas (ver $pendingHoursByUser) e só pagam após aprovar.
         // Rejeitadas/conflito/interno/late continuam de fora. (Não afeta fechamento do CLIENTE.)

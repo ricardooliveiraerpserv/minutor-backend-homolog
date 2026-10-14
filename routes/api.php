@@ -1577,6 +1577,12 @@ Route::prefix('v1')->group(function () {
             Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
         });
 
+        // Janela de pagamento (folha/fechamentos) por colaborador — admin/administrativo.
+        Route::get('/payroll-windows',         [\App\Http\Controllers\PayrollBillingWindowController::class, 'show']);
+        Route::post('/payroll-windows/close',  [\App\Http\Controllers\PayrollBillingWindowController::class, 'close']);
+        Route::post('/payroll-windows/resume', [\App\Http\Controllers\PayrollBillingWindowController::class, 'resume']);
+        Route::post('/payroll-windows/clear',  [\App\Http\Controllers\PayrollBillingWindowController::class, 'clear']);
+
         // Atualização em massa do tipo de contrato (cooperado/clt/pj)
         Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
         Route::post('/users/bulk-work-bond',     [UserController::class, 'bulkWorkBond'])->name('users.bulk-work-bond');

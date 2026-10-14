@@ -44,12 +44,19 @@ class FechamentoDiretoriaController extends Controller
 
         $users = User::where('is_diretor', true)
             ->orderBy('name')
-            ->get(['id', 'name'])
-            ->map(fn ($u) => [
-                'id'     => $u->id,
-                'nome'   => $u->name,
-                'status' => $statusMap[$u->id] ?? ($comItens->has($u->id) ? FechamentoDiretoria::STATUS_ABERTO : 'sem_registro'),
-            ]);
+            ->get(['id', 'name']);
+        // Janela de pagamento: com competência selecionada, diretor fora da janela não é calculado nesse mês.
+        if ($yearMonth) {
+            $dirNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $users->pluck('id')->all(), $yearMonth);
+            if ($dirNon) {
+                $users = $users->reject(fn ($u) => in_array((int) $u->id, $dirNon, true))->values();
+            }
+        }
+        $users = $users->map(fn ($u) => [
+            'id'     => $u->id,
+            'nome'   => $u->name,
+            'status' => $statusMap[$u->id] ?? ($comItens->has($u->id) ? FechamentoDiretoria::STATUS_ABERTO : 'sem_registro'),
+        ]);
 
         return response()->json(['data' => $users]);
     }

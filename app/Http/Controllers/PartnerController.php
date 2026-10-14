@@ -87,13 +87,35 @@ class PartnerController extends Controller
             'hourly_rate_effective_from' => 'nullable|date',
             'contract_type' => 'nullable|in:cooperado,clt,pj',
             'folha_user_id' => 'nullable|integer|exists:users,id',
+            // Janela de pagamento (folha/fechamento parceiro): corte ao inativar / retomada ao reativar.
+            'payroll_end_month'   => 'sometimes|nullable|regex:/^\d{4}-\d{2}$/',
+            'payroll_resume'      => 'sometimes|boolean',
+            'payroll_resume_from' => 'sometimes|nullable|regex:/^\d{4}-\d{2}$/',
         ]);
 
         $effectiveFrom = $data['hourly_rate_effective_from'] ?? null;
-        unset($data['hourly_rate_effective_from']);
+        unset($data['hourly_rate_effective_from'], $data['payroll_end_month'], $data['payroll_resume'], $data['payroll_resume_from']);
 
+        $wasActive = (bool) $partner->active;
         $oldRate = $partner->hourly_rate;
         $partner->update($data);
+
+        // Janela de pagamento (inativar/reativar OU ajustar o corte de um parceiro já inativo).
+        if ($request->has('active') || $request->has('payroll_end_month') || $request->has('payroll_resume_from')) {
+            $nowActive = (bool) $partner->active;
+            $mm = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}$/', $v)) ? $v : null;
+            $end = $mm($request->input('payroll_end_month'));
+            if (!$nowActive) {
+                if ($end) {
+                    \App\Models\PayrollBillingWindow::closeAt('partner', $partner->id, $end, 'Corte de folha');
+                } elseif ($wasActive) {
+                    \App\Models\PayrollBillingWindow::closeAt('partner', $partner->id, now()->format('Y-m'), 'Inativado');
+                }
+            } elseif (!$wasActive && $nowActive && $request->boolean('payroll_resume', true)) {
+                $from = $mm($request->input('payroll_resume_from')) ?? now()->format('Y-m');
+                \App\Models\PayrollBillingWindow::resumeFrom('partner', $partner->id, $from, 'Reativado');
+            }
+        }
 
         // Tipo de vínculo do parceiro é a fonte de verdade: propaga p/ todos os usuários dele
         // (igual ao racional dos valores — o vínculo trava em todos os consultores do parceiro).

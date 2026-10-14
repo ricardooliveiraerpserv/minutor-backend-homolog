@@ -1051,6 +1051,10 @@ class UserController extends Controller
                 $updateData['allowed_modules'][] = 'projetos';
             }
 
+            // Janela de pagamento: campos auxiliares (não são colunas) — removidos do mass-assignment.
+            unset($updateData['payroll_end_month'], $updateData['payroll_resume'], $updateData['payroll_resume_from']);
+            $wasEnabled = (bool) $user->enabled; // estado ANTES do update (p/ detectar transição)
+
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
             $fillableData = array_diff_key($updateData, $protectedData);
@@ -1058,6 +1062,26 @@ class UserController extends Controller
             $user->update($fillableData);
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
+            }
+
+            // Janela de pagamento nos fechamentos/folha (ao inativar/reativar OU ao ajustar o corte de um já inativo).
+            if ($request->has('enabled') || $request->has('payroll_end_month') || $request->has('payroll_resume_from')) {
+                $nowEnabled = (bool) $user->enabled;
+                $mm = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}$/', $v)) ? $v : null;
+                $end = $mm($request->input('payroll_end_month'));
+                if (!$nowEnabled) {
+                    // Resultado INATIVO: define/ajusta o corte (mês informado) ou, se acabou de inativar
+                    // sem informar, assume o mês corrente. Já inativo sem mês → mantém o que houver.
+                    if ($end) {
+                        \App\Models\PayrollBillingWindow::closeAt('user', $user->id, $end, 'Corte de folha');
+                    } elseif ($wasEnabled) {
+                        \App\Models\PayrollBillingWindow::closeAt('user', $user->id, now()->format('Y-m'), 'Inativado');
+                    }
+                } elseif (!$wasEnabled && $nowEnabled && $request->boolean('payroll_resume', true)) {
+                    // REATIVOU: retoma a partir do mês informado (pode ser retroativo) — default corrente.
+                    $from = $mm($request->input('payroll_resume_from')) ?? now()->format('Y-m');
+                    \App\Models\PayrollBillingWindow::resumeFrom('user', $user->id, $from, 'Reativado');
+                }
             }
 
             // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
