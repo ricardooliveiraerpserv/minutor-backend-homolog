@@ -190,7 +190,7 @@ class HelpDeskMeetingSync
         $ini    = $start?->format('H:i');
         $fim    = $end?->format('H:i');
         $dur    = $meeting->duration_minutes;
-        $parts  = $meeting->participantRows->map(fn ($p) => $p->name ?: $p->email)->filter()->implode(', ');
+        $parts  = $meeting->participantRows->map(fn ($p) => $p->name ?: $p->email)->filter()->unique()->implode(', ');
 
         $linhas = [];
         $linhas[] = '<strong>Assunto:</strong> ' . e($meeting->title);
