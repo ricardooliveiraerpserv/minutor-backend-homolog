@@ -589,6 +589,8 @@ Route::prefix('v1')->group(function () {
         Route::delete('/tasks/{task}',    [\App\Http\Controllers\TaskController::class, 'destroy']);
         // Central de Reunião (admin/coordenador; visível só aos envolvidos)
         Route::get('/meetings/tasks/pending',                [\App\Http\Controllers\MeetingController::class, 'pendingTasks']);
+        // NOVO (Central de Reuniões / Teams): precede /meetings/{meeting} p/ não colidir no router.
+        Route::get('/meetings/suggested-participants',       [\App\Http\Controllers\MeetingController::class, 'suggestedParticipants']);
         Route::get('/meetings',                              [\App\Http\Controllers\MeetingController::class, 'index']);
         Route::post('/meetings',                             [\App\Http\Controllers\MeetingController::class, 'store']);
         Route::get('/meetings/{meeting}',                    [\App\Http\Controllers\MeetingController::class, 'show']);
@@ -599,6 +601,15 @@ Route::prefix('v1')->group(function () {
         Route::put('/meetings/{meeting}/tasks/{task}',       [\App\Http\Controllers\MeetingController::class, 'updateTask']);
         Route::patch('/meetings/{meeting}/tasks/{task}/toggle', [\App\Http\Controllers\MeetingController::class, 'toggleTask']);
         Route::delete('/meetings/{meeting}/tasks/{task}',    [\App\Http\Controllers\MeetingController::class, 'deleteTask']);
+        // NOVO — ações da reunião (Central de Reuniões / card do chamado).
+        Route::post('/meetings/{meeting}/cancel',            [\App\Http\Controllers\MeetingController::class, 'cancel']);
+        Route::post('/meetings/{meeting}/start',             [\App\Http\Controllers\MeetingController::class, 'start']);
+        Route::post('/meetings/{meeting}/end',               [\App\Http\Controllers\MeetingController::class, 'end']);
+        Route::post('/meetings/{meeting}/log-hours',         [\App\Http\Controllers\MeetingController::class, 'logHours']);
+        Route::post('/meetings/{meeting}/summary',           [\App\Http\Controllers\MeetingController::class, 'saveSummary']);
+        Route::post('/meetings/{meeting}/ata',               [\App\Http\Controllers\MeetingController::class, 'saveAta']);
+        Route::post('/meetings/{meeting}/note-to-ticket',    [\App\Http\Controllers\MeetingController::class, 'noteToTicket']);
+        Route::post('/meetings/{meeting}/generate-notes',    [\App\Http\Controllers\MeetingController::class, 'generateNotes']);
 
         // Central de Comunicação (externa, com clientes)
         Route::get('/communications/mine',           [\App\Http\Controllers\CommunicationController::class, 'mine']);      // recebidas (endereçadas a mim)

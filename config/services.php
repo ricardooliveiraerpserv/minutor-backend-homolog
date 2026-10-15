@@ -112,6 +112,15 @@ return [
         'scopes'        => env('MS_CALENDAR_SCOPES', 'offline_access openid profile Calendars.Read'),
     ],
 
+    // Central de Reuniões. teams_enabled=false (Fase 1): o provider Teams degrada p/ no-op (reunião
+    // criada SEM link). Fase 2 = ligar MEETINGS_TEAMS_ENABLED + MS_CALENDAR_SCOPES com Calendars.ReadWrite
+    // + cada organizador reconectar a conta Microsoft (OAuth delegado do Meu Dia).
+    'meetings' => [
+        'teams_enabled'  => filter_var(env('MEETINGS_TEAMS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'organizer'      => env('MEETINGS_ORGANIZER'),
+        'organizer_mode' => env('MEETINGS_ORGANIZER_MODE', 'actor'),
+    ],
+
     'github_source' => [
         'api'     => env('GITHUB_SOURCE_API', 'https://api.github.com'),
         'timeout' => (int) env('GITHUB_SOURCE_TIMEOUT', 20),

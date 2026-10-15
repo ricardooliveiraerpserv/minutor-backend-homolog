@@ -151,8 +151,8 @@ class HelpDeskMeetingSync
     /** Cc do e-mail de reunião: participantes + criador/organizador (o cliente é o To da interação). */
     private function meetingCc(Meeting $meeting): array
     {
-        $meeting->loadMissing('participants', 'organizer', 'createdBy');
-        $cc = $meeting->participants->pluck('email')->all();
+        $meeting->loadMissing('participantRows', 'organizer', 'createdBy');
+        $cc = $meeting->participantRows->pluck('email')->all();
         if ($meeting->organizer?->email)  $cc[] = $meeting->organizer->email;
         if ($meeting->createdBy?->email)  $cc[] = $meeting->createdBy->email;
         return array_values(array_unique(array_filter(array_map('trim', $cc))));
@@ -164,6 +164,11 @@ class HelpDeskMeetingSync
      */
     private function dispatchMeetingEmail(HelpDeskTicket $ticket, \App\Models\HelpDeskTicketComment $comment, Meeting $meeting): void
     {
+        // Fase 2: quando a reunião TEM link do Teams, o próprio Graph já disparou o convite/cancelamento
+        // de calendário aos participantes → NÃO duplica por e-mail do Minutor.
+        if (filled($meeting->join_url)) {
+            return;
+        }
         try {
             \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id, $this->meetingCc($meeting))
                 ->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
@@ -175,7 +180,7 @@ class HelpDeskMeetingSync
     /** Corpo da interação = convite formatado (assunto, quando, duração, formato, organizador, link, pauta). */
     private function inviteBody(Meeting $meeting): string
     {
-        $meeting->loadMissing('participants', 'organizer');
+        $meeting->loadMissing('participantRows', 'organizer');
         $prov   = ['teams' => 'Microsoft Teams', 'meet' => 'Google Meet', 'zoom' => 'Zoom', 'webex' => 'Webex', 'presencial' => 'Presencial'][$meeting->provider] ?? $meeting->provider;
         // starts_at/ends_at são UTC (app tz); exibe no fuso da reunião p/ mostrar a hora que o usuário digitou.
         $tz     = $meeting->timezone ?: 'America/Sao_Paulo';
@@ -185,7 +190,7 @@ class HelpDeskMeetingSync
         $ini    = $start?->format('H:i');
         $fim    = $end?->format('H:i');
         $dur    = $meeting->duration_minutes;
-        $parts  = $meeting->participants->map(fn ($p) => $p->name ?: $p->email)->filter()->implode(', ');
+        $parts  = $meeting->participantRows->map(fn ($p) => $p->name ?: $p->email)->filter()->implode(', ');
 
         $linhas = [];
         $linhas[] = '<strong>Assunto:</strong> ' . e($meeting->title);
