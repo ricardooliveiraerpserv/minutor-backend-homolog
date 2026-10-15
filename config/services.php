@@ -109,7 +109,10 @@ return [
         'client_id'     => env('MS_CALENDAR_CLIENT_ID', env('MAIL_GRAPH_CLIENT_ID')),
         'client_secret' => env('MS_CALENDAR_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
         'redirect_uri'  => env('MS_CALENDAR_REDIRECT_URI', rtrim(env('APP_URL', ''), '/') . '/api/v1/integrations/microsoft/callback'),
-        'scopes'        => env('MS_CALENDAR_SCOPES', 'offline_access openid profile Calendars.Read'),
+        // Calendars.ReadWrite (ler a agenda do Meu Dia + CRIAR evento/reunião Teams). Contas já conectadas
+        // só com Calendars.Read seguem lendo normal (o refresh não pede escopo → mantém o consentido);
+        // para CRIAR reunião é preciso reconectar a conta (novo consentimento com escrita).
+        'scopes'        => env('MS_CALENDAR_SCOPES', 'offline_access openid profile Calendars.ReadWrite'),
     ],
 
     // Central de Reuniões. teams_enabled=false (Fase 1): o provider Teams degrada p/ no-op (reunião
