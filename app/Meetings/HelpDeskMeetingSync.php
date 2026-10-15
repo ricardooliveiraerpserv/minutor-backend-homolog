@@ -203,7 +203,10 @@ class HelpDeskMeetingSync
             . '<p>' . implode('<br>', $linhas) . '</p>';
 
         if ($meeting->join_url) {
-            $body .= '<p>🔗 <a href="' . e($meeting->join_url) . '"><strong>Entrar na reunião</strong></a></p>';
+            // Botão em evidência (inline CSS p/ valer na conversa do chamado E no e-mail).
+            $body .= '<p style="margin:12px 0"><a href="' . e($meeting->join_url) . '" '
+                . 'style="display:inline-block;background:#14b8a6;color:#ffffff;padding:9px 18px;'
+                . 'border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">🔗 Entrar na reunião</a></p>';
         }
         if (filled($meeting->description)) {
             $body .= '<p><strong>Pauta:</strong><br>' . nl2br(e($meeting->description)) . '</p>';
