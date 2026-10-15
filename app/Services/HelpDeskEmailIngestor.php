@@ -409,6 +409,9 @@ class HelpDeskEmailIngestor
         // Compara sem prefixos de resposta dos DOIS lados: o assunto salvo também pode ter "Re:".
         return HelpDeskTicket::query()
             ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
+            // NÃO anexa em chamado de ORIGEM MOVIDESK — esses são geridos no Movidesk (a resposta
+            // não volta pra lá). Threading por assunto só vale entre chamados NATIVOS do Minutor.
+            ->where(fn ($q) => $q->whereNull('source_system')->orWhere('source_system', '!=', 'movidesk'))
             ->whereRaw("regexp_replace(lower(subject), '^((re|res|fwd|fw|enc)\\s*:\\s*)+', '') = ?", [mb_strtolower($clean)])
             ->whereHas('status', fn ($q) => $q->where('is_terminal', false))
             ->orderByDesc('id')
