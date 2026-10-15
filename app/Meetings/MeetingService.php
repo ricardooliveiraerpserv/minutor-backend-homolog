@@ -75,6 +75,7 @@ class MeetingService
             // Se veio de um CHAMADO: status "Reunião agendada" + pausa SLA + interação (reusa o SLA existente).
             app(HelpDeskMeetingSync::class)->onScheduled($meeting);
 
+            $this->invalidateCalendarCache($meeting);
             return $meeting->fresh(['participantRows', 'events']);
         });
     }
@@ -89,7 +90,21 @@ class MeetingService
         ]);
         MeetingProviderFactory::for($meeting->provider)->update($meeting);
         MeetingEvent::log($meeting->id, 'rescheduled', ['meta' => ['starts_at' => $starts->toIso8601String()]]);
+        $this->invalidateCalendarCache($meeting);
         return $meeting;
+    }
+
+    /** Invalida o snapshot da agenda do organizador → força re-sync na próxima abertura do Meu Dia
+     *  (sem isso, criar/cancelar/reagendar só refletia na agenda após o throttle de ~10 min). */
+    private function invalidateCalendarCache(Meeting $meeting): void
+    {
+        try {
+            $uid = $meeting->organizer_user_id ?: $meeting->created_by_id;
+            if (!$uid) return;
+            \App\Models\UserIntegration::where('user_id', $uid)->where('provider', 'microsoft')
+                ->update(['last_sync_at' => null]);
+        } catch (\Throwable) {
+        }
     }
 
     public function cancel(Meeting $meeting, ?string $reason = null): Meeting
@@ -99,6 +114,7 @@ class MeetingService
         MeetingEvent::log($meeting->id, 'canceled', ['meta' => ['reason' => $reason]]);
         // Se veio de um CHAMADO em "Reunião agendada": volta p/ "Em atendimento" + retoma SLA.
         app(HelpDeskMeetingSync::class)->onCanceled($meeting);
+        $this->invalidateCalendarCache($meeting);
         return $meeting;
     }
 
