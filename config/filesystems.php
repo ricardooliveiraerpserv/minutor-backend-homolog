@@ -36,6 +36,16 @@ return [
             'serve' => true,
             'throw' => false,
             'report' => false,
+            // Anexos gravados por processos root (scheduler/queue rodam como root) ficavam 0600/0700
+            // dono root (default privado do Flysystem) → o php-fpm (www-data) não conseguia ler →
+            // download dava UnableToRetrieveMetadata/file_size → 422 "imagem quebrada" (ex. imagens
+            // inline re-hospedadas do Movidesk). Grava 0644/0755 p/ ser legível por qualquer processo
+            // do container. O acesso continua protegido pela auth do endpoint de download; o volume
+            // não é exposto na web (serve=true → servido via rota Laravel).
+            'permissions' => [
+                'file' => ['public' => 0644, 'private' => 0644],
+                'dir'  => ['public' => 0755, 'private' => 0755],
+            ],
         ],
 
         'public' => [

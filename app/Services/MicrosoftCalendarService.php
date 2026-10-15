@@ -34,11 +34,13 @@ class MicrosoftCalendarService
     }
 
     /** URL de consentimento (redireciona o usuário). $state amarra o callback ao usuário. */
-    public static function authorizeUrl(string $state): string
+    public static function authorizeUrl(string $state, array $extra = []): string
     {
         $c = self::cfg();
         $tenant = $c['tenant_id'] ?: 'common';
-        $params = http_build_query([
+        // $extra sobrescreve os defaults — ex. o step-up do Cofre força
+        // prompt=login + max_age=0 (re-autenticação fresca → desafia o 2º fator).
+        $params = http_build_query(array_merge([
             'client_id'     => $c['client_id'],
             'response_type' => 'code',
             'redirect_uri'  => $c['redirect_uri'],
@@ -46,7 +48,7 @@ class MicrosoftCalendarService
             'scope'         => $c['scopes'],
             'state'         => $state,
             'prompt'        => 'select_account',
-        ]);
+        ], $extra));
         return "https://login.microsoftonline.com/{$tenant}/oauth2/v2.0/authorize?{$params}";
     }
 
@@ -69,13 +71,15 @@ class MicrosoftCalendarService
     public static function refresh(string $refreshToken): array
     {
         $c = self::cfg();
+        // SEM 'scope' no refresh: o MS devolve os escopos ORIGINALMENTE consentidos. Isso evita quebrar
+        // contas conectadas só com Calendars.Read quando o default passa a incluir Calendars.ReadWrite
+        // (pedir um escopo não consentido no refresh retorna invalid_grant/AADSTS65001).
         $resp = Http::asForm()->post(self::tokenUrl(), [
             'client_id'     => $c['client_id'],
             'client_secret' => $c['client_secret'],
             'grant_type'    => 'refresh_token',
             'refresh_token' => $refreshToken,
             'redirect_uri'  => $c['redirect_uri'],
-            'scope'         => $c['scopes'],
         ]);
         return $resp->successful() ? $resp->json() : ['error' => $resp->json('error_description') ?: ('HTTP ' . $resp->status())];
     }
@@ -178,5 +182,47 @@ class MicrosoftCalendarService
         $i->update(['cached_events' => $events, 'last_sync_at' => now()]);
 
         return count($events);
+    }
+
+    // =====================================================================================
+    // ESCRITA no calendário (Fase 2 — exige escopo Calendars.ReadWrite). Usado pelo Teams provider.
+    // Tudo defensivo: retorna null/false em falha, nunca lança.
+    // =====================================================================================
+
+    /** Cria um EVENTO (com reunião online do Teams, se isOnlineMeeting no payload). Retorna o evento ou null. */
+    public static function createEvent(string $accessToken, array $payload): ?array
+    {
+        try {
+            $r = Http::withToken($accessToken)->acceptJson()->timeout(15)
+                ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
+                ->post(self::GRAPH_BASE . '/me/events', $payload);
+            return $r->successful() ? $r->json() : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Atualiza (PATCH) um evento existente — ex.: reagendar start/end. Retorna o evento ou null. */
+    public static function updateEvent(string $accessToken, string $eventId, array $payload): ?array
+    {
+        try {
+            $r = Http::withToken($accessToken)->acceptJson()->timeout(15)
+                ->patch(self::GRAPH_BASE . '/me/events/' . rawurlencode($eventId), $payload);
+            return $r->successful() ? $r->json() : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** Remove (cancela) um evento — o Graph avisa os convidados. Retorna true se ok. */
+    public static function deleteEvent(string $accessToken, string $eventId): bool
+    {
+        try {
+            $r = Http::withToken($accessToken)->timeout(15)
+                ->delete(self::GRAPH_BASE . '/me/events/' . rawurlencode($eventId));
+            return $r->successful();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }

@@ -237,6 +237,11 @@ class ProjectController extends Controller
         $withRelations = ['customer', 'contractType', 'serviceType'];
         if (!$gestaoMode) {
             $withRelations[] = 'parentProject';
+        } else {
+            // Identificação Pai/Filho/Independente na lista de Gestão de Contratos:
+            // o FE precisa do código+nome do pai para o badge "Filho de ...". Carga leve
+            // (só 3 colunas) — childProjects já é carregado abaixo (conta p/ "Pai (N filhos)").
+            $withRelations['parentProject'] = fn ($q) => $q->select('id', 'name', 'code');
         }
         $withRelations[] = 'hourContributions';
         // Em gestao simples (sem parentProjectsOnly), carrega equipe para indicadores
@@ -256,6 +261,14 @@ class ProjectController extends Controller
         // childProjects: sempre carregado em gestaoMode (para calcular closedChildrenHours)
         // e no modo completo; em multicontratual também carrega coordinators
         $withRelations[] = 'childProjects.contractType';
+        if ($gestaoMode) {
+            // N+1 FIX (incidente fechamento 10/2026): o loop de consumo dos filhos
+            // (children_consumption_breakdown) chama $child->getTotalAvailableHours(),
+            // que precisa de hourContributions. Sem este eager-load era 1 query por filho
+            // × todos os projetos (per_page=1000) → /projects?gestao=true estourava 504
+            // e prendia os workers php-fpm (lentidão global, CPU ociosa).
+            $withRelations[] = 'childProjects.hourContributions';
+        }
         if (!$gestaoMode || $parentProjectsOnly) {
             // Em modo pai/filho carrega coordenadores dos pais e dos filhos para marcar node_state
             if ($parentProjectsOnly) {
@@ -631,7 +644,7 @@ class ProjectController extends Controller
         $gestaoMonths = $gestaoMonthsRaw
             ? array_values(array_filter(array_map('trim', explode(',', (string) $gestaoMonthsRaw))))
             : [];
-        $result = $this->cachedList($request, 'projects', function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths, $myProjectsUserId) {
+        $compute = function () use ($query, $perPage, $page, $nodeStateMap, $gestaoMode, $parentProjectsOnly, $currentUserForTransform, $gestaoMonths, $myProjectsUserId) {
         $projects = $query->paginate($perPage, ['*'], 'page', $page);
 
         // Carregar soma de timesheets em batch: apenas para os projetos desta página
@@ -988,12 +1001,87 @@ class ProjectController extends Controller
             }
         }
 
+        // PERF: enxuga a serialização do payload (SEM mudar o que a tela exibe).
+        // A serialização dominava o tempo (~5-7s) por causa de: (1) os accessors de
+        // $appends (status_display/contract_type_display já viram atributo acima) re-rodando
+        // por modelo; (2) relações de usuário serializando ~40 colunas + o N+1 do
+        // profile_photo_url (1 query/usuário); (3) o array cru de hourContributions (a lista
+        // só lê o total, já computado). Mantemos id/name/email (+pivot do consultor) e todos
+        // os campos/relações que a tela usa.
+        $slimUser = function ($u) { if ($u) $u->setVisible(['id', 'name', 'email']); };
+        $slimConsultant = function ($u) { if ($u) $u->setVisible(['id', 'name', 'email', 'pivot']); };
+        $projects->getCollection()->each(function ($p) use ($slimUser, $slimConsultant) {
+            $p->setAppends([]); // status_display/contract_type_display já estão setados como atributo
+            if ($p->relationLoaded('coordinators')) $p->coordinators->each($slimUser);
+            if ($p->relationLoaded('consultants'))  $p->consultants->each($slimConsultant);
+            foreach (['executivoConta', 'kanbanOverrideCoordinator'] as $r) {
+                if ($p->relationLoaded($r) && $p->$r) $slimUser($p->$r);
+            }
+            if ($p->relationLoaded('consultantGroups')) {
+                $p->consultantGroups->each(function ($g) use ($slimUser) {
+                    if ($g->relationLoaded('users')) $g->users->each($slimUser);
+                });
+            }
+            $p->unsetRelation('hourContributions');
+            if ($p->relationLoaded('childProjects')) {
+                $p->childProjects->each(function ($c) {
+                    // preserva os displays do filho (a lista usa a MESMA renderização) antes de limpar os appends
+                    $c->status_display = $c->status_display;
+                    $c->contract_type_display = $c->contract_type_display;
+                    $c->setAppends([]);
+                    $c->unsetRelation('hourContributions');
+                });
+            }
+        });
+
         // Resposta PO-UI
         return [
             'hasNext' => $projects->hasMorePages(),
             'items'   => $projects->items(),
         ];
-        }); // fim cachedList
+        }; // fim $compute
+
+        // Gestão de Projetos: resposta MUITO pesada (~5-7s: hidrata ~1000 projetos+relações).
+        // O cache de MODELS (cachedList) não ajuda aqui — reconstruir ~1000 Eloquent do cache
+        // custa quase tanto quanto recomputar. Então cacheamos a STRING JSON final:
+        //  - hit = ler a string e devolver (milissegundos), sem reidratar nada;
+        //  - escopo 'admin' COMPARTILHADO (todos os admins veem o mesmo conjunto → 1 cálculo
+        //    serve todos, em vez de N recálculos concorrentes saturando os 2 vCPUs no fechamento);
+        //  - coordenador/consultor: chave por-usuário (visão restrita por escopo);
+        //  - invalidação por "geração": edição de projeto/aporte chama invalidateListCache('projects'),
+        //    que incrementa listgen:projects → a chave muda → recomputa na próxima. TTL 300s de teto.
+        if ($gestaoMode) {
+            $scope = ($currentUserForTransform && $currentUserForTransform->isAdmin())
+                ? 'admin'
+                : ('u' . (optional($currentUserForTransform)->id ?? 'guest'));
+            $companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
+            $gen = $this->listGeneration('projects');
+            $jsonKey = "gestaojson:g{$gen}:{$scope}:c{$companyId}:" . md5($request->getQueryString() ?? '');
+
+            // X-Cache-Warm: 1 → pula a leitura e FORÇA recompute+gravação (renova o TTL).
+            // Usado só pelo job projects:warm-gestao-cache; o FE nunca envia esse header,
+            // e ele NÃO entra na chave (que é só query string + escopo), então o warm
+            // popula exatamente a mesma entrada que o usuário real lê.
+            $forceWarm = $request->header('X-Cache-Warm') === '1';
+            if (!$forceWarm) {
+                try {
+                    $hit = \Illuminate\Support\Facades\Cache::get($jsonKey);
+                    if (is_string($hit) && $hit !== '') {
+                        return \Illuminate\Http\JsonResponse::fromJsonString($hit);
+                    }
+                } catch (\Throwable $e) { /* cache indisponível → computa */ }
+            }
+
+            $result = $compute();
+            $json = json_encode($result);
+            if ($json !== false) {
+                try { \Illuminate\Support\Facades\Cache::put($jsonKey, $json, 300); } catch (\Throwable $e) {}
+                return \Illuminate\Http\JsonResponse::fromJsonString($json);
+            }
+            return response()->json($result);
+        }
+
+        $result = $this->cachedList($request, 'projects', $compute);
         return response()->json($result);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::error('ProjectController@index error', [
@@ -3667,7 +3755,7 @@ class ProjectController extends Controller
         return response()->json($attachment, 201);
     }
 
-    public function downloadAttachment(Project $project, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    public function downloadAttachment(\Illuminate\Http\Request $request, Project $project, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\Response
     {
         // FASE 11.7 (PR 7b) — aceita anexos PROJECT direto OU CONTRACT do contrato vinculado.
         $isProjectOwn  = $attachment->entity_type === 'PROJECT'  && (int) $attachment->entity_id === (int) $project->id;
@@ -3675,6 +3763,19 @@ class ProjectController extends Controller
                          && (int) $attachment->entity_id === (int) $project->contract_id;
         abort_unless($isProjectOwn || $isLinkedCont, 404);
         abort_unless(Storage::exists($attachment->storage_path), 404, 'Arquivo não encontrado.');
+
+        $prev = app(\App\Services\AttachmentPreviewResponder::class);
+        if ($request->boolean('view')) {
+            if ($prev->isInline($attachment->original_name)) {
+                return Storage::response($attachment->storage_path, $attachment->original_name, ['Content-Disposition' => $prev->inlineDisposition($attachment->original_name)]);
+            }
+            if ($prev->isOffice($attachment->original_name)) {
+                $pdf = $prev->officeToPdf(Storage::get($attachment->storage_path), $attachment->original_name);
+                if ($pdf !== null) {
+                    return $prev->pdfResponse($pdf, $attachment->original_name);
+                }
+            }
+        }
         return Storage::download($attachment->storage_path, $attachment->original_name);
     }
 
@@ -4064,7 +4165,8 @@ class ProjectController extends Controller
      * - Setando o override → contract muda pra coluna do coord (alocado + kanban_coordinator_id)
      *   e zera sustentacao_column. Card sai das colunas sust_* do Kanban.
      * - Limpando o override → recalcula sustentacao_column pelo tipo de contrato e devolve
-     *   o card pra fila correta. Zera kanban_coordinator_id e kanban_status.
+     *   o card pra fila correta. Zera kanban_coordinator_id e, se estava em 'alocado',
+     *   devolve o kanban_status pro valor canônico de sustentação ('inicio_autorizado').
      */
     private function syncContractKanbanForOverride(Project $project): void
     {
@@ -4120,7 +4222,12 @@ class ProjectController extends Controller
             $sustColumn = 'sust_cloud';
         }
 
-        $expectedStatus = $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO ? null : $contract->kanban_status;
+        // kanban_status é NOT NULL (default 'novo'); ao sair da coluna do coordenador
+        // ('alocado'), o card de sustentação volta com o status canônico das filas sust_*
+        // ('inicio_autorizado'). Nunca gravar null aqui — viola a constraint (SQLSTATE 23502).
+        $expectedStatus = $contract->kanban_status === \App\Models\Contract::KANBAN_ALOCADO
+            ? \App\Models\Contract::KANBAN_INICIO_AUTORIZADO
+            : $contract->kanban_status;
         $needsUpdate = $contract->kanban_status !== $expectedStatus
             || $contract->kanban_coordinator_id !== null
             || $contract->sustentacao_column !== $sustColumn;

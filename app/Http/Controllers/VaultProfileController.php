@@ -109,7 +109,7 @@ class VaultProfileController extends Controller
         abort_unless($user->isAdmin(), 403);
 
         $data = $request->validate([
-            'minutes' => 'required|integer|in:1,5,15,30',
+            'minutes' => 'required|integer|in:1,5,10,15,30',
         ]);
 
         SystemSetting::set('vault_lock_timeout_min', $data['minutes'], 'integer', 'vault', 'Auto-lock do cofre (minutos) — regra global');
@@ -136,9 +136,11 @@ class VaultProfileController extends Controller
         ]));
 
         // Mantém os scopes padrão (exchangeCode reenvia os mesmos na troca do code);
-        // só força prompt=login pra re-autenticação fresca.
+        // força re-autenticação FRESCA: prompt=login (re-entra credenciais) +
+        // max_age=0 (idade máx. da auth = 0s → o Entra re-desafia o 2º fator/MFA).
         return response()->json(['authorize_url' => MicrosoftCalendarService::authorizeUrl($state, [
-            'prompt' => 'login',
+            'prompt'  => 'login',
+            'max_age' => 0,
         ])]);
     }
 
@@ -422,6 +424,31 @@ class VaultProfileController extends Controller
         }
 
         return response()->json($query->orderBy('users.name')->get());
+    }
+
+    /**
+     * TODOS os usuários internos (exceto clientes) p/ a tela de alocação — inclusive quem
+     * ainda NÃO configurou o cofre (vem com public_key=null, configured=false). O FE lista
+     * todos com busca; só os `configured` podem de fato receber o wrap da chave.
+     */
+    public function allocatableUsers(Request $request): JsonResponse
+    {
+        $this->guardInternal($request);
+        $rows = DB::table('users')
+            ->leftJoin('vault_user_keys as vk', 'vk.user_id', '=', 'users.id')
+            ->whereIn('users.type', self::INTERNAL_TYPES)
+            ->where('users.enabled', true)
+            ->orderBy('users.name')
+            ->get(['users.id as user_id', 'users.name', 'users.email', 'vk.public_key', 'vk.auth_hash'])
+            ->map(fn ($u) => [
+                'user_id'    => (int) $u->user_id,
+                'name'       => $u->name,
+                'email'      => $u->email,
+                'public_key' => $u->public_key,
+                'configured' => ! empty($u->public_key) && ! empty($u->auth_hash),
+            ]);
+
+        return response()->json($rows);
     }
 
     /**

@@ -108,9 +108,20 @@ class HelpDeskEmailIngestor
         $fromName  = trim((string) data_get($msg, 'from.emailAddress.name', '')) ?: $fromEmail;
         $subject   = trim((string) ($msg['subject'] ?? '')) ?: '(sem assunto)';
         $body      = (string) (data_get($msg, 'body.content') ?: data_get($msg, 'bodyPreview', ''));
-        // Corta o histórico citado: mantém só o que o cliente escreveu ACIMA do marcador do e-mail anterior.
-        $body      = $this->stripQuotedHistory($body);
+        // NÃO corta o histórico aqui: ao ABRIR chamado (inclusive e-mail ENCAMINHADO), toda a
+        // thread encaminhada deve ir INTEIRA para a 1ª interação (description). O corte do
+        // histórico citado é aplicado APENAS em RESPOSTA a chamado existente (appendClientReply).
         $receivedAt = ($r = data_get($msg, 'receivedDateTime')) ? Carbon::parse($r) : now();
+
+        // Backup de dedup: se um run ANTERIOR já ABRIU um chamado com ESTE e-mail (external_ref),
+        // mas falhou ao gravar o ledger (ex.: timeout no storeFiles/trigger com corpo gigante),
+        // não reprocessar — senão o mesmo e-mail viraria um comentário duplicado. O external_ref
+        // é gravado na MESMA transação do ticket, então é garantido quando o chamado existe.
+        $extRef = 'gm:' . substr(sha1($messageId), 0, 40);
+        if (HelpDeskTicket::withoutGlobalScopes()->where('external_ref', $extRef)->exists()) {
+            $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'ticket_ja_aberto_deste_email', $receivedAt, $sum);
+            return;
+        }
 
         // Anti-loop: ignora e-mail enviado pela própria caixa (cópia/auto-resposta).
         if ($fromEmail !== '' && strcasecmp($fromEmail, (string) $acc->email) === 0) {
@@ -182,7 +193,15 @@ class HelpDeskEmailIngestor
         $associateExisting  = $settings['associate_existing'] ?? 'customer';
         $existing = $this->matchByTicketToken($subject);
         if (!$existing && $appendExisting && $associateExisting !== 'new') {
-            $existing = $this->findOpenTicketBySubject($subject, $associateExisting === 'customer' ? $customerId : null);
+            // Modo 'customer': só casa por assunto DENTRO do mesmo cliente. Se o remetente NÃO foi
+            // associado a um cliente (sem contato/regra), NÃO anexa por assunto — senão um e-mail de
+            // remetente desconhecido cairia num chamado de QUALQUER cliente com o mesmo assunto
+            // (ex.: "TESTE"). Nesse caso cria chamado NOVO.
+            if ($associateExisting === 'customer' && !$customerId) {
+                $existing = null;
+            } else {
+                $existing = $this->findOpenTicketBySubject($subject, $associateExisting === 'customer' ? $customerId : null);
+            }
         }
         if ($existing) {
             $existing->loadMissing('status');
@@ -257,18 +276,24 @@ class HelpDeskEmailIngestor
             return $t;
         });
         $sum['tickets']++;
+        // Grava o ledger (marca de dedup) IMEDIATAMENTE após criar o chamado — ANTES de
+        // storeFiles/trigger, que podem falhar/estourar (corpo gigante) e deixariam o e-mail
+        // sem marca → reprocessado e duplicado na rodada seguinte.
+        $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
         $this->storeFiles('HELPDESK_TICKET', $ticket->id, $inboundFiles);
         // Sem actor_email: num ticket aberto por e-mail o "cliente" É quem disparou; com
         // actor_email o skip_actor do trigger de confirmação (#1) zerava os destinatários e
         // o cliente nunca recebia o e-mail com o nº do chamado. (comment_added mantém actor_email.)
         HelpDeskTriggerEngine::dispatch('ticket_created', $ticket->fresh(), ['comment_by' => 'client']);
         $sum['details'][] = "✅ Chamado {$ticket->ticket_number} aberto de {$fromEmail}: \"{$subject}\".";
-        $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
     }
 
     /** Anexa a resposta do cliente (e-mail) como interação no chamado alvo e reativa (Em andamento). */
     private function appendClientReply(HelpDeskTicket $ticket, string $body, ?CustomerContact $contact, string $messageId, Carbon $receivedAt): \App\Models\HelpDeskTicketComment
     {
+        // Resposta a chamado existente: corta o histórico citado, mantendo só o que o
+        // cliente escreveu ACIMA do marcador do e-mail anterior (a abertura preserva tudo).
+        $body = $this->stripQuotedHistory($body);
         return DB::transaction(function () use ($ticket, $body, $contact, $messageId, $receivedAt) {
             $c = $ticket->comments()->create([
                 'author_contact_id' => $contact?->id,
@@ -384,6 +409,9 @@ class HelpDeskEmailIngestor
         // Compara sem prefixos de resposta dos DOIS lados: o assunto salvo também pode ter "Re:".
         return HelpDeskTicket::query()
             ->when($customerId, fn ($q) => $q->where('customer_id', $customerId))
+            // NÃO anexa em chamado de ORIGEM MOVIDESK — esses são geridos no Movidesk (a resposta
+            // não volta pra lá). Threading por assunto só vale entre chamados NATIVOS do Minutor.
+            ->where(fn ($q) => $q->whereNull('source_system')->orWhere('source_system', '!=', 'movidesk'))
             ->whereRaw("regexp_replace(lower(subject), '^((re|res|fwd|fw|enc)\\s*:\\s*)+', '') = ?", [mb_strtolower($clean)])
             ->whereHas('status', fn ($q) => $q->where('is_terminal', false))
             ->orderByDesc('id')
@@ -419,7 +447,12 @@ class HelpDeskEmailIngestor
                 $body = str_replace('cid:' . $cid, $data, $body);
                 continue;
             }
-            $regular[] = $f; // anexo real (arquivo enviado pelo usuário)
+            // Imagem marcada como inline pelo Graph (assinatura, logos, print colado no corpo) —
+            // NÃO vira anexo mesmo sem casar o cid. Continua renderizando no corpo; só não duplica.
+            if (!empty($f['inline'])) {
+                continue;
+            }
+            $regular[] = $f; // anexo real (arquivo de fato enviado pelo usuário)
         }
         return [$body, $regular];
     }

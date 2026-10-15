@@ -34,9 +34,9 @@
           {{-- HEADER --}}
           <tr>
             <td class="pd-header" align="center" bgcolor="#FFFFFF" style="padding:36px 40px 28px;background-color:#FFFFFF;border-bottom:1px solid #E5E7EB;">
-              <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+              <img src="data:image/png;base64,{{ base64_encode(file_get_contents(\App\Support\Brand::lightLogoPath())) }}" alt="{{ \App\Support\Brand::name() }}" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
               <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
-                <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                <img src="https://app.minutor.com.br/logo-white.png" alt="{{ \App\Support\Brand::name() }}" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
               </div>
             </td>
           </tr>
@@ -89,7 +89,7 @@
               <p style="margin:0;font-size:14px;color:#4B5563;line-height:1.65;">
                 Atenciosamente,<br>
                 <b style="color:#111827;">{{ $senderName }}</b><br>
-                <span style="color:#6B7280;">ERPSERV Consultoria</span>
+                <span style="color:#6B7280;">{{ \App\Support\Brand::name() }}</span>
               </p>
             </td>
           </tr>
@@ -102,7 +102,7 @@
           </tr>
           <tr>
             <td class="pd-foot" align="left" bgcolor="#FFFFFF" style="padding:18px 40px 32px;background-color:#FFFFFF;">
-              <div style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">&copy; {{ date('Y') }} ERPSERV Consultoria &middot; Todos os direitos reservados</div>
+              <div style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">&copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} &middot; Todos os direitos reservados</div>
             </td>
           </tr>
         </table>

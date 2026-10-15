@@ -1,7 +1,21 @@
-{{-- Card header com logo ERPServ branco + Minutor. Compartilhado entre todos templates de card. --}}
+{{-- Card header — marca POR TENANT. Conecta: logo negativo. Grupo/ERPServ: logo ERPServ branco + Minutor.
+     Compartilhado entre todos os templates de card/workflow. --}}
+@php $__isConecta = false; /* ERPServ base: marca sempre ERPServ. Conecta vive em repo/infra próprios. */ @endphp
 <tr>
   <td align="left" style="padding:36px 40px 28px;background:#000000;border-bottom:1px solid rgba(255,255,255,0.06);">
 
+  @if($__isConecta)
+    {{-- CONECTA — logo OFICIAL dark (alta resolução 3642×900, fundo preto = fundo do e-mail), centralizado --}}
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center">
+          <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('conecta-logo-dark.png'))) }}"
+            alt="Conecta ERP" height="92"
+            style="display:inline-block;height:92px;width:auto;border:0;" />
+        </td>
+      </tr>
+    </table>
+  @else
     {{-- ERPServ — logo centralizado --}}
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
       <tr>
@@ -34,6 +48,7 @@
         </td>
       </tr>
     </table>
+  @endif
 
   </td>
 </tr>

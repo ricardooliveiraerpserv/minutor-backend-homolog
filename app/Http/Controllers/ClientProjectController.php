@@ -238,6 +238,10 @@ class ClientProjectController extends Controller
         if (!$user || !$user->isCliente()) {
             return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
         }
+        // Gestor do cliente enxerga todos os projetos da sua empresa.
+        if ($user->is_customer_manager && (int) $user->customer_id === (int) $project->customer_id) {
+            return null;
+        }
         if (!self::participatesInProject($project, (int) $user->id)) {
             return response()->json(['message' => 'Você não participa deste projeto.'], 403);
         }

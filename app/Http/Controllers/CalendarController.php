@@ -23,6 +23,7 @@ class CalendarController extends Controller
         'reajuste'            => 'Reajuste',
         'task'                => 'Tarefa',
         'outlook'             => 'Outlook',
+        'meeting'             => 'Reunião',
     ];
     /** TODOS os perfis (users.type) entram na matriz de visibilidade. */
     const PROFILE_LABELS = [
@@ -41,6 +42,7 @@ class CalendarController extends Controller
         'reajuste'            => ['admin', 'administrativo', 'coordenador'],
         'task'                => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
         'outlook'             => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
+        'meeting'             => ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin', 'cliente'],
     ];
 
     /** Config atual de visibilidade (saved ∪ defaults, saneada) — { tipo: [perfis] }. */
@@ -176,6 +178,43 @@ class CalendarController extends Controller
                     ]);
                 }
             }
+        } catch (\Throwable) { /* nunca trava o calendário */ }
+
+        // 7) 📹 Reuniões do Minutor (módulo novo) do usuário (organizador/criador/participante) no mês.
+        //    Só as SEM evento externo (external_meeting_id NULL); com Teams ligado, a reunião já entra
+        //    pela sincronização do Outlook (evita duplicar).
+        try {
+            \App\Models\Meeting::query()
+                ->whereNotNull('origin_type')
+                ->where('status', '!=', 'canceled')
+                ->whereNull('external_meeting_id')
+                ->whereNotNull('starts_at')
+                ->whereMonth('starts_at', $month)->whereYear('starts_at', $year)
+                ->where(function ($q) use ($u) {
+                    $q->where('organizer_user_id', $u->id)
+                      ->orWhere('created_by_id', $u->id)
+                      ->orWhereHas('participantRows', fn ($p) => $p->where('user_id', $u->id));
+                })
+                ->with('organizer:id,name')
+                ->orderBy('starts_at')
+                ->get()
+                ->each(function (\App\Models\Meeting $m) use (&$eventos) {
+                    $tz = $m->timezone ?: 'America/Sao_Paulo';
+                    $s  = $m->starts_at?->copy()->timezone($tz);
+                    $e  = $m->ends_at?->copy()->timezone($tz);
+                    if (!$s) return;
+                    $eventos->push([
+                        'tipo'        => 'meeting',
+                        'data'        => $s->toDateString(),
+                        'titulo'      => $m->title,
+                        'hora'        => $s->format('H:i'),
+                        'hora_fim'    => $e?->format('H:i'),
+                        'local'       => '',
+                        'link'        => (string) ($m->join_url ?? ''),
+                        'organizador' => $m->organizer?->name ?? '',
+                        'convidados'  => [],
+                    ]);
+                });
         } catch (\Throwable) { /* nunca trava o calendário */ }
 
         $ordered = $eventos

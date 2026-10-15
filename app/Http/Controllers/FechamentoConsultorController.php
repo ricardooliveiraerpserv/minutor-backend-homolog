@@ -94,7 +94,7 @@ class FechamentoConsultorController extends Controller
      * Linhas de apontamento do consultor no mês — mesma forma do endpoint apontamentos().
      * Usada tanto pela API quanto pela geração de PDF/XLSX no envio de e-mail.
      */
-    private function buildApontamentosRows(string $userId, string $from, string $to, ?User $user = null): array
+    private function buildApontamentosRows(string $userId, string $from, string $to, ?User $user = null, ?array $onlyStatuses = null): array
     {
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
@@ -116,7 +116,9 @@ class FechamentoConsultorController extends Controller
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->where('timesheets.user_id', $userId)
             ->whereBetween('timesheets.date', [$from, $to])
-            ->whereNotIn('timesheets.status', $excludeStatuses)
+            ->when($onlyStatuses !== null,
+                fn ($q) => $q->whereIn('timesheets.status', $onlyStatuses),
+                fn ($q) => $q->whereNotIn('timesheets.status', $excludeStatuses))
             ->where('timesheets.consultant_released', true) // atraso não liberado fica fora do pagamento
             ->where('timesheets.is_billable_only', false)
             ->where('timesheets.is_internal_action', false)
@@ -174,7 +176,7 @@ class FechamentoConsultorController extends Controller
         $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
 
         $minutesList = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
+            ->where('status', Timesheet::STATUS_APPROVED)
             ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
@@ -184,7 +186,7 @@ class FechamentoConsultorController extends Controller
         $totalMinutes = (int) $minutesList->sum();
 
         $extraTimesheets = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
+            ->where('status', Timesheet::STATUS_APPROVED)
             ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
@@ -232,7 +234,8 @@ class FechamentoConsultorController extends Controller
         // Vínculo VIGENTE na competência (via log de vigência), não o atual.
         switch ($hist['consultant_type'] ?? $user->consultant_type) {
             case 'horista':
-                $guaranteedHours    = (float) ($user->guaranteed_hours ?? 0);
+                // Piso de horas garantidas VIGENTE na competência (null = sem piso = apagado).
+                $guaranteedHours    = (float) (\App\Models\UserGuaranteedHoursLog::effectiveValueAt($user->id, $user, $from) ?? 0);
                 $guaranteedProrated = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
                 $horasMinimas       = $guaranteedProrated > 0 ? max($horasTrabalhadas, $guaranteedProrated) : $horasTrabalhadas;
                 return [
@@ -711,6 +714,35 @@ class FechamentoConsultorController extends Controller
     // Envia o fechamento do consultor por e-mail, com detalhamento em anexos (PDF + XLSX).
     // De = conta autenticada (mail.from) com o NOME do usuário logado (sem Send As).
     // Reply-To = financeiro; CC = financeiro; To = consultor. O corpo é minimalista.
+    /**
+     * TRAVA: o fechamento do consultor só pode ser enviado com 100% das horas APROVADAS.
+     * Pendência = pendente + ajuste solicitado (rejeitadas/recusadas NÃO contam). Só modo
+     * com horas (serviços/ambos); modo despesa não bloqueia. Retorna o 422 ou null se ok.
+     */
+    private function pendingHoursBlock(User $consultant, string $yearMonth, string $mode): ?JsonResponse
+    {
+        if ($mode === 'despesa') {
+            return null;
+        }
+        [$from, $to] = $this->period($yearMonth);
+        $pendentes = Timesheet::where('user_id', $consultant->id)
+            ->whereBetween('date', [$from, $to])
+            ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->count();
+        if ($pendentes > 0) {
+            return response()->json([
+                'success' => false,
+                'code'    => 'HORAS_PENDENTES',
+                'message' => "Não é possível enviar o fechamento: há {$pendentes} apontamento(s) pendente(s) de aprovação. Aprove 100% das horas antes de enviar (rejeitadas não contam).",
+            ], 422);
+        }
+        return null;
+    }
+
     public function enviarEmail(Request $request, string $userId, string $yearMonth): JsonResponse
     {
         $sender = $request->user();
@@ -736,6 +768,11 @@ class FechamentoConsultorController extends Controller
         }
         if (!$consultant->email) {
             return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
+        }
+
+        // TRAVA: 100% das horas aprovadas antes de enviar.
+        if ($block = $this->pendingHoursBlock($consultant, $yearMonth, $mode)) {
+            return $block;
         }
 
         $periodo      = $this->periodoExtenso($yearMonth);
@@ -1099,6 +1136,13 @@ class FechamentoConsultorController extends Controller
             return response()->json(['success' => false, 'message' => 'Consultor sem e-mail cadastrado.'], 422);
         }
 
+        // TRAVA: reanexar o fechamento exige 100% das horas aprovadas.
+        if ($attachFechamento) {
+            if ($block = $this->pendingHoursBlock($consultant, $yearMonth, 'ambos')) {
+                return $block;
+            }
+        }
+
         // Raiz canônica da thread (1ª linha com message_id). É nela que a continuação
         // se pendura via In-Reply-To/References, garantindo UMA conversa no Outlook/Gmail.
         $root = $this->threadRoot($userId, $yearMonth);
@@ -1324,6 +1368,13 @@ class FechamentoConsultorController extends Controller
                 'total_servico'  => $totalServico,
                 'total_despesas' => $totalDespesas,
                 'total_base'     => round($totalServico + $totalDespesas, 2),
+                // Horas APROVADAS (base do valor) + PENDENTES de aprovação (informativo).
+                'horas_trabalhadas' => round((float) ($row['horas_trabalhadas'] ?? 0), 2),
+                'horas_pendentes'   => round((float) ($row['horas_pendentes'] ?? 0), 2),
+                'valor_pendente'    => round((float) ($row['valor_pendente'] ?? 0), 2),
+                'horas_ajuste'      => round((float) ($row['horas_ajuste'] ?? 0), 2),
+                'valor_ajuste'      => round((float) ($row['valor_ajuste'] ?? 0), 2),
+                'all_approved'      => (bool) ($row['all_approved'] ?? true),
                 'desconto'       => $desconto,
                 'desconto_desc'  => $row['desconto_desc'] ?? null,
                 'adiantamento'   => $adiantamento,
@@ -1442,10 +1493,17 @@ class FechamentoConsultorController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'email', 'type', 'consultant_type', 'contract_type', 'partner_id', 'hourly_rate', 'rate_type', 'daily_hours', 'bank_hours_start_date', 'guaranteed_hours', 'is_bizify', 'home_company_id']);
 
-        $excludeStatuses = [Timesheet::STATUS_ADJUSTMENT_REQUESTED, Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED, Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE];
+        // Janela de pagamento: exclui quem está fora da janela nesta competência (inativado até mês < comp.).
+        $nonPayable = \App\Models\PayrollBillingWindow::nonPayableIds('user', $users->pluck('id')->all(), $yearMonth);
+        if ($nonPayable) {
+            $users = $users->reject(fn ($u) => in_array((int) $u->id, $nonPayable, true))->values();
+        }
 
+        // PAGAMENTO = SÓ HORAS APROVADAS. Pendentes (pending/adjustment_requested) NÃO entram
+        // no valor a receber — ficam separadas (ver $pendingHoursByUser) e só pagam após aprovar.
+        // Rejeitadas/conflito/interno/late continuam de fora. (Não afeta fechamento do CLIENTE.)
         $hoursByUser = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
+            ->where('status', Timesheet::STATUS_APPROVED)
             ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
@@ -1455,9 +1513,45 @@ class FechamentoConsultorController extends Controller
             ->groupBy('user_id')
             ->pluck('total_hours', 'user_id');
 
-        // Per-timesheet extras (consultant_extra_pct) — only where set
+        // Horas PENDENTES de aprovação (status pendente) — informativo, não pagas.
+        $pendingHoursByUser = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_PENDING)
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereIn('user_id', $users->pluck('id'))
+            ->selectRaw('user_id, SUM(ROUND(effort_minutes / 60.0, 2)) as total_hours')
+            ->groupBy('user_id')
+            ->pluck('total_hours', 'user_id');
+
+        // Horas em AJUSTE SOLICITADO — o consultor precisa corrigir e reenviar.
+        $adjustHoursByUser = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_ADJUSTMENT_REQUESTED)
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereIn('user_id', $users->pluck('id'))
+            ->selectRaw('user_id, SUM(ROUND(effort_minutes / 60.0, 2)) as total_hours')
+            ->groupBy('user_id')
+            ->pluck('total_hours', 'user_id');
+
+        // Contagem de apontamentos pendentes (p/ flag all_approved e trava de envio).
+        $pendingCountByUser = Timesheet::whereBetween('date', [$from, $to])
+            ->whereIn('status', [Timesheet::STATUS_PENDING, Timesheet::STATUS_ADJUSTMENT_REQUESTED])
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereIn('user_id', $users->pluck('id'))
+            ->selectRaw('user_id, COUNT(*) as c')
+            ->groupBy('user_id')
+            ->pluck('c', 'user_id');
+
+        // Per-timesheet extras (consultant_extra_pct) — só aprovados
         $extraTimesheetsByUser = Timesheet::whereBetween('date', [$from, $to])
-            ->whereNotIn('status', $excludeStatuses)
+            ->where('status', Timesheet::STATUS_APPROVED)
             ->where('consultant_released', true) // atraso não liberado p/ consultor fica fora do pagamento
             ->whereNull('deleted_at')
             ->where('is_billable_only', false)
@@ -1515,6 +1609,12 @@ class FechamentoConsultorController extends Controller
             // base exibida no relatório linha a linha), pra "Total × Taxa" fechar. Antes
             // era round(Σ minutos/60), que divergia da soma das linhas por até 0,01h.
             $horasTrabalhadas = round((float) ($hoursByUser[$user->id] ?? 0), 2);
+            // Pendentes de aprovação + ajuste solicitado (informativo — não entram no valor).
+            $horasPendentes   = round((float) ($pendingHoursByUser[$user->id] ?? 0), 2);
+            $valorPendente    = round($horasPendentes * $effectiveRate, 2);
+            $horasAjuste      = round((float) ($adjustHoursByUser[$user->id] ?? 0), 2);
+            $valorAjuste      = round($horasAjuste * $effectiveRate, 2);
+            $pendingCount     = (int) ($pendingCountByUser[$user->id] ?? 0); // pendente + ajuste (p/ trava)
 
             $extrasConsultant = round(
                 ($extraTimesheetsByUser->get($user->id, collect()))
@@ -1543,6 +1643,12 @@ class FechamentoConsultorController extends Controller
                 'is_bizify'         => (bool) $user->is_bizify,
                 'home_company_id'   => $user->home_company_id,
                 'horas_trabalhadas' => $horasTrabalhadas,
+                'horas_pendentes'   => $horasPendentes,
+                'valor_pendente'    => $valorPendente,
+                'horas_ajuste'      => $horasAjuste,
+                'valor_ajuste'      => $valorAjuste,
+                'pendencias_count'  => $pendingCount, // nº de apontamentos pendentes + ajuste
+                'all_approved'      => $pendingCount === 0,
                 'valor_hora'        => $hourlyRate,
                 'rate_type'         => $rateType,
                 'effective_rate'    => $effectiveRate,
@@ -1588,7 +1694,8 @@ class FechamentoConsultorController extends Controller
             // trocar o tipo de contrato só reflete a partir do mês escolhido, sem mexer no passado.
             switch ($hist['consultant_type'] ?? $user->consultant_type) {
                 case 'horista':
-                    $guaranteedHours         = (float) ($user->guaranteed_hours ?? 0);
+                    // Piso de horas garantidas VIGENTE na competência (null = sem piso = apagado).
+                    $guaranteedHours         = (float) (\App\Models\UserGuaranteedHoursLog::effectiveValueAt($user->id, $user, $from) ?? 0);
                     $guaranteedProrated      = $guaranteedHours > 0 ? round($guaranteedHours * $ratio, 2) : 0;
                     $horasMinimas            = $guaranteedProrated > 0
                         ? max($horasTrabalhadas, $guaranteedProrated)
@@ -1715,12 +1822,18 @@ class FechamentoConsultorController extends Controller
         // (home_company_id) igual à ativa. Diretor tem bloco próprio (FechamentoDiretoria), não aqui.
         if (config('multiempresa.scoping_enabled')) {
             $activeCompanyId = (int) app(\App\Services\CompanyContext::class)->id();
+            // Movimento = horas aprovadas OU ajustes financeiros OU PENDÊNCIAS (horas pendentes/
+            // ajuste, ou nº de apontamentos pendentes). Regra do sistema: consultor com apontamento
+            // pendente DEVE aparecer no fechamento (com a legenda de pendência), não some.
             $hasMovement = fn (array $c) =>
                 (float) ($c['horas_trabalhadas'] ?? 0) > 0
                 || (float) ($c['total_despesas'] ?? 0) != 0
                 || (float) ($c['adiantamento'] ?? 0) != 0
                 || (float) ($c['adicional'] ?? 0) != 0
-                || (float) ($c['emprestimo_aporte'] ?? 0) != 0;
+                || (float) ($c['emprestimo_aporte'] ?? 0) != 0
+                || (float) ($c['horas_pendentes'] ?? 0) > 0
+                || (float) ($c['horas_ajuste'] ?? 0) > 0
+                || (int) ($c['pendencias_count'] ?? 0) > 0;
             $horistas   = array_values(array_filter($horistas, $hasMovement));
             $bancoHoras = array_values(array_filter($bancoHoras, $hasMovement));
             $fixos      = array_values(array_filter($fixos, fn (array $c) => (int) ($c['home_company_id'] ?? 0) === $activeCompanyId));
@@ -1805,6 +1918,23 @@ class FechamentoConsultorController extends Controller
     {
         [$from, $to] = $this->period($yearMonth);
         $apont = $this->buildApontamentosRows($userId, $from, $to);
+
+        return response()->json(['data' => $apont['rows']]);
+    }
+
+    /**
+     * EXATAMENTE os apontamentos contabilizados como pendência de aprovação/ajuste
+     * (mesmo filtro de pendencias_count/pendingHoursBlock): status pendente OU ajuste
+     * solicitado, liberados pelo consultor, não faturáveis/internos. Alimenta o drill-down
+     * clicável do fechamento do consultor.
+     */
+    public function apontamentosPendentes(string $userId, string $yearMonth): JsonResponse
+    {
+        [$from, $to] = $this->period($yearMonth);
+        $apont = $this->buildApontamentosRows($userId, $from, $to, null, [
+            Timesheet::STATUS_PENDING,
+            Timesheet::STATUS_ADJUSTMENT_REQUESTED,
+        ]);
 
         return response()->json(['data' => $apont['rows']]);
     }

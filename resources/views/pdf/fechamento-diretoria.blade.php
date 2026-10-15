@@ -44,9 +44,9 @@
       <tr>
         <td style="vertical-align:middle;">
           @if(!empty($logoDataUri))
-            <span class="logo"><img src="{{ $logoDataUri }}" alt="ERPSERV Consultoria"></span>
+            <span class="logo"><img src="{{ \App\Support\Brand::isConecta() ? 'data:image/png;base64,'.base64_encode(file_get_contents(\App\Support\Brand::lightLogoPath())) : $logoDataUri }}" alt="{{ \App\Support\Brand::name() }}"></span>
           @else
-            <span class="brand">ERPSERV Consultoria</span><div class="brand-sub">Minutor — Controle de horas e contratos</div>
+            <span class="brand">{{ \App\Support\Brand::name() }}</span><div class="brand-sub">{{ \App\Support\Brand::isConecta() ? 'Conecta ERP — ERP para a era digital.' : 'Minutor — Controle de horas e contratos' }}</div>
           @endif
         </td>
         <td class="meta" style="vertical-align:middle;">

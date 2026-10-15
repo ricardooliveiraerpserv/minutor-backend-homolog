@@ -17,6 +17,23 @@ use Illuminate\Http\Request;
 class WeeklyClosingController extends Controller
 {
     private const TZ = 'America/Sao_Paulo';
+    private const CACHE_GEN = 'listgen:weekly_closings';
+
+    /** Chave de cache (global por empresa; o payload do index é o mesmo p/ todos os perfis). */
+    private function cacheKey(): string
+    {
+        $gen = (int) \Illuminate\Support\Facades\Cache::get(self::CACHE_GEN, 0);
+        $companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
+        return "weeklyclosings:g{$gen}:c{$companyId}";
+    }
+
+    /** Invalida o cache do painel após reabrir/encerrar (reflete a ação do admin na hora). */
+    private function bumpCache(): void
+    {
+        try {
+            \Illuminate\Support\Facades\Cache::put(self::CACHE_GEN, ((int) \Illuminate\Support\Facades\Cache::get(self::CACHE_GEN, 0)) + 1, 86400);
+        } catch (\Throwable $e) {}
+    }
 
     private function gate(Request $request): void
     {
@@ -28,6 +45,17 @@ class WeeklyClosingController extends Controller
     public function index(Request $request): JsonResponse
     {
         $this->gate($request);
+
+        // Cache compartilhado (payload global, igual p/ todos). No fechamento vários admins
+        // abrem o painel ao mesmo tempo; sem cache cada um paga o recálculo pesado e os
+        // workers saturam → 504 ("não carrega nada"). TTL 30s + invalidação por geração nas
+        // mutações (reabrir/encerrar) p/ refletir a ação do admin na hora.
+        $cacheKey = $this->cacheKey();
+        $cached = \Illuminate\Support\Facades\Cache::get($cacheKey);
+        if (is_array($cached)) {
+            return response()->json($cached);
+        }
+
         $svc = app(ClosingService::class);
         $now = Carbon::now(self::TZ);
 
@@ -151,22 +179,25 @@ class WeeklyClosingController extends Controller
         // um consultor de forma invisível (ex.: mês fechado só p/ ele). Descontar os que já
         // têm reabertura ativa (não bloqueiam mais). Janela = os meses exibidos no painel.
         $minYm = $monthKeys->min() ?: $now->copy()->startOfMonth()->subMonths(3)->format('Y-m');
+        $wkStatusMemo = [];
+        $moStatusMemo = [];
         $rows = \App\Models\CompetenceClosure::query()
             ->where(fn ($q) => $q->whereNotNull('project_id')->orWhereNotNull('user_id'))
             ->where('period_key', '>=', $minYm)
             ->with('project:id,name')
             ->orderBy('period_key')->limit(500)->get()
-            ->filter(function ($c) use ($svc) {
+            ->filter(function ($c) use ($svc, &$wkStatusMemo, &$moStatusMemo) {
                 // Só é RELEVANTE se o período ainda está GLOBALMENTE aberto (mês atual /
                 // semana aberta): se o mês/semana já fechou pra todos (auto-encerrou por
                 // prazo), o bloqueio individual não trava ninguém a mais → é ruído, oculta.
                 // E precisa AINDA bloquear o escopo (reabertura do próprio escopo libera).
+                // Status global memoizado por período (há N closures p/ poucos períodos → evita N+1).
                 if ($c->period_kind === 'week') {
-                    $global = $svc->weekStatusGlobal($svc->weekStart($c->period_key))['status'];
+                    $global = $wkStatusMemo[$c->period_key] ??= $svc->weekStatusGlobal($svc->weekStart($c->period_key))['status'];
                     return $global !== 'fechada'
                         && $svc->isWeekClosed($c->period_key, (int) ($c->project_id ?: 0), $c->user_id);
                 }
-                $global = $svc->monthStatusGlobal($c->period_key)['status'];
+                $global = $moStatusMemo[$c->period_key] ??= $svc->monthStatusGlobal($c->period_key)['status'];
                 return $global !== 'fechada'
                     && $svc->isMonthClosed($c->period_key . '-15', (int) ($c->project_id ?: 0), $c->user_id);
             });
@@ -185,11 +216,13 @@ class WeeklyClosingController extends Controller
             'closed_at'      => optional($c->closed_at ?: $c->created_at)->toIso8601String(),
         ])->values();
 
-        return response()->json([
+        $payload = [
             'months'          => $months,
-            'active_reopens'  => $active->values(),
-            'scoped_closures' => $scopedClosures,
-        ]);
+            'active_reopens'  => $active->values()->all(),
+            'scoped_closures' => $scopedClosures->values()->all(),
+        ];
+        try { \Illuminate\Support\Facades\Cache::put($cacheKey, $payload, 30); } catch (\Throwable $e) {}
+        return response()->json($payload);
     }
 
     private function validateScope(Request $request): array
@@ -231,6 +264,7 @@ class WeeklyClosingController extends Controller
                 $svc->reopenMonth($v['period_key'], $pid, $v['user_id'] ?? null, $request->user());
             }
         }
+        $this->bumpCache();
         return response()->json(['message' => 'Período reaberto até as 23:59 de hoje.'], 201);
     }
 
@@ -248,6 +282,7 @@ class WeeklyClosingController extends Controller
                 $svc->closeMonth($v['period_key'], $pid, $v['user_id'] ?? null, $request->user());
             }
         }
+        $this->bumpCache();
         return response()->json(['message' => 'Período encerrado.']);
     }
 

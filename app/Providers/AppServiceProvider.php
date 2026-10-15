@@ -38,20 +38,12 @@ class AppServiceProvider extends ServiceProvider
         // compartilhada entre o middleware e o global scope BelongsToCompany.
         $this->app->scoped(\App\Services\CompanyContext::class);
 
-        // Central Fontes / Solicitar Código-Fonte (portado 2026-09-24) — bindings do subsistema.
-        $this->app->bind(
-            \App\Services\SourceDocQualityService::class,
-            fn () => \App\Services\SourceDocQualityService::fromConfig(),
-        );
+        // Repositórios de código do cliente (GitHub App read-only) — contrato → concreto.
+        // Usado por GitHubSourceService (/customers/{id}/source-repos).
         $this->app->bind(
             \App\SourceCode\Contracts\SourceProvider::class,
             \App\SourceCode\Providers\GithubAppProvider::class,
         );
-        $this->app->bind(\App\SourceCode\Analyzer\SourceDocAiProvider::class, function () {
-            return match ((string) config('services.source_doc_ai.provider', 'anthropic')) {
-                default => new \App\SourceCode\Analyzer\AnthropicProvider(),
-            };
-        });
     }
 
     /**
@@ -60,20 +52,6 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Carbon::setLocale('pt_BR');
-
-        // Fila de e-mail do Help Desk: throttle p/ não estourar o rate limit do Azure/Graph.
-        // Ajustável via HELPDESK_EMAIL_PER_MINUTE (default 20/min, abaixo do teto ~30/min por caixa).
-        RateLimiter::for('helpdesk-email', fn () => Limit::perMinute((int) env('HELPDESK_EMAIL_PER_MINUTE', 20)));
-
-        // 🚫 KILL-SWITCH DE E-MAIL (bases de teste): se mail.kill_switch = true, cancela
-        // QUALQUER envio via Laravel Mail (log/smtp/nfe/user_smtp). MessageSending é evento
-        // "halting": retornar false aborta o envio. Registrado ANTES do listener de debug.
-        if (config('mail.kill_switch')) {
-            Event::listen(MessageSending::class, function () {
-                \Log::warning('[MAIL_KILL_SWITCH] Envio de e-mail BLOQUEADO (base de testes).');
-                return false;
-            });
-        }
 
         // Registrar listeners de email para debug
         Event::listen(MessageSending::class, EmailSentListener::class);
@@ -90,7 +68,6 @@ class AppServiceProvider extends ServiceProvider
         Project::observe(ProjectObserver::class);
         Contract::observe(ContractObserver::class);
         HourContribution::observe(HourContributionObserver::class);
-        \App\Models\FollowUp::observe(\App\Observers\FollowUpObserver::class);
 
         // Registrar Policies
         Gate::policy(Timesheet::class, TimesheetPolicy::class);
@@ -118,6 +95,19 @@ class AppServiceProvider extends ServiceProvider
             return [
                 Limit::perHour(3)->by($email !== '' ? 'fp:' . $email : 'fp-ip:' . $request->ip()),
                 Limit::perHour(20)->by('fp-ip:' . $request->ip()),
+            ];
+        });
+
+        // Help Desk — throttle de envio de e-mail por caixa (evita bater no teto do provedor).
+        // Ajustável via HELPDESK_EMAIL_PER_MINUTE (default 20/min, abaixo do teto ~30/min por caixa).
+        RateLimiter::for('helpdesk-email', fn () => Limit::perMinute((int) env('HELPDESK_EMAIL_PER_MINUTE', 20)));
+
+        // Cofre — destravamento: anti-brute-force da master password, por usuário
+        // (ou IP se não autenticado). A rota /vault/unlock usa throttle:vault-unlock.
+        RateLimiter::for('vault-unlock', function (Request $request) {
+            $u = $request->user();
+            return [
+                Limit::perMinute(10)->by($u ? 'vault:' . $u->id : 'vault-ip:' . $request->ip()),
             ];
         });
     }

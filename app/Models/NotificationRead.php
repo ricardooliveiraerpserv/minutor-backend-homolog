@@ -11,7 +11,7 @@ class NotificationRead extends Model
     protected $table = 'notification_reads';
 
     protected $fillable = [
-        'notification_id', 'user_id', 'viewed_at', 'ack_at', 'acked_version', 'response_action', 'ack_ip', 'ack_user_agent',
+        'notification_id', 'user_id', 'viewed_at', 'ack_at', 'acked_version', 'response_action', 'response_source', 'ack_ip', 'ack_user_agent',
     ];
 
     protected $casts = [

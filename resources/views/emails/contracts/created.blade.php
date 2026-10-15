@@ -60,7 +60,7 @@
         Olá, {{ $recipientName }}. Você está recebendo este e-mail porque integra a área administrativa
         do Minutor — todo novo contrato cadastrado é comunicado à equipe responsável pela triagem administrativa.
         <br><br>
-        <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
+        <span style="color:#71717A;">&copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} · Todos os direitos reservados</span>
       </td>
     </tr>
   </table>

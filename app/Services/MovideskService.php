@@ -198,7 +198,7 @@ class MovideskService
      *
      * @param string[] $teams Nomes de equipe (ownerTeam) a EXCLUIR. Vazio => não filtra por equipe.
      */
-    public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = []): array
+    public function fetchHelpDeskTicketsSince(Carbon $since, array $teams = [], string $mode = 'exclude'): array
     {
         $tickets = [];
         $top     = 50;
@@ -232,8 +232,12 @@ class MovideskService
                 if (isset($page['id'])) $page = [$page];
 
                 foreach ($page as $t) {
-                    if ($blocked && in_array(mb_strtolower(trim((string) ($t['ownerTeam'] ?? ''))), $blocked, true)) {
-                        continue; // ainda em poder da equipe da PROMAX → não espelhar/interagir
+                    $team   = mb_strtolower(trim((string) ($t['ownerTeam'] ?? '')));
+                    $inList = in_array($team, $blocked, true);
+                    if ($mode === 'include') {
+                        if (!$inList) continue;              // INCLUDE: mantém SÓ as equipes da lista (ex.: só Promax)
+                    } elseif ($blocked && $inList) {
+                        continue;                            // EXCLUDE (padrão): tira as equipes da lista (Promax)
                     }
                     $tickets[] = $t;
                 }
@@ -1610,7 +1614,9 @@ class MovideskService
                     . '&$top=' . $top
                     . '&$skip=' . $skip;
 
-                $response = Http::timeout(60)->get($url);
+                // timeout curto + retry: a API do Movidesk é flaky (cURL error 28 intermitente);
+                // o retry auto-cura na 2ª tentativa e evita pendurar 60s/página → sweep não arrasta horas.
+                $response = Http::timeout(12)->retry(2, 500)->get($url);
 
                 if (!$response->successful()) {
                     Log::warning('[MOVIDESK PORTAL] Erro na listagem', [
@@ -1628,6 +1634,8 @@ class MovideskService
                 $skip   += $top;
 
                 if (count($page) < $top) break;
+                // Trava de segurança: nunca varrer indefinidamente (evita sweep de horas que empilha).
+                if ($skip >= 20000) { Log::warning('[MOVIDESK PORTAL] cap de páginas atingido', ['skip' => $skip]); break; }
 
                 // Rate limit: 10 req/min → sleep between pages
                 sleep(7);
@@ -1741,7 +1749,8 @@ class MovideskService
                     . '&$top='    . $top
                     . '&$skip='   . $skip;
 
-                $response = Http::timeout(30)->get($url);
+                // timeout curto + retry (API Movidesk flaky) — evita pendurar e empilhar o sync.
+                $response = Http::timeout(12)->retry(2, 500)->get($url);
 
                 if (!$response->successful()) {
                     Log::warning('[MOVIDESK] Erro ao buscar persons', [
@@ -1775,6 +1784,7 @@ class MovideskService
 
                 $skip += $top;
                 if (count($page) < $top) break;
+                if ($skip >= 50000) { Log::warning('[MOVIDESK] cap de páginas atingido (persons)', ['skip' => $skip]); break; }
                 sleep(7);
             } catch (\Throwable $e) {
                 Log::error('[MOVIDESK] Exceção ao buscar orgs', ['error' => $e->getMessage()]);

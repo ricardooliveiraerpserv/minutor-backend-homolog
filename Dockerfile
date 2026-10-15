@@ -8,6 +8,9 @@ RUN apk add --no-cache \
     git \
     curl \
     libpng-dev \
+    libjpeg-turbo-dev \
+    libwebp-dev \
+    freetype-dev \
     oniguruma-dev \
     libxml2-dev \
     libzip-dev \
@@ -16,8 +19,9 @@ RUN apk add --no-cache \
     postgresql-dev \
     supervisor
 
-# Extensões PHP
-RUN docker-php-ext-install \
+# Extensões PHP — GD com JPEG/WebP/FreeType (necessário p/ otimizar imagens embutidas em e-mails)
+RUN docker-php-ext-configure gd --with-jpeg --with-webp --with-freetype \
+    && docker-php-ext-install \
     pdo pdo_pgsql pdo_mysql \
     mbstring exif pcntl bcmath gd zip opcache
 
@@ -78,9 +82,9 @@ RUN printf 'upload_max_filesize=52M\npost_max_size=64M\nmemory_limit=256M\n' > /
 # PHP-FPM pool: o default da imagem é max_children=5 — muito apertado.
 # Backend recebe tráfego de usuários + webhooks Movidesk (que podem segurar
 # o worker por até ~5s no fetchTicket). Com 5 workers, qualquer pico ou
-# pequena rajada de webhooks empilha requests. Subindo pra 25.
+# pequena rajada de webhooks empilha requests. Subindo pra 24 (upgrade 4 vCPUs/8GB 2026-10-02; antes 12 nos 2 vCPUs).
 RUN sed -i \
-      -e 's|^pm.max_children = 5$|pm.max_children = 25|' \
+      -e 's|^pm.max_children = 5$|pm.max_children = 24|' \
       -e 's|^pm.start_servers = 2$|pm.start_servers = 5|' \
       -e 's|^pm.min_spare_servers = 1$|pm.min_spare_servers = 3|' \
       -e 's|^pm.max_spare_servers = 3$|pm.max_spare_servers = 10|' \

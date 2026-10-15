@@ -80,6 +80,7 @@ class Timesheet extends Model
         'late_approved_at',
         'consultant_released_at',
         'consultant_released_by',
+        'helpdesk_ticket_id',
     ];
 
     /**

@@ -34,13 +34,18 @@ class UserHourlyRateLog extends Model
      * vigência caem no comportamento antigo (mudança vale a partir do MÊS SEGUINTE à troca).
      * Garante que alterar o valor NÃO mude fechamentos de meses anteriores ("legado intacto").
      */
-    public static function effectiveValuesAt(int $userId, \App\Models\User $user, string $firstDayOfMonth): array
+    /**
+     * @param \Illuminate\Support\Collection|null $preloadedLogs Logs JÁ carregados deste usuário
+     *   (para evitar N+1 quando chamado em lote — ver effectiveValuesForUsers). Quando null (default),
+     *   consulta como antes. A lógica de vigência é a MESMA nos dois casos.
+     */
+    public static function effectiveValuesAt(int $userId, \App\Models\User $user, string $firstDayOfMonth, ?\Illuminate\Support\Collection $preloadedLogs = null): array
     {
         $comp = \Carbon\Carbon::parse($firstDayOfMonth)->startOfMonth();
 
-        $logs = static::where('user_id', $userId)
+        $logs = ($preloadedLogs ?? static::where('user_id', $userId)
             ->orderBy('created_at')
-            ->get()
+            ->get())
             ->map(fn ($l) => [
                 'log' => $l,
                 'eff' => $l->effective_from
@@ -80,6 +85,35 @@ class UserHourlyRateLog extends Model
             'rate_type'       => $user->rate_type,
             'consultant_type' => $user->consultant_type,
         ];
+    }
+
+    /**
+     * Versão em LOTE de effectiveValuesAt: carrega os logs de TODOS os usuários numa query só
+     * e aplica a mesma lógica por usuário (reusa effectiveValuesAt com os logs pré-carregados).
+     * Resultado idêntico ao per-usuário — só elimina o N+1.
+     *
+     * @param \Illuminate\Support\Collection $users Coleção de App\Models\User
+     * @return array<int,array{hourly_rate:mixed,rate_type:mixed,consultant_type:mixed}>
+     */
+    public static function effectiveValuesForUsers(\Illuminate\Support\Collection $users, string $firstDayOfMonth): array
+    {
+        $ids = $users->filter()->pluck('id')->unique()->filter()->values();
+        if ($ids->isEmpty()) {
+            return [];
+        }
+        $byUser = static::whereIn('user_id', $ids)
+            ->orderBy('created_at')
+            ->get()
+            ->groupBy('user_id');
+
+        $out = [];
+        foreach ($users as $u) {
+            if (!$u || isset($out[$u->id])) {
+                continue;
+            }
+            $out[$u->id] = static::effectiveValuesAt($u->id, $u, $firstDayOfMonth, $byUser->get($u->id) ?? collect());
+        }
+        return $out;
     }
 
     /**

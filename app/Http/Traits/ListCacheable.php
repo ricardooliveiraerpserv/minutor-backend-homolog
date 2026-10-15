@@ -55,8 +55,32 @@ trait ListCacheable
         }
     }
 
+    /**
+     * "Geração" do resource — contador simples que incrementa a cada invalidação.
+     * Usado por caches de STRING (ex.: JSON do Gestão de Projetos) que embutem a
+     * geração na chave: ao invalidar, a geração muda → a chave antiga fica órfã
+     * (expira por TTL) e a próxima leitura recomputa. Evita cachear objetos pesados.
+     */
+    protected function listGeneration(string $resource): int
+    {
+        try {
+            return (int) (Cache::get("listgen:{$resource}") ?? 1);
+        } catch (\Throwable) {
+            return 1;
+        }
+    }
+
     protected function invalidateListCache(string $resource): void
     {
+        // Bump da geração (invalida caches de string que embutem listgen na chave)
+        try {
+            if (Cache::get("listgen:{$resource}") === null) {
+                Cache::forever("listgen:{$resource}", 2);
+            } else {
+                Cache::increment("listgen:{$resource}");
+            }
+        } catch (\Throwable) {}
+
         // Invalida Redis tags
         try {
             if ($this->redisAvailable()) {

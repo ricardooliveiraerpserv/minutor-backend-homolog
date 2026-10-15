@@ -18,7 +18,7 @@ class AppNotification extends Model
     protected $fillable = [
         'title', 'message', 'type', 'priority', 'target_roles', 'target_users',
         'target_contract_types', 'target_bonds', 'excluded_user_ids', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
-        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'version', 'created_by', 'expires_at',
+        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'guest_other_user_ids', 'version', 'created_by', 'expires_at',
         'recurrence', 'recurrence_value', 'recurrence_weekdays', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
     ];
 
@@ -30,6 +30,7 @@ class AppNotification extends Model
         'excluded_user_ids'     => 'array',
         'target_customer_ids'   => 'array',
         'actions'               => 'array',
+        'guest_other_user_ids'  => 'array',
         'requires_ack'          => 'boolean',
         'allow_guests'          => 'boolean',
         'send_email'            => 'boolean',
@@ -43,7 +44,7 @@ class AppNotification extends Model
         'resent_at'             => 'datetime',
     ];
 
-    public const TYPES = ['info', 'action', 'require_ack', 'poll', 'aviso', 'formal'];
+    public const TYPES = ['info', 'action', 'require_ack', 'poll', 'survey', 'aviso', 'formal'];
     public const RECURRENCES = ['none', 'every_hours', 'every_days', 'weekly', 'day_of_month', 'business_day'];
     public const PRIORITIES = ['low', 'medium', 'high', 'critical'];
     public const PRIORITY_RANK = ['critical' => 4, 'high' => 3, 'medium' => 2, 'low' => 1];
@@ -52,4 +53,5 @@ class AppNotification extends Model
     public function guests(): HasMany { return $this->hasMany(NotificationGuest::class, 'notification_id'); }
     public function createdBy(): BelongsTo { return $this->belongsTo(User::class, 'created_by'); }
     public function poll(): HasOne { return $this->hasOne(NotificationPoll::class, 'notification_id'); }
+    public function survey(): HasOne { return $this->hasOne(NotificationSurvey::class, 'notification_id'); }
 }

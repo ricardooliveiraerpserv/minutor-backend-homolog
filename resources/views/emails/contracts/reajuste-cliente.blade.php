@@ -19,7 +19,7 @@
         <!-- Cabeçalho (faixa escura com o logo branco — robusto em light e dark mode) -->
         <tr>
           <td align="left" bgcolor="#0F172A" style="padding:28px 40px 24px;background-color:#0F172A;">
-            <img src="data:image/png;base64,{{ base64_encode(file_get_contents(public_path('logo-erpserv-white.png'))) }}"
+            <img src="data:image/png;base64,{{ base64_encode(file_get_contents(\App\Support\Brand::darkLogoPath())) }}"
               alt="ERPSERV" width="150" height="auto" style="display:block;width:150px;height:auto;" />
             <div style="font-size:11px;letter-spacing:.18em;color:#67E8F9;font-weight:700;text-transform:uppercase;margin-top:12px;">Comunicado de reajuste contratual</div>
           </td>

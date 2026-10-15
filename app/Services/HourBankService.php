@@ -101,7 +101,7 @@ class HourBankService
             ->whereMonth('date', $month)
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
-            ->whereIn('status', ['approved', 'pending'])
+            ->where('status', 'approved') // banco soma SÓ aprovadas (pendentes entram após aprovar)
             ->where('consultant_released', true); // atraso não liberado fica fora do banco de horas
 
         if ($startDate) {
@@ -113,6 +113,30 @@ class HourBankService
 
         $minutes = $query->sum('effort_minutes');
         return round($minutes / 60, 2);
+    }
+
+    /**
+     * Horas PENDENTES de aprovação no mês (pendente + ajuste solicitado) — informativo,
+     * NÃO entram no banco; entram após o coordenador aprovar.
+     */
+    public function getPendingHours(int $userId, int $year, int $month, ?string $startDate = null): float
+    {
+        $query = Timesheet::where('user_id', $userId)
+            ->whereYear('date', $year)
+            ->whereMonth('date', $month)
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereIn('status', ['pending', 'adjustment_requested'])
+            ->where('consultant_released', true);
+
+        if ($startDate) {
+            $sd = Carbon::parse($startDate);
+            if ($sd->year === $year && $sd->month === $month) {
+                $query->where('date', '>=', $sd->format('Y-m-d'));
+            }
+        }
+
+        return round($query->sum('effort_minutes') / 60, 2);
     }
 
     /**
@@ -133,7 +157,7 @@ class HourBankService
             ->whereMonth('date', $month)
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
-            ->whereIn('status', ['approved', 'pending'])
+            ->where('status', 'approved') // banco soma SÓ aprovadas (pendentes entram após aprovar)
             ->where('consultant_released', true) // atraso não liberado fica fora do banco de horas
             ->whereNotNull('start_time')
             ->whereNotNull('end_time')
@@ -234,6 +258,7 @@ class HourBankService
         // Horas descartadas por conflito dentro de 09–18 (teto 9h/dia) NÃO entram no banco.
         $conflictHours   = $this->getConflictHours($userId, $year, $month, $startDate);
         $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate) - $conflictHours + $additionalWorkedHours, 2);
+        $pendingHours    = $this->getPendingHours($userId, $year, $month, $startDate); // a aprovar (fora do banco)
         $previousBalance = $this->getPreviousBalance($userId, $year, $month, $startDate);
 
         $monthBalance = round($workedHours - $expectedHours, 2);
@@ -260,6 +285,7 @@ class HourBankService
             'expected_hours_full' => $expectedFull,
             'is_current_month'    => $isCurrent,
             'worked_hours'        => $workedHours,
+            'pending_hours'       => $pendingHours, // horas a aprovar (fora do banco até aprovação)
             'conflict_hours'      => round($conflictHours, 2),
             'month_balance'       => $monthBalance,
             'previous_balance'    => round($previousBalance, 2),
@@ -392,6 +418,7 @@ class HourBankService
             $expectedHours = round($workingUsed['working_days'] * $dailyHours, 2);
             $conflictHours = $this->getConflictHours($userId, $year, $month, $startDate);
             $workedHours   = round($this->getWorkedHours($userId, $year, $month, $startDate) - $conflictHours, 2);
+            $pendingHours  = $this->getPendingHours($userId, $year, $month, $startDate); // a aprovar (fora do banco)
 
             $monthBalance = round($workedHours - $expectedHours, 2);
             $accumulated  = round($prevFinalBalance + $monthBalance, 2);
@@ -415,6 +442,7 @@ class HourBankService
                 'expected_hours_full' => $expectedFull,
                 'is_current_month'    => $isCurrent,
                 'worked_hours'        => $workedHours,
+                'pending_hours'       => $pendingHours,
                 'conflict_hours'      => round($conflictHours, 2),
                 'month_balance'       => $monthBalance,
                 'previous_balance'    => round($prevFinalBalance, 2),

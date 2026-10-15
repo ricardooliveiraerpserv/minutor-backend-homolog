@@ -32,6 +32,7 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
             'Tipo', 'Vínculo', 'Tipo consultor', 'Tipo contrato', 'Coordenador', 'Tipo coordenador',
             'Executivo', 'Diretor', 'Diretor Projetos', 'Bizify', 'Coord. Bizify',
             'CPF', 'Matrícula', 'Status folha',
+            'CNPJ', 'Razão Social', 'Regime tributário',
             'Valor hora', 'Tipo taxa', 'Horas/dia', 'Horas garantidas',
             'Saldo BH inicial', 'Início BH',
             'Parceiro', 'Cliente',
@@ -50,6 +51,14 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
         // Normaliza texto: colapsa espaços/quebras embutidos (dados sujos infam a largura da coluna).
         $c   = fn ($v) => is_string($v) ? trim(preg_replace('/\s+/u', ' ', $v)) : $v;
         // Categoria granular do usuário (Parceiro/Freelance/Interno/Coordenador/Admin/...).
+        $reg = fn ($v) => match ($v) {
+            'mei'              => 'MEI',
+            'simples_nacional' => 'Simples Nacional',
+            'lucro_presumido'  => 'Lucro Presumido',
+            'lucro_real'       => 'Lucro Real',
+            'nao_aplica'       => 'Não se aplica',
+            default            => '',
+        };
         $cat = fn ($u) => match (true) {
             $u->type === 'cliente'        => 'Cliente',
             $u->type === 'parceiro_admin' => 'Parceiro',
@@ -61,7 +70,7 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
             default                       => (string) ($u->type ?? '—'),
         };
 
-        return $this->users->map(function ($u) use ($b, $d, $dt, $c, $cat) {
+        return $this->users->map(function ($u) use ($b, $d, $dt, $c, $cat, $reg) {
             return array_map($c, [
                 $u->id,
                 $u->name,
@@ -84,6 +93,9 @@ class UsersSheet implements FromArray, WithHeadings, WithTitle, WithStyles, Shou
                 $u->cpf,
                 $u->matricula,
                 $u->payroll_status,
+                $u->cnpj,
+                $u->razao_social,
+                $reg($u->tax_regime),
                 $u->hourly_rate,
                 $u->rate_type,
                 $u->daily_hours,

@@ -43,15 +43,24 @@ class MovideskHelpDeskImporter
         return array_values(array_filter(array_map('trim', (array) $raw)));
     }
 
-    /** ownerTeam do chamado está numa equipe bloqueada (Promax)? (case-insensitive) */
-    private function isBlockedTeam(?string $ownerTeam): bool
+    /** Modo do filtro de equipe (SystemSetting 'movidesk_hd_team_filter_mode'):
+     *   - 'exclude' (PADRÃO, hoje): espelha TUDO menos as equipes da lista (exclui Promax = traz o
+     *     legado ERPServ pro Minutor).
+     *   - 'include' (FUTURO): espelha SÓ as equipes da lista (ex.: só Promax) — para quando o Movidesk
+     *     for desligado p/ ERPServ (que passa a abrir nativo no Minutor) e sobrar só a Promax no Movidesk.
+     *  A virada é só mudar este setting — sem redeploy. */
+    private function teamFilterMode(): string
+    {
+        return SystemSetting::get('movidesk_hd_team_filter_mode', 'exclude') === 'include' ? 'include' : 'exclude';
+    }
+
+    /** Deve PULAR (não espelhar/interagir) este chamado pela equipe, respeitando o modo:
+     *  exclude → pula se a equipe ESTÁ na lista; include → pula se NÃO está (mantém só as da lista). */
+    private function shouldSkipTeam(?string $ownerTeam): bool
     {
         $t = mb_strtolower(trim((string) $ownerTeam));
-        if ($t === '') return false;
-        foreach ($this->blockedTeams() as $b) {
-            if (mb_strtolower(trim($b)) === $t) return true;
-        }
-        return false;
+        $inList = $t !== '' && in_array($t, array_map(fn ($b) => mb_strtolower(trim($b)), $this->blockedTeams()), true);
+        return $this->teamFilterMode() === 'include' ? !$inList : $inList;
     }
 
     /**
@@ -114,12 +123,12 @@ class MovideskHelpDeskImporter
             return $stats;
         }
 
-        $teams     = $this->blockedTeams(); // equipes da Promax a EXCLUIR do espelhamento
+        $teams     = $this->blockedTeams(); // lista de equipes (exclude: excluir; include: manter só estas)
         $companyId = $this->companyId();
         $since     = $sinceOverride ?: $this->cursor();
         $stats['since'] = $since->toIso8601String();
 
-        $list = $this->movidesk->fetchHelpDeskTicketsSince($since, $teams);
+        $list = $this->movidesk->fetchHelpDeskTicketsSince($since, $teams, $this->teamFilterMode());
         $maxUpdate = $since;
 
         foreach ($list as $lite) {
@@ -143,9 +152,12 @@ class MovideskHelpDeskImporter
                 if (!$full) { $stats['skipped']++; continue; }
                 // Filtro de teste por domínio do solicitante (ex.: erpserv.com.br).
                 if (!$this->domainAllowed($full)) { $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue; }
-                // Só age para ORGS VINCULADAS no Help Desk (hd_customer_id). Org sem vínculo → ignora.
+                // Só age para ORGS VINCULADAS no Help Desk (hd_customer_id). Org sem vínculo → ignora
+                // APENAS tickets NOVOS. Chamados JÁ espelhados (ex.: carga histórica do dev1, cujas
+                // orgs não foram vinculadas) continuam recebendo atualização de status/interações —
+                // o update não altera customer_id quando a org é nula (resolveCustomer→null), então é seguro.
                 $org = $this->orgFor($this->extractOrgId($full));
-                if ($this->requireLinkedOrg() && !($org && $org->hd_customer_id)) {
+                if ($this->requireLinkedOrg() && !$exists && !($org && $org->hd_customer_id)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
                 // "A partir do vínculo apenas": ignora chamados CRIADOS antes de a org ser vinculada.
@@ -174,6 +186,8 @@ class MovideskHelpDeskImporter
         // PASSADA DEDICADA DE STATUS: mudança de status no Minutor vai pro Movidesk sozinha,
         // independente do chamado ter entrado na varredura por lastUpdate.
         $stats['status_pushed'] = $this->pushPendingStatuses();
+        // Re-hospeda imagens inline das interações novas (fora da transação; URL S3 expira em horas).
+        $stats['images'] = $this->rehostPendingImages();
 
         Log::info('📥 [MOVIDESK HD] Import concluído', $stats);
         return $stats;
@@ -208,7 +222,7 @@ class MovideskHelpDeskImporter
                 $full = $this->movidesk->fetchTicket((int) $ticket->external_ref);
                 if (!$full) { continue; }
                 // Em poder de equipe da Promax → não interage (não empurra comentário).
-                if ($this->isBlockedTeam($full['ownerTeam'] ?? null)) { continue; }
+                if ($this->shouldSkipTeam($full['ownerTeam'] ?? null)) { continue; }
                 $before = HelpDeskTicketComment::where('ticket_id', $tid)
                     ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
                 $this->pushComments($ticket, (int) $ticket->external_ref, $full['actions'] ?? []);
@@ -265,7 +279,7 @@ class MovideskHelpDeskImporter
             try {
                 // Em poder de equipe da Promax → não interage (não empurra status).
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
-                if ($full && $this->isBlockedTeam($full['ownerTeam'] ?? null)) { continue; }
+                if ($full && $this->shouldSkipTeam($full['ownerTeam'] ?? null)) { continue; }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
                     HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;
@@ -292,6 +306,7 @@ class MovideskHelpDeskImporter
         if (!$full) return ['created' => false, 'comments' => 0, 'ticket_id' => null, 'hd_number' => null];
 
         $res = DB::transaction(fn () => $this->upsert($full, $companyId));
+        $this->rehostPendingImages(); // fora da transação
         $hd = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', (string) $externalId)->first(['id', 'ticket_number']);
         return ['created' => $res['created'], 'comments' => $res['comments'], 'ticket_id' => $hd?->id, 'hd_number' => $hd?->ticket_number];
     }
@@ -321,6 +336,9 @@ class MovideskHelpDeskImporter
         $customerId = $this->resolveCustomer($orgId);
         $reqName  = (string) ($client['businessName'] ?? '');
         $reqEmail = $this->firstEmail($client);
+        // Nome da organização do Movidesk (para clientes legados sem cadastro no Minutor).
+        $orgName  = trim((string) ($client['organization']['businessName'] ?? ''));
+        if ($orgName === '' && $orgId) { $orgName = trim((string) (optional($this->orgFor($orgId))->name ?? '')); }
 
         if (!$ticket) {
             $ticket = new HelpDeskTicket();
@@ -340,7 +358,13 @@ class MovideskHelpDeskImporter
             // descrição inicial = primeira ação (mensagem de abertura do cliente), se houver.
             $ticket->description = $this->firstActionBody($md);
         }
-        if ($customerId) { $ticket->customer_id = $customerId; }
+        if ($customerId) {
+            // Org VINCULADA por CNPJ → cliente do Minutor.
+            $ticket->customer_id = $customerId;
+        } elseif ($orgName !== '') {
+            // Org NÃO vinculada (cliente legado, sem cadastro no Minutor desde 2017) → mostra o nome do Movidesk.
+            $ticket->historical_customer_name = mb_substr($orgName, 0, 255);
+        }
         if ($reqName)  { $ticket->requester_name = mb_substr($reqName, 0, 255); }
         if ($reqEmail) { $ticket->requester_email = mb_substr($reqEmail, 0, 255); }
 
@@ -405,10 +429,13 @@ class MovideskHelpDeskImporter
                 ?? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id;
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
-        } elseif ($hdSig !== null && $hdSig !== $ticket->external_status) {
+        } elseif ($hdSig !== null && !empty($ticket->external_status) && $hdSig !== $ticket->external_status) {
             // Minutor mudou o status → empurra pro Movidesk. O Movidesk exige justificativa em TODA
             // troca de status; usamos UMA justificativa global (SystemSetting) associada a todos os
             // status no Movidesk. Sem ela configurada, não empurra (evita 400).
+            // NB: só entra aqui com SOMBRA preenchida. Tickets migrados do dev1 vêm com external_status
+            // vazio; sem este guard, hdSig!='' sempre "parecia" edição do Minutor e o status do Movidesk
+            // (ex.: Cancelado) nunca era puxado. Com sombra vazia, cai no branch abaixo (puxa + backfilla).
             $just = $this->statusJustification();
             if (!empty($hdOut['text']) && !empty($just)) {
                 $patch['status'] = $hdOut['text'];
@@ -528,11 +555,16 @@ class MovideskHelpDeskImporter
 
         // Dedup por external_action_id em QUALQUER origem — inclui comentários NATIVOS que já
         // empurramos p/ o Movidesk (guardam o id da ação criada) → evita reimportar (eco).
-        $existing = HelpDeskTicketComment::withTrashed()
-            ->where('ticket_id', $ticket->id)
-            ->whereNotNull('external_action_id')
-            ->pluck('external_action_id')
-            ->filter()->map(fn ($v) => (string) $v)->flip();
+        $ticketComments = HelpDeskTicketComment::withTrashed()->where('ticket_id', $ticket->id)->get();
+        $existing = $ticketComments->whereNotNull('external_action_id')
+            ->pluck('external_action_id')->filter()->map(fn ($v) => (string) $v)->flip();
+
+        // RECONCILIAÇÃO dos históricos (migração dev1 veio SEM external_action_id): indexa os
+        // comentários ainda SEM id por created_at (= createdDate da ação, idêntico ao segundo).
+        // Ao reencontrar a ação, faz BACKFILL do external_action_id no comentário existente em vez
+        // de duplicar. Evita a duplicação de interações ao re-sincronizar tickets já migrados.
+        $byDate = $ticketComments->whereNull('external_action_id')
+            ->groupBy(fn ($c) => \Carbon\Carbon::parse($c->created_at)->format('Y-m-d H:i:s'));
 
         $n = 0;
         foreach ($actions as $a) {
@@ -540,13 +572,26 @@ class MovideskHelpDeskImporter
             if ($aid === '' || $existing->has($aid)) continue;
             if ($skipActionId !== null && $aid === $skipActionId) continue; // abertura = descrição, não duplicar
 
+            // Reconciliação: já existe um comentário histórico desta ação (mesmo created_at)?
+            $createdKey = isset($a['createdDate']) ? \Carbon\Carbon::parse($a['createdDate'])->format('Y-m-d H:i:s') : null;
+            if ($createdKey && $byDate->has($createdKey) && $byDate->get($createdKey)->isNotEmpty()) {
+                $match = $byDate->get($createdKey)->shift(); // consome (não reusar p/ outra ação)
+                $match->external_action_id = $aid;
+                if (empty($match->idempotency_key)) {
+                    $match->idempotency_key = 'movidesk-' . $ticket->external_ref . '-a' . $aid;
+                }
+                $match->saveQuietly(); // sem observers (não re-empurrar nada)
+                $existing->put($aid, true);
+                continue; // NÃO cria duplicata
+            }
+
             $body = (string) ($a['htmlDescription'] ?? '');
             if (trim(strip_tags($body)) === '' && empty($a['attachments'])) continue; // ação vazia
 
             $isPublic = (bool) ($a['isPublic'] ?? true);
             $authorId = $this->resolveAgentUser($a['createdBy']['email'] ?? null);
 
-            HelpDeskTicketComment::create([
+            $comment = HelpDeskTicketComment::create([
                 'ticket_id'          => $ticket->id,
                 'author_user_id'     => $authorId, // null => interação de origem externa (cliente)
                 'body'               => $body,
@@ -558,10 +603,105 @@ class MovideskHelpDeskImporter
                 // action.id do Movidesk é sequencial POR ticket (1,2,3…) — a chave precisa do id do ticket.
                 'idempotency_key'    => 'movidesk-' . $ticket->external_ref . '-a' . $aid,
             ]);
+            // Imagem inline (URL S3 Movidesk) vem com assinatura que EXPIRA em horas. Enfileira p/
+            // re-hospedar FORA da transação (download é lento) — baixa agora enquanto a URL é válida.
+            if (preg_match('~s3[.-][^/]*amazonaws\.com/[^?"\']*movidesk~i', $body)) {
+                $this->pendingImageComments[] = ['c' => (int) $comment->id, 't' => (int) $ticket->id];
+            }
             $existing->put($aid, true);
             $n++;
         }
         return $n;
+    }
+
+    /**
+     * Re-hospeda imagens inline (URL S3 do Movidesk) dos comentários recém-criados: baixa enquanto
+     * a URL assinada ainda é válida, salva como anexo da interação (AttachmentService) e reescreve o
+     * <img src> pro nosso endpoint de download. Roda FORA da transação (download lento). Best-effort:
+     * URL expirada (403) ou falha → deixa o <img> como está, sem quebrar o import.
+     */
+    private function rehostPendingImages(): int
+    {
+        if (!$this->pendingImageComments) return 0;
+        $pending = $this->pendingImageComments;
+        $this->pendingImageComments = [];
+        $svc = app(\App\Attachments\AttachmentService::class);
+        $done = 0;
+        foreach ($pending as $p) {
+            $comment = HelpDeskTicketComment::find($p['c']);
+            if (!$comment) continue;
+            try {
+                if ($this->rehostCommentImages($comment, (int) $p['t'], $svc)) $done++;
+            } catch (\Throwable $e) {
+                Log::warning('🖼️ [MOVIDESK HD] rehost de imagens falhou', ['comment' => $p['c'], 'error' => $e->getMessage()]);
+            }
+        }
+        if ($done) Log::info('🖼️ [MOVIDESK HD] imagens inline re-hospedadas', ['comentarios' => $done]);
+        return $done;
+    }
+
+    private function rehostCommentImages(HelpDeskTicketComment $comment, int $ticketId, \App\Attachments\AttachmentService $svc): bool
+    {
+        $body = (string) $comment->body;
+        if (!preg_match_all('/<img\b[^>]*>/i', $body, $tags)) return false;
+        $changed = false;
+        $count = 0;
+        foreach ($tags[0] as $tag) {
+            if ($count >= 10) break; // teto por interação
+            if (!preg_match('/src=(["\'])(.*?)\1/i', $tag, $sm)) continue;
+            $src = html_entity_decode($sm[2]);
+            // só URLs S3 do Movidesk (as que expiram); ignora data:, nossas (/api/...), externas
+            if (!preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $src)) continue;
+            $count++;
+            $resp = \Illuminate\Support\Facades\Http::timeout(25)->get($src);
+            if (!$resp->ok()) continue; // 403 expirada → mantém
+            $ct = strtolower((string) ($resp->header('Content-Type') ?: ''));
+            if (strncmp($ct, 'image/', 6) !== 0) continue;
+            $bytes = $resp->body();
+            if (strlen($bytes) < 64) continue;
+            $ext = match (true) {
+                str_contains($ct, 'png')  => 'png',
+                str_contains($ct, 'gif')  => 'gif',
+                str_contains($ct, 'webp') => 'webp',
+                str_contains($ct, 'svg')  => 'svg',
+                default                   => 'jpg',
+            };
+            $tmp = tempnam(sys_get_temp_dir(), 'mvimg');
+            file_put_contents($tmp, $bytes);
+            try {
+                $uf = new \Illuminate\Http\UploadedFile($tmp, 'movidesk-' . substr(md5($src), 0, 10) . '.' . $ext, $ct, null, true);
+                $att = $svc->store($this->imageActorFor($comment), [
+                    'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
+                    'category'    => 'image',
+                    'visibility'  => $comment->visibility,
+                    'file'        => $uf,
+                ]);
+            } finally {
+                @unlink($tmp);
+            }
+            // Usa <img src> DIRETO pro endpoint de download da interação (mesmo mecanismo do preview
+            // de anexo, que carrega no navegador via sessão/cookie). O src S3 original expira; troca
+            // pelo nosso endpoint estável. (data-att-id exigiria o bundle FE novo + fetch autenticado.)
+            $url = "/api/v1/help-desk/tickets/{$ticketId}/comments/{$comment->id}/attachments/{$att->id}/download";
+            $newTag = preg_replace('/src=(["\']).*?\1/i', 'src="' . $url . '"', $tag, 1);
+            $body = str_replace($tag, $newTag, $body);
+            $changed = true;
+        }
+        if ($changed) {
+            $comment->body = $body;
+            $comment->saveQuietly();
+        }
+        return $changed;
+    }
+
+    /** Ator (User) p/ uploaded_by do anexo — autor da interação se mapeado, senão 1º usuário (campo de auditoria). */
+    private function imageActorFor(HelpDeskTicketComment $comment): \App\Models\User
+    {
+        if ($comment->author_user_id) {
+            $u = \App\Models\User::find($comment->author_user_id);
+            if ($u) return $u;
+        }
+        return $this->imageActor ??= \App\Models\User::query()->orderBy('id')->firstOrFail();
     }
 
     // ── Resolução de entidades ────────────────────────────────────────────────
@@ -614,6 +754,9 @@ class MovideskHelpDeskImporter
     /** Empurrar INTERAÇÕES (comentários) do Minutor como ações no Movidesk? */
     /** Cache por execução: user_id → movidesk person id (evita repetir lookup/API). */
     private array $authorMdCache = [];
+    /** Comentários novos com imagem inline S3 a re-hospedar (fora da transação). [{c:commentId,t:ticketId}] */
+    private array $pendingImageComments = [];
+    private ?\App\Models\User $imageActor = null;
 
     /**
      * Id da PESSOA no Movidesk do autor (p/ createdBy da ação):
@@ -770,21 +913,32 @@ class MovideskHelpDeskImporter
 
     private function firstActionBody(array $md): ?string
     {
+        $a = $this->openingClientAction($md);
+        return $a ? (string) ($a['htmlDescription'] ?? '') : null;
+    }
+
+    /** id da ação de ABERTURA (a mesma usada como descrição inicial) — para não duplicar como interação. */
+    /**
+     * Primeira ação NÃO-vazia escrita pelo CLIENTE (autor NÃO é agente). Se a abertura
+     * foi feita por um AGENTE (ex. chamado aberto pelo consultor PARA o cliente), retorna
+     * null → essa ação NÃO vira "descrição do cliente": entra como interação normal,
+     * atribuída ao agente (igual ao Movidesk: "Flavio Augusto · Ação pública").
+     */
+    private function openingClientAction(array $md): ?array
+    {
         foreach (($md['actions'] ?? []) as $a) {
             $b = (string) ($a['htmlDescription'] ?? '');
-            if (trim(strip_tags($b)) !== '') return $b;
+            if (trim(strip_tags($b)) === '') continue;
+            if ($this->resolveAgentUser($a['createdBy']['email'] ?? null)) continue; // autor é agente → não é descrição do cliente
+            return $a;
         }
         return null;
     }
 
-    /** id da ação de ABERTURA (a mesma usada como descrição inicial) — para não duplicar como interação. */
     private function openingActionId(array $md): ?string
     {
-        foreach (($md['actions'] ?? []) as $a) {
-            $b = (string) ($a['htmlDescription'] ?? '');
-            if (trim(strip_tags($b)) !== '') return (string) ($a['id'] ?? '') ?: null;
-        }
-        return null;
+        $a = $this->openingClientAction($md);
+        return $a ? ((string) ($a['id'] ?? '') ?: null) : null;
     }
 
     // ── Cursor ────────────────────────────────────────────────────────────────

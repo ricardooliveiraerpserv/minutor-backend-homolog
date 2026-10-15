@@ -30,12 +30,15 @@ class FolhaPagamentoController extends Controller
     private const RAHO_PARTNER_NAME = 'Raho';
 
     /**
-     * id do parceiro Raho — fechamento dele vai INDIVIDUALMENTE pra cooperativa.
-     * Hardcoded por nome (decisão de negócio: caso específico do Raho).
+     * Regra antiga: fechamento do Raho ia INDIVIDUALMENTE pra cooperativa (uma linha por
+     * consultor). DESATIVADA (2026-10) — o Raho passa a ser tratado como os demais parceiros:
+     * consolida numa ÚNICA linha no recebedor (partners.folha_user_id). Retornar null aqui
+     * desliga tanto o bloco individual quanto a exclusão do Raho na consolidação de parceiros.
+     * (Para reativar a regra, voltar a resolver o id pelo nome.)
      */
     private static function rahoPartnerId(): ?int
     {
-        return \App\Models\Partner::where('name', self::RAHO_PARTNER_NAME)->value('id');
+        return null;
     }
 
     /** Linhas do grid: cooperados regulares + as linhas-sócio fixas (totalmente editáveis). */
@@ -91,7 +94,12 @@ class FolhaPagamentoController extends Controller
                 ? $q->where('is_bizify', true)
                 : $q->where('is_bizify', false)->orWhereNull('is_bizify'))
             ->orderBy('name')->get();
+        // Janela de pagamento: fora da janela nesta competência → não entra na folha.
+        $coopNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $cooperados->pluck('id')->all(), $yearMonth);
         foreach ($cooperados as $u) {
+            if (in_array((int) $u->id, $coopNon, true)) {
+                continue;
+            }
             if ($u->partner_id) {
                 // Usuários de PARCEIRO não entram como cooperado individual:
                 //  • Raho → linha própria (seção azul abaixo);
@@ -115,7 +123,9 @@ class FolhaPagamentoController extends Controller
             $producaoCalc = $hasFech
                 ? round((float) ($c['recebimento'] ?? $c['total'] ?? 0), 2)  // recebimento (com despesa)
                 : 0.0;
-            $producao     = ($f && $f->producao !== null) ? round((float) $f->producao, 2) : $producaoCalc;
+            // Com vínculo de fechamento a Produção SEMPRE reflete o calculado (serv + ajustes do fechamento),
+            // ignorando override congelado ("prod. editada"). Sem vínculo, mantém o salvo (edição manual).
+            $producao     = $hasFech ? $producaoCalc : (($f && $f->producao !== null) ? round((float) $f->producao, 2) : $producaoCalc);
             $horas        = 160.0; // horas FIXAS (não via apontamento); Produção segue do fechamento
 
             // Valor hora só p/ vínculo por hora; fixo/mensal NÃO traz valor.
@@ -153,6 +163,7 @@ class FolhaPagamentoController extends Controller
                 'valor_hora'         => $valorHora,
                 'producao'           => $producao,
                 'producao_calc'      => $producaoCalc, // valor calculado do fechamento (legenda no FE)
+                'producao_locked'    => $hasFech,      // com vínculo → Produção não editável (vem do fechamento)
                 // Componentes do fechamento do consultor (legenda: serv − desc − adiant + adic + desp = produção).
                 'fech_serv'          => round((float) ($c['total'] ?? 0), 2),
                 'fech_desconto'      => $aj ? (float) $aj->desconto : 0.0,
@@ -183,7 +194,12 @@ class FolhaPagamentoController extends Controller
                 : collect();
             // Inclui desativados também (aparecem em "afastamento", ocultação manual).
             $rahoUsers = User::where('partner_id', $rahoId)->orderBy('name')->get();
+            // Janela de pagamento: fora da janela nesta competência → não entra na folha.
+            $rahoNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $rahoUsers->pluck('id')->all(), $yearMonth);
             foreach ($rahoUsers as $u) {
+                if (in_array((int) $u->id, $rahoNon, true)) {
+                    continue;
+                }
                 $uid  = $u->id;
                 $f    = $folhaByUser[$uid] ?? null;
                 $calc = $rahoCalc[$uid] ?? [];
@@ -208,9 +224,11 @@ class FolhaPagamentoController extends Controller
                 }
 
                 // Atual = salvo (editado) quando houver; senão o calculado (prefill).
+                $rahoHasFech  = !empty($calc); // tem fechamento do mês → Produção sempre do calculado
                 $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $horasCalc;
                 $valorHora    = ($f && $f->valor_hora !== null) ? (float) $f->valor_hora : $valorHoraCalc;
-                $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $producaoCalc;
+                // Com fechamento, Produção SEMPRE reflete o calculado (ignora override congelado).
+                $producao     = $rahoHasFech ? $producaoCalc : (($f && $f->producao !== null) ? (float) $f->producao : $producaoCalc);
                 $variavel     = $f ? (float) $f->variavel : 0.0;
                 $reemb        = $f ? (float) $f->reemb : 0.0;
                 $reembAutoCalc = $isCoop ? 0.0 : $reembAuto; // cooperado: despesa já está na produção
@@ -240,6 +258,7 @@ class FolhaPagamentoController extends Controller
                     'horas_apontamentos' => $horasCalc,
                     'valor_hora'         => $valorHora,
                     'producao'           => $producao,
+                    'producao_locked'    => $rahoHasFech, // com fechamento → Produção não editável
                     // Valores ORIGINAIS calculados (p/ legenda "original" quando alterado).
                     'horas_calc'         => $horasCalc,
                     'valor_hora_calc'    => $valorHoraCalc,
@@ -271,7 +290,12 @@ class FolhaPagamentoController extends Controller
         $partners = $isBizify ? collect() : \App\Models\Partner::query()
             ->when($rahoId, fn ($q) => $q->where('id', '!=', $rahoId))
             ->orderBy('name')->get();
+        // Janela de pagamento do PARCEIRO: fora da janela nesta competência → não entra na folha.
+        $partnerNon = \App\Models\PayrollBillingWindow::nonPayableIds('partner', $partners->pluck('id')->all(), $yearMonth);
         foreach ($partners as $partner) {
+            if (in_array((int) $partner->id, $partnerNon, true)) {
+                continue;
+            }
             // Representante do parceiro na folha ("quem sobe pra folha"): escolha EXPLÍCITA
             // no cadastro do parceiro (folha_user_id) → fallback is_executive (legado).
             $admin = null;
@@ -316,7 +340,8 @@ class FolhaPagamentoController extends Controller
 
             // Atual = salvo (editado) quando houver; senão o calculado (prefill).
             $horas        = ($f && $f->horas_trabalhadas !== null) ? (float) $f->horas_trabalhadas : $totalHoras;
-            $producao     = ($f && $f->producao !== null) ? (float) $f->producao : $totalApuracao;
+            // Parceiro consolidado SEMPRE reflete a apuração do fechamento (ignora override congelado).
+            $producao     = $totalApuracao;
             $variavel     = $f ? (float) $f->variavel : 0.0;
             $reemb        = $f ? (float) $f->reemb : 0.0;
             $descontos    = $f ? (float) $f->descontos_diversos : 0.0;
@@ -348,6 +373,7 @@ class FolhaPagamentoController extends Controller
                 'horas_apontamentos' => $totalHoras,
                 'valor_hora'         => 0.0, // consolidado: sem valor/hora (FE mostra "—")
                 'producao'           => $producao,
+                'producao_locked'    => true, // parceiro consolidado: Produção vem da apuração do fechamento
                 'horas_calc'         => $totalHoras,
                 'valor_hora_calc'    => 0.0,
                 'producao_calc'      => $totalApuracao,
@@ -433,7 +459,13 @@ class FolhaPagamentoController extends Controller
                 : $q->where('is_bizify', false)->orWhereNull('is_bizify'))
             ->whereNotIn('id', $jaIncluidos)
             ->get();
+        // Janela de pagamento: inativo FORA da janela nesta competência não aparece mais (ex.: Leandro
+        // pago até mês X → some de X+1 em diante). Sem janela cadastrada segue aparecendo (legado).
+        $inativosNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $inativos->pluck('id')->all(), $yearMonth);
         foreach ($inativos as $u) {
+            if (in_array((int) $u->id, $inativosNon, true)) {
+                continue;
+            }
             $f = $folhaByUser[$u->id] ?? null;
             $valorHora    = ($u->rate_type === 'hourly') ? round((float) $u->hourly_rate, 4) : 0.0;
             $producao     = $f && $f->producao !== null ? (float) $f->producao : 0.0;
@@ -491,6 +523,11 @@ class FolhaPagamentoController extends Controller
             return $rows;
         }
         $headers = \App\Models\FechamentoDiretoria::where('year_month', $yearMonth)->get();
+        // Janela de pagamento do DIRETOR: diretor fora da janela nesta competência não vai p/ a folha.
+        $dirNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $headers->pluck('user_id')->filter()->all(), $yearMonth);
+        if ($dirNon) {
+            $headers = $headers->reject(fn ($h) => $h->user_id && in_array((int) $h->user_id, $dirNon, true))->values();
+        }
         if ($headers->isEmpty()) {
             return $rows;
         }

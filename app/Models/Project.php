@@ -115,6 +115,7 @@ class Project extends Model
         'movidesk_integration_enabled',
         'helpdesk_integration_enabled',
         'movidesk_integration_since',
+        'helpdesk_integration_enabled',
     ];
 
     /**
@@ -158,6 +159,7 @@ class Project extends Model
         'client_follows_timesheets' => 'boolean',
         'extrato_visivel_cliente' => 'boolean',
         'is_investimento_comercial' => 'boolean',
+        'helpdesk_integration_enabled' => 'boolean',
         'is_rateio' => 'boolean',
         'movidesk_integration_enabled' => 'boolean',
         'helpdesk_integration_enabled' => 'boolean',
@@ -707,6 +709,11 @@ class Project extends Model
      */
     public function hasChildProjects(): bool
     {
+        // Usa a relação já carregada quando disponível (evita 1 query/projeto em telas
+        // que eager-loadam childProjects — ex.: Kanban de Contratos chamando managementBreakdown).
+        if ($this->relationLoaded('childProjects')) {
+            return $this->childProjects->isNotEmpty();
+        }
         return $this->childProjects()->exists();
     }
 
@@ -1156,12 +1163,15 @@ class Project extends Model
         // Horas de coordenação sobre as horas apontadas deste projeto
         $coordinationHours = $this->calculateCoordinationHours($totalLoggedHours);
 
-        $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
         // initial_hours_consumed: horas já consumidas antes do projeto entrar no Minutor (saldo
         // já queimado pelo cliente). Sem essa subtração o show() devolvia o saldo inflado e o
         // modal de subprojeto autorizava criação acima do realmente disponível.
-        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) + $initialBalance - $initialConsumed;
+        // initial_hours_balance (Saldo Inicial, campo LEGADO anterior ao "Consumo inicial") é
+        // IGNORADO de propósito — saldo positivo só via aporte; consumo inicial via o campo
+        // próprio. A Gestão/grid, o Portal e o BH Fixo já o ignoram; aqui completa a unificação.
+        // Regra única p/ todos os contratos: contratadas + aporte − consumo inicial − apontadas.
+        $balance = ($soldHours + $contributionHours) - ($totalLoggedHours + $coordinationHours) - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -1202,10 +1212,9 @@ class Project extends Model
                     $childLoggedHours = round(($childQuery->sum('effort_minutes') ?? 0) / 60, 2);
                     $childCoordinationHours = $childProject->calculateCoordinationHours($childLoggedHours);
 
-                    $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
+                    // initial_hours_balance (legado) ignorado — ver nota no saldo do projeto pai.
                     $childBalance = ($childSoldHours + $childContributionHours)
-                        - ($childLoggedHours + $childCoordinationHours)
-                        + $childInitialBalance;
+                        - ($childLoggedHours + $childCoordinationHours);
                     $balance -= $childBalance;
                 } else {
                     // Demais tipos: subtrai apenas o efetivamente apontado + initial_consumed
@@ -1234,18 +1243,32 @@ class Project extends Model
      *
      * @return array{available: float, consumed: float, balance: float}
      */
-    public function managementBreakdown(): array
+    /**
+     * @param array<int,float>|null $consumedMinutesMap Mapa project_id => SOMA ponderada de minutos
+     *   (effort_minutes × (1 + %cliente)) já agregada em bulk pelo chamador. Quando fornecido,
+     *   evita 1 query por projeto/filho (N+1 do Kanban). null (default) = comportamento original
+     *   (query por projeto) — não afeta os demais callers.
+     */
+    public function managementBreakdown(?array $consumedMinutesMap = null): array
     {
         $this->loadMissing('contractType', 'childProjects.contractType');
+
+        // Soma ponderada (minutos) consumida por um projeto: usa o mapa bulk se veio, senão consulta.
+        $weightedMinutes = function ($project) use ($consumedMinutesMap): float {
+            if ($consumedMinutesMap !== null) {
+                return (float) ($consumedMinutesMap[$project->id] ?? 0);
+            }
+            return (float) ($project->timesheets()
+                ->whereIn('status', ['approved', 'pending'])
+                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)')) ?? 0);
+        };
 
         if ($this->isOnDemand()) {
             // On Demand não tem saldo de banco (available/balance = 0). MAS o consumo —
             // inclusive o CONSUMO INICIAL do sistema anterior (initial_hours_consumed) —
             // deve aparecer, batendo com a lista/gestão que já soma o inicial (antes o
             // detalhe zerava e ignorava as horas consumidas iniciais).
-            $logged  = round((($this->timesheets()
-                ->whereIn('status', ['approved', 'pending'])
-                ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
+            $logged  = round($weightedMinutes($this) / 60, 2);
             $initial  = (float) ($this->initial_hours_consumed ?? 0);
             $consumed = round($logged + $initial, 2);
             // CRÉDITO pré-pago por transferência: vira saldo do On Demand (consome o crédito, não
@@ -1260,9 +1283,7 @@ class Project extends Model
         // Consumo FATURÁVEL ao cliente = horas apontadas × (1 + uplift do contrato).
         // O acréscimo mora no apontamento (contract_client_pct); o consultor/pagamento
         // lê effort_minutes cru e não passa por aqui. Contratadas ficam no real.
-        $consumed = round((($this->timesheets()
-            ->whereIn('status', ['approved', 'pending'])
-            ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
+        $consumed = round($weightedMinutes($this) / 60, 2);
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
 
         // Consumo dos filhos — mesma regra do ProjectController gestão-mode.
@@ -1279,9 +1300,7 @@ class Project extends Model
                 if ($isClosed || $isBhFixo) {
                     $childrenConsumed += (float) $child->getTotalAvailableHours();
                 } elseif ($isOnDemand) {
-                    $childLogged = round((($child->timesheets()
-                        ->whereIn('status', ['approved', 'pending'])
-                        ->sum(\Illuminate\Support\Facades\DB::raw('effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)'))) ?? 0) / 60, 2);
+                    $childLogged = round($weightedMinutes($child) / 60, 2);
                     $childrenConsumed += round($childLogged + (float) ($child->initial_hours_consumed ?? 0), 2);
                 }
                 // else: filho Projeto / BH-Mensal — ignorado (idêntico à Gestão).
@@ -1361,9 +1380,9 @@ class Project extends Model
 
         // Calcular saldo base do projeto atual
         // IMPORTANTE: Para Banco de Horas Mensal, soldHours já é accumulated até o mês anterior
-        $initialBalance  = (float) ($this->initial_hours_balance ?? 0);
+        // initial_hours_balance (legado) IGNORADO — regra única; ver nota em getGeneralHoursBalance.
         $initialConsumed = (float) ($this->initial_hours_consumed ?? 0);
-        $balance = ($soldHours + $contributionHours) - $totalLoggedHours + $initialBalance - $initialConsumed;
+        $balance = ($soldHours + $contributionHours) - $totalLoggedHours - $initialConsumed;
 
         // Sempre incluir projetos filhos no cálculo
         if ($this->hasChildProjects()) {
@@ -1406,9 +1425,9 @@ class Project extends Model
                     $childLoggedMinutes = $childQuery->sum('effort_minutes') ?? 0;
                     $childLoggedHours = round($childLoggedMinutes / 60, 2);
                     
-                    // Subtrair o saldo do filho: (accumulated_sold_hours até mês anterior + aportes + saldo inicial) - horas apontadas até mês anterior
-                    $childInitialBalance = (float) ($childProject->initial_hours_balance ?? 0);
-                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours + $childInitialBalance;
+                    // Subtrair o saldo do filho: (accumulated_sold_hours até mês anterior + aportes) - horas apontadas até mês anterior
+                    // initial_hours_balance (legado) ignorado — regra única.
+                    $childBalance = ($childSoldHours + $childContributionHours) - $childLoggedHours;
                     $balance -= $childBalance;
                 } else {
                     // Para outros tipos (inclui Banco de Horas Fixo): subtrair apontadas + initial_hours_consumed

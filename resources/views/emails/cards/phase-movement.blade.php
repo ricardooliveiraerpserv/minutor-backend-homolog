@@ -75,7 +75,7 @@
         deste {{ $cardType === 'contract_request' ? 'card de requisição' : 'card de projeto' }}.
         Movimentações de fase são notificadas para todos os envolvidos (incluindo o cliente).
         <br><br>
-        <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
+        <span style="color:#71717A;">&copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} · Todos os direitos reservados</span>
       </td>
     </tr>
   </table>

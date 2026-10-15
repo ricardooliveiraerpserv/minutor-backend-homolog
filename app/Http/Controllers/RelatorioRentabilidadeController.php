@@ -26,9 +26,26 @@ class RelatorioRentabilidadeController extends Controller
         $from = $request->query('from') ?: Carbon::create($y, $m, 1)->startOfMonth()->toDateString();
         $to   = $request->query('to')   ?: Carbon::create($y, $m, 1)->endOfMonth()->toDateString();
 
+        // CACHE: o relatório é de meses FECHADOS (o FE nunca inclui o mês atual) e NÃO filtra por
+        // usuário no backend (filtros são client-side) → dados estáveis e chave simples. O FE busca
+        // 1 request POR MÊS (vários em paralelo); cachear evita recomputar ~149 queries/mês a cada
+        // abertura/revisita. Chave por mês+intervalo+empresa+escopo. X-Cache-Warm=1 força recompute.
+        $__companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
+        $__scope     = optional(\Illuminate\Support\Facades\Auth::user())->isAdmin() ? 'admin' : ('u' . (\Illuminate\Support\Facades\Auth::id() ?? 'g'));
+        $__cacheKey  = "rentab:{$yearMonth}:{$from}:{$to}:c{$__companyId}:{$__scope}";
+        if ($request->header('X-Cache-Warm') !== '1') {
+            try {
+                $__hit = \Illuminate\Support\Facades\Cache::get($__cacheKey);
+                if (is_string($__hit) && $__hit !== '') {
+                    return \Illuminate\Http\JsonResponse::fromJsonString($__hit);
+                }
+            } catch (\Throwable $e) { /* cache indisponível → computa */ }
+        }
+
         $timesheets = Timesheet::with([
                 'user:id,name,hourly_rate,rate_type,partner_id,type,coordinator_type,is_bizify,is_diretor,is_diretor_projetos',
                 'user.partner:id,pricing_type,hourly_rate',
+                'user.partner.hourlyRateChanges', // N+1 FIX: hourlyRateForCompetencia() usa a relação carregada
                 'project:id,name,hourly_rate,customer_id,is_investimento_comercial,service_type_id,contract_type_id',
                 'project.customer:id,name',
                 'project.serviceType:id,name',
@@ -67,7 +84,14 @@ class RelatorioRentabilidadeController extends Controller
         // Metadados de custo por consultor: ['eff' => custo/hora, 'type' => hourly|monthly,
         // 'salary' => salário mensal cheio quando monthly (0 caso contrário)].
         $costMetaCache = [];
-        $costMeta = function ($user) use (&$costMetaCache, $from, $yearMonth) {
+        // N+1 FIX: pré-computa a vigência de rate de TODOS os consultores do mês numa query só
+        // (em vez de 1 query/usuário via effectiveValuesAt). Resultado idêntico ao per-usuário.
+        $rateMap = UserHourlyRateLog::effectiveValuesForUsers(
+            $timesheets->pluck('user')->filter()->unique('id')->values(),
+            $from
+        );
+
+        $costMeta = function ($user) use (&$costMetaCache, $from, $yearMonth, $rateMap) {
             if (!$user) return ['eff' => 0.0, 'type' => 'hourly', 'salary' => 0.0, 'ctype' => null];
             if (isset($costMetaCache[$user->id])) return $costMetaCache[$user->id];
 
@@ -79,7 +103,7 @@ class RelatorioRentabilidadeController extends Controller
                 return $costMetaCache[$user->id] = ['eff' => $r, 'type' => 'hourly', 'salary' => 0.0, 'ctype' => $user->consultant_type];
             }
 
-            $hist = UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
+            $hist = $rateMap[$user->id] ?? UserHourlyRateLog::effectiveValuesAt($user->id, $user, $from);
             $rate = (float) ($hist['hourly_rate'] ?? $user->hourly_rate ?? 0);
             $type = $hist['rate_type'] ?? $user->rate_type ?? 'hourly';
             $ctype = $hist['consultant_type'] ?? $user->consultant_type;
@@ -266,7 +290,13 @@ class RelatorioRentabilidadeController extends Controller
             unset($r);
         }
 
-        return response()->json(['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados, 'fixos_extras' => $fixosExtras]]);
+        $__payload = ['data' => ['rows' => $rows, 'por_dia' => $porDia, 'fixos_zerados' => $fixosZerados, 'fixos_extras' => $fixosExtras]];
+        $__json = json_encode($__payload);
+        if ($__json !== false) {
+            try { \Illuminate\Support\Facades\Cache::put($__cacheKey, $__json, 1800); } catch (\Throwable $e) {}
+            return \Illuminate\Http\JsonResponse::fromJsonString($__json);
+        }
+        return response()->json($__payload);
     }
 
     /**

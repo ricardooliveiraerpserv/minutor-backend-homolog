@@ -109,7 +109,36 @@ return [
         'client_id'     => env('MS_CALENDAR_CLIENT_ID', env('MAIL_GRAPH_CLIENT_ID')),
         'client_secret' => env('MS_CALENDAR_CLIENT_SECRET', env('MAIL_GRAPH_CLIENT_SECRET')),
         'redirect_uri'  => env('MS_CALENDAR_REDIRECT_URI', rtrim(env('APP_URL', ''), '/') . '/api/v1/integrations/microsoft/callback'),
-        'scopes'        => env('MS_CALENDAR_SCOPES', 'offline_access openid profile Calendars.Read'),
+        // Calendars.ReadWrite (ler a agenda do Meu Dia + CRIAR evento/reunião Teams). Contas já conectadas
+        // só com Calendars.Read seguem lendo normal (o refresh não pede escopo → mantém o consentido);
+        // para CRIAR reunião é preciso reconectar a conta (novo consentimento com escrita).
+        'scopes'        => env('MS_CALENDAR_SCOPES', 'offline_access openid profile Calendars.ReadWrite'),
+    ],
+
+    // Central de Reuniões. teams_enabled=false (Fase 1): o provider Teams degrada p/ no-op (reunião
+    // criada SEM link). Fase 2 = ligar MEETINGS_TEAMS_ENABLED + MS_CALENDAR_SCOPES com Calendars.ReadWrite
+    // + cada organizador reconectar a conta Microsoft (OAuth delegado do Meu Dia).
+    'meetings' => [
+        'teams_enabled'  => filter_var(env('MEETINGS_TEAMS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'organizer'      => env('MEETINGS_ORGANIZER'),
+        'organizer_mode' => env('MEETINGS_ORGANIZER_MODE', 'actor'),
+    ],
+
+    'github_source' => [
+        'api'     => env('GITHUB_SOURCE_API', 'https://api.github.com'),
+        'timeout' => (int) env('GITHUB_SOURCE_TIMEOUT', 20),
+        // GitHub App (oficial):
+        'app_id'                 => env('GITHUB_APP_ID'),
+        // Private key da App — informe UMA das duas. Base64 (linha única) é o recomendado no Render;
+        // o PEM cru multilinha também é aceito. Só server-side; nunca em banco/log/frontend.
+        'app_private_key_base64' => env('GITHUB_APP_PRIVATE_KEY_BASE64'),
+        'app_private_key'        => env('GITHUB_APP_PRIVATE_KEY'),
+        // Provisionamento automático de repositório por cliente (ESCRITA — exige a App com
+        // "Administration: Read and write"). Owner padrão = organização dos repositórios de cliente.
+        'default_owner'   => env('GITHUB_SOURCE_DEFAULT_OWNER', 'erpserv-clientes'),
+        'auto_provision'  => filter_var(env('GITHUB_SOURCE_AUTO_PROVISION', true), FILTER_VALIDATE_BOOLEAN),
+        // LEGADO (provider PAT NÃO-oficial, não bindado, sem fallback):
+        'token'   => env('GITHUB_SOURCE_TOKEN'),
     ],
 
     'github_source' => [

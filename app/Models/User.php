@@ -66,6 +66,10 @@ class User extends Authenticatable
         // Folha de pagamento (planilha de importação)
         'full_name',
         'cpf',
+        'cnpj',
+        'razao_social',
+        'tax_regime',
+        'tax_regime_checked_at',
         'matricula',
         'payroll_status',
         'bank_hours_start_date',
@@ -75,6 +79,7 @@ class User extends Authenticatable
         'has_temporary_password',
         'temporary_password_expires_at',
         'customer_id',
+        'is_customer_manager',
         'allowed_modules',
         'partner_id',
         'signature',
@@ -162,6 +167,7 @@ class User extends Authenticatable
             'temporary_password_expires_at' => 'datetime',
             'is_executive' => 'boolean',
             'is_coordinator' => 'boolean',
+            'is_customer_manager' => 'boolean',
             'is_bizify' => 'boolean',
             'is_bizify_coordinator' => 'boolean',
             'is_diretor' => 'boolean',
@@ -177,6 +183,7 @@ class User extends Authenticatable
             'allowed_modules' => 'array',
             'signature' => 'array',
             'birth_date' => 'date',
+            'tax_regime_checked_at' => 'datetime',
             // Criptografa em repouso com APP_KEY; descriptografa na leitura.
             'smtp_app_password' => 'encrypted',
         ];
@@ -555,6 +562,11 @@ class User extends Authenticatable
     public function hourlyRateLogs(): HasMany
     {
         return $this->hasMany(UserHourlyRateLog::class, 'user_id');
+    }
+
+    public function guaranteedHoursLogs(): HasMany
+    {
+        return $this->hasMany(UserGuaranteedHoursLog::class, 'user_id');
     }
 
     /**

@@ -97,15 +97,13 @@ Schedule::command('movidesk:sync')
   ->withoutOverlapping(30)
   ->runInBackground();
 
-// ENTRADA Help Desk ↔ Movidesk (espelhamento Promax): traz os chamados do Movidesk para o HD
-// do Minutor. SOMENTE LEITURA no Movidesk. Só age se movidesk_hd_import_enabled=true (o próprio
-// job checa o flag), então pode ficar agendado sem efeito até habilitarmos.
-Schedule::command('movidesk:hd-import')
-  ->cron('*/5 * * * *')
-  ->name('movidesk-hd-import')
-  ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
-  ->withoutOverlapping(30)
-  ->runInBackground();
+// ── Syncs de TICKET/ORG do Movidesk — PAUSÁVEIS por ambiente (flag SystemSetting).
+// Em PROD ficam DESLIGADOS até o upgrade do servidor; só o sync de APONTAMENTOS (acima) roda.
+// Default LIGADO → dev/homolog inalterados. Para desligar: system_settings.movidesk_ticket_syncs_enabled = '0'.
+// try/catch: no BUILD (package:discover) não há DB → assume ligado, não quebra o build.
+try { $ticketSyncsOn = \App\Models\SystemSetting::get('movidesk_ticket_syncs_enabled', '1') !== '0'; }
+catch (\Throwable $e) { $ticketSyncsOn = true; }
+if ($ticketSyncsOn) {
 
 // Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
 // aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
@@ -123,7 +121,7 @@ Schedule::command('movidesk:portal-sync')
   ->cron("*/{$portalSyncInterval} * * * *")
   ->name('movidesk-portal-sync')
   ->description('Sincroniza tickets do Movidesk para o Portal de Sustentação')
-  ->withoutOverlapping(60)
+  ->withoutOverlapping(180)
   ->runInBackground();
 
 // Sync de organizações do Movidesk — popula CNPJ e customer_id nos tickets
@@ -133,8 +131,10 @@ Schedule::command('movidesk:sync-orgs')
   ->cron("*/{$syncOrgsInterval} * * * *")
   ->name('movidesk-sync-orgs')
   ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
-  ->withoutOverlapping(60)
+  ->withoutOverlapping(180)
   ->runInBackground();
+
+} // ── fim dos syncs de TICKET/ORG (pausáveis via movidesk_ticket_syncs_enabled)
 
 // Normalização de snapshots de contratos — detecta e corrige divergências
 Schedule::job(new NormalizeContractStateJob)
@@ -323,8 +323,17 @@ Schedule::command('movidesk:reresolve-defaults --execute --limit=40')
   ->withoutOverlapping(120)
   ->runInBackground();
 
+// ============= HELP DESK + integração Movidesk (inerte: gated por flags) =============
+// Import de tickets do HD — também sob a flag movidesk_ticket_syncs_enabled (OFF em prod até o upgrade).
+if (($ticketSyncsOn ?? true)) {
+Schedule::command('movidesk:hd-import')
+  ->cron('*/5 * * * *')
+  ->name('movidesk-hd-import')
+  ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
+  ->withoutOverlapping(30)
+  ->runInBackground();
+} // fim hd-import gated
 
-// ===== Help Desk — agendamentos (portado do homolog 2026-09-24) =====
 Schedule::command('help-desk:ingest-emails --limit=25')
   ->cron('* * * * *')
   ->name('help-desk-ingest-emails')
@@ -357,3 +366,12 @@ Schedule::command('help-desk:remind-dev-delivery')
   ->timezone('America/Sao_Paulo')
   ->name('help-desk-remind-dev-delivery')
   ->description('Lembretes de prazo de entrega em homologação (Em Desenvolvimento)');
+
+// Mantém quente o cache da tela "Gestão de Contratos" (/projects?gestao=true) — evita o
+// miss frio (~vários segundos). Recompute forçado a cada 3min renova o TTL (300s) antes de
+// expirar; após edição de projeto/aporte, a próxima rodada reaquece em até 3min.
+Schedule::command('projects:warm-gestao-cache')
+  ->cron('*/3 * * * *')
+  ->withoutOverlapping(10)
+  ->name('warm-gestao-cache')
+  ->description('Aquece o cache da Gestão de Contratos (evita miss frio)');

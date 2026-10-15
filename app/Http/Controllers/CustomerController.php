@@ -166,6 +166,119 @@ class CustomerController extends Controller
     }
 
     /**
+     * Visão Cliente × Executivo: uma linha por cliente com o executivo EFETIVO da
+     * empresa ATIVA (ERPSERV → executive_id; Bizify → executive_bizify_id). Base da
+     * tela gerencial de carteira. Filtros: busca (nome/CNPJ), executivo (id ou 'none'
+     * p/ sem executivo), status (all|active|inactive). Inclui ativos e inativos.
+     */
+    public function executivesOverview(Request $request): JsonResponse
+    {
+        $execCol  = Customer::activeExecutiveColumn();
+        $relation = $execCol === 'executive_bizify_id' ? 'executiveBizify' : 'executive';
+
+        $query = Customer::query()->with([$relation => fn ($r) => $r->select('id', 'name')]);
+
+        if ($search = trim((string) ($request->get('search') ?? $request->get('filter')))) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'ilike', "%{$search}%")
+                  ->orWhere('cgc', 'ilike', "%{$search}%");
+            });
+        }
+
+        $executiveId = $request->get('executive_id');
+        if ($executiveId === 'none') {
+            $query->whereNull($execCol);
+        } elseif ($executiveId) {
+            $query->where($execCol, $executiveId);
+        }
+
+        // Status: ativos + inativos por padrão (all); filtro opcional.
+        $status = $request->get('status', 'all');
+        if ($status === 'active') {
+            $query->where('active', true);
+        } elseif ($status === 'inactive') {
+            $query->where('active', false);
+        }
+
+        // Bizify ativo: só clientes Bizify (igual ao index), salvo bizify_scope=all.
+        if ($execCol === 'executive_bizify_id' && $request->get('bizify_scope') !== 'all') {
+            $query->where('is_bizify_customer', true);
+        }
+
+        $rows = $query->orderBy('name')->get()->map(fn (Customer $c) => [
+            'id'                 => $c->id,
+            'name'               => $c->name,
+            'cgc'                => $c->cgc,
+            'active'             => (bool) $c->active,
+            'is_bizify_customer' => (bool) $c->is_bizify_customer,
+            'executive_id'       => $c->{$execCol},
+            'executive_name'     => $c->{$relation}?->name,
+        ]);
+
+        return response()->json([
+            'data'             => $rows,
+            'executive_column' => $execCol,
+            'empresa_bizify'   => $execCol === 'executive_bizify_id',
+        ]);
+    }
+
+    /**
+     * Altera o executivo de UM cliente (coluna da empresa ativa). SÓ ADMIN.
+     */
+    public function updateExecutive(Request $request, Customer $customer): JsonResponse
+    {
+        if (!$request->user() || !$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Apenas o administrador pode alterar o executivo.'], 403);
+        }
+        $data = $request->validate([
+            'executive_id' => 'nullable|exists:users,id',
+        ]);
+
+        $col = Customer::activeExecutiveColumn();
+        $customer->{$col} = $data['executive_id'] ?? null;
+        $customer->save();
+
+        $relation = $col === 'executive_bizify_id' ? 'executiveBizify' : 'executive';
+        $customer->load([$relation => fn ($r) => $r->select('id', 'name')]);
+
+        return response()->json(['data' => [
+            'id'             => $customer->id,
+            'executive_id'   => $customer->{$col},
+            'executive_name' => $customer->{$relation}?->name,
+        ]]);
+    }
+
+    /**
+     * Altera o executivo de VÁRIOS clientes de uma vez (coluna da empresa ativa). SÓ ADMIN.
+     */
+    public function bulkExecutive(Request $request): JsonResponse
+    {
+        if (!$request->user() || !$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Apenas o administrador pode alterar o executivo.'], 403);
+        }
+        $data = $request->validate([
+            'customer_ids'   => 'required|array|min:1',
+            'customer_ids.*' => 'integer|exists:customers,id',
+            'executive_id'   => 'nullable|exists:users,id',
+        ]);
+
+        $col       = Customer::activeExecutiveColumn();
+        $executive = $data['executive_id'] ?? null;
+        $count     = 0;
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($data, $col, $executive, &$count) {
+            $customers = Customer::whereIn('id', $data['customer_ids'])->lockForUpdate()->get();
+            foreach ($customers as $c) {
+                $c->{$col} = $executive;
+                $c->save();
+                $count++;
+            }
+        });
+
+        return response()->json(['data' => ['updated' => $count]]);
+    }
+
+    /**
      * @OA\Post(
      *     path="/api/v1/customers",
      *     summary="Criar customer",

@@ -46,7 +46,7 @@ class NotificationController extends Controller
         $u = $this->internalOrAbort($request);
 
         $rows = $this->visibleQuery($u)
-            ->with('poll.options')
+            ->with(['poll.options', 'survey.questions.options'])
             ->orderByRaw("case priority when 'critical' then 4 when 'high' then 3 when 'medium' then 2 else 1 end desc")
             ->orderByDesc('created_at')
             ->get();
@@ -82,13 +82,20 @@ class NotificationController extends Controller
             $poll = $n->type === 'poll' && $n->poll
                 ? \App\Http\Controllers\NotificationPollController::results($n->poll, $u)
                 : null;
+            $survey = $n->type === 'survey' && $n->survey
+                ? \App\Http\Controllers\NotificationSurveyController::formPayload($n->survey, $u)
+                : null;
             return array_merge($n->toArray(), [
                 'viewed'      => $viewed,
                 'acked'       => $acked,
                 'pending_ack' => $n->requires_ack && !$acked,
                 'ack_at'      => $r?->ack_at,
                 'my_response' => $r?->response_action,   // botão de decisão que o usuário clicou
+                // Pode indicar acompanhante "Outro" (além da família)? (está na lista autorizada)
+                'can_invite_other' => (bool) $n->allow_guests
+                    && in_array((int) $u->id, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true),
                 'poll'        => $poll,
+                'survey'      => $survey,
             ]);
         });
 
@@ -105,6 +112,9 @@ class NotificationController extends Controller
         $u = $request->user();
         abort_unless($u, 401);
 
+        // Polling de alta frequência (menu). Cache por-usuário de 15s alivia drasticamente a carga
+        // de DB no pico de fechamento (contagens repetidas a cada poll × muitos usuários).
+        $data = \Illuminate\Support\Facades\Cache::remember("badges:{$u->id}", 15, function () use ($u) {
         $today   = now()->toDateString();
         $nowTime = now()->format('H:i:s');
         $taskBase = \App\Models\Task::where('assigned_to', $u->id)->where('completed', false);
@@ -130,13 +140,16 @@ class NotificationController extends Controller
         $atrasos = \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
             ->whereNull('deleted_at')->count();
 
-        return response()->json(['data' => [
+        return [
             'pending_tasks'        => $pendingTasks,
             'overdue_tasks'        => $overdueTasks,
             'unread_notifications' => $unread,
             'atrasos'              => $atrasos,
             'critical'             => $overdueTasks > 0,
-        ]]);
+        ];
+        });
+
+        return response()->json(['data' => $data]);
     }
 
     /** Query base de notificações VISÍVEIS ao usuário (não-expiradas + alvo). Reusada por index/stream. */
@@ -269,6 +282,7 @@ class NotificationController extends Controller
         $r = NotificationRead::firstOrNew(['notification_id' => $notification->id, 'user_id' => $u->id]);
         $r->viewed_at       = $r->viewed_at ?? now();
         $r->response_action = $action;
+        $r->response_source = 'app';                        // respondeu pela Central/pop-up
         $r->ack_at          = now();                       // respondeu → não fica mais pendente
         $r->acked_version   = $notification->version;
         $r->ack_ip          = $request->ip();
@@ -282,23 +296,7 @@ class NotificationController extends Controller
             \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $u->id)->delete();
             $affirmative = isset($actions[0]) && $action === $actions[0];
             if ($affirmative) {
-                $guests = collect((array) $request->input('guests', []))
-                    ->map(function ($g) {
-                        $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
-                        $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
-                        $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
-                        // Idade só faz sentido p/ Filho(a).
-                        if (stripos($par, 'filho') === false) $idade = null;
-                        return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade];
-                    })
-                    ->filter(fn ($g) => $g['nome'] !== '')
-                    ->take(30)
-                    ->map(fn ($g) => [
-                        'notification_id' => $notification->id, 'user_id' => $u->id,
-                        'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
-                        'idade' => $g['idade'],
-                        'created_at' => now(), 'updated_at' => now(),
-                    ])->values()->all();
+                $guests = $this->parseGuests($request->input('guests', []), $notification, $u->id);
                 if ($guests) \App\Models\NotificationGuest::insert($guests);
             }
         }
@@ -312,47 +310,229 @@ class NotificationController extends Controller
     public function log(Request $request, AppNotification $notification): JsonResponse
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
-        $recipients = $this->resolveRecipientUsers($notification);
+        // Inclui os convites CANCELADOS (excluded_user_ids) p/ exibi-los marcados no Log (com opção de reativar).
+        $recipients = $this->resolveRecipientUsers($notification, true);
+        $cancelledIds = array_map('intval', (array) ($notification->excluded_user_ids ?? []));
+        $otherIds     = array_map('intval', (array) ($notification->guest_other_user_ids ?? []));
         $reads = NotificationRead::where('notification_id', $notification->id)->get()->keyBy('user_id');
         // Acompanhantes/familiares por respondente (só quando a notificação permite).
         $guestsByUser = $notification->allow_guests
             ? \App\Models\NotificationGuest::where('notification_id', $notification->id)->get()->groupBy('user_id')
             : collect();
 
-        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser) {
+        $isSurvey = $notification->type === 'survey';
+        $isPoll   = $notification->type === 'poll';
+        $pollVoterIds = $isPoll && $notification->poll
+            ? array_map('intval', \App\Models\NotificationPollVote::where('poll_id', $notification->poll->id)->distinct()->pluck('user_id')->all())
+            : [];
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds, $isSurvey, $isPoll, $pollVoterIds) {
             $r = $reads->get($usr->id);
+            $cancelled = in_array((int) $usr->id, $cancelledIds, true);
             return [
                 'user_id'      => $usr->id,
                 'user_name'    => $usr->name,
                 'user_email'   => $usr->email,
-                'viewed_at'    => $r?->viewed_at?->toIso8601String(),
-                'response'     => $r?->response_action,
-                'responded_at' => $r && $r->response_action ? $r->ack_at?->toIso8601String() : null,
-                'guests'       => ($guestsByUser->get($usr->id) ?? collect())
+                'cancelled'    => $cancelled, // convite cancelado (não recebe)
+                'can_invite_other' => in_array((int) $usr->id, $otherIds, true), // pode indicar "Outro"
+                'survey_responded' => $isSurvey && !$cancelled && $r && $r->ack_at ? true : false, // respondeu a pesquisa
+                'poll_voted'   => $isPoll && !$cancelled && in_array((int) $usr->id, $pollVoterIds, true), // votou na enquete
+                'viewed_at'    => $cancelled ? null : $r?->viewed_at?->toIso8601String(),
+                'response'     => $cancelled ? null : $r?->response_action,
+                'response_source' => (!$cancelled && $r && $r->response_action) ? ($r->response_source ?: null) : null, // 'app' | 'email' | null
+                'responded_at' => (!$cancelled && $r && $r->response_action) ? $r->ack_at?->toIso8601String() : null,
+                'guests'       => $cancelled ? collect() : ($guestsByUser->get($usr->id) ?? collect())
                     ->map(fn ($g) => ['nome' => $g->nome, 'parentesco' => $g->parentesco, 'idade' => $g->idade])->values(),
             ];
         })->sortBy('user_name')->values();
 
+        // Contadores desconsideram os convites cancelados.
+        $active = $rows->where('cancelled', false);
         $actions = (array) ($notification->actions ?? []);
         $byAction = [];
-        foreach ($actions as $a) $byAction[$a] = $rows->where('response', $a)->count();
+        foreach ($actions as $a) $byAction[$a] = $active->where('response', $a)->count();
 
         return response()->json(['data' => [
             'recipients' => $rows,
             'summary'    => [
-                'total'        => $rows->count(),
-                'viewed'       => $rows->whereNotNull('viewed_at')->count(),
-                'responded'    => $rows->whereNotNull('response')->count(),
-                'actions'      => $actions,
-                'by_action'    => $byAction,
-                'allow_guests' => (bool) $notification->allow_guests,
-                'guests_total' => $rows->sum(fn ($x) => count($x['guests'])),
+                'total'          => $active->count(),
+                'viewed'         => $active->whereNotNull('viewed_at')->count(),
+                'responded'      => $active->whereNotNull('response')->count(),
+                'cancelled'      => $rows->where('cancelled', true)->count(),
+                'actions'        => $actions,
+                'by_action'      => $byAction,
+                'allow_guests'   => (bool) $notification->allow_guests,
+                'guests_total'   => $active->sum(fn ($x) => count($x['guests'])),
+                'is_survey'      => $isSurvey,
+                'survey_id'      => $isSurvey ? optional($notification->survey)->id : null,
+                'survey_responded' => $isSurvey ? $active->where('survey_responded', true)->count() : 0,
+                'is_poll'        => $isPoll,
+                'poll_id'        => $isPoll ? optional($notification->poll)->id : null,
+                'poll_voted'     => $isPoll ? $active->where('poll_voted', true)->count() : 0,
             ],
         ]]);
     }
 
+    /**
+     * REVOGA a resposta de UM destinatário: limpa decisão/ack (e acompanhantes) → ele volta a
+     * ficar PENDENTE (pop-up reabre + volta a receber o e-mail nas recorrências). Reenvia o
+     * e-mail de decisão na hora para esse usuário (best-effort) quando a publicação envia e-mail.
+     */
+    public function revoke(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        $data = $request->validate([
+            'user_id'          => 'required|integer|exists:users,id',
+            'can_invite_other' => 'nullable|boolean', // define se pode indicar "Outro" ao reconvidar
+        ]);
+        $uid  = (int) $data['user_id'];
+
+        $read = NotificationRead::where('notification_id', $notification->id)->where('user_id', $uid)->first();
+        if ($read) {
+            $read->response_action = null;
+            $read->response_source = null;
+            $read->ack_at          = null;   // volta a pendente → pop-up reabre e recebe de novo
+            $read->acked_version   = null;
+            $read->save();
+        }
+        // Remove os acompanhantes que havia informado.
+        \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
+        // Se o convite estava CANCELADO, reativa (tira de excluded_user_ids) — revogar = re-convidar.
+        $this->setInviteExcluded($notification, $uid, false);
+        // "Pode convidar além da família?" (perguntado no modal de revogar) → liga/desliga "Outro".
+        if ($request->has('can_invite_other')) {
+            $this->setGuestOther($notification, $uid, $request->boolean('can_invite_other'));
+        }
+
+        // "Volta a receber": reenvia o e-mail de decisão só para esse usuário (não quebra se falhar).
+        $resent = false;
+        $user = \App\Models\User::find($uid);
+        if ($user) {
+            try { $resent = $this->sendActionEmail($notification, $user); } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail após revogar', [
+                    'notification_id' => $notification->id, 'user_id' => $uid, 'erro' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent]]);
+    }
+
+    /**
+     * CANCELA o convite de UM destinatário: entra em excluded_user_ids → NÃO recebe mais
+     * (sai do pop-up, do e-mail e da apuração). Limpa decisão/ack e acompanhantes. Para
+     * reativar (voltar a receber), use "revogar". `cancel=false` reativa.
+     */
+    public function cancelInvite(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        $data = $request->validate([
+            'user_id' => 'required|integer|exists:users,id',
+            'cancel'  => 'nullable|boolean',
+        ]);
+        $uid    = (int) $data['user_id'];
+        $cancel = $request->boolean('cancel', true);
+
+        $this->setInviteExcluded($notification, $uid, $cancel);
+
+        if ($cancel) {
+            // Cancelado não conta mais: limpa a resposta/ack e os acompanhantes.
+            $read = NotificationRead::where('notification_id', $notification->id)->where('user_id', $uid)->first();
+            if ($read) {
+                $read->response_action = null;
+                $read->response_source = null;
+                $read->ack_at          = null;
+                $read->acked_version   = null;
+                $read->save();
+            }
+            \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
+        }
+
+        return response()->json(['data' => ['cancelled' => $cancel, 'user_id' => $uid]]);
+    }
+
+    /** Liga/desliga a presença de um usuário em notifications_center.excluded_user_ids. */
+    private function setInviteExcluded(AppNotification $n, int $uid, bool $excluded): void
+    {
+        $ids = array_values(array_unique(array_map('intval', (array) ($n->excluded_user_ids ?? []))));
+        $has = in_array($uid, $ids, true);
+        if ($excluded && !$has) {
+            $ids[] = $uid;
+        } elseif (!$excluded && $has) {
+            $ids = array_values(array_filter($ids, fn ($i) => $i !== $uid));
+        } else {
+            return; // já está no estado desejado
+        }
+        $n->excluded_user_ids = $ids ?: null;
+        $n->save();
+    }
+
+    /** Liga/desliga a permissão de indicar "Outro" (guest_other_user_ids) p/ um usuário. */
+    private function setGuestOther(AppNotification $n, int $uid, bool $allowed): void
+    {
+        $ids = array_values(array_unique(array_map('intval', (array) ($n->guest_other_user_ids ?? []))));
+        $has = in_array($uid, $ids, true);
+        if ($allowed && !$has) {
+            $ids[] = $uid;
+        } elseif (!$allowed && $has) {
+            $ids = array_values(array_filter($ids, fn ($i) => $i !== $uid));
+        } else {
+            return;
+        }
+        $n->guest_other_user_ids = $ids ?: null;
+        $n->save();
+    }
+
+    /**
+     * Normaliza a lista de acompanhantes (pop-up ou e-mail). Regras:
+     * - idade mantida p/ Filho(a) e p/ "Outro" (quando criança); zerada p/ Cônjuge.
+     * - "Outro" só aceito de quem pode indicar além da família (guest_other_user_ids); senão descarta.
+     * - nome vazio descartado; máx. 30. (Obrigatoriedade de idade é validada no FE.)
+     */
+    private function parseGuests($raw, AppNotification $n, int $uid): array
+    {
+        $canOther = in_array($uid, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true);
+        return collect((array) $raw)
+            ->map(function ($g) {
+                $nome  = trim((string) (is_array($g) ? ($g['nome'] ?? '') : ''));
+                $par   = trim((string) (is_array($g) ? ($g['parentesco'] ?? '') : ''));
+                $idade = is_array($g) && isset($g['idade']) && $g['idade'] !== '' ? (int) $g['idade'] : null;
+                $isOutro = stripos($par, 'outro') !== false;
+                $isFilho = stripos($par, 'filho') !== false;
+                if (!$isFilho && !$isOutro) $idade = null; // só Filho(a)/Outro têm idade
+                return ['nome' => $nome, 'parentesco' => $par, 'idade' => $idade, 'is_outro' => $isOutro];
+            })
+            ->filter(fn ($g) => $g['nome'] !== '')
+            ->reject(fn ($g) => $g['is_outro'] && !$canOther) // "Outro" só de quem é autorizado
+            ->take(30)
+            ->map(fn ($g) => [
+                'notification_id' => $n->id, 'user_id' => $uid,
+                'nome' => $g['nome'], 'parentesco' => $g['parentesco'] !== '' ? $g['parentesco'] : null,
+                'idade' => $g['idade'],
+                'created_at' => now(), 'updated_at' => now(),
+            ])->values()->all();
+    }
+
+    /** Envia o e-mail de decisão (com botões de 1 clique) para UM usuário. Retorna se enviou. */
+    private function sendActionEmail(AppNotification $n, \App\Models\User $u): bool
+    {
+        if (!$n->send_email || !\App\Services\GraphMailSender::enabled() || empty($n->actions) || !filled($u->email)) {
+            return false;
+        }
+        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
+            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        if (!$from) {
+            return false;
+        }
+        $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
+        $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
+        $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
+        [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
+        [$ok] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+        return (bool) $ok;
+    }
+
     /** Usuários destinatários (perfis + usuários + contratação + cliente) — base do LOG. */
-    private function resolveRecipientUsers(AppNotification $n)
+    private function resolveRecipientUsers(AppNotification $n, bool $includeExcluded = false)
     {
         $customerIds = array_filter(array_merge(
             (array) ($n->target_customer_ids ?? []),
@@ -368,7 +548,8 @@ class NotificationController extends Controller
                 if ($n->target_bonds)          $w->orWhereIn('work_bond', $n->target_bonds);
                 if ($customerIds)              $w->orWhereIn('customer_id', $customerIds);
             })
-            ->when($n->excluded_user_ids, fn ($q) => $q->whereNotIn('id', $n->excluded_user_ids))
+            // Convites cancelados (excluded_user_ids) saem do envio; o Log pede includeExcluded p/ exibi-los marcados.
+            ->when($n->excluded_user_ids && !$includeExcluded, fn ($q) => $q->whereNotIn('id', $n->excluded_user_ids))
             ->get(['id', 'name', 'email']);
     }
 
@@ -415,6 +596,21 @@ class NotificationController extends Controller
                 $arr['poll'] = $n->type === 'poll' && $n->poll
                     ? \App\Http\Controllers\NotificationPollController::results($n->poll, $admin)
                     : null;
+                // Pesquisa: estrutura p/ hidratar o editor (labels) + flag de respostas.
+                $arr['survey'] = null;
+                if ($n->type === 'survey' && $n->survey) {
+                    $n->survey->loadMissing('questions.options');
+                    $arr['survey'] = [
+                        'survey_id'  => $n->survey->id,
+                        'anonymous'  => (bool) $n->survey->anonymous,
+                        'has_responses' => \App\Models\NotificationSurveyResponse::where('survey_id', $n->survey->id)->exists(),
+                        'questions'  => $n->survey->questions->map(fn ($q) => [
+                            'id' => $q->id, 'label' => $q->label, 'type' => $q->type,
+                            'required' => (bool) $q->required, 'multiple' => (bool) $q->multiple,
+                            'options' => $q->options->pluck('label')->values(),
+                        ])->values(),
+                    ];
+                }
                 return $arr;
             });
         return response()->json(['data' => $rows]);
@@ -425,14 +621,16 @@ class NotificationController extends Controller
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         $v = $this->validatePayload($request, false);
         $pollPayload = $v['poll'] ?? null;
-        unset($v['poll']);
+        $surveyPayload = $v['survey'] ?? null;
+        unset($v['poll'], $v['survey']);
         if (array_key_exists('type', $v)) $v['requires_ack'] = $v['type'] === 'require_ack' ? true : (bool) ($v['requires_ack'] ?? $notification->requires_ack);
         if (array_key_exists('actions', $v) && !empty($v['actions'])) $v['requires_ack'] = true;   // botões de decisão exigem resposta
         if (array_key_exists('expires_at', $v)) $v['expires_at'] = $this->normalizeExpiry($v['expires_at']);
         if (array_key_exists('message', $v)) $v['message'] = $v['message'] ?? '';  // coluna NOT NULL (enquete tem msg opcional)
-        \Illuminate\Support\Facades\DB::transaction(function () use ($notification, $v, $pollPayload) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($notification, $v, $pollPayload, $surveyPayload) {
             $notification->update($v);
             if ($notification->type === 'poll' && $pollPayload) $this->savePoll($notification, $pollPayload);
+            if ($notification->type === 'survey' && $surveyPayload) $this->saveSurvey($notification, $surveyPayload);
         });
         return response()->json(['data' => $notification->fresh('poll.options')]);
     }
@@ -467,10 +665,60 @@ class NotificationController extends Controller
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         abort_if($notification->is_template, 422, 'Modelos não podem ser reenviados — use "Usar modelo" para publicar.');
-        // channel: 'popup' = só reabre o pop-up (sem e-mail); qualquer outro (padrão) = e-mail + pop-up.
-        $sendEmail = $request->input('channel') !== 'popup';
-        $emailed = $this->fire($notification, [], $sendEmail);
+        // channel: 'popup' = só reabre o pop-up (sem e-mail); 'email_only' = só reenvia o e-mail
+        // (NÃO reabre o pop-up nem zera leituras); qualquer outro (padrão) = e-mail + pop-up.
+        $channel = $request->input('channel');
+        $sendEmail   = $channel !== 'popup';
+        $reopenPopup = $channel !== 'email_only';
+        $emailed = $this->fire($notification, [], $sendEmail, $reopenPopup);
         return response()->json(['data' => array_merge($notification->fresh('poll.options')->toArray(), ['emailed' => $emailed])]);
+    }
+
+    /**
+     * Reenvia a comunicação para UM destinatário (admin/dono): reenvia o e-mail SÓ p/ aquela
+     * pessoa (pesquisa = link assinado "Responder pesquisa"; decisão = botões; aviso = corpo).
+     * Não mexe nos demais nem no pop-up/leituras — quem não respondeu já fica pendente no Meu Dia.
+     */
+    public function resendUser(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        abort_if($notification->is_template, 422, 'Modelos não podem ser reenviados.');
+        $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
+        $target = \App\Models\User::find((int) $data['user_id']);
+        abort_unless($target && filled($target->email), 422, 'Destinatário sem e-mail cadastrado.');
+
+        $emailed = $this->emailNotificationToUser($notification->fresh(['poll.options', 'survey']), $target);
+        return response()->json(['data' => ['resent' => true, 'user_id' => $target->id, 'emailed' => $emailed ? 1 : 0]]);
+    }
+
+    /** Reenvia o e-mail da comunicação para UM único destinatário (mesma montagem do emailNotification). */
+    public function emailNotificationToUser(AppNotification $n, \App\Models\User $u): bool
+    {
+        if ($n->is_template || !$n->send_email || !\App\Services\GraphMailSender::enabled() || !filled($u->email)) return false;
+        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
+            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        if (!$from) return false;
+        $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
+
+        if ($n->type === 'survey' && $n->survey) {
+            $link = \App\Http\Controllers\NotificationSurveyController::emailLink($n->survey, $u);
+            $btn = '<div style="margin:18px 0 4px"><a href="' . e($link) . '" target="_blank" '
+                . 'style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;background:#06b6d4;border-radius:8px;text-decoration:none">Responder pesquisa</a></div>'
+                . '<p style="margin:8px 0 0;font-size:12px;color:#6b7280">Clique para abrir o formulário' . ($n->survey->anonymous ? ' (anônimo)' : '') . '. Ou acesse a Central de Notificações no Minutor.</p>';
+            $body = (trim((string) $n->message) !== '' ? '<p style="margin:0 0 10px">' . $n->message . '</p>' : '') . $btn;
+        } elseif (!empty($n->actions)) {
+            $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
+        } else {
+            $body = $this->emailBody($n);
+        }
+        $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
+        [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
+        [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+        if (!$ok) {
+            \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail por usuário (Graph)', ['notification_id' => $n->id, 'to' => $u->email, 'erro' => $err]);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -478,18 +726,23 @@ class NotificationController extends Controller
      * fim do dia, marca resent_at (o pop-up reaparece) e reenvia o e-mail. Reusado pelo reenvio
      * manual e pela recorrência. Retorna nº de e-mails enviados.
      */
-    public function fire(AppNotification $n, array $extraBcc = [], bool $sendEmail = true): int
+    public function fire(AppNotification $n, array $extraBcc = [], bool $sendEmail = true, bool $reopenPopup = true): int
     {
-        // Reabre SÓ para quem ainda não decidiu/leu. Quem já confirmou leitura (ack_at) OU
-        // respondeu um botão de decisão (Confirmo presença / Não poderei ir — respond também
-        // grava ack_at) NÃO é incomodado de novo: a decisão persiste entre recorrências.
-        // Reads apenas "vistos" (viewed_at sem ack_at) são apagados → o usuário é re-perguntado.
-        NotificationRead::where('notification_id', $n->id)->whereNull('ack_at')->delete();
-        $n->forceFill([
-            'resent_at'     => now(),
-            'last_fired_at' => now(),
-            'expires_at'    => $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->endOfDay(),
-        ])->save();
+        if ($reopenPopup) {
+            // Reabre SÓ para quem ainda não decidiu/leu. Quem já confirmou leitura (ack_at) OU
+            // respondeu um botão de decisão (Confirmo presença / Não poderei ir — respond também
+            // grava ack_at) NÃO é incomodado de novo: a decisão persiste entre recorrências.
+            // Reads apenas "vistos" (viewed_at sem ack_at) são apagados → o usuário é re-perguntado.
+            NotificationRead::where('notification_id', $n->id)->whereNull('ack_at')->delete();
+            $n->forceFill([
+                'resent_at'     => now(),
+                'last_fired_at' => now(),
+                'expires_at'    => $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->endOfDay(),
+            ])->save();
+        } else {
+            // Somente e-mail: NÃO reabre o pop-up nem zera leituras — só registra o disparo.
+            $n->forceFill(['last_fired_at' => now()])->save();
+        }
         // $sendEmail = false → só re-dispara o pop-up (zera leituras), sem reenviar e-mail.
         return $sendEmail ? $this->emailNotification($n->fresh('poll.options'), $extraBcc) : 0;
     }
@@ -501,17 +754,21 @@ class NotificationController extends Controller
         abort_unless($this->canManage($u), 403, 'Apenas administradores, coordenadores e administrativos podem publicar.');
         $v = $this->validatePayload($request, true);
         $pollPayload = $v['poll'] ?? null;
-        unset($v['poll']);
+        $surveyPayload = $v['survey'] ?? null;
+        unset($v['poll'], $v['survey']);
         $v['requires_ack'] = ($v['type'] ?? '') === 'require_ack' ? true : (bool) ($v['requires_ack'] ?? false);
         if (!empty($v['actions'])) $v['requires_ack'] = true;   // botões de decisão exigem resposta
         $v['message'] = $v['message'] ?? '';
         $v['expires_at'] = $this->normalizeExpiry($v['expires_at'] ?? null);
         $v['created_by'] = $u->id;
 
-        $n = \Illuminate\Support\Facades\DB::transaction(function () use ($v, $pollPayload) {
+        $n = \Illuminate\Support\Facades\DB::transaction(function () use ($v, $pollPayload, $surveyPayload) {
             $n = AppNotification::create($v);
             if (($v['type'] ?? '') === 'poll' && $pollPayload) {
                 $this->savePoll($n, $pollPayload);
+            }
+            if (($v['type'] ?? '') === 'survey' && $surveyPayload) {
+                $this->saveSurvey($n, $surveyPayload);
             }
             return $n;
         });
@@ -558,13 +815,51 @@ class NotificationController extends Controller
         }
     }
 
+    /** Cria/atualiza a PESQUISA (survey) + perguntas/opções. Recria as perguntas só se ainda não houver respostas. */
+    private function saveSurvey(AppNotification $n, array $p): void
+    {
+        $survey = \App\Models\NotificationSurvey::updateOrCreate(
+            ['notification_id' => $n->id],
+            [
+                'anonymous'  => (bool) ($p['anonymous'] ?? false),
+                'expires_at' => $p['expires_at'] ?? $n->expires_at,
+            ]
+        );
+
+        $questions = array_values(array_filter((array) ($p['questions'] ?? []), fn ($q) => trim((string) ($q['label'] ?? '')) !== ''));
+        if (empty($questions)) return;
+
+        // Preserva integridade das respostas já dadas — não recria perguntas.
+        if (\App\Models\NotificationSurveyResponse::where('survey_id', $survey->id)->exists()) return;
+
+        $survey->questions()->delete(); // cascade apaga opções
+        foreach ($questions as $i => $q) {
+            $type = in_array(($q['type'] ?? 'text'), ['text', 'person', 'choice'], true) ? $q['type'] : 'text';
+            $question = $survey->questions()->create([
+                'label'    => trim((string) $q['label']),
+                'type'     => $type,
+                'required' => (bool) ($q['required'] ?? true),
+                'multiple' => $type === 'choice' ? (bool) ($q['multiple'] ?? false) : false,
+                'order'    => $i,
+            ]);
+            if ($type === 'choice') {
+                $opts = array_values(array_filter(array_map('trim', (array) ($q['options'] ?? [])), fn ($s) => $s !== ''));
+                foreach ($opts as $j => $label) {
+                    $question->options()->create(['label' => $label, 'order' => $j]);
+                }
+            }
+        }
+    }
+
     private function validatePayload(Request $request, bool $creating): array
     {
         $isPoll = $request->input('type') === 'poll';
+        $isSurvey = $request->input('type') === 'survey';
+        $noMsgRequired = $isPoll || $isSurvey; // enquete/pesquisa: mensagem opcional (o form é o conteúdo)
         return $request->validate([
             'title'        => ($creating ? 'required' : 'sometimes') . '|string|max:200',
-            // Em enquete a mensagem é opcional (a pergunta é o conteúdo principal).
-            'message'      => ($creating && !$isPoll ? 'required' : 'nullable') . '|string',
+            // Em enquete/pesquisa a mensagem é opcional (a pergunta/formulário é o conteúdo principal).
+            'message'      => ($creating && !$noMsgRequired ? 'required' : 'nullable') . '|string',
             'type'         => ($creating ? 'required' : 'sometimes') . '|in:' . implode(',', AppNotification::TYPES),
             'priority'     => ($creating ? 'required' : 'sometimes') . '|in:' . implode(',', AppNotification::PRIORITIES),
             'target_roles'          => 'nullable|array',
@@ -593,6 +888,9 @@ class NotificationController extends Controller
             'actions.*'    => 'string|max:80',
             // Confirmar presença: permite ao respondente informar acompanhantes/familiares.
             'allow_guests' => 'nullable|boolean',
+            // Usuários autorizados a indicar acompanhante "Outro" (além da família).
+            'guest_other_user_ids'   => 'nullable|array',
+            'guest_other_user_ids.*' => 'integer',
             'version'      => 'nullable|integer|min:1',
             'expires_at'   => 'nullable|date',
             // Enquete (quando type=poll)
@@ -604,6 +902,17 @@ class NotificationController extends Controller
             'poll.expires_at'         => 'nullable|date',
             'poll.options'            => ($creating && $isPoll ? 'required' : 'nullable') . '|array|min:2',
             'poll.options.*'          => 'string|max:200',
+            // Pesquisa (quando type=survey): formulário com várias perguntas.
+            'survey'                     => ($creating && $isSurvey ? 'required' : 'nullable') . '|array',
+            'survey.anonymous'           => 'nullable|boolean',
+            'survey.expires_at'          => 'nullable|date',
+            'survey.questions'           => ($creating && $isSurvey ? 'required' : 'nullable') . '|array|min:1',
+            'survey.questions.*.label'   => 'required_with:survey.questions|string|max:500',
+            'survey.questions.*.type'    => 'nullable|in:text,person,choice',
+            'survey.questions.*.required' => 'nullable|boolean',
+            'survey.questions.*.multiple' => 'nullable|boolean',
+            'survey.questions.*.options'   => 'nullable|array',
+            'survey.questions.*.options.*' => 'string|max:200',
         ]);
     }
 
@@ -643,6 +952,29 @@ class NotificationController extends Controller
 
         $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
 
+        // PESQUISA: cada destinatário recebe o e-mail com um botão "Responder pesquisa" (link assinado por usuário).
+        // Quem já respondeu (ack_at) não recebe de novo nas recorrências.
+        if ($n->type === 'survey' && $n->survey) {
+            $survey = $n->survey;
+            $decidedIds = NotificationRead::where('notification_id', $n->id)->whereNotNull('ack_at')->pluck('user_id')->all();
+            $users = $this->resolveRecipientUsers($n)
+                ->filter(fn ($u) => filled($u->email) && !in_array($u->id, $decidedIds, true));
+            $sent = 0;
+            foreach ($users as $u) {
+                $link = \App\Http\Controllers\NotificationSurveyController::emailLink($survey, $u);
+                $btn = '<div style="margin:18px 0 4px"><a href="' . e($link) . '" target="_blank" '
+                    . 'style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;background:#06b6d4;border-radius:8px;text-decoration:none">Responder pesquisa</a></div>'
+                    . '<p style="margin:8px 0 0;font-size:12px;color:#6b7280">Clique para abrir o formulário' . ($survey->anonymous ? ' (anônimo)' : '') . '. Ou acesse a Central de Notificações no Minutor.</p>';
+                $body = (trim((string) $n->message) !== '' ? '<p style="margin:0 0 10px">' . $n->message . '</p>' : '') . $btn;
+                $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
+                [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
+                [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+                if ($ok) $sent++;
+                else \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de pesquisa (Graph)', ['notification_id' => $n->id, 'to' => $u->email, 'erro' => $err]);
+            }
+            return $sent;
+        }
+
         // COM botões de decisão: cada destinatário recebe o e-mail com SEUS botões de 1 clique (link assinado).
         if (!empty($n->actions)) {
             // Quem JÁ decidiu (respondeu um botão / confirmou → ack_at gravado) NÃO recebe o e-mail
@@ -658,8 +990,15 @@ class NotificationController extends Controller
                 $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
                 $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
                 [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-                \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
-                $sent++;
+                [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+                if ($ok) {
+                    $sent++;
+                } else {
+                    // Antes as falhas do Graph eram engolidas em silêncio ("enviou e não chegou").
+                    \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de publicação (Graph)', [
+                        'notification_id' => $n->id, 'to' => $u->email, 'from' => $from, 'erro' => $err,
+                    ]);
+                }
             }
             return $sent;
         }
@@ -672,7 +1011,13 @@ class NotificationController extends Controller
         if (empty($emails)) return 0;
         $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $this->emailBody($n));
         [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-        \App\Services\GraphMailSender::sendAs($from, [$from], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, $emails);
+        [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$from], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, $emails);
+        if (!$ok) {
+            \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de publicação (Graph, BCC)', [
+                'notification_id' => $n->id, 'bcc_count' => count($emails), 'from' => $from, 'erro' => $err,
+            ]);
+            return 0;
+        }
         return count($emails);
     }
 
@@ -718,6 +1063,7 @@ class NotificationController extends Controller
             $r = $existing ?: new NotificationRead(['notification_id' => $notification->id, 'user_id' => $u->id]);
             $r->viewed_at       = $r->viewed_at ?? now();
             $r->response_action = $action;
+            $r->response_source = 'email';                      // respondeu pelo link do e-mail (1 clique)
             $r->ack_at          = now();                       // respondeu → sai de pendente (pop-up não reabre)
             $r->acked_version   = $notification->version;
             $r->ack_ip          = $request->ip();
@@ -730,6 +1076,18 @@ class NotificationController extends Controller
         elseif ($already)   { $ok = false; $msg = 'Você já respondeu <b>“' . e($existing->response_action) . '”</b> a esta solicitação. Para alterar, acesse a Central de Notificações no Minutor.'; }
         elseif ($expired)   { $ok = false; $msg = 'O prazo para responder já encerrou.'; }
         else                { $ok = true;  $msg = 'Sua resposta <b>“' . e($action) . '”</b> foi registrada. Obrigado!'; }
+
+        // allow_guests + resposta AFIRMATIVA (1ª ação) recém-registrada → em vez do agradecimento
+        // simples, pergunta os acompanhantes/familiares (mesma pergunta do pop-up da Central).
+        // A presença já ficou confirmada acima; o formulário só ACRESCENTA os acompanhantes.
+        $actionsList = array_values(array_filter(
+            array_map(fn ($a) => trim((string) $a), (array) ($notification->actions ?? [])),
+            fn ($a) => $a !== ''
+        ));
+        if ($ok && $u && $notification->allow_guests && isset($actionsList[0]) && $action === $actionsList[0]) {
+            return response($this->guestFormPage($notification, $u), 200)
+                ->header('Content-Type', 'text/html; charset=UTF-8');
+        }
 
         $title = e($notification->title);
         $color = $ok ? '#06b6d4' : '#b91c1c';
@@ -748,6 +1106,143 @@ class NotificationController extends Controller
             . '<p style="font-size:12px;color:#6b7280;margin:18px 0 0">Você já pode fechar esta janela.</p>'
             . '</div></body></html>';
         return response($page, 200)->header('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    /** Página simples de resultado (dark) reutilizada pelos fluxos de e-mail. */
+    private function simpleResultPage(AppNotification $n, bool $ok, string $msg): string
+    {
+        $heading = e($n->title);
+        $color   = $ok ? '#06b6d4' : '#b91c1c';
+        return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            . '<title>' . $heading . '</title></head>'
+            . '<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center">'
+            . '<div style="max-width:440px;padding:32px;text-align:center;background:#111827;border:1px solid #1f2937;border-radius:16px">'
+            . '<div style="font-size:34px;margin-bottom:8px;color:' . $color . '">' . ($ok ? '&#10003;' : '&#9888;') . '</div>'
+            . '<h1 style="font-size:18px;margin:0 0 6px;color:#fff">' . $heading . '</h1>'
+            . '<p style="font-size:14px;color:#9ca3af;margin:0">' . $msg . '</p>'
+            . '<p style="font-size:12px;color:#6b7280;margin:18px 0 0">Você já pode fechar esta janela.</p>'
+            . '</div></body></html>';
+    }
+
+    /**
+     * Página de ACOMPANHANTES exibida após o convidado confirmar presença pelo e-mail (1 clique).
+     * A presença já foi registrada; aqui ele adiciona (opcionalmente) os familiares, que vão
+     * via POST assinado para respondEmailGuests. Mesma regra do pop-up da Central.
+     */
+    private function guestFormPage(AppNotification $n, \App\Models\User $u): string
+    {
+        $expires = $n->expires_at && $n->expires_at->isFuture() ? $n->expires_at : now()->addDay();
+        $postUrl = \Illuminate\Support\Facades\URL::temporarySignedRoute(
+            'notifications.respond-email-guests', $expires,
+            ['notification' => $n->id, 'user' => $u->id]
+        );
+        $title  = e($n->title);
+        $action = e($postUrl);
+        // Pode indicar "Outro" (além da família)?
+        $canOther = in_array((int) $u->id, array_map('intval', (array) ($n->guest_other_user_ids ?? [])), true);
+        $otherOpt   = $canOther ? '<option value="Outro">Outro</option>' : '';
+        $canOtherJs = $canOther ? 'true' : 'false';
+
+        return <<<HTML
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{$title}</title></head>
+<body style="margin:0;font-family:Segoe UI,Arial,sans-serif;background:#0b0f14;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:16px">
+<div style="max-width:520px;width:100%;padding:28px;background:#111827;border:1px solid #1f2937;border-radius:16px">
+  <div style="font-size:30px;margin-bottom:6px;color:#06b6d4;text-align:center">&#10003;</div>
+  <h1 style="font-size:18px;margin:0 0 4px;color:#fff;text-align:center">Presença confirmada!</h1>
+  <p style="font-size:14px;color:#9ca3af;margin:0 0 18px;text-align:center">Vai levar acompanhantes/familiares? <span style="color:#6b7280">(opcional)</span></p>
+  <form method="POST" action="{$action}">
+    <div id="rows"></div>
+    <button type="button" onclick="addRow()" style="margin:4px 0 16px;padding:8px 14px;background:#1f2937;color:#e5e7eb;border:1px solid #374151;border-radius:8px;font-size:13px;cursor:pointer">+ Adicionar acompanhante</button>
+    <button type="submit" style="display:block;width:100%;padding:12px;background:#06b6d4;color:#fff;border:none;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer">Salvar acompanhantes</button>
+    <button type="button" formnovalidate onclick="goAlone(this)" style="display:block;width:100%;margin-top:8px;padding:11px;background:transparent;color:#9ca3af;border:1px solid #374151;border-radius:8px;font-weight:600;font-size:13px;cursor:pointer">Vou sozinho(a) &mdash; sem acompanhantes</button>
+    <div style="margin:18px 0 0;padding:16px 18px;background:rgba(6,182,212,.12);border:1px solid #06b6d4;border-radius:12px;text-align:center">
+      <p style="margin:0;font-size:17px;font-weight:700;color:#e5e7eb;line-height:1.45">Se não levará ninguém, pode fechar esta janela &mdash; sua presença já está confirmada.</p>
+    </div>
+  </form>
+</div>
+<script>
+var i = 0;
+var CAN_OTHER = {$canOtherJs};
+function addRow() {
+  var wrap = document.getElementById('rows');
+  var idx = i++;
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;align-items:center';
+  row.innerHTML =
+    '<input name="guests['+idx+'][nome]" placeholder="Nome" required style="flex:2 1 150px;min-width:0;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+    '<select name="guests['+idx+'][parentesco]" required onchange="toggleRow(this)" style="flex:1 1 120px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+      '<option value="">Parentesco</option><option value="Cônjuge">Cônjuge</option><option value="Filho(a)">Filho(a)</option>{$otherOpt}' +
+    '</select>' +
+    '<label class="crianca" style="display:none;align-items:center;gap:4px;font-size:12px;color:#9ca3af;cursor:pointer"><input type="checkbox" onchange="toggleCrianca(this)"> é criança?</label>' +
+    '<input name="guests['+idx+'][idade]" type="number" min="0" max="120" placeholder="Idade" style="display:none;flex:0 1 90px;padding:9px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:13px">' +
+    '<button type="button" onclick="this.parentNode.remove()" title="Remover" style="flex:0 0 auto;padding:0 12px;height:38px;background:#1f2937;border:1px solid #374151;border-radius:8px;color:#9ca3af;cursor:pointer">&times;</button>';
+  wrap.appendChild(row);
+}
+// Mostra/oculta "é criança?" e Idade conforme o parentesco.
+function toggleRow(sel) {
+  var row = sel.parentNode;
+  var crianca = row.querySelector('.crianca');
+  var cb = crianca.querySelector('input[type=checkbox]');
+  var idade = row.querySelector('input[type=number]');
+  var isFilho = /filho/i.test(sel.value);
+  var isOutro = /outro/i.test(sel.value);
+  crianca.style.display = isOutro ? 'inline-flex' : 'none';
+  if (!isOutro) cb.checked = false;
+  // Filho(a): idade obrigatória sempre. Outro: idade só quando "é criança".
+  var showIdade = isFilho || (isOutro && cb.checked);
+  idade.style.display = showIdade ? 'block' : 'none';
+  idade.required = showIdade;
+  if (!showIdade) idade.value = '';
+}
+function toggleCrianca(cb) {
+  var idade = cb.parentNode.parentNode.querySelector('input[type=number]');
+  idade.style.display = cb.checked ? 'block' : 'none';
+  idade.required = cb.checked;
+  if (!cb.checked) idade.value = '';
+}
+function goAlone(btn) {
+  document.getElementById('rows').innerHTML = '';
+  btn.form.submit();
+}
+addRow();
+</script>
+</body></html>
+HTML;
+    }
+
+    /**
+     * Grava os acompanhantes informados na página pós-confirmação do e-mail (POST assinado).
+     * Só grava se o usuário JÁ confirmou presença (resposta afirmativa). Regrava a lista (idempotente).
+     */
+    public function respondEmailGuests(Request $request, AppNotification $notification)
+    {
+        $u = \App\Models\User::find((int) $request->query('user'));
+        $actions = array_values(array_filter(
+            array_map(fn ($a) => trim((string) $a), (array) ($notification->actions ?? [])),
+            fn ($a) => $a !== ''
+        ));
+        $read = $u ? NotificationRead::where('notification_id', $notification->id)->where('user_id', $u->id)->first() : null;
+        $affirmative = $u && $notification->allow_guests && $read && isset($actions[0]) && $read->response_action === $actions[0];
+
+        if (!$affirmative) {
+            return response($this->simpleResultPage(
+                $notification, false,
+                'Não foi possível registrar os acompanhantes. Confirme a presença primeiro ou acesse a Central de Notificações no Minutor.'
+            ), 200)->header('Content-Type', 'text/html; charset=UTF-8');
+        }
+
+        // Regrava a lista do respondente (idempotente) — mesma regra do respond() da Central.
+        \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $u->id)->delete();
+        $guests = $this->parseGuests($request->input('guests', []), $notification, $u->id);
+        if ($guests) \App\Models\NotificationGuest::insert($guests);
+
+        $cnt = count($guests);
+        $msg = $cnt > 0
+            ? 'Presença confirmada com <b>' . $cnt . '</b> acompanhante(s). Obrigado!'
+            : 'Presença confirmada, sem acompanhantes. Obrigado!';
+        return response($this->simpleResultPage($notification, true, $msg), 200)
+            ->header('Content-Type', 'text/html; charset=UTF-8');
     }
 
     /** Corpo do e-mail: mensagem da notificação ou, em enquete, pergunta + opções + chamada p/ votar. */
@@ -827,7 +1322,7 @@ class NotificationController extends Controller
                     case 'coordenador_projetos':     $w->where('type', 'coordenador')->where('coordinator_type', 'projetos'); break;
                     case 'coordenador_sustentacao':  $w->where('type', 'coordenador')->where('coordinator_type', 'sustentacao'); break;
                     case 'consultor_horista':        $w->where('type', 'consultor')->where('consultant_type', 'horista'); break;
-                    case 'consultor_banco_de_horas': $w->where('type', 'consultor')->whereIn('consultant_type', ['bh_fixo', 'bh_mensal']); break;
+                    case 'consultor_banco_de_horas': $w->where('type', 'consultor')->where('consultant_type', 'banco_de_horas'); break;
                     case 'consultor_fixo':           $w->where('type', 'consultor')->where('consultant_type', 'fixo'); break;
                     default:                         $w->where('type', $type); break; // admin, administrativo, cliente, consultor, coordenador
                 }

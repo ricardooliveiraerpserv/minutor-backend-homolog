@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Partner;
 use App\Models\User;
 use App\Models\UserHourlyRateLog;
+use App\Models\UserGuaranteedHoursLog;
 use App\Exports\UsersExport;
+use App\Services\AccessControl;
 use Maatwebsite\Excel\Facades\Excel;
 use App\Http\Traits\ResponseHelpers;
 use App\Traits\PasswordGenerator;
@@ -19,6 +21,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use App\Notifications\TemporaryPasswordNotification;
 use App\Notifications\WelcomeNotification;
+use App\Services\ReceitaCnpjService;
 
 /**
  * @OA\Tag(
@@ -164,6 +167,7 @@ class UserController extends Controller
             if ($request->filled('work_bond'))       { $query->whereIn('work_bond', array_filter(array_map('trim', explode(',', (string) $request->work_bond)))); }
             if ($request->filled('contract_type'))   { $query->whereIn('contract_type', array_filter(array_map('trim', explode(',', (string) $request->contract_type)))); }
             if ($request->filled('consultant_type')) { $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type)))); }
+            if ($request->filled('tax_regime'))       { $query->whereIn('tax_regime', array_filter(array_map('trim', explode(',', (string) $request->tax_regime)))); }
             if ($request->filled('sustentacao'))     { $query->where('can_timesheet_sustentacao', in_array($request->input('sustentacao'), ['1', 1, true], true)); }
             if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
             if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
@@ -191,8 +195,9 @@ class UserController extends Controller
 
         // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
-        // Consultor NUNCA vê outros usuários — mesmo com extra_permissions; rotina não pertence ao escopo dele.
-        $canSeeAll = !$user->isConsultor() && (
+        // Consultor NUNCA vê outros usuários pelo caminho de permissão — mesmo com extra_permissions.
+        // Quem passa por aqui vê inclusive os dados de FOLHA (valor-hora, CPF, matrícula) na lista.
+        $canSeeFolha = !$user->isConsultor() && (
             $user->isAdmin()
             || $user->isCoordenador()
             || $user->hasAccess('users.view_all')
@@ -200,6 +205,10 @@ class UserController extends Controller
             || $user->hasAccess('users.reset_password')
             || $user->hasAccess('users.create')
         );
+        // EXCEÇÃO: se o Configurador de Menus liberou explicitamente a tela /users a este usuário
+        // (override users[] do nó), ele PODE abrir a lista — mas SEM os dados sensíveis de folha.
+        $grantedByMenu = !$canSeeFolha && AccessControl::screenVisibleInMenu($user, '/users');
+        $canSeeAll = $canSeeFolha || $grantedByMenu;
         if (!$canSeeAll) {
             $query->where('users.id', $user->id);
         }
@@ -253,6 +262,9 @@ class UserController extends Controller
         if ($request->filled('consultant_type')) {
             $query->whereIn('consultant_type', array_filter(array_map('trim', explode(',', (string) $request->consultant_type))));
         }
+        if ($request->filled('tax_regime')) {
+            $query->whereIn('tax_regime', array_filter(array_map('trim', explode(',', (string) $request->tax_regime))));
+        }
         // Liberação da sustentação (can_timesheet_sustentacao): '1' liberado | '0' bloqueado.
         if ($request->filled('sustentacao')) {
             $query->where('can_timesheet_sustentacao', $request->input('sustentacao') === '1' || $request->input('sustentacao') === 1 || $request->input('sustentacao') === true);
@@ -274,9 +286,9 @@ class UserController extends Controller
             $query->where('customer_id', $request->customer_id);
         }
 
-        // Filtro por perfil de acesso do Help Desk (coluna/atribuição inline em Usuários).
-        if ($request->filled('helpdesk_access_profile_id')) {
-            $query->where('helpdesk_access_profile_id', $request->helpdesk_access_profile_id);
+        // Filtro "só gestores do cliente".
+        if ($request->filled('is_customer_manager') && $request->boolean('is_customer_manager')) {
+            $query->where('is_customer_manager', true);
         }
 
         // Filtro por status (ativo/inativo) usando campo enabled
@@ -302,7 +314,7 @@ class UserController extends Controller
                     $field = substr($field, 1);
                 }
 
-                $allowedFields = ['name', 'email', 'created_at', 'updated_at', 'type', 'contract_type', 'consultant_type', 'work_bond', 'enabled', 'can_timesheet_sustentacao'];
+                $allowedFields = ['name', 'email', 'created_at', 'updated_at', 'type', 'contract_type', 'consultant_type', 'work_bond', 'enabled', 'can_timesheet_sustentacao', 'tax_regime', 'is_customer_manager'];
                 if (in_array($field, $allowedFields)) {
                     // Qualifica users.* — campo pode ser ambíguo se algum filtro
                     // anterior adicionou leftJoin com partners (mesma coluna name/email/timestamps).
@@ -311,26 +323,42 @@ class UserController extends Controller
                     $query->leftJoin('partners', 'partners.id', '=', 'users.partner_id')
                           ->orderBy('partners.name', $direction)
                           ->select('users.*');
+                } elseif ($field === 'customer_name') {
+                    $query->leftJoin('customers', 'customers.id', '=', 'users.customer_id')
+                          ->orderBy('customers.name', $direction)
+                          ->select('users.*');
                 }
             }
         }
 
         $users = $query->paginate($pageSize, ['*'], 'page', $page);
 
-        // Equipes de Help Desk por usuário (aba HD) — em LOTE (evita N+1 nas linhas da página).
-        $pageUserIds = collect($users->items())->pluck('id')->all();
-        $teamsByUser = $pageUserIds
-            ? DB::table('helpdesk_team_user')->whereIn('user_id', $pageUserIds)
-                ->get(['user_id', 'helpdesk_team_id'])->groupBy('user_id')
-                ->map(fn ($rows) => $rows->pluck('helpdesk_team_id')->map(fn ($v) => (int) $v)->all())
-            : collect();
-
         // Adicionar tipos de dashboard permitidos para cada usuário
-        $items = collect($users->items())->map(function ($user) use ($teamsByUser) {
+        // Campos de FOLHA / dados pessoais sensíveis — ocultados de quem abriu a lista só por
+        // liberação de menu (Configurador), sem permissão de folha. Ver $canSeeFolha acima.
+        $folhaFields = [
+            'hourly_rate', 'rate_type', 'daily_hours', 'guaranteed_hours', 'capacity_hours',
+            'allocated_hours', 'bank_hours_initial_balance', 'bank_hours_start_date',
+            'cpf', 'matricula', 'payroll_status', 'birth_date', 'extra_permissions', 'signature',
+        ];
+        // Batch dos dashboard_types p/ os usuários da página — evita N+1
+        // (antes: 1 query por usuário via getAllowedDashboardTypes(); com 100/página isso
+        //  eram 100 idas ao banco ~3s. Agora 1 query só.)
+        $pageUserIds = collect($users->items())->pluck('id')->all();
+        $dashByUser = \DB::table('user_dashboard_types')
+            ->whereIn('user_id', $pageUserIds)
+            ->get(['user_id', 'dashboard_type'])
+            ->groupBy('user_id');
+
+        $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields, $dashByUser) {
             $userData = $user->toArray();
-            $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
+            $userData['dashboard_types'] = isset($dashByUser[$user->id])
+                ? $dashByUser[$user->id]->pluck('dashboard_type')->all()
+                : [];
             $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
-            $userData['helpdesk_team_ids'] = $teamsByUser->get($user->id, []);
+            if (!$canSeeFolha) {
+                foreach ($folhaFields as $f) unset($userData[$f]);
+            }
             return $userData;
         })->toArray();
 
@@ -375,19 +403,6 @@ class UserController extends Controller
      *     )
      * )
      */
-    /** Sincroniza as equipes de Help Desk do usuário (pivot helpdesk_team_user). */
-    private function syncHelpDeskTeams(User $user, $teamIds): void
-    {
-        $ids = collect((array) $teamIds)->filter()->map(fn ($i) => (int) $i)->unique()->values()->all();
-        DB::table('helpdesk_team_user')->where('user_id', $user->id)->delete();
-        if ($ids) {
-            $now = now();
-            DB::table('helpdesk_team_user')->insert(array_map(fn ($tid) => [
-                'helpdesk_team_id' => $tid, 'user_id' => $user->id, 'created_at' => $now, 'updated_at' => $now,
-            ], $ids));
-        }
-    }
-
     /**
      * Tipo de contrato (cooperado/clt/pj): regra "trava em todos".
      *  - Parceiro (parceiro_admin com partner_id): grava no parceiro e PROPAGA p/ todos
@@ -424,6 +439,39 @@ class UserController extends Controller
      * Respeita a trava: consultor vinculado a parceiro é pulado (herda do parceiro);
      * se um parceiro_admin estiver na seleção, propaga p/ todos os usuários daquele parceiro.
      */
+    /**
+     * Define/retira o "gestor do cliente" (is_customer_manager) de um usuário cliente.
+     * Permitido a admin E coordenador (escopo restrito — não dá poder de edição geral).
+     */
+    public function setCustomerManager(Request $request, User $user): JsonResponse
+    {
+        $me = $request->user();
+        $can = $me && (
+            (method_exists($me, 'isAdmin') && $me->isAdmin())
+            || (method_exists($me, 'isCoordenador') && $me->isCoordenador())
+        );
+        if (!$can) {
+            return response()->json(['message' => 'Apenas admin ou coordenador podem definir gestores do cliente.'], 403);
+        }
+        if (!$user->isCliente()) {
+            return response()->json(['message' => 'Só usuários do tipo cliente podem ser gestores.'], 422);
+        }
+
+        $data = $request->validate(['is_customer_manager' => 'required|boolean']);
+        $user->is_customer_manager = (bool) $data['is_customer_manager'];
+
+        // Gestor precisa enxergar projetos — garante 'projetos' no allowed_modules (lista explícita).
+        if ($user->is_customer_manager) {
+            $mods = $user->allowed_modules;
+            if (is_array($mods) && !in_array('projetos', $mods, true)) {
+                $user->allowed_modules = array_values(array_merge($mods, ['projetos']));
+            }
+        }
+        $user->save();
+
+        return response()->json(['id' => $user->id, 'is_customer_manager' => $user->is_customer_manager]);
+    }
+
     public function bulkContractType(Request $request): JsonResponse
     {
         $currentUser = Auth::user();
@@ -529,6 +577,26 @@ class UserController extends Controller
         }
     }
 
+    /**
+     * Consulta um CNPJ na Receita (BrasilAPI) e devolve o regime tributário
+     * inferido (MEI / Simples Nacional / demais), para preencher a ficha do
+     * consultor. Usado pelo botão "Consultar Receita" no cadastro.
+     */
+    public function cnpjLookup(string $cnpj, ReceitaCnpjService $receita): JsonResponse
+    {
+        try {
+            $data = $receita->lookup($cnpj);
+        } catch (\App\Exceptions\ReceitaUnavailableException $e) {
+            return response()->json([
+                'message' => 'Serviço da Receita indisponível no momento. Tente novamente em instantes.',
+            ], 503);
+        }
+        if (! $data) {
+            return response()->json(['message' => 'CNPJ inválido ou não encontrado na Receita. Confira o número.'], 422);
+        }
+        return response()->json($data);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
@@ -557,6 +625,9 @@ class UserController extends Controller
             'contract_type' => 'nullable|in:cooperado,clt,pj',
             'full_name'      => 'nullable|string|max:255',
             'cpf'            => 'nullable|string|max:20',
+            'cnpj'           => 'nullable|string|max:18',
+            'razao_social'   => 'nullable|string|max:255',
+            'tax_regime'     => 'nullable|in:mei,simples_nacional,lucro_presumido,lucro_real,nao_aplica',
             'matricula'      => 'nullable|string|max:30',
             'payroll_status' => 'nullable|string|max:40',
             'phone'          => 'nullable|string|max:40',
@@ -570,7 +641,9 @@ class UserController extends Controller
             'bank_hours_start_date' => 'nullable|date',
             'bank_hours_initial_balance' => 'nullable|numeric|min:-100000|max:100000',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
+            'guaranteed_hours_effective_from' => 'nullable|date',
             'customer_id'  => 'nullable|exists:customers,id',
+            'is_customer_manager' => 'sometimes|boolean',
             'partner_id'   => 'nullable|exists:partners,id',
             'is_executive' => 'sometimes|boolean',
             'is_coordinator' => 'sometimes|boolean',
@@ -581,11 +654,6 @@ class UserController extends Controller
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
-            'helpdesk_team_ids'   => 'sometimes|array',
-            'helpdesk_team_ids.*' => 'integer|exists:helpdesk_teams,id',
-            // Acesso por módulo (só interpretado p/ cliente): ['projetos','help_desk']. Ausente/null = todos.
-            'allowed_modules'   => 'sometimes|nullable|array',
-            'allowed_modules.*' => 'string|in:projetos,help_desk',
             'coordinator_type' => 'nullable|in:projetos,sustentacao',
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'nullable|array',
@@ -659,9 +727,14 @@ class UserController extends Controller
                 }
             }
 
-            // Equipes de Help Desk (pivot helpdesk_team_user) — não é coluna de users.
-            $hdTeamIds = array_key_exists('helpdesk_team_ids', $userData) ? $userData['helpdesk_team_ids'] : null;
-            unset($userData['helpdesk_team_ids']); // allowed_modules É coluna (json) — persiste via mass-assign
+            // Gestor do cliente precisa enxergar projetos — garante o módulo 'projetos'
+            // no allowed_modules (se é lista explícita). null = todos já inclui projetos.
+            if (!empty($userData['is_customer_manager'])
+                && array_key_exists('allowed_modules', $userData)
+                && is_array($userData['allowed_modules'])
+                && !in_array('projetos', $userData['allowed_modules'], true)) {
+                $userData['allowed_modules'][] = 'projetos';
+            }
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($userData, array_flip(User::PROTECTED_FIELDS));
@@ -670,17 +743,6 @@ class UserController extends Controller
             $user = User::create($fillableData);
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
-            }
-            if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
-
-            // Regra: TODO CLIENTE entra com um perfil de acesso do Help Desk. Se não veio um
-            // explicitamente, aplica o perfil-padrão de cliente (is_default, kind=cliente).
-            if ($user->type === 'cliente' && !$user->helpdesk_access_profile_id) {
-                $defId = \App\Models\HelpDeskAccessProfile::where('kind', 'cliente')
-                    ->where('enabled', true)
-                    ->orderByDesc('is_default')->orderBy('id')
-                    ->value('id');
-                if ($defId) { $user->helpdesk_access_profile_id = $defId; $user->save(); }
             }
 
             // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
@@ -713,8 +775,6 @@ class UserController extends Controller
             // Adicionar tipos de dashboard permitidos na resposta
             $userData = $user->toArray();
             $userData['dashboard_types'] = $user->getAllowedDashboardTypes();
-            // Equipes de Help Desk (pivot) — devolve o estado atual p/ o form da aba HD.
-            $userData['helpdesk_team_ids'] = DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
 
             \Log::info('✅ [USER CREATED] Usuário criado com sucesso:', [
                 'user_id' => $user->id,
@@ -871,6 +931,9 @@ class UserController extends Controller
             'contract_type' => 'nullable|in:cooperado,clt,pj',
             'full_name'      => 'nullable|string|max:255',
             'cpf'            => 'nullable|string|max:20',
+            'cnpj'           => 'nullable|string|max:18',
+            'razao_social'   => 'nullable|string|max:255',
+            'tax_regime'     => 'nullable|in:mei,simples_nacional,lucro_presumido,lucro_real,nao_aplica',
             'matricula'      => 'nullable|string|max:30',
             'payroll_status' => 'nullable|string|max:40',
             'phone'          => 'nullable|string|max:40',
@@ -884,7 +947,9 @@ class UserController extends Controller
             'bank_hours_start_date' => 'nullable|date',
             'bank_hours_initial_balance' => 'nullable|numeric|min:-100000|max:100000',
             'guaranteed_hours'      => 'nullable|numeric|min:0|max:744',
+            'guaranteed_hours_effective_from' => 'nullable|date',
             'customer_id'  => 'nullable|exists:customers,id',
+            'is_customer_manager' => 'sometimes|boolean',
             'partner_id'   => 'nullable|exists:partners,id',
             'is_executive' => 'sometimes|boolean',
             'is_coordinator' => 'sometimes|boolean',
@@ -895,11 +960,6 @@ class UserController extends Controller
             'dashboard_types' => 'sometimes|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
             'type' => 'sometimes|nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
-            'helpdesk_team_ids'   => 'sometimes|array',
-            'helpdesk_team_ids.*' => 'integer|exists:helpdesk_teams,id',
-            // Acesso por módulo (só interpretado p/ cliente): ['projetos','help_desk']. Ausente/null = todos.
-            'allowed_modules'   => 'sometimes|nullable|array',
-            'allowed_modules.*' => 'string|in:projetos,help_desk',
             'coordinator_type' => 'sometimes|nullable|in:projetos,sustentacao',
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'sometimes|nullable|array',
@@ -928,17 +988,6 @@ class UserController extends Controller
             );
         }
 
-        // Agente de Help Desk (interno COM perfil de acesso) não pode ficar sem equipe.
-        $intendedType = $validatedForType['type'] ?? $user->type;
-        if ($intendedType !== 'cliente' && $user->helpdesk_access_profile_id) {
-            $teamIds = $request->has('helpdesk_team_ids')
-                ? array_filter((array) $request->input('helpdesk_team_ids'))
-                : DB::table('helpdesk_team_user')->where('user_id', $user->id)->pluck('helpdesk_team_id')->all();
-            if (empty($teamIds)) {
-                return $this->validationErrorResponse(['Agente de Help Desk precisa estar em ao menos uma equipe.']);
-            }
-        }
-
         DB::beginTransaction();
         try {
             $updateData = $validator->validated();
@@ -963,12 +1012,19 @@ class UserController extends Controller
             $oldHourlyRate     = $user->hourly_rate;
             $oldRateType       = $user->rate_type;
             $oldConsultantType = $user->consultant_type;
+            // Horas garantidas (piso): vigência própria, independente do valor/hora. null = sem piso.
+            $oldGuaranteedHours = $user->guaranteed_hours !== null ? (float) $user->guaranteed_hours : null;
 
             $hourlyRateChanged     = isset($updateData['hourly_rate'])     && $updateData['hourly_rate']     != $oldHourlyRate;
             $rateTypeChanged       = isset($updateData['rate_type'])        && $updateData['rate_type']        != $oldRateType;
             $consultantTypeChanged = isset($updateData['consultant_type'])  && $updateData['consultant_type']  != $oldConsultantType;
 
             $shouldLog = $hourlyRateChanged || $rateTypeChanged || $consultantTypeChanged;
+
+            $newGuaranteedHoursVal = array_key_exists('guaranteed_hours', $updateData)
+                ? (($updateData['guaranteed_hours'] !== null && $updateData['guaranteed_hours'] !== '') ? (float) $updateData['guaranteed_hours'] : null)
+                : $oldGuaranteedHours;
+            $guaranteedHoursChanged = array_key_exists('guaranteed_hours', $updateData) && $newGuaranteedHoursVal !== $oldGuaranteedHours;
 
             // Hash da senha se fornecida
             if (isset($updateData['password'])) {
@@ -980,9 +1036,24 @@ class UserController extends Controller
             // smtp_app_password: setado explicitamente após o update (fora do mass-assignment);
             // só sobrescreve se veio NÃO-vazio — vazio/ausente preserva o valor atual.
             $smtpAppPassword = $updateData['smtp_app_password'] ?? null;
-            // Equipes de Help Desk (pivot) — não é coluna de users; sincroniza após salvar.
-            $hdTeamIds = array_key_exists('helpdesk_team_ids', $updateData) ? $updateData['helpdesk_team_ids'] : null;
-            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['smtp_app_password'], $updateData['helpdesk_team_ids']); // allowed_modules É coluna (json) — persiste via mass-assign
+            unset($updateData['dashboard_types'], $updateData['password_confirmation'], $updateData['hourly_rate_effective_from'], $updateData['guaranteed_hours_effective_from'], $updateData['smtp_app_password']);
+
+            // Gestor do cliente precisa enxergar projetos — garante o módulo 'projetos'
+            // no allowed_modules quando a lista é explícita. Vale o valor efetivo da flag
+            // (payload tem prioridade; senão o atual do usuário).
+            $willBeManager = array_key_exists('is_customer_manager', $updateData)
+                ? (bool) $updateData['is_customer_manager']
+                : (bool) $user->is_customer_manager;
+            if ($willBeManager
+                && array_key_exists('allowed_modules', $updateData)
+                && is_array($updateData['allowed_modules'])
+                && !in_array('projetos', $updateData['allowed_modules'], true)) {
+                $updateData['allowed_modules'][] = 'projetos';
+            }
+
+            // Janela de pagamento: campos auxiliares (não são colunas) — removidos do mass-assignment.
+            unset($updateData['payroll_end_month'], $updateData['payroll_resume'], $updateData['payroll_resume_from']);
+            $wasEnabled = (bool) $user->enabled; // estado ANTES do update (p/ detectar transição)
 
             // Separar campos protegidos (fora de $fillable) — admin pode setar via forceFill
             $protectedData = array_intersect_key($updateData, array_flip(User::PROTECTED_FIELDS));
@@ -992,7 +1063,26 @@ class UserController extends Controller
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
             }
-            if ($hdTeamIds !== null) $this->syncHelpDeskTeams($user, $hdTeamIds);
+
+            // Janela de pagamento nos fechamentos/folha (ao inativar/reativar OU ao ajustar o corte de um já inativo).
+            if ($request->has('enabled') || $request->has('payroll_end_month') || $request->has('payroll_resume_from')) {
+                $nowEnabled = (bool) $user->enabled;
+                $mm = fn ($v) => (is_string($v) && preg_match('/^\d{4}-\d{2}$/', $v)) ? $v : null;
+                $end = $mm($request->input('payroll_end_month'));
+                if (!$nowEnabled) {
+                    // Resultado INATIVO: define/ajusta o corte (mês informado) ou, se acabou de inativar
+                    // sem informar, assume o mês corrente. Já inativo sem mês → mantém o que houver.
+                    if ($end) {
+                        \App\Models\PayrollBillingWindow::closeAt('user', $user->id, $end, 'Corte de folha');
+                    } elseif ($wasEnabled) {
+                        \App\Models\PayrollBillingWindow::closeAt('user', $user->id, now()->format('Y-m'), 'Inativado');
+                    }
+                } elseif (!$wasEnabled && $nowEnabled && $request->boolean('payroll_resume', true)) {
+                    // REATIVOU: retoma a partir do mês informado (pode ser retroativo) — default corrente.
+                    $from = $mm($request->input('payroll_resume_from')) ?? now()->format('Y-m');
+                    \App\Models\PayrollBillingWindow::resumeFrom('user', $user->id, $from, 'Reativado');
+                }
+            }
 
             // App Password de SMTP (O365): só grava se veio NÃO-vazio; o cast criptografa.
             // Vazio/ausente NÃO sobrescreve o valor existente.
@@ -1043,6 +1133,38 @@ class UserController extends Controller
                         'new_consultant_type'  => $fresh->consultant_type,
                         'reason'               => $request->input('rate_change_reason'),
                         'effective_from'       => $newEffectiveFrom,
+                    ]);
+                }
+            }
+
+            // Log de vigência das HORAS GARANTIDAS (piso) — independente do valor/hora.
+            // null = piso REMOVIDO a partir da vigência; meses anteriores mantêm o valor do período.
+            if ($guaranteedHoursChanged) {
+                $ghEffectiveFrom = $request->input('guaranteed_hours_effective_from')
+                    ? \Carbon\Carbon::parse($request->input('guaranteed_hours_effective_from'))->startOfMonth()->toDateString()
+                    : null;
+
+                $todayGhLog = UserGuaranteedHoursLog::where('user_id', $user->id)
+                    ->whereDate('created_at', now()->toDateString())
+                    ->orderByDesc('id')
+                    ->first();
+
+                if ($todayGhLog) {
+                    $todayGhLog->new_guaranteed_hours = $newGuaranteedHoursVal;
+                    $todayGhLog->changed_by           = $currentUser->id;
+                    $todayGhLog->reason               = $request->input('rate_change_reason');
+                    if ($ghEffectiveFrom !== null) {
+                        $todayGhLog->effective_from = $ghEffectiveFrom;
+                    }
+                    $todayGhLog->save();
+                } else {
+                    UserGuaranteedHoursLog::create([
+                        'user_id'              => $user->id,
+                        'changed_by'           => $currentUser->id,
+                        'old_guaranteed_hours' => $oldGuaranteedHours,
+                        'new_guaranteed_hours' => $newGuaranteedHoursVal,
+                        'reason'               => $request->input('rate_change_reason'),
+                        'effective_from'       => $ghEffectiveFrom,
                     ]);
                 }
             }
@@ -1226,8 +1348,6 @@ class UserController extends Controller
                 ? 'Senha temporária enviada por e-mail ao usuário.'
                 : 'Senha gerada, mas o envio do e-mail falhou — reenvie o reset.',
             'email_sent'         => $emailSent,
-            // Exibida na tela pro admin repassar (o FE mostra e copia). Endpoint é admin-only.
-            'temporary_password' => $temporaryPassword,
         ]);
     }
 
@@ -1695,6 +1815,157 @@ class UserController extends Controller
             'hasNext' => $logs->hasMorePages(),
             'items' => $transformedItems
         ]);
+    }
+
+    /**
+     * Edita uma linha do histórico de valor-hora/tipo (corrigir vigência, valor ou tipo já lançados).
+     * Espelha updateGuaranteedHoursLog. Se for o log de MAIOR vigência, sincroniza o cadastro atual.
+     */
+    public function updateHourlyRateLog(Request $request, int $id, int $logId): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+        $canEdit = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.update');
+        if (!$canEdit) {
+            return $this->accessDeniedResponse('Você não tem permissão para editar este histórico');
+        }
+        $log = UserHourlyRateLog::where('user_id', $id)->find($logId);
+        if (!$log) {
+            return $this->notFoundResponse('Registro de histórico não encontrado');
+        }
+        $validated = $request->validate([
+            'new_hourly_rate'     => 'nullable|numeric|min:0',
+            'new_rate_type'       => 'nullable|in:hourly,monthly',
+            'new_consultant_type' => 'nullable|in:horista,banco_de_horas,fixo',
+            'effective_from'      => 'nullable|date',
+        ]);
+        if (array_key_exists('new_hourly_rate', $validated))     { $log->new_hourly_rate = $validated['new_hourly_rate']; }
+        if (array_key_exists('new_rate_type', $validated))       { $log->new_rate_type = $validated['new_rate_type']; }
+        if (array_key_exists('new_consultant_type', $validated)) { $log->new_consultant_type = $validated['new_consultant_type']; }
+        if (array_key_exists('effective_from', $validated)) {
+            $log->effective_from = $validated['effective_from']
+                ? \Carbon\Carbon::parse($validated['effective_from'])->startOfMonth()->toDateString()
+                : null;
+        }
+        $log->save();
+
+        // Se virou o log de MAIOR vigência → sincroniza o cadastro atual (fallback pós-última vigência).
+        $latest = $user->hourlyRateLogs()
+            ->orderByRaw('effective_from IS NULL, effective_from DESC')
+            ->orderByDesc('id')->first();
+        if ($latest && (int) $latest->id === (int) $log->id) {
+            if ($log->new_hourly_rate !== null) { $user->hourly_rate = $log->new_hourly_rate; }
+            if ($log->new_rate_type)            { $user->rate_type = $log->new_rate_type; }
+            if ($log->new_consultant_type)      { $user->consultant_type = $log->new_consultant_type; }
+            $user->save();
+        }
+
+        $log->changed_by_user = $log->changedBy;
+        unset($log->changedBy);
+        return response()->json(['message' => 'Histórico atualizado', 'item' => $log]);
+    }
+
+    /**
+     * Histórico de vigência das HORAS GARANTIDAS / mês (piso). Espelha getHourlyRateHistory.
+     */
+    public function getGuaranteedHoursHistory(Request $request, int $id): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        $canViewUser = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.view_all')
+            || $currentUser->hasAccess('users.update')
+            || $currentUser->hasAccess('users.reset_password')
+            || $currentUser->hasAccess('users.create')
+            || $user->id === $currentUser->id;
+        if (!$canViewUser) {
+            return $this->accessDeniedResponse('Você não tem permissão para visualizar este usuário');
+        }
+
+        $pageSize = min((int) $request->get('pageSize', 20), 100);
+        $page = (int) $request->get('page', 1);
+
+        $query = $user->guaranteedHoursLogs()->with(['changedBy:id,name,email'])->latest();
+        $logs = $query->paginate($pageSize, ['*'], 'page', $page);
+
+        $transformedItems = $logs->items();
+        foreach ($transformedItems as $item) {
+            $item->changed_by_user = $item->changedBy;
+            unset($item->changedBy);
+        }
+
+        return response()->json([
+            'hasNext' => $logs->hasMorePages(),
+            'items' => $transformedItems,
+        ]);
+    }
+
+    /**
+     * Edita um registro do histórico de horas garantidas — corrigir o VALOR ou a VIGÊNCIA
+     * de uma linha já lançada (sem criar nova). PUT /api/v1/users/{user}/guaranteed-hours-history/{logId}
+     */
+    public function updateGuaranteedHoursLog(Request $request, int $id, int $logId): JsonResponse
+    {
+        $currentUser = Auth::user();
+        $user = User::find($id);
+        if (!$user) {
+            return $this->notFoundResponse('Usuário não encontrado');
+        }
+
+        $canEdit = $currentUser->isAdmin()
+            || $currentUser->isCoordenador()
+            || $currentUser->hasAccess('users.update');
+        if (!$canEdit) {
+            return $this->accessDeniedResponse('Você não tem permissão para editar este histórico');
+        }
+
+        $log = UserGuaranteedHoursLog::where('user_id', $id)->find($logId);
+        if (!$log) {
+            return $this->notFoundResponse('Registro de histórico não encontrado');
+        }
+
+        $validated = $request->validate([
+            'new_guaranteed_hours' => 'nullable|numeric|min:0|max:744',
+            'effective_from'       => 'nullable|date',
+        ]);
+
+        if (array_key_exists('new_guaranteed_hours', $validated)) {
+            // null = piso removido a partir da vigência (mantém a semântica de "sem piso").
+            $log->new_guaranteed_hours = $validated['new_guaranteed_hours'];
+        }
+        if (array_key_exists('effective_from', $validated)) {
+            $log->effective_from = $validated['effective_from']
+                ? \Carbon\Carbon::parse($validated['effective_from'])->startOfMonth()->toDateString()
+                : null;
+        }
+        $log->save();
+
+        // Se este passou a ser o log de MAIOR vigência do usuário, sincroniza o valor "atual"
+        // (guaranteed_hours é o fallback pós-última vigência — mantém cadastro/relatórios coerentes).
+        $latest = $user->guaranteedHoursLogs()
+            ->orderByRaw('effective_from IS NULL, effective_from DESC')
+            ->orderByDesc('id')
+            ->first();
+        if ($latest && (int) $latest->id === (int) $log->id) {
+            $user->guaranteed_hours = $log->new_guaranteed_hours;
+            $user->save();
+        }
+
+        $log->changed_by_user = $log->changedBy;
+        unset($log->changedBy);
+
+        return response()->json(['message' => 'Histórico atualizado', 'item' => $log]);
     }
 
     /**

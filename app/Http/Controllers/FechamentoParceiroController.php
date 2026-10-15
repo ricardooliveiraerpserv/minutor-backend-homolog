@@ -108,6 +108,13 @@ class FechamentoParceiroController extends Controller
         $partners = Partner::whereRaw('"active" = true')
             ->orderBy('name')
             ->get(['id', 'name', 'pricing_type', 'hourly_rate', 'contract_type', 'folha_user_id']);
+        // Janela de pagamento: com competência, parceiro fora da janela não é listado para fechar.
+        if ($yearMonth) {
+            $pNon = \App\Models\PayrollBillingWindow::nonPayableIds('partner', $partners->pluck('id')->all(), $yearMonth);
+            if ($pNon) {
+                $partners = $partners->reject(fn ($p) => in_array((int) $p->id, $pNon, true))->values();
+            }
+        }
 
         // Recebedor da apuração: o admin designado (folha_user_id) OU, se não houver, o
         // admin executivo. admins_count sinaliza ao front quando há +1 admin sem designação.
@@ -340,6 +347,11 @@ class FechamentoParceiroController extends Controller
 
         $users = User::where('partner_id', $partner->id)            ->where('enabled', true)
             ->get();
+        // Janela de pagamento: membro fora da janela nesta competência não entra no fechamento do parceiro.
+        $memberNon = \App\Models\PayrollBillingWindow::nonPayableIds('user', $users->pluck('id')->all(), $yearMonth);
+        if ($memberNon) {
+            $users = $users->reject(fn ($u) => in_array((int) $u->id, $memberNon, true))->values();
+        }
 
         $isFixed      = $partner->pricing_type === Partner::PRICING_FIXED;
         // Valor hora do parceiro vigente na competência (legado intacto ao mudar o valor).

@@ -122,7 +122,7 @@
         Movimentações de fase são notificadas para o solicitante, executivo da conta e acompanhantes,
         até a requisição virar contrato/projeto.
         <br><br>
-        <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
+        <span style="color:#71717A;">&copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} · Todos os direitos reservados</span>
       </td>
     </tr>
   </table>

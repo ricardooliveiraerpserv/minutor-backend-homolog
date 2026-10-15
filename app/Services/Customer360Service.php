@@ -29,7 +29,10 @@ class Customer360Service
     /** Bloco CLIENTE. */
     public function cliente(Customer $c, ?HelpDeskTicket $t = null): array
     {
-        $c->loadMissing('executive:id,name', 'crmProfile');
+        // crmProfile só existe quando o módulo CRM está presente (não está em PROD). Sem o guard,
+        // loadMissing('crmProfile') lança RelationNotFoundException e derruba o Customer 360 do chamado.
+        $c->loadMissing('executive:id,name');
+        if (method_exists($c, 'crmProfile')) { $c->loadMissing('crmProfile'); }
         $contract = $this->relevantContract($c, $t);
         $tecnico = $contract?->loadMissing('architect:id,name')->architect?->name;
         if (!$tecnico && $t?->project_id) {
@@ -41,7 +44,7 @@ class Customer360Service
         return [
             'empresa'               => $c->name,
             'cnpj'                  => $c->cgc,
-            'segmento'              => $c->crmProfile?->segment,
+            'segmento'              => method_exists($c, 'crmProfile') ? $c->crmProfile?->segment : null,
             'classificacao'         => $c->crm_status,   // lead | prospect | cliente | em_renovacao | inativo
             'responsavel_comercial' => $c->executive?->name,
             'responsavel_tecnico'   => $tecnico,
@@ -136,6 +139,18 @@ class Customer360Service
     /** Bloco COMERCIAL. Valores monetários sob `financeiro`. */
     public function comercial(Customer $c): array
     {
+        // Módulo CRM (oportunidades/propostas) NÃO está em PROD — sem as tabelas, retorna estrutura
+        // vazia em vez de derrubar o Customer 360 do chamado com "relation crm_opportunities does not exist".
+        if (!\Illuminate\Support\Facades\Schema::hasTable('crm_opportunities')) {
+            return [
+                'situacao_relacionamento'  => $c->crm_status ?? null,
+                'oportunidades_abertas'    => [],
+                'oportunidades_total'      => 0,
+                'ultima_proposta'          => null,
+                'ultimo_contato_comercial' => null,
+            ];
+        }
+
         $oppIds = CrmOpportunity::where('customer_id', $c->id)->pluck('id');
         $abertas = CrmOpportunity::where('customer_id', $c->id)->where('status', 'aberto')
             ->with('stage:id,name')->orderByDesc('id')->limit(5)->get();
@@ -146,7 +161,7 @@ class Customer360Service
 
         $ultimoContato = collect([
             CrmOpportunity::where('customer_id', $c->id)->max('ultima_interacao_at'),
-            $c->crmProfile?->ultima_interacao_at,
+            method_exists($c, 'crmProfile') ? $c->crmProfile?->ultima_interacao_at : null,
         ])->filter()->max();
 
         return [

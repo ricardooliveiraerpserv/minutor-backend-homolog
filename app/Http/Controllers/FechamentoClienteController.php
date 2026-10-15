@@ -97,12 +97,14 @@ class FechamentoClienteController extends Controller
             \App\Models\FechamentoSendStatus::TIPO_CLIENTE, $yearMonth, $customers->pluck('id')->all(),
         );
 
-        $data = $customers->map(function ($customer) use ($fechamentos, $envioMap) {
+        $data = $customers->map(function ($customer) use ($fechamentos, $envioMap, $yearMonth) {
             $f = $fechamentos->get($customer->id);
             return [
                 'customer_id'    => $customer->id,
                 'nome'           => $customer->name ?: $customer->company_name, // nome fantasia (não a razão social)
                 'status'         => $f?->status ?? 'sem_registro',
+                // Liberação de faturamento On Demand (coordenador): bloqueado = não pode enviar.
+                'on_demand_status' => $yearMonth ? $this->onDemandBillingStatus($customer, $yearMonth) : null,
                 'total_servicos' => (float) ($f?->total_servicos ?? 0),
                 'total_despesas' => (float) ($f?->total_despesas ?? 0),
                 'total_geral'    => (float) ($f?->total_geral ?? 0),
@@ -118,6 +120,61 @@ class FechamentoClienteController extends Controller
         });
 
         return response()->json(['data' => $data]);
+    }
+
+    /**
+     * Status de liberação de faturamento On Demand do cliente na competência:
+     *   'liberado'  → pode enviar; 'bloqueado' → coordenador ainda não liberou (não envia);
+     *   null        → cliente sem contrato On Demand com horas no mês (não se aplica).
+     * Regra: meses ANTERIORES ao atual já foram faturados → sempre liberado.
+     */
+    private function onDemandBillingStatus($customer, string $yearMonth): ?string
+    {
+        $odQuery = $customer->projects()
+            ->whereNull('parent_project_id')
+            ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'))
+            ->where(function ($w) {
+                $w->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+            });
+
+        if ($yearMonth < now()->format('Y-m')) {
+            return $odQuery->exists() ? 'liberado' : null;
+        }
+
+        $od = $odQuery->get(['id', 'code']);
+        if ($od->isEmpty()) {
+            return null;
+        }
+
+        $start = $yearMonth . '-01';
+        $end   = Carbon::parse($start)->endOfMonth()->toDateString();
+        $liberados = \App\Models\OnDemandBillingRelease::where('year_month', $yearMonth)
+            ->whereIn('project_id', $od->pluck('id'))->pluck('project_id')->all();
+
+        $temHoras = false;
+        $bloqueado = false;
+        foreach ($od as $p) {
+            $ids = collect([$p->id])
+                ->merge(Project::where('parent_project_id', $p->id)->pluck('id'))
+                ->all();
+            $min = (float) Timesheet::whereIn('project_id', $ids)
+                ->whereBetween('date', [$start, $end])
+                ->whereNotIn('status', [
+                    Timesheet::STATUS_REJECTED, Timesheet::STATUS_CONFLICTED,
+                    Timesheet::STATUS_INTERNAL, Timesheet::STATUS_LATE,
+                ])
+                ->sum('effort_minutes');
+            if ($min > 0) {
+                $temHoras = true;
+                if (!in_array($p->id, $liberados, true)) {
+                    $bloqueado = true;
+                }
+            }
+        }
+        if (!$temHoras) {
+            return null; // sem movimento no mês → sem indicação
+        }
+        return $bloqueado ? 'bloqueado' : 'liberado';
     }
 
     /**
@@ -1824,6 +1881,60 @@ class FechamentoClienteController extends Controller
         $projectId    = $mode === 'servicos' && $request->filled('project_id')
             ? (int) $request->input('project_id')
             : null;
+
+        // ── GATE ON DEMAND: o coordenador responsável precisa LIBERAR o faturamento do
+        // contrato On Demand nesta competência antes do envio ao cliente. Só no modo
+        // serviços (apontamentos). À prova de falha: só bloqueia contrato On Demand que
+        // TEM horas no mês e NÃO está liberado; demais clientes/tipos não são afetados.
+        // A regra vale DESTE MÊS PARA FRENTE — competências anteriores já foram faturadas
+        // e não são bloqueadas.
+        if ($mode === 'servicos' && $yearMonth >= now()->format('Y-m')) {
+            $gateStart = $yearMonth . '-01';
+            $gateEnd   = Carbon::parse($gateStart)->endOfMonth()->toDateString();
+            $odQuery = $customer->projects()
+                ->whereNull('parent_project_id')
+                ->whereHas('contractType', fn ($c) => $c->where('code', 'on_demand'))
+                ->where(function ($w) {
+                    $w->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
+                });
+            if ($projectId) {
+                $odQuery->where('id', $projectId);
+            }
+            $odContratos = $odQuery->get(['id', 'code', 'name']);
+            if ($odContratos->isNotEmpty()) {
+                $liberados = \App\Models\OnDemandBillingRelease::where('year_month', $yearMonth)
+                    ->whereIn('project_id', $odContratos->pluck('id'))
+                    ->pluck('project_id')->all();
+                $bloqueados = $odContratos->filter(function ($p) use ($liberados, $gateStart, $gateEnd) {
+                    if (in_array($p->id, $liberados, true)) {
+                        return false; // já liberado
+                    }
+                    $ids = collect([$p->id])
+                        ->merge(\App\Models\Project::where('parent_project_id', $p->id)->pluck('id'))
+                        ->all();
+                    $min = (float) \App\Models\Timesheet::whereIn('project_id', $ids)
+                        ->whereBetween('date', [$gateStart, $gateEnd])
+                        ->whereNotIn('status', [
+                            \App\Models\Timesheet::STATUS_REJECTED,
+                            \App\Models\Timesheet::STATUS_CONFLICTED,
+                            \App\Models\Timesheet::STATUS_INTERNAL,
+                            \App\Models\Timesheet::STATUS_LATE,
+                        ])
+                        ->sum('effort_minutes');
+                    return $min > 0; // tem horas no mês e não liberado => bloqueia
+                })->values();
+                if ($bloqueados->isNotEmpty()) {
+                    return response()->json([
+                        'success' => false,
+                        'code'    => 'ON_DEMAND_NAO_LIBERADO',
+                        'message' => 'Contrato On Demand não liberado para faturar nesta competência pelo coordenador responsável: '
+                            . $bloqueados->pluck('code')->implode(', ')
+                            . '. Libere em "Faturamento On Demand" antes de enviar o fechamento.',
+                    ], 422);
+                }
+            }
+        }
+
         $periodo      = $this->periodoExtenso($yearMonth);
         $financeiroCc = (string) (config('mail.financeiro_cc') ?? '');
         $mensagem     = trim((string) $request->input('mensagem')) ?: $this->defaultMensagem($periodo, $mode);

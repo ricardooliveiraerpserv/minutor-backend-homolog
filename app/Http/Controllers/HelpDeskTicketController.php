@@ -1692,9 +1692,9 @@ class HelpDeskTicketController extends Controller
         $isCliente = (bool) $user?->isCliente();
         $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
         $total = $base()->count();
-        $cq = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
+        $cq = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at')->orderByRaw("(case when external_action_id ~ '^[0-9]+$' then external_action_id::int else null end) asc nulls last")->orderBy('id');
         if ($total > 40) {
-            $recentIds = $base()->orderByDesc('created_at')->limit(40)->pluck('id');
+            $recentIds = $base()->orderByDesc('created_at')->orderByRaw("(case when external_action_id ~ '^[0-9]+$' then external_action_id::int else null end) desc nulls last")->limit(40)->pluck('id');
             $cq->whereIn('id', $recentIds);
         }
         $comments = $cq->get();
@@ -1990,7 +1990,7 @@ class HelpDeskTicketController extends Controller
     private function commentSeqMap(HelpDeskTicket $ticket): array
     {
         $ids = $ticket->comments()->where('is_system', false)
-            ->orderBy('created_at')->orderBy('id')->pluck('id');
+            ->orderBy('created_at')->orderByRaw("(case when external_action_id ~ '^[0-9]+$' then external_action_id::int else null end) asc nulls last")->orderBy('id')->pluck('id');
         $map = [];
         $n = 0;
         foreach ($ids as $cid) {
@@ -2005,12 +2005,12 @@ class HelpDeskTicketController extends Controller
         $isCliente = (bool) $request->user()?->isCliente();
         $base = fn () => $ticket->comments()->when($isCliente, fn ($x) => $x->where('visibility', 'customer'));
         $total = $base()->count();
-        $q = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at');
+        $q = $base()->with(['author:id,name,type', 'contact:id,name'])->orderBy('created_at')->orderByRaw("(case when external_action_id ~ '^[0-9]+$' then external_action_id::int else null end) asc nulls last")->orderBy('id');
         // PAGINAÇÃO: por padrão traz só as N interações MAIS RECENTES (tickets grandes — 183 interações —
         // custavam ~6s pra montar). ?limit=0 (ou "todas") traz tudo. Mantém a ordem cronológica no retorno.
         $limit = (int) $request->input('limit', 0);
         if ($limit > 0 && $total > $limit) {
-            $recentIds = $base()->orderByDesc('created_at')->limit($limit)->pluck('id');
+            $recentIds = $base()->orderByDesc('created_at')->orderByRaw("(case when external_action_id ~ '^[0-9]+$' then external_action_id::int else null end) desc nulls last")->limit($limit)->pluck('id');
             $q->whereIn('id', $recentIds);
         }
         $user = $request->user();

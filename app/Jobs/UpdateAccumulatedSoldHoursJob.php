@@ -10,9 +10,16 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
+use Spatie\Multitenancy\Jobs\NotTenantAware;
 use Carbon\Carbon;
 
-class UpdateAccumulatedSoldHoursJob implements ShouldQueue
+// NotTenantAware: este job roda no contexto LANDLORD (ERPSERV), não por-tenant.
+// Sem isto, o Spatie (queues_are_tenant_aware_by_default=true) exige um tenantId
+// no payload — mas o scheduler despacha sem tenant → o worker falha com
+// "CurrentTenantCouldNotBeDetermined" e o accumulated_sold_hours NUNCA atualiza na
+// virada do mês (incidente 01/10/2026). O CONECTA (único tenant) não tem BH Mensal;
+// se um dia tiver, o comando precisará iterar tenants com makeCurrent().
+class UpdateAccumulatedSoldHoursJob implements ShouldQueue, NotTenantAware
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 

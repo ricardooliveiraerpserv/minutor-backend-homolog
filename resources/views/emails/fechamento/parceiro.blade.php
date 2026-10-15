@@ -52,9 +52,9 @@
 
               {{-- Logo ERPSERV (centralizado, maior, com dark-mode swap) --}}
               <div style="text-align:center;">
-                <img src="https://app.minutor.com.br/logo.png" alt="ERPSERV Consultoria" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                <img src="data:image/png;base64,{{ base64_encode(file_get_contents(\App\Support\Brand::lightLogoPath())) }}" alt="{{ \App\Support\Brand::name() }}" width="200" class="erp-light" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
                 <div class="erp-dark" style="display:none;mso-hide:all;max-height:0;overflow:hidden;">
-                  <img src="https://app.minutor.com.br/logo-white.png" alt="ERPSERV Consultoria" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
+                  <img src="https://app.minutor.com.br/logo-white.png" alt="{{ \App\Support\Brand::name() }}" width="200" style="display:inline-block;width:200px;max-width:62%;height:auto;border:0;" />
                 </div>
               </div>
 
@@ -71,8 +71,8 @@
                     </table>
                   </td>
                   <td style="vertical-align:middle;text-align:left;">
-                    <div style="font-size:16px;font-weight:700;letter-spacing:-0.01em;color:#111827;line-height:1.05;">Minutor</div>
-                    <div style="margin-top:2px;font-size:12px;color:#6B7280;font-weight:400;">Controle de horas e contratos em um só lugar</div>
+                    <div style="font-size:16px;font-weight:700;letter-spacing:-0.01em;color:#111827;line-height:1.05;">{{ \App\Support\Brand::appName() }}</div>
+                    <div style="margin-top:2px;font-size:12px;color:#6B7280;font-weight:400;">{{ \App\Support\Brand::tagline() }}</div>
                   </td>
                 </tr>
               </table>
@@ -143,7 +143,7 @@
               <p style="margin:0;font-size:14px;color:#4B5563;line-height:1.65;">
                 Atenciosamente,<br>
                 <b style="color:#111827;">{{ $senderName }}</b><br>
-                <span style="color:#6B7280;">ERPSERV Consultoria</span>
+                <span style="color:#6B7280;">{{ \App\Support\Brand::name() }}</span>
               </p>
             </td>
           </tr>
@@ -163,7 +163,7 @@
           <tr>
             <td class="pd-foot" align="left" bgcolor="#FFFFFF" style="padding:18px 40px 32px;background-color:#FFFFFF;">
               <div style="font-size:11px;color:#9CA3AF;letter-spacing:0.02em;">
-                &copy; {{ date('Y') }} ERPSERV Consultoria &middot; Todos os direitos reservados
+                &copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} &middot; Todos os direitos reservados
               </div>
             </td>
           </tr>

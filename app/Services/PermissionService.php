@@ -119,19 +119,7 @@ class PermissionService
         'help_desk.tickets.view',
         // Sistema
         'settings.view',
-        // Central Fontes / Código-Fonte (portado 2026-09-24)
-        'source_docs.view',
-        'source_docs.validate', 'source_docs.reprocess', 'source_docs.download',
-        'source_docs.view_git', 'source_docs.view_diff',
-        'source_docs.quality.view', 'source_docs.quality.run',
-        'source_docs.inventory',
-        'source_docs.gmud_publish',
-        'source_docs.view_all_customers',
-        'source_docs.view_cross_customer',
-        'source_docs.semantic_campaign',
-        'source_docs.cost_settings.view', 'source_docs.cost_settings.manage',
-        'source_docs.cost_approval.view', 'source_docs.cost_approval.decide',
-        // Prosight — Ambientes / Operações / RPO / Compile
+        // Prosight — Ambientes / Operações / RPO / Compile / Vault
         'environments.use', 'environments.admin', 'environments.audit.view',
         'prosight.environments.view',
         'prosight.operations.view', 'prosight.operations.manage', 'prosight.operations.execute', 'prosight.operations.approve',
@@ -228,9 +216,6 @@ class PermissionService
             'expenses.view', 'expenses.manage',
             'users.view_own_profile', 'users.update_own_profile',
             'financial.view_own_rate', 'financial.view_partner_rate',
-            // Help Desk: acende o item no menu do consultor (sidebar gateia por esta chave).
-            // NÃO amplia dado: o que ele enxerga de chamado segue no HelpDeskAccessPolicy.
-            'help_desk.tickets.view',
             // Banco de Competências: responde a própria pesquisa.
             'competencias.respond',
         ];

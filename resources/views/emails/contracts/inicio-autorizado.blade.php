@@ -54,7 +54,7 @@
         Olá, {{ $recipientName }}. Você está recebendo este e-mail como executivo da conta —
         contratos do seu cliente são comunicados a cada movimentação relevante.
         <br><br>
-        <span style="color:#71717A;">&copy; {{ date('Y') }} ERPServ Consultoria · Todos os direitos reservados</span>
+        <span style="color:#71717A;">&copy; {{ date('Y') }} {{ \App\Support\Brand::name() }} · Todos os direitos reservados</span>
       </td>
     </tr>
   </table>

@@ -164,6 +164,14 @@ Route::prefix('v1')->group(function () {
     // Resposta de 1 clique vinda do e-mail (link assinado, sem login) — botões de decisão no e-mail.
     Route::get('/notifications/{notification}/respond-email', [\App\Http\Controllers\NotificationController::class, 'respondEmail'])
         ->middleware('signed')->name('notifications.respond-email');
+    // Grava os acompanhantes informados na página pós-confirmação do e-mail (POST assinado, sem login).
+    Route::post('/notifications/{notification}/respond-email-guests', [\App\Http\Controllers\NotificationController::class, 'respondEmailGuests'])
+        ->middleware('signed')->name('notifications.respond-email-guests');
+    // PESQUISA por e-mail (link assinado, sem login): formulário (GET) + envio (POST).
+    Route::get('/surveys/{survey}/email-form',    [\App\Http\Controllers\NotificationSurveyController::class, 'emailForm'])
+        ->middleware('signed')->name('surveys.email-form');
+    Route::post('/surveys/{survey}/email-submit', [\App\Http\Controllers\NotificationSurveyController::class, 'emailSubmit'])
+        ->middleware('signed')->name('surveys.email-submit');
     // 🔗 Callback OAuth Microsoft 365 (público — o browser é redirecionado pela Microsoft;
     // o usuário é identificado pelo `state` assinado, não pelo bearer token).
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
@@ -178,7 +186,7 @@ Route::prefix('v1')->group(function () {
     Route::patch('/skills-form/continue/{continueToken}',       [\App\Http\Controllers\SkillFormController::class, 'autosave']);
     Route::post('/skills-form/continue/{continueToken}/submit', [\App\Http\Controllers\SkillFormController::class, 'submit']);
 
-    // ===== Help Desk público (aceite via link) =====
+        // Aceite/encerramento de chamado por link público (token). Inerte sem e-mail.
         Route::get('/hd/aceite/{ticket}',          [\App\Http\Controllers\HelpDeskAcceptController::class, 'show'])->name('hd.accept');
         Route::post('/hd/aceite/{ticket}/encerrar', [\App\Http\Controllers\HelpDeskAcceptController::class, 'accept'])->name('hd.accept.do');
         Route::post('/hd/aceite/{ticket}/recusar',  [\App\Http\Controllers\HelpDeskAcceptController::class, 'reject'])->name('hd.reject.do');
@@ -224,6 +232,7 @@ Route::prefix('v1')->group(function () {
         ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.result');
 
     Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
+
         // 🔐 COFRE DE SENHAS (Vault) — dependência do módulo Ambientes (Prosight).
         Route::prefix('vault')->middleware('permission.or.admin:vault.use')->group(function () {
             // Perfil criptográfico / 2FA / unlock
@@ -239,6 +248,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/recovery/unlock',     [\App\Http\Controllers\VaultProfileController::class, 'recoveryUnlock'])->middleware('throttle:5,15')->name('vault.recovery.unlock');
             Route::post('/recovery/regenerate', [\App\Http\Controllers\VaultProfileController::class, 'regenerateRecovery'])->middleware('throttle:10,1')->name('vault.recovery.regenerate');
             Route::get('/public-keys',          [\App\Http\Controllers\VaultProfileController::class, 'publicKeys'])->name('vault.public-keys');
+            Route::get('/allocatable-users',    [\App\Http\Controllers\VaultProfileController::class, 'allocatableUsers'])->name('vault.allocatable-users');
             Route::get('/teams',                [\App\Http\Controllers\VaultProfileController::class, 'teams'])->name('vault.teams');
 
             // Cofres e membros
@@ -262,6 +272,226 @@ Route::prefix('v1')->group(function () {
 
             // Auditoria — admin global vê tudo; admin de cofre vê só os seus (escopo no controller)
             Route::get('/logs',                          [\App\Http\Controllers\VaultController::class, 'logs'])->name('vault.logs');
+        });
+
+        // Prosight C3 — Ambientes: projeção READ-ONLY segura do Cofre Env* por customer_id.
+        // Permissão PRÓPRIA (não concede acesso ao Cofre/reveal); empresa obrigatória; escopo revalidado
+        // no controller. NÃO expõe secrets/credenciais/host/porta/URL/inventory (allowlist).
+        Route::middleware('permission.or.admin:prosight.environments.view')->group(function () {
+            Route::get('/prosight/environments', [\App\Http\Controllers\ProsightEnvironmentController::class, 'index']);
+            // C4 — configuração cadastral de UM ambiente (read-only; anti-IDOR por environment_id → 404).
+            Route::get('/prosight/environments/{environmentId}/configuration', [\App\Http\Controllers\ProsightEnvironmentController::class, 'configuration'])->whereNumber('environmentId');
+        });
+        // Conector-0 — gestão da IDENTIDADE do agente (emitir enrollment token, status da identidade,
+        // revogar). Permissão própria prosight.operations.manage (infra interna; NÃO é operação).
+        Route::middleware('permission:prosight.operations.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/connector/enrollment-token', [\App\Http\Controllers\ConnectorAgentController::class, 'issueToken'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/connector/agent', [\App\Http\Controllers\ConnectorAgentController::class, 'agentStatus'])->whereNumber('environmentId');
+            Route::delete('/prosight/connector/agents/{agentId}', [\App\Http\Controllers\ConnectorAgentController::class, 'revoke']);
+            // Download do agente Connector (pacote-fonte servido pelo Minutor + binários do Release proxied).
+            Route::get('/prosight/connector/agent/package', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'package']);
+            Route::get('/prosight/connector/agent/releases', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'releases']);
+            Route::get('/prosight/connector/agent/download', [\App\Http\Controllers\ProsightConnectorDownloadController::class, 'download']);
+            // Config REST AdvPL (RPO) por ambiente — paridade com o configurador do ProSight enviado.
+            Route::get('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'show'])->whereNumber('environmentId');
+            Route::put('/prosight/environments/{environmentId}/rpo-config', [\App\Http\Controllers\ProsightRpoConfigController::class, 'update'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-config/test', [\App\Http\Controllers\ProsightRpoConfigController::class, 'test'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/rpo-inventory/scan', [\App\Http\Controllers\ProsightRpoConfigController::class, 'scan'])->whereNumber('environmentId');
+        });
+        // Conector-1 — PRESENÇA (estado observado, read-only). Permissão própria prosight.operations.view
+        // (observabilidade), distinta de environments.view (cadastro) e operations.manage (identidade).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presenceBulk']);
+            Route::get('/prosight/environments/{environmentId}/presence', [\App\Http\Controllers\ConnectorAgentController::class, 'presence'])->whereNumber('environmentId');
+            // Connector-2 — inventário OBSERVADO (Protheus) + divergência cadastral × observado (read-only).
+            Route::get('/prosight/environments/{environmentId}/observed', [\App\Http\Controllers\ConnectorAgentController::class, 'observed'])->whereNumber('environmentId');
+            // Visão Geral — status RPO da empresa (leve, sem re-scan): ambientes configurados + último resumo.
+            Route::get('/prosight/companies/{customerId}/rpo-overview', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyOverview'])->whereNumber('customerId');
+            Route::get('/prosight/companies/{customerId}/rpo-inventory/results', [\App\Http\Controllers\ProsightRpoConfigController::class, 'companyResults'])->whereNumber('customerId');
+            // Connector-3 — LISTAR/VER comandos (read-only; perm operations.view). Anti-IDOR 404.
+            Route::get('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/commands/{commandId}', [\App\Http\Controllers\ConnectorCommandController::class, 'show'])->whereNumber('commandId');
+        });
+        // Conector-3 — EXECUÇÃO de comandos assíncronos não destrutivos. Permissão ESTRITA
+        // prosight.operations.execute (admin via '*' + administrativo; NÃO coordenador). Só allowlist.
+        Route::middleware('permission:prosight.operations.execute')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/commands', [\App\Http\Controllers\ConnectorCommandController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/commands/{commandId}/cancel', [\App\Http\Controllers\ConnectorCommandController::class, 'cancel'])->whereNumber('commandId');
+        });
+        // Conector-4.1 — OPERAÇÕES (só start). Leitura read-only (perm view).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/operations/{id}', [\App\Http\Controllers\ConnectorOperationController::class, 'show'])->whereNumber('id');
+            // C5.4 — auditoria PONTA-A-PONTA read-only (reconstrução + timeline correlacionada). Perm view.
+            Route::get('/prosight/operations/{id}/audit', [\App\Http\Controllers\ConnectorOperationController::class, 'audit'])->whereNumber('id');
+        });
+        // Criar/cancelar operação destrutiva — permissão GRANULAR POR TIPO (operations.start | operations.stop)
+        // + operations.stop.override, enforce no CONTROLLER (o middleware estático não distingue op_type).
+        Route::post('/prosight/environments/{environmentId}/operations', [\App\Http\Controllers\ConnectorOperationController::class, 'create'])->whereNumber('environmentId');
+        Route::post('/prosight/operations/{id}/cancel', [\App\Http\Controllers\ConnectorOperationController::class, 'cancel'])->whereNumber('id');
+        // Aprovar/rejeitar/reconciliar/resolver — perm POR TIPO no CONTROLLER: lifecycle=operations.approve,
+        // rpo_promote=operations.rpo.approve (N-of-M). Middleware estático não distingue op_type.
+        Route::post('/prosight/operations/{id}/approve', [\App\Http\Controllers\ConnectorOperationController::class, 'approve'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reject', [\App\Http\Controllers\ConnectorOperationController::class, 'reject'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/reconcile', [\App\Http\Controllers\ConnectorOperationController::class, 'reconcile'])->whereNumber('id');
+        Route::post('/prosight/operations/{id}/resolve', [\App\Http\Controllers\ConnectorOperationController::class, 'resolve'])->whereNumber('id');
+        // Conector-5.2 — publicação GOVERNADA de RPO (SÓ hot). Cria operação rpo_promote a partir do target.
+        // Perm prosight.operations.rpo.promote enforce no CONTROLLER. Anti-IDOR 404 por customer_id.
+        Route::post('/prosight/rpo/targets/{id}/promote', [\App\Http\Controllers\ConnectorOperationController::class, 'promote'])->whereNumber('id');
+        // Conector-5.3 — rollback GOVERNADO de RPO (SÓ hot). Cria operação rpo_rollback p/ known_good nomeada.
+        // Perm PRÓPRIA prosight.operations.rpo.rollback enforce no CONTROLLER (NÃO herda de promote). Anti-IDOR.
+        Route::post('/prosight/rpo/targets/{id}/rollback', [\App\Http\Controllers\ConnectorOperationController::class, 'rollback'])->whereNumber('id');
+        // Conector-5.1 — FUNDAÇÃO de publicação de RPO (registro/target/qualificação/preview; ZERO publicação).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/capability', [\App\Http\Controllers\RpoRegistryController::class, 'capability'])->whereNumber('environmentId');
+            // CP-PREPHYSICAL — read-model de prontidão física (diagnóstico; NUNCA habilita live).
+            Route::get('/prosight/environments/{environmentId}/physical-readiness', [\App\Http\Controllers\PatchController::class, 'physicalReadiness'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/rpo/artifacts', [\App\Http\Controllers\RpoRegistryController::class, 'artifacts'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/artifacts/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showArtifact'])->whereNumber('id');
+            Route::get('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'targets'])->whereNumber('environmentId');
+            Route::get('/prosight/rpo/targets/{id}', [\App\Http\Controllers\RpoRegistryController::class, 'showTarget'])->whereNumber('id');
+            Route::get('/prosight/rpo/targets/{id}/qualifications', [\App\Http\Controllers\RpoRegistryController::class, 'qualifications'])->whereNumber('id');
+            // C5.3 — preview INFORMATIVO do rollback (read-only; NÃO cria operação). POST só p/ carregar qualification_id.
+            Route::post('/prosight/rpo/targets/{id}/rollback-preview', [\App\Http\Controllers\RpoRegistryController::class, 'rollbackPreview'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/artifacts/register', [\App\Http\Controllers\RpoRegistryController::class, 'register'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/artifacts/{id}/revise', [\App\Http\Controllers\RpoRegistryController::class, 'revise'])->whereNumber('id');
+            Route::post('/prosight/environments/{environmentId}/rpo/targets', [\App\Http\Controllers\RpoRegistryController::class, 'createTarget'])->whereNumber('environmentId');
+            Route::post('/prosight/rpo/targets/{id}/confirm', [\App\Http\Controllers\RpoRegistryController::class, 'confirmTarget'])->whereNumber('id');
+            Route::post('/prosight/rpo/targets/{id}/preview', [\App\Http\Controllers\RpoRegistryController::class, 'preview'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.rpo.qualify')->group(function () {
+            Route::post('/prosight/rpo/targets/{id}/qualify', [\App\Http\Controllers\RpoRegistryController::class, 'qualify'])->whereNumber('id');
+            Route::post('/prosight/rpo/qualifications/{id}/revoke', [\App\Http\Controllers\RpoRegistryController::class, 'revokeQualification'])->whereNumber('id');
+        });
+        // ── Connector-6 (C6) — COMPILE. Produz ARTEFATO candidato; NENHUMA rota publica/promove RPO. ──
+        Route::middleware('permission.or.admin:prosight.compile.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/compile/capability', [\App\Http\Controllers\CompileController::class, 'capability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'index'])->whereNumber('environmentId');
+            Route::get('/prosight/compile/requests/{id}', [\App\Http\Controllers\CompileController::class, 'show'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.compile.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/compile/requests', [\App\Http\Controllers\CompileController::class, 'create'])->whereNumber('environmentId');
+            Route::post('/prosight/compile/requests/{id}/execute', [\App\Http\Controllers\CompileController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/compile/requests/{id}/cancel', [\App\Http\Controllers\CompileController::class, 'cancel'])->whereNumber('id');
+        });
+        // C6.7 — handoff GOVERNADO do artifact candidate ao registry C5 (register). C6 NÃO promove.
+        Route::middleware('permission:prosight.compile.handoff')->group(function () {
+            Route::post('/prosight/compile/candidates/{id}/handoff', [\App\Http\Controllers\CompileController::class, 'handoff'])->whereNumber('id');
+        });
+        // RPO-DISCOVERY (C5.0) — topologia detectada → sugestões → confirmação GOVERNADA (delega ao C5.1).
+        // NENHUMA rota promove/publica RPO nem auto-altera membership. Confirmação = ação de gestão (rpo.manage).
+        Route::middleware('permission.or.admin:prosight.operations.rpo.manage')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/rpo/topology', [\App\Http\Controllers\RpoTopologyController::class, 'show'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.rpo.manage')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/rpo/topology/confirm', [\App\Http\Controllers\RpoTopologyController::class, 'confirm'])->whereNumber('environmentId');
+        });
+        // ENV-HUB — jornada operacional por ambiente (orquestra Connector/AppServers/RPO; NÃO duplica; NÃO promove).
+        Route::middleware('permission.or.admin:prosight.operations.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/operational-status', [\App\Http\Controllers\EnvironmentHubController::class, 'status'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/appservers/reconciliation', [\App\Http\Controllers\EnvironmentHubController::class, 'reconciliation'])->whereNumber('environmentId');
+        });
+        Route::middleware('permission:prosight.operations.appserver.bind')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/appservers/{envAppserverId}/bind', [\App\Http\Controllers\EnvironmentHubController::class, 'bind'])->whereNumber('environmentId')->whereNumber('envAppserverId');
+            Route::post('/prosight/environments/{environmentId}/appservers/register-and-bind', [\App\Http\Controllers\EnvironmentHubController::class, 'registerAndBind'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/appserver-bindings/{bindingId}/supersede', [\App\Http\Controllers\EnvironmentHubController::class, 'supersede'])->whereNumber('environmentId')->whereNumber('bindingId');
+        });
+        // PATCH P1 — produção GOVERNADA de artefato (base RPO + .ptm = candidato). NÃO publica/promove/registra em P1.
+        Route::middleware('permission.or.admin:prosight.operations.patch.view')->group(function () {
+            Route::get('/prosight/environments/{environmentId}/patch/availability', [\App\Http\Controllers\PatchController::class, 'availability'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'inputs'])->whereNumber('environmentId');
+            Route::get('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'requests'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/requests/{id}', [\App\Http\Controllers\PatchController::class, 'show'])->whereNumber('id');
+            // PATCH P2 — visualizar execução (marcadores + itens). SIMULADO explícito nos labels.
+            Route::get('/prosight/patch/executions/{id}', [\App\Http\Controllers\PatchController::class, 'showExecution'])->whereNumber('id');
+            // PATCH P3 — candidatos (jornada execução→candidato→registrar no C5). Read-only.
+            Route::get('/prosight/environments/{environmentId}/patch/candidates', [\App\Http\Controllers\PatchController::class, 'candidates'])->whereNumber('environmentId');
+            Route::get('/prosight/patch/candidates/{id}', [\App\Http\Controllers\PatchController::class, 'showCandidate'])->whereNumber('id');
+        });
+        Route::middleware('permission:prosight.operations.patch.request')->group(function () {
+            Route::post('/prosight/environments/{environmentId}/patch/inputs', [\App\Http\Controllers\PatchController::class, 'createInput'])->whereNumber('environmentId');
+            Route::post('/prosight/environments/{environmentId}/patch/requests', [\App\Http\Controllers\PatchController::class, 'createRequest'])->whereNumber('environmentId');
+        });
+        // PATCH P2 — EXECUÇÃO governada (dispatch/reconcile). Perm PRÓPRIA patch.execute (não herda request). SIMULADO.
+        Route::middleware('permission:prosight.operations.patch.execute')->group(function () {
+            Route::post('/prosight/patch/requests/{id}/execute', [\App\Http\Controllers\PatchController::class, 'execute'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/reconcile', [\App\Http\Controllers\PatchController::class, 'reconcile'])->whereNumber('id');
+            Route::post('/prosight/patch/executions/{id}/resolve', [\App\Http\Controllers\PatchController::class, 'resolve'])->whereNumber('id');
+        });
+        // PATCH P3 — HANDOFF ao C5 (ação EXPLÍCITA). Perm PRÓPRIA patch.register (não herda execute). Boundary=C5 REGISTERED.
+        Route::middleware('permission:prosight.operations.patch.register')->group(function () {
+            Route::post('/prosight/patch/candidates/{id}/handoff', [\App\Http\Controllers\PatchController::class, 'handoff'])->whereNumber('id');
+        });
+
+        // ────────────────────────────────────────────────────────────────────
+        // 🖥️ COFRE DE AMBIENTES (infra Protheus) — camada ADITIVA sobre o cofre.
+        // Metadados em CLARO; segredos só via /reveal enforced. NUNCA logar payload
+        // com blob. Reusa a cripto/chaves do cofre de senhas sem tocá-las.
+        // ────────────────────────────────────────────────────────────────────
+        Route::prefix('environments')->middleware('permission.or.admin:environments.use')->group(function () {
+            // Dashboard + busca (metadados CLARO)
+            Route::get('/dashboard',                       [\App\Http\Controllers\EnvironmentController::class, 'dashboard'])->name('environments.dashboard');
+            Route::get('/alerts',                          [\App\Http\Controllers\EnvironmentController::class, 'alerts'])->name('environments.alerts');
+            Route::get('/search',                          [\App\Http\Controllers\EnvironmentController::class, 'search'])->name('environments.search');
+            Route::get('/favorites',                       [\App\Http\Controllers\EnvironmentController::class, 'favorites'])->name('environments.favorites');
+            Route::post('/environments/{envId}/favorite',  [\App\Http\Controllers\EnvironmentController::class, 'toggleFavorite'])->name('environments.favorite.toggle');
+            // Clientes-vault
+            Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
+            Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
+            // Compartilhamento — remoção aditiva de membro do cofre do cliente (add/role reusam /vault/*)
+            Route::delete('/clients/{customerId}/members/{userId}', [\App\Http\Controllers\EnvironmentController::class, 'removeMember'])->name('environments.member.remove');
+            // Ambientes de um cliente
+            Route::get('/clients/{customerId}/environments',  [\App\Http\Controllers\EnvironmentController::class, 'environments'])->name('environments.env.index');
+            Route::post('/clients/{customerId}/environments', [\App\Http\Controllers\EnvironmentController::class, 'storeEnvironment'])->name('environments.env.store');
+            Route::get('/environments/{id}',               [\App\Http\Controllers\EnvironmentController::class, 'showEnvironment'])->name('environments.env.show');
+            Route::put('/environments/{id}',               [\App\Http\Controllers\EnvironmentController::class, 'updateEnvironment'])->name('environments.env.update');
+            Route::delete('/environments/{id}',            [\App\Http\Controllers\EnvironmentController::class, 'destroyEnvironment'])->name('environments.env.destroy');
+            // Credenciais (listagem SEM blob)
+            Route::get('/environments/{envId}/credentials',  [\App\Http\Controllers\EnvironmentCredentialController::class, 'index'])->name('environments.cred.index');
+            Route::post('/environments/{envId}/credentials', [\App\Http\Controllers\EnvironmentCredentialController::class, 'store'])->name('environments.cred.store');
+            Route::put('/credentials/{id}',                [\App\Http\Controllers\EnvironmentCredentialController::class, 'update'])->name('environments.cred.update');
+            Route::delete('/credentials/{id}',             [\App\Http\Controllers\EnvironmentCredentialController::class, 'destroy'])->name('environments.cred.destroy');
+            // Reveal ENFORCED (único caminho do ciphertext)
+            Route::post('/secrets/{id}/reveal',            [\App\Http\Controllers\EnvironmentSecretController::class, 'reveal'])->middleware('throttle:60,1')->name('environments.secret.reveal');
+
+            // Infra (F1b): Banco / AppServer / VPN — listagem SEM blob; senha via /reveal.
+            Route::get('/environments/{envId}/databases',  [\App\Http\Controllers\EnvironmentInfraController::class, 'databases'])->name('environments.db.index');
+            Route::post('/environments/{envId}/databases', [\App\Http\Controllers\EnvironmentInfraController::class, 'storeDatabase'])->name('environments.db.store');
+            Route::put('/databases/{id}',                  [\App\Http\Controllers\EnvironmentInfraController::class, 'updateDatabase'])->name('environments.db.update');
+            Route::delete('/databases/{id}',               [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyDatabase'])->name('environments.db.destroy');
+            Route::get('/environments/{envId}/appservers',  [\App\Http\Controllers\EnvironmentInfraController::class, 'appservers'])->name('environments.app.index');
+            Route::post('/environments/{envId}/appservers', [\App\Http\Controllers\EnvironmentInfraController::class, 'storeAppserver'])->name('environments.app.store');
+            Route::put('/appservers/{id}',                 [\App\Http\Controllers\EnvironmentInfraController::class, 'updateAppserver'])->name('environments.app.update');
+            Route::delete('/appservers/{id}',              [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyAppserver'])->name('environments.app.destroy');
+            Route::get('/environments/{envId}/vpns',        [\App\Http\Controllers\EnvironmentInfraController::class, 'vpns'])->name('environments.vpn.index');
+            Route::post('/environments/{envId}/vpns',       [\App\Http\Controllers\EnvironmentInfraController::class, 'storeVpn'])->name('environments.vpn.store');
+            Route::put('/vpns/{id}',                        [\App\Http\Controllers\EnvironmentInfraController::class, 'updateVpn'])->name('environments.vpn.update');
+            Route::delete('/vpns/{id}',                     [\App\Http\Controllers\EnvironmentInfraController::class, 'destroyVpn'])->name('environments.vpn.destroy');
+
+            // Certificados (F1c) — metadados em CLARO; senha do PFX via reveal; arquivo .pfx cifrado no client
+            Route::get('/environments/{envId}/certificates',  [\App\Http\Controllers\EnvironmentCertificateController::class, 'index'])->name('environments.cert.index');
+            Route::post('/environments/{envId}/certificates', [\App\Http\Controllers\EnvironmentCertificateController::class, 'store'])->name('environments.cert.store');
+            Route::put('/certificates/{id}',                [\App\Http\Controllers\EnvironmentCertificateController::class, 'update'])->name('environments.cert.update');
+            Route::delete('/certificates/{id}',             [\App\Http\Controllers\EnvironmentCertificateController::class, 'destroy'])->name('environments.cert.destroy');
+            // Histórico de negócio do ambiente
+            Route::get('/environments/{envId}/history',     [\App\Http\Controllers\EnvironmentCertificateController::class, 'history'])->name('environments.history');
+
+            // ACL fina por ambiente (F2) — só admin do ambiente
+            Route::get('/environments/{envId}/permissions',            [\App\Http\Controllers\EnvPermissionController::class, 'index'])->name('environments.perm.index');
+            Route::put('/environments/{envId}/permissions/{userId}',   [\App\Http\Controllers\EnvPermissionController::class, 'upsert'])->name('environments.perm.upsert');
+            Route::delete('/environments/{envId}/permissions/{userId}', [\App\Http\Controllers\EnvPermissionController::class, 'destroy'])->name('environments.perm.destroy');
+            // ACL de grupo (herança automática)
+            Route::get('/environments/{envId}/group-permissions',              [\App\Http\Controllers\EnvPermissionController::class, 'groupIndex'])->name('environments.gperm.index');
+            Route::put('/environments/{envId}/group-permissions/{groupId}',    [\App\Http\Controllers\EnvPermissionController::class, 'groupUpsert'])->name('environments.gperm.upsert');
+            Route::delete('/environments/{envId}/group-permissions/{groupId}', [\App\Http\Controllers\EnvPermissionController::class, 'groupDestroy'])->name('environments.gperm.destroy');
+
+            // Links + Documentação (F1d)
+            Route::get('/environments/{envId}/links',       [\App\Http\Controllers\EnvironmentLinkController::class, 'index'])->name('environments.link.index');
+            Route::post('/environments/{envId}/links',      [\App\Http\Controllers\EnvironmentLinkController::class, 'store'])->name('environments.link.store');
+            Route::delete('/links/{id}',                    [\App\Http\Controllers\EnvironmentLinkController::class, 'destroy'])->name('environments.link.destroy');
+            Route::get('/environments/{envId}/docs',        [\App\Http\Controllers\EnvironmentLinkController::class, 'docs'])->name('environments.docs.index');
         });
         // ===== Kanban do Cliente ("Meus Processos") =====
         Route::prefix('client/kanban')->name('client.kanban.')->group(function () {
@@ -352,7 +582,13 @@ Route::prefix('v1')->group(function () {
         Route::post('/notifications/{notification}/ack',  [\App\Http\Controllers\NotificationController::class, 'ack']);
         Route::post('/notifications/{notification}/respond', [\App\Http\Controllers\NotificationController::class, 'respond']);
         Route::get('/notifications/{notification}/log',   [\App\Http\Controllers\NotificationController::class, 'log']);
+        // Revoga a resposta de UM destinatário → volta a pendente e recebe de novo (pop-up + e-mail).
+        Route::post('/notifications/{notification}/revoke', [\App\Http\Controllers\NotificationController::class, 'revoke']);
+        // Cancela (ou reativa) o convite de UM destinatário → não recebe mais (excluded_user_ids).
+        Route::post('/notifications/{notification}/cancel-invite', [\App\Http\Controllers\NotificationController::class, 'cancelInvite']);
         Route::post('/notifications/{notification}/resend', [\App\Http\Controllers\NotificationController::class, 'resend']);
+        // Reenvia o e-mail da comunicação só p/ UM destinatário (botão Reenviar no log).
+        Route::post('/notifications/{notification}/resend-user', [\App\Http\Controllers\NotificationController::class, 'resendUser']);
         Route::post('/notifications/{notification}/encerrar', [\App\Http\Controllers\NotificationController::class, 'encerrar']);
 
         // Rotina (admin): recorrência dos lembretes de ações não resolvidas.
@@ -364,6 +600,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/polls/{poll}/vote',   [\App\Http\Controllers\NotificationPollController::class, 'vote']);
         Route::get('/polls/{poll}/results', [\App\Http\Controllers\NotificationPollController::class, 'resultsEndpoint']);
         Route::get('/polls/{poll}/voters',  [\App\Http\Controllers\NotificationPollController::class, 'voters']);
+        Route::post('/polls/{poll}/revoke', [\App\Http\Controllers\NotificationPollController::class, 'revoke']);
+        // Pesquisa (survey): responder (logado) + resultados (admin/dono).
+        Route::post('/surveys/{survey}/respond', [\App\Http\Controllers\NotificationSurveyController::class, 'respond']);
+        Route::get('/surveys/{survey}/results',  [\App\Http\Controllers\NotificationSurveyController::class, 'results']);
+        Route::post('/surveys/{survey}/revoke',  [\App\Http\Controllers\NotificationSurveyController::class, 'revoke']);
 
         // Agenda / Calendário da tela inicial (eventos do mês)
         Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);
@@ -381,6 +622,8 @@ Route::prefix('v1')->group(function () {
         Route::delete('/tasks/{task}',    [\App\Http\Controllers\TaskController::class, 'destroy']);
         // Central de Reunião (admin/coordenador; visível só aos envolvidos)
         Route::get('/meetings/tasks/pending',                [\App\Http\Controllers\MeetingController::class, 'pendingTasks']);
+        // NOVO (Central de Reuniões / Teams): precede /meetings/{meeting} p/ não colidir no router.
+        Route::get('/meetings/suggested-participants',       [\App\Http\Controllers\MeetingController::class, 'suggestedParticipants']);
         Route::get('/meetings',                              [\App\Http\Controllers\MeetingController::class, 'index']);
         Route::post('/meetings',                             [\App\Http\Controllers\MeetingController::class, 'store']);
         Route::get('/meetings/{meeting}',                    [\App\Http\Controllers\MeetingController::class, 'show']);
@@ -391,6 +634,15 @@ Route::prefix('v1')->group(function () {
         Route::put('/meetings/{meeting}/tasks/{task}',       [\App\Http\Controllers\MeetingController::class, 'updateTask']);
         Route::patch('/meetings/{meeting}/tasks/{task}/toggle', [\App\Http\Controllers\MeetingController::class, 'toggleTask']);
         Route::delete('/meetings/{meeting}/tasks/{task}',    [\App\Http\Controllers\MeetingController::class, 'deleteTask']);
+        // NOVO — ações da reunião (Central de Reuniões / card do chamado).
+        Route::post('/meetings/{meeting}/cancel',            [\App\Http\Controllers\MeetingController::class, 'cancel']);
+        Route::post('/meetings/{meeting}/start',             [\App\Http\Controllers\MeetingController::class, 'start']);
+        Route::post('/meetings/{meeting}/end',               [\App\Http\Controllers\MeetingController::class, 'end']);
+        Route::post('/meetings/{meeting}/log-hours',         [\App\Http\Controllers\MeetingController::class, 'logHours']);
+        Route::post('/meetings/{meeting}/summary',           [\App\Http\Controllers\MeetingController::class, 'saveSummary']);
+        Route::post('/meetings/{meeting}/ata',               [\App\Http\Controllers\MeetingController::class, 'saveAta']);
+        Route::post('/meetings/{meeting}/note-to-ticket',    [\App\Http\Controllers\MeetingController::class, 'noteToTicket']);
+        Route::post('/meetings/{meeting}/generate-notes',    [\App\Http\Controllers\MeetingController::class, 'generateNotes']);
 
         // Central de Comunicação (externa, com clientes)
         Route::get('/communications/mine',           [\App\Http\Controllers\CommunicationController::class, 'mine']);      // recebidas (endereçadas a mim)
@@ -785,6 +1037,8 @@ Route::prefix('v1')->group(function () {
             // Centro de custo — leitura (template + lista por cliente). ANTES de /customers/{customer}.
             Route::get('/cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('cost-centers.template');
             Route::get('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'index'])->name('customers.cost-centers.index');
+            // Visão Cliente × Executivo — ANTES de /customers/{customer} (rota literal).
+            Route::get('/customers/executives-overview', [CustomerController::class, 'executivesOverview'])->name('customers.executives-overview');
             Route::get('/customers/{customer}', [CustomerController::class, 'show'])->name('customers.show');
         });
 
@@ -793,6 +1047,9 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware('permission.or.admin:customers.update')->group(function () {
+            // Executivo em MASSA (rota literal ANTES de /customers/{customer}); escrita é admin-only (checado no controller).
+            Route::post('/customers/executives/bulk', [CustomerController::class, 'bulkExecutive'])->name('customers.executives.bulk');
+            Route::patch('/customers/{customer}/executive', [CustomerController::class, 'updateExecutive'])->name('customers.executive.update');
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
             // Centro de custo — escrita (criar/importar por cliente, editar/excluir).
             Route::post('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'store'])->name('customers.cost-centers.store');
@@ -955,6 +1212,19 @@ Route::prefix('v1')->group(function () {
         Route::middleware('permission.or.admin:projects.delete')->group(function () {
             Route::delete('/projects/{project}', [ProjectController::class, 'destroy'])->name('projects.destroy');
         });
+
+        // Participantes do projeto (clientes convidados a ver o card). Autorização completa
+        // em ProjectClientViewerController::ensureCanManage (admin/coordenador/gestor-do-cliente).
+        Route::get('/projects/{project}/client-viewers', [\App\Http\Controllers\ProjectClientViewerController::class, 'index'])->name('projects.client-viewers.index');
+        Route::get('/projects/{project}/client-viewers/available', [\App\Http\Controllers\ProjectClientViewerController::class, 'available'])->name('projects.client-viewers.available');
+        Route::post('/projects/{project}/client-viewers', [\App\Http\Controllers\ProjectClientViewerController::class, 'store'])->name('projects.client-viewers.store');
+        Route::delete('/projects/{project}/client-viewers/{user}', [\App\Http\Controllers\ProjectClientViewerController::class, 'destroy'])->name('projects.client-viewers.destroy');
+
+        // Participantes da REQUISIÇÃO (pré-projeto). Mesma autorização (admin/coord/gestor).
+        Route::get('/contract-requests/{contractRequest}/client-viewers', [\App\Http\Controllers\ContractRequestViewerController::class, 'index'])->name('contract-requests.client-viewers.index');
+        Route::get('/contract-requests/{contractRequest}/client-viewers/available', [\App\Http\Controllers\ContractRequestViewerController::class, 'available'])->name('contract-requests.client-viewers.available');
+        Route::post('/contract-requests/{contractRequest}/client-viewers', [\App\Http\Controllers\ContractRequestViewerController::class, 'store'])->name('contract-requests.client-viewers.store');
+        Route::delete('/contract-requests/{contractRequest}/client-viewers/{user}', [\App\Http\Controllers\ContractRequestViewerController::class, 'destroy'])->name('contract-requests.client-viewers.destroy');
 
         // 💰 HOUR CONTRIBUTIONS - Aportes de Horas (vinculados a projetos)
         Route::middleware('permission.or.admin:projects.view')->group(function () {
@@ -1144,6 +1414,308 @@ Route::prefix('v1')->group(function () {
 
         // Configurador de navegação: módulos dinâmicos + associação de itens de menu
         Route::get('/nav-config',                  [\App\Http\Controllers\NavConfigController::class, 'index'])->name('nav-config.index');
+
+        // ============= HELP DESK + CÓDIGO-FONTE (módulo — inerte/admin) =============
+        Route::get('/help-desk/access-profiles',                     [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'index']);
+        Route::post('/help-desk/access-profiles',                    [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'store']);
+        Route::get('/help-desk/agents', [\App\Http\Controllers\HelpDeskController::class, 'agents']);
+        Route::get('/help-desk/agents/without-team', [\App\Http\Controllers\HelpDeskController::class, 'agentsWithoutTeam']);
+        Route::get('/help-desk/saved-views',                 [\App\Http\Controllers\HelpDeskSavedViewController::class, 'index']);
+        Route::post('/help-desk/saved-views',                [\App\Http\Controllers\HelpDeskSavedViewController::class, 'store']);
+        Route::put('/help-desk/saved-views/{savedView}',     [\App\Http\Controllers\HelpDeskSavedViewController::class, 'update']);
+        Route::delete('/help-desk/saved-views/{savedView}',  [\App\Http\Controllers\HelpDeskSavedViewController::class, 'destroy']);
+        Route::get('/help-desk/association-rules',                    [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'index']);
+        Route::post('/help-desk/association-rules',                   [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'store']);
+        Route::get('/help-desk/categories',              [\App\Http\Controllers\HelpDeskCategoryController::class, 'index']);
+        Route::post('/help-desk/categories',             [\App\Http\Controllers\HelpDeskCategoryController::class, 'store']);
+        Route::get('/help-desk/comm-template',  [\App\Http\Controllers\HelpDeskTriggerController::class, 'commTemplate']);
+        Route::put('/help-desk/comm-template',  [\App\Http\Controllers\HelpDeskTriggerController::class, 'updateCommTemplate']);
+        Route::get('/help-desk/contacts', [\App\Http\Controllers\HelpDeskTicketController::class, 'searchContacts']);
+        Route::get('/help-desk/requesters', [\App\Http\Controllers\HelpDeskTicketController::class, 'requesters']);
+        Route::get('/help-desk/email-accounts',                      [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'index']);
+        Route::post('/help-desk/email-accounts',                     [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'store']);
+        Route::get('/help-desk/email-suggestions', [\App\Http\Controllers\HelpDeskTicketController::class, 'emailSuggestions']);
+        Route::get('/help-desk/justifications',                      [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'index']);
+        Route::post('/help-desk/justifications',                     [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'store']);
+        Route::get('/help-desk/meta',   [\App\Http\Controllers\HelpDeskController::class, 'meta']);
+        Route::get('/help-desk/integration-customers', [\App\Http\Controllers\HelpDeskController::class, 'integrationCustomers']);
+        Route::get('/help-desk/ops', [\App\Http\Controllers\HelpDeskOpsController::class, 'index']);
+        Route::get('/help-desk/people',                              [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'people']);
+        Route::get('/help-desk/playbooks', [\App\Http\Controllers\HelpDeskPlaybookController::class, 'index']);
+        Route::post('/help-desk/playbooks',              [\App\Http\Controllers\HelpDeskPlaybookController::class, 'store']);
+        Route::get('/help-desk/services',                [\App\Http\Controllers\HelpDeskServiceController::class, 'index']);
+        Route::post('/help-desk/services',               [\App\Http\Controllers\HelpDeskServiceController::class, 'store']);
+        Route::get('/help-desk/forms',                   [\App\Http\Controllers\HelpDeskFormController::class, 'index']);
+        Route::post('/help-desk/forms',                  [\App\Http\Controllers\HelpDeskFormController::class, 'store']);
+        Route::get('/help-desk/forms/{form}',            [\App\Http\Controllers\HelpDeskFormController::class, 'show']);
+        Route::put('/help-desk/forms/{form}',            [\App\Http\Controllers\HelpDeskFormController::class, 'update']);
+        Route::delete('/help-desk/forms/{form}',         [\App\Http\Controllers\HelpDeskFormController::class, 'destroy']);
+        Route::get('/help-desk/sla-policies',            [\App\Http\Controllers\HelpDeskSlaController::class, 'index']);
+        Route::post('/help-desk/sla-policies',           [\App\Http\Controllers\HelpDeskSlaController::class, 'store']);
+        Route::get('/help-desk/statuses',                [\App\Http\Controllers\HelpDeskStatusController::class, 'index']);
+        Route::post('/help-desk/statuses',               [\App\Http\Controllers\HelpDeskStatusController::class, 'store']);
+        // De-para de status HD ↔ Movidesk (vínculo, por empresa)
+        Route::get('/help-desk/movidesk-status-map',     [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'index']);
+        Route::put('/help-desk/movidesk-status-map',     [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'save']);
+        Route::post('/help-desk/movidesk-status-map/refresh', [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'refreshCatalog']);
+        // Vínculo de cliente (organização Movidesk → cliente Minutor)
+        Route::get('/help-desk/movidesk-customers',      [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'customersIndex']);
+        Route::put('/help-desk/movidesk-customers',      [\App\Http\Controllers\HelpDeskMovideskStatusMapController::class, 'customersSave']);
+        Route::get('/help-desk/tags',                    [\App\Http\Controllers\HelpDeskTagController::class, 'index']);
+        Route::post('/help-desk/tags',                   [\App\Http\Controllers\HelpDeskTagController::class, 'store']);
+        Route::get('/help-desk/teams',                   [\App\Http\Controllers\HelpDeskTeamController::class, 'index']);
+        Route::post('/help-desk/teams',                  [\App\Http\Controllers\HelpDeskTeamController::class, 'store']);
+        Route::get('/help-desk/tickets',                 [\App\Http\Controllers\HelpDeskTicketController::class, 'index']);
+        Route::post('/help-desk/tickets',                [\App\Http\Controllers\HelpDeskTicketController::class, 'store']);
+        Route::get('/help-desk/triggers',             [\App\Http\Controllers\HelpDeskTriggerController::class, 'index']);
+        Route::post('/help-desk/triggers',            [\App\Http\Controllers\HelpDeskTriggerController::class, 'store']);
+        Route::post('/help-desk/usage', [\App\Http\Controllers\HelpDeskUsageController::class, 'record']);
+        Route::put('/help-desk/access-profiles/{accessProfile}',     [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'update']);
+        Route::delete('/help-desk/access-profiles/{accessProfile}',  [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'destroy']);
+        Route::post('/help-desk/access-profiles/{accessProfile}/duplicate', [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'duplicate']);
+        Route::put('/help-desk/association-rules/{associationRule}',  [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'update']);
+        Route::delete('/help-desk/association-rules/{associationRule}', [\App\Http\Controllers\HelpDeskAssociationRuleController::class, 'destroy']);
+        Route::put('/help-desk/categories/{category}',   [\App\Http\Controllers\HelpDeskCategoryController::class, 'update']);
+        Route::delete('/help-desk/categories/{category}', [\App\Http\Controllers\HelpDeskCategoryController::class, 'destroy']);
+        Route::put('/help-desk/email-accounts/{emailAccount}',       [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'update']);
+        Route::delete('/help-desk/email-accounts/{emailAccount}',    [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'destroy']);
+        Route::put('/help-desk/justifications/{justification}',      [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'update']);
+        Route::delete('/help-desk/justifications/{justification}',   [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'destroy']);
+        Route::get('/help-desk/kb/articles',             [\App\Http\Controllers\HelpDeskKbArticleController::class, 'index']);
+        Route::post('/help-desk/kb/articles',            [\App\Http\Controllers\HelpDeskKbArticleController::class, 'store']);
+        Route::get('/help-desk/kb/categories',           [\App\Http\Controllers\HelpDeskKbCategoryController::class, 'index']);
+        Route::post('/help-desk/kb/categories',          [\App\Http\Controllers\HelpDeskKbCategoryController::class, 'store']);
+        Route::get('/help-desk/playbooks/manage',        [\App\Http\Controllers\HelpDeskPlaybookController::class, 'adminIndex']);
+        Route::put('/help-desk/playbooks/{playbook}',    [\App\Http\Controllers\HelpDeskPlaybookController::class, 'update']);
+        Route::delete('/help-desk/playbooks/{playbook}', [\App\Http\Controllers\HelpDeskPlaybookController::class, 'destroy']);
+        Route::get('/help-desk/portal/kb',               [\App\Http\Controllers\HelpDeskPortalController::class, 'kbIndex']);
+        Route::get('/help-desk/portal/permissions',      [\App\Http\Controllers\HelpDeskPortalController::class, 'permissions']);
+        Route::get('/help-desk/portal/tickets',          [\App\Http\Controllers\HelpDeskPortalController::class, 'myTickets']);
+        Route::get('/help-desk/portal/meetings',          [\App\Http\Controllers\MeetingController::class, 'portalMeetings']);
+        Route::post('/help-desk/portal/tickets',         [\App\Http\Controllers\HelpDeskPortalController::class, 'openTicket']);
+        Route::put('/help-desk/services/{service}',      [\App\Http\Controllers\HelpDeskServiceController::class, 'update']);
+        Route::delete('/help-desk/services/{service}',   [\App\Http\Controllers\HelpDeskServiceController::class, 'destroy']);
+        Route::get('/help-desk/sla-policies/{policy}',   [\App\Http\Controllers\HelpDeskSlaController::class, 'show']);
+        Route::put('/help-desk/sla-policies/{policy}',   [\App\Http\Controllers\HelpDeskSlaController::class, 'update']);
+        Route::post('/help-desk/sla-policies/{policy}/duplicate', [\App\Http\Controllers\HelpDeskSlaController::class, 'duplicate']);
+        Route::delete('/help-desk/sla-policies/{policy}', [\App\Http\Controllers\HelpDeskSlaController::class, 'destroy']);
+        Route::put('/help-desk/statuses/{status}',       [\App\Http\Controllers\HelpDeskStatusController::class, 'update']);
+        Route::delete('/help-desk/statuses/{status}',    [\App\Http\Controllers\HelpDeskStatusController::class, 'destroy']);
+        Route::delete('/help-desk/tags/{tag}',           [\App\Http\Controllers\HelpDeskTagController::class, 'destroy']);
+        Route::put('/help-desk/teams/{team}',            [\App\Http\Controllers\HelpDeskTeamController::class, 'update']);
+        Route::delete('/help-desk/teams/{team}',         [\App\Http\Controllers\HelpDeskTeamController::class, 'destroy']);
+        Route::post('/help-desk/tickets/redistribute', [\App\Http\Controllers\HelpDeskTicketController::class, 'bulkAssign']);
+        Route::post('/help-desk/tickets/bulk', [\App\Http\Controllers\HelpDeskTicketController::class, 'bulkUpdate']);
+        Route::get('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'show'])->whereNumber('ticket');
+        Route::get('/help-desk/tickets/{ticket}/detail',  [\App\Http\Controllers\HelpDeskTicketController::class, 'detail'])->whereNumber('ticket');
+        Route::put('/help-desk/tickets/{ticket}',        [\App\Http\Controllers\HelpDeskTicketController::class, 'update']);
+        Route::delete('/help-desk/tickets/{ticket}',     [\App\Http\Controllers\HelpDeskTicketController::class, 'destroy']);
+        Route::post('/help-desk/triggers/apply-recipe', [\App\Http\Controllers\HelpDeskTriggerController::class, 'applyRecipe']);
+        Route::get('/help-desk/triggers/email-templates', [\App\Http\Controllers\HelpDeskTriggerController::class, 'emailTemplates']);
+        Route::get('/help-desk/triggers/meta',        [\App\Http\Controllers\HelpDeskTriggerController::class, 'meta']);
+        Route::post('/help-desk/triggers/preview-email', [\App\Http\Controllers\HelpDeskTriggerController::class, 'previewEmail']);
+        Route::get('/help-desk/triggers/recipes',     [\App\Http\Controllers\HelpDeskTriggerController::class, 'recipes']);
+        Route::put('/help-desk/triggers/{trigger}',   [\App\Http\Controllers\HelpDeskTriggerController::class, 'update']);
+        Route::delete('/help-desk/triggers/{trigger}', [\App\Http\Controllers\HelpDeskTriggerController::class, 'destroy']);
+        Route::get('/help-desk/customers/{customer}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'customerContext']);
+        Route::post('/help-desk/email-accounts/{emailAccount}/test', [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'test']);
+        Route::get('/help-desk/kb/articles/{article}',   [\App\Http\Controllers\HelpDeskKbArticleController::class, 'show']);
+        Route::put('/help-desk/kb/articles/{article}',   [\App\Http\Controllers\HelpDeskKbArticleController::class, 'update']);
+        Route::delete('/help-desk/kb/articles/{article}', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'destroy']);
+        Route::put('/help-desk/kb/categories/{kbCategory}', [\App\Http\Controllers\HelpDeskKbCategoryController::class, 'update']);
+        Route::delete('/help-desk/kb/categories/{kbCategory}', [\App\Http\Controllers\HelpDeskKbCategoryController::class, 'destroy']);
+        Route::patch('/help-desk/people/access-profile/bulk',        [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'bulkSetAccessProfile']);
+        Route::patch('/help-desk/people/{user}/access-profile',      [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setAccessProfile']);
+        Route::patch('/help-desk/people/{user}/companies',           [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setCompanies']);
+        Route::patch('/help-desk/people/{user}/teams',               [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setTeams']);
+        Route::patch('/help-desk/people/{user}/can-timesheet-sustentacao', [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setCanTimesheetSustentacao']);
+            Route::get('/help-desk/departments',                     [\App\Http\Controllers\HelpDeskDepartmentController::class, 'index']);
+            Route::post('/help-desk/departments',                    [\App\Http\Controllers\HelpDeskDepartmentController::class, 'store']);
+            Route::put('/help-desk/departments/{department}',        [\App\Http\Controllers\HelpDeskDepartmentController::class, 'update']);
+            Route::delete('/help-desk/departments/{department}',     [\App\Http\Controllers\HelpDeskDepartmentController::class, 'destroy']);
+            Route::patch('/help-desk/people/{user}/department',      [\App\Http\Controllers\HelpDeskDepartmentController::class, 'setPersonDepartment']);
+        Route::get('/help-desk/portal/kb/{article}',     [\App\Http\Controllers\HelpDeskPortalController::class, 'kbShow']);
+        Route::get('/help-desk/portal/tickets/{ticket}', [\App\Http\Controllers\HelpDeskPortalController::class, 'showTicket']);
+        Route::patch('/help-desk/tickets/{ticket}/assign', [\App\Http\Controllers\HelpDeskTicketController::class, 'assign']);
+        Route::patch('/help-desk/tickets/{ticket}/company', [\App\Http\Controllers\HelpDeskTicketController::class, 'transferCompany']);
+        Route::get('/help-desk/tickets/{ticket}/apontamento-options', [\App\Http\Controllers\HelpDeskTicketController::class, 'apontamentoOptions']);
+        Route::get('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'attachments']);
+        Route::post('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'uploadAttachment']);
+        Route::get('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'comments']);
+        Route::post('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'addComment']);
+        Route::post('/help-desk/tickets/{ticket}/presence', [\App\Http\Controllers\HelpDeskPresenceController::class, 'heartbeat'])->whereNumber('ticket');
+        Route::get('/help-desk/tickets/{ticket}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'context']);
+        Route::post('/help-desk/tickets/{ticket}/finalize', [\App\Http\Controllers\HelpDeskTicketController::class, 'finalize']);
+        Route::patch('/help-desk/tickets/{ticket}/status', [\App\Http\Controllers\HelpDeskTicketController::class, 'changeStatus']);
+        Route::get('/help-desk/tickets/{ticket}/timeline', [\App\Http\Controllers\HelpDeskTicketController::class, 'timeline']);
+        Route::get('/help-desk/tickets/{ticket}/timesheets', [\App\Http\Controllers\HelpDeskTicketController::class, 'timesheets']);
+        Route::get('/help-desk/kb/articles/{article}/attachments', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'attachments']);
+        Route::post('/help-desk/kb/articles/{article}/attachments', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'uploadAttachment']);
+        Route::post('/help-desk/kb/articles/{article}/publish', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'publish']);
+        Route::post('/help-desk/portal/kb/{article}/feedback', [\App\Http\Controllers\HelpDeskPortalController::class, 'kbFeedback']);
+        Route::get('/help-desk/portal/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskPortalController::class, 'attachments']);
+        Route::post('/help-desk/portal/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskPortalController::class, 'uploadAttachment']);
+        Route::post('/help-desk/portal/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskPortalController::class, 'addComment']);
+        Route::post('/help-desk/portal/tickets/{ticket}/presence', [\App\Http\Controllers\HelpDeskPresenceController::class, 'portalHeartbeat'])->whereNumber('ticket');
+        Route::delete('/help-desk/tickets/{ticket}/attachments/{attachment}', [\App\Http\Controllers\HelpDeskTicketController::class, 'deleteAttachment']);
+        Route::patch('/help-desk/tickets/{ticket}/comments/{comment}', [\App\Http\Controllers\HelpDeskTicketController::class, 'updateComment']);
+        Route::delete('/help-desk/kb/articles/{article}/attachments/{attachment}', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'deleteAttachment']);
+        Route::delete('/help-desk/portal/tickets/{ticket}/attachments/{attachment}', [\App\Http\Controllers\HelpDeskPortalController::class, 'deleteAttachment']);
+        Route::get('/help-desk/tickets/{ticket}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskTicketController::class, 'downloadAttachment']);
+        Route::post('/help-desk/tickets/{ticket}/comments/{comment}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'addCommentAttachment']);
+        Route::post('/help-desk/tickets/{ticket}/playbooks/{playbook}/execute', [\App\Http\Controllers\HelpDeskTicketController::class, 'executePlaybook']);
+        Route::get('/help-desk/kb/articles/{article}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'downloadAttachment']);
+        Route::get('/help-desk/portal/tickets/{ticket}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskPortalController::class, 'downloadAttachment']);
+        Route::get('/help-desk/tickets/{ticket}/comments/{comment}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskTicketController::class, 'downloadCommentAttachment']);
+        Route::get('/help-desk/tickets/search',          [\App\Http\Controllers\HelpDeskTicketController::class, 'search']);
+        Route::get('/help-desk/tickets/{ticket}/details', [\App\Http\Controllers\HelpDeskTicketController::class, 'details']);
+        Route::get('/help-desk/tickets/{ticket}/sla',    [\App\Http\Controllers\HelpDeskTicketController::class, 'sla']);
+        Route::get('/help-desk/tickets/{ticket}/apontamentos', [\App\Http\Controllers\HelpDeskTicketController::class, 'apontamentos']);
+        Route::get('/help-desk/tickets/{ticket}/report', [\App\Http\Controllers\HelpDeskTicketController::class, 'report']);
+        Route::post('/help-desk/tickets/{ticket}/clone', [\App\Http\Controllers\HelpDeskTicketController::class, 'clone']);
+        Route::post('/help-desk/tickets/{ticket}/send-email', [\App\Http\Controllers\HelpDeskTicketController::class, 'sendEmail']);
+        Route::post('/help-desk/tickets/{ticket}/schedule', [\App\Http\Controllers\HelpDeskTicketController::class, 'schedule']);
+        Route::delete('/help-desk/tickets/{ticket}/schedule', [\App\Http\Controllers\HelpDeskTicketController::class, 'unschedule']);
+        Route::post('/help-desk/tickets/{ticket}/schedule-reopen', [\App\Http\Controllers\HelpDeskTicketController::class, 'scheduleReopen']);
+        Route::delete('/help-desk/tickets/{ticket}/schedule-reopen', [\App\Http\Controllers\HelpDeskTicketController::class, 'cancelScheduledReopen']);
+        Route::post('/help-desk/tickets/{ticket}/comments/{comment}/to-kb', [\App\Http\Controllers\HelpDeskTicketController::class, 'commentToKb']);
+        Route::get('/help-desk/kb/suggest',              [\App\Http\Controllers\HelpDeskKbArticleController::class, 'suggest']);
+        Route::post('/help-desk/tickets/merge',          [\App\Http\Controllers\HelpDeskMergeController::class, 'merge']);
+        Route::post('/help-desk/tickets/{target}/unmerge/{source}', [\App\Http\Controllers\HelpDeskMergeController::class, 'unmerge']);
+        Route::get('/help-desk/tickets/{target}/merged', [\App\Http\Controllers\HelpDeskMergeController::class, 'mergedList']);
+        Route::get('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'index']);
+        Route::put('/help-desk/portal-columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'update']);
+        Route::get('/help-desk/portal/columns',          [\App\Http\Controllers\HelpDeskPortalColumnsController::class, 'portal']);
+        Route::get('/help-desk/portal/statuses',         [\App\Http\Controllers\HelpDeskPortalController::class, 'statuses']);
+        Route::post('/help-desk/portal/tickets/{ticket}/accept', [\App\Http\Controllers\HelpDeskPortalController::class, 'accept']);
+        Route::post('/help-desk/portal/tickets/{ticket}/reject', [\App\Http\Controllers\HelpDeskPortalController::class, 'reject']);
+        Route::get('/help-desk/portal/tickets/{ticket}/comments/{comment}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskPortalController::class, 'downloadCommentAttachment']);
+        Route::patch('/contracts/{contract}/helpdesk-integration',   [ContractController::class, 'toggleHelpdeskIntegration'])->name('contracts.helpdesk-integration');
+        // ===== Central Fontes / Código-Fonte (portado do homolog 2026-09-24) =====
+            Route::post('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'store'])->whereNumber('ticket');
+            Route::post('/help-desk/tickets/{ticket}/gmud/packages/ensure', [\App\Http\Controllers\GmudPackageController::class, 'ensure'])->whereNumber('ticket');
+            Route::get('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'index'])->whereNumber('ticket');
+            Route::get('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'show'])->whereNumber('package');
+            Route::delete('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'destroy'])->whereNumber('package');
+            Route::get('/gmud/packages/{package}/dirs', [\App\Http\Controllers\GmudPackageController::class, 'dirs'])->whereNumber('package');
+            Route::post('/gmud/packages/{package}/publish', [\App\Http\Controllers\GmudPackageController::class, 'publish'])->whereNumber('package');
+        Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
+        Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
+        Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
+        Route::get('/source-code/clients', [\App\Http\Controllers\SourceCodeController::class, 'clients']);
+        Route::get('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'config']);
+        Route::put('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'saveConfig']);
+        Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
+        Route::get('/source-code/clients/{customer}/has-sources', [\App\Http\Controllers\SourceCodeController::class, 'hasSources']);
+        Route::get('/source-code/clients/{customer}/tree', [\App\Http\Controllers\SourceCodeController::class, 'tree']);
+        Route::get('/source-code/clients/{customer}/resolve', [\App\Http\Controllers\SourceCodeController::class, 'resolveItem']);
+        Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
+        Route::post('/source-code/requests', [\App\Http\Controllers\SourceCodeRequestController::class, 'store']);
+        Route::post('/source-code/request-items/{sourceCodeRequestItem}/attach', [\App\Http\Controllers\SourceCodeRequestController::class, 'attachItem']);
+        Route::post('/source-code/requests/{sourceCodeRequest}/finalize', [\App\Http\Controllers\SourceCodeRequestController::class, 'finalize']);
+        Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
+        Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
+        Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
+        Route::post('/source-repos/{sourceRepo}/verify', [\App\Http\Controllers\ClientSourceRepoController::class, 'verify']);
+            Route::get('/source-docs', [\App\Http\Controllers\SourceDocCatalogController::class, 'index']);
+            Route::get('/source-docs/search', [\App\Http\Controllers\SourceDocSearchController::class, 'search']);
+            Route::get('/source-docs/search/suggest', [\App\Http\Controllers\SourceDocSearchController::class, 'suggest']);
+            Route::get('/source-docs/impact', [\App\Http\Controllers\SourceDocImpactController::class, 'impact']);
+            Route::get('/source-docs/{sourceDoc}/entities', [\App\Http\Controllers\SourceDocSearchController::class, 'entities'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+            Route::get('/source-docs/activity', [\App\Http\Controllers\SourceDocActivityController::class, 'activity']);
+            Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
+            Route::post('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'storeRequest']);
+            Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
+            Route::get('/source-docs/gmud-commits', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudCommits']);
+            Route::get('/source-docs/gmud-packages', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudPackages']);
+            Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
+            Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
+            Route::put('/source-docs/repos/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRepoSettings'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::get('/source-docs/repos/hidden', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listHiddenRepos'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::get('/source-docs/tree/customers/{customer}/repos', [\App\Http\Controllers\SourceDocTreeController::class, 'repos'])->whereNumber('customer');
+            Route::get('/source-docs/tree/nodes', [\App\Http\Controllers\SourceDocTreeController::class, 'nodes']);
+            Route::get('/source-docs/tree/knowledge', [\App\Http\Controllers\SourceDocTreeController::class, 'knowledge']);
+            Route::post('/source-docs/inventory', [\App\Http\Controllers\SourceDocCoverageController::class, 'inventory']);
+            Route::get('/source-docs/campaigns', [\App\Http\Controllers\SourceDocCampaignController::class, 'index']);
+            Route::post('/source-docs/campaigns', [\App\Http\Controllers\SourceDocCampaignController::class, 'store']);
+            Route::get('/source-docs/campaigns/{id}', [\App\Http\Controllers\SourceDocCampaignController::class, 'show'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/start', [\App\Http\Controllers\SourceDocCampaignController::class, 'start'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/pause', [\App\Http\Controllers\SourceDocCampaignController::class, 'pause'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/resume', [\App\Http\Controllers\SourceDocCampaignController::class, 'resume'])->whereNumber('id');
+            Route::post('/source-docs/campaigns/{id}/cancel', [\App\Http\Controllers\SourceDocCampaignController::class, 'cancel'])->whereNumber('id');
+            Route::get('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'index']);
+            Route::get('/source-docs/cost-settings/resolve', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'resolve']);
+            Route::put('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'update']);
+            Route::delete('/source-docs/cost-settings', [\App\Http\Controllers\SourceDocCostSettingsController::class, 'destroy']);
+            Route::get('/source-docs/inventory-settings/resolve', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'resolve']);
+            Route::put('/source-docs/inventory-settings', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'update']);
+            Route::delete('/source-docs/inventory-settings', [\App\Http\Controllers\SourceDocInventorySettingsController::class, 'destroy']);
+            Route::get('/source-docs/cost-approvals', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'index']);
+            Route::get('/source-docs/cost-approvals/{id}', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'show'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/approve-step', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'approveStep'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/approve-limit', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'approveLimit'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/close-partial', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'closePartial'])->whereNumber('id');
+            Route::post('/source-docs/cost-approvals/{id}/reject', [\App\Http\Controllers\SourceDocCostApprovalController::class, 'reject'])->whereNumber('id');
+            Route::post('/source-docs/{sourceDoc}/validate', [\App\Http\Controllers\SourceDocActionController::class, 'validate'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/reprocess/plan', [\App\Http\Controllers\SourceDocActionController::class, 'reprocessPlan'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/reprocess', [\App\Http\Controllers\SourceDocActionController::class, 'reprocess'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/manual-semantic', [\App\Http\Controllers\SourceDocActionController::class, 'manualSemantic'])->whereNumber('sourceDoc')->middleware('permission.or.admin:source_docs.reprocess');
+            Route::post('/source-docs/{sourceDoc}/topup', [\App\Http\Controllers\SourceDocActionController::class, 'topup'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/render', [\App\Http\Controllers\SourceDocActionController::class, 'render'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/publish-git', [\App\Http\Controllers\SourceDocActionController::class, 'publishGit'])->whereNumber('sourceDoc')->middleware('permission.or.admin:source_docs.reprocess');
+            Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/source', [\App\Http\Controllers\SourceDocActionController::class, 'source'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/quality/{analysis}/findings', [\App\Http\Controllers\SourceDocQualityController::class, 'findings'])->whereNumber('sourceDoc')->whereNumber('analysis');
+            Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
+        Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
+        Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
+        Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
+        Route::get('/source-code/clients', [\App\Http\Controllers\SourceCodeController::class, 'clients']);
+        Route::get('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'config']);
+        Route::put('/source-code/config', [\App\Http\Controllers\SourceCodeController::class, 'saveConfig']);
+        Route::get('/source-code/search', [\App\Http\Controllers\SourceCodeController::class, 'search']);
+        Route::get('/source-code/clients/{customer}/has-sources', [\App\Http\Controllers\SourceCodeController::class, 'hasSources']);
+        Route::get('/source-code/clients/{customer}/tree', [\App\Http\Controllers\SourceCodeController::class, 'tree']);
+        Route::get('/source-code/clients/{customer}/resolve', [\App\Http\Controllers\SourceCodeController::class, 'resolveItem']);
+        Route::get('/source-code/tickets', [\App\Http\Controllers\SourceCodeController::class, 'tickets']);
+        Route::post('/source-code/requests', [\App\Http\Controllers\SourceCodeRequestController::class, 'store']);
+        Route::post('/source-code/request-items/{sourceCodeRequestItem}/attach', [\App\Http\Controllers\SourceCodeRequestController::class, 'attachItem']);
+        Route::post('/source-code/requests/{sourceCodeRequest}/finalize', [\App\Http\Controllers\SourceCodeRequestController::class, 'finalize']);
+        Route::put('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'update']);
+        Route::delete('/source-repos/{sourceRepo}', [\App\Http\Controllers\ClientSourceRepoController::class, 'destroy']);
+        Route::post('/source-repos/{sourceRepo}/test', [\App\Http\Controllers\ClientSourceRepoController::class, 'test']);
+        Route::post('/source-repos/{sourceRepo}/verify', [\App\Http\Controllers\ClientSourceRepoController::class, 'verify']);
+            Route::get('/source-docs', [\App\Http\Controllers\SourceDocCatalogController::class, 'index']);
+            Route::get('/source-docs/search', [\App\Http\Controllers\SourceDocSearchController::class, 'search']);
+            Route::get('/source-docs/search/suggest', [\App\Http\Controllers\SourceDocSearchController::class, 'suggest']);
+            Route::get('/source-docs/impact', [\App\Http\Controllers\SourceDocImpactController::class, 'impact']);
+            Route::get('/source-docs/{sourceDoc}/entities', [\App\Http\Controllers\SourceDocSearchController::class, 'entities'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}', [\App\Http\Controllers\SourceDocCatalogController::class, 'show'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/documentation', [\App\Http\Controllers\SourceDocCatalogController::class, 'documentation'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/versions', [\App\Http\Controllers\SourceDocCatalogController::class, 'versions'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/{sourceDoc}/execution', [\App\Http\Controllers\SourceDocActionController::class, 'execution'])->whereNumber('sourceDoc');
+            Route::get('/source-docs/coverage', [\App\Http\Controllers\SourceDocCoverageController::class, 'coverage']);
+            Route::get('/source-docs/activity', [\App\Http\Controllers\SourceDocActivityController::class, 'activity']);
+            Route::get('/source-docs/tree/customers', [\App\Http\Controllers\SourceDocTreeController::class, 'customers']);
+            Route::post('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'storeRequest']);
+            Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
+            Route::get('/source-docs/gmud-commits', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudCommits']);
+            Route::get('/source-docs/gmud-packages', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudPackages']);
+            Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
+            Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
+            Route::put('/source-docs/repos/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRepoSettings'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::get('/source-docs/repos/hidden', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listHiddenRepos'])->middleware('permission.or.admin:source_docs.inventory');
+        // ===================== fim HELP DESK + CÓDIGO-FONTE =====================
         Route::get('/my-denied-actions',           [\App\Http\Controllers\NavConfigController::class, 'myDeniedActions'])->name('my-denied-actions');
         Route::put('/nav-screens',                 [\App\Http\Controllers\NavConfigController::class, 'saveScreens'])->name('nav-screens.save');
         Route::post('/nav-modules',                [\App\Http\Controllers\NavConfigController::class, 'store'])->name('nav-modules.store');
@@ -1167,6 +1739,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/users/export', [UserController::class, 'exportUsers'])->name('users.export');
         Route::get('/users', [UserController::class, 'index'])->name('users.index');
         Route::get('/users/counts', [UserController::class, 'counts'])->name('users.counts'); // ANTES de /users/{user}
+        // Consulta de regime tributário por CNPJ (Receita/BrasilAPI). 2 segmentos → não colide com /users/{user}.
+        Route::get('/users/cnpj-lookup/{cnpj}', [UserController::class, 'cnpjLookup'])->name('users.cnpj-lookup');
         Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
 
         Route::middleware(['permission.or.admin:users.create', 'screen.action:/users,create'])->group(function () {
@@ -1179,9 +1753,17 @@ Route::prefix('v1')->group(function () {
             Route::patch('/users/{user}', [UserController::class, 'update'])->name('users.patch');
         });
 
+        // Janela de pagamento (folha/fechamentos) por colaborador — admin/administrativo.
+        Route::get('/payroll-windows',         [\App\Http\Controllers\PayrollBillingWindowController::class, 'show']);
+        Route::post('/payroll-windows/close',  [\App\Http\Controllers\PayrollBillingWindowController::class, 'close']);
+        Route::post('/payroll-windows/resume', [\App\Http\Controllers\PayrollBillingWindowController::class, 'resume']);
+        Route::post('/payroll-windows/clear',  [\App\Http\Controllers\PayrollBillingWindowController::class, 'clear']);
+
         // Atualização em massa do tipo de contrato (cooperado/clt/pj)
         Route::post('/users/bulk-contract-type', [UserController::class, 'bulkContractType'])->name('users.bulk-contract-type');
         Route::post('/users/bulk-work-bond',     [UserController::class, 'bulkWorkBond'])->name('users.bulk-work-bond');
+        // Gestor do cliente: admin E coordenador podem definir (autorização no controller).
+        Route::patch('/users/{user}/customer-manager', [UserController::class, 'setCustomerManager'])->name('users.customer-manager');
 
         Route::middleware(['permission.or.admin:users.delete', 'screen.action:/users,delete'])->group(function () {
             Route::delete('/users/{user}',    [UserController::class, 'destroy'])->name('users.destroy');
@@ -1201,6 +1783,9 @@ Route::prefix('v1')->group(function () {
 
         // Histórico de alterações de valor hora
         Route::get('/users/{user}/hourly-rate-history', [UserController::class, 'getHourlyRateHistory'])->name('users.hourly-rate-history');
+        Route::get('/users/{user}/guaranteed-hours-history', [UserController::class, 'getGuaranteedHoursHistory'])->name('users.guaranteed-hours-history');
+        Route::put('/users/{user}/guaranteed-hours-history/{logId}', [UserController::class, 'updateGuaranteedHoursLog'])->name('users.guaranteed-hours-history.update');
+        Route::put('/users/{user}/hourly-rate-history/{logId}', [UserController::class, 'updateHourlyRateLog'])->name('users.hourly-rate-history.update');
 
         // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
         Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
@@ -1318,6 +1903,9 @@ Route::prefix('v1')->group(function () {
         Route::middleware('auth:sanctum')->group(function () {
             Route::get('/fechamento-contrato', [\App\Http\Controllers\FechamentoContratoController::class, 'index']);
             Route::post('/on-demand/invoiced', [\App\Http\Controllers\OnDemandInvoicedController::class, 'toggle']);
+            // Tela gerencial de contratos On Demand + liberação de faturamento por competência.
+            Route::get('/on-demand/billing-release',  [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'index']);
+            Route::post('/on-demand/billing-release', [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'toggle']);
         });
 
         // 🧾 FECHAMENTO CLIENTE
@@ -1420,6 +2008,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-folha/{yearMonth}/import-bizify', [\App\Http\Controllers\FolhaPagamentoController::class, 'importBizify']);
 
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos',        [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentos']);
+            Route::get('/fechamento-consultor/{userId}/{yearMonth}/apontamentos-pendentes', [\App\Http\Controllers\FechamentoConsultorController::class, 'apontamentosPendentes']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/report-html',         [\App\Http\Controllers\FechamentoConsultorController::class, 'reportHtml']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/despesas',            [\App\Http\Controllers\FechamentoConsultorController::class, 'despesas']);
             Route::get('/fechamento-consultor/{userId}/{yearMonth}/banco-horas',         [\App\Http\Controllers\FechamentoConsultorController::class, 'bancoHoras']);
@@ -2469,3 +3058,4 @@ Route::prefix('v1')->group(function () {
         [\App\Http\Controllers\AttachmentController::class, 'signedDownload'])
         ->name('attachments.signed-download');
 });
+

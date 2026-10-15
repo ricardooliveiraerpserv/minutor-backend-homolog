@@ -61,7 +61,11 @@ class ContractController extends Controller
             'contractType:id,name',
             'serviceType:id,name',
             'architect:id,name',
-            'project:id,code,name,sold_hours,hour_contribution,status',
+            // Projeto COMPLETO (sem select restrito): managementBreakdown() precisa de
+            // accumulated_sold_hours, contract_type_id, start_date, encerramento_date e
+            // initial_hours_consumed. Com colunas restritas, esses vinham nulos e o saldo de
+            // Banco de Horas Mensal ficava errado (ex.: PRS010-21 mostrava -286,6h em vez de +223,4h).
+            'project',
         ])
             ->when($request->query('status'), fn($q) => $q->where('status', $request->query('status')))
             ->when($request->query('customer_id'), fn($q) => $q->where('customer_id', $request->query('customer_id')))
@@ -1042,6 +1046,25 @@ class ContractController extends Controller
         return response()->json($contract->fresh());
     }
 
+    /**
+     * Herda os participantes (clientes convidados) de uma REQUISIÇÃO para o PROJETO
+     * recém-gerado — "ao virar projeto continua envolvido". Idempotente.
+     */
+    private function inheritRequestViewers(?\App\Models\ContractRequest $req, ?\App\Models\Project $project): void
+    {
+        if (!$req || !$project) return;
+        try {
+            $ids = $req->clientViewers()->pluck('users.id')->all();
+            if (!empty($ids)) {
+                $project->clientViewers()->syncWithoutDetaching($ids);
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('herdar viewers requisição→projeto falhou', [
+                'contract_request_id' => $req->id, 'project_id' => $project->id, 'err' => $e->getMessage(),
+            ]);
+        }
+    }
+
     public function generateProject(Request $request, Contract $contract): JsonResponse
     {
         $request->validate([
@@ -1095,6 +1118,12 @@ class ContractController extends Controller
                 'executivo_conta_id'    => $contract->executivo_conta_id,
                 'vendedor_id'           => $contract->vendedor_id,
             ]));
+
+            // Herda participantes da requisição vinculada (ao virar projeto continua envolvido).
+            $this->inheritRequestViewers(
+                \App\Models\ContractRequest::where('linked_contract_id', $contract->id)->first(),
+                $project
+            );
 
             // Auto-ativação da integração Movidesk para projetos de SUSTENTAÇÃO:
             // se o cliente ainda não tem nenhum projeto flagado, ativa neste
@@ -1297,7 +1326,7 @@ class ContractController extends Controller
         return response()->json($attachment, 201);
     }
 
-    public function downloadAttachment(Contract $contract, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    public function downloadAttachment(\Illuminate\Http\Request $request, Contract $contract, \App\Models\Attachment $attachment): \Symfony\Component\HttpFoundation\Response
     {
         // FASE 11.7 (PR 7b) — valida vínculo polimórfico.
         abort_if(
@@ -1306,6 +1335,18 @@ class ContractController extends Controller
         );
         abort_unless(Storage::exists($attachment->storage_path), 404, 'Arquivo não encontrado.');
 
+        $prev = app(\App\Services\AttachmentPreviewResponder::class);
+        if ($request->boolean('view')) {
+            if ($prev->isInline($attachment->original_name)) {
+                return Storage::response($attachment->storage_path, $attachment->original_name, ['Content-Disposition' => $prev->inlineDisposition($attachment->original_name)]);
+            }
+            if ($prev->isOffice($attachment->original_name)) {
+                $pdf = $prev->officeToPdf(Storage::get($attachment->storage_path), $attachment->original_name);
+                if ($pdf !== null) {
+                    return $prev->pdfResponse($pdf, $attachment->original_name);
+                }
+            }
+        }
         return Storage::download($attachment->storage_path, $attachment->original_name);
     }
 
@@ -1376,6 +1417,11 @@ class ContractController extends Controller
 
             if ($isCliente && $user->customer_id) {
                 $demandQuery->where('customer_id', $user->customer_id);
+                // Cliente comum (não-gestor) não vê demandas pré-projeto: só enxerga
+                // os cards de projeto em que foi convidado. Gestor do cliente vê tudo.
+                if (!$user->is_customer_manager) {
+                    $demandQuery->whereRaw('1 = 0');
+                }
             }
 
             $demandCards = $demandQuery->get()->map(fn($c) => $this->formatKanbanCard($c));
@@ -1418,6 +1464,12 @@ class ContractController extends Controller
             'kanbanLogs:id,project_id,to_status,created_at',
             'contractRequest:id,nivel_urgencia',                     // link projects.contract_request_id (raro)
             'originRequest:id,linked_project_id,nivel_urgencia',     // link contract_requests.linked_project_id (o usado)
+            // N+1 FIX: formatProjectCard chama managementBreakdown(), que lê hourContributions,
+            // childProjects e childProjects.contractType/hourContributions. Sem eager-load era
+            // ~3 queries/projeto (centenas no total). Ver hasChildProjects() que usa a relação carregada.
+            'hourContributions',
+            'childProjects.contractType',
+            'childProjects.hourContributions',
         ])
         // Investimento (comercial/interno + lead-projeto) NÃO gera card no pipeline — mora em "Investimento Interno".
         ->where(fn ($iq) => $iq->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial'))
@@ -1451,6 +1503,11 @@ class ContractController extends Controller
             $projectQuery->whereHas('consultants', fn($q) => $q->where('users.id', $user->id));
         } elseif ($isCliente && $user->customer_id) {
             $projectQuery->where('customer_id', $user->customer_id);
+            // Cliente comum: só os projetos em que foi convidado (project_client_viewers).
+            // Gestor do cliente enxerga todos os projetos da sua empresa.
+            if (!$user->is_customer_manager) {
+                $projectQuery->whereHas('clientViewers', fn($q) => $q->where('users.id', $user->id));
+            }
         } elseif ($user?->isCoordenador()) {
             $projectQuery->where(function ($q) {
                 $q->whereDoesntHave('serviceType')
@@ -1475,17 +1532,21 @@ class ContractController extends Controller
         // Sem override, ele pertence à coluna de sustentação do seu tipo de contrato —
         // tenha ou não um Contract gerado. Particiona aqui; o merge nas colunas de
         // sustentação acontece logo abaixo (bloco $sustentacaoGroups).
+        // N+1 FIX (x267): soma ponderada de minutos (effort × (1+%cliente)) em UMA query p/ todos
+        // os projetos + filhos, injetada no managementBreakdown() (evita 1 query/projeto no card).
+        $weightedMap = $this->weightedConsumedMinutesMap($projects);
+
         $projectCards         = collect();
         $sustProjectsByColumn = [];
         foreach ($projects as $p) {
             $logged  = (float) ($timesheetSums[$p->id] ?? 0);
             $sustCol = (!$isConsultor && !$isCliente) ? $this->sustColumnForProject($p) : null;
             if ($sustCol && $p->kanban_coordinator_override_id === null) {
-                $formatted = $this->formatProjectCard($p, $logged);
+                $formatted = $this->formatProjectCard($p, $logged, $weightedMap);
                 $formatted['sustentacao_column'] = $sustCol;
                 $sustProjectsByColumn[$sustCol][] = $formatted;
             } else {
-                $projectCards->push($this->formatProjectCard($p, $logged));
+                $projectCards->push($this->formatProjectCard($p, $logged, $weightedMap));
             }
         }
 
@@ -1532,6 +1593,10 @@ class ContractController extends Controller
                 'project.coordinators',
                 'project.consultants',
                 'project.contractType:id,name',
+                // N+1 FIX: formatProjectCard($c->project) chama managementBreakdown() (mesmo caso do projectQuery acima)
+                'project.hourContributions',
+                'project.childProjects.contractType',
+                'project.childProjects.hourContributions',
                 'project.contract:id,project_name,project_code_preview,parent_contract_id',
                 'project.contract.parentContract:id,project_code_preview',
                 'project.contract.childContracts:id,parent_contract_id,project_code_preview,valor_projeto,tipo_faturamento,contract_type_id',
@@ -1541,6 +1606,8 @@ class ContractController extends Controller
             ->orderBy('kanban_order')
             ->get();
 
+            // N+1 FIX (x267): mapa ponderado dos projetos de sustentação (+ filhos) numa query só.
+            $sustWeightedMap = $this->weightedConsumedMinutesMap($sustCards->pluck('project')->filter());
             foreach ($sustCards as $c) {
                 $col = $c->sustentacao_column;
                 if (!$col) {
@@ -1562,7 +1629,7 @@ class ContractController extends Controller
                     }
                 }
                 if ($c->project_id && $c->project) {
-                    $formatted = $this->formatProjectCard($c->project);
+                    $formatted = $this->formatProjectCard($c->project, 0, $sustWeightedMap);
                     $formatted['kanban_order'] = $c->kanban_order;
                 } else {
                     $formatted = $this->formatKanbanCard($c);
@@ -1594,6 +1661,15 @@ class ContractController extends Controller
 
             if ($isCliente && $user->customer_id) {
                 $reqQuery->where('customer_id', $user->customer_id);
+                // Cliente comum só vê as requisições que ele mesmo abriu OU foi convidado a ver;
+                // gestor vê todas da empresa.
+                if (!$user->is_customer_manager) {
+                    $uid = $user->id;
+                    $reqQuery->where(function ($q) use ($uid) {
+                        $q->where('created_by_id', $uid)
+                          ->orWhereHas('clientViewers', fn($v) => $v->where('users.id', $uid));
+                    });
+                }
             }
 
             $requestCards = $reqQuery->orderBy('created_at', 'desc')->get()->map(fn($r) => [
@@ -1637,7 +1713,15 @@ class ContractController extends Controller
                 ->orderByDesc('contributed_at');
 
             if ($isCliente && $user->customer_id) {
-                $aporteQuery->whereHas('project', fn($q) => $q->where('customer_id', $user->customer_id));
+                $uid = $user->id;
+                $isManager = $user->is_customer_manager;
+                $aporteQuery->whereHas('project', function ($q) use ($user, $uid, $isManager) {
+                    $q->where('customer_id', $user->customer_id);
+                    // Cliente comum só vê aportes dos projetos em que foi convidado.
+                    if (!$isManager) {
+                        $q->whereHas('clientViewers', fn($v) => $v->where('users.id', $uid));
+                    }
+                });
             }
 
             // FASE 11.7 — proposta agora vive na camada Attachment (HOUR_CONTRIBUTION.proposal).
@@ -2217,6 +2301,9 @@ class ContractController extends Controller
                         'vendedor_id'            => $contract->vendedor_id,
                     ]));
 
+                    // Herda participantes da requisição (ao virar projeto continua envolvido).
+                    $this->inheritRequestViewers($contractRequest, $project);
+
                     foreach ($contract->contacts as $c) {
                         \App\Models\ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
                     }
@@ -2500,21 +2587,59 @@ class ContractController extends Controller
      * usa o executivo Bizify do cliente (o executivo_conta_id gravado é o da ERPSERV).
      * Sem Bizify: usa o executivo gravado no projeto/contrato, senão o executivo ERPSERV do cliente.
      */
+    /** Memo do "empresa ativa é Bizify?" — evita 1 query (Company exists) POR CARD no kanban. */
+    private ?bool $bizifyActiveMemo = null;
+
     private function cardExecutivoContaName(?\App\Models\Customer $customer, ?\App\Models\User $stored): ?string
     {
         if (config('multiempresa.scoping_enabled')) {
-            $activeId = app(\App\Services\CompanyContext::class)->id();
-            if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+            if ($this->bizifyActiveMemo === null) {
+                $activeId = app(\App\Services\CompanyContext::class)->id();
+                $this->bizifyActiveMemo = (bool) ($activeId
+                    && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists());
+            }
+            if ($this->bizifyActiveMemo) {
                 return $customer?->executiveBizify?->name;
             }
         }
         return $stored?->name ?? $customer?->executive?->name;
     }
 
-    private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0): array
+    /**
+     * Soma ponderada de minutos (effort × (1+%cliente)) por project_id — em UMA query p/ a lista
+     * toda (projetos + filhos). Injetada no managementBreakdown() p/ matar o N+1 do Kanban.
+     * Usa o model Timesheet (mesmos global scopes — SoftDeletes + Company) que $this->timesheets(),
+     * então o resultado é idêntico ao cálculo por-projeto.
+     *
+     * @param \Illuminate\Support\Collection $projects
+     * @return array<int,float>
+     */
+    private function weightedConsumedMinutesMap($projects): array
+    {
+        $ids = [];
+        foreach ($projects as $p) {
+            if (!$p) continue;
+            $ids[] = $p->id;
+            if ($p->relationLoaded('childProjects')) {
+                foreach ($p->childProjects as $c) { $ids[] = $c->id; }
+            }
+        }
+        $ids = array_values(array_unique(array_filter($ids)));
+        if (empty($ids)) return [];
+
+        return \App\Models\Timesheet::whereIn('project_id', $ids)
+            ->whereIn('status', ['approved', 'pending'])
+            ->groupBy('project_id')
+            ->selectRaw('project_id, SUM(effort_minutes * (1 + COALESCE(contract_client_pct, client_extra_pct, 0) / 100.0)) as wmin')
+            ->pluck('wmin', 'project_id')
+            ->map(fn ($v) => (float) $v)
+            ->toArray();
+    }
+
+    private function formatProjectCard(\App\Models\Project $project, float $loggedMinutes = 0, ?array $weightedMap = null): array
     {
         // Saldo + consumido pela regra da GESTÃO DE PROJETOS (fonte da verdade) — conta os subprojetos.
-        $b        = $project->managementBreakdown();
+        $b        = $project->managementBreakdown($weightedMap);
         $consumed = round($b['consumed'], 1);
         $saldo    = round($b['balance'], 1);
 
@@ -2656,6 +2781,9 @@ class ContractController extends Controller
             'executivo_conta_id'     => $contract->executivo_conta_id,
             'vendedor_id'            => $contract->vendedor_id,
         ]));
+
+        // Herda participantes da requisição de origem (ao virar projeto continua envolvido).
+        $this->inheritRequestViewers(\App\Models\ContractRequest::find($originRequestId), $project);
 
         foreach ($contract->contacts as $c) {
             ProjectContact::create(['project_id' => $project->id, 'contract_contact_id' => $c->id, 'name' => $c->name, 'cargo' => $c->cargo, 'email' => $c->email, 'phone' => $c->phone]);
