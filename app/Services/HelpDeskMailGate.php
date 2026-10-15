@@ -35,12 +35,13 @@ class HelpDeskMailGate
     }
 
     /**
-     * Chamado de ORIGEM MOVIDESK (não foi criado direto no Minutor): tem external_ref (nº do
-     * Movidesk) e/ou source_system='movidesk'. A trava NÃO afeta esses — "fica da mesma forma".
+     * Chamado de ORIGEM MOVIDESK: source_system='movidesk'. A trava NÃO afeta esses — "fica da
+     * mesma forma". OBS: chamados criados por e-mail (ingestão) têm source_system='email:graph'
+     * e external_ref='gm:...' — NÃO são Movidesk; são criados no Minutor → respeitam a trava.
      */
     private static function isMovidesk(HelpDeskTicket $ticket): bool
     {
-        return filled($ticket->external_ref) || $ticket->source_system === 'movidesk';
+        return $ticket->source_system === 'movidesk';
     }
 
     /** true = pode enviar e-mail deste chamado; false = bloqueado pela trava. */

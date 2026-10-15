@@ -193,7 +193,15 @@ class HelpDeskEmailIngestor
         $associateExisting  = $settings['associate_existing'] ?? 'customer';
         $existing = $this->matchByTicketToken($subject);
         if (!$existing && $appendExisting && $associateExisting !== 'new') {
-            $existing = $this->findOpenTicketBySubject($subject, $associateExisting === 'customer' ? $customerId : null);
+            // Modo 'customer': só casa por assunto DENTRO do mesmo cliente. Se o remetente NÃO foi
+            // associado a um cliente (sem contato/regra), NÃO anexa por assunto — senão um e-mail de
+            // remetente desconhecido cairia num chamado de QUALQUER cliente com o mesmo assunto
+            // (ex.: "TESTE"). Nesse caso cria chamado NOVO.
+            if ($associateExisting === 'customer' && !$customerId) {
+                $existing = null;
+            } else {
+                $existing = $this->findOpenTicketBySubject($subject, $associateExisting === 'customer' ? $customerId : null);
+            }
         }
         if ($existing) {
             $existing->loadMissing('status');
