@@ -1924,7 +1924,7 @@ class ProjectController extends Controller
                 : Carbon::now('America/Sao_Paulo')->toDateString();
         }
 
-        \DB::transaction(function () use ($project, $validated) {
+        \DB::transaction(function () use ($project, $validated, $oldFlaggedIds, $enablingMovidesk, $migrateMovideskTimesheets) {
             // Desliga o flag dos OUTROS projetos do cliente ANTES de ligar neste, pra
             // nunca haver 2 ativos ao mesmo tempo (a unique index parcial barraria).
             if (!empty($validated['movidesk_integration_enabled'])) {
@@ -1934,6 +1934,23 @@ class ProjectController extends Controller
                     ->update(['movidesk_integration_enabled' => false]);
             }
             $project->update($validated);
+
+            // "NÃO migrar": grava a decisão NA PRÓPRIA LINHA de cada apontamento antigo.
+            // Marca os apontamentos de origem Movidesk do(s) projeto(s) de ORIGEM com
+            // manual_project_edit=true — a MESMA trava que o sync/varredura já respeita
+            // (MovideskService:339 `if (!manual_project_edit)`) — ATOMICAMENTE na troca da
+            // chave. Antes, "não migrar" só gravava a data movidesk_integration_since no
+            // destino e a varredura comparava com created_at; havia uma JANELA (flag ligada,
+            // since ainda não efetivo) em que a varredura migrava os antigos mesmo com "não
+            // migrar" (caso EUREKA, 2026-10-02: 298 apontamentos foram pro projeto de alocação).
+            // Travando por-linha aqui, a decisão fica imune a timing/created_at. Só os ainda
+            // não travados (os manuais já estão).
+            if ($enablingMovidesk && !$migrateMovideskTimesheets && !empty($oldFlaggedIds)) {
+                \App\Models\Timesheet::whereIn('project_id', $oldFlaggedIds)
+                    ->whereNotNull('movidesk_appointment_id')
+                    ->where('manual_project_edit', false)
+                    ->update(['manual_project_edit' => true]);
+            }
         });
 
         // Migração opcional dos apontamentos de origem Movidesk dos projetos antigos
