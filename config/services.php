@@ -151,4 +151,76 @@ return [
         'enabled'  => filter_var(env('CODEANALYSIS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
     ],
 
+
+    'source_doc_ai' => [
+        'provider'   => env('SOURCE_DOC_AI_PROVIDER', 'anthropic'),
+        'model'      => env('SOURCE_DOC_AI_MODEL', env('ANTHROPIC_MODEL', 'claude-sonnet-5')),
+        'max_tokens' => (int) env('SOURCE_DOC_AI_MAX_TOKENS', 4096),
+        'max_chars'  => (int) env('SOURCE_DOC_AI_MAX_CHARS', 40000),
+        'timeout'    => (int) env('SOURCE_DOC_AI_TIMEOUT', 120),
+        // Bloco 4 — GATE HOMOLOG-ONLY (não depende de disciplina). Envio de código de cliente à IA
+        // exige ENABLED=true E ambiente autorizado. Prod (VPS) não define esses vars ⇒ BLOQUEADO.
+        // Homolog (Render) roda APP_ENV=production, por isso o ambiente é um marcador PRÓPRIO.
+        'enabled'     => filter_var(env('SOURCE_DOC_AI_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'environment' => env('SOURCE_DOC_AI_ENVIRONMENT', env('APP_ENV', 'production')),
+        'allowed_environments' => array_values(array_filter(array_map('trim', explode(',', (string) env('SOURCE_DOC_AI_ALLOWED_ENVIRONMENTS', 'homolog'))))),
+        // Observabilidade de custo (USD por 1M tokens) — só estimativa/telemetria.
+        'cost_input_per_mtok'  => (float) env('SOURCE_DOC_AI_COST_IN', 3.0),
+        'cost_output_per_mtok' => (float) env('SOURCE_DOC_AI_COST_OUT', 15.0),
+        // Bloco 4.1 — orçamento/limite de custo (arquitetura A+C). Não hardcodar em vários lugares.
+        'max_relevant_functions'     => (int) env('SOURCE_DOC_AI_MAX_RELEVANT_FUNCTIONS', 12),
+        'max_calls'                  => (int) env('SOURCE_DOC_AI_MAX_CALLS', 3),
+        'max_input_tokens_per_call'  => (int) env('SOURCE_DOC_AI_MAX_INPUT_TOKENS_PER_CALL', 60000),
+        // Output: a chamada GLOBAL (narrativa: objetivo+fluxo+regras+IO+pontos) e o aprofundamento
+        // (finalidades) precisam caber sem truncar. Ajustados APÓS medição (o ganho principal foi o
+        // split narrativa×funções; estes são o ajuste fino permitido, mantendo custo ≤ US$ 0,25).
+        'max_output_tokens_per_call' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_PER_CALL', 3000),
+        'max_output_tokens_global'   => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_GLOBAL', 5000),
+        // P1 — output por bloco (centralizado) calibrado pelo output BRUTO medido (não o finalizado):
+        // máx observado nos grandes ent 2408 / regras 2649 / deps 2877 (nenhum truncou a 4000). Caps ≥ máx
+        // com folga p/ NÃO truncar previsivelmente. O bruto é ~2× (deps ~4×) o finalizado — logo o corte
+        // possível é pequeno (ent 4000→2600). O ganho de orçamento vem do #4 (deepening) + guarda P0, não
+        // de espremer estes blocos: espremê-los só troca desperdício por truncamento→retry.
+        'max_output_tokens_entendimento' => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_ENTENDIMENTO', 2600),
+        'max_output_tokens_regras'       => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_REGRAS', 2800),
+        'max_output_tokens_deprisco'     => (int) env('SOURCE_DOC_AI_MAX_OUTPUT_TOKENS_DEPRISCO', 3000),
+        // Aprofundamento (código das funções críticas): nº de funções e orçamento de tokens do código.
+        'max_deepen_functions'       => (int) env('SOURCE_DOC_AI_MAX_DEEPEN_FUNCTIONS', 6),
+        'deepen_code_budget_tokens'  => (int) env('SOURCE_DOC_AI_DEEPEN_CODE_BUDGET', 20000),
+        'hard_limit_usd'             => (float) env('SOURCE_DOC_AI_HARD_LIMIT_USD', 0.30),
+        // Cross-source Fase 1 — resolução determinística (read-only). Limites do 1º gate (depth 1, max 3).
+        // Relevância/blocklist NÃO cristalizadas: configuráveis, auditáveis, reversíveis (todo descarte
+        // registra symbol/target/reason/relevance_score). Nada aqui envia contexto à IA nesta fase.
+        'context_resolver' => [
+            'enabled'             => filter_var(env('SOURCE_DOC_CTX_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'depth'              => (int) env('SOURCE_DOC_CTX_DEPTH', 1),
+            'max_context_sources' => (int) env('SOURCE_DOC_CTX_MAX_SOURCES', 3),
+            'max_context_tokens' => (int) env('SOURCE_DOC_CTX_MAX_TOKENS', 2500),
+            // FACTS-FIRST: facts mínimos do alvo entram SEMPRE (barato); snippet completo só se couber.
+            // Resolved nunca é descartado por o snippet inteiro não caber (some a perda artificial ~29%).
+            'facts_tokens'       => (int) env('SOURCE_DOC_CTX_FACTS_TOKENS', 120),
+            'relevance_min'      => (float) env('SOURCE_DOC_CTX_RELEVANCE_MIN', 0.30),
+            // blocklist de utilitários (regex, case-insensitive) — descarta contexto trivial. AJUSTÁVEL:
+            // o 1º caso real pode mostrar que um "utilitário" é funcional → basta remover daqui.
+            'utility_patterns'   => array_values(array_filter(array_map('trim', explode(',', (string) env('SOURCE_DOC_CTX_UTILITY_PATTERNS',
+                'grava?log,^log,isrunning,^get.*cod$,^u?_?fmt,format,^str,conout,sleep,^is[A-Z]'))))),
+            'chars_per_line'     => (int) env('SOURCE_DOC_CTX_CHARS_PER_LINE', 45), // p/ estimar tokens do snippet
+        ],
+        // Fase 3 — INJEÇÃO cross-source bounded no prompt semântico. DESLIGADO por padrão: com off, o
+        // pipeline se comporta EXATAMENTE como hoje (sem resolver, fingerprint neutro, reuse intacto).
+        // Só liga a alimentação do contexto externo (resolved-only) quando explicitamente habilitado.
+        'cross_source' => [
+            'inject_enabled' => filter_var(env('SOURCE_DOC_XSRC_INJECT_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // ambiguous NÃO entra neste gate (superfície de contaminação); só resolved sustenta contexto/evidence C.
+            'include_ambiguous' => filter_var(env('SOURCE_DOC_XSRC_INCLUDE_AMBIGUOUS', false), FILTER_VALIDATE_BOOLEAN),
+            // teto BOUNDED de tabelas do alvo materializadas nos facts (fallback nunca despeja tudo).
+            'max_context_tables' => (int) env('SOURCE_DOC_XSRC_MAX_TABLES', 6),
+        ],
+        // P0 — GUARDA DE CUSTO INVIOLÁVEL (dentro do array certo!): reserva de CADA chamada =
+        // estimativa × fator. Ancorado no gate: actual/estimated por chamada ∈ ~0,59–1,09 (máx 1,09) →
+        // 1,25 ≈ máx observado + 15% de margem. 1,9 super-reservava ~2× e barrava deps que caberia.
+        'cost_reserve_factor'        => (float) env('SOURCE_DOC_AI_COST_RESERVE_FACTOR', 1.25),
+        // C3 — limite p/ o reaper marcar execução de reprocess como órfã (stale_execution).
+        'reap_stale_minutes'         => (int) env('SOURCE_DOC_REAP_STALE_MINUTES', 15),
+    ],
 ];
