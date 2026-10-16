@@ -54,6 +54,8 @@ class Timesheet extends Model
         'customer_id',
         'project_id',
         'real_project_id',
+        'stage_id',
+        'stage_delivery_id',
         'rateio_source_timesheet_id',
         'rateio_overridden',
         'date',
@@ -328,6 +330,29 @@ class Timesheet extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    // Cronograma: vínculo opcional do apontamento à etapa/atividade (StageDelivery).
+    public function stage(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\ProjectStage::class, 'stage_id');
+    }
+
+    public function delivery(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\StageDelivery::class, 'stage_delivery_id');
+    }
+
+    /** stage_delivery_id sempre implica no stage_id correto (sem divergência). */
+    public function setStageDeliveryIdAttribute($value): void
+    {
+        $this->attributes['stage_delivery_id'] = $value;
+        if ($value) {
+            $delivery = \App\Models\StageDelivery::find($value);
+            if ($delivery) {
+                $this->attributes['stage_id'] = $delivery->stage_id;
+            }
+        }
     }
 
     /**

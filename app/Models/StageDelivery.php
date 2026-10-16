@@ -1,0 +1,160 @@
+<?php
+
+namespace App\Models;
+
+use App\Observers\StageDeliveryObserver;
+use Illuminate\Database\Eloquent\Attributes\ObservedBy;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
+
+#[ObservedBy([StageDeliveryObserver::class])]
+class StageDelivery extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    public const STATUS_BACKLOG         = 'backlog';
+    public const STATUS_IN_PROGRESS     = 'in_progress';
+    public const STATUS_WAITING_CLIENT  = 'waiting_client';
+    public const STATUS_REVIEW          = 'review';
+    public const STATUS_DONE            = 'done';
+
+    public const STATUSES = [
+        self::STATUS_BACKLOG,
+        self::STATUS_IN_PROGRESS,
+        self::STATUS_WAITING_CLIENT,
+        self::STATUS_REVIEW,
+        self::STATUS_DONE,
+    ];
+
+    public const PRIORITY_LOW    = 'low';
+    public const PRIORITY_MEDIUM = 'medium';
+    public const PRIORITY_HIGH   = 'high';
+
+    public const PRIORITIES = [
+        self::PRIORITY_LOW,
+        self::PRIORITY_MEDIUM,
+        self::PRIORITY_HIGH,
+    ];
+
+    // Workflow de aprovação do cliente (status "Aguardando cliente").
+    public const APPROVAL_NONE     = 'none';
+    public const APPROVAL_PENDING  = 'pending';
+    public const APPROVAL_APPROVED = 'approved';
+    public const APPROVAL_REJECTED = 'rejected';
+    public const APPROVAL_CHANGES  = 'changes_requested';
+
+    protected $fillable = [
+        'stage_id',
+        'title',
+        'description',
+        'responsible_user_id',
+        'hours_planned',
+        'priority',
+        'status',
+        'due_date',
+        'order_index',
+        'completed_at',
+        'planned_start_at',
+        'actual_start_at',
+        'depends_on_delivery_id',
+        'dependency_type',
+        'client_user_id',
+        'client_email',
+        'client_involved',
+        'extra_clients',
+        'approval_status',
+        'approval_requested_at',
+        'approval_requested_by',
+        'approval_decided_at',
+        'approval_decided_by',
+        'approval_note',
+    ];
+
+    public const DEPENDENCY_TYPES = ['FS'];
+
+    protected $casts = [
+        'hours_planned'    => 'decimal:2',
+        'order_index'      => 'integer',
+        'due_date'         => 'date:Y-m-d',
+        'completed_at'     => 'datetime',
+        'planned_start_at' => 'date:Y-m-d',
+        'actual_start_at'  => 'datetime',
+        'client_involved'  => 'boolean',
+        'extra_clients'    => 'array',
+        'approval_requested_at' => 'datetime',
+        'approval_decided_at'   => 'datetime',
+    ];
+
+    /**
+     * Fim PLANEJADO da atividade (conceito único de "fim", usado no Prazo Final do
+     * cronograma E no Prazo de Entrega do projeto): o `due_date` se houver; senão,
+     * o fim calculado a partir do início + horas planejadas no calendário útil.
+     * NUNCA usa o início cru como fim.
+     */
+    public function plannedEndDate(?\App\Services\BusinessCalendarService $cal = null, array $calOpts = []): ?\Carbon\Carbon
+    {
+        if ($this->due_date) {
+            return $this->due_date->copy()->startOfDay();
+        }
+        if ($this->planned_start_at) {
+            $cal = $cal ?: app(\App\Services\BusinessCalendarService::class);
+            return $cal->addBusinessHours($this->planned_start_at, (float) $this->hours_planned, 8.0, $calOpts)->startOfDay();
+        }
+        return null;
+    }
+
+    public function stage(): BelongsTo
+    {
+        return $this->belongsTo(ProjectStage::class, 'stage_id');
+    }
+
+    public function responsible(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'responsible_user_id');
+    }
+
+    /** Cliente envolvido pontualmente na atividade (homologação, validação, etc). */
+    public function client(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'client_user_id');
+    }
+
+    public function approvalRequester(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approval_requested_by');
+    }
+
+    public function approvalDecider(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approval_decided_by');
+    }
+
+    public function timesheets(): HasMany
+    {
+        return $this->hasMany(Timesheet::class, 'stage_delivery_id');
+    }
+
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(StageAllocation::class, 'delivery_id');
+    }
+
+    public function events(): HasMany
+    {
+        return $this->hasMany(DeliveryEvent::class, 'delivery_id')->orderByDesc('created_at');
+    }
+
+    /** Dependência leve (1 atividade depende de no máximo 1 outra). ADR 0009. */
+    public function dependsOn(): BelongsTo
+    {
+        return $this->belongsTo(StageDelivery::class, 'depends_on_delivery_id');
+    }
+
+    public function dependents(): HasMany
+    {
+        return $this->hasMany(StageDelivery::class, 'depends_on_delivery_id');
+    }
+}
