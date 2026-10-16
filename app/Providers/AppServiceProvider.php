@@ -44,6 +44,15 @@ class AppServiceProvider extends ServiceProvider
             \App\SourceCode\Contracts\SourceProvider::class,
             \App\SourceCode\Providers\GithubAppProvider::class,
         );
+
+        // Cliente do serviço de Análise de Qualidade (CodeAnalysis). bind (não singleton)
+        // p/ ler config('services.codeanalysis.*') a cada resolução. Sem este binding o
+        // SourceDocQualityController (injeção por construtor) não resolve → 500 → a aba
+        // Qualidade cai no catch do FE e mostra "indisponível".
+        $this->app->bind(
+            \App\Services\SourceDocQualityService::class,
+            fn () => \App\Services\SourceDocQualityService::fromConfig(),
+        );
     }
 
     /**
