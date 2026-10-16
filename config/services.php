@@ -141,4 +141,14 @@ return [
         'token'   => env('GITHUB_SOURCE_TOKEN'),
     ],
 
+    // Central de Fontes — serviço externo de Análise de Qualidade (CodeAnalysis).
+    // Em PROD roda como container 'codeanalysis' no VPS (rede interna, http://codeanalysis:8080).
+    // Gate = CODEANALYSIS_ENABLED; vazio/false => aba Qualidade mostra "indisponível".
+    'codeanalysis' => [
+        'base_url' => env('CODEANALYSIS_BASE_URL', 'http://localhost:8080'),
+        'token'    => env('CODEANALYSIS_SERVICE_TOKEN'),
+        'timeout'  => (int) env('CODEANALYSIS_TIMEOUT', 120),
+        'enabled'  => filter_var(env('CODEANALYSIS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
 ];
