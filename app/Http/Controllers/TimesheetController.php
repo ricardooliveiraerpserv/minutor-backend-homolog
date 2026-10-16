@@ -922,6 +922,11 @@ class TimesheetController extends Controller
             'ticket' => 'nullable',
             'helpdesk_ticket_id' => 'nullable|integer|exists:helpdesk_tickets,id',
             'attachment' => 'nullable|file|mimes:pdf,jpg,jpeg,png,doc,docx|max:5120',
+            // Cronograma (Fase 4) — atividade do apontamento. Nullable: flag OFF ou
+            // projeto sem cronograma seguem exatamente como hoje. O gate está em
+            // validateCronogramaActivity(); o mutator do model deriva o stage_id.
+            'stage_id' => 'nullable|integer|exists:project_stages,id',
+            'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ];
 
         // Se é administrador ou coordenador, pode especificar user_id
@@ -1224,6 +1229,16 @@ class TimesheetController extends Controller
                 ]);
             }
 
+            // Cronograma (Fase 4) — gate de atividade. No-op quando a flag está OFF ou
+            // quando o projeto não tem cronograma. minutesToAdd = TEMPO sendo criado.
+            $this->validateCronogramaActivity(
+                $project,
+                $request->filled('stage_delivery_id') ? (int) $request->input('stage_delivery_id') : null,
+                (int) $timesheetUserId,
+                (int) ($effortMinutes ?? 0),
+                null
+            );
+
             $timesheet = new Timesheet($validatedData);
             $timesheet->user_id = $timesheetUserId;
             $timesheet->customer_id = $project->customer_id;
@@ -1316,6 +1331,11 @@ class TimesheetController extends Controller
                 'message' => $message
             ], 201);
 
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            // Gate do cronograma (abort(response()->json(...))) — devolve o 422 original
+            // em vez de mascarar como 500. Só dispara quando a flag está ON.
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
@@ -1502,6 +1522,11 @@ class TimesheetController extends Controller
             'distribution' => 'nullable|array',
             'distribution.*.target_project_id' => 'required|integer|exists:projects,id',
             'distribution.*.minutes' => 'required|numeric|min:0',
+            // Cronograma (Fase 4) — atividade do apontamento. Nullable: flag OFF ou
+            // projeto sem cronograma seguem exatamente como hoje. O gate está em
+            // validateCronogramaActivity(); o mutator do model deriva o stage_id.
+            'stage_id' => 'nullable|integer|exists:project_stages,id',
+            'stage_delivery_id' => 'nullable|integer|exists:stage_deliveries,id',
         ];
 
         $validator = Validator::make($request->all(), $validationRules);
@@ -1816,6 +1841,24 @@ class TimesheetController extends Controller
                 }
             }
 
+            // Cronograma (Fase 4) — gate de atividade na edição. No-op quando a flag
+            // está OFF ou o projeto não tem cronograma. Usa o projeto EFETIVO (alvo),
+            // o usuário efetivo do apontamento e o TEMPO resultante, excluindo o próprio
+            // apontamento do consumo. stage_delivery_id: usa o enviado no request;
+            // quando não enviado, preserva o já gravado (edição não zera a atividade).
+            $effStageDeliveryId = $request->has('stage_delivery_id')
+                ? (($request->input('stage_delivery_id') !== null && $request->input('stage_delivery_id') !== '')
+                    ? (int) $request->input('stage_delivery_id')
+                    : null)
+                : ($timesheet->stage_delivery_id !== null ? (int) $timesheet->stage_delivery_id : null);
+            $this->validateCronogramaActivity(
+                $projectForValidation ?? $timesheet->project,
+                $effStageDeliveryId,
+                (int) $userIdForValidation,
+                (int) ($newEffortMinutes ?? 0),
+                (int) $timesheet->id
+            );
+
             // Resetar status para pendente quando o usuário corrige um apontamento
             // que foi rejeitado, conflitado ou marcado para ajuste. Edição = correção.
             if ($timesheet->status === Timesheet::STATUS_REJECTED) {
@@ -2036,6 +2079,11 @@ class TimesheetController extends Controller
                 'message' => 'Apontamento atualizado com sucesso!'
             ]);
 
+        } catch (\Illuminate\Http\Exceptions\HttpResponseException $e) {
+            // Gate do cronograma (abort(response()->json(...))) — devolve o 422 original
+            // em vez de mascarar como 500. Só dispara quando a flag está ON.
+            DB::rollBack();
+            throw $e;
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
@@ -3492,6 +3540,99 @@ class TimesheetController extends Controller
         ]);
 
         return null; // OK
+    }
+
+    /**
+     * Cronograma (Fase 4) — gate de atividade do apontamento.
+     *
+     * DORMENTE por padrão: a flag `cronograma_apontamento_gate` nasce false, e enquanto
+     * ela estiver falsa este método é um no-op absoluto (retorna antes de qualquer leitura),
+     * preservando 100% do comportamento atual de store()/update().
+     *
+     * Com a flag ON e SOMENTE em projetos que têm cronograma:
+     *  - a atividade (stage_delivery_id) passa a ser obrigatória;
+     *  - o consultor precisa estar alocado na atividade;
+     *  - 0 horas planejadas = BLOQUEADO (só aponta após a coordenação liberar horas);
+     *  - o apontamento não pode exceder as horas liberadas da atividade.
+     *
+     * Projetos SEM cronograma (sustentação etc.) não entram no escopo — early-return.
+     * Sinaliza erro via abort(response()->json(...)) 422, no mesmo formato dos demais 422
+     * do controller; o HttpResponseException é re-propagado nos catch de store()/update().
+     */
+    private function validateCronogramaActivity(
+        \App\Models\Project $project,
+        ?int $stageDeliveryId,
+        int $timesheetUserId,
+        int $minutesToAdd,
+        ?int $excludeTimesheetId = null
+    ): void {
+        // Flag OFF → no-op (DORMANT). Nada muda vs. produção atual.
+        if (! \App\Models\SystemSetting::get('cronograma_apontamento_gate', false)) {
+            return;
+        }
+
+        // Projeto sem cronograma → fora de escopo, sem gating.
+        if (! $project->stages()->exists()) {
+            return;
+        }
+
+        // Atividade obrigatória.
+        if (empty($stageDeliveryId)) {
+            abort(response()->json([
+                'code'          => 'CRONOGRAMA_ACTIVITY_REQUIRED',
+                'type'          => 'error',
+                'message'       => 'Atividade do cronograma obrigatória',
+                'detailMessage' => 'Selecione a atividade do cronograma para apontar neste projeto.',
+            ], 422));
+        }
+
+        // O consultor precisa estar alocado na atividade.
+        $alloc = \App\Models\StageAllocation::where('delivery_id', $stageDeliveryId)
+            ->where('user_id', $timesheetUserId)
+            ->first();
+        if (! $alloc) {
+            abort(response()->json([
+                'code'          => 'CRONOGRAMA_NOT_ALLOCATED',
+                'type'          => 'error',
+                'message'       => 'Não alocado na atividade',
+                'detailMessage' => 'Você não está alocado nesta atividade. Solicite à coordenadora.',
+            ], 422));
+        }
+
+        // Consumo = TEMPO já apontado nesta atividade por este usuário (pendente/aprovado/liberado),
+        // excluindo o próprio apontamento na edição.
+        $consumed = (float) Timesheet::where('stage_delivery_id', $stageDeliveryId)
+            ->where('user_id', $timesheetUserId)
+            ->whereIn('status', [
+                Timesheet::STATUS_PENDING,
+                Timesheet::STATUS_APPROVED,
+                Timesheet::STATUS_RELEASED,
+            ])
+            ->when($excludeTimesheetId !== null, function ($q) use ($excludeTimesheetId) {
+                $q->where('id', '!=', $excludeTimesheetId);
+            })
+            ->sum('effort_minutes');
+
+        $plannedMinutes = (float) $alloc->planned_hours * 60;
+        $afterMinutes   = $consumed + $minutesToAdd;
+
+        if ($afterMinutes > $plannedMinutes + 0.001) {
+            if ($plannedMinutes == 0.0) {
+                $detail = 'Sem horas liberadas nesta atividade — solicite à coordenadora liberar horas.';
+            } else {
+                $availableHours = ($plannedMinutes - $consumed) / 60;
+                $detail = sprintf(
+                    'Apontamento excede as horas liberadas da atividade (disponível: %sh).',
+                    number_format(max($availableHours, 0), 1, '.', '')
+                );
+            }
+            abort(response()->json([
+                'code'          => 'CRONOGRAMA_ACTIVITY_OVER_BUDGET',
+                'type'          => 'error',
+                'message'       => 'Horas da atividade excedidas',
+                'detailMessage' => $detail,
+            ], 422));
+        }
     }
 
     /**
