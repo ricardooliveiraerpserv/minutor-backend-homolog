@@ -2201,6 +2201,24 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => $arr]);
     }
 
+    /**
+     * Visibilidade do anexo. Regra "Em Homologação": o código-fonte (.zip) é EVIDÊNCIA TÉCNICA —
+     * a interação é PÚBLICA (o cliente lê o texto da entrega), mas o FONTE fica OCULTO para o
+     * cliente. Força 'internal' nos .zip quando o chamado está em homologação (status key
+     * 'em_homologacao'), independente da visibilidade do comentário. Os demais arquivos (prints
+     * etc.) herdam a visibilidade do comentário. O FE aplica o status ANTES do POST da interação
+     * (em_homologacao não é terminal), então aqui o ticket->status já é 'em_homologacao'.
+     */
+    private function attachmentVisibility(HelpDeskTicket $ticket, string $commentVisibility, \Illuminate\Http\UploadedFile $file): string
+    {
+        $isZip = strtolower((string) $file->getClientOriginalExtension()) === 'zip'
+            || in_array((string) $file->getMimeType(), ['application/zip', 'application/x-zip-compressed', 'multipart/x-zip'], true);
+        if ($isZip && optional($ticket->status)->key === 'em_homologacao') {
+            return 'internal';
+        }
+        return $commentVisibility;
+    }
+
     /** Anexa um arquivo a uma interação existente (usado ao editar). Gated igual à edição. */
     public function addCommentAttachment(Request $request, HelpDeskTicket $ticket, HelpDeskTicketComment $comment, AttachmentService $svc): JsonResponse
     {
@@ -2211,7 +2229,7 @@ class HelpDeskTicketController extends Controller
         $att = $svc->store($request->user(), [
             'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
             'category'    => str_starts_with((string) $file->getMimeType(), 'image/') ? 'image' : 'attachment',
-            'visibility'  => $comment->visibility,
+            'visibility'  => $this->attachmentVisibility($ticket, $comment->visibility, $file),
             'file'        => $file,
         ], $request);
         return response()->json(['data' => $att], 201);
@@ -2311,7 +2329,7 @@ class HelpDeskTicketController extends Controller
                     $svc->store($request->user(), [
                         'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
                         'category'    => str_starts_with((string) $file->getMimeType(), 'image/') ? 'image' : 'attachment',
-                        'visibility'  => $comment->visibility,
+                        'visibility'  => $this->attachmentVisibility($ticket, $comment->visibility, $file),
                         'file'        => $file,
                     ], $request);
                 }
