@@ -182,6 +182,9 @@ class PermissionService
             'competencias.respond', 'competencias.reports.view',
             // Configurações
             'settings.view',
+            // Cofre de Senhas / Ambientes — todo interno pode ABRIR o cofre; o que ele
+            // enxerga depende da alocação (membership) e do zero-knowledge. Sem alocação, vê vazio.
+            'vault.use', 'environments.use',
         ];
     }
 
@@ -202,6 +205,8 @@ class PermissionService
             'consultant_groups.view',
             // Banco de Competências: consulta competências da equipe + responde a própria.
             'competencias.view', 'competencias.view_team', 'competencias.respond',
+            // Cofre de Senhas / Ambientes — abre o cofre; visibilidade por alocação (zero-knowledge).
+            'vault.use', 'environments.use',
         ];
     }
 
@@ -218,6 +223,8 @@ class PermissionService
             'financial.view_own_rate', 'financial.view_partner_rate',
             // Banco de Competências: responde a própria pesquisa.
             'competencias.respond',
+            // Cofre de Senhas / Ambientes — abre o cofre; sem alocação vê vazio (zero-knowledge).
+            'vault.use', 'environments.use',
         ];
     }
 
