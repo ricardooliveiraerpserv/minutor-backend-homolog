@@ -11,6 +11,7 @@ use App\Models\PermissionGroup;
 use App\Models\User;
 use App\Models\Vault;
 use App\Models\VaultMember;
+use App\Models\VaultUserKey;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -73,6 +74,8 @@ class EnvironmentController extends Controller
                 'vault_id'          => $cv->vault_id,
                 'environments_count' => EnvEnvironment::where('customer_id', $cv->customer_id)->count(),
                 'role'              => VaultMember::where('vault_id', $cv->vault_id)->where('user_id', $user->id)->value('role'),
+                // chave do PRÓPRIO usuário (opaca) — usada no front p/ re-embrulhar pros admins (backfill)
+                'encrypted_vault_key' => VaultMember::where('vault_id', $cv->vault_id)->where('user_id', $user->id)->value('encrypted_vault_key'),
             ])
             ->sortBy('customer_name')->values();
 
@@ -92,6 +95,11 @@ class EnvironmentController extends Controller
             // Escrow corporativo (opcional): vaultKey cifrado pra chave da empresa.
             // Permite reabrir a pasta mesmo que todos percam master password + recovery key.
             'escrow_encrypted_vault_key' => 'nullable|string|max:2000',
+            // "Admin vê tudo": vaultKey cifrada p/ a chave pública de cada admin do cofre,
+            // pra que todo admin já entre como membro da pasta (zero-knowledge preservado).
+            'members'                    => 'nullable|array',
+            'members.*.user_id'              => 'required|integer',
+            'members.*.encrypted_vault_key'  => 'required|string|max:2000',
         ]);
 
         if (EnvClientVault::where('customer_id', $data['customer_id'])->exists()) {
@@ -112,6 +120,17 @@ class EnvironmentController extends Controller
                 'encrypted_vault_key' => $data['encrypted_vault_key'],
                 'key_version'         => $vault->key_version ?? 1,
             ]);
+
+            // "Admin vê tudo": entra cada admin do cofre como membro (só os que são admin de fato).
+            $adminIds = $this->cofreAdminUserIds();
+            foreach (($data['members'] ?? []) as $m) {
+                if ((int) $m['user_id'] === $user->id) continue;               // criador já é membro
+                if (! in_array((int) $m['user_id'], $adminIds, true)) continue; // só admins do cofre
+                VaultMember::firstOrCreate(
+                    ['vault_id' => $vault->id, 'user_id' => (int) $m['user_id']],
+                    ['role' => 'admin', 'encrypted_vault_key' => $m['encrypted_vault_key'], 'key_version' => $vault->key_version ?? 1]
+                );
+            }
 
             return EnvClientVault::create([
                 'customer_id'                => $customer->id,
@@ -161,6 +180,60 @@ class EnvironmentController extends Controller
                 'permissions' => ['vault.use', 'environments.use', 'environments.admin'],
             ]
         );
+    }
+
+    /** IDs de todos os admins do cofre = admins do Minutor + membros do grupo canônico. */
+    private function cofreAdminUserIds(): array
+    {
+        $groupIds = $this->cofreAdminGroup()->users()->pluck('users.id')->all();
+        $minutorAdmins = User::where('type', 'admin')->whereNull('customer_id')->pluck('id')->all();
+
+        return array_values(array_unique(array_merge($groupIds, $minutorAdmins)));
+    }
+
+    /**
+     * Chaves públicas dos admins do cofre (só quem já configurou o cofre pessoal).
+     * O front usa pra embrulhar a vaultKey de cada pasta e tornar todo admin membro.
+     */
+    public function adminKeys(Request $request): JsonResponse
+    {
+        $this->guardInternal($request);
+        $rows = VaultUserKey::whereIn('user_id', $this->cofreAdminUserIds())
+            ->whereNotNull('public_key')
+            ->with('user:id,name')
+            ->get()
+            ->map(fn ($k) => ['user_id' => $k->user_id, 'name' => $k->user?->name, 'public_key' => $k->public_key])
+            ->values();
+
+        return response()->json($rows);
+    }
+
+    /**
+     * Backfill "admin vê tudo": adiciona admins como membros de uma pasta JÁ existente.
+     * Quem chama tem que ser membro (tem a vaultKey) e só entra quem é admin do cofre.
+     */
+    public function shareWithAdmins(Request $request, int $customerId): JsonResponse
+    {
+        $cv = $this->clientVault($request, $customerId); // 404 se o chamador não é membro
+        $data = $request->validate([
+            'members'                        => 'required|array',
+            'members.*.user_id'              => 'required|integer',
+            'members.*.encrypted_vault_key'  => 'required|string|max:2000',
+        ]);
+        $adminIds = $this->cofreAdminUserIds();
+        $vault = Vault::find($cv->vault_id);
+        $added = 0;
+        foreach ($data['members'] as $m) {
+            if (! in_array((int) $m['user_id'], $adminIds, true)) continue;
+            $r = VaultMember::firstOrCreate(
+                ['vault_id' => $cv->vault_id, 'user_id' => (int) $m['user_id']],
+                ['role' => 'admin', 'encrypted_vault_key' => $m['encrypted_vault_key'], 'key_version' => $vault->key_version ?? 1]
+            );
+            if ($r->wasRecentlyCreated) $added++;
+        }
+        EnvAccessLog::record($request, 'client_share_admins', ['item_label' => (string) $added]);
+
+        return response()->json(['added' => $added]);
     }
 
     /** Lista usuários internos com os flags de admin do cofre / admin do Minutor. */

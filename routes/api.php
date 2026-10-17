@@ -424,6 +424,9 @@ Route::prefix('v1')->group(function () {
             // Admins do Cofre (papel de módulo, NÃO admin do Minutor) — só admin do Minutor elege
             Route::get('/admins',                          [\App\Http\Controllers\EnvironmentController::class, 'cofreAdmins'])->name('environments.admins.index');
             Route::post('/admins',                         [\App\Http\Controllers\EnvironmentController::class, 'setCofreAdmin'])->name('environments.admins.set');
+            // "Admin vê tudo": chaves públicas dos admins + backfill de pasta existente
+            Route::get('/admin-keys',                      [\App\Http\Controllers\EnvironmentController::class, 'adminKeys'])->name('environments.admin.keys');
+            Route::post('/clients/{customerId}/share-admins', [\App\Http\Controllers\EnvironmentController::class, 'shareWithAdmins'])->name('environments.share.admins');
             // Cadastro de listas de opções (categoria, engine, provedor, tipo de link)
             Route::get('/options',                         [\App\Http\Controllers\EnvOptionListController::class, 'index'])->name('environments.options.index');
             Route::post('/options',                        [\App\Http\Controllers\EnvOptionListController::class, 'store'])->name('environments.options.store');
