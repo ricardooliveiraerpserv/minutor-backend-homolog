@@ -424,6 +424,11 @@ Route::prefix('v1')->group(function () {
             // Admins do Cofre (papel de módulo, NÃO admin do Minutor) — só admin do Minutor elege
             Route::get('/admins',                          [\App\Http\Controllers\EnvironmentController::class, 'cofreAdmins'])->name('environments.admins.index');
             Route::post('/admins',                         [\App\Http\Controllers\EnvironmentController::class, 'setCofreAdmin'])->name('environments.admins.set');
+            // Cadastro de listas de opções (categoria, engine, provedor, tipo de link)
+            Route::get('/options',                         [\App\Http\Controllers\EnvOptionListController::class, 'index'])->name('environments.options.index');
+            Route::post('/options',                        [\App\Http\Controllers\EnvOptionListController::class, 'store'])->name('environments.options.store');
+            Route::put('/options/{id}',                    [\App\Http\Controllers\EnvOptionListController::class, 'update'])->name('environments.options.update');
+            Route::delete('/options/{id}',                 [\App\Http\Controllers\EnvOptionListController::class, 'destroy'])->name('environments.options.destroy');
             // Compartilhamento — remoção aditiva de membro do cofre do cliente (add/role reusam /vault/*)
             Route::delete('/clients/{customerId}/members/{userId}', [\App\Http\Controllers\EnvironmentController::class, 'removeMember'])->name('environments.member.remove');
             // Ambientes de um cliente

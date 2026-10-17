@@ -49,7 +49,8 @@ class EnvironmentCredentialController extends Controller
         $this->guardInternal($request);
         $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
-            'category'            => 'required|in:' . implode(',', EnvCredential::CATEGORIES),
+            // Aceita categorias customizadas (não só o enum). Slug built-in OU texto livre curto.
+            'category'            => ['required', 'string', 'max:60', 'regex:/^[\w .\-+]+$/u'],
             'label'               => 'required|string|max:120',
             'username'            => 'nullable|string|max:200',
             'url'                 => 'nullable|string|max:500',
@@ -100,6 +101,7 @@ class EnvironmentCredentialController extends Controller
         $cred = EnvCredential::findOrFail($id);
         $env = $this->envAuthorized($request, $cred->environment_id, 'manage');
         $data = $request->validate([
+            'category'            => ['sometimes', 'string', 'max:60', 'regex:/^[\w .\-+]+$/u'],
             'label'               => 'sometimes|string|max:120',
             'username'            => 'nullable|string|max:200',
             'url'                 => 'nullable|string|max:500',
@@ -133,7 +135,7 @@ class EnvironmentCredentialController extends Controller
                 }
                 $cred->last_rotated_at = now();
             }
-            $cred->fill(collect($data)->only(['label', 'username', 'url', 'critical', 'notes', 'responsible_user_id'])->toArray());
+            $cred->fill(collect($data)->only(['category', 'label', 'username', 'url', 'critical', 'notes', 'responsible_user_id'])->toArray());
             $cred->save();
         });
         EnvAccessLog::record($request, 'cred_update', ['environment_id' => $env->id, 'item_label' => $cred->label]);

@@ -61,7 +61,7 @@ class EnvironmentInfraController extends Controller
         $this->guardInternal($request);
         $env = $this->envAuthorized($request, $envId, 'manage');
         $data = $request->validate([
-            'engine'        => 'sometimes|in:sqlserver,postgres,oracle,mysql',
+            'engine'        => ['sometimes','string','max:40','regex:/^[\w .\-+]+$/u'],
             'server'        => 'required|string|max:200',
             'port'          => 'nullable|integer',
             'instance'      => 'nullable|string|max:120',
@@ -104,7 +104,7 @@ class EnvironmentInfraController extends Controller
         $db = EnvDatabase::findOrFail($id);
         $env = $this->envAuthorized($request, $db->environment_id, 'manage');
         $data = $request->validate([
-            'engine'        => 'sometimes|in:sqlserver,postgres,oracle,mysql',
+            'engine'        => ['sometimes','string','max:40','regex:/^[\w .\-+]+$/u'],
             'server'        => 'sometimes|string|max:200',
             'port'          => 'nullable|integer',
             'instance'      => 'nullable|string|max:120',
