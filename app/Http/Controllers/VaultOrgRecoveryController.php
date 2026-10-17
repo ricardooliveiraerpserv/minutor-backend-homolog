@@ -42,19 +42,28 @@ class VaultOrgRecoveryController extends Controller
         ]);
     }
 
-    /** Configura a chave da empresa (uma vez). Admin do cofre. */
+    /**
+     * Configura a chave da empresa. Admin do cofre.
+     * Com replace=true, SUBSTITUI a atual (rotação / chave perdida antes de guardar).
+     * Aviso: pastas já cifradas com a chave ANTIGA deixam de ser recuperáveis pelo escrow
+     * até o backfill com a nova — o FE avisa.
+     */
     public function setup(Request $request): JsonResponse
     {
         $user = $this->admin($request);
 
-        if (VaultOrgRecovery::current() !== null) {
-            return response()->json(['message' => 'A chave de recuperação da empresa já está configurada.'], 409);
-        }
-
         $data = $request->validate([
             'public_key'            => 'required|string|max:4000',
             'encrypted_private_key' => 'required|string|max:8000',
+            'replace'               => 'sometimes|boolean',
         ]);
+
+        if (VaultOrgRecovery::current() !== null) {
+            if (! ($data['replace'] ?? false)) {
+                return response()->json(['message' => 'A chave de recuperação da empresa já está configurada.'], 409);
+            }
+            VaultOrgRecovery::query()->delete();
+        }
 
         $org = VaultOrgRecovery::create([
             'public_key'            => $data['public_key'],
