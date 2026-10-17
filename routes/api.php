@@ -916,6 +916,10 @@ Route::prefix('v1')->group(function () {
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
             // Migração do cliente p/ a Conecta (SÓ ADMIN): empurra p/ app.conectaerp.com.br e desabilita aqui.
             Route::post('/customers/{customer}/migrate-to-conecta', [CustomerController::class, 'migrateToConecta'])->name('customers.migrate-conecta');
+            // Painel da migração Conecta (tela /migracao-conecta): log de tickets + reenvio. SÓ ADMIN.
+            Route::get('/migration/conecta/log', [\App\Http\Controllers\ConectaMigrationController::class, 'log'])->name('migration.conecta.log');
+            Route::get('/migration/conecta/summary', [\App\Http\Controllers\ConectaMigrationController::class, 'summary'])->name('migration.conecta.summary');
+            Route::post('/migration/conecta/log/{log}/resend', [\App\Http\Controllers\ConectaMigrationController::class, 'resend'])->name('migration.conecta.resend');
             // Centro de custo — escrita (criar/importar por cliente, editar/excluir).
             Route::post('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'store'])->name('customers.cost-centers.store');
             Route::post('/customers/{customer}/cost-centers/import', [\App\Http\Controllers\CostCenterController::class, 'import'])->name('customers.cost-centers.import');

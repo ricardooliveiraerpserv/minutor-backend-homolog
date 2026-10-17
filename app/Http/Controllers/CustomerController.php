@@ -827,6 +827,8 @@ class CustomerController extends Controller
         if ($customer->migrated_to_conecta_at) {
             return response()->json(['message' => 'Cliente já migrado para a Conecta.'], 422);
         }
+        // Toggle: desativar o cliente na ERPSERV (default) OU mantê-lo ativo (só os tickets saem).
+        $deactivate = $request->boolean('deactivate', true);
 
         $url    = rtrim((string) config('services.conecta.api_url', ''), '/');
         $secret = (string) config('services.conecta.migration_secret', '');
@@ -872,23 +874,39 @@ class CustomerController extends Controller
             ], 502);
         }
 
-        // Sucesso na Conecta → aplica os efeitos na ERPSERV atomicamente.
-        \Illuminate\Support\Facades\DB::transaction(function () use ($customer) {
-            $customer->active = false;
+        // Sucesso na Conecta → marca migrado e (opcional) desativa. NÃO desvincula a org: o import
+        // do Movidesk segue rodando p/ INTERCEPTAR os novos (FD → log de entrada) e o legado continua
+        // VISÍVEL aqui. Em "manter ativo", cliente e usuários seguem usando a ERPSERV normalmente.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($customer, $deactivate) {
             $customer->migrated_to_conecta_at = now();
+            if ($deactivate) {
+                $customer->active = false;
+            }
             $customer->save();
-            \App\Models\MovideskOrganization::where('hd_customer_id', $customer->id)
-                ->update(['hd_customer_id' => null, 'hd_linked_at' => null]);
-            $customer->users()->where('type', 'cliente')->update(['enabled' => false]);
+            if ($deactivate) {
+                $customer->users()->where('type', 'cliente')->update(['enabled' => false]);
+            }
         });
 
+        // Backfill do LEGADO: enfileira a cópia de CADA ticket atual do cliente p/ a Conecta (1 job/ticket).
+        $backfill = 0;
+        \App\Models\HelpDeskTicket::where('customer_id', $customer->id)
+            ->select('id')->chunkById(500, function ($rows) use (&$backfill) {
+                foreach ($rows as $r) {
+                    \App\Jobs\PushTicketToConectaJob::dispatch((int) $r->id, 'legado');
+                    $backfill++;
+                }
+            });
+
         return response()->json([
-            'success'       => true,
-            'message'       => 'Cliente migrado para a Conecta.',
-            'conecta'       => $resp->json(),
-            'users_total'   => $allUsers->count(),
-            'users_sent'    => count($users),
-            'orgs_unlinked' => count($orgIds),
+            'success'                 => true,
+            'message'                 => $deactivate ? 'Cliente migrado e desativado na ERPSERV.' : 'Cliente migrado (mantido ativo na ERPSERV).',
+            'conecta'                 => $resp->json(),
+            'deactivated'             => $deactivate,
+            'users_total'             => $allUsers->count(),
+            'users_sent'              => count($users),
+            'orgs_linked'             => count($orgIds),
+            'legacy_tickets_enqueued' => $backfill,
         ]);
     }
 }

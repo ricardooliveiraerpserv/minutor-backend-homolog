@@ -234,10 +234,6 @@ class HelpDeskPortalController extends Controller
         // Interno (não-cliente) abre o PRÓPRIO chamado: customer_id = null (chamado sem cliente,
         // só solicitante). Cliente segue com a trava de perfil de acesso.
         $cid = $request->user()->customer_id;
-        // Cliente migrado p/ a Conecta não abre mais chamado aqui (os tickets dele vivem na Conecta).
-        if ($cid !== null && \App\Models\Customer::whereKey($cid)->whereNotNull('migrated_to_conecta_at')->exists()) {
-            return response()->json(['message' => 'Este cliente foi migrado para a Conecta. Abra o chamado em app.conectaerp.com.br.'], 422);
-        }
         if ($cid !== null) {
             abort_unless($this->access->clientCanOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
         }
@@ -276,6 +272,42 @@ class HelpDeskPortalController extends Controller
         // Tags só se o perfil permitir informar; extrai (não é coluna do ticket) p/ aplicar depois.
         $tagIds = $this->access->informAllowed($u, 'tags') ? array_map('intval', (array) ($v['tags'] ?? [])) : [];
         unset($v['tags']);
+
+        // ── Cliente MIGRADO p/ a Conecta: o chamado NÃO entra na ERPSERV. Empurra pra Conecta
+        //    (nasce lá) + grava log de entrada (kind=novo); NÃO cria ticket local. ──
+        if ($cid !== null) {
+            $migrated = \App\Models\Customer::whereKey($cid)->whereNotNull('migrated_to_conecta_at')->first(['id', 'name', 'cgc']);
+            if ($migrated) {
+                $payload = [
+                    'customer_cgc'  => $migrated->cgc,
+                    'customer_name' => $migrated->name,
+                    'ticket' => [
+                        'source_system'   => 'erpserv_portal',
+                        'external_ref'    => 'portal-' . $migrated->id . '-' . $u->id . '-' . uniqid(),
+                        'subject'         => (string) $v['subject'],
+                        'description'     => (string) ($v['description'] ?? ''),
+                        'status_text'     => 'Novo',
+                        'priority'        => $v['priority'] ?? 'normal',
+                        'channel'         => 'portal',
+                        'requester_name'  => $u->name,
+                        'requester_email' => $u->email,
+                        'created_at'      => now()->toIso8601String(),
+                    ],
+                    'comments'    => [],
+                    'attachments' => [],
+                ];
+                $log = app(\App\Services\ConectaTicketPusher::class)->pushRaw($payload, ['customer_id' => (int) $migrated->id]);
+                if ($log->result !== 'ok') {
+                    return response()->json(['message' => 'Não foi possível abrir o chamado na Conecta. Tente novamente.'], 502);
+                }
+                return response()->json([
+                    'success'           => true,
+                    'migrated'          => true,
+                    'message'           => 'Chamado aberto na Conecta.',
+                    'conecta_ticket_id' => $log->conecta_ticket_id,
+                ], 201);
+            }
+        }
 
         if (!empty($v['contract_id'])) {
             abort_unless(\App\Models\Contract::where('id', $v['contract_id'])->where('customer_id', $cid)->exists(), 422, 'Contrato não pertence à sua empresa.');

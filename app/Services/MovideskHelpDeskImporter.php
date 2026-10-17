@@ -160,6 +160,16 @@ class MovideskHelpDeskImporter
                 if ($this->requireLinkedOrg() && !$exists && !($org && $org->hd_customer_id)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
+                // Cliente MIGRADO p/ Conecta: ticket NOVO não entra na ERPSERV — grava log de entrada
+                // (kind=novo, result=routed) e deixa a Conecta importar do Movidesk. Legado já espelhado
+                // ($exists) segue normal e continua VISÍVEL aqui.
+                if (!$exists && $org && $org->hd_customer_id) {
+                    $mc = \App\Models\Customer::select('id', 'migrated_to_conecta_at')->find($org->hd_customer_id);
+                    if ($mc && $mc->migrated_to_conecta_at) {
+                        $this->logMigratedEntry($externalId, (int) $mc->id, $full);
+                        $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
+                    }
+                }
                 // "A partir do vínculo apenas": ignora chamados CRIADOS antes de a org ser vinculada.
                 if ($org && $org->hd_linked_at && $this->createdBeforeLink($full, $org)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
@@ -706,6 +716,26 @@ class MovideskHelpDeskImporter
 
     // ── Resolução de entidades ────────────────────────────────────────────────
     /** Cliente Minutor a partir do VÍNCULO DEDICADO do HD (hd_customer_id). Null se a org não estiver vinculada. */
+    /**
+     * Registra a ENTRADA de um ticket novo de cliente migrado (NÃO cria na ERPSERV; a Conecta
+     * importa do Movidesk). result='routed' = ERPSERV só logou a entrada. Best-effort.
+     */
+    private function logMigratedEntry(string $externalId, int $customerId, array $md): void
+    {
+        try {
+            $log = \App\Models\ConectaTicketMigrationLog::firstOrNew(['source_system' => 'movidesk', 'external_ref' => (string) $externalId]);
+            $log->customer_id = $customerId;
+            $log->movidesk_id = (string) $externalId;
+            $log->subject     = mb_substr((string) ($md['subject'] ?? ('Chamado Movidesk #' . $externalId)), 0, 255);
+            $log->kind        = 'novo';
+            $log->result      = 'routed';
+            $log->sent_at     = now();
+            $log->save();
+        } catch (\Throwable $e) {
+            Log::warning('📥 [MOVIDESK HD] falha ao logar entrada de migrado', ['id' => $externalId, 'err' => $e->getMessage()]);
+        }
+    }
+
     private function resolveCustomer($orgId): ?int
     {
         $org = $this->orgFor($orgId);
