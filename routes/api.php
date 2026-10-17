@@ -217,6 +217,10 @@ Route::prefix('v1')->group(function () {
             Route::get('/ms/status',            [\App\Http\Controllers\VaultProfileController::class, 'msStatus'])->name('vault.ms.status');
             Route::post('/profile/setup',       [\App\Http\Controllers\VaultProfileController::class, 'setup'])->name('vault.profile.setup');
             Route::post('/profile/reset',       [\App\Http\Controllers\VaultProfileController::class, 'reset'])->middleware('throttle:5,15')->name('vault.profile.reset');
+            // Escrow corporativo (chave de recuperação da EMPRESA)
+            Route::get('/org-recovery',             [\App\Http\Controllers\VaultOrgRecoveryController::class, 'status'])->name('vault.org-recovery.status');
+            Route::post('/org-recovery/setup',      [\App\Http\Controllers\VaultOrgRecoveryController::class, 'setup'])->middleware('throttle:5,15')->name('vault.org-recovery.setup');
+            Route::get('/org-recovery/private-blob',[\App\Http\Controllers\VaultOrgRecoveryController::class, 'privateBlob'])->name('vault.org-recovery.blob');
             Route::post('/unlock',              [\App\Http\Controllers\VaultProfileController::class, 'unlock'])->middleware('throttle:vault-unlock')->name('vault.unlock');
             Route::post('/master-password',     [\App\Http\Controllers\VaultProfileController::class, 'changeMasterPassword'])->middleware('throttle:10,1')->name('vault.master-password');
             Route::post('/recovery/unlock',     [\App\Http\Controllers\VaultProfileController::class, 'recoveryUnlock'])->middleware('throttle:5,15')->name('vault.recovery.unlock');
@@ -414,6 +418,9 @@ Route::prefix('v1')->group(function () {
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
             Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
+            // Escrow corporativo: backfill de pasta existente + leitura p/ recuperação
+            Route::post('/clients/{customerId}/escrow',    [\App\Http\Controllers\EnvironmentController::class, 'setEscrow'])->name('environments.escrow.set');
+            Route::get('/escrow-recovery',                 [\App\Http\Controllers\EnvironmentController::class, 'escrowRecovery'])->name('environments.escrow.recovery');
             // Compartilhamento — remoção aditiva de membro do cofre do cliente (add/role reusam /vault/*)
             Route::delete('/clients/{customerId}/members/{userId}', [\App\Http\Controllers\EnvironmentController::class, 'removeMember'])->name('environments.member.remove');
             // Ambientes de um cliente

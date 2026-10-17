@@ -86,8 +86,11 @@ class EnvironmentController extends Controller
     {
         $user = $this->guardInternal($request);
         $data = $request->validate([
-            'customer_id'         => 'required|integer|exists:customers,id',
-            'encrypted_vault_key' => 'required|string|max:2000',
+            'customer_id'                => 'required|integer|exists:customers,id',
+            'encrypted_vault_key'        => 'required|string|max:2000',
+            // Escrow corporativo (opcional): vaultKey cifrado pra chave da empresa.
+            // Permite reabrir a pasta mesmo que todos percam master password + recovery key.
+            'escrow_encrypted_vault_key' => 'nullable|string|max:2000',
         ]);
 
         if (EnvClientVault::where('customer_id', $data['customer_id'])->exists()) {
@@ -110,15 +113,50 @@ class EnvironmentController extends Controller
             ]);
 
             return EnvClientVault::create([
-                'customer_id' => $customer->id,
-                'vault_id'    => $vault->id,
-                'created_by'  => $user->id,
+                'customer_id'                => $customer->id,
+                'vault_id'                   => $vault->id,
+                'created_by'                 => $user->id,
+                'escrow_encrypted_vault_key' => $data['escrow_encrypted_vault_key'] ?? null,
             ]);
         });
 
         EnvAccessLog::record($request, 'client_create', ['item_label' => $customer->name]);
 
         return response()->json(['customer_id' => $cv->customer_id, 'vault_id' => $cv->vault_id], 201);
+    }
+
+    /**
+     * Backfill do escrow de uma pasta JÁ existente: quem é membro admin (tem o vaultKey)
+     * cifra o vaultKey pra chave pública da empresa e grava aqui. Idempotente.
+     */
+    public function setEscrow(Request $request, int $customerId): JsonResponse
+    {
+        $cv = $this->clientVault($request, $customerId, 'admin');
+        $data = $request->validate(['escrow_encrypted_vault_key' => 'required|string|max:2000']);
+        $cv->update(['escrow_encrypted_vault_key' => $data['escrow_encrypted_vault_key']]);
+        EnvAccessLog::record($request, 'client_escrow_set');
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * Recuperação pela chave da empresa (admin do cofre): lista as pastas com o blob de escrow,
+     * pra o front decifrar com a privada da empresa e re-compartilhar com a chave nova de cada um.
+     */
+    public function escrowRecovery(Request $request): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        abort_unless($user->hasAccess('environments.admin'), 403);
+
+        $rows = EnvClientVault::with('customer:id,name')->get()->map(fn ($cv) => [
+            'customer_id'                => $cv->customer_id,
+            'customer_name'              => $cv->customer?->name,
+            'vault_id'                   => $cv->vault_id,
+            'has_escrow'                 => ! empty($cv->escrow_encrypted_vault_key),
+            'escrow_encrypted_vault_key' => $cv->escrow_encrypted_vault_key,
+        ])->sortBy('customer_name')->values();
+
+        return response()->json($rows);
     }
 
     // ── Ambientes ─────────────────────────────────────────────────────────────

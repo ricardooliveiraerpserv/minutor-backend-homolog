@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 /** Mapeia um Cliente ao seu vault dedicado (vaults type='client'). */
 class EnvClientVault extends Model
 {
-    protected $fillable = ['customer_id', 'vault_id', 'created_by'];
+    protected $fillable = ['customer_id', 'vault_id', 'created_by', 'escrow_encrypted_vault_key'];
 
     public function customer(): BelongsTo { return $this->belongsTo(Customer::class); }
     public function vault(): BelongsTo { return $this->belongsTo(Vault::class); }
