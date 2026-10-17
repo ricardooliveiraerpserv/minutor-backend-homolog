@@ -421,6 +421,9 @@ Route::prefix('v1')->group(function () {
             // Escrow corporativo: backfill de pasta existente + leitura p/ recuperação
             Route::post('/clients/{customerId}/escrow',    [\App\Http\Controllers\EnvironmentController::class, 'setEscrow'])->name('environments.escrow.set');
             Route::get('/escrow-recovery',                 [\App\Http\Controllers\EnvironmentController::class, 'escrowRecovery'])->name('environments.escrow.recovery');
+            // Admins do Cofre (papel de módulo, NÃO admin do Minutor) — só admin do Minutor elege
+            Route::get('/admins',                          [\App\Http\Controllers\EnvironmentController::class, 'cofreAdmins'])->name('environments.admins.index');
+            Route::post('/admins',                         [\App\Http\Controllers\EnvironmentController::class, 'setCofreAdmin'])->name('environments.admins.set');
             // Compartilhamento — remoção aditiva de membro do cofre do cliente (add/role reusam /vault/*)
             Route::delete('/clients/{customerId}/members/{userId}', [\App\Http\Controllers\EnvironmentController::class, 'removeMember'])->name('environments.member.remove');
             // Ambientes de um cliente

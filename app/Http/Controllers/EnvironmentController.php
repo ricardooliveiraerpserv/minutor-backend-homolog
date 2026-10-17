@@ -7,6 +7,7 @@ use App\Models\EnvAccessLog;
 use App\Models\EnvClientVault;
 use App\Models\EnvEnvironment;
 use App\Models\EnvFavorite;
+use App\Models\PermissionGroup;
 use App\Models\User;
 use App\Models\Vault;
 use App\Models\VaultMember;
@@ -135,6 +136,67 @@ class EnvironmentController extends Controller
         $data = $request->validate(['escrow_encrypted_vault_key' => 'required|string|max:2000']);
         $cv->update(['escrow_encrypted_vault_key' => $data['escrow_encrypted_vault_key']]);
         EnvAccessLog::record($request, 'client_escrow_set');
+
+        return response()->json(['ok' => true]);
+    }
+
+    // ── Admins do Cofre (papel de MÓDULO, escopado ao cofre) ───────────────────
+    // Papel environments.admin via grupo de permissão canônico. NÃO é admin do Minutor.
+    // Só o admin do Minutor (type=admin) elege/remove admins do cofre.
+    private const COFRE_ADMIN_GROUP = 'Admin do Cofre';
+
+    private function requireMinutorAdmin(Request $request): User
+    {
+        $user = $this->guardInternal($request);
+        abort_unless($user->type === 'admin', 403);
+        return $user;
+    }
+
+    private function cofreAdminGroup(): PermissionGroup
+    {
+        return PermissionGroup::firstOrCreate(
+            ['name' => self::COFRE_ADMIN_GROUP],
+            [
+                'description' => 'Admins do Cofre de Senhas/Ambientes. NÃO torna admin do Minutor.',
+                'permissions' => ['vault.use', 'environments.use', 'environments.admin'],
+            ]
+        );
+    }
+
+    /** Lista usuários internos com os flags de admin do cofre / admin do Minutor. */
+    public function cofreAdmins(Request $request): JsonResponse
+    {
+        $this->requireMinutorAdmin($request);
+        $group = $this->cofreAdminGroup();
+        $adminIds = $group->users()->pluck('users.id')->all();
+
+        $users = User::whereNull('customer_id')->orderBy('name')
+            ->get(['id', 'name', 'email', 'type'])
+            ->map(fn ($u) => [
+                'id'               => $u->id,
+                'name'             => $u->name,
+                'email'            => $u->email,
+                'is_minutor_admin' => $u->type === 'admin',
+                'is_cofre_admin'   => $u->type === 'admin' || in_array($u->id, $adminIds, true),
+                'can_toggle'       => $u->type !== 'admin', // admin do Minutor já tem tudo
+            ])->values();
+
+        return response()->json($users);
+    }
+
+    /** Concede/remove o papel de admin do cofre (grupo canônico). Só admin do Minutor. */
+    public function setCofreAdmin(Request $request): JsonResponse
+    {
+        $this->requireMinutorAdmin($request);
+        $data = $request->validate(['user_id' => 'required|exists:users,id', 'grant' => 'required|boolean']);
+        $group = $this->cofreAdminGroup();
+
+        if ($data['grant']) {
+            $group->users()->syncWithoutDetaching([$data['user_id']]);
+        } else {
+            $group->users()->detach($data['user_id']);
+        }
+        EnvAccessLog::record($request, $data['grant'] ? 'cofre_admin_grant' : 'cofre_admin_revoke', ['item_label' => (string) $data['user_id']]);
 
         return response()->json(['ok' => true]);
     }
