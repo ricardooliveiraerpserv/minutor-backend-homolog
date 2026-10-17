@@ -223,4 +223,12 @@ return [
         // C3 — limite p/ o reaper marcar execução de reprocess como órfã (stale_execution).
         'reap_stale_minutes'         => (int) env('SOURCE_DOC_REAP_STALE_MINUTES', 15),
     ],
+
+    // Conecta (app.conectaerp.com.br) — destino da migração de clientes (F3).
+    // A ERPSERV EMPURRA (POST /api/v1/migration/customer) autenticando com o mesmo segredo
+    // configurado no .env da Conecta (CONECTA_MIGRATION_SECRET). Ver [[project_minutor_conecta_client_migration]].
+    'conecta' => [
+        'api_url'          => env('CONECTA_API_URL', 'https://app.conectaerp.com.br'),
+        'migration_secret' => env('CONECTA_MIGRATION_SECRET'),
+    ],
 ];

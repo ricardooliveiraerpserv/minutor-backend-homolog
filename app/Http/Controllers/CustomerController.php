@@ -808,4 +808,87 @@ class CustomerController extends Controller
             ]);
         }
     }
+
+    /**
+     * Migra um cliente para a Conecta (app.conectaerp.com.br). SÓ ADMIN.
+     *
+     * Monta customer + usuários (type=cliente, com HASH de senha cru) + orgs Movidesk vinculadas e
+     * EMPURRA para a API da Conecta (POST /api/v1/migration/customer, auth X-Migration-Secret).
+     * SÓ no sucesso aplica os efeitos na ERPSERV, atomicamente: desabilita o cliente, marca
+     * migrated_to_conecta_at, DESVINCULA as orgs do import (hd_customer_id=null → o importer ignora)
+     * e desabilita os usuários do cliente. Se a API falhar, NADA muda (sem meia-migração). A API da
+     * Conecta é idempotente (upsert) → re-tentar é seguro. Ver [[project_minutor_conecta_client_migration]].
+     */
+    public function migrateToConecta(Request $request, Customer $customer): JsonResponse
+    {
+        if (!$request->user() || !$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Apenas o administrador pode migrar clientes para a Conecta.'], 403);
+        }
+        if ($customer->migrated_to_conecta_at) {
+            return response()->json(['message' => 'Cliente já migrado para a Conecta.'], 422);
+        }
+
+        $url    = rtrim((string) config('services.conecta.api_url', ''), '/');
+        $secret = (string) config('services.conecta.migration_secret', '');
+        if ($url === '' || $secret === '') {
+            return response()->json(['message' => 'Integração com a Conecta não configurada neste servidor (CONECTA_API_URL / CONECTA_MIGRATION_SECRET).'], 503);
+        }
+
+        // Usuários do cliente (type=cliente). Senha = HASH bcrypt CRU lido direto da coluna (sem
+        // re-hashear); a Conecta grava via DB::table p/ não re-aplicar o cast 'hashed' → login preservado.
+        $allUsers = $customer->users()->where('type', 'cliente')->get();
+        $users = $allUsers->map(function ($u) {
+            return [
+                'name'          => $u->name,
+                'email'         => $u->email,
+                'password_hash' => \Illuminate\Support\Facades\DB::table('users')->where('id', $u->id)->value('password'),
+            ];
+        })->filter(fn ($x) => filled($x['email']) && filled($x['password_hash']))->values()->all();
+
+        // Orgs Movidesk vinculadas a este cliente no HD (hd_customer_id).
+        $orgIds = \App\Models\MovideskOrganization::where('hd_customer_id', $customer->id)
+            ->pluck('movidesk_id')->filter()->map(fn ($id) => (string) $id)->values()->all();
+
+        $payload = [
+            'customer'         => ['name' => $customer->name, 'cgc' => $customer->cgc],
+            'users'            => $users,
+            'movidesk_org_ids' => $orgIds,
+            'linked_at'        => '2000-01-01 00:00:00', // epoch → Conecta importa TODO o legado do Movidesk.
+        ];
+
+        try {
+            $resp = \Illuminate\Support\Facades\Http::withHeaders(['X-Migration-Secret' => $secret])
+                ->acceptJson()->timeout(60)
+                ->post("{$url}/api/v1/migration/customer", $payload);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Não foi possível contatar a Conecta — nada foi alterado.', 'error' => $e->getMessage()], 502);
+        }
+
+        if (!$resp->successful()) {
+            return response()->json([
+                'message'        => 'A Conecta recusou a migração — nada foi alterado na ERPSERV.',
+                'conecta_status' => $resp->status(),
+                'conecta_body'   => $resp->json() ?? $resp->body(),
+            ], 502);
+        }
+
+        // Sucesso na Conecta → aplica os efeitos na ERPSERV atomicamente.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($customer) {
+            $customer->active = false;
+            $customer->migrated_to_conecta_at = now();
+            $customer->save();
+            \App\Models\MovideskOrganization::where('hd_customer_id', $customer->id)
+                ->update(['hd_customer_id' => null, 'hd_linked_at' => null]);
+            $customer->users()->where('type', 'cliente')->update(['enabled' => false]);
+        });
+
+        return response()->json([
+            'success'       => true,
+            'message'       => 'Cliente migrado para a Conecta.',
+            'conecta'       => $resp->json(),
+            'users_total'   => $allUsers->count(),
+            'users_sent'    => count($users),
+            'orgs_unlinked' => count($orgIds),
+        ]);
+    }
 }

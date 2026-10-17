@@ -914,6 +914,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/customers/executives/bulk', [CustomerController::class, 'bulkExecutive'])->name('customers.executives.bulk');
             Route::patch('/customers/{customer}/executive', [CustomerController::class, 'updateExecutive'])->name('customers.executive.update');
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
+            // Migração do cliente p/ a Conecta (SÓ ADMIN): empurra p/ app.conectaerp.com.br e desabilita aqui.
+            Route::post('/customers/{customer}/migrate-to-conecta', [CustomerController::class, 'migrateToConecta'])->name('customers.migrate-conecta');
             // Centro de custo — escrita (criar/importar por cliente, editar/excluir).
             Route::post('/customers/{customer}/cost-centers', [\App\Http\Controllers\CostCenterController::class, 'store'])->name('customers.cost-centers.store');
             Route::post('/customers/{customer}/cost-centers/import', [\App\Http\Controllers\CostCenterController::class, 'import'])->name('customers.cost-centers.import');

@@ -234,6 +234,10 @@ class HelpDeskPortalController extends Controller
         // Interno (não-cliente) abre o PRÓPRIO chamado: customer_id = null (chamado sem cliente,
         // só solicitante). Cliente segue com a trava de perfil de acesso.
         $cid = $request->user()->customer_id;
+        // Cliente migrado p/ a Conecta não abre mais chamado aqui (os tickets dele vivem na Conecta).
+        if ($cid !== null && \App\Models\Customer::whereKey($cid)->whereNotNull('migrated_to_conecta_at')->exists()) {
+            return response()->json(['message' => 'Este cliente foi migrado para a Conecta. Abra o chamado em app.conectaerp.com.br.'], 422);
+        }
         if ($cid !== null) {
             abort_unless($this->access->clientCanOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
         }

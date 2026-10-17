@@ -32,6 +32,8 @@ class Customer extends Model
         'secondary_cgcs',
         // Perfil de acesso do Help Desk PADRÃO deste cliente (aplicado ao pré-cadastrar pessoa-cliente).
         'helpdesk_default_access_profile_id',
+        // Migração p/ Conecta: NULL = cliente normal; preenchido = migrado (desabilitado aqui, atendido lá).
+        'migrated_to_conecta_at',
     ];
 
     /**
@@ -45,6 +47,7 @@ class Customer extends Model
         'is_bizify_customer' => 'boolean',
         'emails_administrativos' => 'array',
         'secondary_cgcs' => 'array',
+        'migrated_to_conecta_at' => 'datetime',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',
