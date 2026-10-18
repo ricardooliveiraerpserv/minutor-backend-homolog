@@ -897,8 +897,10 @@ class CustomerController extends Controller
         });
 
         // Backfill do LEGADO: enfileira a cópia de CADA ticket atual do cliente p/ a Conecta (1 job/ticket).
+        // withoutCompanyScope: esta ação roda no HTTP do admin (contexto de 1 empresa) — sem isso o
+        // CompanyScope esconde os tickets de OUTRAS empresas do cliente e o backfill enfileira 0.
         $backfill = 0;
-        \App\Models\HelpDeskTicket::where('customer_id', $customer->id)
+        \App\Models\HelpDeskTicket::withoutCompanyScope()->where('customer_id', $customer->id)
             ->select('id')->chunkById(500, function ($rows) use (&$backfill) {
                 foreach ($rows as $r) {
                     \App\Jobs\PushTicketToConectaJob::dispatch((int) $r->id, 'legado');
