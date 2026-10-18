@@ -12,6 +12,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Spatie\Multitenancy\Jobs\NotTenantAware;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -20,7 +21,9 @@ use Illuminate\Support\Facades\Log;
  * Best-effort: se o serviço estiver off/erro, registra a nota de falha e segue — nunca quebra a GMUD.
  * Legenda de cor: A/B verde · C amarelo · demais vermelho.
  */
-class GmudSourceQualityJob implements ShouldQueue
+// NotTenantAware: ERPSERV tem jobs tenant-aware por padrão (spatie); sem isto o worker lança
+// 'current tenant could not be determined' e o GMUD trava. GmudPackage nao e company-scoped.
+class GmudSourceQualityJob implements ShouldQueue, NotTenantAware
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 

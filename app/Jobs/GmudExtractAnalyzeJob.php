@@ -14,6 +14,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Spatie\Multitenancy\Jobs\NotTenantAware;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -22,7 +23,9 @@ use Illuminate\Support\Facades\Log;
  * publica: só produz a evidência (gmud_package_files) e o resultado do matching. É a fronteira que
  * garante "upload não gera commit".
  */
-class GmudExtractAnalyzeJob implements ShouldQueue
+// NotTenantAware: ERPSERV tem jobs tenant-aware por padrão (spatie); sem isto o worker lança
+// 'current tenant could not be determined' e o GMUD trava. GmudPackage nao e company-scoped.
+class GmudExtractAnalyzeJob implements ShouldQueue, NotTenantAware
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
