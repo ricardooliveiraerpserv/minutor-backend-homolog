@@ -852,7 +852,15 @@ class CustomerController extends Controller
             ->pluck('movidesk_id')->filter()->map(fn ($id) => (string) $id)->values()->all();
 
         $payload = [
-            'customer'         => ['name' => $customer->name, 'cgc' => $customer->cgc],
+            'customer'         => [
+                'name'                   => $customer->name,
+                'cgc'                    => $customer->cgc,
+                'company_name'           => $customer->company_name,
+                'code_prefix'            => $customer->code_prefix,
+                'fechamento_email'       => $customer->fechamento_email,
+                'secondary_cgcs'         => $customer->secondary_cgcs,
+                'emails_administrativos' => $customer->emails_administrativos,
+            ],
             'users'            => $users,
             'movidesk_org_ids' => $orgIds,
             'linked_at'        => '2000-01-01 00:00:00', // epoch → Conecta importa TODO o legado do Movidesk.
