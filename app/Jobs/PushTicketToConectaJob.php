@@ -9,12 +9,16 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Spatie\Multitenancy\Jobs\NotTenantAware;
 
 /**
  * Enfileira o push da cópia de UM ticket p/ a Conecta (backfill do legado ou log de entrada de novo).
  * Re-tenta até $tries; o log (conecta_ticket_migration_log) registra o resultado a cada tentativa.
  */
-class PushTicketToConectaJob implements ShouldQueue
+// NotTenantAware: roda no contexto LANDLORD (sem tenant). ERPSERV tem jobs tenant-aware por padrão
+// (spatie); sem isso o worker lança "current tenant could not be determined". Carrega o ticket com
+// withoutCompanyScope (cross-empresa), então não precisa de tenant.
+class PushTicketToConectaJob implements ShouldQueue, NotTenantAware
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
