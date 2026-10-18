@@ -366,6 +366,23 @@ class GithubAppAuth
      */
     public function treeBlobShas(string $owner, string $repo, string $ref): array
     {
+        // Cache por HEAD sha (IMUTÁVEL): evita re-baixar a árvore recursiva INTEIRA do GitHub (repos
+        // Protheus = enormes → análise GMUD lenta) a cada casagem. Correto após um publish: o commit
+        // muda o sha → a chave muda → busca a árvore fresca. getBranchHeadSha é 1 chamada barata.
+        $sha = preg_match('/^[0-9a-f]{40}$/i', $ref)
+            ? $ref
+            : ($this->getBranchHeadSha($owner, $repo, $ref) ?: $ref);
+
+        return Cache::remember(
+            'gmud_tree:' . strtolower($owner) . '/' . strtolower($repo) . ':' . $sha,
+            1800, // 30 min (árvore de um sha é imutável; TTL só limita memória do cache)
+            fn () => $this->fetchTreeBlobShas($owner, $repo, $sha)
+        );
+    }
+
+    /** Busca efetiva da árvore recursiva (sem cache). Usada por treeBlobShas (que cacheia por sha). */
+    private function fetchTreeBlobShas(string $owner, string $repo, string $ref): array
+    {
         try {
             $token = $this->installationToken($owner);
             $res = Http::withToken($token)->timeout($this->timeout)->withHeaders($this->baseHeaders())
