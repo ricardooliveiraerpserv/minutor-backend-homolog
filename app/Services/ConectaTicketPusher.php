@@ -121,6 +121,8 @@ class ConectaTicketPusher
                 'status_text'      => optional($ticket->status)->label,
                 'status_key'       => optional($ticket->status)->key,
                 'priority'         => $ticket->priority,
+                'level'            => $ticket->level,
+                'external_level'   => $ticket->external_level,
                 'channel'          => $ticket->channel,
                 'requester_name'   => $ticket->requester_name,
                 'requester_email'  => $ticket->requester_email,
