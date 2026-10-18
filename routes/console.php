@@ -97,6 +97,15 @@ Schedule::command('movidesk:sync')
   ->withoutOverlapping(30)
   ->runInBackground();
 
+// Espelho ERPSERV→Conecta: chamados/interações novos de clientes migrados. O comando se
+// auto-trava pelo flag conecta_sync_enabled (default OFF) → agendar é inócuo até habilitar.
+Schedule::command('conecta:sync')
+  ->cron('*/5 * * * *')
+  ->name('conecta-sync-outbound')
+  ->description('Espelha na Conecta chamados/interações novos de clientes migrados (ERPSERV→Conecta)')
+  ->withoutOverlapping(15)
+  ->runInBackground();
+
 // ── Syncs de TICKET/ORG do Movidesk — PAUSÁVEIS por ambiente (flag SystemSetting).
 // Em PROD ficam DESLIGADOS até o upgrade do servidor; só o sync de APONTAMENTOS (acima) roda.
 // Default LIGADO → dev/homolog inalterados. Para desligar: system_settings.movidesk_ticket_syncs_enabled = '0'.

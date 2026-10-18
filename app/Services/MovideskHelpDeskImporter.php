@@ -160,16 +160,8 @@ class MovideskHelpDeskImporter
                 if ($this->requireLinkedOrg() && !$exists && !($org && $org->hd_customer_id)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
-                // Cliente MIGRADO p/ Conecta: ticket NOVO não entra na ERPSERV — grava log de entrada
-                // (kind=novo, result=routed) e deixa a Conecta importar do Movidesk. Legado já espelhado
-                // ($exists) segue normal e continua VISÍVEL aqui.
-                if (!$exists && $org && $org->hd_customer_id) {
-                    $mc = \App\Models\Customer::select('id', 'migrated_to_conecta_at')->find($org->hd_customer_id);
-                    if ($mc && $mc->migrated_to_conecta_at) {
-                        $this->logMigratedEntry($externalId, (int) $mc->id, $full);
-                        $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
-                    }
-                }
+                // Modelo ESPELHO: cliente migrado importa normalmente aqui (cria local); o espelhamento
+                // p/ a Conecta é feito pelo sync outbound (conecta:sync). (Antes isto pulava a criação.)
                 // "A partir do vínculo apenas": ignora chamados CRIADOS antes de a org ser vinculada.
                 if ($org && $org->hd_linked_at && $this->createdBeforeLink($full, $org)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;

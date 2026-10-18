@@ -123,6 +123,11 @@ Route::prefix('v1')->group(function () {
         ]);
     })->name('api.health');
 
+    // Recepção das interações que a CONECTA empurra de volta (espelho S2). Pública (máquina-a-máquina),
+    // auth por X-Migration-Secret dentro do controller.
+    Route::post('/conecta/incoming-ticket', [\App\Http\Controllers\ConectaIncomingController::class, 'receiveTicket'])
+        ->name('conecta.incoming.ticket');
+
     // Rotas protegidas (com autenticação Sanctum)
     // 👤 CADASTRO PÚBLICO DE CANDIDATO — sem auth, com throttle pra evitar spam
     Route::get('/candidates/form-data', [CandidateController::class, 'formData'])

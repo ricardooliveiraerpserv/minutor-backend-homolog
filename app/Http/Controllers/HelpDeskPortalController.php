@@ -273,41 +273,8 @@ class HelpDeskPortalController extends Controller
         $tagIds = $this->access->informAllowed($u, 'tags') ? array_map('intval', (array) ($v['tags'] ?? [])) : [];
         unset($v['tags']);
 
-        // ── Cliente MIGRADO p/ a Conecta: o chamado NÃO entra na ERPSERV. Empurra pra Conecta
-        //    (nasce lá) + grava log de entrada (kind=novo); NÃO cria ticket local. ──
-        if ($cid !== null) {
-            $migrated = \App\Models\Customer::whereKey($cid)->whereNotNull('migrated_to_conecta_at')->first(['id', 'name', 'cgc']);
-            if ($migrated) {
-                $payload = [
-                    'customer_cgc'  => $migrated->cgc,
-                    'customer_name' => $migrated->name,
-                    'ticket' => [
-                        'source_system'   => 'erpserv_portal',
-                        'external_ref'    => 'portal-' . $migrated->id . '-' . $u->id . '-' . uniqid(),
-                        'subject'         => (string) $v['subject'],
-                        'description'     => (string) ($v['description'] ?? ''),
-                        'status_text'     => 'Novo',
-                        'priority'        => $v['priority'] ?? 'normal',
-                        'channel'         => 'portal',
-                        'requester_name'  => $u->name,
-                        'requester_email' => $u->email,
-                        'created_at'      => now()->toIso8601String(),
-                    ],
-                    'comments'    => [],
-                    'attachments' => [],
-                ];
-                $log = app(\App\Services\ConectaTicketPusher::class)->pushRaw($payload, ['customer_id' => (int) $migrated->id]);
-                if ($log->result !== 'ok') {
-                    return response()->json(['message' => 'Não foi possível abrir o chamado na Conecta. Tente novamente.'], 502);
-                }
-                return response()->json([
-                    'success'           => true,
-                    'migrated'          => true,
-                    'message'           => 'Chamado aberto na Conecta.',
-                    'conecta_ticket_id' => $log->conecta_ticket_id,
-                ], 201);
-            }
-        }
+        // Modelo ESPELHO: cliente migrado abre o chamado normalmente aqui; o espelhamento p/ a
+        // Conecta é feito pelo sync outbound (conecta:sync). (Antes isto empurrava e não criava local.)
 
         if (!empty($v['contract_id'])) {
             abort_unless(\App\Models\Contract::where('id', $v['contract_id'])->where('customer_id', $cid)->exists(), 422, 'Contrato não pertence à sua empresa.');

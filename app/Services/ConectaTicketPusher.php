@@ -104,7 +104,10 @@ class ConectaTicketPusher
     private function buildPayload(HelpDeskTicket $ticket, string $ss, string $ref): array
     {
         $customer = $ticket->customer;
-        $comments = $ticket->comments()->orderBy('created_at')->orderBy('id')->get();
+        // Anti-eco: NÃO reenvia p/ a Conecta o que veio DELA (source=conecta_sync).
+        $comments = $ticket->comments()
+            ->where(function ($q) { $q->whereNull('source')->orWhere('source', '<>', 'conecta_sync'); })
+            ->orderBy('created_at')->orderBy('id')->get();
 
         return [
             'customer_cgc'  => optional($customer)->cgc,
@@ -134,7 +137,8 @@ class ConectaTicketPusher
                 'reopened_at'       => optional($ticket->reopened_at)->toIso8601String(),
             ],
             'comments' => $comments->map(fn (HelpDeskTicketComment $c) => [
-                'external_action_id' => $c->external_action_id,
+                // Chave estável p/ dedup no re-push: Movidesk mantém o action id; nativo vira erpc-<id>.
+                'external_action_id' => $c->external_action_id ?: ('erpc-' . $c->id),
                 'body'               => (string) $c->body,
                 'visibility'         => $c->visibility,
                 'is_system'          => (bool) $c->is_system,
