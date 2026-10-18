@@ -201,10 +201,10 @@ class GithubAppAuth
      * legado dos fontes AdvPL). Retorna o SHA do commit criado.
      * @param array<string,string> $files
      */
-    public function commitFiles(string $owner, string $repo, string $branch, array $files, string $message, ?array &$blobShas = null): string
+    public function commitFiles(string $owner, string $repo, string $branch, array $files, string $message, ?array &$blobShas = null, array $deletePaths = []): string
     {
         $blobShas = [];
-        if (empty($files)) {
+        if (empty($files) && empty($deletePaths)) {
             throw SourceIntegrationException::upstream(400);
         }
         $token = $this->installationToken($owner);
@@ -238,6 +238,15 @@ class GithubAppAuth
             $blobSha = (string) $blobRes->json('sha');   // git blob SHA autoritativo do GitHub
             $blobShas[$norm] = $blobSha;                  // out: path (normalizado) → blob SHA (Bloco 3)
             $tree[] = ['path' => $norm, 'mode' => '100644', 'type' => 'blob', 'sha' => $blobSha];
+        }
+
+        // 3b) DELEÇÕES (mover = add no novo + delete no antigo): sha=null remove o path da base_tree.
+        foreach (array_unique($deletePaths) as $del) {
+            $norm = ltrim(str_replace('\\', '/', (string) $del), '/');
+            if ($norm === '' || isset($files[$norm]) || array_key_exists($norm, $blobShas)) {
+                continue; // não deletar um path que também está sendo (re)escrito
+            }
+            $tree[] = ['path' => $norm, 'mode' => '100644', 'type' => 'blob', 'sha' => null];
         }
 
         // 4) nova tree (sobre a base → preserva o resto do repo)

@@ -69,11 +69,12 @@ class GmudPublishService
         $destFolder = trim(str_replace('\\', '/', $destFolder), '/');
 
         // 1) Monta o PLANO por arquivo (sem tocar no Git ainda).
-        $plan = [];         // file_id => ['action','dest','path_in_zip']
+        $plan = [];         // file_id => ['action','dest','old','path_in_zip']
         $destSeen = [];     // dest => file_id (anti-colisão)
+        $deletePaths = [];  // paths antigos a REMOVER no mesmo commit (MOVE)
         $skipped = 0;
         foreach ($package->files()->where('is_source', true)->get() as $f) {
-            [$action, $dest] = $this->resolveDestination($f, $destFolder, $repo, $resolutions, $folders);
+            [$action, $dest, $oldPath] = $this->resolveDestination($f, $destFolder, $repo, $resolutions, $folders);
             if ($action === GmudPackageFile::ACTION_SKIP) {
                 $skipped++;
                 $f->update(['action' => GmudPackageFile::ACTION_SKIP, 'dest_git_path' => null]);
@@ -85,7 +86,10 @@ class GmudPublishService
                 throw new GmudPublishException("Colisão de destino: dois fontes iriam para \"{$dest}\". Ajuste a pasta.");
             }
             $destSeen[$dest] = $f->id;
-            $plan[$f->id] = ['action' => $action, 'dest' => $dest, 'path_in_zip' => $f->path_in_zip];
+            $plan[$f->id] = ['action' => $action, 'dest' => $dest, 'old' => $oldPath, 'path_in_zip' => $f->path_in_zip];
+            if ($action === GmudPackageFile::ACTION_MOVE && $oldPath) {
+                $deletePaths[] = $oldPath;
+            }
         }
 
         if (empty($plan)) {
@@ -107,7 +111,7 @@ class GmudPublishService
         $package->update(['status' => GmudPackage::STATUS_PUBLISHING, 'source_repo_id' => $repo->id, 'error' => null]);
         try {
             $blobShas = [];
-            $commitSha = $this->auth->commitFiles($owner, $repository, $branch, $filesMap, $this->commitMessage($package, count($plan), $actor), $blobShas);
+            $commitSha = $this->auth->commitFiles($owner, $repository, $branch, $filesMap, $this->commitMessage($package, count($plan), $actor), $blobShas, $deletePaths);
         } catch (\Throwable $e) {
             $package->update(['status' => GmudPackage::STATUS_PUBLISH_FAILED, 'error' => mb_substr($e->getMessage(), 0, 300)]);
             $this->audit($package, 'gmud_package_publish_failed', ['error' => mb_substr($e->getMessage(), 0, 120), 'committed' => false]);
@@ -120,6 +124,7 @@ class GmudPublishService
                 GmudPackageFile::where('id', $fid)->update([
                     'action'             => $p['action'],
                     'dest_git_path'      => $p['dest'],
+                    'old_git_path'       => $p['old'] ?? null,
                     'published_blob_sha' => $blobShas[$p['dest']] ?? null,
                 ]);
             }
@@ -151,15 +156,31 @@ class GmudPublishService
         ];
     }
 
-    /** Destino + ação de um arquivo, conforme a situação do matching. $folders = pasta por-arquivo (NOVOS). */
+    /**
+     * Destino + ação + path a DELETAR. $folders = pasta por-arquivo (NOVOS e RELOCAÇÃO).
+     * Existente/idêntico com pasta escolhida diferente da atual → MOVE (add no novo + delete do antigo).
+     * @return array{0:string,1:?string,2:?string}  [action, dest, deletePath]
+     */
     private function resolveDestination(GmudPackageFile $f, string $destFolder, ClientSourceRepo $repo, array $resolutions, array $folders = []): array
     {
         switch ($f->match_status) {
             case GmudPackageFile::MATCH_IDENTICAL:
-                return [GmudPackageFile::ACTION_SKIP, null];
+                if (array_key_exists($f->id, $folders)) {
+                    $dest = $this->placeDest($f, (string) $folders[$f->id], $repo);
+                    if ($dest !== $f->matched_git_path) {
+                        return [GmudPackageFile::ACTION_MOVE, $dest, $f->matched_git_path];
+                    }
+                }
+                return [GmudPackageFile::ACTION_SKIP, null, null];
 
             case GmudPackageFile::MATCH_EXISTING:
-                return [GmudPackageFile::ACTION_MODIFY, $f->matched_git_path];
+                if (array_key_exists($f->id, $folders)) {
+                    $dest = $this->placeDest($f, (string) $folders[$f->id], $repo);
+                    if ($dest !== $f->matched_git_path) {
+                        return [GmudPackageFile::ACTION_MOVE, $dest, $f->matched_git_path];
+                    }
+                }
+                return [GmudPackageFile::ACTION_MODIFY, $f->matched_git_path, null];
 
             case GmudPackageFile::MATCH_AMBIGUOUS:
                 $chosen = $resolutions[$f->id] ?? null;
@@ -167,20 +188,25 @@ class GmudPublishService
                 if (! $chosen || ! in_array($chosen, $candPaths, true)) {
                     throw new GmudPublishException("Arquivo ambíguo não resolvido: \"{$f->filename}\". Escolha a ocorrência de destino.");
                 }
-                return [GmudPackageFile::ACTION_MODIFY, $chosen];
+                return [GmudPackageFile::ACTION_MODIFY, $chosen, null];
 
-            // new ou null (não encontrado / sem repo na análise): trata como NOVO → pasta específica
-            // do arquivo (se o consultor vinculou uma), senão a pasta global escolhida.
+            // new ou null → NOVO: pasta específica do arquivo (se vinculada), senão a pasta global.
             default:
-                $folder = array_key_exists($f->id, $folders) ? trim(str_replace('\\', '/', (string) $folders[$f->id]), '/') : $destFolder;
-                $dest = $folder !== '' ? "{$folder}/{$f->filename}" : $f->filename;
-                // Se o repo tem base_path e a pasta escolhida não o inclui, prefixa (mantém dentro da raiz autorizada).
-                $base = $repo->normalizedBasePath();
-                if ($base !== '' && ! str_starts_with($dest . '/', $base . '/')) {
-                    $dest = "{$base}/{$dest}";
-                }
-                return [GmudPackageFile::ACTION_ADD, $dest];
+                $folder = array_key_exists($f->id, $folders) ? (string) $folders[$f->id] : $destFolder;
+                return [GmudPackageFile::ACTION_ADD, $this->placeDest($f, $folder, $repo), null];
         }
+    }
+
+    /** Monta o path de destino de um arquivo numa pasta (com base_path do repo), como no fluxo de NOVOS. */
+    private function placeDest(GmudPackageFile $f, string $folder, ClientSourceRepo $repo): string
+    {
+        $folder = trim(str_replace('\\', '/', $folder), '/');
+        $dest = $folder !== '' ? "{$folder}/{$f->filename}" : $f->filename;
+        $base = $repo->normalizedBasePath();
+        if ($base !== '' && ! str_starts_with($dest . '/', $base . '/')) {
+            $dest = "{$base}/{$dest}";
+        }
+        return $dest;
     }
 
     /** Diretórios existentes do repo (p/ o seletor de pasta) + base_path. Git ao vivo (treeBlobShas). */
