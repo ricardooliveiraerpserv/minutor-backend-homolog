@@ -26,7 +26,9 @@ class PushTicketToConectaJob implements ShouldQueue
 
     public function handle(ConectaTicketPusher $pusher): void
     {
-        $ticket = HelpDeskTicket::find($this->ticketId);
+        // withoutCompanyScope: no worker pode haver contexto de empresa (vazado de outro job) ≠ da
+        // empresa do ticket → find() com CompanyScope retornaria null e o job sairia sem enviar nada.
+        $ticket = HelpDeskTicket::withoutCompanyScope()->find($this->ticketId);
         if (! $ticket) {
             return; // ticket sumiu (ex.: excluído) → nada a enviar
         }
