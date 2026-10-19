@@ -47,6 +47,10 @@ class ProsightRpoConfigController extends Controller
             'rpo_api_password_set'   => (bool) ($cfg?->rpo_api_password),   // nunca a senha em si
             'rpo_exclusion_patterns' => $cfg?->rpo_exclusion_patterns ?? '',
             'allow_insecure_tls'     => (bool) ($cfg?->allow_insecure_tls),
+            // Licenciamento (REST AdvPL) — mesmo ambiente.
+            'licensing_api_url'          => $cfg?->licensing_api_url,
+            'licensing_api_user'         => $cfg?->licensing_api_user,
+            'licensing_api_password_set' => (bool) ($cfg?->licensing_api_password),
         ]]);
     }
 
@@ -63,6 +67,9 @@ class ProsightRpoConfigController extends Controller
             'rpo_api_password'       => 'nullable|string|max:200',   // vazio = manter atual
             'rpo_exclusion_patterns' => 'nullable|string|max:1000',
             'allow_insecure_tls'     => 'nullable|boolean',
+            'licensing_api_url'      => 'nullable|string|max:500|url',
+            'licensing_api_user'     => 'nullable|string|max:120',
+            'licensing_api_password' => 'nullable|string|max:200',   // vazio = manter atual
         ]);
 
         $cfg = ProsightRpoConfig::firstOrNew(['environment_id' => $env->id]);
@@ -70,14 +77,23 @@ class ProsightRpoConfigController extends Controller
         $cfg->rpo_api_user           = $data['rpo_api_user'] ?? null;
         $cfg->rpo_exclusion_patterns = $data['rpo_exclusion_patterns'] ?? '';
         $cfg->allow_insecure_tls     = (bool) ($data['allow_insecure_tls'] ?? false);
-        // Senha: só sobrescreve se veio preenchida (branco = manter a atual).
+        $cfg->licensing_api_url      = $data['licensing_api_url'] ?? null;
+        $cfg->licensing_api_user     = $data['licensing_api_user'] ?? null;
+        // Senhas: só sobrescrevem se vieram preenchidas (branco = manter a atual).
         if (! empty($data['rpo_api_password'])) {
             $cfg->rpo_api_password = $data['rpo_api_password'];
+        }
+        if (! empty($data['licensing_api_password'])) {
+            $cfg->licensing_api_password = $data['licensing_api_password'];
         }
         $cfg->updated_by = $request->user()?->id;
         $cfg->save();
 
-        return response()->json(['data' => ['saved' => true, 'rpo_api_password_set' => (bool) $cfg->rpo_api_password]]);
+        return response()->json(['data' => [
+            'saved' => true,
+            'rpo_api_password_set' => (bool) $cfg->rpo_api_password,
+            'licensing_api_password_set' => (bool) $cfg->licensing_api_password,
+        ]]);
     }
 
     /**
