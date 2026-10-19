@@ -3616,7 +3616,12 @@ class TimesheetController extends Controller
         $plannedMinutes = (float) $alloc->planned_hours * 60;
         $afterMinutes   = $consumed + $minutesToAdd;
 
-        if ($afterMinutes > $plannedMinutes + 0.001) {
+        // Exceção por ATIVIDADE: o coordenador pode liberar horas negativas NESTA atividade
+        // (stage_deliveries.allow_negative_hours) → consultor aponta além do planejado.
+        // O teto do PROJETO continua valendo (validateHoursBalance + allow_negative_balance do admin).
+        $allowNegativeActivity = (bool) \App\Models\StageDelivery::whereKey($stageDeliveryId)->value('allow_negative_hours');
+
+        if ($afterMinutes > $plannedMinutes + 0.001 && ! $allowNegativeActivity) {
             if ($plannedMinutes == 0.0) {
                 $detail = 'Sem horas liberadas nesta atividade — solicite à coordenadora liberar horas.';
             } else {

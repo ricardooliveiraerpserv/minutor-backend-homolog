@@ -52,6 +52,7 @@ class StageDelivery extends Model
         'description',
         'responsible_user_id',
         'hours_planned',
+        'allow_negative_hours',
         'priority',
         'status',
         'due_date',
@@ -77,6 +78,7 @@ class StageDelivery extends Model
 
     protected $casts = [
         'hours_planned'    => 'decimal:2',
+        'allow_negative_hours' => 'boolean',
         'order_index'      => 'integer',
         'due_date'         => 'date:Y-m-d',
         'completed_at'     => 'datetime',

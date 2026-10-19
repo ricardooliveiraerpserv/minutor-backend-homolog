@@ -147,7 +147,7 @@ class ProjectStageController extends Controller
 
         $stages = $project->stages()
             ->with(['deliveries' => function ($q) use ($filterUserId) {
-                $q->select('id', 'stage_id', 'title', 'status', 'order_index')
+                $q->select('id', 'stage_id', 'title', 'status', 'order_index', 'hours_planned', 'allow_negative_hours')
                   ->orderBy('order_index');
                 if ($filterUserId) {
                     $q->where(function ($w) use ($filterUserId) {
@@ -159,14 +159,43 @@ class ProjectStageController extends Controller
             ->orderBy('order_index')
             ->get(['id', 'name', 'order_index', 'project_id']);
 
+        // Horas por atividade PARA O CONSULTOR (quando filtrado): disponível = alocado − apontado.
+        // Alimenta o campo Atividade do apontamento (saldo visível + aviso de 0h liberada).
+        $deliveryIds = [];
+        foreach ($stages as $stage) {
+            foreach ($stage->deliveries as $d) { $deliveryIds[] = $d->id; }
+        }
+        $allocByDelivery = [];
+        $consumedByDelivery = [];
+        if ($filterUserId && ! empty($deliveryIds)) {
+            $allocByDelivery = \App\Models\StageAllocation::whereIn('delivery_id', $deliveryIds)
+                ->where('user_id', $filterUserId)
+                ->pluck('planned_hours', 'delivery_id')->all();
+            $consumedByDelivery = \App\Models\Timesheet::whereIn('stage_delivery_id', $deliveryIds)
+                ->where('user_id', $filterUserId)
+                ->whereIn('status', [
+                    \App\Models\Timesheet::STATUS_PENDING,
+                    \App\Models\Timesheet::STATUS_APPROVED,
+                    \App\Models\Timesheet::STATUS_RELEASED,
+                ])
+                ->selectRaw('stage_delivery_id, COALESCE(SUM(effort_minutes),0) as m')
+                ->groupBy('stage_delivery_id')->pluck('m', 'stage_delivery_id')->all();
+        }
+
         $items = [];
         foreach ($stages as $stage) {
             foreach ($stage->deliveries as $d) {
+                $planned  = $filterUserId ? (float) ($allocByDelivery[$d->id] ?? 0) : (float) $d->hours_planned;
+                $consumed = (float) ($consumedByDelivery[$d->id] ?? 0) / 60;
                 $items[] = [
-                    'id'         => $d->id,
-                    'title'      => $d->title,
-                    'stage_name' => $stage->name,
-                    'status'     => $d->status,
+                    'id'                   => $d->id,
+                    'title'                => $d->title,
+                    'stage_name'           => $stage->name,
+                    'status'               => $d->status,
+                    'planned_hours'        => round($planned, 2),
+                    'consumed_hours'       => round($consumed, 2),
+                    'available_hours'      => round($planned - $consumed, 2),
+                    'allow_negative_hours' => (bool) $d->allow_negative_hours,
                 ];
             }
         }

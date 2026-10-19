@@ -143,6 +143,7 @@ class StageDeliveryController extends Controller
             'description'            => 'nullable|string',
             'responsible_user_id'    => 'nullable|exists:users,id',
             'hours_planned'          => 'sometimes|numeric|min:0',
+            'allow_negative_hours'   => 'sometimes|boolean',
             'priority'               => ['sometimes', Rule::in(StageDelivery::PRIORITIES)],
             'status'                 => ['sometimes', Rule::in(StageDelivery::STATUSES)],
             'due_date'               => 'nullable|date',
