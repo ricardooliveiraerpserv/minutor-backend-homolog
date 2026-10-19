@@ -250,8 +250,10 @@ class HelpDeskTicketController extends Controller
                     ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $s))
                     ->orWhereHas('assignee', fn ($a) => $a->where('name', 'ilike', $s))
                     ->orWhereHas('contact', fn ($c) => $c->where('name', 'ilike', $s))
-                    ->orWhereHas('requester', fn ($r) => $r->where('name', 'ilike', $s))
-                    ->orWhereHas('comments', fn ($cm) => $cm->whereNull('deleted_at')->where('body', 'ilike', $s)));
+                    ->orWhereHas('requester', fn ($r) => $r->where('name', 'ilike', $s)));
+                // NÃO varre o corpo de comentários: palavras comuns (ex.: "teste") apareciam em
+                // algum comentário de quase todo chamado → a busca "casava com tudo" e parecia não
+                // filtrar. A busca rápida cobre assunto, descrição, cliente e pessoas.
             })
             // Filtro DEDICADO por número do chamado (campo separado da busca geral).
             ->when($request->filled('ticket'), fn ($q) => $q->where('ticket_number', 'ilike', '%' . $request->ticket . '%'))
