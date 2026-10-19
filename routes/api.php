@@ -1115,6 +1115,14 @@ Route::prefix('v1')->group(function () {
             Route::get('/projects/{project}/schedule', [ProjectController::class, 'schedule'])->name('projects.schedule');
             Route::post('/projects/{project}/cronograma/recalc-preview', [ProjectController::class, 'recalcPreview'])->name('projects.cronograma.recalc-preview');
 
+            // Indicadores/EVM + carga de consultores (aba Indicadores do Cronograma)
+            Route::get('/consultant-allocation', [\App\Http\Controllers\ConsultantWorkloadController::class, 'allocation'])->name('consultant.allocation');
+            Route::get('/weekly-timesheets', [\App\Http\Controllers\ConsultantWorkloadController::class, 'weekly'])->name('consultant.weekly');
+            Route::get('/projects-portfolio', [\App\Http\Controllers\ProjectEvmController::class, 'portfolio'])->name('projects.portfolio');
+            Route::get('/projects-portfolio/curve', [\App\Http\Controllers\ProjectEvmController::class, 'portfolioCurve'])->name('projects.portfolio.curve');
+            Route::get('/projects/{project}/evm', [\App\Http\Controllers\ProjectEvmController::class, 'evm'])->name('projects.evm');
+            Route::get('/projects/{project}/operational-metrics', [\App\Http\Controllers\ProjectEvmController::class, 'operational'])->name('projects.operational-metrics');
+
             // Modelos de cronograma (salvar/aplicar) + copiar de outro projeto
             Route::get('/cronograma-templates', [CronogramaTemplateController::class, 'index'])->name('cronograma-templates.index');
             Route::post('/cronograma-templates', [CronogramaTemplateController::class, 'storeFromProject'])->name('cronograma-templates.store');
@@ -1144,6 +1152,10 @@ Route::prefix('v1')->group(function () {
 
         // Cronograma: rotas internas de ESCRITA (coordenador / admin; cliente barrado).
         Route::middleware(['permission.or.admin:projects.update', 'block.cliente'])->group(function () {
+            // EVM: congelar/descongelar a linha de base
+            Route::post('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'freeze'])->name('projects.baseline.freeze');
+            Route::post('/projects-portfolio/freeze-missing', [\App\Http\Controllers\ProjectEvmController::class, 'freezeMissing'])->name('projects.portfolio.freeze-missing');
+            Route::delete('/projects/{project}/baseline', [\App\Http\Controllers\ProjectEvmController::class, 'unfreeze'])->name('projects.baseline.unfreeze');
             Route::post('/projects/{project}/stages', [ProjectStageController::class, 'store'])->name('stages.store');
             Route::patch('/stages/{stage}', [ProjectStageController::class, 'update'])->name('stages.update');
             Route::delete('/stages/{stage}', [ProjectStageController::class, 'destroy'])->name('stages.destroy');
