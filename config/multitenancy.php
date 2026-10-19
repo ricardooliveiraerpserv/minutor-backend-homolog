@@ -54,8 +54,14 @@ return [
      * If there is a current tenant when dispatching a job, the id of the current tenant
      * will be automatically set on the job. When the job is executed, the set
      * tenant on the job will be made current.
+     *
+     * ERPSERV roda como LANDLORD puro (tabela `tenants` vazia — o tenant conecta migrou p/ VPS próprio).
+     * Com `true`, TODO job de fila vira tenant-aware e falha com "The current tenant could not be
+     * determined" (SendHelpDeskEmailJob, ProcessHelpDeskTriggersJob, notificações do kanban…) → nenhum
+     * e-mail saía. Como não há tenant, deixamos `false`: os jobs rodam no contexto landlord normalmente.
+     * (Na Conecta — que TEM tenant ativo — este flag deve permanecer `true`.)
      */
-    'queues_are_tenant_aware_by_default' => true,
+    'queues_are_tenant_aware_by_default' => false,
 
     /*
      * The connection name to reach the tenant database.
