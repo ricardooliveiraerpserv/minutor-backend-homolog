@@ -68,6 +68,13 @@ return Application::configure(basePath: dirname(__DIR__))
                     return response()->json(['message' => 'This action is unauthorized.'], 403);
                 }
 
+                // Preserva o STATUS real de HttpExceptions (abort 404/403/409/429/...) em vez de
+                // mascarar tudo como 422 — senão o FE não distingue "não encontrado"/"sem permissão"
+                // de erro interno (ex.: cadastrar ambiente no Prosight sem Cofre → 404 vira needVault).
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                    return response()->json(['message' => $e->getMessage() ?: 'Erro ao processar a requisição'], $e->getStatusCode());
+                }
+
                 $payload = config('app.debug')
                     ? [
                         'message' => $e->getMessage() ?: get_class($e),
