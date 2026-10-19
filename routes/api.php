@@ -2208,6 +2208,15 @@ Route::prefix('v1')->group(function () {
             Route::put('/system-settings', [SystemSettingController::class, 'update'])->name('system-settings.update');
         });
 
+        // 🤖 CONFIGURADOR → IA (Credenciais) — chave cadastrada pela tela, usada por todo o sistema.
+        Route::middleware('permission.or.admin:system_settings.view')->group(function () {
+            Route::get('/ai-credentials', [\App\Http\Controllers\AiCredentialController::class, 'index'])->name('ai-credentials.index');
+        });
+        Route::middleware('permission.or.admin:system_settings.update')->group(function () {
+            Route::put('/ai-credentials', [\App\Http\Controllers\AiCredentialController::class, 'update'])->name('ai-credentials.update');
+            Route::post('/ai-credentials/{slug}/test', [\App\Http\Controllers\AiCredentialController::class, 'test'])->name('ai-credentials.test');
+        });
+
         // 🔗 MOVIDESK ADMIN - Sync manual e status da integração (somente admins)
         Route::middleware('permission.or.admin:system_settings.view')->group(function () {
             Route::get('/movidesk/status', [\App\Http\Controllers\MovideskAdminController::class, 'status'])->name('movidesk.status');
