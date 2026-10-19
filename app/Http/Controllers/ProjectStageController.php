@@ -165,12 +165,8 @@ class ProjectStageController extends Controller
         foreach ($stages as $stage) {
             foreach ($stage->deliveries as $d) { $deliveryIds[] = $d->id; }
         }
-        $allocByDelivery = [];
         $consumedByDelivery = [];
         if ($filterUserId && ! empty($deliveryIds)) {
-            $allocByDelivery = \App\Models\StageAllocation::whereIn('delivery_id', $deliveryIds)
-                ->where('user_id', $filterUserId)
-                ->pluck('planned_hours', 'delivery_id')->all();
             $consumedByDelivery = \App\Models\Timesheet::whereIn('stage_delivery_id', $deliveryIds)
                 ->where('user_id', $filterUserId)
                 ->whereIn('status', [
@@ -185,11 +181,9 @@ class ProjectStageController extends Controller
         $items = [];
         foreach ($stages as $stage) {
             foreach ($stage->deliveries as $d) {
-                // Budget do consultor: alocação se houver; senão as horas planejadas da atividade
-                // (responsável sem stage_allocation — padrão aporte-no-card dos coordenadores).
-                $planned  = $filterUserId
-                    ? (isset($allocByDelivery[$d->id]) ? (float) $allocByDelivery[$d->id] : (float) $d->hours_planned)
-                    : (float) $d->hours_planned;
+                // Budget = stage_deliveries.hours_planned (o que o aporte mantém e o card mostra).
+                // A stage_allocation.planned_hours NÃO é atualizada pelo aporte → não usar como saldo.
+                $planned  = (float) $d->hours_planned;
                 $consumed = (float) ($consumedByDelivery[$d->id] ?? 0) / 60;
                 $items[] = [
                     'id'                   => $d->id,

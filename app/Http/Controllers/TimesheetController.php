@@ -3618,9 +3618,10 @@ class TimesheetController extends Controller
             })
             ->sum('effort_minutes');
 
-        // Budget do consultor = horas da alocação (se houver) senão as horas planejadas da
-        // atividade (quando é o responsável — aporte feito no card via hours_planned).
-        $plannedHours   = $alloc ? (float) $alloc->planned_hours : (float) ($delivery->hours_planned ?? 0);
+        // Budget da atividade = stage_deliveries.hours_planned (o "Disp" do card e o que o APORTE
+        // mantém — o aporte só faz delivery->increment('hours_planned'), nunca toca em
+        // stage_allocations.planned_hours, que fica stale/0). 1 consultor por atividade.
+        $plannedHours   = (float) ($delivery->hours_planned ?? 0);
         $plannedMinutes = $plannedHours * 60;
         $afterMinutes   = $consumed + $minutesToAdd;
 
