@@ -3586,11 +3586,16 @@ class TimesheetController extends Controller
             ], 422));
         }
 
-        // O consultor precisa estar alocado na atividade.
+        // "Alocado" na atividade = tem stage_allocation OU é o RESPONSÁVEL da atividade.
+        // Os coordenadores usam responsible_user_id + hours_planned (aporte no card) SEM criar
+        // stage_allocations — então o responsável conta como alocado, com budget = hours_planned.
+        $delivery = \App\Models\StageDelivery::select('id', 'responsible_user_id', 'hours_planned', 'allow_negative_hours')
+            ->whereKey($stageDeliveryId)->first();
         $alloc = \App\Models\StageAllocation::where('delivery_id', $stageDeliveryId)
             ->where('user_id', $timesheetUserId)
             ->first();
-        if (! $alloc) {
+        $isResponsible = $delivery && (int) $delivery->responsible_user_id === (int) $timesheetUserId;
+        if (! $alloc && ! $isResponsible) {
             abort(response()->json([
                 'code'          => 'CRONOGRAMA_NOT_ALLOCATED',
                 'type'          => 'error',
@@ -3613,13 +3618,16 @@ class TimesheetController extends Controller
             })
             ->sum('effort_minutes');
 
-        $plannedMinutes = (float) $alloc->planned_hours * 60;
+        // Budget do consultor = horas da alocação (se houver) senão as horas planejadas da
+        // atividade (quando é o responsável — aporte feito no card via hours_planned).
+        $plannedHours   = $alloc ? (float) $alloc->planned_hours : (float) ($delivery->hours_planned ?? 0);
+        $plannedMinutes = $plannedHours * 60;
         $afterMinutes   = $consumed + $minutesToAdd;
 
         // Exceção por ATIVIDADE: o coordenador pode liberar horas negativas NESTA atividade
         // (stage_deliveries.allow_negative_hours) → consultor aponta além do planejado.
         // O teto do PROJETO continua valendo (validateHoursBalance + allow_negative_balance do admin).
-        $allowNegativeActivity = (bool) \App\Models\StageDelivery::whereKey($stageDeliveryId)->value('allow_negative_hours');
+        $allowNegativeActivity = (bool) ($delivery->allow_negative_hours ?? false);
 
         if ($afterMinutes > $plannedMinutes + 0.001 && ! $allowNegativeActivity) {
             if ($plannedMinutes == 0.0) {

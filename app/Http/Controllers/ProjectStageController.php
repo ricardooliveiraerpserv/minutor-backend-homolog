@@ -185,7 +185,11 @@ class ProjectStageController extends Controller
         $items = [];
         foreach ($stages as $stage) {
             foreach ($stage->deliveries as $d) {
-                $planned  = $filterUserId ? (float) ($allocByDelivery[$d->id] ?? 0) : (float) $d->hours_planned;
+                // Budget do consultor: alocação se houver; senão as horas planejadas da atividade
+                // (responsável sem stage_allocation — padrão aporte-no-card dos coordenadores).
+                $planned  = $filterUserId
+                    ? (isset($allocByDelivery[$d->id]) ? (float) $allocByDelivery[$d->id] : (float) $d->hours_planned)
+                    : (float) $d->hours_planned;
                 $consumed = (float) ($consumedByDelivery[$d->id] ?? 0) / 60;
                 $items[] = [
                     'id'                   => $d->id,
