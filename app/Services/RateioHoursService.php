@@ -55,8 +55,10 @@ class RateioHoursService
                 'ticket'         => $parent->ticket,
             ]);
             $child->customer_id                = $target->customer_id;
-            // Os rateios (filhos) PAGAM o consultor + consumo do destino (is_billable_only=false).
-            $child->is_billable_only           = false;
+            // Os rateios (filhos) são CONSUMO do destino, NÃO pagam o consultor
+            // (is_billable_only=true): contam no saldo/faturamento do cliente de destino e na
+            // tela de Rateio, mas NÃO no pagamento/banco do consultor e somem das listas dele.
+            $child->is_billable_only           = true;
             $child->status                     = $parent->status;
             $child->origin                     = $parent->origin;
             $child->rateio_source_timesheet_id = $parent->id;
@@ -65,13 +67,13 @@ class RateioHoursService
             $created++;
         }
 
-        // O apontamento-PAI no servidor vira só a ORIGEM quando DISTRIBUIU: não paga (evita
-        // dobra, pois os filhos já pagam) e some da lista de Apontamentos (vive na tela de
-        // Rateio). Sem distribuição (sem período) → o pai continua pagando normalmente.
-        $shouldBeSource = $created > 0;
-        if ((bool) $parent->is_billable_only !== $shouldBeSource) {
-            $parent->is_billable_only = $shouldBeSource;
-            Timesheet::where('id', $parent->id)->update(['is_billable_only' => $shouldBeSource]);
+        // O apontamento-PAI no servidor é o registro REAL do consultor: paga SEMPRE o
+        // consultor e fica VISÍVEL para ele e o coordenador (is_billable_only=false).
+        // Quem distribui/consome é o filho; o rateio só influencia o saldo do destino e a
+        // tela de Rateio. Garante false mesmo que um re-sync encontre um pai legado=true.
+        if ((bool) $parent->is_billable_only !== false) {
+            $parent->is_billable_only = false;
+            Timesheet::where('id', $parent->id)->update(['is_billable_only' => false]);
         }
     }
 
