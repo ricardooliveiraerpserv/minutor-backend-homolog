@@ -94,7 +94,9 @@ class AuthController extends Controller
 
         $user = User::whereRaw('LOWER(email) = ?', [strtolower(trim($request->email))])->first();
 
-        if (!$user || !$user->verifyPassword($request->password)) {
+        // trim: alinhado com o FE e com updatePassword() — espaço/quebra invisível
+        // (senha colada do e-mail) não pode causar "Credenciais inválidas".
+        if (!$user || !$user->verifyPassword(trim((string) $request->password))) {
             return response()->json(['message' => 'Credenciais inválidas'], 401);
         }
 

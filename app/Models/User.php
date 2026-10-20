@@ -213,8 +213,11 @@ class User extends Authenticatable
      */
     public function updatePassword(string $newPassword): void
     {
+        // TRIM obrigatório: o login compara a senha com .trim() (espaço/quebra invisível
+        // colada do e-mail). Se salvar SEM trim e o login comparar COM trim, nunca casa
+        // → "Credenciais inválidas" recorrente. Salvar sempre a versão trimada.
         \DB::table('users')->where('id', $this->id)->update([
-            'password'   => Hash::make($newPassword),
+            'password'   => Hash::make(trim($newPassword)),
             'updated_at' => now(),
         ]);
         $this->refresh();
@@ -614,7 +617,7 @@ class User extends Authenticatable
     public function setTemporaryPassword(string $password, int $hoursToExpire = 24): void
     {
         \DB::table('users')->where('id', $this->id)->update([
-            'password'                      => Hash::make($password),
+            'password'                      => Hash::make(trim($password)),
             'has_temporary_password'        => true,
             'temporary_password_expires_at' => now()->addHours($hoursToExpire),
             'updated_at'                    => now(),

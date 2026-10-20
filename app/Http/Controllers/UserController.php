@@ -1028,7 +1028,7 @@ class UserController extends Controller
 
             // Hash da senha se fornecida
             if (isset($updateData['password'])) {
-                $updateData['password'] = Hash::make($updateData['password']);
+                $updateData['password'] = Hash::make(trim($updateData['password']));
             }
 
             // Remover campos desnecessários
@@ -1680,7 +1680,7 @@ class UserController extends Controller
                     'A senha atual fornecida não confere'
                 );
             }
-            $updateData['password'] = Hash::make($updateData['password']);
+            $updateData['password'] = Hash::make(trim($updateData['password']));
         }
 
         // Remover campos desnecessários
