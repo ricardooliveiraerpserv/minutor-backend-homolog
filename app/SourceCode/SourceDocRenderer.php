@@ -74,6 +74,8 @@ class SourceDocRenderer
             'd' => $d, 's' => is_array($s) ? $s : [], 'id' => $id, 'v' => $v, 'diff' => $diff,
             'findings' => $findings, 'status' => $status, 'versions' => $versions,
             'semPending' => $semPending, 'customer' => $customer,
+            'change_diff' => $this->g($doc, 'change_diff', null),
+            'change_diff_meta' => (array) $this->g($doc, 'change_diff_meta', []),
         ];
     }
 
