@@ -2463,11 +2463,14 @@ class TimesheetController extends Controller
             return response()->json(['success' => false, 'message' => 'Apontamento não está aguardando liberação.'], 422);
         }
 
-        $isAdmin = $user->isAdmin() || $user->isAdministrativo();
-        $isCoord = $timesheet->project
-            && $timesheet->project->coordinators->contains('id', $user->id);
-        if (!$isAdmin && !$isCoord) {
-            return response()->json(['success' => false, 'message' => 'Apenas admin ou o coordenador do projeto pode liberar as horas do consultor.'], 403);
+        // A rota já restringe a quem tem `hours.approve` (admin/administrativo/coordenador) e a tela de
+        // Atrasos é GLOBAL (lista TODOS os atrasos, sem escopo por projeto). Alinha com `aprovarAtraso`
+        // (que confia no middleware): aceita o coordenador do projeto OU qualquer coordenador/administrativo
+        // — senão projetos SEM coordenador (ou de outro coord) travavam com "Erro ao liberar".
+        $canRelease = $user->isAdmin() || $user->isAdministrativo() || $user->isCoordenador()
+            || ($timesheet->project && $timesheet->project->coordinators->contains('id', $user->id));
+        if (!$canRelease) {
+            return response()->json(['success' => false, 'message' => 'Seu perfil não permite liberar as horas do consultor.'], 403);
         }
 
         if (!$timesheet->consultant_released) {
