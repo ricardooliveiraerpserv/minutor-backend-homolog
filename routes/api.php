@@ -426,6 +426,7 @@ Route::prefix('v1')->group(function () {
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
             Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
+            Route::delete('/clients/{customerId}',         [\App\Http\Controllers\EnvironmentController::class, 'destroyClient'])->name('environments.clients.destroy');
             // Escrow corporativo: backfill de pasta existente + leitura p/ recuperação
             Route::post('/clients/{customerId}/escrow',    [\App\Http\Controllers\EnvironmentController::class, 'setEscrow'])->name('environments.escrow.set');
             Route::get('/escrow-recovery',                 [\App\Http\Controllers\EnvironmentController::class, 'escrowRecovery'])->name('environments.escrow.recovery');

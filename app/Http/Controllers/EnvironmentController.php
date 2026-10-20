@@ -106,6 +106,41 @@ class EnvironmentController extends Controller
      * Cria o cofre de ambientes de um cliente: vault type='client' + member owner +
      * mapeamento. O client já envia a vaultKey cifrada com a PRÓPRIA chave pública.
      */
+    /**
+     * Exclui a pasta (cofre) de um cliente inteira: ambientes (soft-delete, recuperável) +
+     * estrutura do cofre (vault, membros, mapping). Só Admin do Cofre ou membro-admin da pasta.
+     * ATENÇÃO: os ambientes são compartilhados com o Prosight (mesma tabela) — somem de lá também.
+     */
+    public function destroyClient(Request $request, int $customerId): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        $cv = EnvClientVault::where('customer_id', $customerId)->first();
+        abort_if(! $cv, 404);
+
+        // Admin do Cofre (type=admin OU environments.admin) pode excluir qualquer pasta;
+        // caso contrário exige ser membro-admin da pasta.
+        $isCofreAdmin = $user->type === 'admin' || $user->hasAccess('environments.admin');
+        if (! $isCofreAdmin) {
+            $this->membershipByVault($request, $cv->vault_id, 'admin');
+        }
+
+        $customerName = Customer::find($customerId)?->name;
+        $vaultId = $cv->vault_id;
+
+        DB::transaction(function () use ($cv, $vaultId) {
+            // Ambientes: soft-delete (recuperável). Some do Cofre e do Prosight (tabela compartilhada).
+            EnvEnvironment::where('vault_id', $vaultId)->get()->each(fn ($e) => $e->delete());
+            // Estrutura do cofre da pasta (chaves/mapeamento) — remoção definitiva.
+            VaultMember::where('vault_id', $vaultId)->delete();
+            $cv->delete();
+            Vault::where('id', $vaultId)->delete();
+        });
+
+        EnvAccessLog::record($request, 'client_delete', ['item_label' => $customerName ?? (string) $customerId]);
+
+        return response()->json(['deleted' => true]);
+    }
+
     public function createClient(Request $request): JsonResponse
     {
         $user = $this->guardInternal($request);
