@@ -491,6 +491,7 @@ Route::prefix('v1')->group(function () {
             // Links + Documentação (F1d)
             Route::get('/environments/{envId}/links',       [\App\Http\Controllers\EnvironmentLinkController::class, 'index'])->name('environments.link.index');
             Route::post('/environments/{envId}/links',      [\App\Http\Controllers\EnvironmentLinkController::class, 'store'])->name('environments.link.store');
+            Route::put('/links/{id}',                       [\App\Http\Controllers\EnvironmentLinkController::class, 'update'])->name('environments.link.update');
             Route::delete('/links/{id}',                    [\App\Http\Controllers\EnvironmentLinkController::class, 'destroy'])->name('environments.link.destroy');
             Route::get('/environments/{envId}/docs',        [\App\Http\Controllers\EnvironmentLinkController::class, 'docs'])->name('environments.docs.index');
         });

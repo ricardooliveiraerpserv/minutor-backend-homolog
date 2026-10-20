@@ -20,10 +20,10 @@ class EnvEnvironment extends Model
     protected $fillable = [
         'customer_id', 'vault_id', 'name', 'type', 'status',
         'inventory', 'notes', 'responsible_user_id', 'company_id',
-        'rdp_host', 'rdp_port',
+        'rdp_host', 'rdp_port', 'block_notes',
     ];
 
-    protected $casts = ['inventory' => 'array', 'rdp_port' => 'integer'];
+    protected $casts = ['inventory' => 'array', 'block_notes' => 'array', 'rdp_port' => 'integer'];
 
     public function customer(): BelongsTo { return $this->belongsTo(Customer::class); }
     public function vault(): BelongsTo { return $this->belongsTo(Vault::class); }

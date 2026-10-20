@@ -426,6 +426,7 @@ class EnvironmentController extends Controller
             'status'      => $env->status,
             'inventory'   => $env->inventory,
             'notes'       => $env->notes,
+            'block_notes' => $env->block_notes,
             'rdp_host'    => $env->rdp_host,
             'rdp_port'    => $env->rdp_port,
             'responsible' => $env->responsible?->only(['id', 'name']),
@@ -448,6 +449,9 @@ class EnvironmentController extends Controller
             'responsible_user_id' => 'nullable|integer|exists:users,id',
             'rdp_host'            => 'nullable|string|max:255',
             'rdp_port'            => 'nullable|integer|min:1|max:65535',
+            // Texto livre por bloco: { credentials, databases, appservers, vpns, certificates, links }
+            'block_notes'         => 'nullable|array',
+            'block_notes.*'       => 'nullable|string|max:5000',
         ]);
         $env->update($data);
         EnvAccessLog::record($request, 'env_update', ['environment_id' => $env->id, 'item_label' => $env->name]);

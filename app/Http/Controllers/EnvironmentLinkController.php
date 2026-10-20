@@ -44,6 +44,22 @@ class EnvironmentLinkController extends Controller
         return response()->json(['id' => $link->id], 201);
     }
 
+    public function update(Request $request, int $id): JsonResponse
+    {
+        $this->guardInternal($request);
+        $link = EnvLink::findOrFail($id);
+        $this->envAuthorized($request, $link->environment_id, 'manage');
+        $data = $request->validate([
+            'label' => 'sometimes|string|max:120',
+            'url'   => 'sometimes|string|max:1000',
+            'kind'  => 'sometimes|string|max:20',
+        ]);
+        $link->fill(collect($data)->only(['label', 'url', 'kind'])->toArray());
+        $link->save();
+
+        return response()->json(['updated' => true]);
+    }
+
     public function destroy(Request $request, int $id): JsonResponse
     {
         $this->guardInternal($request);
