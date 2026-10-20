@@ -829,6 +829,9 @@ class CustomerController extends Controller
         }
         // Toggle: desativar o cliente na ERPSERV (default) OU mantê-lo ativo (só os tickets saem).
         $deactivate = $request->boolean('deactivate', true);
+        // Toggle de NOVOS chamados: false (padrão) = mantém o fluxo na ERPSERV (entra na fila +
+        // espelha na Conecta); true = "só log" (não entra na fila; loga + empurra pra Conecta).
+        $logOnly = $request->boolean('log_only', false);
 
         $url    = rtrim((string) config('services.conecta.api_url', ''), '/');
         $secret = (string) config('services.conecta.migration_secret', '');
@@ -885,8 +888,9 @@ class CustomerController extends Controller
         // Sucesso na Conecta → marca migrado e (opcional) desativa. NÃO desvincula a org: o import
         // do Movidesk segue rodando p/ INTERCEPTAR os novos (FD → log de entrada) e o legado continua
         // VISÍVEL aqui. Em "manter ativo", cliente e usuários seguem usando a ERPSERV normalmente.
-        \Illuminate\Support\Facades\DB::transaction(function () use ($customer, $deactivate) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($customer, $deactivate, $logOnly) {
             $customer->migrated_to_conecta_at = now();
+            $customer->conecta_ticket_log_only = $logOnly;
             if ($deactivate) {
                 $customer->active = false;
             }
@@ -913,10 +917,35 @@ class CustomerController extends Controller
             'message'                 => $deactivate ? 'Cliente migrado e desativado na ERPSERV.' : 'Cliente migrado (mantido ativo na ERPSERV).',
             'conecta'                 => $resp->json(),
             'deactivated'             => $deactivate,
+            'log_only'                => $logOnly,
             'users_total'             => $allUsers->count(),
             'users_sent'              => count($users),
             'orgs_linked'             => count($orgIds),
             'legacy_tickets_enqueued' => $backfill,
+        ]);
+    }
+
+    /**
+     * Altera o modo de roteamento dos NOVOS chamados de um cliente JÁ migrado (SÓ ADMIN):
+     * log_only=false → mantém o fluxo na ERPSERV (fila + espelho); log_only=true → só log + Conecta.
+     */
+    public function setConectaTicketMode(Request $request, Customer $customer): JsonResponse
+    {
+        if (!$request->user() || !$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Apenas o administrador pode alterar o modo de chamados.'], 403);
+        }
+        if (!$customer->migrated_to_conecta_at) {
+            return response()->json(['message' => 'Cliente não está migrado para a Conecta.'], 422);
+        }
+        $customer->conecta_ticket_log_only = $request->boolean('log_only');
+        $customer->save();
+
+        return response()->json([
+            'success'  => true,
+            'log_only' => (bool) $customer->conecta_ticket_log_only,
+            'message'  => $customer->conecta_ticket_log_only
+                ? 'Novos chamados deste cliente ficarão SÓ no log (não entram na fila da ERPSERV).'
+                : 'Novos chamados deste cliente mantêm o fluxo na ERPSERV (entram na fila + espelho na Conecta).',
         ]);
     }
 

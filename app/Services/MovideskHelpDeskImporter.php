@@ -166,6 +166,25 @@ class MovideskHelpDeskImporter
                 if ($org && $org->hd_linked_at && $this->createdBeforeLink($full, $org)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
+                // Cliente migrado em modo "SÓ LOG": o NOVO chamado NÃO entra na fila da ERPSERV.
+                // Reusa o upsert p/ mapear tudo, empurra pra Conecta (nasce lá) e soft-deleta o
+                // local — fica só a linha de log + o chamado na Conecta. Idempotente: se já há um
+                // registro (vivo ou soft-deletado) desse ticket, não reprocessa.
+                $migCust = ($org && $org->hd_customer_id) ? \App\Models\Customer::find($org->hd_customer_id) : null;
+                if (!$exists && $migCust && $migCust->migrated_to_conecta_at && $migCust->conecta_ticket_log_only) {
+                    $already = HelpDeskTicket::withTrashed()
+                        ->where('source_system', 'movidesk')->where('external_ref', $externalId)->exists();
+                    if (!$already) {
+                        DB::transaction(fn () => $this->upsert($full, $companyId));
+                        $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->first();
+                        if ($t) {
+                            try { app(\App\Services\ConectaTicketPusher::class)->push($t, 'novo'); }
+                            catch (\Throwable $e) { Log::warning('📥 [MOVIDESK HD] push só-log falhou', ['id' => $externalId, 'err' => $e->getMessage()]); }
+                            $t->delete(); // soft — some da fila; log + Conecta são a verdade
+                        }
+                    }
+                    $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
+                }
                 $res = DB::transaction(fn () => $this->upsert($full, $companyId));
                 $stats['imported'] += $res['created'] ? 1 : 0;
                 $stats['updated']  += $res['created'] ? 0 : 1;

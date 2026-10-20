@@ -929,6 +929,7 @@ Route::prefix('v1')->group(function () {
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
             // Migração do cliente p/ a Conecta (SÓ ADMIN): empurra p/ app.conectaerp.com.br e desabilita aqui.
             Route::post('/customers/{customer}/migrate-to-conecta', [CustomerController::class, 'migrateToConecta'])->name('customers.migrate-conecta');
+            Route::patch('/customers/{customer}/conecta-ticket-mode', [CustomerController::class, 'setConectaTicketMode'])->name('customers.conecta-ticket-mode');
             // DESATIVAR a migração: zera migrated_to_conecta_at → PARA de enviar dados do cliente à Conecta
             // (o cliente volta a viver normal na ERPSERV). SÓ ADMIN.
             Route::post('/customers/{customer}/conecta-undo-migration', [CustomerController::class, 'conectaUndoMigration'])->name('customers.conecta-undo-migration');

@@ -297,6 +297,34 @@ class HelpDeskPortalController extends Controller
             ?? HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('sort_order')->first()
             ?? $status;
 
+        // Cliente migrado em modo "SÓ LOG": o chamado do portal NÃO entra na fila da ERPSERV —
+        // é empurrado pra Conecta (nasce lá) e registrado no log, sem criar o ticket local.
+        $portalCustomer = \App\Models\Customer::find($cid);
+        if ($portalCustomer && $portalCustomer->migrated_to_conecta_at && $portalCustomer->conecta_ticket_log_only) {
+            $ref = 'portal-' . $cid . '-' . $request->user()->id . '-' . uniqid();
+            $payload = [
+                'customer_cgc'  => $portalCustomer->cgc,
+                'customer_name' => $portalCustomer->name,
+                'ticket' => [
+                    'source_system' => 'erpserv_portal',
+                    'external_ref'  => $ref,
+                    'subject'       => (string) ($v['subject'] ?? ''),
+                    'description'   => (string) ($v['description'] ?? ''),
+                    'priority'      => $v['priority'] ?? 'normal',
+                    'channel'       => 'portal',
+                ],
+                'comments' => [],
+            ];
+            $log = app(\App\Services\ConectaTicketPusher::class)->pushRaw($payload, ['customer_id' => $cid, 'kind' => 'novo']);
+
+            return response()->json([
+                'data'              => null,
+                'migrated'          => true,
+                'conecta_ticket_id' => $log->conecta_ticket_id,
+                'message'           => 'Seu chamado foi registrado no atendimento (Conecta).',
+            ], 201);
+        }
+
         $ticket = HelpDeskTicket::create(array_merge($v, [
             'customer_id'       => $cid,
             'priority'          => $v['priority'] ?? 'normal',
