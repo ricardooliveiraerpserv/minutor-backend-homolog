@@ -683,13 +683,15 @@ class HelpDeskTicketController extends Controller
         };
 
         $withApontamentos = $request->boolean('apontamentos');
+        // Por padrão o relatório NÃO traz notas internas (só o que o cliente vê); `internas=1` inclui.
+        $withInternas = $request->boolean('internas');
         $hhmm = fn (?string $t) => $t ? substr($t, 0, 5) : null;
 
-        // TODAS as interações do chamado (cliente + notas internas), sem eventos de sistema —
-        // fiel ao que aparece no chamado.
+        // Interações do chamado (sem eventos de sistema). Notas internas só quando `internas=1`.
         // Mais recente primeiro (igual ao chamado).
         $comments = $ticket->comments()->with(['author:id,name,type', 'contact:id,name'])
             ->where('is_system', false)
+            ->when(!$withInternas, fn ($q) => $q->where('visibility', '!=', 'internal'))
             ->whereNull('deleted_at')->orderByDesc('created_at')->orderByDesc('id')->get();
         $interactions = $comments->map(function ($c) use ($bodyHtml, $fmt, $withApontamentos) {
             $isAgent = $c->author && in_array($c->author->type, ['admin', 'coordenador', 'consultor'], true);
