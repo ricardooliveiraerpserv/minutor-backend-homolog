@@ -146,6 +146,17 @@ class GmudPublishService
             $package->ticket->forceFill(['gmud_source_status' => 'atualizado'])->saveQuietly();
         }
 
+        // Fase 1 (pós-publish): gera/atualiza a documentação via IA de TODOS os fontes publicados.
+        // Async, best-effort (1 job por arquivo, fila source-doc) — a publicação já concluiu; uma
+        // falha aqui NÃO desfaz o commit.
+        try {
+            foreach (array_keys($plan) as $fid) {
+                \App\Jobs\GmudGenerateSourceDocJob::dispatch((int) $fid, $commitSha);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('gmud.generate_doc.dispatch_failed', ['package' => $package->id, 'error' => $e->getMessage()]);
+        }
+
         return [
             'commit_sha' => $commitSha,
             'repo'       => "{$owner}/{$repository}",
