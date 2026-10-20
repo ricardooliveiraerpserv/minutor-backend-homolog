@@ -927,6 +927,8 @@ Route::prefix('v1')->group(function () {
             Route::put('/customers/{customer}', [CustomerController::class, 'update'])->name('customers.update');
             // Migração do cliente p/ a Conecta (SÓ ADMIN): empurra p/ app.conectaerp.com.br e desabilita aqui.
             Route::post('/customers/{customer}/migrate-to-conecta', [CustomerController::class, 'migrateToConecta'])->name('customers.migrate-conecta');
+            // Após migrado: liga/desliga o cliente na ERPSERV (texto da tela: "manter ativo ou desativá-lo aqui"). SÓ ADMIN.
+            Route::post('/customers/{customer}/conecta-active', [CustomerController::class, 'conectaSetActive'])->name('customers.conecta-active');
             // Painel da migração Conecta (tela /migracao-conecta): log de tickets + reenvio. SÓ ADMIN.
             Route::get('/migration/conecta/log', [\App\Http\Controllers\ConectaMigrationController::class, 'log'])->name('migration.conecta.log');
             Route::get('/migration/conecta/summary', [\App\Http\Controllers\ConectaMigrationController::class, 'summary'])->name('migration.conecta.summary');

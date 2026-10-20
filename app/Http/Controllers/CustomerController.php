@@ -919,4 +919,27 @@ class CustomerController extends Controller
             'legacy_tickets_enqueued' => $backfill,
         ]);
     }
+
+    /**
+     * Liga/desliga um cliente JÁ MIGRADO na ERPSERV (a tela promete "manter ativo ou desativá-lo aqui",
+     * mas não havia ação depois de migrado). Só mexe no `active` local — o cliente já vive na Conecta.
+     */
+    public function conectaSetActive(Request $request, Customer $customer): JsonResponse
+    {
+        if (!$request->user() || !$request->user()->isAdmin()) {
+            return response()->json(['message' => 'Apenas o administrador pode alterar.'], 403);
+        }
+        if (!$customer->migrated_to_conecta_at) {
+            return response()->json(['message' => 'Cliente ainda não foi migrado para a Conecta.'], 422);
+        }
+        $active = $request->boolean('active');
+        $customer->active = $active;
+        $customer->save();
+
+        return response()->json([
+            'success' => true,
+            'active'  => $customer->active,
+            'message' => $active ? 'Cliente reativado na ERPSERV.' : 'Cliente desativado na ERPSERV.',
+        ]);
+    }
 }
