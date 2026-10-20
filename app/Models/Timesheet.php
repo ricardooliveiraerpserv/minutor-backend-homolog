@@ -79,6 +79,9 @@ class Timesheet extends Model
         'late_approved_at',
         'consultant_released_at',
         'consultant_released_by',
+        'consultant_release_denied',
+        'consultant_release_denied_at',
+        'consultant_release_denied_by',
         'helpdesk_ticket_id',
     ];
 
@@ -97,6 +100,8 @@ class Timesheet extends Model
         'consultant_released'    => 'boolean',
         'late_approved_at'       => 'datetime',
         'consultant_released_at' => 'datetime',
+        'consultant_release_denied'    => 'boolean',
+        'consultant_release_denied_at' => 'datetime',
         'client_extra_pct'    => 'decimal:2',
         'contract_client_pct' => 'decimal:2', // derivado da regra do contrato (mantido pelo serviço)
         'consultant_extra_pct'=> 'decimal:2',

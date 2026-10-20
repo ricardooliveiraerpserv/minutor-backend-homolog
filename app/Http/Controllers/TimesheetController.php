@@ -2341,8 +2341,10 @@ class TimesheetController extends Controller
         $tab = $request->query('tab', 'pendente');
         $base = fn () => Timesheet::query()->whereNull('deleted_at');
         $applyTab = function ($q) use ($tab) {
-            if ($tab === 'consultor')  return $q->whereNotNull('late_approved_at')->where('consultant_released', false);
-            if ($tab === 'concluidos') return $q->whereNotNull('late_approved_at')->where('consultant_released', true);
+            // Aguardando consultor: aprovado p/ cliente, ainda não liberado E não negado ("não liberar").
+            if ($tab === 'consultor')  return $q->whereNotNull('late_approved_at')->where('consultant_released', false)->where('consultant_release_denied', false);
+            // Concluídos: resolvido — liberado OU negado (fica como histórico "Não liberado").
+            if ($tab === 'concluidos') return $q->whereNotNull('late_approved_at')->where(fn ($w) => $w->where('consultant_released', true)->orWhere('consultant_release_denied', true));
             return $q->where('status', Timesheet::STATUS_LATE); // pendente
         };
 
@@ -2387,13 +2389,17 @@ class TimesheetController extends Controller
                 'consultant_released'    => (bool) $t->consultant_released,
                 'late_approved_at'       => optional($t->late_approved_at)->toISOString(),
                 'consultant_released_at' => optional($t->consultant_released_at)->toISOString(),
+                'consultant_release_denied'    => (bool) $t->consultant_release_denied,
+                'consultant_release_denied_at' => optional($t->consultant_release_denied_at)->toISOString(),
+                // 'liberado' | 'nao_liberado' | null (ainda aguardando)
+                'resolucao'              => $t->consultant_released ? 'liberado' : ((bool) $t->consultant_release_denied ? 'nao_liberado' : null),
             ];
         });
 
         $counts = [
             'pendente'   => $base()->where('status', Timesheet::STATUS_LATE)->count(),
-            'consultor'  => $base()->whereNotNull('late_approved_at')->where('consultant_released', false)->count(),
-            'concluidos' => $base()->whereNotNull('late_approved_at')->where('consultant_released', true)->count(),
+            'consultor'  => $base()->whereNotNull('late_approved_at')->where('consultant_released', false)->where('consultant_release_denied', false)->count(),
+            'concluidos' => $base()->whereNotNull('late_approved_at')->where(fn ($w) => $w->where('consultant_released', true)->orWhere('consultant_release_denied', true))->count(),
         ];
 
         return response()->json(['data' => $rows, 'counts' => $counts]);
@@ -2482,6 +2488,39 @@ class TimesheetController extends Controller
         }
 
         return response()->json(['success' => true, 'message' => 'Horas do consultor liberadas — passam a contar no pagamento e no banco de horas.']);
+    }
+
+    /**
+     * NÃO LIBERAR as horas do consultor: marca o atraso como negado. Sai da aba "Aguardando consultor"
+     * (vira histórico "Não liberado" em Concluídos). Mesma audiência do liberar.
+     */
+    public function naoLiberarConsultor(Request $request, int $id): JsonResponse
+    {
+        $user = Auth::user();
+        $timesheet = Timesheet::with('project.coordinators')->find($id);
+        if (!$timesheet) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não encontrado'], 404);
+        }
+        if (is_null($timesheet->late_approved_at)) {
+            return response()->json(['success' => false, 'message' => 'Apontamento não está aguardando liberação.'], 422);
+        }
+        if ($timesheet->consultant_released) {
+            return response()->json(['success' => false, 'message' => 'Apontamento já foi liberado — não dá para marcar como não liberar.'], 422);
+        }
+        $canRelease = $user->isAdmin() || $user->isAdministrativo() || $user->isCoordenador()
+            || ($timesheet->project && $timesheet->project->coordinators->contains('id', $user->id));
+        if (!$canRelease) {
+            return response()->json(['success' => false, 'message' => 'Seu perfil não permite esta ação.'], 403);
+        }
+        if (!$timesheet->consultant_release_denied) {
+            $timesheet->consultant_release_denied    = true;
+            $timesheet->consultant_release_denied_at = now();
+            $timesheet->consultant_release_denied_by = $user->id;
+            $timesheet->save();
+            $this->invalidateListCache('timesheets');
+        }
+
+        return response()->json(['success' => true, 'message' => 'Marcado como "não liberar" — não entra no pagamento nem no banco de horas do consultor.']);
     }
 
     /**
