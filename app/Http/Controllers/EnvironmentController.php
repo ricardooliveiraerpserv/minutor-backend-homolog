@@ -59,24 +59,44 @@ class EnvironmentController extends Controller
 
     // ── Clientes-vault ────────────────────────────────────────────────────────
 
-    /** Clientes cujo cofre de ambientes o usuário é membro. */
+    /**
+     * Pastas (cofres) de cliente visíveis ao usuário.
+     * - Admin do Cofre (type=admin OU environments.admin): vê TODAS as pastas, mesmo as
+     *   que ainda não é membro (cofre é interno — admin == super-admin). As que ele ainda
+     *   não tem a chave vêm com is_member=false/pending_access=true (o auto-backfill as
+     *   libera assim que qualquer membro abre o cofre).
+     * - Demais usuários: só as pastas onde é membro (alocação).
+     */
     public function clients(Request $request): JsonResponse
     {
         $user = $this->guardInternal($request);
+        $isCofreAdmin = $user->type === 'admin' || $user->hasAccess('environments.admin');
 
-        $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
-        $rows = EnvClientVault::with('customer:id,name,company_name')
-            ->whereIn('vault_id', $vaultIds)
-            ->get()
-            ->map(fn ($cv) => [
-                'customer_id'       => $cv->customer_id,
-                'customer_name'     => $cv->customer?->name,
-                'vault_id'          => $cv->vault_id,
-                'environments_count' => EnvEnvironment::where('customer_id', $cv->customer_id)->count(),
-                'role'              => VaultMember::where('vault_id', $cv->vault_id)->where('user_id', $user->id)->value('role'),
-                // chave do PRÓPRIO usuário (opaca) — usada no front p/ re-embrulhar pros admins (backfill)
-                'encrypted_vault_key' => VaultMember::where('vault_id', $cv->vault_id)->where('user_id', $user->id)->value('encrypted_vault_key'),
-            ])
+        $myMembership = VaultMember::where('user_id', $user->id)
+            ->get(['vault_id', 'role', 'encrypted_vault_key'])
+            ->keyBy('vault_id');
+
+        $query = EnvClientVault::with('customer:id,name,company_name');
+        if (! $isCofreAdmin) {
+            $query->whereIn('vault_id', $myMembership->keys());
+        }
+
+        $rows = $query->get()
+            ->map(function ($cv) use ($myMembership) {
+                $m = $myMembership->get($cv->vault_id);
+                return [
+                    'customer_id'        => $cv->customer_id,
+                    'customer_name'      => $cv->customer?->name,
+                    'vault_id'           => $cv->vault_id,
+                    'environments_count' => EnvEnvironment::where('customer_id', $cv->customer_id)->count(),
+                    'role'               => $m?->role,
+                    // chave do PRÓPRIO usuário (opaca) — usada no front p/ re-embrulhar pros admins (backfill).
+                    // null quando é admin que ainda não é membro: vê a pasta, mas sem a chave p/ decifrar.
+                    'encrypted_vault_key' => $m?->encrypted_vault_key,
+                    'is_member'          => (bool) $m,
+                    'pending_access'     => ! $m, // admin não-membro: acesso será liberado pelo auto-backfill
+                ];
+            })
             ->sortBy('customer_name')->values();
 
         return response()->json($rows);
