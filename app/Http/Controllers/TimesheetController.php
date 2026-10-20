@@ -270,9 +270,13 @@ class TimesheetController extends Controller
 
         // Os RATEIOS (filhos, rateio_source_timesheet_id != null) são bastidor: contam no
         // saldo/faturamento do destino e vivem na tela de Rateio, mas NÃO aparecem na lista
-        // de Apontamentos de ninguém (consultor, coordenador, admin). O registro visível é o
-        // apontamento-ORIGEM no servidor (is_billable_only=false → paga o consultor).
-        $query->whereNull('timesheets.rateio_source_timesheet_id');
+        // de Apontamentos (consultor/coordenador/admin). O registro visível é o apontamento-
+        // ORIGEM no servidor (is_billable_only=false → paga o consultor).
+        // EXCEÇÃO: a Gestão de Contratos pede `include_rateio=1` ao abrir os apontamentos de
+        // UM projeto-destino — ali os filhos SÃO o consumo daquele projeto e devem aparecer.
+        if (!$request->boolean('include_rateio')) {
+            $query->whereNull('timesheets.rateio_source_timesheet_id');
+        }
 
         // Percentuais de acréscimo: consultor e cliente nunca veem client_extra_pct
         $hideClientPct = !$user->isAdmin() && !$user->isCoordenador() && $user->type !== 'administrativo';
