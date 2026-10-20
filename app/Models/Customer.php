@@ -35,6 +35,7 @@ class Customer extends Model
         // Migração p/ Conecta: NULL = cliente normal; preenchido = migrado (desabilitado aqui, atendido lá).
         'migrated_to_conecta_at',
         'conecta_ticket_log_only',
+        'conecta_ticket_copy',
     ];
 
     /**
@@ -50,6 +51,7 @@ class Customer extends Model
         'secondary_cgcs' => 'array',
         'migrated_to_conecta_at' => 'datetime',
         'conecta_ticket_log_only' => 'boolean',
+        'conecta_ticket_copy' => 'boolean',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
         'deleted_at' => 'datetime',

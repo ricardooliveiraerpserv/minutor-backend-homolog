@@ -199,6 +199,18 @@ class MovideskHelpDeskImporter
                 $stats['imported'] += $res['created'] ? 1 : 0;
                 $stats['updated']  += $res['created'] ? 0 : 1;
                 $stats['comments'] += $res['comments'];
+
+                // Cliente migrado em modo "CÓPIA": o chamado cai NORMALMENTE na fila do HD da
+                // ERPSERV (upsert acima) E uma CÓPIA é empurrada pra Conecta a cada atualização
+                // (incremental; Conecta deduplica comentários). Fica nos DOIS lados.
+                if ($migCust && $migCust->migrated_to_conecta_at && $migCust->conecta_ticket_copy) {
+                    try {
+                        $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->first();
+                        if ($t) app(\App\Services\ConectaTicketPusher::class)->push($t, $res['created'] ? 'novo' : 'legado');
+                    } catch (\Throwable $e) {
+                        Log::warning('📥 [MOVIDESK HD] push cópia falhou', ['id' => $externalId, 'err' => $e->getMessage()]);
+                    }
+                }
             } catch (\Throwable $e) {
                 $stats['skipped']++;
                 Log::error('📥 [MOVIDESK HD] Falha ao importar ticket', ['id' => $externalId, 'error' => $e->getMessage()]);
