@@ -921,25 +921,26 @@ class CustomerController extends Controller
     }
 
     /**
-     * Liga/desliga um cliente JÁ MIGRADO na ERPSERV (a tela promete "manter ativo ou desativá-lo aqui",
-     * mas não havia ação depois de migrado). Só mexe no `active` local — o cliente já vive na Conecta.
+     * DESATIVA a migração de um cliente: zera `migrated_to_conecta_at`. Isso tira o cliente do sync
+     * outbound (`conecta:sync` → `Customer whereNotNull(migrated_to_conecta_at)`), então os dados do
+     * cliente DEIXAM de ser enviados à Conecta. O cliente volta a viver normalmente na ERPSERV (active=true).
+     * NÃO apaga o que já foi enviado à Conecta — só interrompe o envio daqui pra frente.
      */
-    public function conectaSetActive(Request $request, Customer $customer): JsonResponse
+    public function conectaUndoMigration(Request $request, Customer $customer): JsonResponse
     {
         if (!$request->user() || !$request->user()->isAdmin()) {
             return response()->json(['message' => 'Apenas o administrador pode alterar.'], 403);
         }
         if (!$customer->migrated_to_conecta_at) {
-            return response()->json(['message' => 'Cliente ainda não foi migrado para a Conecta.'], 422);
+            return response()->json(['message' => 'Este cliente não está migrado.'], 422);
         }
-        $active = $request->boolean('active');
-        $customer->active = $active;
+        $customer->migrated_to_conecta_at = null;
+        $customer->active = true;
         $customer->save();
 
         return response()->json([
             'success' => true,
-            'active'  => $customer->active,
-            'message' => $active ? 'Cliente reativado na ERPSERV.' : 'Cliente desativado na ERPSERV.',
+            'message' => 'Migração desativada — os dados do cliente deixam de ser enviados à Conecta.',
         ]);
     }
 }
