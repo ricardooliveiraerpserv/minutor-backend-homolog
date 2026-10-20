@@ -42,8 +42,15 @@ class HelpDeskMergeService
      */
     public function merge(HelpDeskTicket $target, array $sources, array $options, ?User $user): HelpDeskTicket
     {
+        // A mescla consolida SEMPRE no chamado MAIS ANTIGO (menor created_at; empate = menor id).
+        // Ele é o sobrevivente (destino), independente de qual foi clicado; os demais são mesclados nele.
+        $all = collect([$target])->concat($sources)->filter()->unique('id')->values();
+        $target = $all->sort(fn (HelpDeskTicket $a, HelpDeskTicket $b) =>
+            ((optional($a->created_at)->timestamp ?? 0) <=> (optional($b->created_at)->timestamp ?? 0)) ?: ($a->id <=> $b->id)
+        )->first();
+
         // Normaliza: dedup por id e remove o próprio destino da lista de origens.
-        $sources = collect($sources)->unique('id')->reject(fn (HelpDeskTicket $s) => $s->id === $target->id)->values();
+        $sources = $all->reject(fn (HelpDeskTicket $s) => $s->id === $target->id)->values();
         if ($sources->isEmpty()) {
             throw new HelpDeskMergeException('Selecione ao menos um chamado de origem diferente do destino.');
         }
@@ -79,7 +86,8 @@ class HelpDeskMergeService
             'keep_tags'       => (bool) ($options['keep_tags'] ?? false),
         ];
 
-        $merged = DB::transaction(function () use ($target, $sources, $opts, $user) {
+        $clientNotices = []; // [[sourceId, commentId], ...] → e-mail "acompanhe pelo chamado que ficou" (após commit)
+        $merged = DB::transaction(function () use ($target, $sources, $opts, $user, &$clientNotices) {
             // Lock (concorrência): recarrega destino + origens com FOR UPDATE e revalida o estado.
             $ids = $sources->pluck('id')->push($target->id)->all();
             HelpDeskTicket::whereIn('id', $ids)->lockForUpdate()->get(); // adquire os locks
@@ -162,6 +170,34 @@ class HelpDeskMergeService
                 ]);
                 HelpDeskTicketEvent::log($target->id, 'merged', ['to_value' => $src->ticket_number, 'meta' => ['source_id' => $src->id, 'options' => $opts, 'by' => $user?->id]]);
                 HelpDeskTicketEvent::log($src->id, 'merged_into', ['to_value' => $target->ticket_number, 'meta' => ['target_id' => $target->id, 'by' => $user?->id]]);
+
+                // (a) NOTA no chamado que RECEBEU a mescla (destino) — interna, evidente no histórico.
+                //     Criada DEPOIS do move de comentários → fica no destino (não é realocada).
+                $tnote = new HelpDeskTicketComment();
+                $tnote->ticket_id        = $target->id;
+                $tnote->origin_ticket_id = $src->id;
+                $tnote->author_user_id   = $user?->id;
+                $tnote->body             = "<p>🔗 O chamado <strong>#{$src->ticket_number}</strong>" . (filled($src->subject) ? ' (' . e($src->subject) . ')' : '') . " foi <strong>mesclado neste chamado</strong>.</p>";
+                $tnote->visibility       = 'internal';
+                $tnote->is_system        = true;
+                $tnote->channel          = 'merge';
+                $tnote->no_charge        = true;
+                $tnote->save();
+
+                // (b) AVISO ao CLIENTE no chamado MESCLADO (origem), visível ao cliente → dispara e-mail
+                //     "acompanhe pelo chamado que ficou". author_user_id (executor) é exigido pelo mailer.
+                $snote = new HelpDeskTicketComment();
+                $snote->ticket_id        = $src->id;
+                $snote->origin_ticket_id = $src->id;
+                $snote->author_user_id   = $user?->id;
+                $snote->body             = "<p>Este chamado foi <strong>consolidado no chamado #{$target->ticket_number}</strong>. A partir de agora, acompanhe o andamento por lá — este chamado foi encerrado para evitar duplicidade. Obrigado!</p>";
+                $snote->visibility       = 'customer';
+                $snote->is_system        = true;
+                $snote->channel          = 'merge';
+                $snote->no_charge        = true;
+                $snote->save();
+                $clientNotices[] = [$src->id, $snote->id];
+
                 $done[] = $src->ticket_number;
             }
 
@@ -178,6 +214,17 @@ class HelpDeskMergeService
             'actor_id' => $user?->id, 'actor_email' => $user?->email,
             'merged_sources' => $sources->pluck('ticket_number')->filter()->values()->all(),
         ]);
+
+        // (b) E-mail ao CLIENTE de cada chamado mesclado: "acompanhe pelo chamado que ficou". Após o
+        //     commit (comentário já gravado). Best-effort — nunca derruba a mescla já concluída.
+        foreach ($clientNotices as [$srcId, $commentId]) {
+            try {
+                \App\Jobs\SendHelpDeskEmailJob::dispatch($srcId, $commentId)
+                    ->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('HelpDesk merge: aviso ao cliente da origem falhou: ' . $e->getMessage());
+            }
+        }
 
         return $merged;
     }
@@ -202,8 +249,10 @@ class HelpDeskMergeService
             // 1) A descrição da origem foi INJETADA como interação (channel='merge') na mescla — a
             //    origem ainda tem a descrição no próprio campo, então aqui só REMOVE a cópia (evita
             //    duplicar no origem e acumular a cada re-merge). As demais interações voltam pra origem.
-            HelpDeskTicketComment::where('ticket_id', $target->id)->where('origin_ticket_id', $source->id)
-                ->where('channel', 'merge')->forceDelete();
+            // Remove as interações automáticas da mescla (channel='merge') nos DOIS chamados:
+            // a cópia da descrição + a nota no destino (a) + o aviso ao cliente no origem (b).
+            HelpDeskTicketComment::whereIn('ticket_id', [$target->id, $source->id])
+                ->where('origin_ticket_id', $source->id)->where('channel', 'merge')->forceDelete();
             HelpDeskTicketComment::where('ticket_id', $target->id)->where('origin_ticket_id', $source->id)
                 ->update(['ticket_id' => $source->id]);
 
