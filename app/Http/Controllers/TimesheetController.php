@@ -287,6 +287,12 @@ class TimesheetController extends Controller
             $query->whereIn('timesheets.project_id', $projectIds);
         }
 
+        // Apontamentos DE UMA ATIVIDADE (cronograma) — painel "Apontamentos desta atividade". Sem este
+        // filtro o parâmetro era IGNORADO e a listagem trazia apontamentos de OUTROS projetos/pessoas.
+        if ($request->filled('stage_delivery_id')) {
+            $query->where('timesheets.stage_delivery_id', (int) $request->input('stage_delivery_id'));
+        }
+
         $customerIds = array_values(array_filter((array) $request->input('customer_id', [])));
         if (!empty($customerIds)) {
             $query->whereIn('timesheets.customer_id', $customerIds);
