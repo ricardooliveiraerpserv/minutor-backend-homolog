@@ -173,6 +173,10 @@ class SourceDocInventory
             || str_starts_with($p, '__MACOSX/') || str_contains($p, '/__MACOSX/')) {
             return false;
         }
+        // Cópia de download/SO: "NOME (1).prw", "NOME (2).PRW" — artefato (duplicata do original), ignora.
+        if (preg_match('/\s\(\d+\)\.[^.\/]+$/', $baseName) === 1) {
+            return false;
+        }
         $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
 
         return $ext !== '' && in_array($ext, $exts, true);
