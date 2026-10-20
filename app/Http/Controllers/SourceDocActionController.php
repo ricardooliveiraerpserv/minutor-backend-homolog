@@ -256,6 +256,12 @@ class SourceDocActionController extends Controller
         }
         $docJson = DB::table('source_docs')->where('id', $doc->id)->value('documentation_json');
         $docArr = $docJson ? json_decode($docJson, true) : [];
+        // Fase 3: injeta o "Trecho Alterado" (diff de código da versão atual) p/ render MD/PDF.
+        $curVer = $doc->currentVersion;
+        if ($curVer) {
+            $docArr['change_diff'] = $curVer->change_diff;
+            $docArr['change_diff_meta'] = $curVer->change_diff_meta;
+        }
         $isOutdated = ($this->resolver->resolve($doc)['status'] ?? null) === SourceDocStatusResolver::STATUS_OUTDATED;
         $customer = $doc->customer ? ['name' => $doc->customer->name] : [];
 

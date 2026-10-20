@@ -265,7 +265,26 @@ class SourceDocRenderer
             ['n' => 13, 'title' => 'Pontos de Atenção',        'html' => $this->secAttention($m),    'heavy' => false],
             ['n' => 14, 'title' => 'Histórico de Alterações',  'html' => $this->secHistory($m),      'heavy' => true],
             ['n' => 15, 'title' => 'Diff da Versão',           'html' => $this->secDiff($m),         'heavy' => false],
+            ['n' => 16, 'title' => 'Trecho Alterado (Última Modificação)', 'html' => $this->secTrechoAlterado($m), 'heavy' => true],
         ];
+    }
+
+    /** Diff de código UNIFICADO da última modificação (anterior × versão atual). */
+    private function secTrechoAlterado(array $m): string
+    {
+        $diff = (string) ($m['change_diff'] ?? '');
+        $meta = (array) ($m['change_diff_meta'] ?? []);
+        if (($meta['is_new'] ?? false) && trim($diff) === '') {
+            return '<p>Arquivo novo — primeira versão publicada (sem versão anterior para comparar).</p>';
+        }
+        if (trim($diff) === '') {
+            return $this->ni('Sem alteração de código registrada nesta versão.');
+        }
+        $added   = (int) ($meta['added'] ?? 0);
+        $removed = (int) ($meta['removed'] ?? 0);
+        $trunc   = ! empty($meta['truncated']) ? ' <i>(trecho resumido por tamanho)</i>' : '';
+        $head    = '<p>Linhas: +' . $added . ' / −' . $removed . '.' . $trunc . '</p>';
+        return $head . '<pre style="font-family:DejaVu Sans Mono,monospace;font-size:10px;white-space:pre-wrap;word-break:break-all;border:1px solid #ddd;padding:8px;background:#fafafa;">' . $this->e($diff) . '</pre>';
     }
 
     private function ni(string $msg): string
@@ -978,6 +997,8 @@ class SourceDocRenderer
     {
         $html = preg_replace('#<style>.*?</style>#s', '', $this->html($doc, $isOutdated, $customer, $context));
         $md = $html;
+        // <pre> (ex.: o Trecho Alterado) → bloco de código ```diff (antes das demais regras).
+        $md = preg_replace_callback('#<pre[^>]*>(.*?)</pre>#is', fn ($mm) => "\n```diff\n" . html_entity_decode(strip_tags($mm[1]), ENT_QUOTES, 'UTF-8') . "\n```\n", $md);
         $md = preg_replace('#<h1[^>]*>(.*?)</h1>#is', "# $1\n", $md);
         $md = preg_replace('#<h2[^>]*>(.*?)</h2>#is', "\n## $1\n", $md);
         $md = preg_replace('#<h3[^>]*>(.*?)</h3>#is', "\n### $1\n", $md);
