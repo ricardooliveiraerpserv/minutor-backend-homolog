@@ -56,6 +56,18 @@ class GmudGenerateSourceDocJob implements ShouldQueue
             return;
         }
 
+        // old_code = conteúdo da versão ANTERIOR documentada deste fonte (o "trecho alterado"
+        // é o diff ENTRE VERSÕES da doc: versão anterior × esta publicação).
+        $oldCode = null;
+        $prevDoc = \App\Models\SourceDoc::with('currentVersion')
+            ->where('owner', $repo->owner)->where('repository', $repo->repository)
+            ->where('branch', $branch)->where('path', $f->dest_git_path)->first();
+        $prevVer = $prevDoc?->currentVersion;
+        if ($prevVer && $prevVer->source_commit_sha && $prevVer->source_commit_sha !== $this->commitSha) {
+            $prevFetched = $auth->getFileWithSha($repo->owner, $repo->repository, $prevVer->source_commit_sha, $f->dest_git_path);
+            $oldCode = $prevFetched['content'] ?? null;
+        }
+
         $ticket = $pkg->ticket;
         try {
             $pipeline->processFile([
@@ -67,6 +79,7 @@ class GmudGenerateSourceDocJob implements ShouldQueue
                 'path'                => $f->dest_git_path,
                 'tipo'                => $repo->tipo,
                 'new_code'            => $fetched['content'],
+                'old_code'            => $oldCode,
                 'source_commit_sha'   => $this->commitSha,
                 'source_blob_sha'     => $f->published_blob_sha ?: ($fetched['blob_sha'] ?? null),
                 'gmud_id'             => $ticket?->id,

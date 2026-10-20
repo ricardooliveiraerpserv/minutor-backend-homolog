@@ -21,6 +21,7 @@ class SourceDocVersion extends Model
         'source_doc_id', 'source_commit_sha', 'source_blob_sha', 'parent_source_commit_sha', 'documentation_commit_sha',
         'gmud_id', 'ticket_number', 'responsible_user_id', 'responsavel',
         'deterministic_json', 'semantic_json', 'documentation_json', 'diff_summary', 'diff_stats',
+        'change_diff', 'change_diff_meta',
         'analysis_status', 'schema_version',
     ];
 
@@ -29,6 +30,7 @@ class SourceDocVersion extends Model
         'semantic_json'      => 'array',
         'documentation_json' => 'array',
         'diff_stats'         => 'array',
+        'change_diff_meta'   => 'array',
         'schema_version'     => 'integer',
     ];
 

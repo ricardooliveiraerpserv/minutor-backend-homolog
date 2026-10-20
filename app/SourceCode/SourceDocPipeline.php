@@ -96,6 +96,19 @@ class SourceDocPipeline
 
             $ver->deterministic_json = $det;
             $ver->diff_stats = $diff['diff_stats'] ?? null;
+
+            // "Trecho alterado da última modificação" — diff de código UNIFICADO (anterior × novo).
+            // Só quando o caller fornece o código anterior (ex.: GMUD passa o conteúdo da versão
+            // anterior). Sem anterior = arquivo novo (marca is_new, sem hunk).
+            $oldCodeForDiff = $ctx['old_code'] ?? null;
+            if ($oldCodeForDiff !== null) {
+                $cd = (new \App\SourceCode\Analyzer\CodeDiff())->unified((string) $oldCodeForDiff, (string) $ctx['new_code']);
+                $ver->change_diff = $cd['diff'] !== '' ? $cd['diff'] : null;
+                $ver->change_diff_meta = ['added' => $cd['added'], 'removed' => $cd['removed'], 'is_new' => $cd['is_new'], 'truncated' => $cd['truncated']];
+            } elseif ($ver->change_diff === null && $ver->change_diff_meta === null) {
+                $ver->change_diff_meta = ['added' => null, 'removed' => null, 'is_new' => true, 'truncated' => false];
+            }
+
             $ver->analysis_status = 'analyzing';
             $ver->save();
 
