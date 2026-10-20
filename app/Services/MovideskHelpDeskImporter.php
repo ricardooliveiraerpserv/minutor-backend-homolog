@@ -206,7 +206,7 @@ class MovideskHelpDeskImporter
                 if ($migCust && $migCust->migrated_to_conecta_at && $migCust->conecta_ticket_copy) {
                     try {
                         $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->first();
-                        if ($t) app(\App\Services\ConectaTicketPusher::class)->push($t, $res['created'] ? 'novo' : 'legado');
+                        if ($t) app(\App\Services\ConectaTicketPusher::class)->push($t, 'copia');
                     } catch (\Throwable $e) {
                         Log::warning('📥 [MOVIDESK HD] push cópia falhou', ['id' => $externalId, 'err' => $e->getMessage()]);
                     }

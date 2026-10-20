@@ -906,10 +906,11 @@ class CustomerController extends Controller
         // withoutCompanyScope: esta ação roda no HTTP do admin (contexto de 1 empresa) — sem isso o
         // CompanyScope esconde os tickets de OUTRAS empresas do cliente e o backfill enfileira 0.
         $backfill = 0;
+        $backfillKind = $copy ? 'copia' : 'legado';
         \App\Models\HelpDeskTicket::withoutCompanyScope()->where('customer_id', $customer->id)
-            ->select('id')->chunkById(500, function ($rows) use (&$backfill) {
+            ->select('id')->chunkById(500, function ($rows) use (&$backfill, $backfillKind) {
                 foreach ($rows as $r) {
-                    \App\Jobs\PushTicketToConectaJob::dispatch((int) $r->id, 'legado');
+                    \App\Jobs\PushTicketToConectaJob::dispatch((int) $r->id, $backfillKind);
                     $backfill++;
                 }
             });
