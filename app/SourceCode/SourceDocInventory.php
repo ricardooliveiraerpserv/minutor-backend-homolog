@@ -164,6 +164,15 @@ class SourceDocInventory
         if ($base !== '' && ! str_starts_with($p, $base . '/') && $p !== $base) {
             return false;
         }
+        // Ignora LIXO (não é fonte): AppleDouble do macOS (._arquivo), artefatos _binary_class, e qualquer
+        // arquivo cujo nome comece com '_' ou '._'; além de .DS_Store/Thumbs.db e tudo dentro de __MACOSX/.
+        // (Mesmo critério do GmudZipExtractor.) Esses "._X.prw" passavam no filtro de extensão e viravam doc.
+        $baseName = basename($p);
+        if (str_starts_with($baseName, '_') || str_starts_with($baseName, '._')
+            || $baseName === '.DS_Store' || strcasecmp($baseName, 'Thumbs.db') === 0
+            || str_starts_with($p, '__MACOSX/') || str_contains($p, '/__MACOSX/')) {
+            return false;
+        }
         $ext = strtolower(pathinfo($p, PATHINFO_EXTENSION));
 
         return $ext !== '' && in_array($ext, $exts, true);
