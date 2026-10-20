@@ -846,7 +846,11 @@ class ApprovalController extends Controller
             'project.kanbanOverrideCoordinator:id,name',
             'realProject:id,name',
         ])
-        ->where('status', Timesheet::STATUS_PENDING);
+        ->where('status', Timesheet::STATUS_PENDING)
+        // Os RATEIOS (filhos) são bastidor: contam no saldo/faturamento do destino e vivem
+        // na tela de Rateio — NÃO entram na fila de Aprovação. Quem é aprovado é o
+        // apontamento-ORIGEM no servidor (is_billable_only=false), que aparece normalmente.
+        ->whereNull('rateio_source_timesheet_id');
 
         // Portal de Sustentação: restringe aos projetos elegíveis (respeita override de coord).
         if ($request && $request->get('scope') === 'sustentacao') {
