@@ -146,6 +146,10 @@ class GmudPublishService
             $package->ticket->forceFill(['gmud_source_status' => 'atualizado'])->saveQuietly();
         }
 
+        // O HEAD do branch mudou no commit → invalida o cache da árvore do Git usado pelo
+        // SourceDocStatusResolver, senão a doc recém-gerada apareceria "Desatualizada" por 5-15min.
+        \Illuminate\Support\Facades\Cache::forget("srcdoc:tree:{$owner}/{$repository}@{$branch}");
+
         // Fase 1 (pós-publish): gera/atualiza a documentação via IA de TODOS os fontes publicados.
         // Async, best-effort (1 job por arquivo, fila source-doc) — a publicação já concluiu; uma
         // falha aqui NÃO desfaz o commit.
