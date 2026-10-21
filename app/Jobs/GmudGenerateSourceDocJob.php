@@ -81,7 +81,9 @@ class GmudGenerateSourceDocJob implements ShouldQueue
                 'new_code'            => $fetched['content'],
                 'old_code'            => $oldCode,
                 'source_commit_sha'   => $this->commitSha,
-                'source_blob_sha'     => $f->published_blob_sha ?: ($fetched['blob_sha'] ?? null),
+                // Blob AUTORITATIVO do conteúdo que estamos documentando (o fetchado no commit).
+                // Garante doc "Atualizada" após o publish (published_blob_sha pode defasar em re-runs).
+                'source_blob_sha'     => $fetched['blob_sha'] ?? $f->published_blob_sha,
                 'gmud_id'             => $ticket?->id,
                 'ticket_number'       => $ticket?->ticket_number,
                 'responsible_user_id' => $ticket?->assignee_id,
