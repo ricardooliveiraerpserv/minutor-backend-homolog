@@ -1348,6 +1348,7 @@ class UserController extends Controller
                 ? 'Senha temporária enviada por e-mail ao usuário.'
                 : 'Senha gerada, mas o envio do e-mail falhou — reenvie o reset.',
             'email_sent'         => $emailSent,
+            'temporary_password' => $temporaryPassword,
         ]);
     }
 
