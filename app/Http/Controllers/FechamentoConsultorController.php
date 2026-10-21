@@ -236,7 +236,10 @@ class FechamentoConsultorController extends Controller
         $emplStart = $user->bank_hours_start_date ? $user->bank_hours_start_date->format('Y-m-d') : null;
         $segs = UserHourlyRateLog::segmentsForMonth($user->id, $user, $yearMonth, $emplStart);
         if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo', 'banco_de_horas'], true))) {
-            $pays = array_map(fn ($s) => $this->segmentPay($user, $s), $segs);
+            $pays = [];
+            foreach ($segs as $i => $s) {
+                $pays[] = $this->segmentPay($user, $s, $i > 0 ? ($segs[$i - 1]['consultant_type'] ?? null) : null);
+            }
             $last = end($pays);
             $ehRepasse = in_array($last['type'], ['fixo', 'banco_de_horas'], true);
             return [
@@ -1589,7 +1592,7 @@ class FechamentoConsultorController extends Controller
      *   - horista: max(horas do trecho, piso garantido rateado) × taxa + extras do trecho
      * Ponto único das fórmulas de rateio (usado pelo split da lista E pelo total do detalhe).
      */
-    private function segmentPay(User $user, array $seg): array
+    private function segmentPay(User $user, array $seg, ?string $prevType = null): array
     {
         $type          = $seg['consultant_type'];
         $hourlyRate    = (float) ($seg['hourly_rate'] ?? 0);
@@ -1624,9 +1627,16 @@ class FechamentoConsultorController extends Controller
             $y = (int) Carbon::parse($seg['from'])->year;
             $m = (int) Carbon::parse($seg['from'])->month;
             $extraHoursBank = $this->bankExtraHoursInRange($user->id, $seg['from'], $seg['to']);
+            // Histórico do banco: CONVERSÃO p/ banco neste mês (trecho novo, prevType != banco) ZERA
+            // o saldo anterior → startDate = início do trecho. Banco CONTÍNUO (1º trecho do mês, vinha
+            // de antes) mantém o histórico → startDate = a data real de início do banco (null = sempre).
+            $isFreshBank = $prevType !== null && $prevType !== 'banco_de_horas';
+            $bankStart = $isFreshBank
+                ? $seg['from']
+                : ($user->bank_hours_start_date ? $user->bank_hours_start_date->format('Y-m-d') : null);
             $calc = app(HourBankService::class)->calculateMonth(
                 $user->id, $y, $m, (float) ($user->daily_hours ?? 8.0),
-                $seg['from'], $extraHoursBank, $seg['to']
+                $bankStart, $extraHoursBank, $seg['to']
             );
             $valorHoraExtra = $hourlyRate > 0 ? round($hourlyRate / 160, 4) : 0;
             $paidHours      = $calc['paid_hours'];
@@ -1680,7 +1690,8 @@ class FechamentoConsultorController extends Controller
         $lastIdx = count($segments) - 1;
 
         foreach ($segments as $idx => $seg) {
-            $pay    = $this->segmentPay($user, $seg);
+            $prevType = $idx > 0 ? ($segments[$idx - 1]['consultant_type'] ?? null) : null;
+            $pay    = $this->segmentPay($user, $seg, $prevType);
             $isLast = $idx === $lastIdx;
             $label  = Carbon::parse($seg['from'])->format('d/m') . '–' . Carbon::parse($seg['to'])->format('d/m');
 
