@@ -117,7 +117,7 @@ class HelpDeskTicketController extends Controller
         ]);
     }
 
-    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false, int $interCount = 0): array
+    private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false, int $interCount = 0, $meetingAt = null): array
     {
         // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
         $solicitante = optional($t->contact)->name ?: optional($t->requester)->name ?: $t->requester_name;
@@ -143,6 +143,11 @@ class HelpDeskTicketController extends Controller
             'dev_delivery_overdue'   => (optional($t->status)->key === 'em_desenvolvimento' && $t->dev_delivery_at)
                 ? (\Illuminate\Support\Carbon::parse($t->dev_delivery_at)->toDateString() <= $this->lastBusinessDayBeforeToday())
                 : false,
+            // Reunião Teams ATIVA (agendada/em andamento) vinculada ao ticket — alimenta o chip
+            // "Reunião agendada" na fila. É independente do STATUS do ticket: um chamado pode estar
+            // "Em atendimento" e ter uma reunião marcada (tabela `meetings`, não o status_id).
+            'has_scheduled_meeting'  => $meetingAt !== null,
+            'meeting_scheduled_at'   => $meetingAt ? \Illuminate\Support\Carbon::parse($meetingAt)->toIso8601String() : null,
         ]);
     }
 
@@ -173,6 +178,23 @@ class HelpDeskTicketController extends Controller
             ->groupBy('helpdesk_ticket_comments.ticket_id')
             ->selectRaw('helpdesk_ticket_comments.ticket_id as tid, MAX(helpdesk_ticket_comments.created_at) as last_agent_at')
             ->pluck('last_agent_at', 'tid');
+    }
+
+    /**
+     * Reunião Teams ATIVA por ticket (batch anti-N+1). Mapa ticket_id => starts_at da próxima reunião.
+     * "Ativa" = status scheduled/live (exclui ended/canceled). Vínculo polimórfico em `meetings`
+     * (origin_type='HELPDESK_TICKET', origin_id = ticket.id). Usado pelo chip "Reunião agendada" da fila.
+     */
+    private function scheduledMeetingByTicket(\Illuminate\Support\Collection $tickets): \Illuminate\Support\Collection
+    {
+        if ($tickets->isEmpty()) return collect();
+        return \App\Models\Meeting::query()
+            ->where('origin_type', 'HELPDESK_TICKET')
+            ->whereIn('origin_id', $tickets->pluck('id'))
+            ->whereIn('status', ['scheduled', 'live'])
+            ->groupBy('origin_id')
+            ->selectRaw('origin_id as oid, MIN(starts_at) as next_at')
+            ->pluck('next_at', 'oid');
     }
 
     /** Qtd de INTERAÇÕES (comentários reais, não-sistema) por ticket — batch anti-N+1. */
@@ -312,9 +334,10 @@ class HelpDeskTicketController extends Controller
         $events = $this->eventsByTicket($tickets->where('sla_ever_paused', true)->values());
         $lastAgent = $this->lastAgentCommentByTicket($tickets);
         $interCounts = $this->interactionCountByTicket($tickets);
+        $meetings = $this->scheduledMeetingByTicket($tickets);
         $t2 = $mark();
         $cal = app(\App\Services\BusinessCalendarService::class);
-        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true, (int) ($interCounts->get($t->id) ?? 0)));
+        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true, (int) ($interCounts->get($t->id) ?? 0), $meetings->get($t->id)));
         $t3 = $mark();
 
         $payload = ['data' => $data];
