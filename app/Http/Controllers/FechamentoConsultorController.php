@@ -232,19 +232,20 @@ class FechamentoConsultorController extends Controller
         );
 
         // MÊS DA TROCA (meio do mês): total = SOMA dos trechos (mesmo rateio da lista), para o
-        // detalhe/PDF/e-mail fecharem com a lista. Fase 1: só horista/fixo (banco → caminho legado).
+        // detalhe/PDF/e-mail fecharem com a lista.
         $emplStart = $user->bank_hours_start_date ? $user->bank_hours_start_date->format('Y-m-d') : null;
         $segs = UserHourlyRateLog::segmentsForMonth($user->id, $user, $yearMonth, $emplStart);
-        if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo'], true))) {
+        if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo', 'banco_de_horas'], true))) {
             $pays = array_map(fn ($s) => $this->segmentPay($user, $s), $segs);
             $last = end($pays);
+            $ehRepasse = in_array($last['type'], ['fixo', 'banco_de_horas'], true);
             return [
                 'total'             => round(array_sum(array_column($pays, 'total')), 2),
                 'horas_a_pagar'     => round(array_sum(array_column($pays, 'horas_a_pagar')), 2),
                 'horas_trabalhadas' => round(array_sum(array_column($pays, 'horas_trabalhadas')), 2),
                 'effective_rate'    => $last['effective_rate'],
-                'taxa_label'        => $last['type'] === 'fixo' ? 'Repasse no Mês' : 'Valor/Hora',
-                'taxa_value'        => $last['type'] === 'fixo' ? $last['hourly_rate'] : $last['effective_rate'],
+                'taxa_label'        => $ehRepasse ? 'Repasse no Mês' : 'Valor/Hora',
+                'taxa_value'        => $ehRepasse ? $last['hourly_rate'] : $last['effective_rate'],
                 'split_segments'    => array_map(fn ($p) => [
                     'tipo'  => $p['type'],
                     'label' => Carbon::parse($p['from'])->format('d/m') . '–' . Carbon::parse($p['to'])->format('d/m'),
@@ -1552,6 +1553,21 @@ class FechamentoConsultorController extends Controller
         return round((float) ($v ?? 0), 2);
     }
 
+    /** Horas-extra do BANCO (consultant_extra_pct infla as horas, não gera $) num intervalo. */
+    private function bankExtraHoursInRange(int $userId, string $from, string $to): float
+    {
+        $rows = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereNotNull('consultant_extra_pct')
+            ->where('user_id', $userId)
+            ->get(['effort_minutes', 'consultant_extra_pct']);
+        return round($rows->sum(fn ($t) => ($t->effort_minutes / 60) * ((float) $t->consultant_extra_pct / 100)), 2);
+    }
+
     /** Valor dos extras (consultant_extra_pct) de um consultor num intervalo, à taxa informada. */
     private function extrasValueInRange(int $userId, string $from, string $to, float $effectiveRate): float
     {
@@ -1599,6 +1615,31 @@ class FechamentoConsultorController extends Controller
                 'base'          => $salarioProp,
                 'horas_a_pagar' => $horas,
                 'total'         => round($salarioProp + $extras, 2),
+            ]);
+        }
+        if ($type === 'banco_de_horas') {
+            // Base mensal RATEADA por dias corridos + horas-extra do banco SÓ do trecho
+            // (HourBankService limitado a [from,to] via startDate+upToDate).
+            $baseProp = round($hourlyRate * $fracao, 2);
+            $y = (int) Carbon::parse($seg['from'])->year;
+            $m = (int) Carbon::parse($seg['from'])->month;
+            $extraHoursBank = $this->bankExtraHoursInRange($user->id, $seg['from'], $seg['to']);
+            $calc = app(HourBankService::class)->calculateMonth(
+                $user->id, $y, $m, (float) ($user->daily_hours ?? 8.0),
+                $seg['from'], $extraHoursBank, $seg['to']
+            );
+            $valorHoraExtra = $hourlyRate > 0 ? round($hourlyRate / 160, 4) : 0;
+            $paidHours      = $calc['paid_hours'];
+            $totalExtra     = round($paidHours * $valorHoraExtra, 2);
+            return array_merge($common, [
+                'base'             => $baseProp,
+                'fixed_salary'     => $baseProp,         // base mensal rateada (card "Base Mensal")
+                'valor_hora_extra' => $valorHoraExtra,
+                'paid_hours'       => $paidHours,
+                'horas_extras'     => $paidHours,
+                'horas_a_pagar'    => $paidHours,
+                'calc'             => $calc,
+                'total'            => round($baseProp + $totalExtra, 2),
             ]);
         }
         // horista (piso garantido rateado por dias corridos)
@@ -1670,6 +1711,26 @@ class FechamentoConsultorController extends Controller
             if ($pay['type'] === 'fixo') {
                 $row['_bucket']        = 'fixo';
                 $row['salario_mensal'] = $pay['hourly_rate'];
+            } elseif ($pay['type'] === 'banco_de_horas') {
+                $calc = $pay['calc'];
+                $row['_bucket']       = 'banco';
+                $row['total_extras']  = 0;  // banco não paga extra monetário (vira horas no banco)
+                $row = array_merge($row, [
+                    'fixed_salary'        => $pay['fixed_salary'],
+                    'valor_hora_extra'    => $pay['valor_hora_extra'],
+                    'horas_extras'        => $pay['horas_extras'],
+                    'paid_hours'          => $pay['paid_hours'],
+                    'total_extra'         => round($pay['total'] - $pay['base'], 2),
+                    'horas_trabalhadas'   => round($calc['worked_hours'] ?? $pay['horas_trabalhadas'], 2),
+                    'conflict_hours'      => round($calc['conflict_hours'] ?? 0, 2),
+                    'daily_hours'         => (float) ($user->daily_hours ?? 8.0),
+                    'working_days'        => $calc['working_days'] ?? 0,
+                    'expected_hours'      => $calc['expected_hours'] ?? 0,
+                    'month_balance'       => $calc['month_balance'] ?? 0,
+                    'previous_balance'    => $calc['previous_balance'] ?? 0,
+                    'accumulated_balance' => $calc['accumulated_balance'] ?? 0,
+                    'final_balance'       => $calc['final_balance'] ?? 0,
+                ]);
             } else {
                 $row['_bucket']             = 'horista';
                 $row['guaranteed_hours']    = $pay['guaranteed_hours'];
@@ -1875,14 +1936,15 @@ class FechamentoConsultorController extends Controller
             ];
 
             // MÊS DA TROCA (meio do mês): se houve mudança de valor/tipo em dia > 1 dentro do mês,
-            // parte o consultor em trechos (1 linha por segmento, no bucket do tipo do trecho).
-            // Fase 1: só quando TODOS os trechos são horista/fixo; banco envolvido segue o caminho
-            // mensal legado até a Fase 2. Fora disso (1 segmento), nada muda.
+            // parte o consultor em trechos (1 linha por segmento, no bucket do tipo do trecho) e
+            // paga cada trecho pelo seu tipo (fixo/horista/banco). Fora disso (1 segmento), nada muda.
             $emplStart = $user->bank_hours_start_date ? $user->bank_hours_start_date->format('Y-m-d') : null;
             $segs = UserHourlyRateLog::segmentsForMonth($user->id, $user, $yearMonth, $emplStart);
-            if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo'], true))) {
+            if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo', 'banco_de_horas'], true))) {
                 foreach ($this->buildSplitConsultorRows($user, $segs, $yearMonth, $base) as $r) {
-                    if ($r['_bucket'] === 'horista') { $horistas[] = $r; } else { $fixos[] = $r; }
+                    if ($r['_bucket'] === 'horista') { $horistas[] = $r; }
+                    elseif ($r['_bucket'] === 'banco') { $bancoHoras[] = $r; }
+                    else { $fixos[] = $r; }
                 }
                 continue;
             }

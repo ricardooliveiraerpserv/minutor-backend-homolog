@@ -94,7 +94,7 @@ class HourBankService
      * Soma horas apontadas (approved + pending) no mês para o consultor.
      * Se $startDate cair no mesmo mês, só conta apontamentos a partir dessa data.
      */
-    public function getWorkedHours(int $userId, int $year, int $month, ?string $startDate = null): float
+    public function getWorkedHours(int $userId, int $year, int $month, ?string $startDate = null, ?string $upToDate = null): float
     {
         $query = Timesheet::where('user_id', $userId)
             ->whereYear('date', $year)
@@ -110,16 +110,27 @@ class HourBankService
                 $query->where('date', '>=', $sd->format('Y-m-d'));
             }
         }
+        $this->applyUpTo($query, $year, $month, $upToDate);
 
         $minutes = $query->sum('effort_minutes');
         return round($minutes / 60, 2);
+    }
+
+    /** Limite de FIM (trecho do mês da troca): conta só até $upToDate quando no mesmo mês. */
+    private function applyUpTo($query, int $year, int $month, ?string $upToDate): void
+    {
+        if (!$upToDate) return;
+        $ed = Carbon::parse($upToDate);
+        if ($ed->year === $year && $ed->month === $month) {
+            $query->where('date', '<=', $ed->format('Y-m-d'));
+        }
     }
 
     /**
      * Horas PENDENTES de aprovação no mês (pendente + ajuste solicitado) — informativo,
      * NÃO entram no banco; entram após o coordenador aprovar.
      */
-    public function getPendingHours(int $userId, int $year, int $month, ?string $startDate = null): float
+    public function getPendingHours(int $userId, int $year, int $month, ?string $startDate = null, ?string $upToDate = null): float
     {
         $query = Timesheet::where('user_id', $userId)
             ->whereYear('date', $year)
@@ -135,6 +146,7 @@ class HourBankService
                 $query->where('date', '>=', $sd->format('Y-m-d'));
             }
         }
+        $this->applyUpTo($query, $year, $month, $upToDate);
 
         return round($query->sum('effort_minutes') / 60, 2);
     }
@@ -150,7 +162,7 @@ class HourBankService
      *
      * Retorna o TOTAL de horas descartadas no mês (soma por dia de max(0, janela−9)).
      */
-    public function getConflictHours(int $userId, int $year, int $month, ?string $startDate = null): float
+    public function getConflictHours(int $userId, int $year, int $month, ?string $startDate = null, ?string $upToDate = null): float
     {
         $query = Timesheet::where('user_id', $userId)
             ->whereYear('date', $year)
@@ -169,6 +181,7 @@ class HourBankService
                 $query->where('date', '>=', $sd->format('Y-m-d'));
             }
         }
+        $this->applyUpTo($query, $year, $month, $upToDate);
 
         // Minutos de cada apontamento que caem DENTRO da janela 09h–18h, somados por dia.
         $overlapMin = "GREATEST(0, EXTRACT(EPOCH FROM (LEAST(end_time, TIME '18:00') - GREATEST(start_time, TIME '09:00'))) / 60.0)";
@@ -241,24 +254,27 @@ class HourBankService
         int     $month,
         float   $dailyHours = 8.0,
         ?string $startDate  = null,
-        float   $additionalWorkedHours = 0.0
+        float   $additionalWorkedHours = 0.0,
+        ?string $upToDate   = null
     ): array {
         // Dias úteis do MÊS INTEIRO (info: "quantas horas úteis o mês terá").
         $workingFull     = $this->calculateWorkingDays($year, $month, $startDate);
         $expectedFull    = round($workingFull['working_days'] * $dailyHours, 2);
 
-        // No MÊS CORRENTE o saldo usa só os dias úteis DECORRIDOS (até hoje) — senão o mês nasce
-        // com déficit do mês inteiro (-184h). Meses passados usam o mês inteiro (já completos).
+        // Limite de FIM: TRECHO (upToDate, mês da troca banco) tem prioridade; senão, mês CORRENTE
+        // usa só os dias úteis decorridos (até hoje — senão nasce com déficit do mês inteiro); mês
+        // passado usa o mês inteiro. Quando upToDate vem, o trecho substitui o "até hoje".
         $isCurrent       = ((int) now()->year === $year && (int) now()->month === $month);
-        $workingUsed     = $isCurrent
-            ? $this->calculateWorkingDays($year, $month, $startDate, now()->toDateString())
+        $effectiveUpTo   = $upToDate ?? ($isCurrent ? now()->toDateString() : null);
+        $workingUsed     = $effectiveUpTo
+            ? $this->calculateWorkingDays($year, $month, $startDate, $effectiveUpTo)
             : $workingFull;
         $expectedHours   = round($workingUsed['working_days'] * $dailyHours, 2);
 
         // Horas descartadas por conflito dentro de 09–18 (teto 9h/dia) NÃO entram no banco.
-        $conflictHours   = $this->getConflictHours($userId, $year, $month, $startDate);
-        $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate) - $conflictHours + $additionalWorkedHours, 2);
-        $pendingHours    = $this->getPendingHours($userId, $year, $month, $startDate); // a aprovar (fora do banco)
+        $conflictHours   = $this->getConflictHours($userId, $year, $month, $startDate, $upToDate);
+        $workedHours     = round($this->getWorkedHours($userId, $year, $month, $startDate, $upToDate) - $conflictHours + $additionalWorkedHours, 2);
+        $pendingHours    = $this->getPendingHours($userId, $year, $month, $startDate, $upToDate); // a aprovar (fora do banco)
         $previousBalance = $this->getPreviousBalance($userId, $year, $month, $startDate);
 
         $monthBalance = round($workedHours - $expectedHours, 2);
