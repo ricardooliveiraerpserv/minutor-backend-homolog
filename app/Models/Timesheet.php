@@ -156,9 +156,9 @@ class Timesheet extends Model
         // status não mexe. É lado-cliente puro: consultor/parceiro NUNCA lê contract_client_pct.
         static::saving(function ($timesheet) {
             if ($timesheet->project_id && $timesheet->date &&
-                (!$timesheet->exists || $timesheet->isDirty('project_id') || $timesheet->isDirty('date'))) {
+                (!$timesheet->exists || $timesheet->isDirty('project_id') || $timesheet->isDirty('date') || $timesheet->isDirty('user_id'))) {
                 $timesheet->contract_client_pct = app(\App\Services\ContractHourMultiplierService::class)
-                    ->pctForTimesheet((int) $timesheet->project_id, $timesheet->date);
+                    ->pctForTimesheet((int) $timesheet->project_id, $timesheet->date, $timesheet->user_id ? (int) $timesheet->user_id : null);
             }
         });
     }

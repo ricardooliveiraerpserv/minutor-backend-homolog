@@ -16,7 +16,7 @@ class ContractHourMultiplier extends Model
 
     protected $fillable = [
         'contract_id', 'customer_id', 'percent', 'start_date', 'end_date',
-        'active', 'reason', 'created_by_id',
+        'active', 'reason', 'created_by_id', 'users',
     ];
 
     protected $casts = [
@@ -24,7 +24,20 @@ class ContractHourMultiplier extends Model
         'start_date' => 'date',
         'end_date'   => 'date',
         'active'     => 'boolean',
+        'users'      => 'array',
     ];
+
+    /**
+     * A faixa se aplica a este apontador?
+     * `users` vazio/NULL = TODOS (comportamento histórico). Lista preenchida = só esses user_id.
+     */
+    public function appliesToUser(?int $userId): bool
+    {
+        $users = $this->users;
+        if (empty($users)) return true;              // sem filtro = multiplica todo mundo
+        if ($userId === null) return false;          // faixa restrita + apontamento sem autor → não multiplica
+        return in_array((int) $userId, array_map('intval', $users), true);
+    }
 
     public function contract()  { return $this->belongsTo(Contract::class); }
     public function customer()  { return $this->belongsTo(Customer::class); }

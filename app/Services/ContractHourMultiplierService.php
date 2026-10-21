@@ -64,24 +64,29 @@ class ContractHourMultiplierService
         return $this->factorForContract($this->contractIdOfProject($projectId), $date);
     }
 
-    /** % da regra ativa vigente do contrato numa data (null = sem regra → sem efeito). */
-    public function rulePercentFor(?int $contractId, $date): ?float
+    /**
+     * % da regra ativa vigente do contrato numa data (null = sem regra → sem efeito).
+     * $userId: apontador. A faixa só multiplica se `users` estiver vazio (todos) OU
+     * contiver esse user_id (escopo por usuário — pedido do Ricardo).
+     */
+    public function rulePercentFor(?int $contractId, $date, ?int $userId = null): ?float
     {
         if (!$contractId) return null;
         $rule = ContractHourMultiplier::query()
             ->where('contract_id', $contractId)
             ->effectiveOn(self::d($date))
             ->first();
-        return $rule ? (float) $rule->percent : null;
+        if (!$rule || !$rule->appliesToUser($userId)) return null;
+        return (float) $rule->percent;
     }
 
     /** % derivado pro timesheet (resolve contrato do projeto). Alimenta contract_client_pct. */
-    public function pctForTimesheet(?int $projectId, $date): ?float
+    public function pctForTimesheet(?int $projectId, $date, ?int $userId = null): ?float
     {
         // Projeto FECHADO nunca multiplica — nem o excedente (o excedente lê o mesmo
         // contract_client_pct do apontamento; deixando null aqui, exclui em todas as rotinas).
         if ($this->isClosedProject($projectId)) return null;
-        return $this->rulePercentFor($this->contractIdOfProject($projectId), $date);
+        return $this->rulePercentFor($this->contractIdOfProject($projectId), $date, $userId);
     }
 
     /** Projeto do tipo "Fechado" (escopo/valor fixo) — EXCLUÍDO do multiplicador. */
@@ -162,14 +167,18 @@ class ContractHourMultiplierService
 
         $rules = ContractHourMultiplier::query()
             ->where('contract_id', $contractId)->where('active', true)
-            ->get(['percent', 'start_date', 'end_date']);
+            ->get(['percent', 'start_date', 'end_date', 'users']);
 
         foreach ($rules as $rule) {
             $start = $rule->start_date?->format('Y-m-d');
             $end   = $rule->end_date?->format('Y-m-d');
+            // Escopo por USUÁRIO: faixa com `users` preenchido só infla os apontamentos
+            // desses apontadores (os demais ficam no REAL). Vazio/NULL = todos.
+            $users = array_map('intval', $rule->users ?? []);
             (clone $base)
                 ->when($start, fn ($q) => $q->whereDate('date', '>=', $start))
                 ->when($end,   fn ($q) => $q->whereDate('date', '<=', $end))
+                ->when($users, fn ($q) => $q->whereIn('user_id', $users))
                 ->update(['contract_client_pct' => (float) $rule->percent]);
         }
     }

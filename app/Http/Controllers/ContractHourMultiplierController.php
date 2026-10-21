@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -106,6 +107,8 @@ class ContractHourMultiplierController extends Controller
             'faixas.*.start_date' => 'required|date',
             'faixas.*.end_date'   => 'nullable|date|after_or_equal:faixas.*.start_date',
             'faixas.*.reason'     => 'nullable|string|max:500',
+            'faixas.*.users'      => 'nullable|array',            // apontadores a quem a faixa se aplica (vazio = todos)
+            'faixas.*.users.*'    => 'integer|exists:users,id',
         ]);
 
         $contract = Contract::findOrFail($data['contract_id']);
@@ -117,12 +120,14 @@ class ContractHourMultiplierController extends Controller
         }
 
         $faixas = array_map(function ($f) {
+            $users = array_values(array_unique(array_map('intval', $f['users'] ?? [])));
             return [
                 'id'         => $f['id'] ?? null,
                 'percent'    => (float) $f['percent'],
                 'start_date' => Carbon::parse($f['start_date'])->format('Y-m-d'),
                 'end_date'   => !empty($f['end_date']) ? Carbon::parse($f['end_date'])->format('Y-m-d') : null,
                 'reason'     => $f['reason'] ?? null,
+                'users'      => $users ?: null,   // vazio = todos (NULL no banco)
             ];
         }, $data['faixas']);
 
@@ -142,6 +147,7 @@ class ContractHourMultiplierController extends Controller
                     'end_date'    => $f['end_date'],
                     'active'      => true,
                     'reason'      => $f['reason'],
+                    'users'       => $f['users'],
                 ];
                 if (!empty($f['id']) && $existing->has($f['id'])) {
                     $existing[$f['id']]->update($payload);
@@ -286,12 +292,20 @@ class ContractHourMultiplierController extends Controller
             'end_date'   => 'nullable|date|after_or_equal:start_date',
             'active'     => 'sometimes|boolean',
             'reason'     => 'nullable|string|max:500',
+            'users'      => 'nullable|array',
+            'users.*'    => 'integer|exists:users,id',
         ];
         // contract_id só é obrigatório/editável na criação (a regra pertence a 1 contrato).
         if (!$existing) {
             $rules['contract_id'] = 'required|integer|exists:contracts,id';
         }
-        return $request->validate($rules);
+        $data = $request->validate($rules);
+        // Normaliza users: vazio = todos (NULL no banco).
+        if (array_key_exists('users', $data)) {
+            $u = array_values(array_unique(array_map('intval', $data['users'] ?? [])));
+            $data['users'] = $u ?: null;
+        }
+        return $data;
     }
 
     private function row(ContractHourMultiplier $r): array
@@ -310,8 +324,43 @@ class ContractHourMultiplierController extends Controller
             'end_date'      => optional($r->end_date)->format('Y-m-d'),
             'active'        => (bool) $r->active,
             'reason'        => $r->reason,
+            'users'         => array_map('intval', $r->users ?? []),          // apontadores da faixa (vazio = todos)
+            'users_label'   => $this->usersLabel($r->users ?? []),            // nomes p/ exibição
             'created_by'    => $r->createdBy?->name,
             'created_at'    => optional($r->created_at)->toIso8601String(),
         ];
+    }
+
+    /** cache por request: id => nome (p/ rotular as faixas escopadas sem N+1). */
+    private array $userNameCache = [];
+
+    private function usersLabel(?array $ids): ?string
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids ?? [])));
+        if (!$ids) return null; // vazio = todos
+        $missing = array_values(array_diff($ids, array_keys($this->userNameCache)));
+        if ($missing) {
+            foreach (\App\Models\User::query()->whereIn('id', $missing)->pluck('name', 'id') as $id => $name) {
+                $this->userNameCache[(int) $id] = $name;
+            }
+        }
+        $names = array_map(fn ($id) => $this->userNameCache[$id] ?? "#$id", $ids);
+        return implode(', ', $names);
+    }
+
+    /**
+     * GET /contract-hour-multipliers/apontadores — usuários que podem apontar horas
+     * (não-clientes, ativos), pro multi-select de escopo por usuário no editor de faixas.
+     */
+    public function apontadores(Request $request): JsonResponse
+    {
+        $items = \App\Models\User::query()
+            ->where('type', '!=', 'cliente')
+            ->when(Schema::hasColumn('users', 'is_active'), fn ($q) => $q->where('is_active', true))
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn ($u) => ['id' => $u->id, 'label' => $u->name]);
+
+        return response()->json(['items' => $items]);
     }
 }
