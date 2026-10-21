@@ -1106,8 +1106,11 @@ class UserController extends Controller
                     ->orderByDesc('id')
                     ->first();
 
+                // Vigência: COMPETÊNCIA = 1º dia do mês (mês cheio, como sempre); PERÍODO = dia exato
+                // (ex.: 15/10) → o fechamento do consultor RATEIA o mês da troca. Guarda a data como
+                // veio (não força startOfMonth); o FE manda o dia 1 quando é competência.
                 $newEffectiveFrom = $request->input('hourly_rate_effective_from')
-                    ? \Carbon\Carbon::parse($request->input('hourly_rate_effective_from'))->startOfMonth()->toDateString()
+                    ? \Carbon\Carbon::parse($request->input('hourly_rate_effective_from'))->toDateString()
                     : null;
 
                 if ($todayLog) {
@@ -1849,8 +1852,9 @@ class UserController extends Controller
         if (array_key_exists('new_rate_type', $validated))       { $log->new_rate_type = $validated['new_rate_type']; }
         if (array_key_exists('new_consultant_type', $validated)) { $log->new_consultant_type = $validated['new_consultant_type']; }
         if (array_key_exists('effective_from', $validated)) {
+            // Mantém o dia exato (período) — não força startOfMonth; dia 1 = competência (mês cheio).
             $log->effective_from = $validated['effective_from']
-                ? \Carbon\Carbon::parse($validated['effective_from'])->startOfMonth()->toDateString()
+                ? \Carbon\Carbon::parse($validated['effective_from'])->toDateString()
                 : null;
         }
         $log->save();

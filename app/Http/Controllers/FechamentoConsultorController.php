@@ -231,6 +231,29 @@ class FechamentoConsultorController extends Controller
             2
         );
 
+        // MÊS DA TROCA (meio do mês): total = SOMA dos trechos (mesmo rateio da lista), para o
+        // detalhe/PDF/e-mail fecharem com a lista. Fase 1: só horista/fixo (banco → caminho legado).
+        $emplStart = $user->bank_hours_start_date ? $user->bank_hours_start_date->format('Y-m-d') : null;
+        $segs = UserHourlyRateLog::segmentsForMonth($user->id, $user, $yearMonth, $emplStart);
+        if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo'], true))) {
+            $pays = array_map(fn ($s) => $this->segmentPay($user, $s), $segs);
+            $last = end($pays);
+            return [
+                'total'             => round(array_sum(array_column($pays, 'total')), 2),
+                'horas_a_pagar'     => round(array_sum(array_column($pays, 'horas_a_pagar')), 2),
+                'horas_trabalhadas' => round(array_sum(array_column($pays, 'horas_trabalhadas')), 2),
+                'effective_rate'    => $last['effective_rate'],
+                'taxa_label'        => $last['type'] === 'fixo' ? 'Repasse no Mês' : 'Valor/Hora',
+                'taxa_value'        => $last['type'] === 'fixo' ? $last['hourly_rate'] : $last['effective_rate'],
+                'split_segments'    => array_map(fn ($p) => [
+                    'tipo'  => $p['type'],
+                    'label' => Carbon::parse($p['from'])->format('d/m') . '–' . Carbon::parse($p['to'])->format('d/m'),
+                    'total' => $p['total'],
+                    'horas' => $p['horas_trabalhadas'],
+                ], $pays),
+            ];
+        }
+
         // Vínculo VIGENTE na competência (via log de vigência), não o atual.
         switch ($hist['consultant_type'] ?? $user->consultant_type) {
             case 'horista':
@@ -445,19 +468,51 @@ class FechamentoConsultorController extends Controller
      * Espelha o antigo buildReport() do front: resumo por tipo (BH/Fixo/Horista),
      * apontamentos por tipo→cliente (8 colunas), despesas, ajustes e total.
      */
+    /**
+     * Mescla as linhas de um consultor em UMA (para telas/relatórios que esperam 1 linha por
+     * consultor). No mês da TROCA o consultor aparece em 2 trechos; aqui somamos os campos
+     * numéricos (deduções ficam só no último trecho, então a soma = valor do mês) e partimos da
+     * última linha (tipo final + descrições). Fora do split: devolve a própria linha inalterada.
+     */
+    private function mergeUserClosingRows(\Illuminate\Support\Collection $userRows): ?array
+    {
+        if ($userRows->isEmpty()) return null;
+        if ($userRows->count() === 1) return $userRows->first();
+
+        $merged = $userRows->last();
+        foreach ([
+            'total', 'total_despesas', 'desconto', 'adiantamento', 'emprestimo_aporte', 'adicional',
+            'recebimento', 'horas_trabalhadas', 'horas_pendentes', 'valor_pendente',
+            'horas_ajuste', 'valor_ajuste', 'pendencias_count',
+        ] as $f) {
+            $merged[$f] = round($userRows->sum(fn ($r) => (float) ($r[$f] ?? 0)), 2);
+        }
+        $merged['all_approved']   = $userRows->every(fn ($r) => ($r['all_approved'] ?? true));
+        $merged['split_segments'] = $userRows->map(fn ($r) => [
+            'tipo'  => $r['consultant_type'] ?? null,
+            'label' => $r['segment_label'] ?? null,
+            'total' => round((float) ($r['total'] ?? 0), 2),
+        ])->values()->all();
+        return $merged;
+    }
+
     private function buildConsultorReportView(int $userId, string $yearMonth, string $mode = 'ambos'): array
     {
         [$from, $to] = $this->period($yearMonth);
         $dataConsultores = $this->buildConsultoresData($yearMonth);
         $bizPools        = $dataConsultores['bizify'] ?? [];
-        $consultor = collect($dataConsultores)
-            ->only(['horistas', 'banco_horas', 'fixos'])
-            ->flatMap(fn ($g) => $g)
-            // Consultores Bizify são particionados para um bloco aninhado próprio em
-            // buildConsultoresData; sem incluí-lo aqui o relatório do Bizify vinha SEM os
-            // ajustes (desconto/adiantamento/adicional) e zerado — $consultor caía em [].
-            ->merge(collect($bizPools)->only(['horistas', 'banco_horas', 'fixos'])->flatMap(fn ($g) => $g))
-            ->firstWhere('user_id', $userId) ?? [];
+        // Mês da TROCA: o consultor vira 2 linhas (trechos) — mescla p/ o relatório/PDF (soma dos
+        // trechos + deduções do mês, partindo da última linha). Fora do split: a própria linha.
+        $consultor = $this->mergeUserClosingRows(
+            collect($dataConsultores)
+                ->only(['horistas', 'banco_horas', 'fixos'])
+                ->flatMap(fn ($g) => $g)
+                // Consultores Bizify são particionados para um bloco aninhado próprio em
+                // buildConsultoresData; sem incluí-lo aqui o relatório do Bizify vinha SEM os
+                // ajustes (desconto/adiantamento/adicional) e zerado — $consultor caía em [].
+                ->merge(collect($bizPools)->only(['horistas', 'banco_horas', 'fixos'])->flatMap(fn ($g) => $g))
+                ->where('user_id', $userId)->values()
+        ) ?? [];
 
         $user     = User::find($userId);
         $apont    = $this->buildApontamentosRows((string) $userId, $from, $to, $user);
@@ -1346,14 +1401,16 @@ class FechamentoConsultorController extends Controller
         // ── CONSULTOR: acha a própria linha em buildConsultoresData (horistas+banco+fixos) ──
         $data = $this->buildConsultoresData($yearMonth);
         $biz  = $data['bizify'] ?? [];
-        $row  = collect($data['horistas'])
-            ->merge($data['banco_horas'])
-            ->merge($data['fixos'])
-            // Bizify vive num bloco aninhado próprio (partição em buildConsultoresData).
-            ->merge($biz['horistas'] ?? [])
-            ->merge($biz['banco_horas'] ?? [])
-            ->merge($biz['fixos'] ?? [])
-            ->firstWhere('user_id', $user->id);
+        $row  = $this->mergeUserClosingRows(
+            collect($data['horistas'])
+                ->merge($data['banco_horas'])
+                ->merge($data['fixos'])
+                // Bizify vive num bloco aninhado próprio (partição em buildConsultoresData).
+                ->merge($biz['horistas'] ?? [])
+                ->merge($biz['banco_horas'] ?? [])
+                ->merge($biz['fixos'] ?? [])
+                ->where('user_id', $user->id)->values()
+        );
 
         if ($row) {
             $totalServico  = round((float) ($row['total'] ?? 0), 2);
@@ -1477,6 +1534,154 @@ class FechamentoConsultorController extends Controller
     }
 
     /** Computa horistas/banco_horas/fixos + totais (compartilhado por index, exportExcel e folha). */
+    /**
+     * Soma de horas aprovadas (pagáveis) de um consultor num intervalo de datas [from,to].
+     * Mesmo filtro de $hoursByUser (aprovado + liberado + não billable/interno), mas por trecho.
+     */
+    private function approvedHoursInRange(int $userId, string $from, string $to): float
+    {
+        $v = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->where('user_id', $userId)
+            ->selectRaw('SUM(ROUND(effort_minutes / 60.0, 2)) as h')
+            ->value('h');
+        return round((float) ($v ?? 0), 2);
+    }
+
+    /** Valor dos extras (consultant_extra_pct) de um consultor num intervalo, à taxa informada. */
+    private function extrasValueInRange(int $userId, string $from, string $to, float $effectiveRate): float
+    {
+        $rows = Timesheet::whereBetween('date', [$from, $to])
+            ->where('status', Timesheet::STATUS_APPROVED)
+            ->where('consultant_released', true)
+            ->whereNull('deleted_at')
+            ->where('is_billable_only', false)
+            ->where('is_internal_action', false)
+            ->whereNotNull('consultant_extra_pct')
+            ->where('user_id', $userId)
+            ->get(['effort_minutes', 'consultant_extra_pct']);
+        return round($rows->sum(fn ($t) => ($t->effort_minutes / 60) * $effectiveRate * ((float) $t->consultant_extra_pct / 100)), 2);
+    }
+
+    /**
+     * Pagamento de UM segmento (trecho de vigência dentro do mês da troca), pelo tipo do trecho:
+     *   - fixo:    salário × (dias corridos do trecho ÷ dias do mês) + extras do trecho
+     *   - horista: max(horas do trecho, piso garantido rateado) × taxa + extras do trecho
+     * Ponto único das fórmulas de rateio (usado pelo split da lista E pelo total do detalhe).
+     */
+    private function segmentPay(User $user, array $seg): array
+    {
+        $type          = $seg['consultant_type'];
+        $hourlyRate    = (float) ($seg['hourly_rate'] ?? 0);
+        $rateType      = $seg['rate_type'] ?? 'hourly';
+        $effectiveRate = $this->effectiveHourlyRate($hourlyRate, $rateType);
+        $segDays       = (int) $seg['days'];
+        $monthDays     = (int) $seg['month_days'];
+        $fracao        = $monthDays > 0 ? $segDays / $monthDays : 0;
+
+        $horas  = $this->approvedHoursInRange($user->id, $seg['from'], $seg['to']);
+        $extras = $this->extrasValueInRange($user->id, $seg['from'], $seg['to'], $effectiveRate);
+
+        $common = [
+            'type' => $type, 'from' => $seg['from'], 'to' => $seg['to'], 'days' => $segDays,
+            'month_days' => $monthDays, 'fracao' => round($fracao, 6), 'hourly_rate' => $hourlyRate,
+            'rate_type' => $rateType, 'effective_rate' => $effectiveRate,
+            'horas_trabalhadas' => $horas, 'extras' => $extras,
+        ];
+
+        if ($type === 'fixo') {
+            $salarioProp = round($hourlyRate * $fracao, 2);
+            return array_merge($common, [
+                'base'          => $salarioProp,
+                'horas_a_pagar' => $horas,
+                'total'         => round($salarioProp + $extras, 2),
+            ]);
+        }
+        // horista (piso garantido rateado por dias corridos)
+        $gh     = (float) (\App\Models\UserGuaranteedHoursLog::effectiveValueAt($user->id, $user, $seg['from']) ?? 0);
+        $ghPror = $gh > 0 ? round($gh * $fracao, 2) : 0;
+        $horasMin = $ghPror > 0 ? max($horas, $ghPror) : $horas;
+        return array_merge($common, [
+            'guaranteed_hours'    => $gh,
+            'guaranteed_prorated' => $ghPror,
+            'horas_a_pagar'       => $horasMin,
+            'total'               => round($horasMin * $effectiveRate + $extras, 2),
+        ]);
+    }
+
+    /**
+     * MÊS DA TROCA (meio do mês): parte o consultor em N linhas (1 por segmento de vigência),
+     * cada uma no SEU bucket e paga pelo SEU tipo (ver segmentPay).
+     * As deduções/acréscimos do MÊS (despesas, desconto, adiantamento, adicional, empréstimo,
+     * pendências, notas, envio) ficam SÓ no ÚLTIMO trecho → a soma dos recebimentos fecha o mês.
+     * Fase 1: só trata segmentos horista/fixo (o caller não chama com banco envolvido).
+     *
+     * @param array $segments  saída de UserHourlyRateLog::segmentsForMonth (>1 item)
+     * @param array $base       dict base do mês (com deduções) já montado no loop
+     * @return array<int,array> linhas com chave '_bucket' => 'horista'|'fixo'
+     */
+    private function buildSplitConsultorRows(User $user, array $segments, string $yearMonth, array $base): array
+    {
+        // Campos de MÊS que não podem duplicar entre as linhas (ficam só na última).
+        $zeroMes = [
+            'horas_pendentes' => 0, 'valor_pendente' => 0, 'horas_ajuste' => 0, 'valor_ajuste' => 0,
+            'pendencias_count' => 0, 'all_approved' => true, 'total_despesas' => 0,
+            'desconto' => 0, 'desconto_desc' => null, 'adiantamento' => 0, 'adiantamento_desc' => null,
+            'emprestimo_aporte' => 0, 'adicional' => 0, 'adicional_desc' => null,
+            'notas' => null, 'envio_em' => null, 'envio_por' => null,
+        ];
+
+        $rows    = [];
+        $lastIdx = count($segments) - 1;
+
+        foreach ($segments as $idx => $seg) {
+            $pay    = $this->segmentPay($user, $seg);
+            $isLast = $idx === $lastIdx;
+            $label  = Carbon::parse($seg['from'])->format('d/m') . '–' . Carbon::parse($seg['to'])->format('d/m');
+
+            // Base do trecho: só a última linha carrega as deduções do mês (não duplicar).
+            $row = $isLast ? $base : array_merge($base, $zeroMes);
+            $row = array_merge($row, [
+                'row_key'            => $user->id . '-' . $idx,   // chave única p/ FE (user aparece 2x)
+                'consultant_type'    => $pay['type'],
+                'valor_hora'         => $pay['hourly_rate'],
+                'rate_type'          => $pay['rate_type'],
+                'effective_rate'     => $pay['effective_rate'],
+                'split_segment'      => true,
+                'segment_label'      => $label,
+                'segment_from'       => $seg['from'],
+                'segment_to'         => $seg['to'],
+                'segment_days'       => $pay['days'],
+                'segment_month_days' => $pay['month_days'],
+                'horas_trabalhadas'  => $pay['horas_trabalhadas'],
+                'horas_a_pagar'      => $pay['horas_a_pagar'],
+                'total_extras'       => $pay['extras'],
+                'proporcional'       => true,
+                'ratio'              => $pay['fracao'],
+                'dias_uteis_periodo' => $pay['days'],       // aqui = dias CORRIDOS do trecho
+                'dias_uteis_cheio'   => $pay['month_days'], // dias corridos do mês
+                'total'              => $pay['total'],
+            ]);
+
+            if ($pay['type'] === 'fixo') {
+                $row['_bucket']        = 'fixo';
+                $row['salario_mensal'] = $pay['hourly_rate'];
+            } else {
+                $row['_bucket']             = 'horista';
+                $row['guaranteed_hours']    = $pay['guaranteed_hours'];
+                $row['guaranteed_prorated'] = $pay['guaranteed_prorated'];
+            }
+
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
     public function buildConsultoresData(string $yearMonth): array
     {
         [$from, $to]     = $this->period($yearMonth);
@@ -1668,6 +1873,19 @@ class FechamentoConsultorController extends Controller
                     ? (optional($notasMap->get($user->id))->toRowPayload() ?? \App\Models\FechamentoNota::emptyRowPayload())
                     : null,
             ];
+
+            // MÊS DA TROCA (meio do mês): se houve mudança de valor/tipo em dia > 1 dentro do mês,
+            // parte o consultor em trechos (1 linha por segmento, no bucket do tipo do trecho).
+            // Fase 1: só quando TODOS os trechos são horista/fixo; banco envolvido segue o caminho
+            // mensal legado até a Fase 2. Fora disso (1 segmento), nada muda.
+            $emplStart = $user->bank_hours_start_date ? $user->bank_hours_start_date->format('Y-m-d') : null;
+            $segs = UserHourlyRateLog::segmentsForMonth($user->id, $user, $yearMonth, $emplStart);
+            if (count($segs) > 1 && collect($segs)->every(fn ($s) => in_array($s['consultant_type'], ['horista', 'fixo'], true))) {
+                foreach ($this->buildSplitConsultorRows($user, $segs, $yearMonth, $base) as $r) {
+                    if ($r['_bucket'] === 'horista') { $horistas[] = $r; } else { $fixos[] = $r; }
+                }
+                continue;
+            }
 
             // Proporcionalidade: se data_inicio cai no mês atual
             $startDate = $user->bank_hours_start_date
