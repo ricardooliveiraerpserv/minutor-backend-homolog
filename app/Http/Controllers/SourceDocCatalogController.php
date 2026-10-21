@@ -188,7 +188,7 @@ class SourceDocCatalogController extends Controller
                 // 'active' é OBRIGATÓRIO: o SourceDocStatusResolver::preChecks lê $repo->active;
                 // sem essa coluna o repo parece inativo e a situação vira NAO_VALIDADO indevido.
                 'sourceRepo:id,owner,repository,branch,active',
-                'currentVersion:id,source_doc_id,analysis_status,source_commit_sha,source_blob_sha,gmud_id,ticket_number,responsavel,created_at',
+                'currentVersion:id,source_doc_id,analysis_status,source_commit_sha,source_blob_sha,gmud_id,ticket_number,responsavel,created_at,change_diff,change_diff_meta',
             ])
             ->find($sourceDoc);
 
@@ -236,6 +236,8 @@ class SourceDocCatalogController extends Controller
                 ] : null,
                 'responsavel' => $ver->responsavel,
                 'created_at'  => $ver->created_at,
+                'change_diff'      => $ver->change_diff,
+                'change_diff_meta' => $ver->change_diff_meta,
             ] : null,
             // Leve (~13KB mesmo em fontes grandes): identity + semantic + diff + version + status.
             'documentation_meta' => $documentationMeta,
@@ -281,6 +283,7 @@ class SourceDocCatalogController extends Controller
             ->select([
                 'id', 'source_commit_sha', 'source_blob_sha', 'gmud_id', 'ticket_number',
                 'responsavel', 'analysis_status', 'diff_summary', 'diff_stats', 'created_at',
+                'change_diff', 'change_diff_meta',
             ])
             ->orderByDesc('id')
             ->paginate($perPage);

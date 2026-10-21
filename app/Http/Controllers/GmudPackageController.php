@@ -149,6 +149,27 @@ class GmudPackageController extends Controller
     private function manifest(GmudPackage $package): array
     {
         $package->loadMissing('uploader');
+
+        // Trecho alterado por fonte publicado (quando a doc-IA pós-publish já gerou a versão).
+        $diffByPath = [];
+        if ($package->status === GmudPackage::STATUS_PUBLISHED && $package->source_repo_id) {
+            $repo = \App\Models\ClientSourceRepo::find($package->source_repo_id);
+            if ($repo) {
+                $paths = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')->pluck('dest_git_path')->all();
+                if (! empty($paths)) {
+                    $docs = \App\Models\SourceDoc::with('currentVersion:id,source_doc_id,change_diff,change_diff_meta')
+                        ->where('owner', $repo->owner)->where('repository', $repo->repository)
+                        ->where('branch', $repo->branch ?: 'main')->whereIn('path', $paths)
+                        ->get(['id', 'path', 'current_version_id']);
+                    foreach ($docs as $d) {
+                        if ($cv = $d->currentVersion) {
+                            $diffByPath[$d->path] = ['change_diff' => $cv->change_diff, 'change_diff_meta' => $cv->change_diff_meta];
+                        }
+                    }
+                }
+            }
+        }
+
         return [
             'id'             => $package->id,
             'ticket_id'      => $package->ticket_id,
@@ -177,6 +198,9 @@ class GmudPackageController extends Controller
                     'score'       => $f->quality_score,
                     'findings'    => is_array($f->quality_findings) ? $f->quality_findings : [],
                     'analyzed_at' => optional($f->quality_analyzed_at)->toIso8601String(),
+                    // Trecho alterado da última modificação (quando a doc-IA pós-publish já concluiu).
+                    'change_diff'      => $diffByPath[$f->dest_git_path]['change_diff'] ?? null,
+                    'change_diff_meta' => $diffByPath[$f->dest_git_path]['change_diff_meta'] ?? null,
                 ])->values(),
         ];
     }
