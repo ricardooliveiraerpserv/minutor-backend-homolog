@@ -2689,6 +2689,9 @@ class ContractController extends Controller
             'kanban_coordinator_override_name' => $project->kanbanOverrideCoordinator?->name,
             'consultants'           => $project->consultants->pluck('name'),
             'executivo_conta_name'  => $this->cardExecutivoContaName($project->customer, $project->executivoConta),
+            // Executivo DO CLIENTE (customers.executive_id) — fonte de verdade p/ "executivo de conta"
+            // (o executivo do PROJETO pode divergir). Usado no alerta de consumo (filtro por responsável).
+            'customer_executivo_name' => $this->cardExecutivoContaName($project->customer, null),
             'contract_type'         => $project->contractType?->name,
             'service_type'          => $project->serviceType?->name,
             'is_complete'           => true,
