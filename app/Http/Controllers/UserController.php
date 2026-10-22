@@ -191,7 +191,7 @@ class UserController extends Controller
         $pageSize = min((int) $request->get('pageSize', 20), 500);
         $page = (int) $request->get('page', 1);
 
-        $query = User::with(['customer', 'partner:id,name']);
+        $query = User::with(['customer', 'partner:id,name', 'companies:id']);
 
         // Se não é admin nem tem permissão para ver/editar/resetar todos, só pode ver próprio perfil
         // Coordenadores podem ver todos os usuários (necessário para filtros de aprovações/apontamentos)
@@ -350,10 +350,25 @@ class UserController extends Controller
             ->get(['user_id', 'dashboard_type'])
             ->groupBy('user_id');
 
-        $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields, $dashByUser) {
+        // Batch das equipes HD (helpdesk_team_user) p/ a página — evita N+1 na coluna Equipe(s).
+        // company_ids vem da relação companies (eager-load acima). Ambos são DERIVADOS de pivot,
+        // então não aparecem no toArray() por padrão — a aba Help Desk precisa deles p/ persistir
+        // a seleção de Empresa/Equipe (senão a coluna "apaga" ao recarregar).
+        $teamsByUser = \DB::table('helpdesk_team_user')
+            ->whereIn('user_id', $pageUserIds)
+            ->get(['user_id', 'team_id'])
+            ->groupBy('user_id');
+
+        $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields, $dashByUser, $teamsByUser) {
             $userData = $user->toArray();
             $userData['dashboard_types'] = isset($dashByUser[$user->id])
                 ? $dashByUser[$user->id]->pluck('dashboard_type')->all()
+                : [];
+            $userData['company_ids'] = $user->relationLoaded('companies')
+                ? $user->companies->pluck('id')->map(fn ($id) => (int) $id)->values()->all()
+                : [];
+            $userData['helpdesk_team_ids'] = isset($teamsByUser[$user->id])
+                ? $teamsByUser[$user->id]->pluck('team_id')->map(fn ($id) => (int) $id)->values()->all()
                 : [];
             $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
             if (!$canSeeFolha) {
