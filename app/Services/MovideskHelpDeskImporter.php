@@ -114,7 +114,7 @@ class MovideskHelpDeskImporter
      * @param bool $force ignora o flag de habilitação (para teste manual via command).
      * @return array{scanned:int,imported:int,updated:int,comments:int,skipped:int,since:string}
      */
-    public function run(bool $force = false, ?Carbon $sinceOverride = null): array
+    public function run(bool $force = false, ?Carbon $sinceOverride = null, ?int $companyIdOverride = null): array
     {
         $stats = ['scanned' => 0, 'imported' => 0, 'updated' => 0, 'comments' => 0, 'skipped' => 0, 'since' => ''];
 
@@ -124,7 +124,9 @@ class MovideskHelpDeskImporter
         }
 
         $teams     = $this->blockedTeams(); // lista de equipes (exclude: excluir; include: manter só estas)
-        $companyId = $this->companyId();
+        $companyId = $companyIdOverride ?: $this->companyId();
+        // Multi-empresa: fixa o token Movidesk da empresa alvo p/ todas as chamadas desta varredura.
+        $this->movidesk->forCompany($companyId);
         $since     = $sinceOverride ?: $this->cursor();
         $stats['since'] = $since->toIso8601String();
 
@@ -345,6 +347,8 @@ class MovideskHelpDeskImporter
     public function importOne(int $externalId, ?int $companyId = null): array
     {
         $companyId = $companyId ?: $this->companyId();
+        // Multi-empresa: usa o token Movidesk da empresa alvo (ERPSERV=global, Bizify=2, etc.).
+        $this->movidesk->forCompany($companyId);
         $full = $this->movidesk->fetchTicket($externalId);
         if (!$full) return ['created' => false, 'comments' => 0, 'ticket_id' => null, 'hd_number' => null];
 

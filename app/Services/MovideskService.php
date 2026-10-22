@@ -34,8 +34,26 @@ class MovideskService
 
     private bool $lastUserIdWasFallback = false;
 
+    /** Empresa ativa p/ resolver o token Movidesk (multi-empresa). null = token global (ERPSERV). */
+    private ?int $companyId = null;
+
+    /**
+     * Fixa a empresa das próximas chamadas à API Movidesk — usado p/ importar/sincronizar uma
+     * 2ª empresa (ex.: Bizify = 2) com o token dela, sem afetar a ERPSERV (que não seta e usa o global).
+     */
+    public function forCompany(?int $companyId): static
+    {
+        $this->companyId = $companyId && $companyId > 0 ? $companyId : null;
+        return $this;
+    }
+
     private function token(): ?string
     {
+        // Token por empresa (services.movidesk.tokens[companyId]) com fallback pro global.
+        if ($this->companyId) {
+            $perCompany = config("services.movidesk.tokens.{$this->companyId}");
+            if (!empty($perCompany)) return $perCompany;
+        }
         return config('services.movidesk.token') ?: null;
     }
 

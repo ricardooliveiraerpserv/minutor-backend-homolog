@@ -16,13 +16,15 @@ use Illuminate\Console\Command;
  */
 class MovideskHelpDeskImportCommand extends Command
 {
-    protected $signature = 'movidesk:hd-import {--force : Ignora o flag de habilitação} {--since= : Data/hora mínima (ISO ou Y-m-d) para varrer} {--ticket= : Importa APENAS este id de ticket do Movidesk (validação, sem filtros)}';
+    protected $signature = 'movidesk:hd-import {--force : Ignora o flag de habilitação} {--since= : Data/hora mínima (ISO ou Y-m-d) para varrer} {--ticket= : Importa APENAS este id de ticket do Movidesk (validação, sem filtros)} {--company= : company_id alvo (multi-empresa; usa o token Movidesk da empresa). Vazio = ERPSERV/global}';
     protected $description = 'Espelha os chamados Promax do Movidesk no Help Desk (entrada; somente leitura no Movidesk)';
 
     public function handle(MovideskHelpDeskImporter $importer): int
     {
+        $company = $this->option('company') ? (int) $this->option('company') : null;
+
         if ($this->option('ticket')) {
-            $r = $importer->importOne((int) $this->option('ticket'));
+            $r = $importer->importOne((int) $this->option('ticket'), $company);
             if (!$r['ticket_id']) { $this->error('Ticket não encontrado no Movidesk.'); return self::FAILURE; }
             $this->info(sprintf('Ticket Movidesk %s → HD %s (%s) | interações novas: %d',
                 $this->option('ticket'), $r['hd_number'] ?? '?', $r['created'] ? 'CRIADO' : 'atualizado', $r['comments']));
@@ -35,7 +37,7 @@ class MovideskHelpDeskImportCommand extends Command
             catch (\Throwable $e) { $this->error('--since inválido: ' . $e->getMessage()); return self::FAILURE; }
         }
 
-        $stats = $importer->run((bool) $this->option('force'), $since);
+        $stats = $importer->run((bool) $this->option('force'), $since, $company);
 
         if (($stats['skipped'] ?? 0) === -1) {
             $this->warn('Import desabilitado (SystemSetting movidesk_hd_import_enabled=false). Use --force para testar.');

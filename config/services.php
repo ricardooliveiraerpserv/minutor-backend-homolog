@@ -37,6 +37,10 @@ return [
 
     'movidesk' => [
         'token'            => env('MOVIDESK_API_TOKEN'),
+        // Token por empresa (multi-empresa). Chave = company_id. Fallback pro 'token' global (ERPSERV).
+        'tokens'           => array_filter([
+            2 => env('MOVIDESK_API_TOKEN_BIZIFY'),
+        ]),
         'webhook_secret'   => env('MOVIDESK_WEBHOOK_SECRET'),
         'webhook_validate' => filter_var(env('MOVIDESK_WEBHOOK_VALIDATE', false), FILTER_VALIDATE_BOOLEAN),
     ],
