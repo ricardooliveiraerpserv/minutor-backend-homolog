@@ -296,8 +296,15 @@ class VaultProfileController extends Controller
     }
 
     /**
-     * Unlock: auth_hash + TOTP válidos => devolve os blobs cifrados.
-     * Erro é sempre GENÉRICO (não revelar se falhou hash ou TOTP).
+     * Unlock: master password (auth_hash) + 2º fator válidos => devolve os blobs cifrados.
+     *
+     * Erros são ESPECÍFICOS (senha vs 2º fator): o erro genérico anterior fazia o usuário
+     * confundir um step-up Microsoft expirado com "senha quebrada" e cair em recovery
+     * desnecessário (que rotaciona a recovery key e agrava o problema).
+     *
+     * O 2º fator entra como GATE (toda tentativa passa por ele — anti brute-force, reforçado
+     * pelo throttle:vault-unlock de 10/min), mas o step-up MS (uso único) só é CONSUMIDO no
+     * SUCESSO total: senha errada NÃO queima o popup, então o retry não exige nova verificação.
      */
     public function unlock(Request $request): JsonResponse
     {
@@ -309,13 +316,43 @@ class VaultProfileController extends Controller
         ]);
 
         $keys = VaultUserKey::where('user_id', $user->id)->first();
-        $hashOk = $keys?->isConfigured() && Hash::check($data['auth_hash'], $keys->auth_hash);
-        $totpOk = $keys && $this->checkSecondFactor($keys, $request);
+        if (! $keys?->isConfigured()) {
+            VaultAccessLog::record($request, 'unlock_failed', [], ['reason' => 'not_configured']);
 
-        if (! $hashOk || ! $totpOk) {
-            VaultAccessLog::record($request, 'unlock_failed');
+            return response()->json(['message' => 'Cofre não configurado.'], 422);
+        }
 
-            return response()->json(['message' => 'Credenciais do cofre inválidas.'], 422);
+        $isMs = VaultStepUp::driver() === 'microsoft';
+
+        // 1) 2º fator como GATE, SEM consumir ainda (MS: step-up válido? · TOTP: código válido?).
+        $secondOk = $isMs ? VaultStepUp::active($keys) : $this->checkTotp($keys, (string) ($data['totp_code'] ?? ''));
+        if (! $secondOk) {
+            VaultAccessLog::record($request, 'unlock_failed', [], ['reason' => 'second_factor']);
+
+            return response()->json([
+                'message'              => $isMs
+                    ? 'Verificação Microsoft expirada — refaça a verificação.'
+                    : 'Código do autenticador inválido ou expirado.',
+                'second_factor_failed' => true,
+            ], 422);
+        }
+
+        // 2) Senha. Errada aqui NÃO consumiu o step-up — pode tentar de novo sem refazer o popup.
+        if (! Hash::check($data['auth_hash'], $keys->auth_hash)) {
+            VaultAccessLog::record($request, 'unlock_failed', [], ['reason' => 'password']);
+
+            return response()->json(['message' => 'Master password incorreta.'], 422);
+        }
+
+        // 3) Sucesso: só agora consome o step-up MS (uso único). Corrida rara (expirou entre o
+        //    active() e aqui) cai de volta no erro de 2º fator.
+        if ($isMs && ! VaultStepUp::consume($keys)) {
+            VaultAccessLog::record($request, 'unlock_failed', [], ['reason' => 'second_factor']);
+
+            return response()->json([
+                'message'              => 'Verificação Microsoft expirada — refaça a verificação.',
+                'second_factor_failed' => true,
+            ], 422);
         }
 
         VaultAccessLog::record($request, 'unlock_success');
