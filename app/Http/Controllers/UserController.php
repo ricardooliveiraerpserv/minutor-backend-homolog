@@ -356,7 +356,7 @@ class UserController extends Controller
         // a seleção de Empresa/Equipe (senão a coluna "apaga" ao recarregar).
         $teamsByUser = \DB::table('helpdesk_team_user')
             ->whereIn('user_id', $pageUserIds)
-            ->get(['user_id', 'team_id'])
+            ->get(['user_id', 'helpdesk_team_id'])
             ->groupBy('user_id');
 
         $items = collect($users->items())->map(function ($user) use ($canSeeFolha, $folhaFields, $dashByUser, $teamsByUser) {
@@ -368,7 +368,7 @@ class UserController extends Controller
                 ? $user->companies->pluck('id')->map(fn ($id) => (int) $id)->values()->all()
                 : [];
             $userData['helpdesk_team_ids'] = isset($teamsByUser[$user->id])
-                ? $teamsByUser[$user->id]->pluck('team_id')->map(fn ($id) => (int) $id)->values()->all()
+                ? $teamsByUser[$user->id]->pluck('helpdesk_team_id')->map(fn ($id) => (int) $id)->values()->all()
                 : [];
             $userData['partner_name'] = $user->partner?->name;   // exibido nos destinatários (grupo Parceiro)
             if (!$canSeeFolha) {
