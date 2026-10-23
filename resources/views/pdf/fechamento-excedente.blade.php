@@ -21,9 +21,9 @@
 
     /* Cards KPI (tabela — DomPDF não tem flexbox) */
     table.cards { width: 100%; border-collapse: separate; border-spacing: 6px 0; margin: 4px 0 12px; }
-    table.cards td { width: 20%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px 10px; vertical-align: top; background: #fafafa; }
-    .card-lbl { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
-    .card-val { font-size: 15px; font-weight: bold; color: #111827; margin-top: 3px; }
+    table.cards td { width: 20%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px 8px; vertical-align: top; background: #fafafa; }
+    .card-lbl { font-size: 7.5px; text-transform: uppercase; letter-spacing: 0.03em; color: #6b7280; }
+    .card-val { font-size: 13px; font-weight: bold; color: #111827; margin-top: 3px; white-space: nowrap; }
     td.c-red   { background: #fef2f2; border-color: #fecaca; }
     td.c-red   .card-val { color: #dc2626; }
     td.c-pay   { background: #f5f3ff; border-color: #ddd6fe; }
