@@ -4278,13 +4278,35 @@ class ProjectController extends Controller
         }
         $startDate = Carbon::parse($startStr)->startOfMonth();
 
+        // Filhos: os que têm horas vendidas (>0) são BLOCOS que saem do banco do
+        // pai — carve-out no mês de início do filho. Filhos sem horas vendidas (sold=0)
+        // são extensões que compartilham o banco (apontamentos somam no consumo do pai).
+        $children       = Project::where('parent_project_id', $project->id)->get(['id', 'sold_hours', 'start_date']);
+        $blockChildren  = $children->where('sold_hours', '>', 0);
+        $sharedChildIds = $children->where('sold_hours', '<=', 0)->pluck('id')->all();
+        $bankIds        = array_merge([$project->id], $sharedChildIds);
+
         // Nº de meses: do início até o encerramento (ou mês atual se ativo). Para BH
         // Mensal cada mês incrementa o valor VIGENTE naquele mês (soldHoursForCompetencia),
-        // então o total não depende mais do accumulated_sold_hours (que podia ficar stale e
-        // não respeitava a vigência — meses anteriores apareciam com a quantidade nova).
-        $endDate = $project->encerramento_date
+        // então o total não depende mais do accumulated_sold_hours (que podia ficar stale).
+        // CONTRATO ENCERRADO que ainda recebeu apontamentos DEPOIS do encerramento: a janela
+        // se estende até o último mês apontado para não PERDER esse consumo — mas o crédito de
+        // horas mensais CONGELA no encerramento (ver loop: sem incremento após encerrar), então
+        // o saldo do(s) mês(es) pós-encerramento fica negativo = excedente a cobrar.
+        $encerrEnd = $project->encerramento_date
             ? Carbon::parse($project->encerramento_date)->startOfMonth()
-            : Carbon::now()->startOfMonth();
+            : null;
+        $endDate = $encerrEnd ? $encerrEnd->copy() : Carbon::now()->startOfMonth();
+        if ($encerrEnd) {
+            $lastTsDate = \App\Models\Timesheet::whereIn('project_id', $bankIds)
+                ->whereIn('status', ['approved', 'pending'])->max('date');
+            if ($lastTsDate) {
+                $lastTsMonth = Carbon::parse($lastTsDate)->startOfMonth();
+                if ($lastTsMonth->gt($endDate)) {
+                    $endDate = $lastTsMonth;
+                }
+            }
+        }
         if ($endDate->lt($startDate)) {
             $endDate = $startDate->copy();
         }
@@ -4294,15 +4316,7 @@ class ProjectController extends Controller
             return response()->json($empty);
         }
 
-        // Filhos: os que têm horas vendidas (>0) são BLOCOS que saem do banco do
-        // pai — fazem "carve-out" no extrato do pai no mês de início do filho (e seus
-        // apontamentos ficam no extrato do próprio filho, não somam de novo aqui).
-        // Filhos sem horas vendidas (sold=0) são extensões que compartilham o banco —
-        // seus apontamentos continuam somando no consumo do pai.
-        $children       = Project::where('parent_project_id', $project->id)->get(['id', 'sold_hours', 'start_date']);
-        $blockChildren  = $children->where('sold_hours', '>', 0);
-        $sharedChildIds = $children->where('sold_hours', '<=', 0)->pluck('id')->all();
-        $bankIds        = array_merge([$project->id], $sharedChildIds);
+        // (children/blockChildren/sharedChildIds/bankIds definidos acima, antes do cálculo de meses.)
 
         // Carve-out dos filhos-bloco por mês de início (clampado à janela do extrato
         // pra nunca perder o bloco se o filho começar antes/depois da janela).
@@ -4369,8 +4383,12 @@ class ProjectController extends Controller
             if ($isMonthly) {
                 // Incremento do mês = horas vendidas VIGENTES nessa competência (não o
                 // sold_hours atual) — preserva os meses anteriores ao alterar a quantidade.
-                $monthlyHours = $project->soldHoursForCompetencia($ym);
-                $accumulatedHours += $monthlyHours;
+                // Após o encerramento o crédito mensal PARA (horas contratadas congelam);
+                // o consumo pós-encerramento continua entrando → saldo negativo = excedente.
+                if (!$encerrEnd || $ym <= $encerrEnd->format('Y-m')) {
+                    $monthlyHours = $project->soldHoursForCompetencia($ym);
+                    $accumulatedHours += $monthlyHours;
+                }
                 $vendidasHours = $accumulatedHours + $accumAporte;
             } elseif ($isFixed) {
                 $vendidasHours = (float) $hoursPerMonth + $accumAporte;
