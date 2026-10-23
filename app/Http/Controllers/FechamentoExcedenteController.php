@@ -350,8 +350,11 @@ class FechamentoExcedenteController extends Controller
             $out[] = [
                 'projeto'       => $r['code'] . ' — ' . $r['project_name'],
                 'valor_hora'    => $this->brl($rate),
-                'excedente_tot' => number_format(round($excTot, 2), 2, ',', '.') . 'h',
-                'valor_tot'     => $this->brl(round($valTot, 2)),
+                // Totais = os da APURAÇÃO (headline do resumo), p/ o detalhamento BATER com
+                // o resumo. As linhas (porções) são a composição e podem diferir em centavos
+                // (arredondamento por apontamento vs. arredondamento mensal do extrato).
+                'excedente_tot' => number_format((float) $r['excess_hours'], 2, ',', '.') . 'h',
+                'valor_tot'     => $this->brl((float) $r['excess_value']),
                 'itens'         => $itens,
             ];
         }
