@@ -1921,6 +1921,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-excedente/{customerId}/{yearMonth}/email-preview', [\App\Http\Controllers\FechamentoExcedenteController::class, 'emailPreview']);
             Route::post('/fechamento-excedente/{customerId}/{yearMonth}/email',         [\App\Http\Controllers\FechamentoExcedenteController::class, 'enviarEmail']);
             Route::patch('/fechamento-excedente/{project}/flag',                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'toggleFlag']);
+            Route::post('/fechamento-excedente/{project}/faturar',                      [\App\Http\Controllers\FechamentoExcedenteController::class, 'faturar']);
             Route::post('/fechamento-excedente/{project}/{yearMonth}',                  [\App\Http\Controllers\FechamentoExcedenteController::class, 'salvar']);
         });
 
