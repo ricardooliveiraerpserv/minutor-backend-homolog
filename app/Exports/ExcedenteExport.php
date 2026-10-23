@@ -6,8 +6,10 @@ use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithTitle;
 
 /**
- * Excel do relatório de Horas Excedentes: resumo por contrato + apontamentos
- * (detalhamento) da competência apurada. Recebe o mesmo viewData do PDF.
+ * Excel do relatório de Horas Excedentes — MESMOS DADOS do PDF: título + resumo por contrato
+ * (Contratadas/Consumidas/Excedente/Valor hora/Valor a cobrar) + detalhamento (ponto de estouro:
+ * Data/Consultor/Chamado/Solicitante/Interação/Horas/Excedente/Valor) + total geral. Recebe o
+ * mesmo viewData do PDF.
  */
 class ExcedenteExport implements FromArray, WithTitle
 {
@@ -22,14 +24,30 @@ class ExcedenteExport implements FromArray, WithTitle
     {
         $d = $this->data;
 
-        // Só a tabela do excedente (ponto de estouro): cabeçalho + linhas (sem título/resumo).
-        $out = [['Data', 'Consultor', 'Projeto', 'Chamado', 'Solicitante', 'Interação', 'Horas', 'Excedente', 'Valor']];
+        $out = [];
+        $out[] = ['Relatório de Horas Excedentes'];
+        $out[] = ['Cliente:', $d['clienteName'] ?? '', '', 'Excedente acumulado:', $d['periodoLabel'] ?? '', '', 'Emitido em:', $d['emitidoEm'] ?? ''];
+        $out[] = [];
+
         foreach (($d['apontamentos'] ?? []) as $ap) {
-            foreach ($ap['itens'] as $it) {
+            // Resumo do contrato (espelha os cards do PDF).
+            $out[] = [$ap['projeto'] . '  (' . ($ap['tipo'] ?? '') . ')'];
+            $out[] = ['Contratadas', 'Consumidas', 'Excedente', 'Valor hora', 'Valor a cobrar'];
+            $out[] = [
+                $ap['contratadas'] ?? '',
+                $ap['consumido'] ?? '',
+                $ap['excedente_tot'] ?? '',
+                $ap['valor_hora'] ?? '',
+                $ap['valor_tot'] ?? '',
+            ];
+            $out[] = [];
+
+            // Detalhamento (ponto de estouro).
+            $out[] = ['Data', 'Consultor', 'Chamado', 'Solicitante', 'Interação', 'Horas', 'Excedente', 'Valor'];
+            foreach (($ap['itens'] ?? []) as $it) {
                 $out[] = [
                     $it['data'],
                     $it['consultor'],
-                    $ap['projeto'],
                     $it['chamado'] ?? '',
                     $it['solicitante'] ?? '',
                     $it['interacao'] ?? '',
@@ -38,7 +56,10 @@ class ExcedenteExport implements FromArray, WithTitle
                     $it['valor'] ?? '',
                 ];
             }
+            $out[] = [];
         }
+
+        $out[] = ['TOTAL A COBRAR', '', '', '', '', '', '', $d['totalFmt'] ?? ''];
 
         return $out;
     }
