@@ -22,11 +22,21 @@ class ExcedenteExport implements FromArray, WithTitle
     {
         $d = $this->data;
 
-        // Só a tabela de apontamentos: cabeçalho das colunas + linhas (sem título/resumo).
-        $out = [['Data', 'Consultor', 'Projeto', 'Descrição', 'Horas']];
+        // Só a tabela do excedente (ponto de estouro): cabeçalho + linhas (sem título/resumo).
+        $out = [['Data', 'Consultor', 'Projeto', 'Chamado', 'Solicitante', 'Interação', 'Horas', 'Excedente', 'Valor']];
         foreach (($d['apontamentos'] ?? []) as $ap) {
             foreach ($ap['itens'] as $it) {
-                $out[] = [$it['data'], $it['consultor'], $ap['projeto'], $it['descricao'], $it['horas']];
+                $out[] = [
+                    $it['data'],
+                    $it['consultor'],
+                    $ap['projeto'],
+                    $it['chamado'] ?? '',
+                    $it['solicitante'] ?? '',
+                    $it['interacao'] ?? '',
+                    $it['horas'],
+                    $it['excedente'] ?? '',
+                    $it['valor'] ?? '',
+                ];
             }
         }
 

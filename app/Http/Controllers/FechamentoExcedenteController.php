@@ -5,7 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\ExcessHourCharge;
 use App\Models\FechamentoSendStatus;
+use App\Models\HelpDeskTicket;
 use App\Models\Project;
+use App\Models\ProjectMonthlyConsumption;
+use App\Models\Timesheet;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -257,6 +260,105 @@ class FechamentoExcedenteController extends Controller
         return trim($s);
     }
 
+    /**
+     * Detalhamento do EXCEDENTE por projeto — o "PONTO DE ESTOURO". Percorre o consumo em
+     * ordem cronológica (baseline do consumo manual migrado + apontamentos do banco = pai +
+     * filhos que compartilham sold<=0) e marca, A PARTIR de qual apontamento o acumulado
+     * ultrapassou as horas contratadas. Para cada apontamento excedente traz o solicitante +
+     * nº do chamado (Help Desk) + interação + o valor a cobrar (porção excedente × Hora
+     * Adicional). Espelha o raciocínio da Gestão de Contratos.
+     *
+     * @param  Collection  $rows  linhas já apuradas (buildRows) com excess_value>0
+     * @return array<int, array<string, mixed>>
+     */
+    private function buildExcedenteApontamentos(Collection $rows, string $yearMonth): array
+    {
+        $cutoff    = ProjectController::MONTHLY_CONSUMPTION_CUTOFF;              // 'YYYY-MM'
+        $periodEnd = Carbon::parse($yearMonth . '-01')->endOfMonth()->toDateString();
+        $out = [];
+
+        foreach ($rows as $r) {
+            $p = Project::find($r['project_id']);
+            if (!$p) { continue; }
+
+            $contracted = (float) ($r['contracted_hours'] ?? 0);
+            $rate       = (float) ($r['additional_hourly_rate'] ?? 0);
+
+            // Banco = pai + filhos que COMPARTILHAM (sold<=0). Filhos-bloco (sold>0) têm banco próprio.
+            $sharedChildIds = Project::where('parent_project_id', $p->id)
+                ->where('sold_hours', '<=', 0)->pluck('id')->all();
+            $bankIds = array_merge([$p->id], $sharedChildIds);
+
+            // Baseline = consumo manual migrado (anterior ao corte) — entra ANTES dos apontamentos.
+            $baseline = (float) ProjectMonthlyConsumption::where('project_id', $p->id)
+                ->where('year_month', '<', $cutoff)->sum('consumed_minutes') / 60.0;
+
+            // Apontamentos do banco, em ordem cronológica, do corte até o fim da competência.
+            $ts = Timesheet::with(['user:id,name'])
+                ->whereIn('project_id', $bankIds)
+                ->whereIn('status', ['approved', 'pending'])
+                ->where('date', '>=', $cutoff . '-01')
+                ->where('date', '<=', $periodEnd)
+                ->orderBy('date')->orderBy('created_at')->orderBy('id')
+                ->get(['id', 'user_id', 'date', 'effort_minutes', 'contract_client_pct', 'client_extra_pct', 'ticket', 'observation']);
+
+            // Solicitante + nº do chamado: resolvidos do Help Desk pelo número do chamado
+            // (casa com ticket cru OU zero-padded a 6 dígitos, como no Movidesk).
+            $tickets = $ts->pluck('ticket')->filter()->map(fn ($t) => (string) $t)->unique()->values()->all();
+            $solicitantes = [];
+            if (!empty($tickets)) {
+                $padded = array_map(fn ($t) => str_pad($t, 6, '0', STR_PAD_LEFT), $tickets);
+                $solicitantes = HelpDeskTicket::whereIn('ticket_number', array_merge($tickets, $padded))
+                    ->pluck('requester_name', 'ticket_number')->all();
+            }
+            $solFor = function ($ticket) use ($solicitantes) {
+                $t = (string) $ticket;
+                return $solicitantes[$t] ?? $solicitantes[str_pad($t, 6, '0', STR_PAD_LEFT)] ?? null;
+            };
+
+            $running = $baseline;
+            $itens = [];
+            $excTot = 0.0; $valTot = 0.0; $first = true;
+            foreach ($ts as $t) {
+                $pct   = (float) ($t->contract_client_pct ?? $t->client_extra_pct ?? 0);
+                $horas = (float) $t->effort_minutes * (1 + $pct / 100) / 60.0;
+                $running += $horas;
+                if ($running <= $contracted) { continue; }                      // ainda dentro do contratado
+                $portionRaw = min($horas, $running - $contracted);
+                if ($portionRaw <= 0) { continue; }
+                $portion = round($portionRaw, 2);
+                $valor   = round($portion * $rate, 2);
+                // Totais acumulam SEM arredondar por linha (p/ bater com o headline da apuração;
+                // as linhas exibem valores arredondados, o total é o oficial).
+                $excTot += $portionRaw; $valTot += $portionRaw * $rate;
+                $itens[] = [
+                    'data'        => Carbon::parse($t->date)->format('d/m/Y'),
+                    'consultor'   => $t->user->name ?? '—',
+                    'chamado'     => $t->ticket ? (string) $t->ticket : null,
+                    'solicitante' => $solFor($t->ticket),
+                    'interacao'   => $this->plainText($t->observation),
+                    'horas'       => number_format(round($horas, 2), 2, ',', '.'),
+                    'excedente'   => number_format($portion, 2, ',', '.'),
+                    'valor'       => $this->brl($valor),
+                    'estouro'     => $first,
+                ];
+                $first = false;
+            }
+
+            if (empty($itens)) { continue; }
+
+            $out[] = [
+                'projeto'       => $r['code'] . ' — ' . $r['project_name'],
+                'valor_hora'    => $this->brl($rate),
+                'excedente_tot' => number_format(round($excTot, 2), 2, ',', '.') . 'h',
+                'valor_tot'     => $this->brl(round($valTot, 2)),
+                'itens'         => $itens,
+            ];
+        }
+
+        return $out;
+    }
+
     /** Dados da view do relatório de horas excedentes de um cliente. */
     private function buildExcedenteViewData(Customer $customer, string $yearMonth): array
     {
@@ -294,32 +396,9 @@ class FechamentoExcedenteController extends Controller
             'valor'      => $this->brl((float) $r['excess_value']),
         ])->all();
 
-        // Apontamentos (detalhamento) da competência apurada — por projeto excedente.
-        $apontamentos = [];
-        $projIds = $rows->pluck('project_id')->filter()->all();
-        if (!empty($projIds)) {
-            $from = Carbon::parse($yearMonth . '-01')->startOfMonth()->toDateString();
-            $to   = Carbon::parse($yearMonth . '-01')->endOfMonth()->toDateString();
-            $ts = \App\Models\Timesheet::with(['user:id,name'])
-                ->whereIn('project_id', $projIds)
-                ->whereIn('status', ['approved', 'pending'])
-                ->whereBetween('date', [$from, $to])
-                ->orderBy('project_id')->orderBy('date')->get()
-                ->groupBy('project_id');
-            foreach ($rows as $r) {
-                $g = $ts->get($r['project_id']) ?? collect();
-                $apontamentos[] = [
-                    'projeto'     => $r['code'] . ' — ' . $r['project_name'],
-                    'total_horas' => number_format((float) $g->sum('effort_minutes') / 60, 2, ',', '.') . 'h',
-                    'itens'       => $g->map(fn ($t) => [
-                        'data'      => Carbon::parse($t->date)->format('d/m/Y'),
-                        'consultor' => $t->user->name ?? '—',
-                        'horas'     => number_format((float) ($t->effort_minutes ?? 0) / 60, 2, ',', '.'),
-                        'descricao' => $this->plainText($t->observation),
-                    ])->values()->all(),
-                ];
-            }
-        }
+        // Detalhamento do EXCEDENTE (PONTO DE ESTOURO) por projeto — com solicitante,
+        // nº do chamado, interação e valor a cobrar por apontamento.
+        $apontamentos = $this->buildExcedenteApontamentos($rows, $yearMonth);
 
         return [
             'clienteName' => $customer->name,

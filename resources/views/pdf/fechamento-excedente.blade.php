@@ -109,39 +109,51 @@
   </table>
 
   @if (!empty($apontamentos))
-    <h2 style="font-size:13px;color:#0e7490;margin:24px 0 4px;">Apontamentos da competência</h2>
-    <p class="doc-sub" style="margin:0 0 8px;">Detalhamento dos apontamentos que compõem o consumo apurado.</p>
+    <h2 style="font-size:13px;color:#0e7490;margin:24px 0 4px;">Detalhamento do excedente — ponto de estouro</h2>
+    <p class="doc-sub" style="margin:0 0 8px;">A partir de qual apontamento o consumo acumulado ultrapassou as horas contratadas. Valor = horas excedentes × Hora Adicional.</p>
     @foreach ($apontamentos as $ap)
       <p style="font-size:11px;font-weight:bold;color:#1f2937;margin:14px 0 4px;">
-        {{ $ap['projeto'] }} <span style="font-weight:normal;color:#6b7280;">— {{ $ap['total_horas'] }}</span>
+        {{ $ap['projeto'] }}
+        <span style="font-weight:normal;color:#6b7280;">— Excedente {{ $ap['excedente_tot'] }} · Hora adic. {{ $ap['valor_hora'] }} · A cobrar {{ $ap['valor_tot'] }}</span>
       </p>
       <table class="rows" style="table-layout:fixed;">
         <colgroup>
-          <col style="width:16%;">
+          <col style="width:13%;">
           <col style="width:auto;">
+          <col style="width:10%;">
           <col style="width:12%;">
+          <col style="width:15%;">
         </colgroup>
         <thead>
           <tr>
             <th>Data</th>
-            <th>Consultor</th>
+            <th>Consultor / Chamado / Interação</th>
             <th class="right">Horas</th>
+            <th class="right">Exced.</th>
+            <th class="right">Valor</th>
           </tr>
         </thead>
         <tbody>
           @forelse ($ap['itens'] as $it)
             <tr>
               <td class="nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['data'] }}</td>
-              <td style="border-bottom:none;padding-bottom:1px;word-wrap:break-word;">{{ $it['consultor'] }}</td>
+              <td style="border-bottom:none;padding-bottom:1px;word-wrap:break-word;">
+                {{ $it['consultor'] }}@if (!empty($it['estouro'])) <span style="background:#dc2626;color:#fff;border-radius:3px;font-size:8px;padding:1px 4px;">estourou aqui</span>@endif
+              </td>
               <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['horas'] }}h</td>
+              <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;color:#dc2626;font-weight:bold;">{{ $it['excedente'] }}h</td>
+              <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;font-weight:bold;">{{ $it['valor'] }}</td>
             </tr>
             <tr>
-              <td colspan="3" style="padding:0 6px 8px;border-bottom:1px solid #e5e7eb;word-wrap:break-word;overflow-wrap:break-word;color:#374151;">
-                <span style="color:#6b7280;font-weight:bold;">Descrição:</span> {{ $it['descricao'] !== '' ? $it['descricao'] : '—' }}
+              <td></td>
+              <td colspan="4" style="padding:0 6px 8px;border-bottom:1px solid #e5e7eb;word-wrap:break-word;overflow-wrap:break-word;color:#4b5563;font-size:9px;">
+                @if (!empty($it['chamado']))<span style="color:#0e7490;font-weight:bold;">Chamado {{ $it['chamado'] }}</span>@endif
+                @if (!empty($it['solicitante'])) · <span style="font-weight:bold;">{{ $it['solicitante'] }}</span>@endif
+                @if ($it['interacao'] !== '')<br><span style="color:#6b7280;">{{ \Illuminate\Support\Str::limit($it['interacao'], 260) }}</span>@endif
               </td>
             </tr>
           @empty
-            <tr><td colspan="3" class="empty">Sem apontamentos na competência.</td></tr>
+            <tr><td colspan="5" class="empty">Nenhum apontamento compôs o excedente nesta competência.</td></tr>
           @endforelse
         </tbody>
       </table>
