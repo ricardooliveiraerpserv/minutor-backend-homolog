@@ -6,158 +6,165 @@
   <style>
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
-    @page { margin: 1.3cm 1.5cm; }
-    @media screen { body { padding: 1.3cm 1.5cm; } }
+    @page { margin: 1.1cm 1.2cm; }
+    @media screen { body { padding: 1.1cm 1.2cm; } }
 
-    table.header { width: 100%; border-collapse: collapse; border-bottom: 2px solid #0e7490; margin-bottom: 18px; }
-    table.header td { padding: 0 0 14px; vertical-align: middle; }
-    .hd-logo { width: 50%; }
-    .hd-logo img { width: 150px; max-width: 100%; height: auto; }
-    .brand { font-size: 20px; font-weight: bold; color: #0e7490; }
-    .hd-meta { text-align: right; }
-    .doc-title { font-size: 18px; font-weight: bold; color: #1f2937; }
-    .doc-sub { font-size: 11px; color: #6b7280; margin: 1px 0 6px; }
-    .doc-line { font-size: 11px; color: #4b5563; margin-top: 1px; }
-    .doc-line .lbl { font-weight: bold; color: #374151; }
-    .doc-emit { font-size: 10px; color: #9ca3af; margin-top: 3px; }
+    /* Cabeçalho roxo */
+    table.bar { width: 100%; border-collapse: collapse; background: #6d28d9; border-radius: 8px; margin-bottom: 14px; }
+    table.bar td { padding: 13px 16px; vertical-align: middle; color: #fff; }
+    .bar h1 { font-size: 16px; margin: 0; color: #fff; }
+    .bar .sub { font-size: 10.5px; color: #ede9fe; margin-top: 2px; }
+    .bar .r { text-align: right; }
 
-    .summary { width: 100%; margin: 14px 0 18px; border-collapse: collapse; }
-    .summary td { width: 50%; background: #ecfeff; border: 1px solid #a5f0f7; padding: 10px 12px; vertical-align: top; }
-    .summary-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: #0e7490; font-weight: bold; }
-    .summary-value { font-size: 15px; font-weight: bold; color: #111827; margin-top: 3px; }
+    .meta { margin: 2px 0 14px; font-size: 11px; color: #374151; }
+    .meta b { color: #111827; }
 
-    table.rows { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
-    table.rows th { background: #ecfeff; border-bottom: 1px solid #a5f0f7; text-align: left; padding: 5px 6px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: #0e7490; }
-    table.rows td { border-bottom: 1px solid #f3f4f6; padding: 5px 6px; font-size: 10px; vertical-align: top; }
+    /* Cards KPI (tabela — DomPDF não tem flexbox) */
+    table.cards { width: 100%; border-collapse: separate; border-spacing: 6px 0; margin: 4px 0 12px; }
+    table.cards td { width: 20%; border: 1px solid #e5e7eb; border-radius: 8px; padding: 9px 10px; vertical-align: top; background: #fafafa; }
+    .card-lbl { font-size: 8px; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+    .card-val { font-size: 15px; font-weight: bold; color: #111827; margin-top: 3px; }
+    td.c-red   { background: #fef2f2; border-color: #fecaca; }
+    td.c-red   .card-val { color: #dc2626; }
+    td.c-pay   { background: #f5f3ff; border-color: #ddd6fe; }
+    td.c-pay   .card-val { color: #6d28d9; }
+
+    .note { background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 9px 11px; margin: 10px 0 12px; font-size: 10.5px; color: #991b1b; }
+
+    .proj-title { font-size: 12px; font-weight: bold; color: #1f2937; margin: 18px 0 4px; }
+    .proj-title .tag { font-weight: normal; color: #6b7280; font-size: 10.5px; }
+
+    table.rows { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+    table.rows th { background: #f5f3ff; border-bottom: 1px solid #ddd6fe; text-align: left; padding: 5px 6px; font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.03em; color: #6d28d9; }
+    table.rows td { padding: 5px 6px; font-size: 10px; vertical-align: top; }
     .right { text-align: right; }
     .nowrap { white-space: nowrap; }
+    .exc { color: #dc2626; font-weight: bold; }
+    .val { font-weight: bold; color: #111827; }
+    .badge { background: #dc2626; color: #fff; border-radius: 3px; font-size: 7.5px; padding: 1px 4px; }
+    .det { color: #4b5563; font-size: 9px; }
+    .det .k { color: #6d28d9; font-weight: bold; }
+    .det .s { font-weight: bold; }
+    .det .i { color: #6b7280; }
 
-    .total-box { margin-top: 22px; width: 100%; background: #0e7490; color: #fff; border-radius: 6px; border-collapse: collapse; }
-    .total-box td { color: #fff; padding: 12px 16px; }
+    tfoot.ptot td { background: #f5f3ff; border-top: 2px solid #6d28d9; font-weight: bold; padding: 7px 6px; font-size: 11px; }
+
+    table.total-box { margin-top: 18px; width: 100%; background: #6d28d9; border-radius: 6px; border-collapse: collapse; }
+    table.total-box td { color: #fff; padding: 12px 16px; }
     .total-label { font-size: 12px; font-weight: bold; }
     .total-value { font-size: 18px; font-weight: bold; text-align: right; }
-    .empty { padding: 20px; text-align: center; color: #9ca3af; }
+
+    .foot { margin-top: 14px; font-size: 8.5px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 7px; }
+    .empty { padding: 16px; text-align: center; color: #9ca3af; }
   </style>
 </head>
 <body>
-  <table class="header">
+
+  <table class="bar">
     <tr>
-      <td class="hd-logo">
-        @if ($logoDataUri)
-          <img src="{{ $logoDataUri }}" alt="ERPSERV">
-        @else
-          <span class="brand">ERPSERV</span>
-        @endif
+      <td>
+        <h1>Relatório de Horas Excedentes</h1>
+        <div class="sub">ERPSERV &middot; Sustentação</div>
       </td>
-      <td class="hd-meta">
-        <div class="doc-title">Relatório de Horas Excedentes</div>
-        <div class="doc-sub">Horas consumidas acima das contratadas</div>
-        <div class="doc-line"><span class="lbl">Cliente:</span> {{ $clienteName }}</div>
-        <div class="doc-line"><span class="lbl">Competência:</span> {{ $periodo }}</div>
-        <div class="doc-emit">Emitido em {{ $emitidoEm }}</div>
+      <td class="r">
+        <div class="sub">Emitido em {{ $emitidoEm }}</div>
       </td>
     </tr>
   </table>
 
-  <table class="summary">
-    <tr>
-      <td>
-        <div class="summary-label">Contratos com excedente</div>
-        <div class="summary-value">{{ $qtd }}</div>
-      </td>
-      <td>
-        <div class="summary-label">Total a cobrar</div>
-        <div class="summary-value">{{ $totalFmt }}</div>
-      </td>
-    </tr>
-  </table>
+  <div class="meta">
+    <b>Cliente:</b> {{ $clienteName }} &nbsp;&middot;&nbsp; <b>Competência:</b> {{ $periodo }}
+  </div>
 
-  <table class="rows">
-    <thead>
+  @forelse ($apontamentos as $ap)
+    @php $it0 = $ap['itens'][0] ?? null; @endphp
+
+    <div class="proj-title">{{ $ap['projeto'] }} <span class="tag">&mdash; {{ $ap['tipo'] }}</span></div>
+
+    <table class="cards">
       <tr>
-        <th>Contrato / Projeto</th>
-        <th>Tipo</th>
-        <th class="right">Contratadas</th>
-        <th class="right">Consumido</th>
-        <th class="right">Excedente</th>
-        <th class="right">Hora adic.</th>
-        <th class="right">Valor</th>
+        <td><div class="card-lbl">Contratadas</div><div class="card-val">{{ $ap['contratadas'] }}</div></td>
+        <td><div class="card-lbl">Consumidas</div><div class="card-val">{{ $ap['consumido'] }}</div></td>
+        <td class="c-red"><div class="card-lbl">Excedente</div><div class="card-val">{{ $ap['excedente_tot'] }}</div></td>
+        <td><div class="card-lbl">Valor hora</div><div class="card-val">{{ $ap['valor_hora'] }}</div></td>
+        <td class="c-pay"><div class="card-lbl">Valor a cobrar</div><div class="card-val">{{ $ap['valor_tot'] }}</div></td>
       </tr>
-    </thead>
-    <tbody>
-      @forelse ($linhas as $l)
-        <tr>
-          <td>{{ $l['projeto'] }}</td>
-          <td class="nowrap">{{ $l['tipo'] }}</td>
-          <td class="right nowrap">{{ $l['contratadas'] }}</td>
-          <td class="right nowrap">{{ $l['consumido'] }}</td>
-          <td class="right nowrap">{{ $l['excedente'] }}</td>
-          <td class="right nowrap">{{ $l['hora_adic'] }}</td>
-          <td class="right nowrap">{{ $l['valor'] }}</td>
-        </tr>
-      @empty
-        <tr><td colspan="7" class="empty">Nenhuma hora excedente a cobrar na competência.</td></tr>
-      @endforelse
-    </tbody>
-  </table>
+    </table>
 
-  <table class="total-box">
-    <tr>
-      <td class="total-label">Total a cobrar — Horas Excedentes</td>
-      <td class="total-value">{{ $totalFmt }}</td>
-    </tr>
-  </table>
+    @if ($it0)
+      <div class="note">
+        <b>A partir do apontamento de {{ $it0['data'] }} ({{ $it0['consultor'] }}, {{ $it0['horas'] }}h)</b>
+        o consumo acumulado ultrapassou as <b>{{ $ap['contratadas'] }}</b> contratadas. Deste apontamento em diante,
+        os lançamentos abaixo compõem o excedente de <b>{{ $ap['excedente_tot'] }}</b>. Valor a cobrar = horas
+        excedentes &times; {{ $ap['valor_hora'] }} (Hora Adicional do contrato).
+      </div>
+    @endif
+
+    <table class="rows" style="table-layout:fixed;">
+      <colgroup>
+        <col style="width:13%;">
+        <col style="width:auto;">
+        <col style="width:10%;">
+        <col style="width:11%;">
+        <col style="width:15%;">
+      </colgroup>
+      <thead>
+        <tr>
+          <th>Data</th>
+          <th>Consultor / Chamado / Interação</th>
+          <th class="right">Horas</th>
+          <th class="right">Exced.</th>
+          <th class="right">Valor</th>
+        </tr>
+      </thead>
+      <tbody>
+        @forelse ($ap['itens'] as $it)
+          <tr>
+            <td class="nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['data'] }}</td>
+            <td style="border-bottom:none;padding-bottom:1px;word-wrap:break-word;">
+              {{ $it['consultor'] }}@if (!empty($it['estouro'])) <span class="badge">estourou aqui</span>@endif
+            </td>
+            <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['horas'] }}h</td>
+            <td class="right nowrap exc" style="border-bottom:none;padding-bottom:1px;">{{ $it['excedente'] }}h</td>
+            <td class="right nowrap val" style="border-bottom:none;padding-bottom:1px;">{{ $it['valor'] }}</td>
+          </tr>
+          <tr>
+            <td></td>
+            <td colspan="4" class="det" style="padding:0 6px 8px;border-bottom:1px solid #eef0f3;word-wrap:break-word;overflow-wrap:break-word;">
+              @if (!empty($it['chamado']))<span class="k">Chamado {{ $it['chamado'] }}</span>@endif
+              @if (!empty($it['solicitante'])) &middot; <span class="s">{{ $it['solicitante'] }}</span>@endif
+              @if ($it['interacao'] !== '')<br><span class="i">{{ \Illuminate\Support\Str::limit($it['interacao'], 260) }}</span>@endif
+            </td>
+          </tr>
+        @empty
+          <tr><td colspan="5" class="empty">Nenhum apontamento compôs o excedente nesta competência.</td></tr>
+        @endforelse
+      </tbody>
+      <tfoot class="ptot">
+        <tr>
+          <td colspan="3">TOTAL EXCEDENTE</td>
+          <td class="right exc">{{ $ap['excedente_tot'] }}</td>
+          <td class="right" style="color:#6d28d9;">{{ $ap['valor_tot'] }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  @empty
+    <div class="empty">Nenhuma hora excedente a cobrar na competência.</div>
+  @endforelse
 
   @if (!empty($apontamentos))
-    <h2 style="font-size:13px;color:#0e7490;margin:24px 0 4px;">Detalhamento do excedente — ponto de estouro</h2>
-    <p class="doc-sub" style="margin:0 0 8px;">A partir de qual apontamento o consumo acumulado ultrapassou as horas contratadas. Valor = horas excedentes × Hora Adicional.</p>
-    @foreach ($apontamentos as $ap)
-      <p style="font-size:11px;font-weight:bold;color:#1f2937;margin:14px 0 4px;">
-        {{ $ap['projeto'] }}
-        <span style="font-weight:normal;color:#6b7280;">— Excedente {{ $ap['excedente_tot'] }} · Hora adic. {{ $ap['valor_hora'] }} · A cobrar {{ $ap['valor_tot'] }}</span>
-      </p>
-      <table class="rows" style="table-layout:fixed;">
-        <colgroup>
-          <col style="width:13%;">
-          <col style="width:auto;">
-          <col style="width:10%;">
-          <col style="width:12%;">
-          <col style="width:15%;">
-        </colgroup>
-        <thead>
-          <tr>
-            <th>Data</th>
-            <th>Consultor / Chamado / Interação</th>
-            <th class="right">Horas</th>
-            <th class="right">Exced.</th>
-            <th class="right">Valor</th>
-          </tr>
-        </thead>
-        <tbody>
-          @forelse ($ap['itens'] as $it)
-            <tr>
-              <td class="nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['data'] }}</td>
-              <td style="border-bottom:none;padding-bottom:1px;word-wrap:break-word;">
-                {{ $it['consultor'] }}@if (!empty($it['estouro'])) <span style="background:#dc2626;color:#fff;border-radius:3px;font-size:8px;padding:1px 4px;">estourou aqui</span>@endif
-              </td>
-              <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;">{{ $it['horas'] }}h</td>
-              <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;color:#dc2626;font-weight:bold;">{{ $it['excedente'] }}h</td>
-              <td class="right nowrap" style="border-bottom:none;padding-bottom:1px;font-weight:bold;">{{ $it['valor'] }}</td>
-            </tr>
-            <tr>
-              <td></td>
-              <td colspan="4" style="padding:0 6px 8px;border-bottom:1px solid #e5e7eb;word-wrap:break-word;overflow-wrap:break-word;color:#4b5563;font-size:9px;">
-                @if (!empty($it['chamado']))<span style="color:#0e7490;font-weight:bold;">Chamado {{ $it['chamado'] }}</span>@endif
-                @if (!empty($it['solicitante'])) · <span style="font-weight:bold;">{{ $it['solicitante'] }}</span>@endif
-                @if ($it['interacao'] !== '')<br><span style="color:#6b7280;">{{ \Illuminate\Support\Str::limit($it['interacao'], 260) }}</span>@endif
-              </td>
-            </tr>
-          @empty
-            <tr><td colspan="5" class="empty">Nenhum apontamento compôs o excedente nesta competência.</td></tr>
-          @endforelse
-        </tbody>
-      </table>
-    @endforeach
+    <table class="total-box">
+      <tr>
+        <td class="total-label">Total a cobrar — Horas Excedentes</td>
+        <td class="total-value">{{ $totalFmt }}</td>
+      </tr>
+    </table>
   @endif
+
+  <div class="foot">
+    Horas consideram as horas faturáveis ao cliente, incluindo o consumo inicial migrado do sistema anterior quando houver.
+    Solicitante e nº do chamado extraídos do Help Desk; interação = texto do apontamento. Relatório gerado automaticamente pelo Minutor &mdash; ERPSERV.
+  </div>
+
 </body>
 </html>
