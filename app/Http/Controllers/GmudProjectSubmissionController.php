@@ -40,6 +40,7 @@ class GmudProjectSubmissionController extends Controller
         $v = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
             'project_id'  => ['required', 'exists:projects,id'],
+            'description' => ['nullable', 'string', 'max:5000'], // nota do envio → documentação ao cliente
             'file'        => ['required', 'file', 'mimes:zip', 'max:51200'], // 50 MB (= wizard)
         ]);
 
@@ -59,6 +60,7 @@ class GmudProjectSubmissionController extends Controller
         // família "Solução com GMUD": serviço dedicado + categoria de solicitação de serviço.
         $ticket = HelpDeskTicket::create([
             'subject'             => 'Envio de fontes — ' . $project->name,
+            'description'         => $v['description'] ?? null,   // nota do envio (vai pra documentação ao cliente)
             'customer_id'         => $customer->id,
             'customer_contact_id' => $contactId,            // recipiente do e-mail ao cliente (finalize)
             'project_id'          => $project->id,
@@ -120,7 +122,9 @@ class GmudProjectSubmissionController extends Controller
 
         if (! $already) {
             $pub = $this->publicationInfo($package);
-            $body = $this->documentationBody($package, $project, $pub);
+            // Descrição do envio: a que veio agora (FE) tem precedência; senão a persistida no chamado.
+            $description = $request->filled('description') ? (string) $request->input('description') : (string) ($ticket->description ?? '');
+            $body = $this->documentationBody($package, $project, $pub, $description);
 
             // Interação VISÍVEL AO CLIENTE criada diretamente (o chamado pode ter sido fechado): o
             // addComment barraria ticket terminal. Documenta o envio no chamado E no projeto (project_id).
@@ -194,7 +198,7 @@ class GmudProjectSubmissionController extends Controller
     // ── helpers ──────────────────────────────────────────────────────────
 
     /** Corpo da interação de documentação (visível ao cliente). */
-    private function documentationBody(GmudPackage $package, ?Project $project, ?array $pub): string
+    private function documentationBody(GmudPackage $package, ?Project $project, ?array $pub, string $description = ''): string
     {
         $sha  = $pub['commit_sha'] ? substr((string) $pub['commit_sha'], 0, 10) : '—';
         $repo = $pub['repo'] ?? '—';
@@ -202,8 +206,10 @@ class GmudProjectSubmissionController extends Controller
             ->orderBy('dest_git_path')->get();
         $lines = $files->map(fn ($f) => "📄  {$f->dest_git_path}")->implode("\n");
         $head = "📦  Fontes do projeto \"" . ($project?->name ?? '—') . "\" publicados no repositório do cliente.";
+        // Descrição do envio (nota do consultor) — logo após o cabeçalho, quando informada.
+        $desc = trim($description) !== '' ? "📝  " . trim($description) . "\n\n" : '';
         $meta = "🗂️  Repositório: {$repo}" . ($pub['branch'] ?? null ? " @ {$pub['branch']}" : '') . "\n🔖  Commit: {$sha}\n📁  Pasta: " . ($package->project_folder ?: '/');
-        return trim($head . "\n\n" . $meta . "\n\n" . ($lines !== '' ? "Arquivos:\n" . $lines : '') . "\n\n✅  Envio documentado no projeto.");
+        return trim($head . "\n\n" . $desc . $meta . "\n\n" . ($lines !== '' ? "Arquivos:\n" . $lines : '') . "\n\n✅  Envio documentado no projeto.");
     }
 
     /** Metadados da publicação (commit/repo/branch/data) — lidos do evento gmud_package_published. */
