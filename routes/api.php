@@ -1218,6 +1218,14 @@ Route::prefix('v1')->group(function () {
         // ⏰ TIMESHEETS - Protegido por permissões específicas (Admins sempre têm acesso)
 
         // Rotas que qualquer usuário autenticado pode acessar (com lógica de permissão no controller)
+        // Transferência de Apontamentos — regras cliente→projeto por janela de data (admin-only no controller).
+        Route::get('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'index']);
+        Route::post('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'store']);
+        Route::post('/timesheet-transfer-rules/preview', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'preview']);
+        Route::put('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'update'])->whereNumber('rule');
+        Route::delete('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'destroy'])->whereNumber('rule');
+        Route::post('/timesheet-transfer-rules/{rule}/apply', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'apply'])->whereNumber('rule');
+
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');
         Route::put('/timesheets/bulk-extra-pct', [TimesheetController::class, 'bulkExtraPct'])->name('timesheets.bulk-extra-pct');

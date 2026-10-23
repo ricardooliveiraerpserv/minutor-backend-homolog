@@ -151,6 +151,19 @@ class Timesheet extends Model
             }
         });
 
+        // TRANSFERÊNCIA DE APONTAMENTOS: regra cliente→projeto por janela de data. Move o
+        // apontamento (novo — Movidesk/HD/web — ou com projeto/cliente/data alterados) para o
+        // projeto destino ANTES do cálculo de pct. Respeita edição manual (override_manual=false)
+        // e NÃO toca período fechado (date_locked). O recálculo de pct abaixo usa o projeto já movido.
+        static::saving(function ($timesheet) {
+            $relevant = ! $timesheet->exists
+                || $timesheet->isDirty('project_id') || $timesheet->isDirty('customer_id')
+                || $timesheet->isDirty('date') || $timesheet->isDirty('created_at');
+            if ($relevant && ! $timesheet->date_locked) {
+                app(\App\Services\TimesheetTransferService::class)->applyToModel($timesheet);
+            }
+        });
+
         // % de uplift do cliente DERIVADO da regra do contrato (denormaliza p/ a cobrança
         // ler sem join). Só recalcula quando muda projeto/data (ou é novo) — update de
         // status não mexe. É lado-cliente puro: consultor/parceiro NUNCA lê contract_client_pct.
