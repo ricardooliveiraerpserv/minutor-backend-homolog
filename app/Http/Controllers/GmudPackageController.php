@@ -76,6 +76,11 @@ class GmudPackageController extends Controller
                     'matched_git_path'      => $f->matched_git_path,
                     'match_candidates'      => $f->match_candidates,
                     'match_evidence'        => $f->match_evidence,
+                    // Qualidade (CodeAnalysis) — preenchida pelo GmudExtractAnalyzeJob por arquivo-fonte.
+                    'quality_grade'         => $f->quality_grade,
+                    'quality_score'         => $f->quality_score,
+                    'quality_findings'      => $f->quality_findings,
+                    'quality_analyzed_at'   => optional($f->quality_analyzed_at)->toIso8601String(),
                     // Resultado da publicação (G7) — preenchido só após publicar.
                     'action'                => $f->action,
                     'dest_git_path'         => $f->dest_git_path,
