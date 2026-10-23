@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <title>Relatório de Horas Excedentes — {{ $clienteName }} — {{ $periodo }}</title>
+  <title>Relatório de Horas Excedentes — {{ $clienteName }} — {{ $periodoLabel ?? $periodo }}</title>
   <style>
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
@@ -73,7 +73,7 @@
   </table>
 
   <div class="meta">
-    <b>Cliente:</b> {{ $clienteName }} &nbsp;&middot;&nbsp; <b>Competência:</b> {{ $periodo }}
+    <b>Cliente:</b> {{ $clienteName }} &nbsp;&middot;&nbsp; <b>Excedente acumulado</b> {{ $periodoLabel ?? '' }}
   </div>
 
   @forelse ($apontamentos as $ap)

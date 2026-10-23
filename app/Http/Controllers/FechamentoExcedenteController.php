@@ -68,20 +68,28 @@ class FechamentoExcedenteController extends Controller
         return $ap;
     }
 
-    /** Saldo (déficit/superávit) no FIM da competência via extrato mês-a-mês. */
+    /**
+     * Saldo (déficit/superávit) VIGENTE via extrato mês-a-mês. A rotina não tem seletor de
+     * competência: apura o excedente ACUMULADO atual. Pega a linha do $yearMonth pedido; se
+     * não existir (ex.: contrato encerrado cujo último mês com dados é anterior), cai na ÚLTIMA
+     * linha <= $yearMonth (o estado mais recente). Assim "mês atual" sempre resolve o excedente real.
+     */
     private function monthlyBalanceAt(Project $p, string $yearMonth): ?array
     {
         $resp = json_decode(app(ProjectController::class)->monthlyStatement($p)->getContent(), true);
+        $pick = null;
         foreach (($resp['rows'] ?? []) as $r) {
-            if (($r['year_month'] ?? null) === $yearMonth) {
-                return [
-                    'balance'  => (float) ($r['balance_hours'] ?? 0),
-                    'vendidas' => (float) ($r['vendidas_hours'] ?? 0),
-                    'consumed' => (float) ($r['accumulated_consumption_hours'] ?? 0),
-                ];
-            }
+            $ym = $r['year_month'] ?? '';
+            if ($ym === $yearMonth) { $pick = $r; break; }
+            if ($ym !== '' && $ym <= $yearMonth) { $pick = $r; }   // mantém a última linha <= pedido
         }
-        return null;
+        if (!$pick) { return null; }
+        return [
+            'balance'  => (float) ($pick['balance_hours'] ?? 0),
+            'vendidas' => (float) ($pick['vendidas_hours'] ?? 0),
+            'consumed' => (float) ($pick['accumulated_consumption_hours'] ?? 0),
+            'ym'       => (string) ($pick['year_month'] ?? $yearMonth),
+        ];
     }
 
     /** Excedente PENDENTE a cobrar. BH Mensal = saldo do mês (acerto via aporte); demais = incremental. */
@@ -139,15 +147,14 @@ class FechamentoExcedenteController extends Controller
     }
 
     /**
-     * GET /fechamento-excedente?year_month=AAAA-MM
-     * Lista os projetos com horas excedentes A COBRAR (valor > 0) na competência.
+     * GET /fechamento-excedente
+     * Lista os contratos com horas excedentes A COBRAR (excedente ACUMULADO vigente). A rotina
+     * NÃO tem seletor de competência — apura sempre o estado atual (desde que estourou). O
+     * year_month é opcional (default = mês corrente); a apuração cai na última linha disponível.
      */
     public function index(Request $request): JsonResponse
     {
-        $yearMonth = $request->query('year_month');
-        if (!$yearMonth) {
-            return response()->json(['data' => [], 'total_geral' => 0]);
-        }
+        $yearMonth = $request->query('year_month') ?: now()->format('Y-m');
 
         $envio = FechamentoSendStatus::mapFor(
             FechamentoSendStatus::TIPO_EXCEDENTE, $yearMonth,
@@ -417,9 +424,19 @@ class FechamentoExcedenteController extends Controller
         // nº do chamado, interação e valor a cobrar por apontamento.
         $apontamentos = $this->buildExcedenteApontamentos($rows, $yearMonth);
 
+        // Período do excedente = DESDE o 1º apontamento que estourou (a rotina não tem
+        // competência — o relatório traz tudo desde que começou o excedente).
+        $estouros = [];
+        foreach ($apontamentos as $ap) {
+            if (!empty($ap['itens'][0]['data'])) { $estouros[] = $ap['itens'][0]['data']; }
+        }
+        usort($estouros, fn ($a, $b) => Carbon::createFromFormat('d/m/Y', $a)->timestamp <=> Carbon::createFromFormat('d/m/Y', $b)->timestamp);
+        $periodoLabel = !empty($estouros) ? ('desde ' . $estouros[0]) : 'Excedente acumulado';
+
         return [
             'clienteName' => $customer->name,
             'periodo'     => $this->periodoExtenso($yearMonth),
+            'periodoLabel'=> $periodoLabel,
             'logoDataUri' => $logoDataUri,
             'emitidoEm'   => now()->format('d/m/Y'),
             'linhas'      => $linhas,
