@@ -160,7 +160,13 @@ class Timesheet extends Model
                 || $timesheet->isDirty('project_id') || $timesheet->isDirty('customer_id')
                 || $timesheet->isDirty('date') || $timesheet->isDirty('created_at');
             if ($relevant && ! $timesheet->date_locked) {
-                app(\App\Services\TimesheetTransferService::class)->applyToModel($timesheet);
+                try {
+                    app(\App\Services\TimesheetTransferService::class)->applyToModel($timesheet);
+                } catch (\Throwable $e) {
+                    // Regra de transferência NUNCA pode derrubar o save do apontamento (ex.: tabela
+                    // ainda não migrada na janela de deploy). Best-effort.
+                    \Illuminate\Support\Facades\Log::warning('timesheet_transfer.apply_failed', ['error' => $e->getMessage()]);
+                }
             }
         });
 
