@@ -76,6 +76,12 @@ class GmudProjectSubmissionController extends Controller
             'source_system'       => 'gmud_project',
         ]);
 
+        // Número do chamado (mesma numeração do portal, por empresa) — sem isto o ticket_number
+        // fica vazio e a BUSCA GLOBAL não encontra o chamado (só o FE mostra "#id" como fallback).
+        if (! $ticket->ticket_number) {
+            $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next((int) $ticket->company_id)]);
+        }
+
         // RECEBIMENTO governado (reusa exatamente o motor do wizard) — sem commit.
         $package = $this->service->receiveFromUpload($ticket, $user, $request->file('file'));
 
