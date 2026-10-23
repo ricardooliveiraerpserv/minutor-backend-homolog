@@ -499,6 +499,21 @@ class FechamentoExcedenteController extends Controller
         return \Maatwebsite\Excel\Facades\Excel::download(new \App\Exports\ExcedenteExport($viewData), $fileName);
     }
 
+    /** GET /fechamento-excedente/{customerId}/{yearMonth}/pdf — baixa o PDF (o mesmo anexado no e-mail). */
+    public function downloadPdf(Request $request, string $customerId, string $yearMonth)
+    {
+        $customer = Customer::find($customerId);
+        if (!$customer) {
+            return response()->json(['success' => false, 'message' => 'Cliente não encontrado.'], 404);
+        }
+        $viewData = $this->buildExcedenteViewData($customer, $yearMonth);
+        $safeName = preg_replace('/[^A-Za-z0-9]+/', '_', (string) $customer->name);
+        $fileName = "Horas_Excedentes_{$yearMonth}_{$safeName}.pdf";
+        return Pdf::loadView('pdf.fechamento-excedente', $viewData)
+            ->setPaper('a4', 'portrait')
+            ->download($fileName);
+    }
+
     /** POST .../email-preview — prévia do E-MAIL (layout branded, mesma Blade do envio), live com a mensagem editada. */
     public function emailPreview(Request $request, string $customerId, string $yearMonth): JsonResponse
     {
