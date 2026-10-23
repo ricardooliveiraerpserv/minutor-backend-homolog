@@ -234,6 +234,8 @@ class GmudProjectSubmissionController extends Controller
                     'repo'          => $pub['repo'] ?? null,
                     'branch'        => $pub['branch'] ?? null,
                     'published_at'  => $pub['published_at'] ?? null,
+                    // Por fonte publicado: o que foi ALTERADO (change_diff) + o DOC gerado (source_doc_id).
+                    'files'         => $this->publishedFilesWithDoc($p),
                 ];
             })->values();
 
@@ -241,6 +243,36 @@ class GmudProjectSubmissionController extends Controller
     }
 
     // ── helpers ──────────────────────────────────────────────────────────
+
+    /** Fontes publicados do pacote + trecho alterado (change_diff) e id do doc gerado por arquivo. */
+    private function publishedFilesWithDoc(GmudPackage $package): array
+    {
+        $files = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')
+            ->where('action', '!=', 'skip')->orderBy('dest_git_path')->get();
+        if ($files->isEmpty()) {
+            return [];
+        }
+        $docsByPath = collect();
+        $repo = $package->source_repo_id ? \App\Models\ClientSourceRepo::find($package->source_repo_id) : null;
+        if ($repo) {
+            $docsByPath = \App\Models\SourceDoc::with('currentVersion:id,source_doc_id,change_diff,change_diff_meta')
+                ->where('owner', $repo->owner)->where('repository', $repo->repository)
+                ->where('branch', $repo->branch ?: 'main')
+                ->whereIn('path', $files->pluck('dest_git_path')->all())
+                ->get(['id', 'path', 'current_version_id'])->keyBy('path');
+        }
+        return $files->map(function ($f) use ($docsByPath) {
+            $doc = $docsByPath->get($f->dest_git_path);
+            $cv  = $doc?->currentVersion;
+            return [
+                'filename'         => $f->filename ?: basename((string) $f->dest_git_path),
+                'dest_git_path'    => $f->dest_git_path,
+                'source_doc_id'    => $doc?->id,
+                'change_diff'      => $cv?->change_diff,
+                'change_diff_meta' => $cv?->change_diff_meta,
+            ];
+        })->values()->all();
+    }
 
     /** Corpo da interação de documentação (visível ao cliente). */
     private function documentationBody(GmudPackage $package, ?Project $project, ?array $pub, string $description = ''): string
