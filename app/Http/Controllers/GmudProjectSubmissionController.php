@@ -182,7 +182,10 @@ class GmudProjectSubmissionController extends Controller
     /** GET /gmud/project-submissions — TODAS as GMUDs enviadas por esta rotina (todos os projetos). */
     public function index(Request $request): JsonResponse
     {
-        $packages = GmudPackage::whereNotNull('project_id')
+        // whereHas('project') aplica o CompanyScope do Project → a lista fica escopada à EMPRESA ATIVA
+        // (o projeto/cliente resolvem e o "Ver no projeto" funciona; sem isto, GMUD de outra empresa
+        // aparecia com projeto "—" e o link dava 404 por escopo). Troque de empresa p/ ver a de cada uma.
+        $packages = GmudPackage::whereHas('project')
             ->where('classification', 'projeto')
             ->where('status', GmudPackage::STATUS_PUBLISHED)
             ->with(['ticket:id,ticket_number', 'project:id,name,code', 'customer:id,name'])
