@@ -113,7 +113,12 @@ class GmudProjectSubmissionController extends Controller
     public function finalize(Request $request, GmudPackage $package): JsonResponse
     {
         abort_unless($package->project_id, 422, 'Este pacote não é um envio de fontes de projeto.');
-        abort_unless($package->status === GmudPackage::STATUS_PUBLISHED, 422, 'Publique os fontes no Git antes de finalizar.');
+        // Normalmente exige publicação (commit) antes. EXCEÇÃO: todos os fontes já são IDÊNTICOS ao Git
+        // (nada a commitar) → ainda assim DOCUMENTAMOS o envio ("sem alteração") e encerramos o chamado.
+        $allIdentical = $package->status !== GmudPackage::STATUS_PUBLISHED
+            && $package->files()->where('is_source', true)->exists()
+            && ! $package->files()->where('is_source', true)->where('match_status', '!=', 'identical')->exists();
+        abort_unless($package->status === GmudPackage::STATUS_PUBLISHED || $allIdentical, 422, 'Publique os fontes no Git antes de finalizar.');
 
         $ticket = $package->ticket;
         if (! $ticket) {
@@ -237,15 +242,27 @@ class GmudProjectSubmissionController extends Controller
     /** Corpo da interação de documentação (visível ao cliente). */
     private function documentationBody(GmudPackage $package, ?Project $project, ?array $pub, string $description = ''): string
     {
-        $sha  = $pub['commit_sha'] ? substr((string) $pub['commit_sha'], 0, 10) : '—';
-        $repo = $pub['repo'] ?? '—';
-        $files = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')->where('action', '!=', 'skip')
-            ->orderBy('dest_git_path')->get();
-        $lines = $files->map(fn ($f) => "📄  {$f->dest_git_path}")->implode("\n");
-        $head = "📦  Fontes do projeto \"" . ($project?->name ?? '—') . "\" publicados no repositório do cliente.";
         // Descrição do envio (nota do consultor) — logo após o cabeçalho, quando informada.
         $desc = trim($description) !== '' ? "📝  " . trim($description) . "\n\n" : '';
-        $meta = "🗂️  Repositório: {$repo}" . ($pub['branch'] ?? null ? " @ {$pub['branch']}" : '') . "\n🔖  Commit: {$sha}\n📁  Pasta: " . ($package->project_folder ?: '/');
+        $committed = $pub && ! empty($pub['commit_sha']);
+
+        if ($committed) {
+            $sha  = substr((string) $pub['commit_sha'], 0, 10);
+            $repo = $pub['repo'] ?? '—';
+            $files = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')->where('action', '!=', 'skip')
+                ->orderBy('dest_git_path')->get();
+            $lines = $files->map(fn ($f) => "📄  {$f->dest_git_path}")->implode("\n");
+            $head = "📦  Fontes do projeto \"" . ($project?->name ?? '—') . "\" publicados no repositório do cliente.";
+            $meta = "🗂️  Repositório: {$repo}" . (! empty($pub['branch']) ? " @ {$pub['branch']}" : '') . "\n🔖  Commit: {$sha}\n📁  Pasta: " . ($package->project_folder ?: '/');
+        } else {
+            // Sem commit: todos os fontes já estão IDÊNTICOS ao Git (nada mudou) — lista pelos paths já versionados.
+            $files = $package->files()->where('is_source', true)->whereNotNull('matched_git_path')
+                ->orderBy('matched_git_path')->get();
+            $lines = $files->map(fn ($f) => "📄  {$f->matched_git_path}")->implode("\n");
+            $head = "📦  Fontes do projeto \"" . ($project?->name ?? '—') . "\" já presentes no repositório do cliente (sem alteração nesta verificação).";
+            $meta = "🔖  Sem nova publicação — os fontes já estavam versionados no Git.";
+        }
+
         return trim($head . "\n\n" . $desc . $meta . "\n\n" . ($lines !== '' ? "Arquivos:\n" . $lines : '') . "\n\n✅  Envio documentado no projeto.");
     }
 
