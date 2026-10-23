@@ -82,12 +82,16 @@ class SourceDocQualityController extends Controller
         }
 
         $counts   = $r['counts'] ?? [];
-        // O dev subiu o próprio fonte → pode ver os achados (sem gating de git). Só metadados leves.
+        // O dev subiu o próprio fonte → pode ver os achados COMPLETOS (sem gating de git):
+        // regra do catálogo (código/categoria/descrição/recomendação) + severidade + linha.
         $findings = is_array($r['findings'] ?? null) ? array_map(fn ($f) => [
-            'severity' => $f['severity'] ?? $f['analyzer_severity'] ?? null,
-            'rule'     => $f['rule'] ?? $f['rule_id'] ?? null,
-            'title'    => $f['title'] ?? $f['message'] ?? null,
-            'line'     => $f['line'] ?? $f['line_start'] ?? null,
+            'severity'       => $f['severity'] ?? $f['analyzer_severity'] ?? null,
+            'rule'           => $f['rule'] ?? $f['rule_id'] ?? null,
+            'category'       => $f['category'] ?? null,
+            'title'          => $f['title'] ?? $f['message'] ?? null,
+            'description'    => $f['description'] ?? null,
+            'recommendation' => $f['recommendation'] ?? null,
+            'line'           => $f['line'] ?? $f['start_line'] ?? $f['line_start'] ?? null,
         ], array_values($r['findings'])) : [];
 
         return response()->json(['data' => [
