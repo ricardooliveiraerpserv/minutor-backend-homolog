@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class GmudPackage extends Model
 {
     protected $fillable = [
-        'ticket_id', 'customer_id', 'source_repo_id', 'attachment_id',
+        'ticket_id', 'customer_id', 'project_id', 'source_repo_id', 'attachment_id',
         'original_name', 'size_bytes', 'sha256', 'uploaded_by', 'received_at',
         'classification', 'project_name', 'project_folder', 'status', 'error',
     ];
@@ -44,6 +44,11 @@ class GmudPackage extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(Customer::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'project_id');
     }
 
     public function sourceRepo(): BelongsTo

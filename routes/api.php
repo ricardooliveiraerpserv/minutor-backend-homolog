@@ -1567,6 +1567,10 @@ Route::prefix('v1')->group(function () {
             Route::delete('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'destroy'])->whereNumber('package');
             Route::get('/gmud/packages/{package}/dirs', [\App\Http\Controllers\GmudPackageController::class, 'dirs'])->whereNumber('package');
             Route::post('/gmud/packages/{package}/publish', [\App\Http\Controllers\GmudPackageController::class, 'publish'])->whereNumber('package');
+            // Envio de Fontes de PROJETO (sem ticket) — rotina standalone que reusa o motor GMUD.
+            Route::post('/gmud/project-submission', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'store'])->middleware('permission.or.admin:source_docs.gmud_publish');
+            Route::post('/gmud/project-submission/{package}/finalize', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'finalize'])->whereNumber('package')->middleware('permission.or.admin:source_docs.gmud_publish');
+            Route::get('/projects/{project}/gmud-submissions', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'projectSubmissions'])->whereNumber('project')->middleware('permission.or.admin:source_docs.gmud_publish');
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
         Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
