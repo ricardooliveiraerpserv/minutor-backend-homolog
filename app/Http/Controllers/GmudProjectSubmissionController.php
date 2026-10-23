@@ -168,6 +168,37 @@ class GmudProjectSubmissionController extends Controller
         ]);
     }
 
+    /** GET /gmud/project-submissions — TODAS as GMUDs enviadas por esta rotina (todos os projetos). */
+    public function index(Request $request): JsonResponse
+    {
+        $packages = GmudPackage::whereNotNull('project_id')
+            ->where('classification', 'projeto')
+            ->where('status', GmudPackage::STATUS_PUBLISHED)
+            ->with(['ticket:id,ticket_number', 'project:id,name,code', 'customer:id,name'])
+            ->withCount(['files as published_files_count' => fn ($q) => $q->where('is_source', true)->whereNotNull('dest_git_path')->where('action', '!=', 'skip')])
+            ->orderByDesc('id')->limit(1000)->get()
+            ->map(function (GmudPackage $p) {
+                $pub = $this->publicationInfo($p);
+                return [
+                    'id'            => $p->id,
+                    'project_id'    => $p->project_id,
+                    'project_name'  => optional($p->project)->name,
+                    'project_code'  => optional($p->project)->code,
+                    'customer_name' => optional($p->customer)->name,
+                    'ticket_id'     => $p->ticket_id,
+                    'ticket_number' => optional($p->ticket)->ticket_number,
+                    'project_folder'=> $p->project_folder,
+                    'files_count'   => $p->published_files_count,
+                    'commit_sha'    => $pub['commit_sha'] ?? null,
+                    'repo'          => $pub['repo'] ?? null,
+                    'branch'        => $pub['branch'] ?? null,
+                    'published_at'  => $pub['published_at'] ?? null,
+                ];
+            })->values();
+
+        return response()->json(['data' => $packages]);
+    }
+
     /** GET /projects/{project}/gmud-submissions — pacotes GMUD publicados do projeto (documentação). */
     public function projectSubmissions(Project $project): JsonResponse
     {
