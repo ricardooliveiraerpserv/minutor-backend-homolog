@@ -400,7 +400,10 @@ class HelpDeskTriggerEngine
 
     private static function senderAccount(?int $id, HelpDeskTicket $ticket): ?HelpDeskEmailAccount
     {
-        $base = HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true);
+        // CADA EMPRESA ENVIA PELA SUA PRÓPRIA CONTA: escopa pela empresa do chamado. Sem conta da
+        // empresa → null → gatilho não envia (sem fallback p/ conta de outra empresa).
+        $base = HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)
+            ->when($ticket->company_id, fn ($q, $cid) => $q->where('company_id', $cid));
         if ($id) return (clone $base)->find($id) ?? $base->orderBy('id')->first();
         // "Conta que recebeu o e-mail": preferimos a conta de onde o chamado entrou (ledger).
         $recvId = HelpDeskIngestedEmail::where('ticket_id', $ticket->id)->orderBy('id')->value('email_account_id');

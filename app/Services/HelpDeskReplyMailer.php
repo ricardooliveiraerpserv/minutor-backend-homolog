@@ -282,7 +282,11 @@ class HelpDeskReplyMailer
     /** Conta microsoft365 que envia: a da fila do chamado; senão, a primeira habilitada. */
     private static function resolveFromAccount(HelpDeskTicket $ticket): ?HelpDeskEmailAccount
     {
-        $base = HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true);
+        // CADA EMPRESA ENVIA PELA SUA PRÓPRIA CONTA. Escopa pela empresa do chamado; se a empresa
+        // NÃO tem conta, retorna null → o mailer PULA o envio (sem fallback p/ a conta de outra
+        // empresa). Chamado sem company_id (legado/single-company) mantém o comportamento antigo.
+        $base = HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)
+            ->when($ticket->company_id, fn ($q, $cid) => $q->where('company_id', $cid));
         if ($ticket->team_id) {
             $match = (clone $base)->where('default_team_id', $ticket->team_id)->first();
             if ($match) return $match;
