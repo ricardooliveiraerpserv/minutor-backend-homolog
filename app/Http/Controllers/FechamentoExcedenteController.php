@@ -7,7 +7,6 @@ use App\Models\ExcessHourCharge;
 use App\Models\FechamentoSendStatus;
 use App\Models\HelpDeskTicket;
 use App\Models\Project;
-use App\Models\ProjectMonthlyConsumption;
 use App\Models\Timesheet;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
@@ -282,16 +281,13 @@ class FechamentoExcedenteController extends Controller
             if (!$p) { continue; }
 
             $contracted = (float) ($r['contracted_hours'] ?? 0);
+            $consumed   = (float) ($r['consumed_hours'] ?? 0);
             $rate       = (float) ($r['additional_hourly_rate'] ?? 0);
 
             // Banco = pai + filhos que COMPARTILHAM (sold<=0). Filhos-bloco (sold>0) têm banco próprio.
             $sharedChildIds = Project::where('parent_project_id', $p->id)
                 ->where('sold_hours', '<=', 0)->pluck('id')->all();
             $bankIds = array_merge([$p->id], $sharedChildIds);
-
-            // Baseline = consumo manual migrado (anterior ao corte) — entra ANTES dos apontamentos.
-            $baseline = (float) ProjectMonthlyConsumption::where('project_id', $p->id)
-                ->where('year_month', '<', $cutoff)->sum('consumed_minutes') / 60.0;
 
             // Apontamentos do banco, em ordem cronológica, do corte até o fim da competência.
             $ts = Timesheet::with(['user:id,name'])
@@ -301,6 +297,22 @@ class FechamentoExcedenteController extends Controller
                 ->where('date', '<=', $periodEnd)
                 ->orderBy('date')->orderBy('created_at')->orderBy('id')
                 ->get(['id', 'user_id', 'date', 'effort_minutes', 'contract_client_pct', 'client_extra_pct', 'ticket', 'observation']);
+
+            // Horas faturáveis (com multiplicador) por apontamento + soma da janela.
+            $horasDe = [];
+            $apSum = 0.0;
+            foreach ($ts as $t) {
+                $pct = (float) ($t->contract_client_pct ?? $t->client_extra_pct ?? 0);
+                $h = (float) $t->effort_minutes * (1 + $pct / 100) / 60.0;
+                $horasDe[$t->id] = $h;
+                $apSum += $h;
+            }
+            // Baseline = tudo que NÃO é apontamento da janela (consumo manual migrado + blocos de
+            // filhos-bloco sold>0 + etc.), DERIVADO da apuração: consumido − soma dos apontamentos.
+            // Assim o acumulado do walk termina exatamente no consumido e as porções excedentes
+            // reconciliam com o headline (consumido − contratadas). Cobre contratos cujo consumo
+            // vem de carve-outs (não-apontamentos), que o baseline só-manual não enxergava.
+            $baseline = max(0.0, $consumed - $apSum);
 
             // Solicitante + nº do chamado: resolvidos do Help Desk pelo número do chamado
             // (casa com ticket cru OU zero-padded a 6 dígitos, como no Movidesk).
@@ -320,8 +332,7 @@ class FechamentoExcedenteController extends Controller
             $itens = [];
             $excTot = 0.0; $valTot = 0.0; $first = true;
             foreach ($ts as $t) {
-                $pct   = (float) ($t->contract_client_pct ?? $t->client_extra_pct ?? 0);
-                $horas = (float) $t->effort_minutes * (1 + $pct / 100) / 60.0;
+                $horas = $horasDe[$t->id];
                 $running += $horas;
                 if ($running <= $contracted) { continue; }                      // ainda dentro do contratado
                 $portionRaw = min($horas, $running - $contracted);
