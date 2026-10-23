@@ -349,6 +349,9 @@ class FechamentoExcedenteController extends Controller
 
             $out[] = [
                 'projeto'       => $r['code'] . ' — ' . $r['project_name'],
+                'tipo'          => $r['basis'] === 'fixed' ? 'BH Fixo' : ($r['basis'] === 'closed' ? 'Fechado' : 'BH Mensal'),
+                'contratadas'   => number_format((float) $r['contracted_hours'], 2, ',', '.') . 'h',
+                'consumido'     => number_format((float) $r['consumed_hours'], 2, ',', '.') . 'h',
                 'valor_hora'    => $this->brl($rate),
                 // Totais = os da APURAÇÃO (headline do resumo), p/ o detalhamento BATER com
                 // o resumo. As linhas (porções) são a composição e podem diferir em centavos
