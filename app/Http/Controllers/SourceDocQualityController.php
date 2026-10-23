@@ -35,6 +35,78 @@ class SourceDocQualityController extends Controller
     ) {
     }
 
+    /**
+     * POST /source-docs/quality/analyze — análise AD-HOC de um fonte AVULSO (o dev sobe um .prw
+     * só pra conferir a qualidade do próprio desenvolvimento). NÃO publica, NÃO comita, NÃO
+     * persiste nada no Minutor: apenas repassa o conteúdo ao CodeAnalysis e devolve o job.
+     */
+    public function analyzeAdhoc(Request $request): JsonResponse
+    {
+        $request->validate(['file' => ['required', 'file', 'max:5120']]); // 5 MB — um fonte
+
+        if (! $this->service->enabled()) {
+            return response()->json(['message' => 'Análise de qualidade indisponível neste ambiente.', 'error' => 'disabled'], 503);
+        }
+
+        $up       = $request->file('file');
+        $filename = $up->getClientOriginalName() ?: 'fonte.prw';
+        $content  = (string) file_get_contents($up->getRealPath());
+
+        try {
+            $resp = $this->service->analyze($filename, $content, ['adhoc' => true, 'by' => $request->user()?->id]);
+        } catch (CodeAnalysisException $e) {
+            return response()->json(['message' => $e->getMessage(), 'error' => $e->errorCode], $e->unavailable ? 503 : 502);
+        }
+
+        return response()->json(['data' => [
+            'job_id'   => $resp['job_id'] ?? null,
+            'status'   => $resp['status'] ?? 'queued',
+            'filename' => $filename,
+        ]], 202);
+    }
+
+    /** GET /source-docs/quality/analyze/{job} — resultado (poll) da análise ad-hoc. Nada persistido. */
+    public function adhocResult(Request $request, string $job): JsonResponse
+    {
+        if (! $this->service->enabled()) {
+            return response()->json(['message' => 'Indisponível.', 'error' => 'disabled'], 503);
+        }
+
+        try {
+            $r = $this->service->getJob($job);
+        } catch (CodeAnalysisException $e) {
+            return response()->json(['message' => $e->getMessage(), 'error' => $e->errorCode], $e->unavailable ? 503 : 502);
+        }
+        if ($r === null) {
+            return response()->json(['message' => 'Análise não encontrada.', 'error' => 'not_found'], 404);
+        }
+
+        $counts   = $r['counts'] ?? [];
+        // O dev subiu o próprio fonte → pode ver os achados (sem gating de git). Só metadados leves.
+        $findings = is_array($r['findings'] ?? null) ? array_map(fn ($f) => [
+            'severity' => $f['severity'] ?? $f['analyzer_severity'] ?? null,
+            'rule'     => $f['rule'] ?? $f['rule_id'] ?? null,
+            'title'    => $f['title'] ?? $f['message'] ?? null,
+            'line'     => $f['line'] ?? $f['line_start'] ?? null,
+        ], array_values($r['findings'])) : [];
+
+        return response()->json(['data' => [
+            'job_id' => $job,
+            'status' => $r['status'] ?? 'running',
+            'grade'  => $r['grade'] ?? null,
+            'score'  => $r['score'] ?? null,
+            'risk'   => $r['risk'] ?? null,
+            'counts' => [
+                'critical'        => $counts['critical'] ?? null,
+                'warnings'        => $counts['warnings'] ?? null,
+                'recommendations' => $counts['recommendations'] ?? null,
+                'total'           => $counts['total'] ?? null,
+            ],
+            'findings' => $findings,
+            'error'    => $r['error'] ?? null,
+        ]]);
+    }
+
     /** GET /source-docs/{sourceDoc}/quality — estado da qualidade da VERSÃO vigente. */
     public function show(Request $request, int $sourceDoc): JsonResponse
     {

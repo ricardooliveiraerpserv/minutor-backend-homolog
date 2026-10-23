@@ -1648,6 +1648,9 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/quality/{analysis}/findings', [\App\Http\Controllers\SourceDocQualityController::class, 'findings'])->whereNumber('sourceDoc')->whereNumber('analysis');
             Route::post('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'run'])->whereNumber('sourceDoc');
+            // Análise AD-HOC de fonte avulso (dev confere a própria qualidade; NÃO publica/persiste).
+            Route::post('/source-docs/quality/analyze', [\App\Http\Controllers\SourceDocQualityController::class, 'analyzeAdhoc'])->middleware('permission.or.admin:source_docs.quality.view');
+            Route::get('/source-docs/quality/analyze/{job}', [\App\Http\Controllers\SourceDocQualityController::class, 'adhocResult'])->middleware('permission.or.admin:source_docs.quality.view');
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);
         Route::get('/source-repos/available', [\App\Http\Controllers\ClientSourceRepoController::class, 'available']);
