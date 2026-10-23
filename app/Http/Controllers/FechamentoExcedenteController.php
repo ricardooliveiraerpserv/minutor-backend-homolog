@@ -28,6 +28,8 @@ use Illuminate\Support\Facades\Mail;
  */
 class FechamentoExcedenteController extends Controller
 {
+    use \App\Http\Traits\ListCacheable;
+
     /** Projetos PAI de BH Mensal ou BH Fixo (não-investimento). */
     private function baseQuery()
     {
@@ -61,10 +63,12 @@ class FechamentoExcedenteController extends Controller
                 'contracted' => round($bal['vendidas'] ?? 0.0, 2),
                 'consumed'   => round($bal['consumed'] ?? 0.0, 2),
                 'excess'     => $bal ? max(0, round(-$bal['balance'], 2)) : 0.0,
+                'ym'         => $bal['ym'] ?? $yearMonth,
             ];
         }
         $ap = $p->excessHoursApuracao($yearMonth);
         $ap['monthly'] = false;
+        $ap['ym'] = $yearMonth;
         return $ap;
     }
 
@@ -234,6 +238,84 @@ class FechamentoExcedenteController extends Controller
         );
 
         return response()->json(['ok' => true, 'record' => $rec]);
+    }
+
+    /**
+     * POST /fechamento-excedente/{project}/faturar
+     * FATURA o excedente: cria um APORTE (motivo 'excedentes') das horas faturadas no contrato —
+     * adicionando as horas ao banco, o que ATUALIZA O SALDO (zera/reduz o excedente) — e registra
+     * a cobrança. O usuário pode faturar o excedente apurado, INCLUIR MAIS horas ou faturar MENOS
+     * (campo `horas`, default = excedente vigente). Valor = horas × Hora Adicional.
+     */
+    public function faturar(Request $request, int $project): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !($user->isAdmin() || $user->isAdministrativo())) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
+
+        $p = $this->baseQuery()->whereKey($project)->first();
+        if (!$p) {
+            return response()->json(['message' => 'Projeto não elegível a horas excedentes.'], 422);
+        }
+
+        $rate = (float) ($p->additional_hourly_rate ?? 0);
+        if ($rate <= 0) {
+            return response()->json(['message' => 'Defina a Hora Adicional do contrato antes de faturar.'], 422);
+        }
+
+        $validated = $request->validate([
+            'horas' => 'nullable|numeric|min:0.01|max:999999',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        // Excedente acumulado vigente (default a faturar); o usuário pode faturar mais ou menos.
+        $ap    = $this->apuracao($p, now()->format('Y-m'));
+        $ym    = (string) ($ap['ym'] ?? now()->format('Y-m'));
+        $horas = isset($validated['horas']) ? round((float) $validated['horas'], 2) : round((float) $ap['excess'], 2);
+        if ($horas <= 0) {
+            return response()->json(['message' => 'Informe as horas a faturar.'], 422);
+        }
+        $valor = round($horas * $rate, 2);
+        $obs   = trim((string) ($validated['notes'] ?? ''));
+
+        // Aporte (motivo 'excedentes' = ajuste interno: entra no banco, atualiza saldo, NÃO notifica cliente).
+        $aporte = $p->hourContributions()->create([
+            'contributed_hours' => $horas,
+            'hourly_rate'       => $rate,
+            'nao_valorizado'    => false,
+            'description'       => 'Faturamento de horas excedentes — ' . $this->periodoExtenso($ym) . ($obs !== '' ? (' · ' . $obs) : ''),
+            'motivo'            => 'excedentes',
+            'kanban_status'     => \App\Models\HourContribution::KANBAN_FINAL,
+            'contributed_by'    => $user->id,
+            'contributed_at'    => now(),
+        ]);
+        $this->invalidateListCache('projects');
+
+        // Registra a cobrança (faturado) com o snapshot faturado + referência ao aporte gerado.
+        $rec = ExcessHourCharge::updateOrCreate(
+            ['project_id' => $p->id, 'year_month' => $ym],
+            [
+                'basis'                  => $ap['basis'],
+                'contracted_hours'       => $ap['contracted'],
+                'consumed_hours'         => $ap['consumed'],
+                'excess_hours'           => $horas,
+                'additional_hourly_rate' => $rate,
+                'excess_value'           => $valor,
+                'status'                 => ExcessHourCharge::STATUS_COBRADO,
+                'notes'                  => trim('Faturado via aporte #' . $aporte->id . ($obs !== '' ? (' · ' . $obs) : '')),
+                'closed_at'              => now(),
+                'closed_by_id'           => $user->id,
+            ]
+        );
+
+        return response()->json([
+            'ok'        => true,
+            'aporte_id' => $aporte->id,
+            'horas'     => $horas,
+            'valor'     => $valor,
+            'record'    => $rec,
+        ]);
     }
 
     // ─── Relatório + E-mail ──────────────────────────────────────────────────
