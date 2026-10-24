@@ -17,14 +17,17 @@ class TimesheetTransferRuleController extends Controller
 {
     public function __construct(private TimesheetTransferService $service)
     {
-        $this->middleware(function (Request $request, $next) {
-            abort_unless(optional($request->user())->isAdmin(), 403, 'Apenas administradores.');
-            return $next($request);
-        });
+    }
+
+    /** Gate admin-only (altera lançamentos/faturamento). Chamado no início de cada ação. */
+    private function ensureAdmin(): void
+    {
+        abort_unless(optional(auth()->user())->isAdmin(), 403, 'Apenas administradores.');
     }
 
     public function index(): JsonResponse
     {
+        $this->ensureAdmin();
         $rows = TimesheetTransferRule::with(['sourceCustomer:id,name', 'targetProject:id,name,code,customer_id'])
             ->orderByDesc('active')->orderByDesc('id')->get()
             ->map(fn (TimesheetTransferRule $r) => $this->view($r));
@@ -34,6 +37,7 @@ class TimesheetTransferRuleController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $v = $this->validateRule($request);
         $rule = new TimesheetTransferRule($v);
         $rule->company_id = optional(Project::find($v['target_project_id']))->company_id;
@@ -51,6 +55,7 @@ class TimesheetTransferRuleController extends Controller
 
     public function update(Request $request, TimesheetTransferRule $rule): JsonResponse
     {
+        $this->ensureAdmin();
         $v = $this->validateRule($request);
         $rule->fill($v);
         $rule->company_id = optional(Project::find($v['target_project_id']))->company_id;
@@ -66,6 +71,7 @@ class TimesheetTransferRuleController extends Controller
 
     public function destroy(TimesheetTransferRule $rule): JsonResponse
     {
+        $this->ensureAdmin();
         $rule->delete();
         return response()->json(['data' => ['deleted' => true]]);
     }
@@ -73,6 +79,7 @@ class TimesheetTransferRuleController extends Controller
     /** POST /timesheet-transfer-rules/{rule}/apply — aplica a regra nos apontamentos existentes. */
     public function apply(Request $request, TimesheetTransferRule $rule): JsonResponse
     {
+        $this->ensureAdmin();
         $result = $this->service->applyRule($rule, $request->boolean('dry_run'), $request->user()?->id);
         return response()->json(['data' => $result]);
     }
@@ -80,6 +87,7 @@ class TimesheetTransferRuleController extends Controller
     /** POST /timesheet-transfer-rules/preview — conta quantos apontamentos moveriam (sem salvar). */
     public function preview(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $v = $this->validateRule($request);
         $rule = new TimesheetTransferRule($v); // transiente, não salvo
         $result = $this->service->applyRule($rule, true);
