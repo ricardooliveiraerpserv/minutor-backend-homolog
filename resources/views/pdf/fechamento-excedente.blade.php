@@ -100,6 +100,18 @@
       </div>
     @endif
 
+    @if (!empty($ap['sem_hora_adic']))
+      <div class="note" style="background:#fffbeb;border-color:#fde68a;color:#92400e;">
+        <b>ATENÇÃO: a Hora Adicional deste contrato está R$ 0,00.</b> Defina a Hora Adicional para calcular o valor a cobrar — por ora o valor sai como R$ 0,00.
+      </div>
+    @endif
+    @if (!empty($ap['resto_horas']))
+      <div class="note" style="background:#eff6ff;border-color:#bfdbfe;color:#1e40af;">
+        <b>{{ $ap['resto_horas'] }}</b> do excedente vêm de blocos contratados / consumo migrado (sem apontamento individual). Os apontamentos abaixo compõem o restante.
+      </div>
+    @endif
+
+    @if (count($ap['itens']) > 0)
     <table class="rows" style="table-layout:fixed;">
       <colgroup>
         <col style="width:13%;">
@@ -148,6 +160,11 @@
         </tr>
       </tfoot>
     </table>
+    @else
+      <div style="font-size:11px;background:#f5f3ff;border-top:2px solid #6d28d9;padding:7px;margin:6px 0 4px;">
+        TOTAL EXCEDENTE: <b style="color:#dc2626;">{{ $ap['excedente_tot'] }}</b> &nbsp;&middot;&nbsp; <b style="color:#6d28d9;">{{ $ap['valor_tot'] }}</b>
+      </div>
+    @endif
   @empty
     <div class="empty">Nenhuma hora excedente a cobrar na competência.</div>
   @endforelse

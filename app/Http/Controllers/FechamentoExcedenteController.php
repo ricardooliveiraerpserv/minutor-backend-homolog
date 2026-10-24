@@ -445,8 +445,13 @@ class FechamentoExcedenteController extends Controller
                 $first = false;
             }
 
-            if (empty($itens)) { continue; }
+            // Excedente NÃO coberto por apontamento (vem de blocos de filhos contratados ou
+            // consumo migrado anterior ao período de rastreio). Ex.: BH Fixo cujo banco estourou
+            // majoritariamente por blocos, não por apontamentos.
+            $restoHoras = round((float) $r['excess_hours'] - round($excTot, 2), 2);
 
+            // SEMPRE inclui o contrato (mesmo sem itens detalhados, ou com Hora Adicional zerada)
+            // — o relatório nunca vem vazio se há excedente apurado.
             $out[] = [
                 'projeto'       => $r['code'] . ' — ' . $r['project_name'],
                 'tipo'          => $r['basis'] === 'fixed' ? 'BH Fixo' : ($r['basis'] === 'closed' ? 'Fechado' : 'BH Mensal'),
@@ -454,10 +459,11 @@ class FechamentoExcedenteController extends Controller
                 'consumido'     => number_format((float) $r['consumed_hours'], 2, ',', '.') . 'h',
                 'valor_hora'    => $this->brl($rate),
                 // Totais = os da APURAÇÃO (headline do resumo), p/ o detalhamento BATER com
-                // o resumo. As linhas (porções) são a composição e podem diferir em centavos
-                // (arredondamento por apontamento vs. arredondamento mensal do extrato).
+                // o resumo. As linhas (porções) são a composição e podem diferir em centavos.
                 'excedente_tot' => number_format((float) $r['excess_hours'], 2, ',', '.') . 'h',
                 'valor_tot'     => $this->brl((float) $r['excess_value']),
+                'sem_hora_adic' => $rate <= 0,
+                'resto_horas'   => $restoHoras > 0.1 ? (number_format($restoHoras, 2, ',', '.') . 'h') : null,
                 'itens'         => $itens,
             ];
         }
@@ -471,7 +477,7 @@ class FechamentoExcedenteController extends Controller
         $rows = $this->buildRows(
             $this->baseQuery()->where('customer_id', $customer->id)->get(),
             $yearMonth,
-        )->filter(fn ($r) => $r['excess_value'] > 0 && $r['charge'] && $r['status'] !== ExcessHourCharge::STATUS_NAO_COBRAR)
+        )->filter(fn ($r) => $r['excess_hours'] > 0 && $r['charge'] && $r['status'] !== ExcessHourCharge::STATUS_NAO_COBRAR)
          ->values();
 
         $total = round($rows->sum('excess_value'), 2);
@@ -513,7 +519,7 @@ class FechamentoExcedenteController extends Controller
             if (!empty($ap['itens'][0]['data'])) { $estouros[] = $ap['itens'][0]['data']; }
         }
         usort($estouros, fn ($a, $b) => Carbon::createFromFormat('d/m/Y', $a)->timestamp <=> Carbon::createFromFormat('d/m/Y', $b)->timestamp);
-        $periodoLabel = !empty($estouros) ? ('desde ' . $estouros[0]) : 'Excedente acumulado';
+        $periodoLabel = !empty($estouros) ? ('desde ' . $estouros[0]) : '';
 
         return [
             'clienteName' => $customer->name,
