@@ -107,7 +107,11 @@
     @endif
     @if (!empty($ap['resto_horas']))
       <div class="note" style="background:#eff6ff;border-color:#bfdbfe;color:#1e40af;">
-        <b>{{ $ap['resto_horas'] }}</b> do excedente vêm de blocos contratados / consumo migrado (sem apontamento individual). Os apontamentos abaixo compõem o restante.
+        @if (count($ap['itens']) > 0)
+          <b>{{ $ap['resto_horas'] }}</b> do excedente vêm de blocos contratados / consumo migrado (sem apontamento individual). Os apontamentos abaixo compõem o restante.
+        @else
+          Todo o excedente (<b>{{ $ap['excedente_tot'] }}</b>) vem de blocos contratados / consumo migrado — não há apontamentos individuais a detalhar.
+        @endif
       </div>
     @endif
 

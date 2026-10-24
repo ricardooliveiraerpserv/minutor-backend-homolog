@@ -373,10 +373,22 @@ class FechamentoExcedenteController extends Controller
             $consumed   = (float) ($r['consumed_hours'] ?? 0);
             $rate       = (float) ($r['additional_hourly_rate'] ?? 0);
 
-            // Banco = pai + filhos que COMPARTILHAM (sold<=0). Filhos-bloco (sold>0) têm banco próprio.
-            $sharedChildIds = Project::where('parent_project_id', $p->id)
-                ->where('sold_hours', '<=', 0)->pluck('id')->all();
-            $bankIds = array_merge([$p->id], $sharedChildIds);
+            // Banco (fontes de apontamento que compõem o consumo), alinhado ao managementBreakdown:
+            //  • BH MENSAL: pai + filhos que COMPARTILHAM o banco (sold<=0). Filhos-bloco (sold>0) são bloco.
+            //  • BH FIXO/FECHADO: pai + filhos ON DEMAND (consumo APONTADO, independe de sold_hours).
+            //    Filhos Fechado/BH-Fixo = bloco; Projeto/BH-Mensal = ignorados.
+            $children = Project::where('parent_project_id', $p->id)
+                ->with('contractType:id,name')->get(['id', 'sold_hours', 'contract_type_id', 'tipo_faturamento']);
+            if ($p->isBankHoursMonthly()) {
+                $childIds = $children->where('sold_hours', '<=', 0)->pluck('id')->all();
+            } else {
+                $childIds = $children->filter(function ($c) {
+                    $n = strtolower((string) ($c->contractType->name ?? ''));
+                    return str_contains($n, 'on demand') || str_contains($n, 'on-demand')
+                        || $c->tipo_faturamento === 'on_demand';
+                })->pluck('id')->all();
+            }
+            $bankIds = array_merge([$p->id], $childIds);
 
             // Apontamentos do banco, em ordem cronológica, do corte até o fim da competência.
             $ts = Timesheet::with(['user:id,name'])
