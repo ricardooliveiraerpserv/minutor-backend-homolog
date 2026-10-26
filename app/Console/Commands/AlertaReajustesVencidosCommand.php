@@ -46,12 +46,19 @@ class AlertaReajustesVencidosCommand extends Command
         $cc = $rcpt['cc'];
 
         $mail = new ReajustesPendentesMail($vencidos->all(), $totalImpacto, $referencia, $dashboardUrl);
+        $subject = $mail->envelope()->subject;
         // Entrega via Microsoft Graph (mesmo canal do fechamento); fallback p/ mailer default.
-        $graphFrom = config('services.graph.mailbox');
-        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
-            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $mail->envelope()->subject, $mail->render());
-        } else {
-            Mail::to($to)->cc($cc)->send($mail);
+        try {
+            $graphFrom = config('services.graph.mailbox');
+            if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+                \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $subject, $mail->render());
+            } else {
+                Mail::to($to)->cc($cc)->send($mail);
+            }
+            \App\Models\WorkflowEmailLog::record('contract.reajustes_pendentes', 'sent', ['to' => $to, 'cc' => $cc, 'subject' => $subject]);
+        } catch (\Throwable $e) {
+            \App\Models\WorkflowEmailLog::record('contract.reajustes_pendentes', 'failed', ['to' => $to, 'cc' => $cc, 'subject' => $subject, 'error' => $e->getMessage()]);
+            throw $e;
         }
 
         $this->info('Alerta enviado para ' . implode(', ', $to) . ": {$vencidos->count()} contrato(s) vencido(s), impacto R$ " . number_format($totalImpacto, 2, ',', '.') . '.');

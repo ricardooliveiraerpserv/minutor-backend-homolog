@@ -52,11 +52,18 @@ class AlertaAvisoPrevioReajusteCommand extends Command
         }
 
         $mail = new ReajustesPendentesMail($rows->all(), $totalImpacto, $referencia, $dashboardUrl);
-        $graphFrom = config('services.graph.mailbox');
-        if (\App\Services\GraphMailer::enabled() && $graphFrom) {
-            \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, 'Aviso prévio de reajuste — enviar comunicado aos clientes', $mail->render());
-        } else {
-            Mail::to($to)->cc($cc)->send($mail);
+        $subject = 'Aviso prévio de reajuste — enviar comunicado aos clientes';
+        try {
+            $graphFrom = config('services.graph.mailbox');
+            if (\App\Services\GraphMailer::enabled() && $graphFrom) {
+                \App\Services\GraphMailer::sendAs($graphFrom, $to, $cc, $subject, $mail->render());
+            } else {
+                Mail::to($to)->cc($cc)->send($mail);
+            }
+            \App\Models\WorkflowEmailLog::record('contract.reajuste.aviso', 'sent', ['to' => $to, 'cc' => $cc, 'subject' => $subject]);
+        } catch (\Throwable $e) {
+            \App\Models\WorkflowEmailLog::record('contract.reajuste.aviso', 'failed', ['to' => $to, 'cc' => $cc, 'subject' => $subject, 'error' => $e->getMessage()]);
+            throw $e;
         }
 
         $this->info('Aviso prévio enviado a ' . implode(', ', $to) . ": {$rows->count()} contrato(s) na janela.");
