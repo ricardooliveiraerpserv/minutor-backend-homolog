@@ -180,6 +180,18 @@ class Timesheet extends Model
                     ->pctForTimesheet((int) $timesheet->project_id, $timesheet->date, $timesheet->user_id ? (int) $timesheet->user_id : null);
             }
         });
+
+        // ATIVIDADE PADRÃO "Execução": todo projeto tipo Projeto deve ter a atividade do
+        // consultor que apontou — senão projetos novos/importados nascem "sem atividade"
+        // (bug recorrente: o seed de 2026-10-16 foi one-off). Cria lazy etapa/atividade/
+        // alocação (0h) e liga o apontamento. Best-effort — NUNCA derruba o save.
+        static::created(function ($timesheet) {
+            try {
+                app(\App\Services\DefaultCronogramaService::class)->ensureForTimesheet($timesheet);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('default_cronograma.ensure_failed', ['ts' => $timesheet->id, 'error' => $e->getMessage()]);
+            }
+        });
     }
 
     /**
