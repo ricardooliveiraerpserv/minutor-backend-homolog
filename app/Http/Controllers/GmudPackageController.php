@@ -155,8 +155,10 @@ class GmudPackageController extends Controller
     {
         $package->loadMissing('uploader');
 
-        // Trecho alterado por fonte publicado (quando a doc-IA pós-publish já gerou a versão).
+        // Trecho alterado + DOCUMENTAÇÃO (IA) por fonte publicado — resolvidos pela doc gerada
+        // no pós-publish (por path no repo do cliente).
         $diffByPath = [];
+        $docIdByPath = [];
         if ($package->status === GmudPackage::STATUS_PUBLISHED && $package->source_repo_id) {
             $repo = \App\Models\ClientSourceRepo::find($package->source_repo_id);
             if ($repo) {
@@ -167,6 +169,7 @@ class GmudPackageController extends Controller
                         ->where('branch', $repo->branch ?: 'main')->whereIn('path', $paths)
                         ->get(['id', 'path', 'current_version_id']);
                     foreach ($docs as $d) {
+                        $docIdByPath[$d->path] = $d->id;
                         if ($cv = $d->currentVersion) {
                             $diffByPath[$d->path] = ['change_diff' => $cv->change_diff, 'change_diff_meta' => $cv->change_diff_meta];
                         }
@@ -206,6 +209,8 @@ class GmudPackageController extends Controller
                     // Trecho alterado da última modificação (quando a doc-IA pós-publish já concluiu).
                     'change_diff'      => $diffByPath[$f->dest_git_path]['change_diff'] ?? null,
                     'change_diff_meta' => $diffByPath[$f->dest_git_path]['change_diff_meta'] ?? null,
+                    // Documentação (IA) gerada pós-publish p/ este fonte — link "Ver documentação".
+                    'source_doc_id'    => $docIdByPath[$f->dest_git_path] ?? null,
                 ])->values(),
         ];
     }
