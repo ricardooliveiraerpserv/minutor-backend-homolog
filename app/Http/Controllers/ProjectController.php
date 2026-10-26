@@ -4898,6 +4898,18 @@ class ProjectController extends Controller
             }
         }
 
+        // Também inclui QUEM APONTOU no projeto, não só os responsáveis de atividade — senão
+        // projetos importados (ou sem cronograma) ficam com "Sem alocações" mesmo tendo horas
+        // consumidas. Mesmo universo do ConsultantWorkloadController (responsável OU apontou).
+        \DB::table('timesheets')
+            ->where('project_id', $project->id)
+            ->whereNull('deleted_at')
+            ->whereIn('status', [\App\Models\Timesheet::STATUS_APPROVED, \App\Models\Timesheet::STATUS_PENDING, \App\Models\Timesheet::STATUS_RELEASED])
+            ->whereNotNull('user_id')
+            ->distinct()
+            ->pluck('user_id')
+            ->each(function ($uid) use (&$userIdsInvolved) { $userIdsInvolved[$uid] = true; });
+
         // Team load: envolvimento de cada pessoa NESTE projeto — reflete os apontamentos.
         // usage_pct = horas consumidas pela pessoa neste projeto (approved/released) sobre
         // o pool do cronograma. Assim quem apontou aparece (mesmo sem stage_allocation), e
