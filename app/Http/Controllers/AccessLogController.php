@@ -56,9 +56,22 @@ class AccessLogController extends Controller
             ->groupByRaw('CAST(l.created_at AS date)')->orderBy('day')->get()
             ->map(fn ($r) => ['day' => (string) $r->day, 'total' => (int) $r->total, 'usuarios' => (int) $r->usuarios]);
 
+        // Ranking: quem mais acessa (top 8 por nº de logins) — respeita perfil + busca.
+        $topUsers = DB::table('login_logs as l')
+            ->join('users as users', 'users.id', '=', 'l.user_id')
+            ->when($request->filled('type'), fn ($qq) => $qq->where('users.type', $request->input('type')))
+            ->when($request->filled('search'), function ($qq) use ($request) {
+                $s = '%' . strtolower($request->input('search')) . '%';
+                $qq->where(fn ($w) => $w->whereRaw('LOWER(users.name) LIKE ?', [$s])->orWhereRaw('LOWER(users.email) LIKE ?', [$s]));
+            })
+            ->selectRaw('users.id, users.name, users.type, COUNT(*) logins, MAX(l.created_at) last_login')
+            ->groupBy('users.id', 'users.name', 'users.type')
+            ->orderByRaw('COUNT(*) DESC')->limit(8)->get()
+            ->map(fn ($r) => ['id' => $r->id, 'name' => $r->name, 'type' => $r->type, 'logins' => (int) $r->logins, 'last_login' => $r->last_login ? \Illuminate\Support\Carbon::parse($r->last_login)->toIso8601String() : null]);
+
         return response()->json(['data' => [
             'total' => $total, 'acessaram' => $acessou, 'nunca' => $total - $acessou, 'online' => $online,
-            'by_type' => $byType, 'by_day' => $byDay,
+            'by_type' => $byType, 'by_day' => $byDay, 'top_users' => $topUsers,
         ]]);
     }
 
