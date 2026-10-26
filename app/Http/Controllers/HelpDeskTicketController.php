@@ -182,16 +182,25 @@ class HelpDeskTicketController extends Controller
 
     /**
      * Reunião Teams ATIVA por ticket (batch anti-N+1). Mapa ticket_id => starts_at da próxima reunião.
-     * "Ativa" = status scheduled/live (exclui ended/canceled). Vínculo polimórfico em `meetings`
-     * (origin_type='HELPDESK_TICKET', origin_id = ticket.id). Usado pelo chip "Reunião agendada" da fila.
+     * "Ativa" = `live` (em andamento) OU `scheduled` que AINDA NÃO EXPIROU (exclui ended/canceled
+     * e as scheduled cujo horário+duração já passou). Vínculo polimórfico em `meetings`
+     * (origin_type='HELPDESK_TICKET', origin_id = ticket.id). Usado pelo chip "Reunião agendada".
      */
     private function scheduledMeetingByTicket(\Illuminate\Support\Collection $tickets): \Illuminate\Support\Collection
     {
         if ($tickets->isEmpty()) return collect();
+        $now = \Illuminate\Support\Carbon::now()->toDateTimeString();
         return \App\Models\Meeting::query()
             ->where('origin_type', 'HELPDESK_TICKET')
             ->whereIn('origin_id', $tickets->pluck('id'))
-            ->whereIn('status', ['scheduled', 'live'])
+            ->where(function ($q) use ($now) {
+                $q->where('status', 'live')
+                    ->orWhere(function ($q2) use ($now) {
+                        // scheduled que ainda não passou (fim = ends_at, senão starts_at + duração ~60min).
+                        $q2->where('status', 'scheduled')
+                            ->whereRaw("COALESCE(ends_at, starts_at + (COALESCE(duration_minutes, 60) * interval '1 minute')) >= ?", [$now]);
+                    });
+            })
             ->groupBy('origin_id')
             ->selectRaw('origin_id as oid, MIN(starts_at) as next_at')
             ->pluck('next_at', 'oid');
