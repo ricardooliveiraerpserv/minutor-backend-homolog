@@ -1579,6 +1579,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/gmud/project-submissions', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'index'])->middleware('permission.or.admin:source_docs.gmud_publish');
             Route::post('/gmud/project-submission', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'store'])->middleware('permission.or.admin:source_docs.gmud_publish');
             Route::post('/gmud/project-submission/{package}/finalize', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'finalize'])->whereNumber('package')->middleware('permission.or.admin:source_docs.gmud_publish');
+            Route::delete('/gmud/project-submission/{package}', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'cancel'])->whereNumber('package')->middleware('permission.or.admin:source_docs.gmud_publish');
             Route::get('/projects/{project}/gmud-submissions', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'projectSubmissions'])->whereNumber('project')->middleware('permission.or.admin:source_docs.gmud_publish');
         Route::get('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'index']);
         Route::post('/customers/{customer}/source-repos', [\App\Http\Controllers\ClientSourceRepoController::class, 'store']);

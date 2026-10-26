@@ -213,6 +213,32 @@ class GmudProjectSubmissionController extends Controller
         return response()->json(['data' => $packages]);
     }
 
+    /**
+     * DELETE /gmud/project-submission/{package} — CANCELA um envio ainda NÃO publicado: apaga o
+     * pacote (e evidências) e o chamado automático que nasceu com ele (sem atividade real). Usado
+     * quando o .zip não tinha fonte ou o usuário desiste — não deixa chamado/pacote órfão.
+     */
+    public function cancel(GmudPackage $package): JsonResponse
+    {
+        abort_unless($package->project_id, 422, 'Este pacote não é um envio de fontes de projeto.');
+        abort_if($package->status === GmudPackage::STATUS_PUBLISHED, 422, 'Este envio já foi publicado — não pode ser cancelado.');
+
+        $ticketId = $package->ticket_id;
+        \Illuminate\Support\Facades\DB::transaction(function () use ($package, $ticketId) {
+            if ($ticketId) {
+                HelpDeskTicketComment::where('ticket_id', $ticketId)->delete();
+                HelpDeskTicketEvent::where('ticket_id', $ticketId)->delete();
+            }
+            $package->files()->delete();
+            $package->delete();
+            if ($ticketId && ($t = HelpDeskTicket::find($ticketId)) && $t->source_system === 'gmud_project') {
+                $t->delete();
+            }
+        });
+
+        return response()->json(['data' => ['canceled' => true]]);
+    }
+
     /** GET /projects/{project}/gmud-submissions — pacotes GMUD publicados do projeto (documentação). */
     public function projectSubmissions(Project $project): JsonResponse
     {
