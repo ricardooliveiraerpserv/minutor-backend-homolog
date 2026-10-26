@@ -968,6 +968,10 @@ Route::prefix('v1')->group(function () {
         // Envios por rotina (log central de e-mails de workflow)
         Route::get('/workflow-email-logs/summary', [\App\Http\Controllers\WorkflowEmailLogController::class, 'summary'])->name('workflow-email-logs.summary');
         Route::get('/workflow-email-logs', [\App\Http\Controllers\WorkflowEmailLogController::class, 'index'])->name('workflow-email-logs.index');
+        // Acessos de usuários/clientes (log de login)
+        Route::get('/access-logs/summary', [\App\Http\Controllers\AccessLogController::class, 'summary'])->name('access-logs.summary');
+        Route::get('/access-logs/{user}/history', [\App\Http\Controllers\AccessLogController::class, 'history'])->whereNumber('user')->name('access-logs.history');
+        Route::get('/access-logs', [\App\Http\Controllers\AccessLogController::class, 'index'])->name('access-logs.index');
 
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {

@@ -118,6 +118,7 @@ class AuthController extends Controller
         // Verificar se usuário tem senha temporária
         if ($user->hasTemporaryPassword()) {
             $token = $user->createToken($request->device_name ?? 'api-token')->plainTextToken;
+            \App\Models\LoginLog::record($user, $request);
 
             return response()->json([
                 'message' => 'Login realizado com sucesso',
@@ -140,6 +141,7 @@ class AuthController extends Controller
         $user->tokens()->where('name', $request->device_name ?? 'api-token')->delete();
 
         $token = $user->createToken($request->device_name ?? 'api-token')->plainTextToken;
+        \App\Models\LoginLog::record($user, $request);
 
         return response()->json([
             'message' => 'Login realizado com sucesso',
