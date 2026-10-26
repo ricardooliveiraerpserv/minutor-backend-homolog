@@ -38,7 +38,7 @@ class GmudProjectSubmissionController extends Controller
     public function store(Request $request): JsonResponse
     {
         // Gate por EMPRESA: só quem trabalha com fonte (git) envia GMUD de projeto.
-        abort_unless(\App\Models\Company::activeAllowsSourceRequests(), 403, 'Esta empresa não tem o módulo de código-fonte habilitado.');
+        abort_unless(\App\Models\Company::userCanUseSourceModule(), 403, 'Esta empresa não tem o módulo de código-fonte habilitado.');
 
         $v = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],

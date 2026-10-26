@@ -23,7 +23,7 @@ class Company extends Model
 
     /**
      * A EMPRESA ATIVA (contexto da requisição) pode solicitar/enviar código-fonte?
-     * Gate central do módulo de fontes. Sem empresa resolvida → não bloqueia (compat).
+     * Sem empresa resolvida → não bloqueia (compat).
      */
     public static function activeAllowsSourceRequests(): bool
     {
@@ -32,6 +32,18 @@ class Company extends Model
             return true;
         }
         return (bool) static::whereKey($cid)->value('allow_source_requests');
+    }
+
+    /**
+     * Gate do módulo de código-fonte (assistente + GMUD). É capacidade do AGENTE, não da
+     * empresa ativa: pode usar quem ATENDE ao menos uma empresa com o módulo habilitado.
+     * Assim um agente ERPSERV+BIZIFY usa o módulo mesmo logado em BIZIFY; um agente só-BIZIFY
+     * (ou cliente) não. A visibilidade por chamado/empresa é decidida no FE.
+     */
+    public static function userCanUseSourceModule(): bool
+    {
+        $user = auth()->user();
+        return $user ? $user->companies()->where('allow_source_requests', true)->exists() : false;
     }
 
     public function users(): BelongsToMany

@@ -104,7 +104,7 @@ class HelpDeskController extends Controller
             // Multi-empresa: empresas que o agente ATENDE (perfil de acesso). O FE usa p/ o selo
             // de empresa (só quando 2+) e o filtro rápido por empresa na fila unificada.
             'companies_scope' => \App\Models\Company::whereIn('id', app(\App\Services\HelpDeskAccessPolicy::class)->companiesScope(auth()->user()))
-                ->orderBy('name')->get(['id', 'name', 'slug', 'color']),
+                ->orderBy('name')->get(['id', 'name', 'slug', 'color', 'allow_source_requests']),
             'is_multi_company' => app(\App\Services\HelpDeskAccessPolicy::class)->isMultiCompany(auth()->user()),
         ]]);
     }

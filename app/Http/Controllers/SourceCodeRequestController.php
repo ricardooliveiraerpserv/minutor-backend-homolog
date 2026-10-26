@@ -35,7 +35,7 @@ class SourceCodeRequestController extends Controller
     {
         $perms = PermissionService::for($request->user());
         abort_unless(in_array('*', $perms, true) || in_array('source_code.request', $perms, true), 403, 'Sem permissão para solicitar código-fonte.');
-        abort_unless(\App\Models\Company::activeAllowsSourceRequests(), 403, 'Esta empresa não tem o módulo de código-fonte habilitado.');
+        abort_unless(\App\Models\Company::userCanUseSourceModule(), 403, 'Esta empresa não tem o módulo de código-fonte habilitado.');
     }
 
     /** Cria a solicitação: (cria/vincula chamado) + interação + itens (pending). */
