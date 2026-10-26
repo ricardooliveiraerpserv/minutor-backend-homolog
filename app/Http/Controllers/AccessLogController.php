@@ -31,8 +31,34 @@ class AccessLogController extends Controller
             ->join('user_presence as pr', 'pr.user_id', '=', 'users.id')
             ->where('pr.status', 'online')->where('pr.last_seen_at', '>=', now()->subMinutes(5))->count();
 
+        // Adoção por perfil (todos os perfis; respeita a busca, não o filtro de perfil — senão 1 barra).
+        $byType = User::query()
+            ->when($request->filled('search'), function ($qq) use ($request) {
+                $s = '%' . strtolower($request->input('search')) . '%';
+                $qq->leftJoin('customers as cs', 'cs.id', '=', 'users.customer_id')
+                    ->where(fn ($w) => $w->whereRaw('LOWER(users.name) LIKE ?', [$s])->orWhereRaw('LOWER(users.email) LIKE ?', [$s])->orWhereRaw('LOWER(COALESCE(cs.name, \'\')) LIKE ?', [$s]));
+            })
+            ->selectRaw('users.type, COUNT(*) total, COUNT(users.last_login_at) acessaram')
+            ->groupBy('users.type')->orderByRaw('COUNT(*) DESC')->get()
+            ->map(fn ($r) => ['type' => $r->type, 'total' => (int) $r->total, 'acessaram' => (int) $r->acessaram]);
+
+        // Logins por dia (últimos 30 dias) — respeita perfil + busca.
+        $from = now()->subDays(29)->startOfDay();
+        $byDay = DB::table('login_logs as l')
+            ->join('users as users', 'users.id', '=', 'l.user_id')
+            ->where('l.created_at', '>=', $from)
+            ->when($request->filled('type'), fn ($qq) => $qq->where('users.type', $request->input('type')))
+            ->when($request->filled('search'), function ($qq) use ($request) {
+                $s = '%' . strtolower($request->input('search')) . '%';
+                $qq->where(fn ($w) => $w->whereRaw('LOWER(users.name) LIKE ?', [$s])->orWhereRaw('LOWER(users.email) LIKE ?', [$s]));
+            })
+            ->selectRaw('CAST(l.created_at AS date) as day, COUNT(*) total, COUNT(DISTINCT l.user_id) usuarios')
+            ->groupByRaw('CAST(l.created_at AS date)')->orderBy('day')->get()
+            ->map(fn ($r) => ['day' => (string) $r->day, 'total' => (int) $r->total, 'usuarios' => (int) $r->usuarios]);
+
         return response()->json(['data' => [
             'total' => $total, 'acessaram' => $acessou, 'nunca' => $total - $acessou, 'online' => $online,
+            'by_type' => $byType, 'by_day' => $byDay,
         ]]);
     }
 
