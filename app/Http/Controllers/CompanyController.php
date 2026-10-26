@@ -30,6 +30,7 @@ class CompanyController extends Controller
                 'type'   => $c->type,
                 'role'   => $c->pivot->role,
                 'active' => $c->id === $user->current_company_id,
+                'allow_source_requests' => (bool) $c->allow_source_requests,
             ]);
 
         return response()->json([
@@ -81,6 +82,7 @@ class CompanyController extends Controller
         $data = Company::withCount('users')->orderBy('name')->get()->map(fn (Company $c) => [
             'id' => $c->id, 'name' => $c->name, 'slug' => $c->slug, 'color' => $c->color, 'cnpj' => $c->cnpj,
             'type' => $c->type, 'status' => $c->status, 'users_count' => $c->users_count,
+            'allow_source_requests' => (bool) $c->allow_source_requests,
         ]);
         return response()->json(['data' => $data]);
     }
@@ -95,6 +97,7 @@ class CompanyController extends Controller
             'cnpj'   => 'nullable|string|max:20',
             'type'   => 'required|in:internal,external',
             'status' => 'required|in:active,inactive',
+            'allow_source_requests' => 'sometimes|boolean',
         ]);
         $company = Company::create([...$data, 'slug' => Company::makeSlug($data['name'])]);
         return response()->json(['data' => $company], 201);
@@ -110,6 +113,7 @@ class CompanyController extends Controller
             'cnpj'   => 'nullable|string|max:20',
             'type'   => 'sometimes|in:internal,external',
             'status' => 'sometimes|in:active,inactive',
+            'allow_source_requests' => 'sometimes|boolean',
         ]);
         $company->update($data);
         return response()->json(['data' => $company->fresh()]);

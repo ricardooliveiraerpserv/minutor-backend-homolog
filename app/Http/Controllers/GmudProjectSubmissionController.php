@@ -37,6 +37,9 @@ class GmudProjectSubmissionController extends Controller
     /** POST /gmud/project-submission — recebe o ZIP de um PROJETO e devolve o pacote (sem publicar). */
     public function store(Request $request): JsonResponse
     {
+        // Gate por EMPRESA: só quem trabalha com fonte (git) envia GMUD de projeto.
+        abort_unless(\App\Models\Company::activeAllowsSourceRequests(), 403, 'Esta empresa não tem o módulo de código-fonte habilitado.');
+
         $v = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
             'project_id'  => ['required', 'exists:projects,id'],

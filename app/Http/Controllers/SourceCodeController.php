@@ -19,6 +19,8 @@ class SourceCodeController extends Controller
     {
         $perms = PermissionService::for($request->user());
         abort_unless(in_array('*', $perms, true) || in_array('source_code.request', $perms, true), 403, 'Sem permissão para solicitar código-fonte.');
+        // Gate por EMPRESA: empresas que não trabalham com fonte (ex.: sem git) não usam o módulo.
+        abort_unless(\App\Models\Company::activeAllowsSourceRequests(), 403, 'Esta empresa não tem o módulo de código-fonte habilitado.');
     }
 
     /** Gate de gestão (configurar textos/repos) — mais restrito que solicitar. */

@@ -11,7 +11,28 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
  */
 class Company extends Model
 {
-    protected $fillable = ['name', 'slug', 'color', 'cnpj', 'type', 'status'];
+    protected $fillable = ['name', 'slug', 'color', 'cnpj', 'type', 'status', 'allow_source_requests'];
+
+    protected $casts = ['allow_source_requests' => 'boolean'];
+
+    /** A empresa pode solicitar/enviar código-fonte (assistente de fontes + GMUD de projeto)? */
+    public function allowsSourceRequests(): bool
+    {
+        return (bool) $this->allow_source_requests;
+    }
+
+    /**
+     * A EMPRESA ATIVA (contexto da requisição) pode solicitar/enviar código-fonte?
+     * Gate central do módulo de fontes. Sem empresa resolvida → não bloqueia (compat).
+     */
+    public static function activeAllowsSourceRequests(): bool
+    {
+        $cid = app(\App\Services\CompanyContext::class)->id();
+        if (! $cid) {
+            return true;
+        }
+        return (bool) static::whereKey($cid)->value('allow_source_requests');
+    }
 
     public function users(): BelongsToMany
     {
