@@ -20,20 +20,32 @@ class AccessLogController extends Controller
         abort_unless(optional($request->user())->isAdmin(), 403, 'Apenas administradores.');
     }
 
-    /** GET /access-logs/summary — totais (usuários, já acessaram, nunca, online agora). */
+    /** GET /access-logs/summary — totais no universo do filtro (perfil + busca). Os cards
+     *  obedecem os filtros; o refino acessou/nunca NÃO entra (os cards mostram essa distribuição). */
     public function summary(Request $request): JsonResponse
     {
         $this->ensureAdmin($request);
-        $total   = User::query()->count();
-        $acessou = User::query()->whereNotNull('last_login_at')->count();
-        $online  = DB::table('user_presence')->where('status', 'online')->where('last_seen_at', '>=', now()->subMinutes(5))->count();
-        $byType  = User::query()->selectRaw('type, COUNT(*) total, COUNT(last_login_at) acessaram')->groupBy('type')->get()
-            ->map(fn ($r) => ['type' => $r->type, 'total' => (int) $r->total, 'acessaram' => (int) $r->acessaram]);
+        $total   = $this->scoped($request)->count();
+        $acessou = $this->scoped($request)->whereNotNull('users.last_login_at')->count();
+        $online  = $this->scoped($request)
+            ->join('user_presence as pr', 'pr.user_id', '=', 'users.id')
+            ->where('pr.status', 'online')->where('pr.last_seen_at', '>=', now()->subMinutes(5))->count();
 
         return response()->json(['data' => [
             'total' => $total, 'acessaram' => $acessou, 'nunca' => $total - $acessou, 'online' => $online,
-            'by_type' => $byType,
         ]]);
+    }
+
+    /** Users já com filtro de perfil + busca aplicado (sem o filtro acessou/nunca). */
+    private function scoped(Request $request)
+    {
+        return User::query()
+            ->when($request->filled('type'), fn ($qq) => $qq->where('users.type', $request->input('type')))
+            ->when($request->filled('search'), function ($qq) use ($request) {
+                $s = '%' . strtolower($request->input('search')) . '%';
+                $qq->leftJoin('customers as cs', 'cs.id', '=', 'users.customer_id')
+                    ->where(fn ($w) => $w->whereRaw('LOWER(users.name) LIKE ?', [$s])->orWhereRaw('LOWER(users.email) LIKE ?', [$s])->orWhereRaw('LOWER(COALESCE(cs.name, \'\')) LIKE ?', [$s]));
+            });
     }
 
     /** GET /access-logs — lista de usuários com agregados de acesso. */
