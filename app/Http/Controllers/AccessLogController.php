@@ -61,6 +61,7 @@ class AccessLogController extends Controller
             ->when($request->filled('type'), fn ($qq) => $qq->where('users.type', $request->input('type')))
             ->when($request->input('access') === 'never', fn ($qq) => $qq->whereNull('users.last_login_at'))
             ->when($request->input('access') === 'yes', fn ($qq) => $qq->whereNotNull('users.last_login_at'))
+            ->when($request->boolean('online'), fn ($qq) => $qq->where('pr.status', 'online')->where('pr.last_seen_at', '>=', now()->subMinutes(5)))
             ->when($request->filled('search'), function ($qq) use ($request) {
                 $s = '%' . strtolower($request->input('search')) . '%';
                 $qq->where(fn ($w) => $w->whereRaw('LOWER(users.name) LIKE ?', [$s])->orWhereRaw('LOWER(users.email) LIKE ?', [$s])->orWhereRaw('LOWER(COALESCE(c.name, \'\')) LIKE ?', [$s]));
