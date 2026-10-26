@@ -163,11 +163,22 @@ class ContractHoursConsumptionAlertService
             'sent_at'            => $sentAt,
         ];
 
-        if ($existing) {
-            $existing->update($payload);
-            return $existing->fresh();
-        }
-        return ContractHoursAlert::create($payload);
+        $alert = $existing ? tap($existing)->update($payload)->fresh() : ContractHoursAlert::create($payload);
+
+        // Espelha no log central de envios (tela "Envios por rotina"). Best-effort.
+        \App\Models\WorkflowEmailLog::record('contract.hours_alert', $payload['status'], [
+            'subject'     => 'Alerta de consumo — ' . ($payload['classification'] ?? ''),
+            'to'          => $payload['recipients_to'] ?? [],
+            'cc'          => $payload['recipients_cc'] ?? [],
+            'error'       => $payload['error'] ?? null,
+            'customer_id' => $project->customer_id ?? ($project->customer->id ?? null),
+            'contract_id' => $payload['contract_id'] ?? null,
+            'project_id'  => $project->id,
+            'company_id'  => $project->company_id ?? null,
+            'sent_at'     => $payload['sent_at'] ?? now(),
+        ]);
+
+        return $alert;
     }
 
     /**

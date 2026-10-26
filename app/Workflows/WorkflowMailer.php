@@ -25,8 +25,11 @@ class WorkflowMailer
      */
     public function send(string $key, array $ctx, array $vars, ?string $ctaUrl = null, ?string $bodyOverride = null, ?string $titleOverride = null): bool
     {
+        $ids = \App\Models\WorkflowEmailLog::idsFromContext($ctx);
         $rcpt = $this->resolver->resolve($key, $ctx);
         if (empty($rcpt['to'])) {
+            // Registra que a rotina rodou mas não tinha destinatário (ajuda a diagnosticar config).
+            \App\Models\WorkflowEmailLog::record($key, 'no_recipient', $ids + ['to' => [], 'cc' => []]);
             return false;
         }
 
@@ -44,9 +47,11 @@ class WorkflowMailer
                     }
                 });
             }
+            \App\Models\WorkflowEmailLog::record($key, 'sent', $ids + ['to' => $rcpt['to'], 'cc' => $rcpt['cc'] ?? [], 'subject' => $subject]);
             return true;
         } catch (\Throwable $e) {
             Log::warning("Workflow [{$key}] falhou ao enviar", ['err' => $e->getMessage()]);
+            \App\Models\WorkflowEmailLog::record($key, 'failed', $ids + ['to' => $rcpt['to'], 'cc' => $rcpt['cc'] ?? [], 'subject' => $subject ?? null, 'error' => $e->getMessage()]);
             return false;
         }
     }

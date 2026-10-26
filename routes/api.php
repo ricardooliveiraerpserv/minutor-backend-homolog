@@ -965,6 +965,9 @@ Route::prefix('v1')->group(function () {
         Route::put('/workflows/{key}', [\App\Http\Controllers\WorkflowController::class, 'update'])->name('workflows.update');
         Route::post('/workflows/{key}/test', [\App\Http\Controllers\WorkflowController::class, 'test'])->name('workflows.test');
         Route::post('/workflows/{key}/preview', [\App\Http\Controllers\WorkflowController::class, 'preview'])->name('workflows.preview');
+        // Envios por rotina (log central de e-mails de workflow)
+        Route::get('/workflow-email-logs/summary', [\App\Http\Controllers\WorkflowEmailLogController::class, 'summary'])->name('workflow-email-logs.summary');
+        Route::get('/workflow-email-logs', [\App\Http\Controllers\WorkflowEmailLogController::class, 'index'])->name('workflow-email-logs.index');
 
         // Rotas de escrita - protegidas por permissões
         Route::middleware('permission.or.admin:service_types.create')->group(function () {
