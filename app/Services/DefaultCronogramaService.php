@@ -75,29 +75,50 @@ class DefaultCronogramaService
             $stageId = $stage->id;
         }
 
-        // Atividade "Execução" do consultor (1 por usuário).
-        $delivery = DB::table('stage_deliveries')
-            ->where('stage_id', $stageId)->whereNull('deleted_at')
-            ->where('responsible_user_id', $ts->user_id)->where('title', 'Execução')->first();
+        // Atividade do consultor. Resolução (nessa ordem):
+        //  1) Se o usuário JÁ tem alocação nessa etapa (unique stage_id+user_id), usa a atividade
+        //     dela — pode ser uma atividade REAL que a coordenação montou sobre a etapa "Execução"
+        //     (ex.: proj com cronograma de verdade). Assim NÃO criamos "Execução" duplicada nem
+        //     violamos o unique da alocação.
+        //  2) Senão, se já existe a atividade "Execução" do usuário, usa ela.
+        //  3) Senão, cria a atividade "Execução" + alocação (0h).
+        $alloc = DB::table('stage_allocations')
+            ->where('stage_id', $stageId)->where('user_id', $ts->user_id)->first();
 
-        if (!$delivery) {
-            $now   = now();
-            $order = (int) DB::table('stage_deliveries')->where('stage_id', $stageId)
-                ->whereNull('deleted_at')->max('order_index');
-            $deliveryId = DB::table('stage_deliveries')->insertGetId([
-                'stage_id' => $stageId, 'title' => 'Execução', 'responsible_user_id' => $ts->user_id,
-                'hours_planned' => 0, 'priority' => 'medium',
-                'status' => $this->deliveryStatusFor($project->status),
-                'order_index' => $order + 1, 'client_involved' => false, 'approval_status' => 'none',
-                'created_at' => $now, 'updated_at' => $now,
-            ]);
-            DB::table('stage_allocations')->insert([
-                'stage_id' => $stageId, 'user_id' => $ts->user_id, 'planned_hours' => 0,
-                'delivery_id' => $deliveryId, 'is_primary' => true,
-                'created_at' => $now, 'updated_at' => $now,
-            ]);
+        if ($alloc && $alloc->delivery_id) {
+            $deliveryId = $alloc->delivery_id;
         } else {
-            $deliveryId = $delivery->id;
+            $delivery = DB::table('stage_deliveries')
+                ->where('stage_id', $stageId)->whereNull('deleted_at')
+                ->where('responsible_user_id', $ts->user_id)->where('title', 'Execução')->first();
+
+            if ($delivery) {
+                $deliveryId = $delivery->id;
+            } else {
+                $now   = now();
+                $order = (int) DB::table('stage_deliveries')->where('stage_id', $stageId)
+                    ->whereNull('deleted_at')->max('order_index');
+                $deliveryId = DB::table('stage_deliveries')->insertGetId([
+                    'stage_id' => $stageId, 'title' => 'Execução', 'responsible_user_id' => $ts->user_id,
+                    'hours_planned' => 0, 'priority' => 'medium',
+                    'status' => $this->deliveryStatusFor($project->status),
+                    'order_index' => $order + 1, 'client_involved' => false, 'approval_status' => 'none',
+                    'created_at' => $now, 'updated_at' => $now,
+                ]);
+            }
+
+            // Garante a alocação do usuário (respeita o unique stage_id+user_id).
+            if ($alloc) {
+                DB::table('stage_allocations')->where('id', $alloc->id)
+                    ->update(['delivery_id' => $deliveryId, 'updated_at' => now()]);
+            } else {
+                $now = now();
+                DB::table('stage_allocations')->insert([
+                    'stage_id' => $stageId, 'user_id' => $ts->user_id, 'planned_hours' => 0,
+                    'delivery_id' => $deliveryId, 'is_primary' => true,
+                    'created_at' => $now, 'updated_at' => $now,
+                ]);
+            }
         }
 
         // Liga o apontamento (raw — sem reentrar nos hooks do Timesheet).
