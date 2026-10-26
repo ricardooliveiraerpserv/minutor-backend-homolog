@@ -53,10 +53,40 @@ class GmudPackageController extends Controller
         return response()->json(['data' => $packages]);
     }
 
+    /**
+     * Resolve, para um pacote PUBLICADO, a doc (IA) gerada no pós-publish por path no repo do
+     * cliente. Retorna [docIdByPath, diffByPath]. Vazio se não publicado/sem repo.
+     */
+    private function publishedDocsByPath(GmudPackage $package): array
+    {
+        $docIdByPath = [];
+        $diffByPath = [];
+        if ($package->status === GmudPackage::STATUS_PUBLISHED && $package->source_repo_id) {
+            $repo = \App\Models\ClientSourceRepo::find($package->source_repo_id);
+            if ($repo) {
+                $paths = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')->pluck('dest_git_path')->all();
+                if (! empty($paths)) {
+                    $docs = \App\Models\SourceDoc::with('currentVersion:id,source_doc_id,change_diff,change_diff_meta')
+                        ->where('owner', $repo->owner)->where('repository', $repo->repository)
+                        ->where('branch', $repo->branch ?: 'main')->whereIn('path', $paths)
+                        ->get(['id', 'path', 'current_version_id']);
+                    foreach ($docs as $d) {
+                        $docIdByPath[$d->path] = $d->id;
+                        if ($cv = $d->currentVersion) {
+                            $diffByPath[$d->path] = ['change_diff' => $cv->change_diff, 'change_diff_meta' => $cv->change_diff_meta];
+                        }
+                    }
+                }
+            }
+        }
+        return [$docIdByPath, $diffByPath];
+    }
+
     /** GET /gmud/packages/{package} — manifesto + arquivos + evidências + links de Acervo. */
     public function show(GmudPackage $package): JsonResponse
     {
         $package->load(['files' => fn ($q) => $q->orderBy('path_in_zip')]);
+        [$docIdByPath] = $this->publishedDocsByPath($package);
 
         return response()->json([
             'data' => array_merge($this->manifest($package), [
@@ -85,6 +115,8 @@ class GmudPackageController extends Controller
                     'action'                => $f->action,
                     'dest_git_path'         => $f->dest_git_path,
                     'published_blob_sha'    => $f->published_blob_sha,
+                    // Doc (IA) gerada no pós-publish p/ este fonte — link "Ver documentação".
+                    'source_doc_id'         => $docIdByPath[$f->dest_git_path] ?? null,
                 ])->values(),
             ]),
         ]);
@@ -157,26 +189,7 @@ class GmudPackageController extends Controller
 
         // Trecho alterado + DOCUMENTAÇÃO (IA) por fonte publicado — resolvidos pela doc gerada
         // no pós-publish (por path no repo do cliente).
-        $diffByPath = [];
-        $docIdByPath = [];
-        if ($package->status === GmudPackage::STATUS_PUBLISHED && $package->source_repo_id) {
-            $repo = \App\Models\ClientSourceRepo::find($package->source_repo_id);
-            if ($repo) {
-                $paths = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')->pluck('dest_git_path')->all();
-                if (! empty($paths)) {
-                    $docs = \App\Models\SourceDoc::with('currentVersion:id,source_doc_id,change_diff,change_diff_meta')
-                        ->where('owner', $repo->owner)->where('repository', $repo->repository)
-                        ->where('branch', $repo->branch ?: 'main')->whereIn('path', $paths)
-                        ->get(['id', 'path', 'current_version_id']);
-                    foreach ($docs as $d) {
-                        $docIdByPath[$d->path] = $d->id;
-                        if ($cv = $d->currentVersion) {
-                            $diffByPath[$d->path] = ['change_diff' => $cv->change_diff, 'change_diff_meta' => $cv->change_diff_meta];
-                        }
-                    }
-                }
-            }
-        }
+        [$docIdByPath, $diffByPath] = $this->publishedDocsByPath($package);
 
         return [
             'id'             => $package->id,
