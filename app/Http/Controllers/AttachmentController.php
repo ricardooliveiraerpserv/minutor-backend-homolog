@@ -63,13 +63,13 @@ class AttachmentController extends Controller
 
     public function store(Request $request): JsonResponse
     {
-        // Cofre de Ambientes: arquivos CIFRADOS no client (.enc wrapper de .ovpn/.pfx/.ini) chegam
-        // como application/octet-stream → NÃO passam no whitelist de mimes (dava "validation.mimes").
-        // Para esses tipos (sempre visibility=restricted, blob opaco), libera o mime e aumenta o teto.
-        $encEntities = ['ENV_VPN_OVPN', 'ENV_CERT_PFX', 'ENV_APPSERVER_INI'];
-        $isEnc = in_array((string) $request->input('entity_type'), $encEntities, true);
-        $fileRule = $isEnc
-            ? 'required|file|max:102400' // 100 MB — arquivo cifrado do cofre (sem whitelist de mime; é blob)
+        // Cofre de Ambientes: arquivos CIFRADOS (.enc de .ovpn/.pfx/.ini, octet-stream) + Documentação
+        // (ENV_DOC: manuais/layouts/XMLs). Não passam no whitelist genérico de mimes → libera o mime
+        // (a extensão é validada no AttachableEntitiesRegistry por tipo) e aumenta o teto.
+        $envEntities = ['ENV_VPN_OVPN', 'ENV_CERT_PFX', 'ENV_APPSERVER_INI', 'ENV_DOC'];
+        $isEnv = in_array((string) $request->input('entity_type'), $envEntities, true);
+        $fileRule = $isEnv
+            ? 'required|file|max:102400' // 100 MB — mime validado por tipo no registry (ext whitelist)
             : 'required|file|max:25600|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z';
 
         $data = $request->validate([

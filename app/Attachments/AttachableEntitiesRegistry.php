@@ -120,6 +120,12 @@ class AttachableEntitiesRegistry
             if (!$env) return false;
             return \App\Services\EnvAccess::can($user, $env, $action === 'view' ? 'view' : 'manage');
         };
+        // ENV_DOC: a entidade É o próprio ambiente (entity_id = environment_id).
+        $envDirectPerm = function (User $user, $entity, string $action) {
+            if ($entity === null) return $user->isAdmin();
+            if (!$entity instanceof \App\Models\EnvEnvironment) return false;
+            return \App\Services\EnvAccess::can($user, $entity, $action === 'view' ? 'view' : 'manage');
+        };
 
         self::$entities = [
             // ── PROJECT ───────────────────────────────────────────────────────
@@ -393,6 +399,17 @@ class AttachableEntitiesRegistry
                 'permission_check' => $envPerm,
                 'allowed_mime' => ['application/octet-stream'],
                 'allowed_extensions' => ['enc', 'ini'],
+                'max_size_mb' => 100,
+            ],
+            // Documentação do ambiente (NÃO cifrada): manuais/layouts/XMLs/procedimentos. entity = o ambiente.
+            'ENV_DOC' => [
+                'model' => \App\Models\EnvEnvironment::class,
+                'categories' => ['doc'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envDirectPerm,
+                // octet-stream liberado (a extensão é o gate real); inclui XML/JSON p/ layouts.
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'application/octet-stream', 'application/xml', 'text/xml', 'application/json'],
+                'allowed_extensions' => ['pdf','doc','docx','xls','xlsx','ppt','pptx','csv','txt','xml','json','md','png','jpg','jpeg','webp','gif','zip','rar','7z','tar','gz'],
                 'max_size_mb' => 100,
             ],
         ];
