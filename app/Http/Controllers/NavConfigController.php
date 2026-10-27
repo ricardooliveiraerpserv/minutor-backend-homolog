@@ -147,6 +147,57 @@ class NavConfigController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    /** Query dos usuários de uma CATEGORIA de perfil do configurador (perfil granular). */
+    private function usersOfConfiguradorProfile(string $p)
+    {
+        $q = \App\Models\User::query();
+        return match ($p) {
+            'admin'                    => $q->where('type', 'admin'),
+            'administrativo'           => $q->where('type', 'administrativo'),
+            'coordenador_projetos'     => $q->where('type', 'coordenador')->where('coordinator_type', 'projetos'),
+            'coordenador_sustentacao'  => $q->where('type', 'coordenador')->where('coordinator_type', 'sustentacao'),
+            'consultor_horista'        => $q->where('type', 'consultor')->where('consultant_type', 'horista'),
+            'consultor_banco_de_horas' => $q->where('type', 'consultor')->whereIn('consultant_type', ['bh_fixo', 'bh_mensal']),
+            'consultor_fixo'           => $q->where('type', 'consultor')->where('consultant_type', 'fixo'),
+            'parceiro_gestor'          => $q->where('type', 'parceiro_admin')->where('is_executive', true),
+            'parceiro_simples'         => $q->where('type', 'parceiro_admin')->where('is_executive', false),
+            default                    => $q->whereRaw('1 = 0'),
+        };
+    }
+
+    /**
+     * Aplica um limite de abas a TODA uma CATEGORIA de perfil: grava o padrão (SystemSetting)
+     * E zera os overrides individuais dos usuários da categoria — assim todos passam a seguir
+     * o novo valor. Depois o admin pode voltar a definir individuais. Admin.
+     */
+    public function applyTabsLimitToProfile(Request $request): JsonResponse
+    {
+        if ($resp = $this->denyIfNotAdmin($request)) return $resp;
+
+        $cap = \App\Models\User::TABS_LIMIT_CAP;
+        $data = $request->validate([
+            'profile'  => 'required|string|in:' . implode(',', self::TAB_PROFILES),
+            'max_tabs' => 'nullable|integer|min:1|max:' . $cap,
+        ]);
+
+        $p   = $data['profile'];
+        $val = $data['max_tabs'] ?? null;
+        $key = 'tabs.max.' . $p;
+
+        // Padrão da categoria.
+        if ($val === null) {
+            \App\Models\SystemSetting::where('key', $key)->delete();
+            \Illuminate\Support\Facades\Cache::forget(\App\Models\SystemSetting::CACHE_PREFIX . $key);
+        } else {
+            \App\Models\SystemSetting::set($key, (int) $val, 'integer', 'tabs', 'Máx. de abas do workspace para o perfil ' . $p);
+        }
+
+        // Zera os individuais da categoria → todos seguem o padrão recém-definido.
+        $applied = $this->usersOfConfiguradorProfile($p)->update(['max_tabs' => null]);
+
+        return response()->json(['applied' => $applied]);
+    }
+
     /** Upsert em lote das TELAS (permissões/ativo). Admin. Mantém consistência única por key. */
     public function saveScreens(Request $request): JsonResponse
     {
