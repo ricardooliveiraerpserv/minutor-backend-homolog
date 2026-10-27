@@ -20,6 +20,7 @@ use PhpOffice\PhpWord\Shared\Html as PhpWordHtml;
 class SourceDocRenderer
 {
     private const SEM_PENDING = 'Descrição funcional ainda não disponível (análise semântica pendente). Os dados técnicos abaixo permanecem válidos.';
+    private const SEM_PROCESSING = '⏳ Processando a análise funcional por IA… Atualize o documento em instantes. Os dados técnicos abaixo já estão válidos.';
     private const SEM_RULES   = 'Regras funcionais ainda não analisadas semanticamente.';
     private const UNDET       = 'Não foi possível determinar com segurança.';
 
@@ -69,11 +70,13 @@ class SourceDocRenderer
         $status = (array) $this->g($context, 'status', []);
         $versions = (array) $this->g($context, 'versions', []);
         $semPending = !is_array($s) || in_array($this->g((array) $s, 'status', ''), ['pending', 'failed'], true);
+        // Em ANDAMENTO (pipeline rodando) × pendente de verdade (falhou/não iniciou): mostra "Processando".
+        $semProcessing = $semPending && in_array((string) $this->g($context, 'analysis_status', ''), ['received', 'extracting', 'analyzing'], true);
 
         return [
             'd' => $d, 's' => is_array($s) ? $s : [], 'id' => $id, 'v' => $v, 'diff' => $diff,
             'findings' => $findings, 'status' => $status, 'versions' => $versions,
-            'semPending' => $semPending, 'customer' => $customer,
+            'semPending' => $semPending, 'semProcessing' => $semProcessing, 'customer' => $customer,
             'change_diff' => $this->g($doc, 'change_diff', null),
             'change_diff_meta' => (array) $this->g($doc, 'change_diff_meta', []),
         ];
@@ -294,11 +297,17 @@ class SourceDocRenderer
         return '<p ' . self::NI . '>' . $this->e($msg) . '</p>';
     }
 
+    /** Mensagem do bloco funcional quando a semântica não está pronta: processando (em andamento) × pendente. */
+    private function semMsg(array $m): string
+    {
+        return !empty($m['semProcessing']) ? self::SEM_PROCESSING : self::SEM_PENDING;
+    }
+
     // ── Bloco 4.2 — Entendimento Funcional (topo) ───────────────────────────────
     private function secEntendimento(array $m): string
     {
         if ($m['semPending']) {
-            return $this->ni(self::SEM_PENDING);
+            return $this->ni($this->semMsg($m));
         }
         $ent = (array) $this->g($m['s'], 'entendimento_funcional', []);
         // compat: schema antigo (sem entendimento_funcional) → usa objetivo/entradas/saidas soltos.

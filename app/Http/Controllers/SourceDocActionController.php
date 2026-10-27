@@ -264,13 +264,15 @@ class SourceDocActionController extends Controller
         }
         $isOutdated = ($this->resolver->resolve($doc)['status'] ?? null) === SourceDocStatusResolver::STATUS_OUTDATED;
         $customer = $doc->customer ? ['name' => $doc->customer->name] : [];
+        // Passa o estado da análise p/ o renderer mostrar "Processando…" (em andamento) vs "pendente".
+        $ctx = ['analysis_status' => $doc->currentVersion?->analysis_status ?? $doc->analysis_status];
 
         $base = pathinfo($doc->filename, PATHINFO_FILENAME) ?: 'fonte';
         $t0 = microtime(true);
         [$body, $mime, $ext] = match ($format) {
-            'md'  => [$renderer->markdown($docArr, $isOutdated, $customer), 'text/markdown', 'md'],
-            'pdf' => [$renderer->pdf($docArr, $isOutdated, $customer), 'application/pdf', 'pdf'],
-            default => [$renderer->docx($docArr, $isOutdated, $customer), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx'],
+            'md'  => [$renderer->markdown($docArr, $isOutdated, $customer, $ctx), 'text/markdown', 'md'],
+            'pdf' => [$renderer->pdf($docArr, $isOutdated, $customer, $ctx), 'application/pdf', 'pdf'],
+            default => [$renderer->docx($docArr, $isOutdated, $customer, $ctx), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'docx'],
         };
         $this->audit($doc, 'download', 'ok', ['format' => $format, 'bytes' => strlen((string) $body)],
             durationMs: (int) ((microtime(true) - $t0) * 1000), userId: $request->user()?->id);
