@@ -279,10 +279,13 @@ class Project extends Model
         return $this->isOperational();
     }
 
-    /** Projeto operacional = tem cronograma (tipo Projeto, não investimento/sustentação/cloud/bizify). */
+    /** Projeto operacional = tem cronograma (tipo Projeto, não investimento/sustentação/cloud/bizify/on demand). */
     public function isOperational(): bool
     {
         if ($this->is_investimento_comercial) return false;
+        // On Demand opera por demanda contínua, igual sustentação: sem cronograma/atividade,
+        // equipe alocada direto no projeto e consumindo do saldo do contrato pai.
+        if ($this->isOnDemandType()) return false;
         $name = strtolower((string) ($this->serviceType?->name ?? ''));
         if ($name === '') return true;
         if (str_contains($name, 'sustenta'))    return false;
@@ -1044,6 +1047,20 @@ class Project extends Model
             return false;
         }
         return strtolower(trim($this->contractType->name)) === 'on demand';
+    }
+
+    /**
+     * On Demand por QUALQUER das fontes (tipo de contrato por name/code OU tipo_faturamento).
+     * Mais abrangente que isOnDemand() — cobre o caso de On Demand cadastrado com
+     * categoria='projeto'. Usado para decidir "não ter cronograma" (igual sustentação).
+     * Mantido separado de isOnDemand() para não alterar os cálculos de saldo existentes.
+     */
+    public function isOnDemandType(): bool
+    {
+        $this->loadMissing('contractType');
+        $code = strtolower(trim((string) ($this->contractType->code ?? '')));
+        $name = strtolower(trim((string) ($this->contractType->name ?? '')));
+        return $this->tipo_faturamento === 'on_demand' || $code === 'on_demand' || $name === 'on demand';
     }
 
     /**

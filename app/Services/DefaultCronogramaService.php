@@ -52,6 +52,12 @@ class DefaultCronogramaService
         if (!$project || (int) $project->service_type_id !== self::PROJETO_SERVICE_TYPE_ID) {
             return;
         }
+        // On Demand opera como sustentação: sem cronograma/atividade. Mesmo quando cadastrado
+        // com categoria='projeto' (service_type_id=2), o apontamento fica direto no projeto,
+        // sem a atividade "Execução". A equipe é alocada sem atividade e consome o saldo do pai.
+        if ($project->isOnDemandType()) {
+            return;
+        }
 
         // Etapa "Execução" do regime padrão.
         $stage = DB::table('project_stages')
