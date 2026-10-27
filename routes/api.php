@@ -17,6 +17,7 @@ use App\Http\Controllers\CronogramaTemplateController;
 use App\Http\Controllers\ServiceTypeController;
 use App\Http\Controllers\TimesheetController;
 use App\Http\Controllers\ExpenseController;
+use App\Http\Controllers\ExpenseClosingController;
 use App\Http\Controllers\ExpenseCategoryController;
 use App\Http\Controllers\ExpenseTypeController;
 use App\Http\Controllers\PaymentMethodController;
@@ -1301,6 +1302,11 @@ Route::prefix('v1')->group(function () {
         Route::patch('/expenses/{expense}', [ExpenseController::class, 'update'])->name('expenses.patch');
         Route::post('/expenses/{expense}/set-fechamento', [ExpenseController::class, 'setFechamento'])->name('expenses.set-fechamento');
         Route::delete('/expenses/{expense}', [ExpenseController::class, 'destroy'])->name('expenses.destroy');
+
+        // Bloco de DESPESAS do Fechamento — liberar competência fechada (global/cliente/projeto/usuário).
+        Route::get('/fechamento/despesas/releases',         [ExpenseClosingController::class, 'index'])->name('fechamento.despesas.releases');
+        Route::post('/fechamento/despesas/releases',        [ExpenseClosingController::class, 'store'])->name('fechamento.despesas.liberar');
+        Route::delete('/fechamento/despesas/releases/{id}', [ExpenseClosingController::class, 'destroy'])->name('fechamento.despesas.fechar');
 
         Route::middleware('permission.or.admin:expenses.approve')->group(function () {
             Route::post('/expenses/{expense}/approve', [ExpenseController::class, 'approve'])->name('expenses.approve');
