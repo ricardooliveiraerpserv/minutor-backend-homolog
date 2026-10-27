@@ -122,7 +122,15 @@ class AttachmentService
         }
 
         // 5. Sanitiza nome + monta storage key.
-        $originalName = $this->safeName($file->getClientOriginalName() ?: ('upload.' . $ext));
+        // Nome EXIBIDO = nome original do que foi anexado. Uploads cifrados (cofre) sobem o arquivo
+        // como "nome.enc", mas mandam o nome real em metadata[original_name] → usa ESSE (senão o
+        // download sairia com nome/extensão trocados). Demais uploads caem no nome do próprio arquivo.
+        $metaName = $input['metadata']['original_name'] ?? null;
+        $originalName = $this->safeName(
+            (is_string($metaName) && trim($metaName) !== '')
+                ? $metaName
+                : ($file->getClientOriginalName() ?: ('upload.' . $ext))
+        );
         $fileName     = sprintf('%s_%s.%s', (string) Str::uuid(), substr($checksum, 0, 8), $ext);
         $storageKey   = sprintf(
             'attachments/%s/%d/%s',
