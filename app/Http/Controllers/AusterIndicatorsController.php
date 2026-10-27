@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Project;
 use App\Models\Scopes\HideAusterFrozenScope;
+use App\Models\SystemSetting;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -12,6 +13,18 @@ use Illuminate\Support\Facades\DB;
 class AusterIndicatorsController extends Controller
 {
     private const AUSTER_CUSTOMER_ID = HideAusterFrozenScope::AUSTER_CUSTOMER_ID;
+
+    // Projetos que entram no indicador "Previsto × Consumido mensal" (configurável na tela).
+    private const MONTHLY_BUDGET_SETTING = 'auster_monthly_budget_projects';
+    private const MONTHLY_BUDGET_DEFAULT = [649, 650]; // ATR019-26, ATR020-26 (os 2 já cadastrados)
+
+    /** IDs dos projetos escolhidos para o indicador (default = os 2 já cadastrados). */
+    private function selectedBudgetIds(): array
+    {
+        $v = SystemSetting::get(self::MONTHLY_BUDGET_SETTING, self::MONTHLY_BUDGET_DEFAULT);
+        $ids = is_array($v) ? array_values(array_filter(array_map('intval', $v))) : [];
+        return $ids ?: self::MONTHLY_BUDGET_DEFAULT;
+    }
 
     private function denyIfNotAllowed(): ?JsonResponse
     {
@@ -173,16 +186,14 @@ class AusterIndicatorsController extends Controller
     {
         if ($deny = $this->denyIfNotAllowed()) return $deny;
 
+        // Projetos ESCOLHIDOS para o indicador (configurável na tela). Default = os 2 já
+        // cadastrados (ATR019-26, ATR020-26). Guarda customer 220 + sold>0 por segurança.
+        $ids = $this->selectedBudgetIds();
         $contracts = Project::withoutGlobalScope(HideAusterFrozenScope::class)
             ->with(['contractType'])
             ->where('customer_id', self::AUSTER_CUSTOMER_ID)
-            ->whereNull('parent_project_id')
+            ->whereIn('id', $ids)
             ->where('sold_hours', '>', 0)
-            ->where('start_date', '>=', '2026-09-01')
-            ->whereIn('status', [Project::STATUS_STARTED, Project::STATUS_PAUSED])
-            ->whereHas('contractType', function ($q) {
-                $q->where('code', 'fixed_hours')->orWhereRaw("LOWER(TRIM(name)) = ?", ['banco de horas fixo']);
-            })
             ->orderBy('code')
             ->get();
 
@@ -246,5 +257,67 @@ class AusterIndicatorsController extends Controller
         }
 
         return response()->json(['items' => $items]);
+    }
+
+    /**
+     * Opções de projetos que PODEM entrar no indicador Previsto × Consumido (contratos PAI de
+     * Banco de Horas da Auster) + os atualmente selecionados. Usado pelo seletor na tela.
+     */
+    public function monthlyBudgetOptions(Request $request): JsonResponse
+    {
+        if ($deny = $this->denyIfNotAllowed()) return $deny;
+
+        $options = Project::withoutGlobalScope(HideAusterFrozenScope::class)
+            ->with(['contractType'])
+            ->where('customer_id', self::AUSTER_CUSTOMER_ID)
+            ->whereNull('parent_project_id')
+            ->where('sold_hours', '>', 0)
+            ->whereHas('contractType', function ($q) {
+                $q->where('code', 'fixed_hours')->orWhereRaw("LOWER(TRIM(name)) = ?", ['banco de horas fixo']);
+            })
+            ->orderBy('code')
+            ->get()
+            ->map(fn (Project $p) => [
+                'id'         => $p->id,
+                'code'       => $p->code,
+                'name'       => $p->name,
+                'contracted' => (float) ($p->sold_hours ?? 0),
+                'start_date' => optional($p->start_date)->format('Y-m-d'),
+            ]);
+
+        return response()->json([
+            'options'  => $options->values(),
+            'selected' => array_map('intval', $this->selectedBudgetIds()),
+        ]);
+    }
+
+    /**
+     * Salva quais projetos entram no indicador (admin). Aceita só projetos PAI da Auster;
+     * se a lista vier vazia, mantém o default (os 2 já cadastrados).
+     */
+    public function saveMonthlyBudgetConfig(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        if (!$user || !$user->isAdmin()) {
+            return response()->json(['message' => 'Acesso negado'], 403);
+        }
+
+        $data = $request->validate([
+            'project_ids'   => 'present|array',
+            'project_ids.*' => 'integer',
+        ]);
+        $ids = array_values(array_unique(array_map('intval', $data['project_ids'] ?? [])));
+
+        // Só aceita projetos PAI da Auster (evita gravar id de outro cliente/filho).
+        $valid = Project::withoutGlobalScope(HideAusterFrozenScope::class)
+            ->where('customer_id', self::AUSTER_CUSTOMER_ID)
+            ->whereNull('parent_project_id')
+            ->whereIn('id', $ids)
+            ->pluck('id')->map(fn ($x) => (int) $x)->values()->all();
+
+        $save = $valid ?: self::MONTHLY_BUDGET_DEFAULT;
+        SystemSetting::set(self::MONTHLY_BUDGET_SETTING, $save, 'json', 'indicadores', 'Projetos do indicador Previsto × Consumido (Auster)');
+
+        return response()->json(['selected' => $save]);
     }
 }
