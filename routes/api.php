@@ -1786,6 +1786,7 @@ Route::prefix('v1')->group(function () {
         // 📊 INDICADORES — Auster (admin only via check no controller; inclui projetos congelados)
         Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
         Route::get('/indicadores/auster/top-consumed',  [AusterIndicatorsController::class, 'topConsumed'])->name('indicadores.auster.top-consumed');
+        Route::get('/indicadores/auster/monthly-budget',[AusterIndicatorsController::class, 'monthlyBudget'])->name('indicadores.auster.monthly-budget');
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
         Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {

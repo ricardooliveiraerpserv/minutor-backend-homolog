@@ -160,4 +160,91 @@ class AusterIndicatorsController extends Controller
             'limit' => $limitParam,
         ]);
     }
+
+    /**
+     * Previsto × Consumido MENSAL dos contratos novos de Banco de Horas da Auster
+     * (ex.: ATR019-26 Especialista, ATR020-26 Protheus/Fluig). Pedido do Caio (2026-10):
+     * previsto mensal = total contratado ÷ 12 meses (contrato anual); consumido = horas
+     * apontadas no mês (pai + filhos On Demand, que consomem o banco). Série dos 12 meses
+     * a partir do início do contrato. Escopo: contratos PAI BH Fixo iniciados a partir de
+     * 09/2026 (os "novos") — os legados (2025) ficam de fora.
+     */
+    public function monthlyBudget(Request $request): JsonResponse
+    {
+        if ($deny = $this->denyIfNotAllowed()) return $deny;
+
+        $contracts = Project::withoutGlobalScope(HideAusterFrozenScope::class)
+            ->with(['contractType'])
+            ->where('customer_id', self::AUSTER_CUSTOMER_ID)
+            ->whereNull('parent_project_id')
+            ->where('sold_hours', '>', 0)
+            ->where('start_date', '>=', '2026-09-01')
+            ->whereIn('status', [Project::STATUS_STARTED, Project::STATUS_PAUSED])
+            ->whereHas('contractType', function ($q) {
+                $q->where('code', 'fixed_hours')->orWhereRaw("LOWER(TRIM(name)) = ?", ['banco de horas fixo']);
+            })
+            ->orderBy('code')
+            ->get();
+
+        $months = 12; // contrato anual (decisão: previsto = contratado ÷ 12)
+        $items = [];
+
+        foreach ($contracts as $c) {
+            if (!$c->start_date) continue;
+            $sold    = (float) $c->sold_hours;
+            $monthly = round($sold / $months, 2);
+
+            // Banco = pai + filhos que consomem (On Demand ou sold<=0). Filhos-bloco não entram.
+            $children = Project::where('parent_project_id', $c->id)
+                ->with('contractType:id,name,code')
+                ->get(['id', 'contract_type_id', 'sold_hours', 'tipo_faturamento']);
+            $childIds = $children->filter(function ($ch) {
+                $n = strtolower((string) ($ch->contractType->name ?? ''));
+                return str_contains($n, 'on demand') || str_contains($n, 'on-demand')
+                    || $ch->tipo_faturamento === 'on_demand' || (float) $ch->sold_hours <= 0;
+            })->pluck('id')->all();
+            $bankIds = array_merge([$c->id], $childIds);
+
+            $byYm = DB::table('timesheets')
+                ->whereIn('project_id', $bankIds)
+                ->whereIn('status', ['approved', 'pending'])
+                ->whereNull('deleted_at')
+                ->selectRaw("to_char(date, 'YYYY-MM') AS ym, COALESCE(SUM(effort_minutes), 0) AS mins")
+                ->groupBy('ym')->pluck('mins', 'ym');
+
+            $start  = \Carbon\Carbon::parse($c->start_date)->startOfMonth();
+            $rows   = [];
+            $cursor = $start->copy();
+            $nowYm  = now()->format('Y-m');
+            for ($i = 0; $i < $months; $i++) {
+                $ym       = $cursor->format('Y-m');
+                $consumed = round(((int) ($byYm[$ym] ?? 0)) / 60, 2);
+                $rows[] = [
+                    'ym'        => $ym,
+                    'previsto'  => $monthly,
+                    'consumido' => $consumed,
+                    'saldo'     => round($monthly - $consumed, 2),
+                    'pct'       => $monthly > 0 ? round($consumed / $monthly * 100, 1) : 0.0,
+                    'futuro'    => $ym > $nowYm,
+                ];
+                $cursor->addMonth();
+            }
+            $totalCons = round(array_sum(array_column($rows, 'consumido')), 2);
+
+            $items[] = [
+                'id'             => $c->id,
+                'code'           => $c->code,
+                'name'           => $c->name,
+                'contracted'     => $sold,
+                'months'         => $months,
+                'monthly_budget' => $monthly,
+                'start_date'     => $start->format('Y-m-d'),
+                'total_consumed' => $totalCons,
+                'total_balance'  => round($sold - $totalCons, 2),
+                'rows'           => $rows,
+            ];
+        }
+
+        return response()->json(['items' => $items]);
+    }
 }
