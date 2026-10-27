@@ -1787,6 +1787,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/indicadores/auster/projects',      [AusterIndicatorsController::class, 'projects'])->name('indicadores.auster.projects');
         Route::get('/indicadores/auster/top-consumed',  [AusterIndicatorsController::class, 'topConsumed'])->name('indicadores.auster.top-consumed');
         Route::get('/indicadores/auster/monthly-budget',[AusterIndicatorsController::class, 'monthlyBudget'])->name('indicadores.auster.monthly-budget');
+        Route::get('/indicadores/auster/monthly-budget/options', [AusterIndicatorsController::class, 'monthlyBudgetOptions'])->name('indicadores.auster.monthly-budget.options');
+        Route::put('/indicadores/auster/monthly-budget/config',  [AusterIndicatorsController::class, 'saveMonthlyBudgetConfig'])->name('indicadores.auster.monthly-budget.config');
 
         // 🎯 APROVAÇÕES - Endpoints para gerenciar aprovações pendentes
         Route::middleware('permission.or.admin:timesheets.approve,expenses.approve')->group(function () {
