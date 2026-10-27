@@ -309,6 +309,7 @@ class AuthController extends Controller
                 'guaranteed_hours'      => $user->guaranteed_hours,
                 'chat_sound'            => \App\Models\SystemSetting::get('chat_notification_sound', 'ding'),
                 'chat_sound_volume'     => (int) \App\Models\SystemSetting::get('chat_notification_volume', 70),
+                'tabs_limit'            => $user->resolvedTabsLimit(),
             ])
         ], 200);
     }

@@ -1716,6 +1716,8 @@ Route::prefix('v1')->group(function () {
         Route::delete('/nav-modules/{navModule}',  [\App\Http\Controllers\NavConfigController::class, 'destroy'])->name('nav-modules.destroy');
         Route::post('/nav-screen-actions',         [\App\Http\Controllers\NavConfigController::class, 'addScreenAction'])->name('nav-screen-actions.add');
         Route::delete('/nav-screen-actions',       [\App\Http\Controllers\NavConfigController::class, 'deleteScreenAction'])->name('nav-screen-actions.delete');
+        Route::get('/nav-config/tabs-limits',      [\App\Http\Controllers\NavConfigController::class, 'tabsLimits'])->name('nav-config.tabs-limits');
+        Route::put('/nav-config/tabs-limits',      [\App\Http\Controllers\NavConfigController::class, 'saveTabsLimits'])->name('nav-config.tabs-limits.save');
 
         // Liberação de visualização do pipeline "Demandas e Projetos" (por usuário).
         Route::get('/pipeline-view-permissions',            [\App\Http\Controllers\PipelineViewPermissionController::class, 'index'])->name('pipeline-view-permissions.index');

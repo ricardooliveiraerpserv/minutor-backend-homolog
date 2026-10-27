@@ -48,6 +48,7 @@ class User extends Authenticatable
         'email',
         'password',
         'enabled',
+        'max_tabs',
         'auto_inactivated_at',
         'current_company_id',
         'home_company_id',
@@ -156,6 +157,7 @@ class User extends Authenticatable
             'auto_inactivated_at' => 'datetime',
             'password' => 'hashed',
             'enabled' => 'boolean',
+            'max_tabs' => 'integer',
             'can_use_bot' => 'boolean',
             'bot_allowed_scopes' => 'array',
             'bot_scope_overrides' => 'array',
@@ -381,6 +383,56 @@ class User extends Authenticatable
         return [$type];
     }
     public function isParceiroAdmin(): bool { return $this->effectiveType() === 'parceiro_admin'; }
+
+    /** Limite de abas do workspace. */
+    public const TABS_LIMIT_DEFAULT = 5;
+    public const TABS_LIMIT_CAP = 10;
+
+    /**
+     * Chave(s) de perfil no padrão do CONFIGURADOR (tela) para o limite de abas.
+     * Difere de effectiveProfiles() em: consultor BH (fixo/mensal) é agregado em
+     * 'consultor_banco_de_horas' (como a tela mostra), e não traz as chaves-base legadas.
+     */
+    public function configuradorProfileKeys(): array
+    {
+        $type = $this->effectiveType();
+        if ($type === 'coordenador') {
+            return ['coordenador_' . ($this->coordinator_type ?: 'projetos')];
+        }
+        if ($type === 'consultor') {
+            $ct = match ($this->consultant_type) {
+                'bh_fixo', 'bh_mensal' => 'banco_de_horas',
+                'fixo'                 => 'fixo',
+                default                => 'horista',
+            };
+            return ['consultor_' . $ct];
+        }
+        if ($type === 'parceiro_admin') {
+            return [$this->is_executive ? 'parceiro_gestor' : 'parceiro_simples'];
+        }
+        return [$type]; // admin, administrativo, cliente
+    }
+
+    /**
+     * Limite de abas resolvido para ESTE usuário (precedência: override do usuário >
+     * padrão do perfil no configurador > default global), sempre limitado ao teto.
+     */
+    public function resolvedTabsLimit(): int
+    {
+        $cap = self::TABS_LIMIT_CAP;
+        if ($this->max_tabs) {
+            return max(1, min($cap, (int) $this->max_tabs));
+        }
+        $vals = [];
+        foreach ($this->configuradorProfileKeys() as $p) {
+            $v = \App\Models\SystemSetting::get('tabs.max.' . $p);
+            if ($v) {
+                $vals[] = (int) $v;
+            }
+        }
+        $limit = $vals ? max($vals) : self::TABS_LIMIT_DEFAULT;
+        return max(1, min($cap, $limit));
+    }
 
     /** Help Desk: é agente (perfil de acesso kind=agent OU membro de alguma equipe HD). */
     public function isHelpDeskAgent(): bool

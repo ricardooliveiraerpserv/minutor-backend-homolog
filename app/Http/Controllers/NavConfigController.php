@@ -82,6 +82,71 @@ class NavConfigController extends Controller
         return response()->json(['data' => \App\Services\AccessControl::deniedActionsFor($request->user()) ?: new \stdClass]);
     }
 
+    /** Perfis do configurador (mesmo conjunto/ordem da tela) para o limite de abas. */
+    private const TAB_PROFILES = [
+        'admin', 'administrativo', 'coordenador_projetos', 'coordenador_sustentacao',
+        'consultor_horista', 'consultor_banco_de_horas', 'consultor_fixo',
+        'parceiro_gestor', 'parceiro_simples', 'cliente',
+    ];
+
+    /** Lê os limites de abas por perfil (SystemSetting) e os overrides por usuário. Admin. */
+    public function tabsLimits(Request $request): JsonResponse
+    {
+        if ($resp = $this->denyIfNotAdmin($request)) return $resp;
+
+        $profiles = [];
+        foreach (self::TAB_PROFILES as $p) {
+            $profiles[$p] = \App\Models\SystemSetting::get('tabs.max.' . $p); // null = usa default
+        }
+        $overrides = \App\Models\User::whereNotNull('max_tabs')
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'max_tabs'])
+            ->map(fn ($u) => ['user_id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'max_tabs' => (int) $u->max_tabs]);
+
+        return response()->json([
+            'default'   => \App\Models\User::TABS_LIMIT_DEFAULT,
+            'cap'       => \App\Models\User::TABS_LIMIT_CAP,
+            'profiles'  => $profiles,
+            'overrides' => $overrides,
+        ]);
+    }
+
+    /** Grava limites por perfil (SystemSetting) + overrides por usuário (users.max_tabs). Admin. */
+    public function saveTabsLimits(Request $request): JsonResponse
+    {
+        if ($resp = $this->denyIfNotAdmin($request)) return $resp;
+
+        $cap = \App\Models\User::TABS_LIMIT_CAP;
+        $data = $request->validate([
+            'profiles'              => 'array',
+            'profiles.*'            => 'nullable|integer|min:1|max:' . $cap,
+            'overrides'             => 'array',
+            'overrides.*.user_id'   => 'required|integer|exists:users,id',
+            'overrides.*.max_tabs'  => 'required|integer|min:1|max:' . $cap,
+        ]);
+
+        // Por perfil: valor → SystemSetting; null/ausente → limpa (volta ao default).
+        foreach (self::TAB_PROFILES as $p) {
+            $key = 'tabs.max.' . $p;
+            $val = $data['profiles'][$p] ?? null;
+            if ($val === null || $val === '') {
+                \App\Models\SystemSetting::where('key', $key)->delete();
+                \Illuminate\Support\Facades\Cache::forget(\App\Models\SystemSetting::CACHE_PREFIX . $key);
+            } else {
+                \App\Models\SystemSetting::set($key, (int) $val, 'integer', 'tabs', 'Máx. de abas do workspace para o perfil ' . $p);
+            }
+        }
+
+        // Overrides por usuário: a lista enviada é o estado desejado completo.
+        $ids = collect($data['overrides'] ?? [])->pluck('user_id')->map(fn ($v) => (int) $v)->all();
+        \App\Models\User::whereNotNull('max_tabs')->when($ids, fn ($q) => $q->whereNotIn('id', $ids))->update(['max_tabs' => null]);
+        foreach (($data['overrides'] ?? []) as $o) {
+            \App\Models\User::where('id', (int) $o['user_id'])->update(['max_tabs' => (int) $o['max_tabs']]);
+        }
+
+        return response()->json(['ok' => true]);
+    }
+
     /** Upsert em lote das TELAS (permissões/ativo). Admin. Mantém consistência única por key. */
     public function saveScreens(Request $request): JsonResponse
     {
