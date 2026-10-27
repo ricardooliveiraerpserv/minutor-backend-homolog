@@ -57,16 +57,39 @@ class Customer360Service
     public function contrato(Customer $c, ?HelpDeskTicket $t = null): array
     {
         $contract = $this->relevantContract($c, $t);
+        $contract?->loadMissing('contractType:id,code,name');
         $bh = $this->bancoHoras($c);
+
+        // On Demand NÃO tem banco de horas (saldo não faz sentido). Em vez do saldo, expõe a
+        // QUANTIDADE de apontamentos do mês (count + horas) nos projetos do contrato (pai + filhos).
+        $isOnDemand = $contract && (($contract->tipo_faturamento ?? null) === 'on_demand'
+            || optional($contract->contractType)->code === 'on_demand');
+        $apontMes = null;
+        if ($isOnDemand && $contract->project_id) {
+            $pid = (int) $contract->project_id;
+            $projIds = Project::where('id', $pid)->orWhere('parent_project_id', $pid)
+                ->whereNull('deleted_at')->pluck('id');
+            $ini = now('America/Sao_Paulo')->startOfMonth()->toDateString();
+            $fim = now('America/Sao_Paulo')->endOfMonth()->toDateString();
+            $q = Timesheet::whereIn('project_id', $projIds)->whereNull('deleted_at')
+                ->whereIn('status', ['approved', 'pending'])
+                ->whereBetween('date', [$ini, $fim]);
+            $apontMes = [
+                'count' => (int) (clone $q)->count(),
+                'horas' => round((float) (clone $q)->sum('effort_minutes') / 60, 2),
+            ];
+        }
 
         $base = [
             'tem_contrato'        => $contract !== null,
             'nome'                => $contract ? ($contract->project_name ?: 'Contrato #' . $contract->id) : null,
-            'tipo'                => $contract?->loadMissing('contractType:id,name')->contractType?->name ?? $contract?->categoria,
+            'tipo'                => $contract?->contractType?->name ?? $contract?->categoria,
             'situacao'            => $contract?->status,
             'data_vencimento'     => optional($contract?->data_vencimento)->toDateString(),
             'sla'                 => $t ? app(HelpDeskSlaService::class)->summary($t) : null,
             'banco_horas'         => $bh,   // contratadas/consumidas/saldo (operacional)
+            'on_demand'           => $isOnDemand,            // On Demand → sem saldo; usa apontamentos_mes
+            'apontamentos_mes'    => $apontMes,              // {count, horas} do mês corrente (só On Demand)
             'ref'                 => $contract ? ['type' => 'contract', 'id' => $contract->id] : null,
             'financeiro'          => [
                 'valor_hora'    => $contract ? (float) ($contract->valor_hora ?? 0) : null,
