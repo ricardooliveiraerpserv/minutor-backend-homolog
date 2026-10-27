@@ -587,6 +587,22 @@ class ExpenseController extends Controller
         );
         if ($limitError) return $limitError;
 
+        // 🔒 Fechamento de competência de DESPESA: bloqueia incluir despesa em competência fechada
+        // (após o 2º dia útil do mês seguinte), a menos que haja liberação ativa (global/cliente/
+        // projeto/usuário) no bloco de despesas do Fechamento.
+        if (app(\App\Services\ClosingService::class)->isExpenseClosed(
+            $validator->validated()['expense_date'],
+            $project->customer_id ? (int) $project->customer_id : null,
+            (int) $project->id,
+            (int) $targetUserId,
+        )) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Competência ' . \Carbon\Carbon::parse($validator->validated()['expense_date'])->format('m/Y')
+                    . ' fechada para despesas (prazo: 2º dia útil do mês seguinte). Solicite a liberação no Fechamento.',
+            ], 422);
+        }
+
         // Investimento exige o "Projeto Real" (referência). Consumo segue no projeto de investimento.
         // ERPSERV (empresa própria): investimento interno não tem projeto de cliente real → não pede Projeto Real.
         $isErpservCustomer = strtoupper(trim((string) optional($project->customer)->name)) === 'ERPSERV';
@@ -844,6 +860,24 @@ class ExpenseController extends Controller
         }
 
         $updateData = $validator->validated();
+
+        // 🔒 Fechamento de competência de DESPESA: bloqueia editar despesa cuja competência
+        // (nova ou atual) esteja fechada, a menos que haja liberação ativa no Fechamento.
+        $effDate    = $updateData['expense_date'] ?? optional($expense->expense_date)->format('Y-m-d');
+        $effProject = Project::find($updateData['project_id'] ?? $expense->project_id);
+        $effUserId  = $updateData['user_id'] ?? $expense->user_id;
+        if ($effDate && app(\App\Services\ClosingService::class)->isExpenseClosed(
+            $effDate,
+            $effProject && $effProject->customer_id ? (int) $effProject->customer_id : null,
+            $effProject ? (int) $effProject->id : null,
+            $effUserId ? (int) $effUserId : null,
+        )) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Competência ' . \Carbon\Carbon::parse($effDate)->format('m/Y')
+                    . ' fechada para despesas (prazo: 2º dia útil do mês seguinte). Solicite a liberação no Fechamento.',
+            ], 422);
+        }
 
         // Deriva cabeçalho a partir dos itens (multi-item).
         $itemsInput = [];

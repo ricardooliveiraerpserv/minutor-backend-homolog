@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\ClosingLog;
 use App\Models\CompetenceClosure;
+use App\Models\ExpenseOpenPeriod;
 use App\Models\FechamentoAdministrativo;
 use App\Models\Holiday;
 use App\Models\ProjectOpenPeriod;
@@ -167,6 +168,41 @@ class ClosingService
             || $this->hasClosure('month', $ym, $projectId, $userId);
         if (!$closedReason) return false;
         return !$this->activeMonthReopen($ym, $projectId, $userId);
+    }
+
+    // ── DESPESAS: fechamento por competência (2º dia útil do mês seguinte) ─────────
+
+    /** Prazo de inclusão de DESPESA da competência = 2º dia útil do mês seguinte, 23:59:59. */
+    public function expenseDeadline(string $ym): Carbon
+    {
+        [$y, $m] = array_map('intval', explode('-', $ym));
+        $next = Carbon::create($y, $m, 1, 0, 0, 0, self::TZ)->addMonthNoOverflow();
+        return $this->secondBusinessDayDeadline($next);
+    }
+
+    /** Há liberação ATIVA de despesa compatível com o escopo (nulos = "qualquer")? */
+    private function hasActiveExpenseRelease(string $ym, ?int $customerId, ?int $projectId, ?int $userId): bool
+    {
+        return ExpenseOpenPeriod::where('year_month', $ym)
+            ->whereNull('closed_at')
+            ->where(fn ($q) => $q->whereNull('auto_close_at')->orWhere('auto_close_at', '>=', now()))
+            ->where(fn ($q) => $q->whereNull('customer_id')->orWhere('customer_id', $customerId))
+            ->where(fn ($q) => $q->whereNull('project_id')->orWhere('project_id', $projectId))
+            ->where(fn ($q) => $q->whereNull('user_id')->orWhere('user_id', $userId))
+            ->exists();
+    }
+
+    /**
+     * Competência da DESPESA está fechada? Fecha após o 2º dia útil do mês seguinte, 23:59.
+     * Reaberta por uma liberação ativa que cubra o escopo (global/cliente/projeto/usuário).
+     */
+    public function isExpenseClosed(string $date, ?int $customerId = null, ?int $projectId = null, ?int $userId = null): bool
+    {
+        $ym = Carbon::parse($date, self::TZ)->format('Y-m');
+        if (Carbon::now(self::TZ)->lte($this->expenseDeadline($ym))) {
+            return false; // ainda dentro do prazo (2º dia útil do mês seguinte)
+        }
+        return !$this->hasActiveExpenseRelease($ym, $customerId, $projectId, $userId);
     }
 
     public function isWeekClosed(string $date, int $projectId, ?int $userId = null): bool
