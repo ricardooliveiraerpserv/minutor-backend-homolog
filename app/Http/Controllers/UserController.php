@@ -531,6 +531,31 @@ class UserController extends Controller
         }
     }
 
+    /** Define em massa o LIMITE DE ABAS do workspace (override por usuário). null = volta ao perfil. */
+    public function bulkMaxTabs(Request $request): JsonResponse
+    {
+        $currentUser = Auth::user();
+        if (!($currentUser->isAdmin() || $currentUser->hasAccess('users.update'))) {
+            return $this->accessDeniedResponse('Você não tem permissão para atualizar usuários.');
+        }
+
+        $cap = User::TABS_LIMIT_CAP;
+        $validator = Validator::make($request->all(), [
+            'user_ids'   => 'required|array|min:1',
+            'user_ids.*' => 'integer|exists:users,id',
+            'max_tabs'   => 'nullable|integer|min:1|max:' . $cap,
+        ]);
+        if ($validator->fails()) {
+            return $this->validationErrorResponse($validator->errors()->all());
+        }
+
+        $val = $request->input('max_tabs');
+        $applied = User::whereIn('id', $request->input('user_ids'))
+            ->update(['max_tabs' => $val !== null ? (int) $val : null]);
+
+        return response()->json(['applied' => $applied]);
+    }
+
     /** Categoriza em massa o VÍNCULO (Fixo/Free Lance) — só consultores. */
     public function bulkWorkBond(Request $request): JsonResponse
     {
