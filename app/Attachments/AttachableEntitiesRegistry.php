@@ -408,8 +408,10 @@ class AttachableEntitiesRegistry
                 'default_visibility' => 'restricted',
                 'permission_check' => $envDirectPerm,
                 // octet-stream liberado (a extensão é o gate real); inclui XML/JSON p/ layouts.
-                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'application/octet-stream', 'application/xml', 'text/xml', 'application/json'],
-                'allowed_extensions' => ['pdf','doc','docx','xls','xlsx','ppt','pptx','csv','txt','xml','json','md','png','jpg','jpeg','webp','gif','zip','rar','7z','tar','gz'],
+                // Cofre interno restrito (download-only): aceita QUALQUER documento (manuais/layouts/XMLs/
+                // procedimentos de qualquer tipo). '*' = allow-all no assertMime/assertExtension.
+                'allowed_mime' => ['*'],
+                'allowed_extensions' => ['*'],
                 'max_size_mb' => 100,
             ],
         ];
@@ -498,6 +500,8 @@ class AttachableEntitiesRegistry
     public static function assertMime(string $entityType, string $mime): void
     {
         $def = self::definition($entityType);
+        // '*' = allow-all (ex.: ENV_DOC — cofre interno restrito, download-only, aceita qualquer doc).
+        if (in_array('*', $def['allowed_mime'], true)) return;
         if (!in_array($mime, $def['allowed_mime'], true)) {
             throw InvalidMimeTypeException::for($entityType, $mime, $def['allowed_mime']);
         }
@@ -510,6 +514,7 @@ class AttachableEntitiesRegistry
     {
         $def = self::definition($entityType);
         $ext = strtolower(ltrim($extension, '.'));
+        if (in_array('*', $def['allowed_extensions'], true)) return; // '*' = allow-all (ENV_DOC)
         if (!in_array($ext, $def['allowed_extensions'], true)) {
             throw InvalidMimeTypeException::for($entityType, ".{$ext}", array_map(fn ($e) => '.' . $e, $def['allowed_extensions']));
         }
