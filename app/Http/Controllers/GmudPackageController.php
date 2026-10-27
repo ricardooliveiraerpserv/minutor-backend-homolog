@@ -61,17 +61,19 @@ class GmudPackageController extends Controller
     {
         $docIdByPath = [];
         $diffByPath = [];
+        $docStatusByPath = []; // analysis_status por path (p/ o FE saber se a doc está pronta ou processando)
         if ($package->status === GmudPackage::STATUS_PUBLISHED && $package->source_repo_id) {
             $repo = \App\Models\ClientSourceRepo::find($package->source_repo_id);
             if ($repo) {
                 $paths = $package->files()->where('is_source', true)->whereNotNull('dest_git_path')->pluck('dest_git_path')->all();
                 if (! empty($paths)) {
-                    $docs = \App\Models\SourceDoc::with('currentVersion:id,source_doc_id,change_diff,change_diff_meta')
+                    $docs = \App\Models\SourceDoc::with('currentVersion:id,source_doc_id,analysis_status,change_diff,change_diff_meta')
                         ->where('owner', $repo->owner)->where('repository', $repo->repository)
                         ->where('branch', $repo->branch ?: 'main')->whereIn('path', $paths)
-                        ->get(['id', 'path', 'current_version_id']);
+                        ->get(['id', 'path', 'current_version_id', 'analysis_status']);
                     foreach ($docs as $d) {
                         $docIdByPath[$d->path] = $d->id;
+                        $docStatusByPath[$d->path] = $d->currentVersion?->analysis_status ?? $d->analysis_status;
                         if ($cv = $d->currentVersion) {
                             $diffByPath[$d->path] = ['change_diff' => $cv->change_diff, 'change_diff_meta' => $cv->change_diff_meta];
                         }
@@ -79,14 +81,14 @@ class GmudPackageController extends Controller
                 }
             }
         }
-        return [$docIdByPath, $diffByPath];
+        return [$docIdByPath, $diffByPath, $docStatusByPath];
     }
 
     /** GET /gmud/packages/{package} — manifesto + arquivos + evidências + links de Acervo. */
     public function show(GmudPackage $package): JsonResponse
     {
         $package->load(['files' => fn ($q) => $q->orderBy('path_in_zip')]);
-        [$docIdByPath] = $this->publishedDocsByPath($package);
+        [$docIdByPath, , $docStatusByPath] = $this->publishedDocsByPath($package);
 
         return response()->json([
             'data' => array_merge($this->manifest($package), [
@@ -117,6 +119,7 @@ class GmudPackageController extends Controller
                     'published_blob_sha'    => $f->published_blob_sha,
                     // Doc (IA) gerada no pós-publish p/ este fonte — link "Ver documentação".
                     'source_doc_id'         => $docIdByPath[$f->dest_git_path] ?? null,
+                    'source_doc_status'     => $docStatusByPath[$f->dest_git_path] ?? null, // received/extracting/analyzing/completed/partial/failed
                 ])->values(),
             ]),
         ]);
