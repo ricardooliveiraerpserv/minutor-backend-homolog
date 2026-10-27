@@ -112,6 +112,14 @@ class AttachableEntitiesRegistry
                 && $user->customer_id !== null
                 && (int) $user->customer_id === (int) $customerId;
         };
+        // Cofre de Ambientes: acesso ao anexo cifrado = permissão do AMBIENTE do recurso (EnvAccess).
+        // upload/delete exigem 'manage'; download/list (view) exigem 'view'. Sem entidade → admin.
+        $envPerm = function (User $user, $entity, string $action) {
+            if ($entity === null) return $user->isAdmin();
+            $env = $entity->environment ?? null;
+            if (!$env) return false;
+            return \App\Services\EnvAccess::can($user, $env, $action === 'view' ? 'view' : 'manage');
+        };
 
         self::$entities = [
             // ── PROJECT ───────────────────────────────────────────────────────
@@ -355,6 +363,37 @@ class AttachableEntitiesRegistry
                     'prw','prx','prg','ppr','ppx','ppp','tlpp','tlp','ch','apl','apo','apw','aph','apu','sql','xml','json','md',
                 ],
                 'max_size_mb' => 50,
+            ],
+
+            // ── COFRE DE AMBIENTES — arquivos CIFRADOS no client (.enc wrapper de .ovpn/.pfx/.ini) ──
+            // Conteúdo opaco (application/octet-stream), sempre 'restricted'. Acesso = permissão do
+            // AMBIENTE do recurso (EnvAccess). Teto alto (arquivos podem ser pesados).
+            'ENV_VPN_OVPN' => [
+                'model' => \App\Models\EnvVpn::class,
+                'categories' => ['ovpn'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envPerm,
+                'allowed_mime' => ['application/octet-stream'],
+                'allowed_extensions' => ['enc', 'ovpn'],
+                'max_size_mb' => 100,
+            ],
+            'ENV_CERT_PFX' => [
+                'model' => \App\Models\EnvCertificate::class,
+                'categories' => ['pfx'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envPerm,
+                'allowed_mime' => ['application/octet-stream'],
+                'allowed_extensions' => ['enc', 'pfx', 'p12'],
+                'max_size_mb' => 100,
+            ],
+            'ENV_APPSERVER_INI' => [
+                'model' => \App\Models\EnvAppserver::class,
+                'categories' => ['ini'],
+                'default_visibility' => 'restricted',
+                'permission_check' => $envPerm,
+                'allowed_mime' => ['application/octet-stream'],
+                'allowed_extensions' => ['enc', 'ini'],
+                'max_size_mb' => 100,
             ],
         ];
 
