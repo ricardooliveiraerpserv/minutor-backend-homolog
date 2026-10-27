@@ -26,6 +26,7 @@ class AudienceResolver
             'cliente'              => $this->cliente($ctx),
             'contatos_do_contrato' => $this->contatosContrato($ctx),
             'contatos_alerta_consumo' => $this->contatosAlertaConsumo($ctx),
+            'contatos_fixos_cliente' => $this->contatosFixosCliente($ctx),
             'executivo_de_contas'  => $this->executivo($ctx),
             'coordenador'          => $this->coordenador($ctx),
             'administrativo'       => $this->administrativo(),
@@ -92,6 +93,17 @@ class AudienceResolver
             ->merge($contract->alertExtraEmails->pluck('email'))
             ->filter()
             ->all();
+    }
+
+    /** Contatos FIXOS do CLIENTE marcados p/ receber alerta de consumo — valem p/ todos os
+     *  contratos/projetos do cliente (somam aos por-contrato; dedup no norm()). */
+    private function contatosFixosCliente(array $ctx): array
+    {
+        $customerId = $this->customerId($ctx);
+        if (!$customerId) return [];
+        return \App\Models\CustomerContact::where('customer_id', $customerId)
+            ->where('recebe_alerta_consumo', true)
+            ->pluck('email')->filter()->all();
     }
 
     private function executivo(array $ctx): array

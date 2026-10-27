@@ -85,7 +85,8 @@ return [
     'audiences' => [
         'cliente'              => 'Cliente (usuários do cliente)',
         'contatos_do_contrato' => 'Contatos do contrato',
-        'contatos_alerta_consumo' => 'Contatos c/ alerta de consumo',
+        'contatos_alerta_consumo' => 'Contatos c/ alerta de consumo (do contrato)',
+        'contatos_fixos_cliente' => 'Contatos fixos do cliente (alerta de consumo)',
         'executivo_de_contas'  => 'Executivo de contas',
         'coordenador'          => 'Coordenador(es) do projeto',
         'administrativo'       => 'Administrativo',
@@ -106,6 +107,7 @@ return [
         'cliente'              => ['customer'],
         'contatos_do_contrato' => ['contract'],
         'contatos_alerta_consumo' => ['contract'],
+        'contatos_fixos_cliente' => ['customer'],
         'executivo_de_contas'  => ['contract', 'customer'],
         'coordenador'          => ['project'],
         'administrativo'       => [],
@@ -663,6 +665,7 @@ return [
             'description' => 'Ao aprovar um apontamento, se o consumo de horas do contrato (aprovadas + pendentes, mesma regra da Gestão de Contratos) cruzar uma faixa (70/80/90/100% e, daí, a cada 10%). Enviado aos contatos do contrato marcados com "Recebe alerta de consumo" e ao executivo de contas. O liga/desliga geral fica em Gestão de Contratos (nasce DESLIGADO).',
             'audiences'   => [
                 'contatos_alerta_consumo' => 'to',
+                'contatos_fixos_cliente'  => 'to',
                 'executivo_de_contas'     => 'to',
                 'coordenador'             => 'off',
                 'diretor'                 => 'off',

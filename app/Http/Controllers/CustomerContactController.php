@@ -41,6 +41,7 @@ class CustomerContactController extends Controller
             'cargo'       => 'nullable|string|max:255',
             'email'       => 'required|email|max:255',
             'phone'       => 'nullable|string|max:50',
+            'recebe_alerta_consumo' => 'sometimes|boolean',
         ]);
 
         $contact = CustomerContact::create($validated);
@@ -55,6 +56,7 @@ class CustomerContactController extends Controller
             'cargo'       => 'nullable|string|max:255',
             'email'       => 'sometimes|required|email|max:255',
             'phone'       => 'nullable|string|max:50',
+            'recebe_alerta_consumo' => 'sometimes|boolean',
         ]);
 
         $customerContact->update($validated);
