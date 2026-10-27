@@ -2304,11 +2304,18 @@ class HelpDeskTicketController extends Controller
                     'form_kind'       => $v['form_kind'] ?? null,
                 ]);
                 // Anexos da interação (estilo e-mail: texto + arquivos/prints juntos). Reúsa o motor de anexos.
+                // "Em Homologação": a interação é PÚBLICA, mas o CÓDIGO-FONTE (.zip) NÃO pode aparecer ao
+                // cliente (portal filtra visibility='customer' e o download exige 'customer'). Quando o FE
+                // sinaliza `source_files_internal`, o(s) .zip vão como 'internal' (os prints/demais seguem
+                // a visibilidade do comentário).
+                $sourceInternal = $request->boolean('source_files_internal');
                 foreach ((array) $request->file('files', []) as $file) {
+                    $isZip = (bool) preg_match('/\.zip$/i', (string) $file->getClientOriginalName())
+                        || in_array((string) $file->getMimeType(), ['application/zip', 'application/x-zip-compressed'], true);
                     $svc->store($request->user(), [
                         'entity_type' => 'HELPDESK_TICKET_COMMENT', 'entity_id' => $comment->id,
                         'category'    => str_starts_with((string) $file->getMimeType(), 'image/') ? 'image' : 'attachment',
-                        'visibility'  => $comment->visibility,
+                        'visibility'  => ($sourceInternal && $isZip) ? 'internal' : $comment->visibility,
                         'file'        => $file,
                     ], $request);
                 }
