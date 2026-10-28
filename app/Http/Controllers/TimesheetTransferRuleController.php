@@ -284,6 +284,9 @@ class TimesheetTransferRuleController extends Controller
         $rules = TimesheetTransferRule::get(['id', 'source_customer_id', 'target_project_id', 'date_field']);
         $targetIds = $rules->pluck('target_project_id')->map(fn ($v) => (int) $v)->unique()->values()->all();
 
+        // Valor/hora de cobrança (R$) de cada projeto destino. Valor a receber = horas × hourly_rate.
+        $rates = \App\Models\Project::whereIn('id', $targetIds)->pluck('hourly_rate', 'id');
+
         // per_rule: horas efetivamente RASTREADAS como migradas por esta regra (transfer_rule_id).
         // Base de data = a da própria regra. Fica 0 enquanto não houver migração/backfill rastreado.
         $perRule = [];
@@ -293,7 +296,13 @@ class TimesheetTransferRuleController extends Controller
             if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
             if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
             $minutes = (int) $q->sum('effort_minutes');
-            $perRule[(int) $rule->id] = ['hours' => round($minutes / 60, 2), 'count' => (int) $q->count()];
+            $rate = (float) ($rates[(int) $rule->target_project_id] ?? 0);
+            $perRule[(int) $rule->id] = [
+                'hours' => round($minutes / 60, 2),
+                'count' => (int) $q->count(),
+                'rate'  => round($rate, 2),
+                'value' => round(($minutes / 60) * $rate, 2),
+            ];
         }
 
         // Universo = apontamentos que ESTÃO HOJE nos projetos destino das regras (linhas distintas —
@@ -322,15 +331,36 @@ class TimesheetTransferRuleController extends Controller
             if ($r->cid === null) { $unMin += (int) $r->mins; $unCnt += (int) $r->cnt; return false; }
             return true;
         });
+        // Valor a receber por EMPRESA de origem: horas × hourly_rate do projeto destino (project_id).
+        // Query própria com join (prefixos explícitos — customer_id existe em timesheets E projects).
+        $valByCid = [];
+        if (! empty($targetIds)) {
+            $vq = \Illuminate\Support\Facades\DB::table('timesheets as t')
+                ->join('projects as dp', 'dp.id', '=', 't.project_id')
+                ->whereNull('t.deleted_at')
+                ->where(function ($w) use ($targetIds) {
+                    $w->whereIn('t.project_id', $targetIds)->orWhereIn('t.real_project_id', $targetIds);
+                });
+            if ($dateFrom)  { $vq->whereDate('t.date', '>=', $dateFrom); }
+            if ($dateUntil) { $vq->whereDate('t.date', '<=', $dateUntil); }
+            foreach ($vq->selectRaw('COALESCE(t.transfer_source_customer_id, t.customer_id) as cid, SUM(t.effort_minutes/60.0 * COALESCE(dp.hourly_rate,0)) as val')
+                ->groupByRaw('COALESCE(t.transfer_source_customer_id, t.customer_id)')->get() as $vr) {
+                $valByCid[(int) $vr->cid] = round((float) $vr->val, 2);
+            }
+        }
+
         $names = \App\Models\Customer::whereIn('id', $valid->pluck('cid'))->pluck('name', 'id');
         $perCompany = $valid->map(fn ($r) => [
             'customer_id' => (int) $r->cid,
             'name'        => $names[$r->cid] ?? ('#' . $r->cid),
             'hours'       => round(((int) $r->mins) / 60, 2),
             'count'       => (int) $r->cnt,
+            'value'       => $valByCid[(int) $r->cid] ?? 0,
         ])->sortByDesc('hours')->values();
         $grandMin = empty($targetIds) ? 0 : (int) $base()->sum('effort_minutes');
         $grandCnt = empty($targetIds) ? 0 : (int) $base()->count();
+        $grandVal = round(array_sum($valByCid), 2);
+        $blended  = $grandMin > 0 ? round($grandVal / ($grandMin / 60), 2) : 0;
 
         return response()->json(['data' => [
             'per_rule'          => $perRule,
@@ -338,6 +368,8 @@ class TimesheetTransferRuleController extends Controller
             'untracked'         => ['hours' => round($unMin / 60, 2), 'count' => $unCnt],
             'grand_total_hours' => round($grandMin / 60, 2),
             'grand_total_count' => $grandCnt,
+            'grand_total_value' => $grandVal,
+            'blended_rate'      => $blended,
         ]]);
     }
 
