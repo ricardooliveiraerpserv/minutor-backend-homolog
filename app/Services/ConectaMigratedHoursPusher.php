@@ -51,7 +51,7 @@ class ConectaMigratedHoursPusher
                 'target_project_erp_id'  => $t->project_id,
                 'target_project_name'    => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
                 'hourly_rate'            => $rate,
-                'value'                  => $rate !== null ? round($hours * $rate, 2) : null,
+                'value'                  => $rate !== null ? round(((int) $t->effort_minutes) / 60 * $rate, 2) : null,
                 'user_name'              => optional($t->user)->name,
                 'origin_type'            => $t->origin,
                 'ticket'                 => $t->ticket ?: null,
