@@ -180,26 +180,39 @@ class TimesheetTransferRuleController extends Controller
             'source_project_id'  => ['nullable', 'exists:projects,id'],
             'note'               => ['nullable', 'string', 'max:500'],
         ]);
-        $actor = $request->user()?->id;
-        $ids = \App\Models\Timesheet::whereIn('id', $v['timesheet_ids'])->pluck('id')->all();
-        if (! empty($ids)) {
-            \App\Models\Timesheet::whereIn('id', $ids)->update([
-                'transfer_source_customer_id' => (int) $v['source_customer_id'],
-                'transfer_source_project_id'  => $v['source_project_id'] ?? null,
-            ]);
-            foreach ($ids as $tid) {
-                \App\Models\TimesheetOriginLog::create([
-                    'timesheet_id'       => $tid,
-                    'source_customer_id' => (int) $v['source_customer_id'],
-                    'source_project_id'  => $v['source_project_id'] ?? null,
-                    'method'             => 'manual',
-                    'set_by'             => $actor,
-                    'note'               => $v['note'] ?? null,
-                ]);
-            }
+        $actor  = $request->user()?->id;
+        $srcCid = (int) $v['source_customer_id'];
+        $srcPid = $v['source_project_id'] ?? null;
+
+        // Mapa [projeto_destino][cliente_origem] => rule_id, p/ VINCULAR o apontamento à regra quando o
+        // cliente informado bater com uma regra do projeto destino (aí ele passa a aparecer nos "Migrados"
+        // daquela regra, não só no total por empresa).
+        $ruleByTargetSource = [];
+        foreach (TimesheetTransferRule::get(['id', 'source_customer_id', 'target_project_id']) as $r) {
+            $ruleByTargetSource[(int) $r->target_project_id][(int) $r->source_customer_id] = (int) $r->id;
         }
 
-        return response()->json(['data' => ['updated' => count($ids)]]);
+        $rows = \App\Models\Timesheet::whereIn('id', $v['timesheet_ids'])->get(['id', 'project_id', 'real_project_id']);
+        foreach ($rows as $ts) {
+            $tgtP = isset($ruleByTargetSource[(int) $ts->project_id]) ? (int) $ts->project_id : (int) $ts->real_project_id;
+            $ruleId = $ruleByTargetSource[$tgtP][$srcCid] ?? null;
+            \App\Models\Timesheet::where('id', $ts->id)->update([
+                'transfer_source_customer_id' => $srcCid,
+                'transfer_source_project_id'  => $srcPid,
+                'transfer_rule_id'            => $ruleId,
+            ]);
+            \App\Models\TimesheetOriginLog::create([
+                'timesheet_id'       => $ts->id,
+                'source_customer_id' => $srcCid,
+                'source_project_id'  => $srcPid,
+                'rule_id'            => $ruleId,
+                'method'             => 'manual',
+                'set_by'             => $actor,
+                'note'               => $v['note'] ?? null,
+            ]);
+        }
+
+        return response()->json(['data' => ['updated' => $rows->count()]]);
     }
 
     /** GET /timesheet-transfer-rules/origin-logs?timesheet_id=&date_from=&date_until= — log de atribuição de origem. */
