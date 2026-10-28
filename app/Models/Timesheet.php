@@ -56,6 +56,7 @@ class Timesheet extends Model
         'real_project_id',
         'transfer_rule_id',
         'transfer_source_customer_id',
+        'transfer_source_project_id',
         'stage_id',
         'stage_delivery_id',
         'rateio_source_timesheet_id',
@@ -131,11 +132,37 @@ class Timesheet extends Model
     protected $appends = ['effort_hours', 'status_display', 'attachment_url'];
 
     /**
+     * Flag transiente (NÃO é coluna): setada pela TimesheetTransferService quando a origem é atribuída
+     * no save, p/ o hook 'saved' gravar o TimesheetOriginLog (precisa do id, que só existe pós-save).
+     */
+    public ?string $originJustSet = null;
+
+    /**
      * Boot method - define model events
      */
     protected static function boot()
     {
         parent::boot();
+
+        // Log de ORIGEM dos apontamentos migrados automaticamente (hook de transferência no save).
+        // Roda pós-save (id já existe). Best-effort — nunca derruba o save.
+        static::saved(function ($timesheet) {
+            if (! $timesheet->originJustSet) {
+                return;
+            }
+            try {
+                \App\Models\TimesheetOriginLog::create([
+                    'timesheet_id'       => $timesheet->id,
+                    'source_customer_id' => $timesheet->transfer_source_customer_id,
+                    'source_project_id'  => $timesheet->transfer_source_project_id,
+                    'rule_id'            => $timesheet->transfer_rule_id,
+                    'method'             => $timesheet->originJustSet,
+                ]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('timesheet_origin_log.failed', ['ts' => $timesheet->id, 'error' => $e->getMessage()]);
+            }
+            $timesheet->originJustSet = null;
+        });
 
         // Calcular automaticamente o esforço antes de salvar
         static::saving(function ($timesheet) {
@@ -368,6 +395,17 @@ class Timesheet extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    // Origem da Transferência de Apontamentos: cliente/projeto de ONDE o apontamento veio (antes da migração).
+    public function sourceCustomer(): BelongsTo
+    {
+        return $this->belongsTo(Customer::class, 'transfer_source_customer_id');
+    }
+
+    public function sourceProject(): BelongsTo
+    {
+        return $this->belongsTo(Project::class, 'transfer_source_project_id');
     }
 
     // Cronograma: vínculo opcional do apontamento à etapa/atividade (StageDelivery).

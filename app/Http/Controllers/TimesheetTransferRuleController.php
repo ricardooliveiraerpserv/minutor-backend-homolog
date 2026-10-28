@@ -106,28 +106,124 @@ class TimesheetTransferRuleController extends Controller
         // atribuíveis a uma empresa/regra específica (apareceriam repetidos em toda regra que compartilha o
         // destino). Eles vivem só no consolidado "não registrada" (endpoint untracked). Filtro = base da regra.
         $dateCol  = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
-        $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
-            ->where('transfer_rule_id', $rule->id);
-        if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
-        if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
-        $rows = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get();
-        $srcNames = \App\Models\Customer::whereIn('id', $rows->pluck('transfer_source_customer_id')->filter()->unique())
-            ->pluck('name', 'id');
-        $items = $rows->map(fn ($t) => [
-            'id'          => $t->id,
-            'date'        => optional($t->date)->toDateString(),
-            'created_at'  => optional($t->created_at)->toIso8601String(),
-            'hours'       => round((float) ($t->effort_minutes ?? 0) / 60, 2),
-            'user'        => optional($t->user)->name,
-            'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
-            'origin'      => $t->transfer_source_customer_id ? ($srcNames[$t->transfer_source_customer_id] ?? ('#' . $t->transfer_source_customer_id)) : null,
-            'tracked'     => (bool) $t->transfer_rule_id,
-            'observation' => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', html_entity_decode(preg_replace('/<[^>]*>/', ' ', (string) $t->observation), ENT_QUOTES | ENT_HTML5))), 3000),
-            'ticket'      => $t->ticket ?: null,
-            'origin_type' => $t->origin,
-            'via_integration' => in_array($t->origin, ['webhook', 'movidesk', 'movidesk_fallback'], true),
-            'date_locked' => (bool) $t->date_locked,
-            'manual_edit' => (bool) $t->manual_project_edit,
+        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
+            ->where('transfer_rule_id', $rule->id)
+            ->when($dateFrom, fn ($q) => $q->whereDate($dateCol, '>=', $dateFrom))
+            ->when($dateUntil, fn ($q) => $q->whereDate($dateCol, '<=', $dateUntil))
+            ->orderByDesc('date')->orderByDesc('id')->limit(3000)->get();
+        $items = $rows->map(fn ($t) => $this->rowView($t));
+
+        return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
+    }
+
+    /** Mapeia uma linha de apontamento para os modais (origem cliente+projeto, ticket, observação limpa). */
+    private function rowView(\App\Models\Timesheet $t): array
+    {
+        $srcProj = $t->relationLoaded('sourceProject') ? $t->sourceProject : null;
+        return [
+            'id'                 => $t->id,
+            'date'               => optional($t->date)->toDateString(),
+            'created_at'         => optional($t->created_at)->toIso8601String(),
+            'hours'              => round((float) ($t->effort_minutes ?? 0) / 60, 2),
+            'user'               => optional($t->user)->name,
+            'project'            => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
+            'origin'             => $t->transfer_source_customer_id
+                ? (($t->relationLoaded('sourceCustomer') && $t->sourceCustomer) ? $t->sourceCustomer->name : '#' . $t->transfer_source_customer_id)
+                : null,
+            'origin_customer_id' => $t->transfer_source_customer_id ? (int) $t->transfer_source_customer_id : null,
+            'origin_project'     => $srcProj ? trim(($srcProj->code ? $srcProj->code . ' · ' : '') . $srcProj->name) : null,
+            'origin_project_id'  => $t->transfer_source_project_id ? (int) $t->transfer_source_project_id : null,
+            'tracked'            => (bool) $t->transfer_rule_id,
+            'observation'        => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', html_entity_decode(preg_replace('/<[^>]*>/', ' ', (string) $t->observation), ENT_QUOTES | ENT_HTML5))), 3000),
+            'ticket'             => $t->ticket ?: null,
+            'origin_type'        => $t->origin,
+            'via_integration'    => in_array($t->origin, ['webhook', 'movidesk', 'movidesk_fallback'], true),
+            'date_locked'        => (bool) $t->date_locked,
+            'manual_edit'        => (bool) $t->manual_project_edit,
+        ];
+    }
+
+    /** GET /timesheet-transfer-rules/by-origin?customer_id=&date_from=&date_until= — apontamentos nos destinos
+     *  cuja ORIGEM EFETIVA (COALESCE(transfer_source_customer_id, customer_id)) é o cliente informado. */
+    public function byOrigin(Request $request): JsonResponse
+    {
+        $this->ensureAdmin();
+        $customerId = (int) $request->query('customer_id');
+        $dateFrom   = $request->query('date_from');
+        $dateUntil  = $request->query('date_until');
+        $targetIds  = TimesheetTransferRule::get(['target_project_id'])
+            ->pluck('target_project_id')->map(fn ($v) => (int) $v)->unique()->values()->all();
+        if (! $customerId || empty($targetIds)) {
+            return response()->json(['data' => ['total' => 0, 'items' => []]]);
+        }
+        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
+            ->where(function ($w) use ($targetIds) {
+                $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
+            })
+            ->whereRaw('COALESCE(transfer_source_customer_id, customer_id) = ?', [$customerId])
+            ->when($dateFrom, fn ($q) => $q->whereDate('date', '>=', $dateFrom))
+            ->when($dateUntil, fn ($q) => $q->whereDate('date', '<=', $dateUntil))
+            ->orderByDesc('date')->orderByDesc('id')->limit(3000)->get();
+        $items = $rows->map(fn ($t) => $this->rowView($t));
+
+        return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
+    }
+
+    /** POST /timesheet-transfer-rules/set-origin — INFORMA manualmente a origem (cliente/projeto) de 1+ apontamentos. */
+    public function setOrigin(Request $request): JsonResponse
+    {
+        $this->ensureAdmin();
+        $v = $request->validate([
+            'timesheet_ids'      => ['required', 'array', 'min:1'],
+            'timesheet_ids.*'    => ['integer'],
+            'source_customer_id' => ['required', 'exists:customers,id'],
+            'source_project_id'  => ['nullable', 'exists:projects,id'],
+            'note'               => ['nullable', 'string', 'max:500'],
+        ]);
+        $actor = $request->user()?->id;
+        $ids = \App\Models\Timesheet::whereIn('id', $v['timesheet_ids'])->pluck('id')->all();
+        if (! empty($ids)) {
+            \App\Models\Timesheet::whereIn('id', $ids)->update([
+                'transfer_source_customer_id' => (int) $v['source_customer_id'],
+                'transfer_source_project_id'  => $v['source_project_id'] ?? null,
+            ]);
+            foreach ($ids as $tid) {
+                \App\Models\TimesheetOriginLog::create([
+                    'timesheet_id'       => $tid,
+                    'source_customer_id' => (int) $v['source_customer_id'],
+                    'source_project_id'  => $v['source_project_id'] ?? null,
+                    'method'             => 'manual',
+                    'set_by'             => $actor,
+                    'note'               => $v['note'] ?? null,
+                ]);
+            }
+        }
+
+        return response()->json(['data' => ['updated' => count($ids)]]);
+    }
+
+    /** GET /timesheet-transfer-rules/origin-logs?timesheet_id=&date_from=&date_until= — log de atribuição de origem. */
+    public function originLogs(Request $request): JsonResponse
+    {
+        $this->ensureAdmin();
+        $tsId      = $request->query('timesheet_id');
+        $dateFrom  = $request->query('date_from');
+        $dateUntil = $request->query('date_until');
+        $rows = \App\Models\TimesheetOriginLog::with(['sourceCustomer:id,name', 'sourceProject:id,code,name', 'setBy:id,name'])
+            ->when($tsId, fn ($x) => $x->where('timesheet_id', $tsId))
+            ->when($dateFrom, fn ($x) => $x->whereDate('created_at', '>=', $dateFrom))
+            ->when($dateUntil, fn ($x) => $x->whereDate('created_at', '<=', $dateUntil))
+            ->orderByDesc('id')->limit(2000)->get();
+        $items = $rows->map(fn ($l) => [
+            'id'           => $l->id,
+            'timesheet_id' => $l->timesheet_id,
+            'customer'     => optional($l->sourceCustomer)->name,
+            'project'      => $l->sourceProject ? trim(($l->sourceProject->code ? $l->sourceProject->code . ' · ' : '') . $l->sourceProject->name) : null,
+            'rule_id'      => $l->rule_id,
+            'ticket'       => $l->ticket,
+            'method'       => $l->method,
+            'set_by'       => optional($l->setBy)->name,
+            'created_at'   => optional($l->created_at)->toIso8601String(),
         ]);
 
         return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
@@ -152,27 +248,15 @@ class TimesheetTransferRuleController extends Controller
 
         // "Não registrada" agora = sem origem rastreada E sem cliente atual (edge, ~nunca) — pois o
         // manual/nativo em destino já é atribuído ao cliente do projeto destino em totals().
-        $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
+        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
             ->whereNull('transfer_source_customer_id')->whereNull('customer_id')
             ->where(function ($w) use ($targetIds) {
                 $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
-            });
-        if ($dateFrom)  { $q->whereDate('date', '>=', $dateFrom); }
-        if ($dateUntil) { $q->whereDate('date', '<=', $dateUntil); }
-        $items = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get()->map(fn ($t) => [
-            'id'          => $t->id,
-            'date'        => optional($t->date)->toDateString(),
-            'created_at'  => optional($t->created_at)->toIso8601String(),
-            'hours'       => round((float) ($t->effort_minutes ?? 0) / 60, 2),
-            'user'        => optional($t->user)->name,
-            'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
-            'observation' => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', html_entity_decode(preg_replace('/<[^>]*>/', ' ', (string) $t->observation), ENT_QUOTES | ENT_HTML5))), 3000),
-            'ticket'      => $t->ticket ?: null,
-            'origin_type' => $t->origin,
-            'via_integration' => in_array($t->origin, ['webhook', 'movidesk', 'movidesk_fallback'], true),
-            'date_locked' => (bool) $t->date_locked,
-            'manual_edit' => (bool) $t->manual_project_edit,
-        ]);
+            })
+            ->when($dateFrom, fn ($q) => $q->whereDate('date', '>=', $dateFrom))
+            ->when($dateUntil, fn ($q) => $q->whereDate('date', '<=', $dateUntil))
+            ->orderByDesc('date')->orderByDesc('id')->limit(3000)->get();
+        $items = $rows->map(fn ($t) => $this->rowView($t));
 
         return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
     }

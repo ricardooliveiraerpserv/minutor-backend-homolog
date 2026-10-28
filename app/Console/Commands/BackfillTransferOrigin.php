@@ -79,6 +79,10 @@ class BackfillTransferOrigin extends Command
                     'transfer_rule_id'            => $ruleId,
                     'transfer_source_customer_id' => $cust,
                 ]);
+                \App\Models\TimesheetOriginLog::firstOrCreate(
+                    ['timesheet_id' => $row->id, 'method' => 'ticket'],
+                    ['source_customer_id' => $cust, 'rule_id' => $ruleId, 'ticket' => $row->ticket]
+                );
             }
             $p1++;
             $p1ByCompany[$cust] = ($p1ByCompany[$cust] ?? 0) + 1;
@@ -110,11 +114,48 @@ class BackfillTransferOrigin extends Command
                 $srcName = optional(Customer::find($rule->source_customer_id))->name ?? ('#' . $rule->source_customer_id);
                 $this->line(sprintf('  destino %d (regra %d, %s): %d apontamento(s)', $targetId, $rule->id, $srcName, $count));
                 if ($execute) {
+                    $affectedIds = (clone $q)->pluck('id')->all();
                     $q->update(['transfer_rule_id' => $rule->id, 'transfer_source_customer_id' => $rule->source_customer_id]);
+                    foreach ($affectedIds as $tid) {
+                        \App\Models\TimesheetOriginLog::firstOrCreate(
+                            ['timesheet_id' => $tid, 'method' => 'heuristic'],
+                            ['source_customer_id' => $rule->source_customer_id, 'rule_id' => $rule->id]
+                        );
+                    }
                 }
             }
             $p2 += $count;
         }
+
+        // ── PASSADA 3: garante LOG para apontamentos JÁ atribuídos sem log (ex.: os migrados antes
+        //    de existir a tabela de log). Não altera a atribuição, só registra no log de origem.
+        $this->line('');
+        $this->info('PASSADA 3 — log para já-atribuídos sem registro:');
+        $p3 = 0;
+        $already = DB::table('timesheets')->whereNull('deleted_at')
+            ->whereNotNull('transfer_source_customer_id')
+            ->where(function ($w) use ($targetIds) {
+                $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
+            })
+            ->whereNotExists(function ($x) {
+                $x->select(DB::raw(1))->from('timesheet_origin_logs')
+                    ->whereColumn('timesheet_origin_logs.timesheet_id', 'timesheets.id');
+            })
+            ->get(['id', 'ticket', 'transfer_source_customer_id', 'transfer_source_project_id', 'transfer_rule_id']);
+        foreach ($already as $row) {
+            if ($execute) {
+                \App\Models\TimesheetOriginLog::create([
+                    'timesheet_id'       => $row->id,
+                    'source_customer_id' => $row->transfer_source_customer_id,
+                    'source_project_id'  => $row->transfer_source_project_id,
+                    'rule_id'            => $row->transfer_rule_id,
+                    'ticket'             => $row->ticket ?: null,
+                    'method'             => $row->ticket ? 'ticket' : 'backfill',
+                ]);
+            }
+            $p3++;
+        }
+        $this->line(sprintf('  → %d log(s) de já-atribuídos %s.', $p3, $execute ? 'criados' : '(dry-run)'));
         if ($ambiguous) {
             $this->warn('  Destinos AMBÍGUOS (2+ regras) — não usam heurística; remanescentes sem ticket ficam "não registrados":');
             foreach ($ambiguous as $t => $n) {

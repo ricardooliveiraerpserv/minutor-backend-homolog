@@ -1230,6 +1230,9 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'index']);
         Route::get('/timesheet-transfer-rules/totals', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'totals']);
         Route::get('/timesheet-transfer-rules/untracked', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'untracked']);
+        Route::get('/timesheet-transfer-rules/by-origin', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'byOrigin']);
+        Route::get('/timesheet-transfer-rules/origin-logs', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'originLogs']);
+        Route::post('/timesheet-transfer-rules/set-origin', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'setOrigin']);
         Route::post('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'store']);
         Route::post('/timesheet-transfer-rules/preview', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'preview']);
         Route::put('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'update'])->whereNumber('rule');

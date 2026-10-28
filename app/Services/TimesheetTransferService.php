@@ -69,10 +69,15 @@ class TimesheetTransferService
         if (! $target) {
             return false;
         }
-        // Grava a ORIGEM ANTES de sobrescrever o customer_id (que vira o do destino). Usamos
-        // rule->source_customer_id (= cliente de origem por definição da regra que casou).
+        // Grava a ORIGEM ANTES de sobrescrever customer_id/project_id (que viram os do destino).
+        // Usamos rule->source_customer_id (= cliente de origem por definição da regra) e o project_id
+        // ATUAL (projeto de origem). A flag originJustSet faz o hook 'saved' gravar o TimesheetOriginLog.
         $ts->transfer_rule_id            = (int) $rule->id;
         $ts->transfer_source_customer_id = (int) $rule->source_customer_id;
+        if ($ts->project_id) {
+            $ts->transfer_source_project_id = (int) $ts->project_id;
+        }
+        $ts->originJustSet = 'rule_auto';
         $ts->project_id      = (int) $rule->target_project_id;
         $ts->real_project_id = (int) $rule->target_project_id;
         if ($target->customer_id) {
@@ -134,6 +139,9 @@ class TimesheetTransferService
                 $from = $ts->project_id;
                 $ts->transfer_rule_id            = (int) $rule->id;
                 $ts->transfer_source_customer_id = (int) $rule->source_customer_id;
+                if ($from) {
+                    $ts->transfer_source_project_id = (int) $from;
+                }
                 $ts->project_id      = (int) $rule->target_project_id;
                 $ts->real_project_id = (int) $rule->target_project_id;
                 if ($target->customer_id) {
@@ -147,6 +155,14 @@ class TimesheetTransferService
                         'source'       => 'transfer_rule',
                         'action'       => 'project_transferred',
                         'changes'      => ['from_project_id' => $from, 'to_project_id' => (int) $rule->target_project_id, 'rule_id' => $rule->id],
+                    ]);
+                    \App\Models\TimesheetOriginLog::create([
+                        'timesheet_id'       => $ts->id,
+                        'source_customer_id' => (int) $rule->source_customer_id,
+                        'source_project_id'  => $from ? (int) $from : null,
+                        'rule_id'            => (int) $rule->id,
+                        'method'             => 'rule_apply',
+                        'set_by'             => $actorId,
                     ]);
                 } catch (\Throwable $e) {
                     // auditoria best-effort
