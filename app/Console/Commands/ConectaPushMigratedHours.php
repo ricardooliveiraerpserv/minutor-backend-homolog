@@ -21,6 +21,9 @@ class ConectaPushMigratedHours extends Command
         $ids = Timesheet::withoutGlobalScopes()
             ->whereNotNull('transfer_source_customer_id')
             ->pluck('id')->map(fn ($x) => (int) $x)->all();
+        // Sincroniza o universo de clientes das regras SEMPRE (p/ listar inclusive sem movimentação).
+        app(\App\Services\ConectaMigratedHoursPusher::class)->pushRuleClients();
+        $this->info('Clientes das regras sincronizados.');
         if (empty($ids)) {
             $this->warn('Nenhum apontamento migrado para enviar.');
             return self::SUCCESS;

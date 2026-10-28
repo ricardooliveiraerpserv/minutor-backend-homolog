@@ -16,6 +16,30 @@ use Illuminate\Support\Str;
  */
 class ConectaMigratedHoursPusher
 {
+    /** Empurra o UNIVERSO de clientes das regras de transferência (full-sync) p/ a Conecta listar
+     *  inclusive os SEM movimentação. Best-effort. */
+    public function pushRuleClients(): void
+    {
+        $url    = rtrim((string) config('services.conecta.api_url', ''), '/');
+        $secret = (string) config('services.conecta.migration_secret', '');
+        if ($url === '' || $secret === '') {
+            return;
+        }
+        $ids = \App\Models\TimesheetTransferRule::withoutGlobalScopes()->pluck('source_customer_id')->filter()->unique();
+        $custs = $ids->isEmpty() ? collect() : \App\Models\Customer::withoutGlobalScopes()->whereIn('id', $ids)->get(['id', 'name', 'cgc']);
+        $clients = $custs->map(fn ($c) => ['erpserv_customer_id' => (int) $c->id, 'name' => $c->name, 'cgc' => $c->cgc])->values()->all();
+        try {
+            $resp = \Illuminate\Support\Facades\Http::withHeaders(['X-Migration-Secret' => $secret])->acceptJson()->timeout(60)
+                ->post("{$url}/api/v1/migration/transfer-clients", ['clients' => $clients]);
+            if (! $resp->successful()) {
+                throw new \RuntimeException('HTTP ' . $resp->status());
+            }
+        } catch (\Throwable $e) {
+            Log::warning('conecta.transfer_clients.push_failed', ['error' => $e->getMessage()]);
+            throw $e;
+        }
+    }
+
     public function pushIds(array $ids): void
     {
         $url    = rtrim((string) config('services.conecta.api_url', ''), '/');

@@ -50,6 +50,7 @@ class TimesheetTransferRuleController extends Controller
             $applied = $this->service->applyRule($rule, false, $request->user()?->id);
         }
 
+        try { \App\Jobs\PushTransferClientsToConectaJob::dispatch(); } catch (\Throwable $e) { /* best-effort */ }
         return response()->json(['data' => $this->view($rule->fresh(['sourceCustomer', 'targetProject'])), 'applied' => $applied], 201);
     }
 
@@ -66,6 +67,7 @@ class TimesheetTransferRuleController extends Controller
             $applied = $this->service->applyRule($rule, false, $request->user()?->id);
         }
 
+        try { \App\Jobs\PushTransferClientsToConectaJob::dispatch(); } catch (\Throwable $e) { /* best-effort */ }
         return response()->json(['data' => $this->view($rule->fresh(['sourceCustomer', 'targetProject'])), 'applied' => $applied]);
     }
 
@@ -73,6 +75,7 @@ class TimesheetTransferRuleController extends Controller
     {
         $this->ensureAdmin();
         $rule->delete();
+        try { \App\Jobs\PushTransferClientsToConectaJob::dispatch(); } catch (\Throwable $e) { /* best-effort */ }
         return response()->json(['data' => ['deleted' => true]]);
     }
 
