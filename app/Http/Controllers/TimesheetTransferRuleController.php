@@ -101,16 +101,16 @@ class TimesheetTransferRuleController extends Controller
         $dateFrom  = $request->query('date_from');
         $dateUntil = $request->query('date_until');
 
-        // ids dos timesheets migrados por esta regra (log action=project_transferred, changes.rule_id).
-        $logIds = \App\Models\TimesheetLog::where('action', 'project_transferred')
-            ->where('source', 'transfer_rule')
-            ->whereRaw("(changes->>'rule_id')::int = ?", [(int) $rule->id])
-            ->orderByDesc('id')->pluck('timesheet_id')->unique()->values();
-
+        // Apontamentos migrados = os que ESTÃO no projeto destino da regra (cobre tanto a aplicação
+        // RETROATIVA quanto a AUTOMÁTICA no save — esta não gera log). Filtro de data = base da regra.
+        $targetId = (int) $rule->target_project_id;
+        $dateCol  = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
         $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
-            ->whereIn('id', $logIds->all());
-        if ($dateFrom)  { $q->whereDate('date', '>=', $dateFrom); }
-        if ($dateUntil) { $q->whereDate('date', '<=', $dateUntil); }
+            ->where(function ($w) use ($targetId) {
+                $w->where('project_id', $targetId)->orWhere('real_project_id', $targetId);
+            });
+        if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
+        if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
         $items = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get()->map(fn ($t) => [
             'id'          => $t->id,
             'date'        => optional($t->date)->toDateString(),
