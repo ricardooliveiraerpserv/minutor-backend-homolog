@@ -101,22 +101,13 @@ class TimesheetTransferRuleController extends Controller
         $dateFrom  = $request->query('date_from');
         $dateUntil = $request->query('date_until');
 
-        // Escopo desta regra = linhas RASTREADAS como migradas por ela (transfer_rule_id = regra)
-        // + linhas no projeto destino SEM origem registrada (transfer_rule_id NULL — migrados antes do
-        // rastreio/auto-save, não atribuíveis). NÃO inclui linhas rastreadas de OUTRA regra que
-        // compartilhe o mesmo destino. Filtro de data = base da regra. Campo `origin` rotula a empresa.
-        $targetId = (int) $rule->target_project_id;
+        // Escopo desta regra = SOMENTE linhas RASTREADAS como migradas por ela (transfer_rule_id = regra).
+        // Apontamentos no destino SEM origem registrada (transfer_rule_id NULL) NÃO entram aqui — não são
+        // atribuíveis a uma empresa/regra específica (apareceriam repetidos em toda regra que compartilha o
+        // destino). Eles vivem só no consolidado "não registrada" (endpoint untracked). Filtro = base da regra.
         $dateCol  = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
         $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
-            ->where(function ($w) use ($targetId, $rule) {
-                $w->where('transfer_rule_id', $rule->id)
-                    ->orWhere(function ($x) use ($targetId) {
-                        $x->whereNull('transfer_rule_id')
-                            ->where(function ($y) use ($targetId) {
-                                $y->where('project_id', $targetId)->orWhere('real_project_id', $targetId);
-                            });
-                    });
-            });
+            ->where('transfer_rule_id', $rule->id);
         if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
         if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
         $rows = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get();
@@ -131,6 +122,44 @@ class TimesheetTransferRuleController extends Controller
             'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
             'origin'      => $t->transfer_source_customer_id ? ($srcNames[$t->transfer_source_customer_id] ?? ('#' . $t->transfer_source_customer_id)) : null,
             'tracked'     => (bool) $t->transfer_rule_id,
+            'date_locked' => (bool) $t->date_locked,
+            'manual_edit' => (bool) $t->manual_project_edit,
+        ]);
+
+        return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
+    }
+
+    /**
+     * GET /timesheet-transfer-rules/untracked — apontamentos nos projetos destino SEM origem registrada
+     * (transfer_rule_id NULL): migrados antes do rastreio ou em destinos com 2+ regras (não atribuíveis a
+     * uma empresa). Consolidado único — NÃO repete por regra. Filtro pela data de serviço.
+     */
+    public function untracked(Request $request): JsonResponse
+    {
+        $this->ensureAdmin();
+        $dateFrom  = $request->query('date_from');
+        $dateUntil = $request->query('date_until');
+
+        $targetIds = TimesheetTransferRule::get(['target_project_id'])
+            ->pluck('target_project_id')->map(fn ($v) => (int) $v)->unique()->values()->all();
+        if (empty($targetIds)) {
+            return response()->json(['data' => ['total' => 0, 'items' => []]]);
+        }
+
+        $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
+            ->whereNull('transfer_rule_id')
+            ->where(function ($w) use ($targetIds) {
+                $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
+            });
+        if ($dateFrom)  { $q->whereDate('date', '>=', $dateFrom); }
+        if ($dateUntil) { $q->whereDate('date', '<=', $dateUntil); }
+        $items = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get()->map(fn ($t) => [
+            'id'          => $t->id,
+            'date'        => optional($t->date)->toDateString(),
+            'created_at'  => optional($t->created_at)->toIso8601String(),
+            'hours'       => round((float) ($t->effort_minutes ?? 0) / 60, 2),
+            'user'        => optional($t->user)->name,
+            'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
             'date_locked' => (bool) $t->date_locked,
             'manual_edit' => (bool) $t->manual_project_edit,
         ]);
