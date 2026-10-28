@@ -69,6 +69,10 @@ class TimesheetTransferService
         if (! $target) {
             return false;
         }
+        // Grava a ORIGEM ANTES de sobrescrever o customer_id (que vira o do destino). Usamos
+        // rule->source_customer_id (= cliente de origem por definição da regra que casou).
+        $ts->transfer_rule_id            = (int) $rule->id;
+        $ts->transfer_source_customer_id = (int) $rule->source_customer_id;
         $ts->project_id      = (int) $rule->target_project_id;
         $ts->real_project_id = (int) $rule->target_project_id;
         if ($target->customer_id) {
@@ -128,6 +132,8 @@ class TimesheetTransferService
                     continue;
                 }
                 $from = $ts->project_id;
+                $ts->transfer_rule_id            = (int) $rule->id;
+                $ts->transfer_source_customer_id = (int) $rule->source_customer_id;
                 $ts->project_id      = (int) $rule->target_project_id;
                 $ts->real_project_id = (int) $rule->target_project_id;
                 if ($target->customer_id) {

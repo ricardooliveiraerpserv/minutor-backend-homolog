@@ -101,23 +101,36 @@ class TimesheetTransferRuleController extends Controller
         $dateFrom  = $request->query('date_from');
         $dateUntil = $request->query('date_until');
 
-        // Apontamentos migrados = os que ESTÃO no projeto destino da regra (cobre tanto a aplicação
-        // RETROATIVA quanto a AUTOMÁTICA no save — esta não gera log). Filtro de data = base da regra.
+        // Escopo desta regra = linhas RASTREADAS como migradas por ela (transfer_rule_id = regra)
+        // + linhas no projeto destino SEM origem registrada (transfer_rule_id NULL — migrados antes do
+        // rastreio/auto-save, não atribuíveis). NÃO inclui linhas rastreadas de OUTRA regra que
+        // compartilhe o mesmo destino. Filtro de data = base da regra. Campo `origin` rotula a empresa.
         $targetId = (int) $rule->target_project_id;
         $dateCol  = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
         $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
-            ->where(function ($w) use ($targetId) {
-                $w->where('project_id', $targetId)->orWhere('real_project_id', $targetId);
+            ->where(function ($w) use ($targetId, $rule) {
+                $w->where('transfer_rule_id', $rule->id)
+                    ->orWhere(function ($x) use ($targetId) {
+                        $x->whereNull('transfer_rule_id')
+                            ->where(function ($y) use ($targetId) {
+                                $y->where('project_id', $targetId)->orWhere('real_project_id', $targetId);
+                            });
+                    });
             });
         if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
         if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
-        $items = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get()->map(fn ($t) => [
+        $rows = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get();
+        $srcNames = \App\Models\Customer::whereIn('id', $rows->pluck('transfer_source_customer_id')->filter()->unique())
+            ->pluck('name', 'id');
+        $items = $rows->map(fn ($t) => [
             'id'          => $t->id,
             'date'        => optional($t->date)->toDateString(),
             'created_at'  => optional($t->created_at)->toIso8601String(),
             'hours'       => round((float) ($t->effort_minutes ?? 0) / 60, 2),
             'user'        => optional($t->user)->name,
             'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
+            'origin'      => $t->transfer_source_customer_id ? ($srcNames[$t->transfer_source_customer_id] ?? ('#' . $t->transfer_source_customer_id)) : null,
+            'tracked'     => (bool) $t->transfer_rule_id,
             'date_locked' => (bool) $t->date_locked,
             'manual_edit' => (bool) $t->manual_project_edit,
         ]);
@@ -132,31 +145,57 @@ class TimesheetTransferRuleController extends Controller
         $dateFrom  = $request->query('date_from');
         $dateUntil = $request->query('date_until');
 
-        $rules = TimesheetTransferRule::get(['id', 'target_project_id', 'date_field']);
-        $perRule = [];
-        $uniqueTargets = []; // por projeto destino (evita contar em dobro quando regras compartilham o destino)
+        $rules = TimesheetTransferRule::get(['id', 'source_customer_id', 'target_project_id', 'date_field']);
+        $targetIds = $rules->pluck('target_project_id')->map(fn ($v) => (int) $v)->unique()->values()->all();
 
+        // per_rule: horas efetivamente RASTREADAS como migradas por esta regra (transfer_rule_id).
+        // Base de data = a da própria regra. Fica 0 enquanto não houver migração/backfill rastreado.
+        $perRule = [];
         foreach ($rules as $rule) {
             $dateCol = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
-            $targetId = (int) $rule->target_project_id;
-            $q = \App\Models\Timesheet::where(function ($w) use ($targetId) {
-                $w->where('project_id', $targetId)->orWhere('real_project_id', $targetId);
-            });
+            $q = \App\Models\Timesheet::where('transfer_rule_id', $rule->id);
             if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
             if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
             $minutes = (int) $q->sum('effort_minutes');
-            $count   = (int) $q->count();
-            $perRule[(int) $rule->id] = ['hours' => round($minutes / 60, 2), 'count' => $count];
-            $uniqueTargets[$targetId] = ['minutes' => $minutes, 'count' => $count]; // mesmo destino sobrescreve (mesmo valor)
+            $perRule[(int) $rule->id] = ['hours' => round($minutes / 60, 2), 'count' => (int) $q->count()];
         }
 
-        $grandMin   = array_sum(array_column($uniqueTargets, 'minutes'));
-        $grandCount = array_sum(array_column($uniqueTargets, 'count'));
+        // Universo = apontamentos que ESTÃO HOJE nos projetos destino das regras (linhas distintas —
+        // um OR entre project_id/real_project_id não duplica a linha). Filtro cross-regra pela data de
+        // SERVIÇO (date). Particiona por origem RASTREADA (transfer_source_customer_id) + bucket
+        // "não registrada" (NULL = migrados antes do rastreio ou não atribuíveis). Soma das partições = geral.
+        $base = function () use ($targetIds, $dateFrom, $dateUntil) {
+            $q = \App\Models\Timesheet::query()->where(function ($w) use ($targetIds) {
+                $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
+            });
+            if ($dateFrom)  { $q->whereDate('date', '>=', $dateFrom); }
+            if ($dateUntil) { $q->whereDate('date', '<=', $dateUntil); }
+            return $q;
+        };
+
+        $byCompany = empty($targetIds) ? collect() : $base()
+            ->whereNotNull('transfer_source_customer_id')
+            ->selectRaw('transfer_source_customer_id as cid, SUM(effort_minutes) as mins, COUNT(*) as cnt')
+            ->groupBy('transfer_source_customer_id')->get();
+        $names = \App\Models\Customer::whereIn('id', $byCompany->pluck('cid'))->pluck('name', 'id');
+        $perCompany = $byCompany->map(fn ($r) => [
+            'customer_id' => (int) $r->cid,
+            'name'        => $names[$r->cid] ?? ('#' . $r->cid),
+            'hours'       => round(((int) $r->mins) / 60, 2),
+            'count'       => (int) $r->cnt,
+        ])->sortByDesc('hours')->values();
+
+        $unMin = empty($targetIds) ? 0 : (int) $base()->whereNull('transfer_source_customer_id')->sum('effort_minutes');
+        $unCnt = empty($targetIds) ? 0 : (int) $base()->whereNull('transfer_source_customer_id')->count();
+        $grandMin = empty($targetIds) ? 0 : (int) $base()->sum('effort_minutes');
+        $grandCnt = empty($targetIds) ? 0 : (int) $base()->count();
 
         return response()->json(['data' => [
             'per_rule'          => $perRule,
+            'per_company'       => $perCompany,
+            'untracked'         => ['hours' => round($unMin / 60, 2), 'count' => $unCnt],
             'grand_total_hours' => round($grandMin / 60, 2),
-            'grand_total_count' => $grandCount,
+            'grand_total_count' => $grandCnt,
         ]]);
     }
 
