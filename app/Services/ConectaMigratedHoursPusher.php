@@ -27,7 +27,7 @@ class ConectaMigratedHoursPusher
 
         // withoutGlobalScopes inclui soft-deleted (p/ detectar remoção) e ignora CompanyScope (cross-empresa).
         $rows = Timesheet::withoutGlobalScopes()
-            ->with(['user:id,name', 'project:id,code,name,hourly_rate', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
+            ->with(['user:id,name', 'project:id,code,name,hourly_rate', 'sourceCustomer:id,name,cgc', 'sourceProject:id,code,name'])
             ->whereIn('id', $ids)->get();
         $methods = TimesheetOriginLog::whereIn('timesheet_id', $ids)
             ->orderByDesc('id')->get()->groupBy('timesheet_id')->map(fn ($g) => $g->first()->method);
@@ -46,6 +46,7 @@ class ConectaMigratedHoursPusher
                 'effort_minutes'         => (int) $t->effort_minutes,
                 'source_customer_erp_id' => $t->transfer_source_customer_id,
                 'source_customer_name'   => optional($t->sourceCustomer)->name,
+                'source_customer_cgc'    => optional($t->sourceCustomer)->cgc,
                 'source_project_name'    => $t->sourceProject ? trim(($t->sourceProject->code ? $t->sourceProject->code . ' · ' : '') . $t->sourceProject->name) : null,
                 'target_project_erp_id'  => $t->project_id,
                 'target_project_name'    => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
