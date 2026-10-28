@@ -212,6 +212,14 @@ class TimesheetTransferRuleController extends Controller
             ]);
         }
 
+        // Integração: espelha na Conecta a origem definida manualmente (tempo real, best-effort).
+        $ids = $rows->pluck('id')->map(fn ($x) => (int) $x)->all();
+        if (! empty($ids)) {
+            foreach (array_chunk($ids, 200) as $batch) {
+                try { \App\Jobs\PushMigratedHoursToConectaJob::dispatch($batch); } catch (\Throwable $e) { /* best-effort */ }
+            }
+        }
+
         return response()->json(['data' => ['updated' => $rows->count()]]);
     }
 

@@ -116,7 +116,8 @@ class TimesheetTransferService
         }
 
         $out['moved_locked'] = 0; // movidos APESAR de período fechado (projeto encerrado)
-        $q->chunkById(300, function ($chunk) use (&$out, $rule, $target, $dryRun, $actorId, $finishedProjectIds) {
+        $movedIds = [];
+        $q->chunkById(300, function ($chunk) use (&$out, &$movedIds, $rule, $target, $dryRun, $actorId, $finishedProjectIds) {
             foreach ($chunk as $ts) {
                 $out['total']++;
                 // Projeto origem ENCERRADO → migra mesmo em período fechado; senão PULA o fechado.
@@ -167,8 +168,20 @@ class TimesheetTransferService
                 } catch (\Throwable $e) {
                     // auditoria best-effort
                 }
+                $movedIds[] = (int) $ts->id;
             }
         });
+
+        // Integração: espelha na Conecta os movidos (tempo real, best-effort, em lotes).
+        if (! $dryRun && ! empty($movedIds)) {
+            foreach (array_chunk($movedIds, 200) as $batch) {
+                try {
+                    \App\Jobs\PushMigratedHoursToConectaJob::dispatch($batch);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('conecta.migrated_hours.dispatch_failed', ['error' => $e->getMessage()]);
+                }
+            }
+        }
 
         return $out;
     }

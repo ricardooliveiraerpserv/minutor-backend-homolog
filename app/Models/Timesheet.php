@@ -161,6 +161,12 @@ class Timesheet extends Model
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::warning('timesheet_origin_log.failed', ['ts' => $timesheet->id, 'error' => $e->getMessage()]);
             }
+            // Integração: espelha a hora migrada na Conecta (tempo real, best-effort via job).
+            try {
+                \App\Jobs\PushMigratedHoursToConectaJob::dispatch([(int) $timesheet->id]);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('conecta.migrated_hours.dispatch_failed', ['ts' => $timesheet->id, 'error' => $e->getMessage()]);
+            }
             $timesheet->originJustSet = null;
         });
 
