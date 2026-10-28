@@ -123,6 +123,9 @@ class TimesheetTransferRuleController extends Controller
             'origin'      => $t->transfer_source_customer_id ? ($srcNames[$t->transfer_source_customer_id] ?? ('#' . $t->transfer_source_customer_id)) : null,
             'tracked'     => (bool) $t->transfer_rule_id,
             'observation' => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', html_entity_decode(preg_replace('/<[^>]*>/', ' ', (string) $t->observation), ENT_QUOTES | ENT_HTML5))), 3000),
+            'ticket'      => $t->ticket ?: null,
+            'origin_type' => $t->origin,
+            'via_integration' => in_array($t->origin, ['webhook', 'movidesk', 'movidesk_fallback'], true),
             'date_locked' => (bool) $t->date_locked,
             'manual_edit' => (bool) $t->manual_project_edit,
         ]);
@@ -162,6 +165,9 @@ class TimesheetTransferRuleController extends Controller
             'user'        => optional($t->user)->name,
             'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
             'observation' => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', html_entity_decode(preg_replace('/<[^>]*>/', ' ', (string) $t->observation), ENT_QUOTES | ENT_HTML5))), 3000),
+            'ticket'      => $t->ticket ?: null,
+            'origin_type' => $t->origin,
+            'via_integration' => in_array($t->origin, ['webhook', 'movidesk', 'movidesk_fallback'], true),
             'date_locked' => (bool) $t->date_locked,
             'manual_edit' => (bool) $t->manual_project_edit,
         ]);
