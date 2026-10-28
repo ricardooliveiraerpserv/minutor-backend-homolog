@@ -328,6 +328,28 @@ class TimesheetTransferRuleController extends Controller
         ]]);
     }
 
+    /**
+     * GET /timesheets/{id}/transfer-origin — origem (cliente/projeto) de UM apontamento, p/ exibir ao
+     * abrir o apontamento (HD/timesheet). NÃO é admin-only (qualquer autenticado); retorna só nomes de
+     * origem, nada sensível. null se o apontamento não tem origem de transferência registrada.
+     */
+    public function timesheetOrigin(int $id): JsonResponse
+    {
+        $ts = \App\Models\Timesheet::with(['sourceCustomer:id,name', 'sourceProject:id,code,name'])
+            ->find($id);
+        if (! $ts || ! $ts->transfer_source_customer_id) {
+            return response()->json(['data' => null]);
+        }
+        $method = optional(\App\Models\TimesheetOriginLog::where('timesheet_id', $id)->orderByDesc('id')->first())->method;
+        $proj = $ts->sourceProject;
+
+        return response()->json(['data' => [
+            'customer' => optional($ts->sourceCustomer)->name,
+            'project'  => $proj ? trim(($proj->code ? $proj->code . ' · ' : '') . $proj->name) : null,
+            'method'   => $method,
+        ]]);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     private function validateRule(Request $request): array
