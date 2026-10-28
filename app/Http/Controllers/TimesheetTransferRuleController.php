@@ -125,6 +125,41 @@ class TimesheetTransferRuleController extends Controller
         return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
     }
 
+    /** GET /timesheet-transfer-rules/totals?date_from=&date_until= — total de horas por regra + geral. */
+    public function totals(Request $request): JsonResponse
+    {
+        $this->ensureAdmin();
+        $dateFrom  = $request->query('date_from');
+        $dateUntil = $request->query('date_until');
+
+        $rules = TimesheetTransferRule::get(['id', 'target_project_id', 'date_field']);
+        $perRule = [];
+        $uniqueTargets = []; // por projeto destino (evita contar em dobro quando regras compartilham o destino)
+
+        foreach ($rules as $rule) {
+            $dateCol = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
+            $targetId = (int) $rule->target_project_id;
+            $q = \App\Models\Timesheet::where(function ($w) use ($targetId) {
+                $w->where('project_id', $targetId)->orWhere('real_project_id', $targetId);
+            });
+            if ($dateFrom)  { $q->whereDate($dateCol, '>=', $dateFrom); }
+            if ($dateUntil) { $q->whereDate($dateCol, '<=', $dateUntil); }
+            $minutes = (int) $q->sum('effort_minutes');
+            $count   = (int) $q->count();
+            $perRule[(int) $rule->id] = ['hours' => round($minutes / 60, 2), 'count' => $count];
+            $uniqueTargets[$targetId] = ['minutes' => $minutes, 'count' => $count]; // mesmo destino sobrescreve (mesmo valor)
+        }
+
+        $grandMin   = array_sum(array_column($uniqueTargets, 'minutes'));
+        $grandCount = array_sum(array_column($uniqueTargets, 'count'));
+
+        return response()->json(['data' => [
+            'per_rule'          => $perRule,
+            'grand_total_hours' => round($grandMin / 60, 2),
+            'grand_total_count' => $grandCount,
+        ]]);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     private function validateRule(Request $request): array

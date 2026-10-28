@@ -1228,6 +1228,7 @@ Route::prefix('v1')->group(function () {
         // Rotas que qualquer usuário autenticado pode acessar (com lógica de permissão no controller)
         // Transferência de Apontamentos — regras cliente→projeto por janela de data (admin-only no controller).
         Route::get('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'index']);
+        Route::get('/timesheet-transfer-rules/totals', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'totals']);
         Route::post('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'store']);
         Route::post('/timesheet-transfer-rules/preview', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'preview']);
         Route::put('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'update'])->whereNumber('rule');
