@@ -150,8 +150,10 @@ class TimesheetTransferRuleController extends Controller
             return response()->json(['data' => ['total' => 0, 'items' => []]]);
         }
 
+        // "Não registrada" agora = sem origem rastreada E sem cliente atual (edge, ~nunca) — pois o
+        // manual/nativo em destino já é atribuído ao cliente do projeto destino em totals().
         $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
-            ->whereNull('transfer_rule_id')
+            ->whereNull('transfer_source_customer_id')->whereNull('customer_id')
             ->where(function ($w) use ($targetIds) {
                 $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
             });
@@ -210,20 +212,26 @@ class TimesheetTransferRuleController extends Controller
             return $q;
         };
 
+        // Origem EFETIVA = empresa rastreada OU, na falta (manual/nativo lançado direto no destino),
+        // o CLIENTE ATUAL do apontamento — que é o do próprio projeto destino (segue a mesma lógica da
+        // migração: o apontamento pertence à empresa do projeto destino). Só fica "não registrada" se
+        // nem cliente houver (edge, ~nunca).
+        $origemExpr = 'COALESCE(transfer_source_customer_id, customer_id)';
         $byCompany = empty($targetIds) ? collect() : $base()
-            ->whereNotNull('transfer_source_customer_id')
-            ->selectRaw('transfer_source_customer_id as cid, SUM(effort_minutes) as mins, COUNT(*) as cnt')
-            ->groupBy('transfer_source_customer_id')->get();
-        $names = \App\Models\Customer::whereIn('id', $byCompany->pluck('cid'))->pluck('name', 'id');
-        $perCompany = $byCompany->map(fn ($r) => [
+            ->selectRaw("$origemExpr as cid, SUM(effort_minutes) as mins, COUNT(*) as cnt")
+            ->groupByRaw($origemExpr)->get();
+        $unMin = 0; $unCnt = 0;
+        $valid = $byCompany->filter(function ($r) use (&$unMin, &$unCnt) {
+            if ($r->cid === null) { $unMin += (int) $r->mins; $unCnt += (int) $r->cnt; return false; }
+            return true;
+        });
+        $names = \App\Models\Customer::whereIn('id', $valid->pluck('cid'))->pluck('name', 'id');
+        $perCompany = $valid->map(fn ($r) => [
             'customer_id' => (int) $r->cid,
             'name'        => $names[$r->cid] ?? ('#' . $r->cid),
             'hours'       => round(((int) $r->mins) / 60, 2),
             'count'       => (int) $r->cnt,
         ])->sortByDesc('hours')->values();
-
-        $unMin = empty($targetIds) ? 0 : (int) $base()->whereNull('transfer_source_customer_id')->sum('effort_minutes');
-        $unCnt = empty($targetIds) ? 0 : (int) $base()->whereNull('transfer_source_customer_id')->count();
         $grandMin = empty($targetIds) ? 0 : (int) $base()->sum('effort_minutes');
         $grandCnt = empty($targetIds) ? 0 : (int) $base()->count();
 
