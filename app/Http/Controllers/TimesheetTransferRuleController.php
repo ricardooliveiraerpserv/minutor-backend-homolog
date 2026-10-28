@@ -122,6 +122,7 @@ class TimesheetTransferRuleController extends Controller
             'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
             'origin'      => $t->transfer_source_customer_id ? ($srcNames[$t->transfer_source_customer_id] ?? ('#' . $t->transfer_source_customer_id)) : null,
             'tracked'     => (bool) $t->transfer_rule_id,
+            'observation' => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', strip_tags((string) $t->observation))), 800),
             'date_locked' => (bool) $t->date_locked,
             'manual_edit' => (bool) $t->manual_project_edit,
         ]);
@@ -160,6 +161,7 @@ class TimesheetTransferRuleController extends Controller
             'hours'       => round((float) ($t->effort_minutes ?? 0) / 60, 2),
             'user'        => optional($t->user)->name,
             'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
+            'observation' => \Illuminate\Support\Str::limit(trim(preg_replace('/\s+/', ' ', strip_tags((string) $t->observation))), 800),
             'date_locked' => (bool) $t->date_locked,
             'manual_edit' => (bool) $t->manual_project_edit,
         ]);
