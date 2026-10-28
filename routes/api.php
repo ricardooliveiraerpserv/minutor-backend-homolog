@@ -1233,6 +1233,7 @@ Route::prefix('v1')->group(function () {
         Route::put('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'update'])->whereNumber('rule');
         Route::delete('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'destroy'])->whereNumber('rule');
         Route::post('/timesheet-transfer-rules/{rule}/apply', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'apply'])->whereNumber('rule');
+        Route::get('/timesheet-transfer-rules/{rule}/applied', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'applied'])->whereNumber('rule');
 
         Route::get('/timesheets', [TimesheetController::class, 'index'])->name('timesheets.index');
         Route::get('/timesheets/export', [TimesheetController::class, 'export'])->name('timesheets.export');

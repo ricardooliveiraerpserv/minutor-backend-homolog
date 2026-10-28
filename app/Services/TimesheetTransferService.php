@@ -90,6 +90,10 @@ class TimesheetTransferService
             return $out;
         }
         $dateCol = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
+        // Projetos ENCERRADOS (finished) do cliente origem: p/ estes, MOVE mesmo em período fechado
+        // (date_locked) — decisão do user "migrar mesmo encerrado" (mantém a migração). Set p/ O(1).
+        $finishedProjectIds = Project::where('customer_id', $rule->source_customer_id)
+            ->where('status', Project::STATUS_FINISHED)->pluck('id')->flip();
 
         $q = Timesheet::where('customer_id', $rule->source_customer_id)
             ->where(function ($w) use ($rule) {
@@ -102,12 +106,18 @@ class TimesheetTransferService
             $q->whereDate($dateCol, '<=', $rule->date_until->toDateString());
         }
 
-        $q->chunkById(300, function ($chunk) use (&$out, $rule, $target, $dryRun, $actorId) {
+        $out['moved_locked'] = 0; // movidos APESAR de período fechado (projeto encerrado)
+        $q->chunkById(300, function ($chunk) use (&$out, $rule, $target, $dryRun, $actorId, $finishedProjectIds) {
             foreach ($chunk as $ts) {
                 $out['total']++;
-                if ($ts->date_locked) {
+                // Projeto origem ENCERRADO → migra mesmo em período fechado; senão PULA o fechado.
+                $originEncerrado = $ts->project_id && isset($finishedProjectIds[$ts->project_id]);
+                if ($ts->date_locked && ! $originEncerrado) {
                     $out['skipped_locked']++;
                     continue;
+                }
+                if ($ts->date_locked && $originEncerrado) {
+                    $out['moved_locked']++;
                 }
                 if ($ts->manual_project_edit && ! $rule->override_manual) {
                     $out['skipped_manual']++;

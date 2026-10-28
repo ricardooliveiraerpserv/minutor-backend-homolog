@@ -94,6 +94,37 @@ class TimesheetTransferRuleController extends Controller
         return response()->json(['data' => $result]);
     }
 
+    /** GET /timesheet-transfer-rules/{rule}/applied — apontamentos JÁ migrados por esta regra. */
+    public function applied(Request $request, TimesheetTransferRule $rule): JsonResponse
+    {
+        $this->ensureAdmin();
+        $dateFrom  = $request->query('date_from');
+        $dateUntil = $request->query('date_until');
+
+        // ids dos timesheets migrados por esta regra (log action=project_transferred, changes.rule_id).
+        $logIds = \App\Models\TimesheetLog::where('action', 'project_transferred')
+            ->where('source', 'transfer_rule')
+            ->whereRaw("(changes->>'rule_id')::int = ?", [(int) $rule->id])
+            ->orderByDesc('id')->pluck('timesheet_id')->unique()->values();
+
+        $q = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name'])
+            ->whereIn('id', $logIds->all());
+        if ($dateFrom)  { $q->whereDate('date', '>=', $dateFrom); }
+        if ($dateUntil) { $q->whereDate('date', '<=', $dateUntil); }
+        $items = $q->orderByDesc('date')->orderByDesc('id')->limit(3000)->get()->map(fn ($t) => [
+            'id'          => $t->id,
+            'date'        => optional($t->date)->toDateString(),
+            'created_at'  => optional($t->created_at)->toIso8601String(),
+            'hours'       => round((float) ($t->effort_minutes ?? 0) / 60, 2),
+            'user'        => optional($t->user)->name,
+            'project'     => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
+            'date_locked' => (bool) $t->date_locked,
+            'manual_edit' => (bool) $t->manual_project_edit,
+        ]);
+
+        return response()->json(['data' => ['total' => $items->count(), 'items' => $items->values()]]);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     private function validateRule(Request $request): array
