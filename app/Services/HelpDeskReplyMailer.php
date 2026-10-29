@@ -54,10 +54,21 @@ class HelpDeskReplyMailer
         $updateBanner = $isSolutionUpdate
             ? '<div style="margin:0 0 16px;padding:12px 16px;border-radius:8px;background:#fef3c7;border:1px solid #fde68a;color:#92400e;font-weight:600;">🔄 A solução deste chamado foi <b>atualizada</b>. Segue abaixo a versão atualizada, com o histórico completo.</div>'
             : '';
+        // Em Desenvolvimento: a caixa roxa (updateHeaderHtml) JÁ informa "em desenvolvimento" + a
+        // previsão de entrega. Remove o TEMPLATE FIXO do corpo p/ não duplicar a mensagem — mantém
+        // qualquer texto que o consultor tenha escrito depois do template.
+        $commentBodyHtml = (string) $comment->body;
+        if (optional($ticket->status)->key === 'em_desenvolvimento') {
+            $commentBodyHtml = preg_replace(
+                '#<p>\s*Olá! Informamos que seu chamado foi colocado\s*<strong>\s*em desenvolvimento\s*</strong>\s*,\s*com previsão de entrega em\s*<strong>\s*homologação para o dia\s*\d{2}/\d{2}/\d{4}\s*</strong>\s*\.\s*</p>(\s*<p>\s*<br\s*/?>\s*</p>)?#iu',
+                '',
+                $commentBodyHtml
+            ) ?? $commentBodyHtml;
+        }
         $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
             . $updateBanner
             . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar NO TOPO
-            . (string) $comment->body
+            . $commentBodyHtml
             . \App\Services\HelpDeskMailComposer::ticketLinkHtml($ticket)    // Link de acesso ao chamado (toda resposta)
             . \App\Services\HelpDeskMailComposer::conversationHistoryHtml($ticket, (int) $comment->id);
         [$html, $inlineImgs] = self::treatBody($bodyWithHistory);

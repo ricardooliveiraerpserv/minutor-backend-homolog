@@ -244,7 +244,7 @@ class HelpDeskMailComposer
             ? \Illuminate\Support\Carbon::parse($ticket->scheduled_until)->timezone('America/Sao_Paulo')->format($ticket->scheduled_all_day ? 'd/m/Y' : 'd/m/Y \à\s H:i') . ($ticket->scheduled_all_day ? '' : ' BRT')
             : '';
         // Aviso automático ao cliente conforme o status — mesma caixa destacada.
-        $avStyle = 'font-size:14px;color:#374151;background:#f5f3ff;border-left:3px solid #7c3aed;padding:10px 12px;border-radius:6px;margin:0 0 16px';
+        $avStyle = 'font-size:16px;line-height:1.6;color:#374151;background:#f5f3ff;border-left:4px solid #7c3aed;padding:14px 16px;border-radius:8px;margin:0 0 16px';
         $fornec  = $ref !== '' ? trim((string) preg_replace('/\s*#.*$/', '', $ref)) : '';
         $aviso = '';
         if ($stKey === 'aguardando_cliente') {
