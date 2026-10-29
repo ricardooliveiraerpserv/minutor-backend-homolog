@@ -335,9 +335,10 @@ class HelpDeskEmailIngestor
      *  faz a reabertura (reopen_count/reopened_at) como no fluxo de recusa do portal. */
     private function moveToEmAndamento(HelpDeskTicket $t): void
     {
-        // Reunião agendada: a resposta do cliente ao agendamento NÃO reativa — mantém "Reunião agendada"
-        // (confirmação/combinado da reunião não é retomada de atendimento).
-        if (optional($t->status)->key === 'reuniao_agendada') return;
+        // Status "de espera própria" que a resposta do cliente NÃO reativa — mantém o status atual:
+        //  - reuniao_agendada: confirmação/combinado da reunião não é retomada de atendimento;
+        //  - em_desenvolvimento: o chamado segue em desenvolvimento (a resposta não puxa p/ "Em andamento").
+        if (in_array(optional($t->status)->key, ['reuniao_agendada', 'em_desenvolvimento'], true)) return;
         $em = HelpDeskStatus::where('key', 'em_andamento')->first();
         if (!$em || $t->status_id === $em->id) return;
         $old = $t->status;
