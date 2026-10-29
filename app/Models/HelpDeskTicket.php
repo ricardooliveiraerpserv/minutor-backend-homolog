@@ -51,7 +51,7 @@ class HelpDeskTicket extends Model
         'scheduled_until', 'scheduled_all_day', 'sla_paused_at', 'sla_ever_paused',
         'reopen_scheduled_at', 'reopen_scheduled_note', 'reopen_scheduled_by_id',
         'previous_ticket_id', 'merged_into_id',
-        'dev_delivery_at',
+        'dev_delivery_at', 'reactivation_snapshot',
     ];
 
     protected $casts = [
@@ -72,6 +72,7 @@ class HelpDeskTicket extends Model
         'reopen_count'            => 'integer',
         'cc_emails'               => 'array',
         'dev_delivery_at'         => 'date:Y-m-d',
+        'reactivation_snapshot'   => 'array',
     ];
 
     public const PRIORITIES = ['baixa', 'normal', 'alta', 'urgente'];

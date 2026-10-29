@@ -148,7 +148,30 @@ class HelpDeskTicketController extends Controller
             // "Em atendimento" e ter uma reunião marcada (tabela `meetings`, não o status_id).
             'has_scheduled_meeting'  => $meetingAt !== null,
             'meeting_scheduled_at'   => $meetingAt ? \Illuminate\Support\Carbon::parse($meetingAt)->toIso8601String() : null,
+            // Oferta de "voltar ao status anterior com a data" — presente quando a resposta do cliente
+            // reativou o chamado (Em atendimento) a partir de um status de espera agendado.
+            'reactivation'           => $this->reactivationHint($t),
         ]);
+    }
+
+    /** Dados do snapshot de reativação (p/ o aviso/botão "voltar ao status anterior com a data").
+     *  Só enquanto o chamado está "Em atendimento" e há snapshot gravado. */
+    private function reactivationHint(HelpDeskTicket $t): ?array
+    {
+        $snap = $t->reactivation_snapshot;
+        if (!is_array($snap) || empty($snap['status_id'])) return null;
+        if (optional($t->status)->key !== 'em_andamento') return null;
+        $ymd = $snap['dev_delivery_at'] ?? null;
+        if (!$ymd && !empty($snap['scheduled_until'])) {
+            $ymd = \Illuminate\Support\Carbon::parse($snap['scheduled_until'])->timezone('America/Sao_Paulo')->toDateString();
+        }
+        return [
+            'status_id'    => (int) $snap['status_id'],
+            'status_key'   => $snap['status_key'] ?? null,
+            'status_label' => $snap['status_label'] ?? null,
+            'date'         => $ymd, // YYYY-MM-DD (previsão/entrega do status anterior)
+            'date_br'      => $ymd ? \Illuminate\Support\Carbon::parse($ymd)->format('d/m/Y') : null,
+        ];
     }
 
     /** Carrega os eventos status_changed de vários tickets em UMA query (anti-N+1 do SLA pausado). */
@@ -1429,6 +1452,12 @@ class HelpDeskTicketController extends Controller
         $new = HelpDeskStatus::find($v['status_id']);
         // Mudança REAL de status? "Manter" (mesmo status) só atualiza a data de entrega, sem disparar gatilho.
         $statusChanged = $new && (int) $new->id !== (int) $ticket->status_id;
+        // Mudança MANUAL de status descarta a oferta de "voltar ao status anterior" (o consultor
+        // decidiu outro rumo) — some o aviso da reativação por resposta do cliente.
+        if ($statusChanged && $ticket->reactivation_snapshot) {
+            $ticket->reactivation_snapshot = null;
+            $ticket->save();
+        }
         // "Em Desenvolvimento" EXIGE a data de entrega prevista em homologação (vira legenda + comunicação ao cliente).
         if ($new && $new->key === 'em_desenvolvimento') {
             abort_if(empty($v['dev_delivery_at']), 422, 'Informe a data de entrega prevista em homologação para colocar o chamado em desenvolvimento.');
@@ -1525,6 +1554,33 @@ class HelpDeskTicketController extends Controller
             $this->sla->resumeSchedule($ticket);
             HelpDeskTicketEvent::log($ticket->id, 'schedule_resumed', []);
         }
+        return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
+    }
+
+    /** Volta ao STATUS ANTERIOR gravado quando a resposta do cliente reativou o chamado
+     *  (Em atendimento). Restaura status + datas + pausa de SLA exatamente como estavam e limpa o
+     *  snapshot. A resposta ao cliente (opcional) é enviada DEPOIS pelo fluxo normal de interação. */
+    public function restoreReactivation(Request $request, HelpDeskTicket $ticket): JsonResponse
+    {
+        abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
+        $snap = $ticket->reactivation_snapshot;
+        abort_if(!is_array($snap) || empty($snap['status_id']), 422, 'Não há status anterior para restaurar neste chamado.');
+        $target = HelpDeskStatus::find($snap['status_id']);
+        abort_if(!$target, 422, 'O status anterior não existe mais.');
+        $old = $ticket->status;
+        $ticket->status_id         = (int) $target->id;
+        $ticket->scheduled_until   = !empty($snap['scheduled_until']) ? \Illuminate\Support\Carbon::parse($snap['scheduled_until']) : null;
+        $ticket->scheduled_all_day = (bool) ($snap['scheduled_all_day'] ?? false);
+        $ticket->dev_delivery_at   = $snap['dev_delivery_at'] ?? null;
+        $ticket->sla_paused_at     = !empty($snap['sla_paused_at']) ? \Illuminate\Support\Carbon::parse($snap['sla_paused_at']) : null;
+        $ticket->reactivation_snapshot = null;
+        $this->sla->computeBreaches($ticket);
+        $ticket->last_activity_at = now();
+        $ticket->save();
+        HelpDeskTicketEvent::log($ticket->id, 'status_changed', [
+            'field' => 'status', 'from_value' => optional($old)->key, 'to_value' => $target->key,
+            'meta'  => ['via' => 'restore_reactivation'],
+        ]);
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
 

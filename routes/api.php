@@ -1543,6 +1543,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/tickets/{ticket}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'context']);
         Route::post('/help-desk/tickets/{ticket}/finalize', [\App\Http\Controllers\HelpDeskTicketController::class, 'finalize']);
         Route::patch('/help-desk/tickets/{ticket}/status', [\App\Http\Controllers\HelpDeskTicketController::class, 'changeStatus']);
+        Route::post('/help-desk/tickets/{ticket}/restore-reactivation', [\App\Http\Controllers\HelpDeskTicketController::class, 'restoreReactivation']);
         Route::get('/help-desk/tickets/{ticket}/timeline', [\App\Http\Controllers\HelpDeskTicketController::class, 'timeline']);
         Route::get('/help-desk/tickets/{ticket}/timesheets', [\App\Http\Controllers\HelpDeskTicketController::class, 'timesheets']);
         Route::get('/help-desk/kb/articles/{article}/attachments', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'attachments']);

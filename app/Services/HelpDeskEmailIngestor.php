@@ -331,18 +331,33 @@ class HelpDeskEmailIngestor
         );
     }
 
+    /** Status "de espera COM agendamento" cuja reativação por resposta do cliente guarda um snapshot
+     *  (status + datas + pausa de SLA) para oferecer "voltar ao status anterior com a data". */
+    private const REACTIVATION_SNAPSHOT_KEYS = ['planejamento_gmud', 'em_desenvolvimento', 'pendente_terceiros', 'em_homologacao'];
+
     /** Move o chamado para "Em andamento" quando o cliente responde por e-mail. Se estava RESOLVIDO,
-     *  faz a reabertura (reopen_count/reopened_at) como no fluxo de recusa do portal. */
+     *  faz a reabertura (reopen_count/reopened_at) como no fluxo de recusa do portal. Se vinha de um
+     *  status de espera agendado, grava o snapshot p/ o botão "voltar ao status anterior com a data". */
     private function moveToEmAndamento(HelpDeskTicket $t): void
     {
-        // Status "de espera própria" que a resposta do cliente NÃO reativa — mantém o status atual:
-        //  - reuniao_agendada: confirmação/combinado da reunião não é retomada de atendimento;
-        //  - em_desenvolvimento: o chamado segue em desenvolvimento (a resposta não puxa p/ "Em andamento").
-        if (in_array(optional($t->status)->key, ['reuniao_agendada', 'em_desenvolvimento'], true)) return;
         $em = HelpDeskStatus::where('key', 'em_andamento')->first();
         if (!$em || $t->status_id === $em->id) return;
         $old = $t->status;
         $wasResolved = (bool) optional($old)->is_resolved;
+        // Snapshot do estado anterior (só p/ os status marcados) ANTES de reativar — permite restaurar
+        // status + datas + pausa de SLA exatamente como estava. Em outros status, nenhum snapshot.
+        if (in_array(optional($old)->key, self::REACTIVATION_SNAPSHOT_KEYS, true)) {
+            $t->reactivation_snapshot = [
+                'status_id'         => (int) $old->id,
+                'status_key'        => (string) $old->key,
+                'status_label'      => (string) $old->label,
+                'scheduled_until'   => optional($t->scheduled_until)->toIso8601String(),
+                'scheduled_all_day' => (bool) $t->scheduled_all_day,
+                'dev_delivery_at'   => $t->dev_delivery_at ? \Illuminate\Support\Carbon::parse($t->dev_delivery_at)->toDateString() : null,
+                'sla_paused_at'     => optional($t->sla_paused_at)->toIso8601String(),
+                'saved_at'          => now()->toIso8601String(),
+            ];
+        }
         $t->status_id = $em->id;
         if ($wasResolved) {
             $t->reopened_at   = now();
