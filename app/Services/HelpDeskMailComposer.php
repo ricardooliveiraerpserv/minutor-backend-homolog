@@ -273,19 +273,33 @@ class HelpDeskMailComposer
             . '<td valign="middle" style="' . ($logoCell !== '' ? 'padding-left:14px;border-left:1px solid #e6e8ec' : '') . '"><div style="font-size:15px;font-weight:700;color:#111827;line-height:1.2">Central de Atendimento</div><div style="font-size:12px;color:#6b7280;line-height:1.3;margin-top:2px">Minutor Help Desk</div></td>'
             . '</tr></table></div>';
 
+        // Metadados em 2 colunas, compactos e finos (rótulo leve/suave, valor normal).
+        $lbl = 'color:#6b7280;font-weight:600';
+        $cells = [
+            '<span style="' . $lbl . '">Solicitação nº:</span> ' . $num,
+            '<span style="' . $lbl . '">Último status:</span> ' . $status,
+            '<span style="' . $lbl . '">Data de abertura:</span> ' . e($abertura),
+            '<span style="' . $lbl . '">Responsável:</span> ' . $resp,
+        ];
+        if ($ref !== '' && $stKey === 'pendente_terceiros') {
+            $cells[] = '<span style="' . $lbl . '">Fornecedor:</span> ' . e($ref);
+        }
+        $tdS   = 'padding:1px 0;font-size:12px;color:#111827;line-height:1.45;font-family:Arial,Helvetica,sans-serif';
+        $rows  = '';
+        for ($i = 0; $i < count($cells); $i += 2) {
+            $c1 = '<td width="50%" valign="top" style="' . $tdS . '">' . $cells[$i] . '</td>';
+            $c2 = isset($cells[$i + 1]) ? '<td width="50%" valign="top" style="' . $tdS . '">' . $cells[$i + 1] . '</td>' : '<td width="50%"></td>';
+            $rows .= '<tr>' . $c1 . $c2 . '</tr>';
+        }
+        $metaTable = '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 10px">' . $rows . '</table>';
+
         return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
             . '<div style="color:#9ca3af;font-size:11px;margin:0 0 12px">' . e(self::REPLY_DELIMITER) . '</div>'
             . $headerBar
-            . '<div style="font-size:13px;color:#374151;line-height:1.6;margin:0 0 10px">'
-            .   ($subject !== '' ? '<div style="font-size:16px;font-weight:700;color:#111827;margin:0 0 10px">' . $num . ' — ' . $subject . '</div>' : '')
-            .   '<strong>Solicitação nº:</strong> ' . $num . '<br>'
-            .   '<strong>Data de abertura:</strong> ' . e($abertura) . '<br>'
-            .   '<strong>Último status:</strong> ' . $status . '<br>'
-            .   '<strong>Responsável:</strong> ' . $resp
-            .   (($ref !== '' && $stKey === 'pendente_terceiros') ? '<br><strong>Fornecedor:</strong> ' . e($ref) : '')
-            . '</div>'
-            . '<div style="border-top:1px solid #e5e7eb;margin:12px 0 14px"></div>'
-            . '<div style="font-size:14px;font-weight:bold;color:#111827;margin:0 0 18px;padding:0 0 18px;border-bottom:1px solid #e5e7eb">Olá ' . $nome . ',<br>Sua solicitação nº ' . $num . ' foi atualizada.</div>'
+            . ($subject !== '' ? '<div style="font-size:15px;font-weight:700;color:#111827;line-height:1.3;margin:0 0 8px">' . $num . ' — ' . $subject . '</div>' : '')
+            . $metaTable
+            . '<div style="border-top:1px solid #eef0f3;margin:10px 0 10px"></div>'
+            . '<div style="font-size:13px;font-weight:400;color:#374151;line-height:1.5;margin:0 0 14px">Olá <strong style="color:#111827">' . $nome . '</strong>, sua solicitação nº ' . $num . ' foi atualizada.</div>'
             . $aviso
             . '</div>';
     }
