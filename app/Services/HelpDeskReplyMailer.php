@@ -286,8 +286,12 @@ class HelpDeskReplyMailer
      */
     private static function commentAttachments(HelpDeskTicketComment $comment): array
     {
+        // SOMENTE anexos públicos (visibility='customer') vão no e-mail ao cliente. Anexos INTERNOS
+        // — ex.: o CÓDIGO-FONTE (.zip) de "Em Homologação" — nunca podem ir ao cliente (igual ao portal,
+        // que filtra visibility='customer'). O cliente recebe só o texto, não o fonte.
         $atts = Attachment::query()
             ->forEntity('HELPDESK_TICKET_COMMENT', $comment->id)
+            ->where('visibility', 'customer')
             ->whereNull('deleted_at')->get();
         if ($atts->isEmpty()) return [];
 

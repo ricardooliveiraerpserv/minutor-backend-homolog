@@ -2361,10 +2361,20 @@ class HelpDeskTicketController extends Controller
                 ]);
                 // Anexos da interação (estilo e-mail: texto + arquivos/prints juntos). Reúsa o motor de anexos.
                 // "Em Homologação": a interação é PÚBLICA, mas o CÓDIGO-FONTE (.zip) NÃO pode aparecer ao
-                // cliente (portal filtra visibility='customer' e o download exige 'customer'). Quando o FE
-                // sinaliza `source_files_internal`, o(s) .zip vão como 'internal' (os prints/demais seguem
-                // a visibilidade do comentário).
-                $sourceInternal = $request->boolean('source_files_internal');
+                // cliente (portal filtra visibility='customer' e o download exige 'customer'; o e-mail também
+                // só anexa 'customer'). O cliente recebe só o texto, nunca o fonte.
+                // Contexto "homologação" robusto (independe do FE): flag do composer OU status ATUAL já é
+                // em_homologacao (composer aplica o status ANTES de postar) OU o status-ALVO do formulário
+                // dinâmico é em_homologacao (o form aplica o status DEPOIS — detecta pelo helpdesk_forms).
+                $sourceInternal = $request->boolean('source_files_internal')
+                    || optional($ticket->status)->key === 'em_homologacao';
+                if (!$sourceInternal && ($comment->form_kind === 'dynamic') && is_array($comment->solution) && !empty($comment->solution['form_id'])) {
+                    $targetKey = \Illuminate\Support\Facades\DB::table('helpdesk_forms')
+                        ->join('helpdesk_statuses', 'helpdesk_statuses.id', '=', 'helpdesk_forms.status_id')
+                        ->where('helpdesk_forms.id', (int) $comment->solution['form_id'])
+                        ->value('helpdesk_statuses.key');
+                    $sourceInternal = ($targetKey === 'em_homologacao');
+                }
                 foreach ((array) $request->file('files', []) as $file) {
                     $isZip = (bool) preg_match('/\.zip$/i', (string) $file->getClientOriginalName())
                         || in_array((string) $file->getMimeType(), ['application/zip', 'application/x-zip-compressed'], true);
