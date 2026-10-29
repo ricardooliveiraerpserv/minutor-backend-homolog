@@ -257,10 +257,21 @@ class HelpDeskMailComposer
         // Obs.: "Pendente terceiros" NÃO tem aviso de cabeçalho — a mensagem (caixa) já é a própria
         // interação enviada pelo fluxo de fornecedor (evita a mensagem em dobro).
         $nome     = e((string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'cliente'));
+        $subject  = e((string) ($ticket->subject ?: ''));
+        // Cabeçalho com logo (mesmo padrão dos e-mails de notificação). Logo em data URI
+        // (self-contained) — este e-mail de resposta não anexa o CID do logo.
+        $headerLogo = \App\Services\HelpDeskMailFooter::logoDataUri();
+        $logoCell = $headerLogo !== '' ? '<td valign="middle" style="padding-right:14px"><img src="' . $headerLogo . '" alt="ERPSERV" height="34" style="height:34px;width:auto;display:block;border:0" /></td>' : '';
+        $headerBar = '<div style="padding:0 0 16px;border-bottom:1px solid #eef0f3;margin:0 0 16px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            . $logoCell
+            . '<td valign="middle" style="' . ($logoCell !== '' ? 'padding-left:14px;border-left:1px solid #e6e8ec' : '') . '"><div style="font-size:15px;font-weight:700;color:#111827;line-height:1.2">Central de Atendimento</div><div style="font-size:12px;color:#6b7280;line-height:1.3;margin-top:2px">Minutor Help Desk</div></td>'
+            . '</tr></table></div>';
 
         return '<div style="font-family:Arial,Helvetica,sans-serif;color:#111827">'
             . '<div style="color:#9ca3af;font-size:11px;margin:0 0 12px">' . e(self::REPLY_DELIMITER) . '</div>'
+            . $headerBar
             . '<div style="font-size:13px;color:#374151;line-height:1.6;margin:0 0 10px">'
+            .   ($subject !== '' ? '<div style="font-size:16px;font-weight:700;color:#111827;margin:0 0 10px">' . $num . ' — ' . $subject . '</div>' : '')
             .   '<strong>Solicitação nº:</strong> ' . $num . '<br>'
             .   '<strong>Data de abertura:</strong> ' . e($abertura) . '<br>'
             .   '<strong>Último status:</strong> ' . $status . '<br>'
