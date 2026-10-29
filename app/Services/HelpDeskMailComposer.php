@@ -368,15 +368,17 @@ class HelpDeskMailComposer
         $font  = $tpl->font ?: 'Arial, Helvetica, sans-serif';
         $minutor = $tpl->show_minutor
             ? '<div class="hde-foot" style="font-size:11px;color:#9ca3af;margin-top:4px">Mensagem automática · enviada via <span style="color:#6b7280;font-weight:600">Minutor</span></div>' : '';
-        // Subtítulo opcional na FAIXA ROXA (ex.: nº do chamado + título) — texto branco abaixo do logo.
-        $subHtml = ($headerSubtitle !== null && trim($headerSubtitle) !== '')
-            ? '<div style="margin-top:10px;color:#ffffff;font-size:14px;font-weight:700;line-height:1.3">' . e($headerSubtitle) . '</div>'
-            : '';
+        // Cabeçalho SEM logo (imagem): faixa roxa com texto branco = o subtítulo do chamado
+        // (ex.: "Chamado 050697 — TESTE") ou, na falta dele, o nome da empresa.
+        $headTitle = ($headerSubtitle !== null && trim($headerSubtitle) !== '')
+            ? e($headerSubtitle)
+            : e($tpl->company_name);
+        $subHtml = '<div style="color:#ffffff;font-size:17px;font-weight:800;line-height:1.3">' . $headTitle . '</div>';
 
         $inner = '<div class="hde-outer" style="margin:0;padding:0;background:#f3f4f6">'
             . '<div class="hde-card" style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' . $font . ';color:#1f2937;border-radius:10px;overflow:hidden;border:1px solid #e9ebef">'
             // Cabeçalho colorido (marca) + logo branco — legível em claro e escuro.
-            .   '<div class="hde-head" style="background:' . $color . ';padding:18px 24px" bgcolor="' . $color . '"><img src="' . $logo . '" alt="' . e($tpl->company_name) . '" style="height:30px;width:auto;display:block;border:0" />' . $subHtml . '</div>'
+            .   '<div class="hde-head" style="background:' . $color . ';padding:18px 24px" bgcolor="' . $color . '">' . $subHtml . '</div>'
             .   '<div style="padding:22px 24px">'
             .     '<h2 class="hde-title" style="margin:0 0 12px;font-size:18px;color:#111827">' . e($title) . '</h2>'
             .     '<div class="hde-text" style="font-size:14px;line-height:1.6;color:#1f2937">' . $messageHtml . '</div>'

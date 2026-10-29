@@ -336,7 +336,8 @@ class HelpDeskReplyMailer
         $novo  = e($new->ticket_number);
         $ant   = e($old->ticket_number);
         $title = 'Demos continuidade ao seu atendimento';
-        $msg = '<p style="margin:0 0 12px">Olá,</p>'
+        $contNome = trim((string) ($new->requester_name ?: optional($new->contact)->name ?: optional($new->requester)->name));
+        $msg = '<p style="margin:0 0 12px">Olá' . ($contNome !== '' ? ' ' . e($contNome) : '') . ',</p>'
             . '<p style="margin:0 0 12px">Para dar continuidade ao seu atendimento, abrimos um novo chamado: <b>' . $novo . '</b>.</p>'
             . '<p style="margin:0 0 12px">Essa ação foi realizada para manter um histórico organizado e garantir que o acompanhamento da sua solicitação continue normalmente.</p>'
             . '<p style="margin:0 0 12px">O chamado anterior (<b>' . $ant . '</b>) foi encerrado, mas todo o contexto permanece registrado e poderá ser consultado a qualquer momento.</p>'
@@ -397,7 +398,7 @@ class HelpDeskReplyMailer
         if (!$to) return;
 
         $portal = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $ticket->id;
-        $msg = '<p style="margin:0 0 12px">Olá,</p>'
+        $msg = '<p style="margin:0 0 12px">Olá ' . e($clientNm) . ',</p>'
             . '<p style="margin:0 0 12px">Recebemos o retorno de <b>' . e($clientNm) . '</b> informando que a solução do chamado <b>' . $num . '</b> '
             . 'não resolveu. Obrigado por nos avisar.</p>'
             . '<p style="margin:0 0 4px;font-weight:700;color:#111827">O que foi informado:</p>' . $reasonBox
