@@ -71,7 +71,7 @@ class ActionReminderController extends Controller
         $html = \App\Services\HelpDeskMailComposer::composeSimple(
             $d['title'],
             'Lembrete: há itens pendentes aguardando sua ação.',
-            \App\Services\HelpDeskMailFooter::whiteLogoDataUri()
+            \App\Services\HelpDeskMailFooter::logoDataUri()
         );
 
         return response()->json(['data' => [

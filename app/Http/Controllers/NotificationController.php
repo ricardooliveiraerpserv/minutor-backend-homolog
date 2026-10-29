@@ -1288,7 +1288,7 @@ HTML;
         $pollPayload = $v['poll'] ?? null;
         unset($v['poll']);
         $n = new AppNotification($v);
-        $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $this->emailBody($n, $pollPayload), \App\Services\HelpDeskMailFooter::whiteLogoDataUri());
+        $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $this->emailBody($n, $pollPayload), \App\Services\HelpDeskMailFooter::logoDataUri());
         return response()->json(['data' => ['html' => $html, 'recipients' => count($this->resolveRecipientEmails($n))]]);
     }
 

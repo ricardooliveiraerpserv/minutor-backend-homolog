@@ -363,24 +363,32 @@ class HelpDeskMailComposer
     public static function composeSimple(string $title, string $messageHtml, ?string $logoSrc = null, ?string $headerSubtitle = null): string
     {
         $tpl   = HelpDeskCommTemplate::current();
-        $logo  = $logoSrc ?? ('cid:' . HelpDeskMailFooter::LOGO_WHITE_CID);
+        $logo  = $logoSrc ?? ('cid:' . HelpDeskMailFooter::LOGO_CID);
         $color = $tpl->primary_color ?: '#7c3aed';
         $font  = $tpl->font ?: 'Arial, Helvetica, sans-serif';
+        $company = e($tpl->company_name);
         $minutor = $tpl->show_minutor
             ? '<div class="hde-foot" style="font-size:11px;color:#9ca3af;margin-top:4px">Mensagem automática · enviada via <span style="color:#6b7280;font-weight:600">Minutor</span></div>' : '';
-        // Cabeçalho SEM logo (imagem): faixa roxa com texto branco = o subtítulo do chamado
-        // (ex.: "Chamado 050697 — TESTE") ou, na falta dele, o nome da empresa.
-        $headTitle = ($headerSubtitle !== null && trim($headerSubtitle) !== '')
-            ? e($headerSubtitle)
-            : e($tpl->company_name);
-        $subHtml = '<div style="color:#ffffff;font-size:17px;font-weight:800;line-height:1.3">' . $headTitle . '</div>';
+        // Subtítulo opcional (ex.: "Chamado 050697 — TESTE") — linha discreta logo abaixo do título.
+        $subLine = ($headerSubtitle !== null && trim($headerSubtitle) !== '')
+            ? '<div style="font-size:13px;color:#6b7280;line-height:1.4;margin:0 0 12px">' . e($headerSubtitle) . '</div>'
+            : '';
 
         $inner = '<div class="hde-outer" style="margin:0;padding:0;background:#f3f4f6">'
             . '<div class="hde-card" style="max-width:600px;margin:0 auto;background:#ffffff;font-family:' . $font . ';color:#1f2937;border-radius:10px;overflow:hidden;border:1px solid #e9ebef">'
-            // Cabeçalho colorido (marca) + logo branco — legível em claro e escuro.
-            .   '<div class="hde-head" style="background:' . $color . ';padding:18px 24px" bgcolor="' . $color . '">' . $subHtml . '</div>'
+            // Cabeçalho ÚNICO (padrão): logo + "Central de Atendimento / Minutor Help Desk" em fundo branco.
+            .   '<div class="hde-head" style="padding:18px 24px;border-bottom:1px solid #eef0f3;background:#ffffff" bgcolor="#ffffff">'
+            .     '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            .       '<td valign="middle" style="padding-right:14px"><img src="' . $logo . '" alt="' . $company . '" height="34" style="height:34px;width:auto;display:block;border:0" /></td>'
+            .       '<td valign="middle" style="padding-left:14px;border-left:1px solid #e6e8ec">'
+            .         '<div style="font-size:15px;font-weight:700;color:#111827;line-height:1.2">Central de Atendimento</div>'
+            .         '<div style="font-size:12px;color:#6b7280;line-height:1.3;margin-top:2px">Minutor Help Desk</div>'
+            .       '</td>'
+            .     '</tr></table>'
+            .   '</div>'
             .   '<div style="padding:22px 24px">'
-            .     '<h2 class="hde-title" style="margin:0 0 12px;font-size:18px;color:#111827">' . e($title) . '</h2>'
+            .     '<h2 class="hde-title" style="margin:0 0 ' . ($subLine !== '' ? '6' : '12') . 'px;font-size:18px;color:#111827">' . e($title) . '</h2>'
+            .     $subLine
             .     '<div class="hde-text" style="font-size:14px;line-height:1.6;color:#1f2937">' . $messageHtml . '</div>'
             .   '</div>'
             .   '<div class="hde-footwrap" style="padding:14px 24px;background:#fafafa;border-top:1px solid #eef0f3"><div class="hde-foot" style="font-size:12px;color:#6b7280">' . e($tpl->footer_text) . '</div>' . $minutor . '</div>'
@@ -392,7 +400,8 @@ class HelpDeskMailComposer
     /** Anexo inline do logo BRANCO (cabeçalho do e-mail de notificação). */
     public static function inlineAssetsSimple(): array
     {
-        $logo = HelpDeskMailFooter::inlineWhiteLogo();
+        // Header "Central de Atendimento" usa o logo COLORIDO (fundo branco) — mesmo do compose().
+        $logo = HelpDeskMailFooter::inlineLogo();
         return $logo ? [$logo] : [];
     }
 
