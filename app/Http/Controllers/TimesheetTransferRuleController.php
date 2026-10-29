@@ -109,7 +109,7 @@ class TimesheetTransferRuleController extends Controller
         // atribuíveis a uma empresa/regra específica (apareceriam repetidos em toda regra que compartilha o
         // destino). Eles vivem só no consolidado "não registrada" (endpoint untracked). Filtro = base da regra.
         $dateCol  = $rule->date_field === 'digitacao' ? 'created_at' : 'date';
-        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
+        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name,hourly_rate', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
             ->where('transfer_rule_id', $rule->id)
             ->when($dateFrom, fn ($q) => $q->whereDate($dateCol, '>=', $dateFrom))
             ->when($dateUntil, fn ($q) => $q->whereDate($dateCol, '<=', $dateUntil))
@@ -128,6 +128,7 @@ class TimesheetTransferRuleController extends Controller
             'date'               => optional($t->date)->toDateString(),
             'created_at'         => optional($t->created_at)->toIso8601String(),
             'hours'              => round((float) ($t->effort_minutes ?? 0) / 60, 2),
+            'value'              => $t->project && $t->project->hourly_rate !== null ? round(((int) ($t->effort_minutes ?? 0)) / 60 * (float) $t->project->hourly_rate, 2) : null,
             'user'               => optional($t->user)->name,
             'project'            => $t->project ? trim(($t->project->code ? $t->project->code . ' · ' : '') . $t->project->name) : null,
             'origin'             => $t->transfer_source_customer_id
@@ -159,7 +160,7 @@ class TimesheetTransferRuleController extends Controller
         if (! $customerId || empty($targetIds)) {
             return response()->json(['data' => ['total' => 0, 'items' => []]]);
         }
-        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
+        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name,hourly_rate', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
             ->where(function ($w) use ($targetIds) {
                 $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
             })
@@ -272,7 +273,7 @@ class TimesheetTransferRuleController extends Controller
 
         // "Não registrada" agora = sem origem rastreada E sem cliente atual (edge, ~nunca) — pois o
         // manual/nativo em destino já é atribuído ao cliente do projeto destino em totals().
-        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
+        $rows = \App\Models\Timesheet::with(['user:id,name', 'project:id,code,name,hourly_rate', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
             ->whereNull('transfer_source_customer_id')->whereNull('customer_id')
             ->where(function ($w) use ($targetIds) {
                 $w->whereIn('project_id', $targetIds)->orWhereIn('real_project_id', $targetIds);
