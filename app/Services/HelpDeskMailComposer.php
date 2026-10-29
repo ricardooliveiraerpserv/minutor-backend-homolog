@@ -275,9 +275,17 @@ class HelpDeskMailComposer
 
         // Metadados em 2 colunas, compactos e finos (rótulo leve/suave, valor normal).
         $lbl = 'color:#6b7280;font-weight:600';
+        // DESTAQUE do status: pílula sólida na COR do status (fallback roxo). Texto branco/escuro conforme
+        // a luminância da cor (legível em qualquer cor). Fundo sólido p/ compatibilidade com clientes de e-mail.
+        $stColorRaw = (string) optional($ticket->status)->color;
+        $stColor = preg_match('/^#[0-9a-fA-F]{6}$/', $stColorRaw) ? $stColorRaw : '#7c3aed';
+        $stLum = (0.299 * hexdec(substr($stColor, 1, 2)) + 0.587 * hexdec(substr($stColor, 3, 2)) + 0.114 * hexdec(substr($stColor, 5, 2))) / 255;
+        $stText = $stLum > 0.62 ? '#1f2937' : '#ffffff';
+        $statusBadge = '<span style="display:inline-block;background:' . $stColor . ';color:' . $stText
+            . ';font-weight:700;font-size:12px;line-height:1;padding:4px 10px;border-radius:999px;white-space:nowrap">' . $status . '</span>';
         $cells = [
             '<span style="' . $lbl . '">Solicitação nº:</span> ' . $num,
-            '<span style="' . $lbl . '">Último status:</span> ' . $status,
+            '<span style="' . $lbl . '">Último status:</span> ' . $statusBadge,
             '<span style="' . $lbl . '">Data de abertura:</span> ' . e($abertura),
             '<span style="' . $lbl . '">Responsável:</span> ' . $resp,
         ];
