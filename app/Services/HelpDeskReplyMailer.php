@@ -58,14 +58,27 @@ class HelpDeskReplyMailer
         // previsão de entrega. Remove o TEMPLATE FIXO do corpo p/ não duplicar a mensagem — mantém
         // qualquer texto que o consultor tenha escrito depois do template.
         $commentBodyHtml = (string) $comment->body;
+        // ADIAMENTO: re-aplicar "Em Desenvolvimento" num chamado que já estava em desenvolvimento gera o
+        // template "…foi adiada para o dia DD/MM/YYYY". Detecta pelo próprio corpo p/ a caixa roxa dizer
+        // "adiada" (não há status novo — mesma transição) e remove o template fixo p/ não duplicar.
+        $isDevPostpone = false;
         if (optional($ticket->status)->key === 'em_desenvolvimento') {
+            $isDevPostpone = (bool) preg_match(
+                '#<p>\s*Olá! Informamos que a\s*<strong>\s*previsão de entrega em homologação\s*</strong>\s*do seu chamado foi\s*<strong>\s*adiada para o dia\s*\d{2}/\d{2}/\d{4}\s*</strong>\s*\.\s*</p>#iu',
+                $commentBodyHtml
+            );
             $commentBodyHtml = preg_replace(
-                '#<p>\s*Olá! Informamos que seu chamado foi colocado\s*<strong>\s*em desenvolvimento\s*</strong>\s*,\s*com previsão de entrega em\s*<strong>\s*homologação para o dia\s*\d{2}/\d{2}/\d{4}\s*</strong>\s*\.\s*</p>(\s*<p>\s*<br\s*/?>\s*</p>)?#iu',
+                [
+                    // 1º envio: "colocado em desenvolvimento, com previsão … homologação para o dia DD/MM/YYYY"
+                    '#<p>\s*Olá! Informamos que seu chamado foi colocado\s*<strong>\s*em desenvolvimento\s*</strong>\s*,\s*com previsão de entrega em\s*<strong>\s*homologação para o dia\s*\d{2}/\d{2}/\d{4}\s*</strong>\s*\.\s*</p>(\s*<p>\s*<br\s*/?>\s*</p>)?#iu',
+                    // Adiamento: "…foi adiada para o dia DD/MM/YYYY"
+                    '#<p>\s*Olá! Informamos que a\s*<strong>\s*previsão de entrega em homologação\s*</strong>\s*do seu chamado foi\s*<strong>\s*adiada para o dia\s*\d{2}/\d{2}/\d{4}\s*</strong>\s*\.\s*</p>(\s*<p>\s*<br\s*/?>\s*</p>)?#iu',
+                ],
                 '',
                 $commentBodyHtml
             ) ?? $commentBodyHtml;
         }
-        $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket)
+        $bodyWithHistory = \App\Services\HelpDeskMailComposer::updateHeaderHtml($ticket, $isDevPostpone)
             . $updateBanner
             . \App\Services\HelpDeskMailComposer::acceptButtonsHtml($ticket) // Resolvido → botões Aceitar/Recusar NO TOPO
             . $commentBodyHtml

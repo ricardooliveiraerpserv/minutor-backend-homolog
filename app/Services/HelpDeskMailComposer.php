@@ -230,7 +230,7 @@ class HelpDeskMailComposer
      * foi atualizada". Vai no TOPO do e-mail — assim, quando o cliente responder, o texto novo
      * dele fica acima do marcador e o histórico citado é cortado na ingestão.
      */
-    public static function updateHeaderHtml(HelpDeskTicket $ticket): string
+    public static function updateHeaderHtml(HelpDeskTicket $ticket, bool $isPostpone = false): string
     {
         $tz       = 'America/Sao_Paulo';
         $num      = e((string) ($ticket->ticket_number ?: ('#' . $ticket->id)));
@@ -249,6 +249,12 @@ class HelpDeskMailComposer
         $aviso = '';
         if ($stKey === 'aguardando_cliente') {
             $aviso = '<div style="' . $avStyle . '">⏳ <strong>Aguardamos o seu retorno</strong> para darmos continuidade ao atendimento do seu chamado.</div>';
+        } elseif ($stKey === 'em_desenvolvimento' && $isPostpone) {
+            // Re-aplicar "Em Desenvolvimento" num chamado que JÁ estava em desenvolvimento = ADIAR a data.
+            // A caixa deixa explícito o ADIAMENTO (e não um "entrou em desenvolvimento" novo).
+            $aviso = '<div style="' . $avStyle . '">📆 A <strong>previsão de entrega em homologação</strong> do seu chamado foi <strong>adiada'
+                . ($schedTxt !== '' ? ' para ' . e($schedTxt) : '') . '</strong>.'
+                . '</div>';
         } elseif ($stKey === 'em_desenvolvimento') {
             $aviso = '<div style="' . $avStyle . '">🛠️ Sua solicitação está <strong>em desenvolvimento</strong>.'
                 . ($schedTxt !== '' ? ' A previsão de entrega é <strong>' . e($schedTxt) . '</strong>.' : '')
