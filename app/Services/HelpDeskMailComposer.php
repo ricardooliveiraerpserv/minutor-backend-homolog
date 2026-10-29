@@ -77,8 +77,8 @@ class HelpDeskMailComposer
             $acceptReject = '<tr><td align="center" style="padding:22px 28px 0">'
                 . '<div style="font-size:13px;color:#4b5563;margin-bottom:12px">A solução resolveu? Você pode responder direto por aqui:</div>'
                 . '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-                . '<td style="padding:0 6px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#16a34a" style="border-radius:8px"><a href="' . e($aUrl) . '" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px">&#10003; Aceitar e encerrar</a></td></tr></table></td>'
-                . '<td style="padding:0 6px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#ef4444" style="border-radius:8px"><a href="' . e($rUrl) . '" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px">&#10007; Recusar solução</a></td></tr></table></td>'
+                . '<td style="padding:0 6px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#16a34a" style="border-radius:8px"><a href="' . e($aUrl) . '" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px"><span style="color:#ffffff">&#10003; Aceitar e encerrar</span></a></td></tr></table></td>'
+                . '<td style="padding:0 6px"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="#ef4444" style="border-radius:8px"><a href="' . e($rUrl) . '" style="display:inline-block;padding:13px 24px;font-size:14px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:8px"><span style="color:#ffffff">&#10007; Recusar solução</span></a></td></tr></table></td>'
                 . '</tr></table>'
                 . '</td></tr>';
         }
@@ -281,8 +281,8 @@ class HelpDeskMailComposer
         $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject');
         return '<div style="margin:22px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px">'
             . '<div style="font-size:13px;color:#4b5563;margin:0 0 12px">A solução resolveu o seu chamado? Você pode responder direto por aqui:</div>'
-            . '<a href="' . e($aUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#16a34a;text-decoration:none;border-radius:8px;margin:0 8px 8px 0">&#10003; Aceitar e encerrar</a>'
-            . '<a href="' . e($rUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#ef4444;text-decoration:none;border-radius:8px;margin:0 8px 8px 0">&#10007; Recusar solução</a>'
+            . '<a href="' . e($aUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#16a34a;text-decoration:none;border-radius:8px;margin:0 8px 8px 0"><span style="color:#ffffff">&#10003; Aceitar e encerrar</span></a>'
+            . '<a href="' . e($rUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#ef4444;text-decoration:none;border-radius:8px;margin:0 8px 8px 0"><span style="color:#ffffff">&#10007; Recusar solução</span></a>'
             . '</div>';
     }
 
