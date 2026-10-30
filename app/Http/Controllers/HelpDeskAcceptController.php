@@ -89,7 +89,7 @@ class HelpDeskAcceptController extends Controller
                 . 'rich.addEventListener("paste",function(e){var items=(e.clipboardData||{}).items||[],got=0,i;for(i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){var fl=items[i].getAsFile();if(fl){got++;(function(f){var r=new FileReader();r.onload=function(){addImage(r.result);};r.readAsDataURL(f);})(fl);}}}if(got)e.preventDefault();});'
                 . 'if(inp)inp.addEventListener("change",function(){info.textContent=inp.files.length?inp.files.length+" arquivo(s) anexado(s).":"";});'
                 . 'form.addEventListener("submit",function(e){hidden.value=rich.innerHTML;var txt=(rich.textContent||"").replace(/\s+/g,""),hasImg=rich.querySelector("img");if(!txt&&!hasImg){e.preventDefault();rich.style.borderColor="#ef4444";rich.focus();}});})();</script>';
-            return $this->page('Recusar solução · ' . $num, $body);
+            return $this->page('Recusar solução · ' . $num, $body, ticket: $ticket);
         }
 
         $post = URL::temporarySignedRoute('hd.accept.do', now()->addDays(30), ['ticket' => $ticket->id]);
@@ -100,7 +100,7 @@ class HelpDeskAcceptController extends Controller
             . '<button type="submit" style="background:#16a34a;color:#fff;border:0;border-radius:10px;padding:14px 28px;font-size:15px;font-weight:700;cursor:pointer">Confirmar encerramento</button>'
             . '</form>'
             . '<p style="margin-top:16px;font-size:13px"><a href="' . e($reject) . '" style="color:#ef4444">A solução não resolveu? Recusar e reabrir</a></p>';
-        return $this->page('Confirmar encerramento · ' . $num, $body);
+        return $this->page('Confirmar encerramento · ' . $num, $body, ticket: $ticket);
     }
 
     /** POST: encerra o chamado (aceite). */
@@ -154,7 +154,8 @@ class HelpDeskAcceptController extends Controller
                 . '</b> foi <b>encerrado</b>. Muito obrigado pelo seu retorno — ficamos felizes em ter ajudado! 🎉</p>'
                 . '<p style="color:#6b7280;font-size:13px;margin-top:14px">Você já pode fechar esta página.</p>',
             '🚀',
-            '#16a34a'
+            '#16a34a',
+            $ticket
         );
     }
 
@@ -237,7 +238,9 @@ class HelpDeskAcceptController extends Controller
             '<p>Obrigado pelo retorno. O chamado <b>' . e($ticket->ticket_number ?: ('#' . $ticket->id))
                 . '</b> voltou para <b>Em atendimento</b> e nossa equipe já foi avisada para dar continuidade.</p>'
                 . '<p style="color:#6b7280;font-size:13px;margin-top:14px">Você já pode fechar esta página.</p>',
-            '🔧'
+            '🔧',
+
+            ticket: $ticket
         );
     }
 
@@ -265,26 +268,38 @@ class HelpDeskAcceptController extends Controller
      * Página HTML branded (autossuficiente) — logo + tudo CENTRALIZADO.
      * $icon: emoji grande de destaque (ex.: 🚀) para telas de sucesso. $accent: cor do topo.
      */
-    private function page(string $title, string $bodyHtml, string $icon = '', string $accent = self::BRAND)
+    private function page(string $title, string $bodyHtml, string $icon = '', string $accent = self::BRAND, ?HelpDeskTicket $ticket = null)
     {
-        $logo = \App\Services\HelpDeskMailFooter::whiteLogoDataUri();
-        $logoImg = $logo !== ''
-            ? '<img src="' . $logo . '" alt="ERPSERV" style="height:34px;width:auto;display:inline-block;border:0" />'
-            : '<div style="color:#fff;font-weight:800;font-size:20px;letter-spacing:.02em">ERPSERV</div>';
+        // Marca pela EMPRESA DONA do chamado (multi-empresa): Bizify → logo/azul-marinho Bizify;
+        // senão ERPSERV (roxo). Logo COLOR numa faixa BRANCA (confiável — sem logo branco que quebra).
+        $isBizify = $ticket && optional($ticket->company()->first())->slug === 'bizify';
+        if ($isBizify && $accent === self::BRAND) $accent = '#2e3192'; // navy Bizify quando sem accent custom
+        $brandName = $isBizify ? 'BIZIFY' : 'ERPSERV';
+        $logoSrc = '';
+        if ($isBizify) {
+            $bp = public_path('logo-bizify.png');
+            $logoSrc = is_file($bp) ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($bp)) : '';
+        } else {
+            $logoSrc = \App\Services\HelpDeskMailFooter::logoDataUri();
+        }
+        $logoImg = $logoSrc !== ''
+            ? '<img src="' . $logoSrc . '" alt="' . $brandName . '" style="height:40px;width:auto;display:block;margin:0 auto;border:0" />'
+            : '<div style="color:' . $accent . ';font-weight:800;font-size:22px;letter-spacing:.02em">' . $brandName . '</div>';
         $iconHtml = $icon !== '' ? '<div style="font-size:60px;line-height:1;margin:2px 0 12px">' . $icon . '</div>' : '';
         $html = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
             . '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' . e($title) . '</title></head>'
             . '<body style="margin:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#1f2937">'
             . '<div style="max-width:520px;margin:8vh auto;padding:0 16px">'
             . '<div style="background:#fff;border:1px solid #e6e8ec;border-radius:16px;overflow:hidden;box-shadow:0 12px 34px rgba(17,24,39,.10)">'
-            . '<div style="background:' . $accent . ';padding:22px 24px;text-align:center">' . $logoImg . '</div>'
-            . '<div style="padding:32px 28px;text-align:center">'
+            . '<div style="height:5px;background:' . $accent . '"></div>'
+            . '<div style="padding:22px 24px 14px;text-align:center;border-bottom:1px solid #eef0f3">' . $logoImg
+            . '<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a94a6;margin-top:10px">Central de Atendimento · ' . $brandName . '</div></div>'
+            . '<div style="padding:30px 28px;text-align:center">'
             . $iconHtml
-            . '<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a94a6">Central de Atendimento · ERPSERV</div>'
-            . '<h1 style="margin:8px 0 16px;font-size:22px;color:#111827">' . e($title) . '</h1>'
+            . '<h1 style="margin:0 0 16px;font-size:22px;color:#111827">' . e($title) . '</h1>'
             . '<div style="font-size:15px;line-height:1.65;color:#374151">' . $bodyHtml . '</div>'
             . '</div></div>'
-            . '<div style="text-align:center;font-size:12px;color:#9ca3af;margin-top:16px">Mensagem da Central de Atendimento ERPSERV · Minutor</div>'
+            . '<div style="text-align:center;font-size:12px;color:#9ca3af;margin-top:16px">Mensagem da Central de Atendimento ' . $brandName . ' · Minutor</div>'
             . '</div></body></html>';
         return response($html)->header('Content-Type', 'text/html; charset=UTF-8');
     }
