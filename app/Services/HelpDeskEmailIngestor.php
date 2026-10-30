@@ -396,6 +396,10 @@ class HelpDeskEmailIngestor
                 'scheduled_all_day' => (bool) $t->scheduled_all_day,
                 'dev_delivery_at'   => $t->dev_delivery_at ? \Illuminate\Support\Carbon::parse($t->dev_delivery_at)->toDateString() : null,
                 'sla_paused_at'     => optional($t->sla_paused_at)->toIso8601String(),
+                // Pendente terceiros/TOTVS: guarda a justificativa e o fornecedor+nº do ticket p/ restaurar iguais.
+                'justification_id'  => $t->justification_id ? (int) $t->justification_id : null,
+                'justification_name' => (string) optional($t->justification)->name,
+                'external_ticket_ref' => (string) $t->external_ticket_ref,
                 'saved_at'          => now()->toIso8601String(),
             ];
         }

@@ -165,12 +165,19 @@ class HelpDeskTicketController extends Controller
         if (!$ymd && !empty($snap['scheduled_until'])) {
             $ymd = \Illuminate\Support\Carbon::parse($snap['scheduled_until'])->timezone('America/Sao_Paulo')->toDateString();
         }
+        // Pendente terceiros/TOTVS: separa fornecedor e nº do ticket do external_ref (ex.: "TOTVS #45454").
+        $ref = (string) ($snap['external_ticket_ref'] ?? '');
+        $supplierName = $ref !== '' ? trim((string) preg_replace('/\s*#.*$/', '', $ref)) : '';
+        $supplierTicket = (preg_match('/#\s*(.+)$/', $ref, $m)) ? trim($m[1]) : '';
         return [
             'status_id'    => (int) $snap['status_id'],
             'status_key'   => $snap['status_key'] ?? null,
             'status_label' => $snap['status_label'] ?? null,
             'date'         => $ymd, // YYYY-MM-DD (previsão/entrega do status anterior)
             'date_br'      => $ymd ? \Illuminate\Support\Carbon::parse($ymd)->format('d/m/Y') : null,
+            'justification_name' => $snap['justification_name'] ?? null,
+            'supplier_name'   => $supplierName ?: null,   // ex.: "TOTVS"
+            'supplier_ticket' => $supplierTicket ?: null, // ex.: "45454"
         ];
     }
 
@@ -1585,6 +1592,9 @@ class HelpDeskTicketController extends Controller
         $ticket->scheduled_all_day = (bool) ($snap['scheduled_all_day'] ?? false);
         $ticket->dev_delivery_at   = $snap['dev_delivery_at'] ?? null;
         $ticket->sla_paused_at     = !empty($snap['sla_paused_at']) ? \Illuminate\Support\Carbon::parse($snap['sla_paused_at']) : null;
+        // Pendente terceiros/TOTVS: restaura a justificativa e o fornecedor+nº do ticket exatamente como estavam.
+        if (array_key_exists('justification_id', $snap)) $ticket->justification_id = $snap['justification_id'] ?: null;
+        if (array_key_exists('external_ticket_ref', $snap) && $snap['external_ticket_ref'] !== '') $ticket->external_ticket_ref = $snap['external_ticket_ref'];
         $ticket->reactivation_snapshot = null;
         $this->sla->computeBreaches($ticket);
         $ticket->last_activity_at = now();
