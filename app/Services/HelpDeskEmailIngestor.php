@@ -427,6 +427,9 @@ class HelpDeskEmailIngestor
         ?int $customerId, ?CustomerContact $contact, string $messageId, Carbon $receivedAt,
         string $fromEmail, string $fromName
     ): HelpDeskTicket {
+        // Continuação: a descrição é SÓ a mensagem NOVA do cliente — corta o histórico citado do e-mail
+        // (o chamado anterior fica acessível pela tarja amarela + "Ver chamado de origem", não embutido).
+        $body = $this->stripQuotedHistory($body);
         return DB::transaction(function () use ($acc, $prev, $subject, $body, $customerId, $contact, $messageId, $receivedAt, $fromEmail, $fromName) {
             $t = HelpDeskTicket::create([
                 'ticket_number'       => HelpDeskTicketNumber::next(),
