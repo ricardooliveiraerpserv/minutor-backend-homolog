@@ -127,7 +127,7 @@ class GraphMailReader
         $resp = Http::withToken($token)->acceptJson()->get($url, [
             '$top'     => max(1, min($top, 50)),
             '$orderby' => 'receivedDateTime desc',
-            '$select'  => 'id,subject,from,receivedDateTime,bodyPreview,body,isRead,hasAttachments',
+            '$select'  => 'id,subject,from,toRecipients,ccRecipients,receivedDateTime,bodyPreview,body,isRead,hasAttachments',
         ]);
 
         return $resp->successful() ? (array) ($resp->json('value') ?? []) : [];

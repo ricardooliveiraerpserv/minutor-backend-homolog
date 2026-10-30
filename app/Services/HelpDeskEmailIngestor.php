@@ -222,6 +222,7 @@ class HelpDeskEmailIngestor
                     // 1ª resposta a chamado encerrado → abre a continuação e avisa o cliente.
                     $new = $this->openContinuationTicket($acc, $existing, $subject, $body, $customerId, $contact, $messageId, $receivedAt, $fromEmail, $fromName);
                     $sum['tickets']++;
+                    $this->mergeInvolvedEmails($new, $this->involvedEmails($msg, (string) $acc->email, $fromEmail));
                     $this->storeFiles('HELPDESK_TICKET', $new->id, $inboundFiles);
                     try {
                         HelpDeskReplyMailer::sendClosedTicketNotice($acc, $existing, $new, $fromEmail);
@@ -241,6 +242,8 @@ class HelpDeskEmailIngestor
 
             // Anexa a resposta no alvo e move para "Em andamento" (reativa o atendimento).
             $comment = $this->appendClientReply($target, $body, $contact, $messageId, $receivedAt);
+            // Captura novos envolvidos (Para + CC) que apareçam nesta resposta → recebem as próximas respostas.
+            $this->mergeInvolvedEmails($target, $this->involvedEmails($msg, (string) $acc->email, $fromEmail));
             $sum['comments']++;
             $this->storeFiles('HELPDESK_TICKET_COMMENT', $comment->id, $inboundFiles);
             HelpDeskTriggerEngine::dispatch('comment_added', $target->fresh(), ['comment_by' => 'client', 'actor_email' => $fromEmail]);
@@ -280,12 +283,50 @@ class HelpDeskEmailIngestor
         // storeFiles/trigger, que podem falhar/estourar (corpo gigante) e deixariam o e-mail
         // sem marca → reprocessado e duplicado na rodada seguinte.
         $this->ledger($acc, $messageId, $fromEmail, $subject, 'ticket_created', null, $receivedAt, $sum, $ticket->id);
+        // Envolvidos (Para + CC) do e-mail de abertura → viram cc_emails do chamado (recebem as respostas).
+        $this->mergeInvolvedEmails($ticket, $this->involvedEmails($msg, (string) $acc->email, $fromEmail));
         $this->storeFiles('HELPDESK_TICKET', $ticket->id, $inboundFiles);
         // Sem actor_email: num ticket aberto por e-mail o "cliente" É quem disparou; com
         // actor_email o skip_actor do trigger de confirmação (#1) zerava os destinatários e
         // o cliente nunca recebia o e-mail com o nº do chamado. (comment_added mantém actor_email.)
         HelpDeskTriggerEngine::dispatch('ticket_created', $ticket->fresh(), ['comment_by' => 'client']);
         $sum['details'][] = "✅ Chamado {$ticket->ticket_number} aberto de {$fromEmail}: \"{$subject}\".";
+    }
+
+    /** Endereços ENVOLVIDOS (Para + CC) do e-mail recebido — fora o remetente e a própria caixa do
+     *  Help Desk. Normalizados (minúsculas), válidos e únicos. São as pessoas "em cópia" a preservar. */
+    private function involvedEmails(array $msg, string $accountEmail, string $fromEmail): array
+    {
+        $acc = strtolower(trim($accountEmail));
+        $from = strtolower(trim($fromEmail));
+        $out = [];
+        foreach (['toRecipients', 'ccRecipients'] as $k) {
+            foreach ((array) ($msg[$k] ?? []) as $r) {
+                $e = strtolower(trim((string) data_get($r, 'emailAddress.address', '')));
+                if ($e === '' || $e === $acc || $e === $from) continue;
+                if (!filter_var($e, FILTER_VALIDATE_EMAIL)) continue;
+                $out[$e] = $e;
+            }
+        }
+        return array_values($out);
+    }
+
+    /** Mescla os envolvidos (Para+CC) no cc_emails do chamado — sem duplicar e sem incluir o
+     *  solicitante (requester_email). Preserva o que já existia. */
+    private function mergeInvolvedEmails(HelpDeskTicket $ticket, array $involved): void
+    {
+        if (empty($involved)) return;
+        $existing = array_values(array_unique(array_map('strtolower', array_filter((array) $ticket->cc_emails))));
+        $req = strtolower((string) $ticket->requester_email);
+        $merged = $existing;
+        foreach ($involved as $e) {
+            if ($e === $req) continue;
+            if (!in_array($e, $merged, true)) $merged[] = $e;
+        }
+        if (count($merged) !== count($existing)) {
+            $ticket->cc_emails = $merged;
+            $ticket->save();
+        }
     }
 
     /** Anexa a resposta do cliente (e-mail) como interação no chamado alvo e reativa (Em andamento). */
