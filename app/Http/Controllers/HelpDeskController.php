@@ -41,7 +41,12 @@ class HelpDeskController extends Controller
         $profileUserIds = $agentProfileIds->isEmpty() ? collect()
             : User::whereIn('helpdesk_access_profile_id', $agentProfileIds)->where('type', '<>', 'cliente')->pluck('id');
         $allIds = $memberIds->merge($profileUserIds)->unique()->values();
-        $agents = User::whereIn('id', $allIds)->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id']);
+        // REGRA: só é agente DISPONÍVEL quem tem PERFIL HD (kind=agent) cadastrado.
+        // Membro de equipe sem Perfil HD NÃO entra (cai fora pelo whereIn em $agentProfileIds).
+        $agents = User::whereIn('id', $allIds)
+            ->whereIn('helpdesk_access_profile_id', $agentProfileIds)
+            ->where('type', '<>', 'cliente')
+            ->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id']);
         if ($companyId) {
             $pol = app(\App\Services\HelpDeskAccessPolicy::class);
             $agents = $agents->filter(fn ($u) => $pol->attendsCompany($u, $companyId))->values();

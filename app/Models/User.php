@@ -437,14 +437,11 @@ class User extends Authenticatable
     /** Help Desk: é agente (perfil de acesso kind=agent OU membro de alguma equipe HD). */
     public function isHelpDeskAgent(): bool
     {
-        if ($this->helpdesk_access_profile_id
+        // Agente SÓ se tiver PERFIL HD (perfil de acesso kind=agent) atribuído.
+        // Ser membro de equipe, sozinho, NÃO basta — precisa ter Perfil HD cadastrado.
+        return (bool) ($this->helpdesk_access_profile_id
             && \App\Models\HelpDeskAccessProfile::whereKey($this->helpdesk_access_profile_id)
-                ->where('kind', 'agent')->exists()) {
-            return true;
-        }
-        return \Illuminate\Support\Facades\DB::table('helpdesk_team_user')
-            ->where('user_id', $this->id)
-            ->exists();
+                ->where('kind', 'agent')->exists());
     }
 
     // ── BOT: equipe e clientes acessíveis ─────────────────────────────
