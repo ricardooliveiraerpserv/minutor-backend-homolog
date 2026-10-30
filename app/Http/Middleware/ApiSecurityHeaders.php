@@ -22,7 +22,16 @@ class ApiSecurityHeaders
         $response->headers->set('X-Frame-Options', 'DENY');
         $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
-        $response->headers->set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+        // CSP: por padrão bloqueia tudo ('none'). As páginas HTML de aceite/recusa (abertas no
+        // NAVEGADOR do cliente, via link do e-mail) precisam de estilos inline, imagens data: (logo
+        // + prints colados), script inline (editor de recusa) e enviar o form → CSP relaxada só nelas.
+        $htmlPages = ['hd.accept', 'hd.accept.do', 'hd.reject.do'];
+        if (in_array(optional($request->route())->getName(), $htmlPages, true)) {
+            $response->headers->set('Content-Security-Policy',
+                "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
+        } else {
+            $response->headers->set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+        }
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
 
