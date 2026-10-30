@@ -2469,6 +2469,13 @@ class HelpDeskTicketController extends Controller
             \Illuminate\Support\Facades\Log::warning('HelpDesk: dispatch do e-mail de resposta lançou: ' . $e->getMessage());
         }
 
+        // Nova interação do AGENTE descarta a oferta de "voltar ao status anterior" (reativação por
+        // resposta do cliente): o atendente já engajou no chamado, então some o aviso de último status.
+        if ($ticket->reactivation_snapshot) {
+            $ticket->reactivation_snapshot = null;
+            $ticket->save();
+        }
+
         // Gatilhos: interação feita por um AGENTE (usuário logado).
         $u = $request->user();
         \App\Services\HelpDeskTriggerEngine::queue('comment_added', $ticket->fresh(), [
