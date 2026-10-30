@@ -404,6 +404,9 @@ class HelpDeskEmailIngestor
             ];
         }
         $t->status_id = $em->id;
+        // A justificativa (ex.: "TOTVS" do Pendente terceiros) é do status ANTERIOR — some ao reativar
+        // (o chip não deve mostrar "Em atendimento/TOTVS"). O snapshot já a guardou p/ o restore.
+        $t->justification_id = null;
         if ($wasResolved) {
             $t->reopened_at   = now();
             $t->resolved_at   = null;
