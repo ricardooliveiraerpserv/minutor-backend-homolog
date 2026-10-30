@@ -361,7 +361,7 @@ class SignatureRenderer
             .   '<div style="font-size:13px;font-weight:bold;color:' . $nameColor . ';text-transform:uppercase;line-height:1.2;white-space:nowrap">' . e($name) . '</div>'
             .   ($role !== '' ? '<div style="font-size:11px;color:' . $roleColor . ';text-transform:uppercase;line-height:1.3;white-space:nowrap">' . e($role) . '</div>' : '')
             . '</td></tr></table>';
-        $left = '<td valign="top" style="vertical-align:top;padding-right:12px">'
+        $left = '<td class="sigcol" valign="top" style="vertical-align:top;padding-right:12px">'
             . '<img src="' . $logoSrc . '" alt="ERPSERV" width="150" border="0" style="width:150px;max-width:100%;height:auto;display:block;border:0;outline:none" />'
             . $userBlock
             . '</td>';
@@ -510,13 +510,24 @@ class SignatureRenderer
             $colB .= self::contactLine('web', $iconMode, '<a href="' . e($href) . '" target="_blank" style="color:' . $linkColor . ';text-decoration:underline">' . e($d['website']) . '</a>', $textColor, $bk);
         }
         $grid = '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
-            . '<td valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
-            . '<td valign="top" style="vertical-align:top">' . $colB . '</td>'
+            . '<td class="sigcell" valign="top" style="vertical-align:top;padding-right:10px">' . $colA . '</td>'
+            . '<td class="sigcell" valign="top" style="vertical-align:top">' . $colB . '</td>'
             . '</tr></table>';
 
-        $right = '<td valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
+        $right = '<td class="sigcol" valign="top" style="vertical-align:top">' . $topRow . $grid . '</td>';
 
-        return '<table role="presentation" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
+        // Mobile (iOS Mail etc.): o layout de 2 colunas de largura fixa era espremido e o e-mail
+        // quebrava caractere a caractere. A media query EMPILHA as colunas (logo em cima, contatos
+        // embaixo) e deixa o e-mail/site quebrarem por palavra. Desktop e clientes sem @media: inalterado.
+        $mobileCss = '<style>@media only screen and (max-width:480px){'
+            . '.sigroot{width:100%!important}'
+            . '.sigcol{display:block!important;width:100%!important;padding-right:0!important;padding-bottom:10px}'
+            . '.sigcell{display:block!important;width:100%!important;padding-right:0!important}'
+            . '.sigcell div{white-space:normal!important;word-break:break-word!important;overflow-wrap:anywhere!important}'
+            . '}</style>';
+
+        return $mobileCss
+            . '<table role="presentation" class="sigroot" width="1" cellpadding="0" cellspacing="0" border="0" style="max-width:100%;border-collapse:collapse;font-family:Arial,Helvetica,sans-serif;margin-top:6px">'
             . '<tr>' . $left . $right . '</tr></table>';
     }
 }
