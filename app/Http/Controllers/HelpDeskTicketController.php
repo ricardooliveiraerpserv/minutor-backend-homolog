@@ -1397,6 +1397,18 @@ class HelpDeskTicketController extends Controller
         $tagIds = $v['tag_ids'] ?? null;
         unset($v['tag_ids']);
 
+        // O SOLICITANTE nunca entra em cópia (ele já É o destinatário da resposta). Remove o e-mail do
+        // requester do cc_emails na gravação — vale p/ qualquer origem (UI, API). O ingest de e-mail já exclui.
+        if (array_key_exists('cc_emails', $v) && is_array($v['cc_emails'])) {
+            $reqEmail = strtolower(trim((string) ($ticket->requester_email ?: '')));
+            if ($reqEmail !== '') {
+                $v['cc_emails'] = array_values(array_filter(
+                    $v['cc_emails'],
+                    fn ($e) => strtolower(trim((string) $e)) !== $reqEmail
+                ));
+            }
+        }
+
         // Trocar a EMPRESA (cliente) do chamado exige permissão específica do perfil de acesso.
         if (array_key_exists('customer_id', $v) && (int) $v['customer_id'] !== (int) $ticket->customer_id) {
             abort_unless($this->access->canChangeCustomer($request->user()), 403, 'Seu perfil não permite alterar a empresa do chamado.');
