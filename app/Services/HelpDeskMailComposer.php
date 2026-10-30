@@ -281,8 +281,11 @@ class HelpDeskMailComposer
         $stColor = preg_match('/^#[0-9a-fA-F]{6}$/', $stColorRaw) ? $stColorRaw : '#7c3aed';
         $stLum = (0.299 * hexdec(substr($stColor, 1, 2)) + 0.587 * hexdec(substr($stColor, 3, 2)) + 0.114 * hexdec(substr($stColor, 5, 2))) / 255;
         $stText = $stLum > 0.62 ? '#1f2937' : '#ffffff';
+        // "Pendente terceiros" com fornecedor informado → mostra o FORNECEDOR no status (ex.: TOTVS →
+        // "Pendente TOTVS"), deixando explícito com quem o chamado está pendente.
+        $statusLabel = ($stKey === 'pendente_terceiros' && $fornec !== '') ? e('Pendente ' . $fornec) : $status;
         $statusBadge = '<span style="display:inline-block;background:' . $stColor . ';color:' . $stText
-            . ';font-weight:700;font-size:12px;line-height:1;padding:4px 10px;border-radius:999px;white-space:nowrap">' . $status . '</span>';
+            . ';font-weight:700;font-size:12px;line-height:1;padding:4px 10px;border-radius:999px;white-space:nowrap">' . $statusLabel . '</span>';
         $cells = [
             '<span style="' . $lbl . '">Solicitação nº:</span> ' . $num,
             '<span style="' . $lbl . '">Último status:</span> ' . $statusBadge,
