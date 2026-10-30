@@ -441,6 +441,13 @@ class HelpDeskEmailIngestor
                 'requester_name'      => ($contact?->name ?: $fromName) ?: $prev->requester_name,
                 'requester_email'     => $fromEmail ?: $prev->requester_email,
                 'priority'            => $prev->priority ?: 'normal',
+                // Continuação já nasce com a TRIAGEM do chamado anterior preenchida
+                // (Categoria, Serviço, Nível, Contrato/Projeto) — EXCETO o RESPONSÁVEL (assignee fica vazio).
+                'category_id'         => $prev->category_id,
+                'service_id'          => $prev->service_id,
+                'level'               => $prev->level,
+                'contract_id'         => $prev->contract_id,
+                'project_id'          => $prev->project_id,
                 'channel'             => 'email',
                 'status_id'           => optional(HelpDeskStatus::default())->id,
                 'team_id'             => $prev->team_id ?: $acc->default_team_id,
