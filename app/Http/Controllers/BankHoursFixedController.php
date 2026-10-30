@@ -660,7 +660,7 @@ class BankHoursFixedController extends Controller
         $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
         if ($isClienteViewer && $projectId) {
             $selProj = Project::find($projectId);
-            if ($selProj && $selProj->client_follows_timesheets === false) {
+            if ($selProj && !$selProj->clientSeesTimesheets()) {
                 $consumedHours       = round($contractedHours + $contributedHours, 2);
                 $hoursBalance        = 0.0;
                 $monthConsumedHours  = 0.0;
@@ -909,7 +909,7 @@ class BankHoursFixedController extends Controller
                 // (client_follows_timesheets) E "Cliente vê o Extrato"
                 // (extrato_visivel_cliente). Qualquer uma em false → front mostra "—".
                 // null/true contam como ligado.
-                'consumo_visivel_cliente' => $project->client_follows_timesheets !== false
+                'consumo_visivel_cliente' => $project->clientSeesTimesheets()
                     && $project->extrato_visivel_cliente !== false,
                 'hours_balance' => $adjustedBalance,
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
@@ -5038,7 +5038,7 @@ class BankHoursFixedController extends Controller
         // os apontamentos desse projeto (admin/coord seguem vendo).
         if ($isClienteViewer) {
             $selProj = Project::find($projectId);
-            if ($selProj && $selProj->client_follows_timesheets === false) {
+            if ($selProj && !$selProj->clientSeesTimesheets()) {
                 return response()->json(['success' => true, 'data' => []]);
             }
         }

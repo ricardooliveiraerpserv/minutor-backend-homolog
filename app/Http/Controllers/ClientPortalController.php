@@ -768,7 +768,7 @@ class ClientPortalController extends Controller
             // "Cliente acompanha apontamento" DESLIGADO: o cliente não vê o detalhe.
             // Exibe neutro, SEM saúde (igual projeto Fechado) — sem barra, sem saldo,
             // sem % e sem chip de risco. Não vaza o consumo/saldo real.
-            if (($p->client_follows_timesheets ?? true) === false) {
+            if (!$p->clientSeesTimesheets()) {
                 return [
                     'id'             => $p->id,
                     'code'           => $p->code,

@@ -1053,6 +1053,13 @@ class Project extends Model
         return strtolower(trim($this->contractType->name)) === 'on demand';
     }
 
+    /** O CLIENTE enxerga os apontamentos/consumo deste projeto? On Demand SEMPRE expõe (o consumo é a
+     *  base da cobrança); os demais respeitam a chave "Cliente acompanha apontamentos". */
+    public function clientSeesTimesheets(): bool
+    {
+        return $this->client_follows_timesheets !== false || $this->isOnDemandType();
+    }
+
     /**
      * On Demand por QUALQUER das fontes (tipo de contrato por name/code OU tipo_faturamento).
      * Mais abrangente que isOnDemand() — cobre o caso de On Demand cadastrado com

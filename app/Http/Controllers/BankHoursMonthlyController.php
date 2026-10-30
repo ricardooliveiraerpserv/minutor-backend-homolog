@@ -901,7 +901,7 @@ class BankHoursMonthlyController extends Controller
                 // (client_follows_timesheets) E "Cliente vê o Extrato"
                 // (extrato_visivel_cliente). Qualquer uma em false → front mostra "—".
                 // null/true contam como ligado.
-                'consumo_visivel_cliente' => $project->client_follows_timesheets !== false
+                'consumo_visivel_cliente' => $project->clientSeesTimesheets()
                     && $project->extrato_visivel_cliente !== false,
                 'hours_balance' => round($project->getGeneralHoursBalance(), 2),
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
