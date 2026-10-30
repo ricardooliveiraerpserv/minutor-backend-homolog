@@ -316,7 +316,10 @@ class HelpDeskAcceptController extends Controller
             . '<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a94a6;margin-top:10px">Central de Atendimento · ' . $brandName . '</div></div>'
             . '<div style="padding:30px 28px;text-align:center">'
             . $iconHtml
-            . '<h1 style="margin:0 0 16px;font-size:22px;color:#111827">' . e($title) . '</h1>'
+            . '<h1 style="margin:0 0 ' . ($ticket && trim((string) $ticket->subject) !== '' ? '6px' : '16px') . ';font-size:22px;color:#111827">' . e($title) . '</h1>'
+            . ($ticket && trim((string) $ticket->subject) !== ''
+                ? '<div style="margin:0 0 18px;font-size:16px;font-weight:600;line-height:1.4;color:#374151">' . e($ticket->subject) . '</div>'
+                : '')
             . '<div style="font-size:15px;line-height:1.65;color:#374151">' . $bodyHtml . '</div>'
             . '</div></div>'
             . '<div style="text-align:center;font-size:12px;color:#9ca3af;margin-top:16px">Mensagem da Central de Atendimento ' . $brandName . ' · Minutor</div>'
