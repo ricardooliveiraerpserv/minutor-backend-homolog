@@ -371,7 +371,7 @@ class HelpDeskMailComposer
             $items[] = [
                 'when' => $ticket->created_at,
                 'who'  => (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente'),
-                'html' => self::richHtml((string) $ticket->description),
+                'html' => self::richHtmlNoImg((string) $ticket->description),
             ];
         }
 
@@ -384,7 +384,7 @@ class HelpDeskMailComposer
             $who = $c->author_user_id
                 ? (optional(\App\Models\User::find($c->author_user_id))->name ?: 'Suporte ERPSERV')
                 : (string) ($ticket->solicitanteName() ?: $ticket->requester_name ?: 'Cliente');
-            $items[] = ['when' => $c->created_at, 'who' => $who, 'html' => self::richHtml((string) $c->body)];
+            $items[] = ['when' => $c->created_at, 'who' => $who, 'html' => self::richHtmlNoImg((string) $c->body)];
         }
 
         if (empty($items)) return '';
@@ -575,6 +575,23 @@ class HelpDeskMailComposer
         if ($html === '') return '—';
         $html = preg_replace('/<\s*(script|iframe|object|embed|style)\b[^>]*>.*?<\s*\/\s*\1\s*>/is', '', $html) ?? $html;
         $html = preg_replace('/\son\w+\s*=\s*("[^"]*"|\'[^\']*\')/i', '', $html) ?? $html; // on* handlers
+        return '<div style="max-width:100%;overflow-x:auto">' . $html . '</div>';
+    }
+
+    /** Igual ao richHtml, mas REMOVE as imagens (<img>) — usado no HISTÓRICO da conversa. Um fio longo
+     *  com dezenas de prints colados (data:image) gera um e-mail de MBs → o envio ao Graph pendura
+     *  (muitos anexos inline/upload sessions). As imagens ficam na interação original/portal; aqui vira
+     *  um marcador leve. A MENSAGEM ATUAL (fora do histórico) mantém as imagens normalmente. */
+    private static function richHtmlNoImg(string $html): string
+    {
+        $html = trim($html);
+        if ($html === '') return '—';
+        $html = preg_replace('/<\s*(script|iframe|object|embed|style)\b[^>]*>.*?<\s*\/\s*\1\s*>/is', '', $html) ?? $html;
+        $html = preg_replace('/\son\w+\s*=\s*("[^"]*"|\'[^\']*\')/i', '', $html) ?? $html;
+        // Remove TODA <img> (data: e http) → substitui por um marcador discreto (evita payload gigante).
+        $html = preg_replace('/<img\b[^>]*>/i',
+            '<span style="display:inline-block;font-size:12px;color:#6b7280;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;padding:1px 6px">🖼️ imagem</span>',
+            $html) ?? $html;
         return '<div style="max-width:100%;overflow-x:auto">' . $html . '</div>';
     }
 
