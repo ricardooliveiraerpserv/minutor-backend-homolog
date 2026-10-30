@@ -72,8 +72,8 @@ class HelpDeskMailComposer
         // assinado — o cliente decide direto do e-mail, SEM login. Encerra ou reabre "Em atendimento".
         $acceptReject = '';
         if (optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal) {
-            $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept');
-            $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject');
+            $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept', (int) $ticket->reopen_count);
+            $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject', (int) $ticket->reopen_count);
             $acceptReject = '<tr><td align="center" style="padding:22px 28px 0">'
                 . '<div style="font-size:13px;color:#4b5563;margin-bottom:12px">A solução resolveu? Você pode responder direto por aqui:</div>'
                 . '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
@@ -321,8 +321,8 @@ class HelpDeskMailComposer
     public static function acceptButtonsHtml(HelpDeskTicket $ticket): string
     {
         if (!(optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal)) return '';
-        $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept');
-        $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject');
+        $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept', (int) $ticket->reopen_count);
+        $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject', (int) $ticket->reopen_count);
         return '<div style="margin:22px 0 6px;border-top:1px solid #e5e7eb;padding-top:16px">'
             . '<div style="font-size:13px;color:#4b5563;margin:0 0 12px">A solução resolveu o seu chamado? Você pode responder direto por aqui:</div>'
             . '<a href="' . e($aUrl) . '" style="display:inline-block;padding:12px 22px;font-size:14px;font-weight:700;color:#ffffff;background:#16a34a;text-decoration:none;border-radius:8px;margin:0 8px 8px 0"><span style="color:#ffffff">&#10003; Aceitar e encerrar</span></a>'

@@ -32,8 +32,10 @@ class HelpDeskAcceptController extends Controller
         return $st && $st->is_resolved && !$st->is_terminal;
     }
 
-    /** Link assinado (30 dias) da tela de aceite/recusa — usado nos botões do e-mail. */
-    public static function actionUrl(int $ticketId, string $acao): string
+    /** Link assinado (30 dias) da tela de aceite/recusa — usado nos botões do e-mail. $rc = ciclo
+     *  (reopen_count) no momento da solução: amarra o link a ESTA solução — ao re-resolver (reopen++),
+     *  os links das soluções anteriores expiram. */
+    public static function actionUrl(int $ticketId, string $acao, int $rc = 0): string
     {
         // O link precisa apontar SEMPRE para o host público do backend (APP_URL). A request
         // que gera o e-mail chega proxiada pelo frontend (host minutor-frontend + porta interna
@@ -42,11 +44,19 @@ class HelpDeskAcceptController extends Controller
         URL::forceRootUrl(config('app.url'));
         URL::forceScheme('https');
         try {
-            return URL::temporarySignedRoute('hd.accept', now()->addDays(30), ['ticket' => $ticketId, 'acao' => $acao]);
+            return URL::temporarySignedRoute('hd.accept', now()->addDays(30), ['ticket' => $ticketId, 'acao' => $acao, 'rc' => $rc]);
         } finally {
             URL::forceRootUrl(null);
             URL::forceScheme(null);
         }
+    }
+
+    /** Link de uma SOLUÇÃO ANTERIOR? (ciclo rc != reopen_count atual). Só aplica quando o rc veio
+     *  assinado no link (links antigos sem rc caem só na trava por status). */
+    private function resolutionExpired(Request $request, HelpDeskTicket $ticket): bool
+    {
+        $rc = $request->query('rc');
+        return $rc !== null && (int) $rc !== (int) $ticket->reopen_count;
     }
 
     /** Página (GET): confirmação de encerramento (verde) ou formulário de recusa (vermelho). */
@@ -55,6 +65,10 @@ class HelpDeskAcceptController extends Controller
         abort_unless($request->hasValidSignature(), 403, 'Link inválido ou expirado.');
         $acao = $request->query('acao') === 'reject' ? 'reject' : 'accept';
 
+        if ($this->resolutionExpired($request, $ticket)) {
+            return $this->page('Link expirado', '<p>Este link é de uma <b>solução anterior</b> deste chamado. '
+                . 'Uma nova atualização foi enviada — use o <b>e-mail mais recente</b> para aceitar ou recusar.</p>', ticket: $ticket);
+        }
         if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando seu aceite '
                 . '(status atual: <b>' . e(optional($ticket->status)->label ?: '—') . '</b>). Nenhuma ação é necessária.</p>');
@@ -62,7 +76,7 @@ class HelpDeskAcceptController extends Controller
 
         $num = e($ticket->ticket_number ?: ('#' . $ticket->id));
         if ($acao === 'reject') {
-            $post = URL::temporarySignedRoute('hd.reject.do', now()->addDays(30), ['ticket' => $ticket->id]);
+            $post = URL::temporarySignedRoute('hd.reject.do', now()->addDays(30), ['ticket' => $ticket->id, 'rc' => $ticket->reopen_count]);
             $body = '<p>Conte pra gente o que faltou na solução do chamado <b>' . $num . '</b>. '
                 . 'Ao enviar, o chamado volta para <b>Em atendimento</b> e nossa equipe retoma o tratamento.</p>'
                 . '<style>#reasonRich:empty:before{content:attr(data-ph);color:#9ca3af}#reasonRich:focus{border-color:#7c3aed}#reasonRich .rich-img{outline:1px dashed #c4b5fd;margin:6px 0}#reasonRich .rich-img:hover{outline-color:#7c3aed}</style>'
@@ -92,7 +106,7 @@ class HelpDeskAcceptController extends Controller
             return $this->page('Recusar solução · ' . $num, $body, ticket: $ticket);
         }
 
-        $post = URL::temporarySignedRoute('hd.accept.do', now()->addDays(30), ['ticket' => $ticket->id]);
+        $post = URL::temporarySignedRoute('hd.accept.do', now()->addDays(30), ['ticket' => $ticket->id, 'rc' => $ticket->reopen_count]);
         $reject = self::actionUrl($ticket->id, 'reject');
         $body = '<p>Você está confirmando que a solução do chamado <b>' . $num . '</b> resolveu. '
             . 'Ao confirmar, o chamado será <b>encerrado</b>.</p>'
@@ -107,6 +121,9 @@ class HelpDeskAcceptController extends Controller
     public function accept(Request $request, HelpDeskTicket $ticket)
     {
         abort_unless($request->hasValidSignature(), 403, 'Link inválido ou expirado.');
+        if ($this->resolutionExpired($request, $ticket)) {
+            return $this->page('Link expirado', '<p>Este link é de uma <b>solução anterior</b> deste chamado. Use o <b>e-mail mais recente</b>.</p>', ticket: $ticket);
+        }
         if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando aceite. Obrigado!</p>');
         }
@@ -163,6 +180,9 @@ class HelpDeskAcceptController extends Controller
     public function reject(Request $request, HelpDeskTicket $ticket)
     {
         abort_unless($request->hasValidSignature(), 403, 'Link inválido ou expirado.');
+        if ($this->resolutionExpired($request, $ticket)) {
+            return $this->page('Link expirado', '<p>Este link é de uma <b>solução anterior</b> deste chamado. Use o <b>e-mail mais recente</b>.</p>', ticket: $ticket);
+        }
         // O campo agora é um editor rico (contenteditable) → vem HTML com o print colado INLINE.
         // Sanitiza (remove script/handlers, só imagens data:/http) e valida "vazio" (sem texto E sem imagem).
         $reason = self::sanitizeRejectHtml((string) $request->input('reason'));
