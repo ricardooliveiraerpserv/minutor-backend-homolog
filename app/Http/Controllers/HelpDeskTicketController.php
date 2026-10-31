@@ -2412,6 +2412,13 @@ class HelpDeskTicketController extends Controller
                 }
                 $ticket->update(['last_activity_at' => now()]);
                 HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $comment->id, 'visibility' => $comment->visibility]]);
+                // Apontamento oficial (TimesheetController::store) DENTRO da transação: se violar QUALQUER
+                // regra de apontamento (saldo/horas negativas, fechamento de competência, projeto), REVERTE
+                // a interação inteira e devolve 422. O conflito de horário por cliente já foi pré-checado acima.
+                $apontErro = $this->maybeCreateInteractionTimesheet($ticket, $comment, $effortMinutes, $workedDate, $request);
+                if ($apontErro !== null) {
+                    throw new \RuntimeException('__APONT_BLOCK__' . $apontErro);
+                }
                 return $comment;
             });
         } catch (\Illuminate\Database\QueryException $e) {
@@ -2423,12 +2430,14 @@ class HelpDeskTicketController extends Controller
                 return response()->json(['data' => $arr], 200);
             }
             throw $e;
+        } catch (\RuntimeException $e) {
+            // Apontamento bloqueado por regra (saldo/horas negativas, fechamento de competência, projeto)
+            // → a interação inteira foi revertida. Devolve o motivo ao usuário.
+            if (str_starts_with($e->getMessage(), '__APONT_BLOCK__')) {
+                return response()->json(['code' => 'APONTAMENTO_BLOCKED', 'message' => substr($e->getMessage(), 15)], 422);
+            }
+            throw $e;
         }
-
-        // Integração de horas (substitui Movidesk): interação com tempo + contrato com a
-        // chave ligada → gera o apontamento oficial FORA da transação da interação. Best-effort:
-        // uma falha de saldo/projeto avisa o usuário, mas nunca perde a interação já gravada.
-        $apontamentoWarning = $this->maybeCreateInteractionTimesheet($ticket, $comment, $effortMinutes, $workedDate, $request);
 
         // Enviar uma SOLUÇÃO (Detalhamento/GMUD/form dinâmico) move o chamado para o status DEFINIDO
         // no próprio formulário — ANTES do e-mail, para que a mensagem já saia com o status certo (e,
@@ -2484,9 +2493,6 @@ class HelpDeskTicketController extends Controller
 
         $arr = $comment->load('author:id,name')->toArray();
         $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $comment->id, $request->user())->values();
-        if ($apontamentoWarning) {
-            $arr['apontamento_warning'] = $apontamentoWarning;
-        }
         return response()->json(['data' => $arr], 201);
     }
 
@@ -2505,11 +2511,9 @@ class HelpDeskTicketController extends Controller
         if (!$effortMinutes || $effortMinutes <= 0) return null;
         if ($noCharge) return null;
         if ($visibility !== 'customer') return null;
-        // Integração ligada no CONTRATO (sustentação) OU no PROJETO vinculado (projetos comuns
-        // sem contrato). Basta um dos dois para movimentar horas.
-        $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
-        $project  = $ticket->project_id ? \App\Models\Project::find($ticket->project_id) : null;
-        if (!(($contract && $contract->helpdesk_integration_enabled) || ($project && $project->helpdesk_integration_enabled))) return null;
+        // SEMPRE vira apontamento real (gatilho de integração removido por decisão de produto):
+        // toda resposta ao cliente com tempo movimenta horas via TimesheetController::store(),
+        // respeitando TODAS as regras (conflito por cliente, saldo/negativas, fechamento de competência).
         return $this->resolveProjectForApontamento($ticket);
     }
 
@@ -2615,13 +2619,8 @@ class HelpDeskTicketController extends Controller
             return null;
         }
 
-        // Integração ligada no CONTRATO (sustentação) OU no PROJETO vinculado (projetos comuns).
-        $contract = $ticket->contract_id ? \App\Models\Contract::find($ticket->contract_id) : null;
-        $project  = $ticket->project_id ? \App\Models\Project::find($ticket->project_id) : null;
-        if (!(($contract && $contract->helpdesk_integration_enabled) || ($project && $project->helpdesk_integration_enabled))) {
-            return null; // integração desligada: guarda o tempo na interação, mas não movimenta horas
-        }
-
+        // SEMPRE movimenta horas (gatilho de integração removido por decisão de produto):
+        // a resposta ao cliente com tempo gera apontamento real, independentemente do toggle do contrato.
         $projectId = $this->resolveProjectForApontamento($ticket);
         if (!$projectId) {
             \Illuminate\Support\Facades\Log::warning('HelpDesk: interação com tempo sem projeto para apontamento', [
