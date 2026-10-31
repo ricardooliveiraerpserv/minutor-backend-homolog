@@ -74,7 +74,15 @@ class HelpDeskController extends Controller
         return response()->json(['data' => [
             'priorities' => HelpDeskTicket::PRIORITIES,
             'channels'   => HelpDeskTicket::CHANNELS,
-            'statuses'   => HelpDeskStatus::where('active', true)->orderBy('sort_order')->get(),
+            // Status são por EMPRESA (BelongsToCompany). Sem empresa ativa no request, a query
+            // traria as duas empresas (ERPSERV + BIZIFY) → chips duplicados. Escopa às empresas
+            // que o usuário ATENDE (companiesScope) e deduplica por `key`.
+            'statuses'   => (function () {
+                $cos = app(\App\Services\HelpDeskAccessPolicy::class)->companiesScope(auth()->user());
+                $q = HelpDeskStatus::where('active', true);
+                if (! empty($cos)) { $q->whereIn('company_id', $cos); }
+                return $q->orderBy('sort_order')->orderBy('id')->get()->unique('key')->values();
+            })(),
             'categories' => HelpDeskCategory::where('active', true)->orderBy('sort_order')->orderBy('name')
                 ->get(['id', 'parent_id', 'name', 'color', 'default_team_id', 'sla_policy_id']),
             'teams'      => HelpDeskTeam::where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name', 'color']),
