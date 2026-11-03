@@ -402,16 +402,13 @@ class HelpDeskReplyMailer
         $reasonBox = '<div style="margin:0 0 14px;padding:12px 14px;background:#fef2f2;border:1px solid #fecaca;'
             . 'border-radius:8px;color:#7f1d1d;word-break:break-word">' . $reason . '</div>';
 
-        // UM ÚNICO e-mail na sequência do chamado: To = cliente, Cc = responsável (equipe). Sem e-mail
-        // do cliente, vai pro time como To. Nada de mandar 2 e-mails (cliente + agente) separados.
-        $to = self::resolveRecipient($ticket);          // cliente
+        // E-mail "ao cliente" na sequência do chamado: To = cliente. Sem e-mail do cliente, cai pro
+        // consultor (ou caixa do time) como To. SEM Cc do responsável — o consultor recebe um AVISO
+        // DEDICADO (logo abaixo), separado do e-mail do cliente, pra ficar visível pra ele.
+        $clientTo = self::resolveRecipient($ticket);    // cliente
         $assignee = trim((string) optional($ticket->assignee)->email);
+        $to = $clientTo ?: ($assignee !== '' ? $assignee : (string) $from->email);
         $cc = [];
-        if ($to) {
-            if ($assignee !== '' && strcasecmp($assignee, $to) !== 0) $cc[] = $assignee;
-        } else {
-            $to = $assignee !== '' ? $assignee : (string) $from->email; // fallback: caixa do time
-        }
         if (!$to) return;
 
         $portal = rtrim((string) config('app.frontend_url', config('app.url')), '/') . '/help-desk/portal?ticket=' . $ticket->id;
@@ -437,6 +434,23 @@ class HelpDeskReplyMailer
         );
         if (empty($anchor) && $captured) self::rememberAnchor($ticket, $captured);
         if (!$ok) Log::warning("HelpDesk: e-mail de recusa falhou ({$ticket->ticket_number}→{$to}): {$err}");
+
+        // AVISO DEDICADO ao CONSULTOR responsável (separado do e-mail do cliente), no modelo #552.
+        // Só quando houve e-mail do cliente E o responsável é outra pessoa (senão ele já recebeu o
+        // e-mail acima como To). O motivo da recusa aparece no histórico (comentário visível).
+        if ($assignee !== '' && $clientTo && strcasecmp($assignee, (string) $clientTo) !== 0) {
+            $agNum  = $ticket->ticket_number ?: ('#' . $ticket->id);
+            $agHtml = HelpDeskMailComposer::composeUpdate(
+                'O cliente recusou a solução proposta. O motivo informado e o histórico completo estão abaixo — o chamado já voltou para a sua responsabilidade.',
+                [], $ticket, 'responsavel',
+                '👈 O cliente recusou a solução',
+                'O chamado nº ' . $agNum . ' foi reaberto e voltou para a sua responsabilidade.'
+            );
+            [$agHtml, $agImg] = HelpDeskMailComposer::inlineImages($agHtml);
+            $agAnchor = optional($ticket->fresh())->graph_thread_msg_id ?: $ticket->graph_thread_msg_id;
+            [$agOk, $agErr] = GraphMailSender::sendAs((string) $from->email, [$assignee], [], self::subjectFor($ticket), $agHtml, [], $agImg, false, [], $agAnchor);
+            if (!$agOk) Log::warning("HelpDesk: aviso de recusa ao consultor falhou ({$ticket->ticket_number}→{$assignee}): {$agErr}");
+        }
     }
 
     /** Assunto com token [HD-xxxxxx] + prefixo Re: — garante o threading no retorno. */

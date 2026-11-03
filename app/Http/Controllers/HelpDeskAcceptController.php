@@ -244,9 +244,9 @@ class HelpDeskAcceptController extends Controller
             }
         }
 
-        // UM ÚNICO e-mail de recusa (To cliente, Cc responsável), determinístico e threadado, pela
-        // fila 'emails' (throttle/retry). NÃO disparamos o gatilho status_changed aqui: ele geraria
-        // um 2º e-mail (duplicata) — o usuário quer uma única mensagem na sequência do chamado.
+        // E-mail de recusa (To cliente) + AVISO DEDICADO ao consultor responsável (#552, separado),
+        // determinístico e threadado, pela fila 'emails' (throttle/retry). NÃO disparamos o gatilho
+        // status_changed aqui: ele geraria um e-mail duplicado — o fluxo de recusa já cuida do envio.
         try {
             \App\Jobs\SendHelpDeskRejectionEmailsJob::dispatch($ticket->id, $reason, $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
         } catch (\Throwable $e) {
