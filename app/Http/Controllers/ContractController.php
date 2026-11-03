@@ -1541,7 +1541,11 @@ class ContractController extends Controller
         foreach ($projects as $p) {
             $logged  = (float) ($timesheetSums[$p->id] ?? 0);
             $sustCol = (!$isConsultor && !$isCliente) ? $this->sustColumnForProject($p) : null;
-            if ($sustCol && $p->kanban_coordinator_override_id === null) {
+            // Projeto de sustentação com coordenador ATRIBUÍDO (override OU na relação M2M) sai da
+            // fila de sustentação e vai pra COLUNA desse coordenador (igual a projeto comum) — some
+            // da visão do coord de sustentação. Sem coordenador atribuído, fica na fila do seu tipo.
+            $hasAssignedCoord = $p->kanban_coordinator_override_id !== null || $p->coordinators->isNotEmpty();
+            if ($sustCol && !$hasAssignedCoord) {
                 $formatted = $this->formatProjectCard($p, $logged, $weightedMap);
                 $formatted['sustentacao_column'] = $sustCol;
                 $sustProjectsByColumn[$sustCol][] = $formatted;
