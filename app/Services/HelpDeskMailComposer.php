@@ -230,7 +230,7 @@ class HelpDeskMailComposer
      * foi atualizada". Vai no TOPO do e-mail — assim, quando o cliente responder, o texto novo
      * dele fica acima do marcador e o histórico citado é cortado na ingestão.
      */
-    public static function updateHeaderHtml(HelpDeskTicket $ticket, bool $isPostpone = false): string
+    public static function updateHeaderHtml(HelpDeskTicket $ticket, bool $isPostpone = false, ?string $greetingOverride = null): string
     {
         $tz       = 'America/Sao_Paulo';
         $num      = e((string) ($ticket->ticket_number ?: ('#' . $ticket->id)));
@@ -312,9 +312,74 @@ class HelpDeskMailComposer
             . ($subject !== '' ? '<div style="font-size:15px;font-weight:700;color:#111827;line-height:1.3;margin:0 0 8px">' . $num . ' — ' . $subject . '</div>' : '')
             . $metaTable
             . '<div style="border-top:1px solid #eef0f3;margin:10px 0 10px"></div>'
-            . '<div style="font-size:13px;font-weight:400;color:#374151;line-height:1.5;margin:0 0 14px">Olá <strong style="color:#111827">' . $nome . '</strong>, sua solicitação nº ' . $num . ' foi atualizada.</div>'
+            . '<div style="font-size:13px;font-weight:400;color:#374151;line-height:1.5;margin:0 0 14px">'
+                . ($greetingOverride !== null ? $greetingOverride
+                    : 'Olá <strong style="color:#111827">' . $nome . '</strong>, sua solicitação nº ' . $num . ' foi atualizada.')
+                . '</div>'
             . $aviso
             . '</div>';
+    }
+
+    /**
+     * Notificação de gatilho no modelo COMPACTO (mesmo layout do e-mail de resposta ao cliente):
+     * cabeçalho + metadados (Solicitação nº / Último status / Data / Responsável) + saudação por
+     * audiência + conteúdo do gatilho (título/subtítulo/mensagem) + botões Aceitar/Recusar (quando
+     * resolvido) + link do chamado + histórico. Substitui o card institucional (compose) nas
+     * notificações. Logo via data URI (self-contained → vira cid no inlineImages).
+     */
+    public static function composeUpdate(string $message, array $blocks, HelpDeskTicket $ticket, string $audience = 'cliente', ?string $notifTitle = null, ?string $notifSubtitle = null): string
+    {
+        $tpl   = HelpDeskCommTemplate::current();
+        $color = $tpl->primary_color ?: '#7c3aed';
+        $font  = $tpl->font ?: 'Arial, Helvetica, sans-serif';
+
+        // Saudação por audiência: cliente → padrão do updateHeaderHtml ("sua solicitação foi
+        // atualizada"); responsável → nome do agente; interno → genérica.
+        $greeting = null;
+        if ($audience === 'responsavel') {
+            $ag = trim((string) optional($ticket->assignee)->name);
+            $greeting = 'Olá <strong style="color:#111827">' . e($ag !== '' ? $ag : 'responsável') . '</strong>,';
+        } elseif ($audience === 'interno') {
+            $greeting = 'Olá,';
+        }
+
+        // Conteúdo do gatilho (título/subtítulo/mensagem) — placeholders renderizados; mensagem
+        // tratada como texto (escapa + nl2br), igual ao card.
+        $t = trim((string) ($notifTitle !== null ? HelpDeskTriggerEngine::render($notifTitle, $ticket) : ''));
+        $s = trim((string) ($notifSubtitle !== null ? HelpDeskTriggerEngine::render($notifSubtitle, $ticket) : ''));
+        $m = nl2br(e(HelpDeskTriggerEngine::render($message, $ticket)));
+        $content = '';
+        if ($t !== '') $content .= '<div style="font-size:18px;font-weight:800;line-height:1.3;color:#111827;margin:0 0 6px">' . e($t) . '</div>';
+        if ($s !== '') $content .= '<div style="font-size:14px;color:#6b7280;line-height:1.55;margin:0 0 12px">' . e($s) . '</div>';
+        if (trim(strip_tags((string) $m)) !== '') {
+            $content .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 6px"><tr>'
+                . '<td width="4" bgcolor="' . $color . '" style="width:4px;background:' . $color . ';border-radius:8px 0 0 8px;font-size:0;line-height:0">&nbsp;</td>'
+                . '<td style="padding:14px 16px;background:#f8f9fb;border:1px solid #e6e8ec;border-left:0;border-radius:0 8px 8px 0;font-size:14px;line-height:1.65;color:#1f2937">' . $m . '</td>'
+                . '</tr></table>';
+        }
+
+        // Blocos opcionais do admin (raros nas notificações) — preservados p/ não perder dado.
+        $blocksHtml = '';
+        foreach ($blocks as $b) {
+            if ((string) $b === 'button') continue; // o CTA é o ticketLinkHtml abaixo
+            $blocksHtml .= self::renderBlock((string) $b, $ticket, $color);
+        }
+
+        $body = self::updateHeaderHtml($ticket, false, $greeting)
+            . ($content !== '' ? '<div style="margin:4px 0 8px">' . $content . '</div>' : '')
+            . $blocksHtml
+            . self::acceptButtonsHtml($ticket)
+            . self::ticketLinkHtml($ticket)
+            . self::conversationHistoryHtml($ticket);
+
+        // Envelope: cartão branco centralizado (max 600) sobre fundo cinza — mesmo "cartão" do #552.
+        $inner = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f3f4f6"><tr><td align="center" style="padding:24px 12px">'
+            . '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;background:#ffffff;border:1px solid #e9ebef;border-radius:10px;font-family:' . $font . ';color:#1f2937"><tr><td style="padding:22px 24px">'
+            . $body
+            . '</td></tr></table>'
+            . '</td></tr></table>';
+
+        return self::wrapDocument($inner, $color);
     }
 
     /** Botões Aceitar/Recusar quando o chamado está RESOLVIDO (aguardando aceite) — o cliente decide do e-mail, sem login. */

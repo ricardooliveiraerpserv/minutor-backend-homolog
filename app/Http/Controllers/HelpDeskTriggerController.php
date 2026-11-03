@@ -127,9 +127,8 @@ class HelpDeskTriggerController extends Controller
             $toList = (array) ($v['to'] ?? []);
             $audience = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'cliente'
                 : (in_array('responsavel', $toList, true) ? 'responsavel' : 'interno');
-            $html = \App\Services\HelpDeskMailComposer::compose(
-                (string) ($v['message'] ?? ''), (array) ($v['blocks'] ?? []), $ticket,
-                \App\Services\HelpDeskMailFooter::logoDataUri(), $audience,
+            $html = \App\Services\HelpDeskMailComposer::composeUpdate(
+                (string) ($v['message'] ?? ''), (array) ($v['blocks'] ?? []), $ticket, $audience,
                 isset($v['notification_title']) ? (string) $v['notification_title'] : null,
                 isset($v['notification_subtitle']) ? (string) $v['notification_subtitle'] : null,
             );

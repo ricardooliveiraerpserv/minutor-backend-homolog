@@ -289,14 +289,16 @@ class HelpDeskTriggerEngine
             $toList = (array) ($params['to'] ?? []);
             $audience = (in_array('cliente', $toList, true) || in_array('requester', $toList, true)) ? 'cliente'
                 : (in_array('responsavel', $toList, true) ? 'responsavel' : 'interno');
-            $html = HelpDeskMailComposer::compose(
-                (string) ($params['message'] ?? ''), (array) ($params['blocks'] ?? []), $ticket, null, $audience,
+            // Modelo COMPACTO (#552): cabeçalho + metadados + saudação + conteúdo + aceite/recusa +
+            // link + histórico (mesmo layout do e-mail de resposta ao cliente). Substitui o card.
+            $html = HelpDeskMailComposer::composeUpdate(
+                (string) ($params['message'] ?? ''), (array) ($params['blocks'] ?? []), $ticket, $audience,
                 isset($params['notification_title']) ? (string) $params['notification_title'] : null,
                 isset($params['notification_subtitle']) ? (string) $params['notification_subtitle'] : null,
             );
-            // Imagens/assinatura do chamado (data:) → cid inline, pra renderizarem no e-mail.
+            // Imagens/assinatura do chamado + logo (data:) → cid inline, pra renderizarem no e-mail.
             [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
-            $inline = array_merge(HelpDeskMailComposer::inlineAssets(), $imgAtts);
+            $inline = $imgAtts;
             [$ok, $err] = GraphMailSender::sendAs((string) $from->email, $to, $cc, $subject, $html, [], $inline, false, [], $ticket->graph_thread_msg_id);
             // Corpo LEGÍVEL p/ registrar no chamado (sem o layout institucional/cids que não renderizam no histórico).
             // Parágrafos <p> (o front do chamado renderiza <p>/<b> com espaçamento; estilos inline são removidos).
