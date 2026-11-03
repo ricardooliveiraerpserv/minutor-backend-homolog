@@ -417,8 +417,10 @@ class NotificationController extends Controller
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         $data = $request->validate([
-            'user_id'          => 'required|integer|exists:users,id',
-            'can_invite_other' => 'nullable|boolean', // define se pode indicar "Outro" ao reconvidar
+            'user_id'           => 'required|integer|exists:users,id',
+            'can_invite_other'  => 'nullable|boolean', // define se pode indicar "Outro" ao reconvidar
+            'invite_user_ids'   => 'nullable|array',   // admin convida NOVAS pessoas no lugar da revogada
+            'invite_user_ids.*' => 'integer|exists:users,id',
         ]);
         $uid  = (int) $data['user_id'];
 
@@ -450,7 +452,36 @@ class NotificationController extends Controller
             }
         }
 
-        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent]]);
+        // Admin convida NOVAS pessoas (no lugar de quem foi revogado): entram como destinatárias
+        // (target_users), saem de excluded_user_ids e recebem o convite por e-mail.
+        $invitedCount = 0;
+        $inviteIds = array_values(array_unique(array_map('intval', (array) $request->input('invite_user_ids', []))));
+        $inviteIds = array_values(array_filter($inviteIds, fn ($x) => $x > 0 && $x !== $uid));
+        if ($inviteIds) {
+            $targets  = array_map('intval', (array) ($notification->target_users ?? []));
+            foreach ($inviteIds as $nid) {
+                if (!in_array($nid, $targets, true)) $targets[] = $nid;
+            }
+            $excluded = array_values(array_filter(
+                array_map('intval', (array) ($notification->excluded_user_ids ?? [])),
+                fn ($x) => !in_array($x, $inviteIds, true)
+            ));
+            $notification->target_users      = array_values(array_unique($targets));
+            $notification->excluded_user_ids = $excluded;
+            $notification->save();
+            foreach ($inviteIds as $nid) {
+                $nu = \App\Models\User::find($nid);
+                if (!$nu) continue;
+                try { if ($this->sendActionEmail($notification, $nu)) $invitedCount++; }
+                catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('Falha ao convidar novo destinatário no revogar', [
+                        'notification_id' => $notification->id, 'user_id' => $nid, 'erro' => $e->getMessage(),
+                    ]);
+                }
+            }
+        }
+
+        return response()->json(['data' => ['revoked' => true, 'user_id' => $uid, 'email_resent' => $resent, 'invited' => $invitedCount]]);
     }
 
     /**
