@@ -640,6 +640,17 @@ class MeetingController extends Controller
                 }
             }
         }
+        // Dedup por e-mail (case-insensitive): mantém a 1ª ocorrência — como a ordem é
+        // solicitante → responsável → CC, o papel mais relevante prevalece (ex.: responsável que
+        // também está em cópia não aparece de novo como "Opcional").
+        $seen = [];
+        $out = array_values(array_filter($out, function ($p) use (&$seen) {
+            $e = strtolower(trim((string) ($p['email'] ?? '')));
+            if ($e === '') return true;
+            if (isset($seen[$e])) return false;
+            $seen[$e] = true;
+            return true;
+        }));
         return response()->json(['data' => $out]);
     }
 
