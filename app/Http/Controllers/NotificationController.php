@@ -304,6 +304,42 @@ class NotificationController extends Controller
     }
 
     /**
+     * ADMIN registra/edita a resposta POR um destinatário (confirmar presença pela pessoa,
+     * trocar a resposta, editar a família). Fica marcada como 'sistema'. Só admin/dono da publicação.
+     */
+    public function adminRespond(Request $request, AppNotification $notification): JsonResponse
+    {
+        $this->authorizeOwnOrAdmin($request->user(), $notification);
+        $data = $request->validate([
+            'user_id' => 'required|integer|exists:users,id',
+            'action'  => 'required|string',
+            'guests'  => 'nullable|array',
+        ]);
+        $actions = (array) ($notification->actions ?? []);
+        abort_unless(in_array($data['action'], $actions, true), 422, 'Opção inválida.');
+        $uid = (int) $data['user_id'];
+
+        $r = NotificationRead::firstOrNew(['notification_id' => $notification->id, 'user_id' => $uid]);
+        $r->viewed_at       = $r->viewed_at ?? now();
+        $r->response_action = $data['action'];
+        $r->response_source = 'sistema';   // registrado pelo admin em nome da pessoa
+        $r->ack_at          = now();
+        $r->acked_version   = $notification->version;
+        $r->save();
+
+        // Família/acompanhantes: regrava quando a resposta é AFIRMATIVA (1ª ação) e o evento permite.
+        if ($notification->allow_guests) {
+            \App\Models\NotificationGuest::where('notification_id', $notification->id)->where('user_id', $uid)->delete();
+            $affirmative = isset($actions[0]) && $data['action'] === $actions[0];
+            if ($affirmative) {
+                $guests = $this->parseGuests($data['guests'] ?? [], $notification, $uid);
+                if ($guests) \App\Models\NotificationGuest::insert($guests);
+            }
+        }
+        return response()->json(['data' => ['responded' => true]]);
+    }
+
+    /**
      * LOG de uma comunicação (admin): destinatários × visualizou/quando × resposta do botão.
      * Serve p/ "log de visualização de tudo que foi enviado" e "resultado dos botões de decisão".
      */

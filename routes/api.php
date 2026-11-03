@@ -584,6 +584,8 @@ Route::prefix('v1')->group(function () {
         Route::post('/notifications/{notification}/view', [\App\Http\Controllers\NotificationController::class, 'view']);
         Route::post('/notifications/{notification}/ack',  [\App\Http\Controllers\NotificationController::class, 'ack']);
         Route::post('/notifications/{notification}/respond', [\App\Http\Controllers\NotificationController::class, 'respond']);
+        // Admin registra/edita a resposta (e família) POR um destinatário — "confirmar presença pela pessoa".
+        Route::post('/notifications/{notification}/admin-respond', [\App\Http\Controllers\NotificationController::class, 'adminRespond']);
         Route::get('/notifications/{notification}/log',   [\App\Http\Controllers\NotificationController::class, 'log']);
         // Revoga a resposta de UM destinatário → volta a pendente e recebe de novo (pop-up + e-mail).
         Route::post('/notifications/{notification}/revoke', [\App\Http\Controllers\NotificationController::class, 'revoke']);
