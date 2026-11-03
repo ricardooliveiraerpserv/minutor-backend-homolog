@@ -914,8 +914,14 @@ class ClientPortalController extends Controller
         $sold         = (float) ($project->sold_hours ?? 0);
         $consumed     = (float) ($project->getTotalLoggedHours() ?? 0);
 
-        if ($totalPlanned > 0) {
-            $progressPct = round(($totalDone / $totalPlanned) * 100, 1);
+        // Progresso = atividades CONCLUÍDAS ÷ total (CONTAGEM) — MESMA base da visão do
+        // coordenador (executive.progress_pct). NÃO usar horas aqui: atividades/marcos
+        // concluídos frequentemente têm hours_planned=0, o que zerava o progresso por EV
+        // (bug: coordenador via 26% = 14/53 e o cliente via 0% por horas no mesmo projeto).
+        $totalCount = (int) $stages->sum('deliveries_count');
+        $doneCount  = (int) $stages->sum('deliveries_done_count');
+        if ($totalCount > 0) {
+            $progressPct = round(($doneCount / $totalCount) * 100, 1);
         } elseif ($sold > 0) {
             $progressPct = round(min(100, ($consumed / $sold) * 100), 1);
         } else {
