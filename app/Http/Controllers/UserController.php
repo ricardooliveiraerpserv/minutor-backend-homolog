@@ -739,6 +739,19 @@ class UserController extends Controller
                 $userData['email'] = strtolower(trim($userData['email']));
             }
 
+            // AUTOMÁTICO: cliente sem customer_id informado → identifica o CLIENTE (organização)
+            // pelo DOMÍNIO do e-mail via Regra de Associação (mesma base do ingest de e-mail).
+            // Escopo global (withoutGlobalScope) pois o domínio→cliente independe da empresa ativa.
+            if (($userData['type'] ?? null) === 'cliente' && empty($userData['customer_id']) && !empty($userData['email'])) {
+                $rule = \App\Models\HelpDeskAssociationRule::withoutGlobalScope(\App\Models\Scopes\CompanyScope::class)
+                    ->where('domain', \App\Models\HelpDeskAssociationRule::normalize($userData['email']))
+                    ->where('enabled', true)
+                    ->first();
+                if ($rule && $rule->customer_id) {
+                    $userData['customer_id'] = $rule->customer_id;
+                }
+            }
+
             // Usar senha fornecida pelo admin ou gerar automaticamente
             $adminProvidedPassword = !empty($userData['password']) ? $userData['password'] : null;
             $temporaryPassword = $adminProvidedPassword ?? $this->generateTemporaryPassword();
