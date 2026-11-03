@@ -348,9 +348,13 @@ class HelpDeskMailComposer
         $t = trim((string) ($notifTitle !== null ? HelpDeskTriggerEngine::render($notifTitle, $ticket) : ''));
         $s = trim((string) ($notifSubtitle !== null ? HelpDeskTriggerEngine::render($notifSubtitle, $ticket) : ''));
         $m = nl2br(e(HelpDeskTriggerEngine::render($message, $ticket)));
+        // Evita duplicar a mensagem: quando o status já exibe a CAIXA DE AVISO no cabeçalho
+        // (updateHeaderHtml — aguardando_cliente / em_desenvolvimento), não repetimos o título/
+        // subtítulo do gatilho (que dizem o mesmo). A caixa de aviso é a mensagem nesses casos.
+        $hasAviso = in_array((string) optional($ticket->status)->key, ['aguardando_cliente', 'em_desenvolvimento'], true);
         $content = '';
-        if ($t !== '') $content .= '<div style="font-size:18px;font-weight:800;line-height:1.3;color:#111827;margin:0 0 6px">' . e($t) . '</div>';
-        if ($s !== '') $content .= '<div style="font-size:14px;color:#6b7280;line-height:1.55;margin:0 0 12px">' . e($s) . '</div>';
+        if (!$hasAviso && $t !== '') $content .= '<div style="font-size:18px;font-weight:800;line-height:1.3;color:#111827;margin:0 0 6px">' . e($t) . '</div>';
+        if (!$hasAviso && $s !== '') $content .= '<div style="font-size:14px;color:#6b7280;line-height:1.55;margin:0 0 12px">' . e($s) . '</div>';
         if (trim(strip_tags((string) $m)) !== '') {
             $content .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 6px"><tr>'
                 . '<td width="4" bgcolor="' . $color . '" style="width:4px;background:' . $color . ';border-radius:8px 0 0 8px;font-size:0;line-height:0">&nbsp;</td>'
