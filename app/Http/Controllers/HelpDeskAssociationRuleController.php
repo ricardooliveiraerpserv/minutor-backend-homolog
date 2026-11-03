@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\HelpDeskAssociationRule;
+use App\Models\Scopes\CompanyScope;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -33,7 +34,12 @@ class HelpDeskAssociationRuleController extends Controller
     {
         $v = $request->validate($this->rules(true));
         $v['domain'] = HelpDeskAssociationRule::normalize($v['domain']);
-        abort_if(HelpDeskAssociationRule::where('domain', $v['domain'])->exists(), 422, 'Já existe regra para este domínio.');
+        // Trava GLOBAL (ignora o escopo de empresa): um domínio pertence a UMA única empresa.
+        abort_if(
+            HelpDeskAssociationRule::withoutGlobalScope(CompanyScope::class)->where('domain', $v['domain'])->exists(),
+            422,
+            'Já existe regra para este domínio (possivelmente em outra empresa). Um domínio pode estar associado a apenas uma empresa.'
+        );
         $r = HelpDeskAssociationRule::create($v);
         return response()->json(['data' => $r->load(['customer:id,name', 'accessProfile:id,name'])], 201);
     }
@@ -43,7 +49,12 @@ class HelpDeskAssociationRuleController extends Controller
         $v = $request->validate($this->rules(false));
         if (isset($v['domain'])) {
             $v['domain'] = HelpDeskAssociationRule::normalize($v['domain']);
-            abort_if(HelpDeskAssociationRule::where('domain', $v['domain'])->where('id', '!=', $associationRule->id)->exists(), 422, 'Já existe regra para este domínio.');
+            // Trava GLOBAL (ignora o escopo de empresa): um domínio pertence a UMA única empresa.
+            abort_if(
+                HelpDeskAssociationRule::withoutGlobalScope(CompanyScope::class)->where('domain', $v['domain'])->where('id', '!=', $associationRule->id)->exists(),
+                422,
+                'Já existe regra para este domínio (possivelmente em outra empresa). Um domínio pode estar associado a apenas uma empresa.'
+            );
         }
         $associationRule->update($v);
         return response()->json(['data' => $associationRule->fresh()->load(['customer:id,name', 'accessProfile:id,name'])]);
