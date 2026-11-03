@@ -35,6 +35,7 @@ class HelpDeskTrigger extends Model
         'assigned'        => 'Quando o responsável muda',
         'idle_in_status'  => 'Quando fica parado num status por X tempo',
         'merged'          => 'Quando chamados são mesclados',
+        'meeting_scheduled' => 'Quando uma reunião é agendada',
     ];
 
     public const OPERATORS = [

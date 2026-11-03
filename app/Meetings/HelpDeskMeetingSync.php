@@ -7,6 +7,7 @@ use App\Models\HelpDeskTicket;
 use App\Models\HelpDeskTicketEvent;
 use App\Models\Meeting;
 use App\Services\HelpDeskSlaService;
+use App\Services\HelpDeskTriggerEngine;
 
 /**
  * Sincroniza o chamado quando uma reunião VINCULADA a ele muda de estado. Reusa o mecanismo de
@@ -68,7 +69,15 @@ class HelpDeskMeetingSync
         ]);
 
         // 5) E-mail do convite pelo MESMO fluxo das interações (threaded) → cliente + participantes + criador.
+        //    (Pulado quando há gatilho configurável "meeting_scheduled" ligado — ver dispatchMeetingEmail.)
         $this->dispatchMeetingEmail($ticket, $comment, $meeting);
+
+        // 6) Gatilhos configuráveis do motor de triggers: evento dedicado "Reunião agendada"
+        //    (destinatário "participantes", com {meeting.*}) + a transição de status (p/ quem preferir
+        //    um gatilho status_changed = "Reunião agendada"). Assíncrono (fila 'emails'). O convite de
+        //    calendário (Teams/Meet) aos participantes continua indo pelo provider, à parte.
+        HelpDeskTriggerEngine::queue('meeting_scheduled', $ticket, ['meeting_id' => $meeting->id]);
+        HelpDeskTriggerEngine::queue('status_changed', $ticket, ['actor_id' => null, 'actor_email' => null, 'changed_field' => 'status_id']);
     }
 
     /** Reunião cancelada → se o chamado estava "Reunião agendada", volta p/ "Em atendimento" + retoma SLA. */
@@ -167,6 +176,11 @@ class HelpDeskMeetingSync
         // Fase 2: quando a reunião TEM link do Teams, o próprio Graph já disparou o convite/cancelamento
         // de calendário aos participantes → NÃO duplica por e-mail do Minutor.
         if (filled($meeting->join_url)) {
+            return;
+        }
+        // Se há gatilho configurável "Reunião agendada" LIGADO, é ele quem notifica (evita duplicar o
+        // convite presencial). Sem gatilho ligado, mantém o comportamento legado (envia o convite aqui).
+        if (\App\Models\HelpDeskTrigger::where('event', 'meeting_scheduled')->where('enabled', true)->exists()) {
             return;
         }
         try {

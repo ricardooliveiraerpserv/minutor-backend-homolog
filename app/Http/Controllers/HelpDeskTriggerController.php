@@ -84,7 +84,7 @@ class HelpDeskTriggerController extends Controller
             'catalog'     => HelpDeskTrigger::conditionCatalog(),
             'operators'   => HelpDeskTrigger::OPERATORS,
             'actionTypes' => HelpDeskTrigger::ACTION_TYPES,
-            'recipients'  => ['responsavel' => 'Responsável pelo chamado', 'cliente' => 'Cliente (solicitante)', 'requester' => 'Usuário solicitante', 'coordenador_sustentacao' => 'Coordenador de Sustentação'],
+            'recipients'  => ['responsavel' => 'Responsável pelo chamado', 'cliente' => 'Cliente (solicitante)', 'requester' => 'Usuário solicitante', 'coordenador_sustentacao' => 'Coordenador de Sustentação', 'participantes' => 'Participantes da reunião'],
             'blocks'      => \App\Services\HelpDeskMailComposer::BLOCKS,
             // Fontes de opções (referenciadas por 'source' no catálogo).
             'channels'     => collect(\App\Models\HelpDeskTicket::CHANNELS)->map(fn ($c) => ['id' => $c, 'name' => $c]),
@@ -105,6 +105,7 @@ class HelpDeskTriggerController extends Controller
                 '{ticket.status}', '{ticket.priority}', '{ticket.category}', '{ticket.service}', '{ticket.team}',
                 '{ticket.created_at}', '{ticket.description}', '{ticket.summary.public.actions}',
                 '{ticket.firstaction.attachments}', '{tenant.name}',
+                '{meeting.title}', '{meeting.date}', '{meeting.time}', '{meeting.datetime}', '{meeting.provider}', '{meeting.link}',
             ],
         ]]);
     }

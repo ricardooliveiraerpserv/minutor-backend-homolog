@@ -369,11 +369,30 @@ class HelpDeskTriggerEngine
 
     /** Resolve um destinatário simbólico em e-mail. Aceita também e-mail fixo (contém @). */
     /** Resolve um alvo para 1..N e-mails (alvos de GRUPO, ex.: coordenadores, retornam vários). */
+    /** Última reunião vinculada ao chamado (origem HELPDESK_TICKET) — fonte dos placeholders {meeting.*} e do destinatário "participantes". */
+    private static function latestMeetingFor(HelpDeskTicket $ticket): ?\App\Models\Meeting
+    {
+        return \App\Models\Meeting::where('origin_type', 'HELPDESK_TICKET')
+            ->where('origin_id', $ticket->id)
+            ->orderByDesc('id')->first();
+    }
+
     private static function resolveRecipients(string $target, HelpDeskTicket $ticket): array
     {
         if ($target === 'coordenador_sustentacao') {
             return \App\Models\User::where('type', 'coordenador')->where('coordinator_type', 'sustentacao')
                 ->pluck('email')->filter()->values()->all();
+        }
+        // Participantes da reunião vinculada ao chamado (a última agendada).
+        if ($target === 'participantes') {
+            $meeting = self::latestMeetingFor($ticket);
+            if (!$meeting) return [];
+            // participantRows = MeetingParticipant (tem e-mail, inclui externos). Organizador/criador entram tb.
+            $emails = $meeting->participantRows()->pluck('email')->all();
+            $emails[] = optional($meeting->organizer)->email;
+            return collect($emails)
+                ->filter(fn ($e) => $e && str_contains((string) $e, '@'))
+                ->map(fn ($e) => trim((string) $e))->unique()->values()->all();
         }
         $one = self::resolveRecipient($target, $ticket);
         return $one ? [$one] : [];
@@ -422,6 +441,14 @@ class HelpDeskTriggerEngine
         $firstName  = $clientName ? (preg_split('/\s+/', trim((string) $clientName))[0] ?? '') : '';
         $created   = $ticket->created_at ? $ticket->created_at->format('d/m/Y H:i') : '';
 
+        // Reunião vinculada (última agendada) — para os placeholders {meeting.*}. Exibe no fuso da
+        // própria reunião (igual ao convite/inviteBody), não num fuso fixo.
+        $meeting   = self::latestMeetingFor($ticket);
+        $mTz       = $meeting ? ($meeting->timezone ?: 'America/Sao_Paulo') : 'America/Sao_Paulo';
+        $mStart    = $meeting && $meeting->starts_at ? $meeting->starts_at->copy()->setTimezone($mTz) : null;
+        $mEnd      = $meeting && $meeting->ends_at ? $meeting->ends_at->copy()->setTimezone($mTz) : null;
+        $mProv     = $meeting ? (['teams' => 'Microsoft Teams', 'meet' => 'Google Meet', 'zoom' => 'Zoom', 'webex' => 'Webex', 'presencial' => 'Presencial'][$meeting->provider] ?? (string) $meeting->provider) : '';
+
         $map = [
             '{ticket.id}'                      => (string) $ticket->id,
             '{ticket.requester.firstName}'     => (string) $firstName,
@@ -445,6 +472,12 @@ class HelpDeskTriggerEngine
             '{ticket.summary.public.actions}'  => self::publicActionsSummary($ticket),
             '{ticket.firstaction.attachments}' => self::attachmentsList($ticket),
             '{tenant.name}'                    => (string) config('app.name', 'Minutor'),
+            '{meeting.title}'                  => (string) ($meeting?->title ?? ''),
+            '{meeting.date}'                   => $mStart ? $mStart->format('d/m/Y') : '',
+            '{meeting.time}'                   => $mStart ? $mStart->format('H:i') : '',
+            '{meeting.datetime}'               => $mStart ? $mStart->format('d/m/Y') . ' · ' . $mStart->format('H:i') . ($mEnd ? ' às ' . $mEnd->format('H:i') : '') : '',
+            '{meeting.provider}'               => $mProv,
+            '{meeting.link}'                   => (string) ($meeting?->join_url ?? ''),
         ];
         return strtr($text, $map);
     }
