@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\OnDemandBillingRelease;
+use App\Models\OnDemandBillingReleaseLog;
 use App\Models\Project;
 use App\Models\Timesheet;
 use App\Models\User;
@@ -114,9 +115,12 @@ class OnDemandBillingReleaseController extends Controller
         $userIsSustCoord = ($user->coordinator_type === 'sustentacao')
             && ($user->type === 'coordenador' || $user->is_coordinator);
 
-        // A liberação vale DESTE MÊS PARA FRENTE. Competências anteriores já foram
-        // faturadas → tratadas como JÁ LIBERADAS (sem exigir ação / sem bloquear envio).
-        $isPast = $yearMonth < now()->format('Y-m');
+        // A competência a faturar é SEMPRE o mês fechado anterior (mês corrente - 1).
+        // Logo a liberação é exigida do MÊS ANTERIOR para frente. Só competências
+        // ANTERIORES ao mês anterior já foram faturadas em ciclos passados → tratadas
+        // como JÁ LIBERADAS (sem exigir ação / sem bloquear envio).
+        $billingRef = now()->subMonthNoOverflow()->format('Y-m');
+        $isPast = $yearMonth < $billingRef;
 
         $rows = $projects->map(function (Project $p) use ($monthStart, $monthEnd, $releases, $user, $sustCoordNames, $userIsSustCoord, $isPast) {
             // Horas do CONTRATO = projeto pai + filhos.
@@ -218,7 +222,46 @@ class OnDemandBillingReleaseController extends Controller
                 ->delete();
         }
 
+        // Log de auditoria (append-only): registra cada liberação/estorno sem apagar histórico.
+        OnDemandBillingReleaseLog::create([
+            'project_id' => $data['project_id'],
+            'year_month' => $data['year_month'],
+            'action'     => $data['released'] ? OnDemandBillingReleaseLog::ACTION_RELEASE : OnDemandBillingReleaseLog::ACTION_REVOKE,
+            'user_id'    => $user->id,
+            'reason'     => $data['reason'] ?? null,
+        ]);
+
         return response()->json(['success' => true, 'released' => (bool) $data['released']]);
+    }
+
+    /**
+     * Histórico (log de auditoria) de liberações/estornos de um contrato On Demand.
+     * GET /on-demand/billing-release/history?project_id=&year_month=
+     * year_month é opcional: sem ele, devolve todo o histórico do contrato.
+     */
+    public function history(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'project_id' => 'required|integer|exists:projects,id',
+            'year_month' => ['nullable', 'regex:/^\d{4}-\d{2}$/'],
+        ]);
+
+        $logs = OnDemandBillingReleaseLog::query()
+            ->where('project_id', $data['project_id'])
+            ->when($data['year_month'] ?? null, fn ($q, $ym) => $q->where('year_month', $ym))
+            ->with('user:id,name')
+            ->orderByDesc('created_at')
+            ->get()
+            ->map(fn (OnDemandBillingReleaseLog $l) => [
+                'id'         => $l->id,
+                'year_month' => $l->year_month,
+                'action'     => $l->action,
+                'user'       => $l->user?->name,
+                'reason'     => $l->reason,
+                'at'         => $l->created_at,
+            ]);
+
+        return response()->json(['data' => $logs]);
     }
 
     /** Coordenador EFETIVO: override do Kanban vence; senão, M2M coordinators. */

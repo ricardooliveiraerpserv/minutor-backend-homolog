@@ -1919,6 +1919,7 @@ Route::prefix('v1')->group(function () {
             // Tela gerencial de contratos On Demand + liberação de faturamento por competência.
             Route::get('/on-demand/billing-release',  [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'index']);
             Route::post('/on-demand/billing-release', [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'toggle']);
+            Route::get('/on-demand/billing-release/history', [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'history']);
         });
 
         // 🧾 FECHAMENTO CLIENTE

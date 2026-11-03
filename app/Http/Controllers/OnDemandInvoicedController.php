@@ -26,9 +26,11 @@ class OnDemandInvoicedController extends Controller
         ]);
 
         // Backstop: não deixa MARCAR faturado se o coordenador não liberou o faturamento
-        // On Demand na competência (regra vale deste mês pra frente; meses anteriores ok).
+        // On Demand na competência. A competência a faturar é SEMPRE o mês fechado anterior,
+        // então a regra vale do MÊS ANTERIOR pra frente; competências mais antigas já ok.
         // Só se aplica quando HÁ horas no mês (sem movimento = nada a liberar/faturar).
-        if ($data['invoiced'] && $data['year_month'] >= now()->format('Y-m')) {
+        $billingRef = now()->subMonthNoOverflow()->format('Y-m');
+        if ($data['invoiced'] && $data['year_month'] >= $billingRef) {
             $start = $data['year_month'] . '-01';
             $end   = \Carbon\Carbon::parse($start)->endOfMonth()->toDateString();
             $ids = collect([$data['project_id']])

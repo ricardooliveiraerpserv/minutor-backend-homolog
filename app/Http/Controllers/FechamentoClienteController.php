@@ -126,7 +126,9 @@ class FechamentoClienteController extends Controller
      * Status de liberação de faturamento On Demand do cliente na competência:
      *   'liberado'  → pode enviar; 'bloqueado' → coordenador ainda não liberou (não envia);
      *   null        → cliente sem contrato On Demand com horas no mês (não se aplica).
-     * Regra: meses ANTERIORES ao atual já foram faturados → sempre liberado.
+     * Regra: a competência a faturar é SEMPRE o mês fechado anterior; a liberação é
+     * exigida do MÊS ANTERIOR para frente. Só competências ANTERIORES ao mês anterior
+     * já foram faturadas em ciclos passados → sempre liberado.
      */
     private function onDemandBillingStatus($customer, string $yearMonth): ?string
     {
@@ -137,7 +139,8 @@ class FechamentoClienteController extends Controller
                 $w->where('is_investimento_comercial', false)->orWhereNull('is_investimento_comercial');
             });
 
-        if ($yearMonth < now()->format('Y-m')) {
+        $billingRef = now()->subMonthNoOverflow()->format('Y-m');
+        if ($yearMonth < $billingRef) {
             return $odQuery->exists() ? 'liberado' : null;
         }
 
