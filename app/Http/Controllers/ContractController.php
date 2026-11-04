@@ -1515,7 +1515,11 @@ class ContractController extends Controller
             });
         }
 
-        $projects    = $projectQuery->get();
+        // Liberação de Visualização (allow-list): se a parte "Projetos" não está liberada p/ o
+        // usuário (ex.: consultor sem regra), NÃO devolve projeto nenhum — nem no tráfego. Mesma
+        // identidade no "Ver como" → reproduz o comportamento do login real.
+        $pipelineView = \App\Models\PipelineViewPermission::effectiveFor($user);
+        $projects    = ($pipelineView['project']['visible'] ?? true) ? $projectQuery->get() : collect();
         $projectIds  = $projects->pluck('id')->toArray();
         $timesheetSums = count($projectIds) > 0
             ? DB::table('timesheets')
@@ -1799,7 +1803,7 @@ class ContractController extends Controller
             'contracts'             => $demandCards,
             // Liberação de visualização do pipeline (Demandas e Projetos) p/ o usuário logado.
             // O FE usa isto p/ mostrar/esconder as partes (demand/project) e filtrar por cliente.
-            'pipeline_view'         => \App\Models\PipelineViewPermission::effectiveFor($user),
+            'pipeline_view'         => $pipelineView,
         ]);
     }
 

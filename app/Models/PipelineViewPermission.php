@@ -39,7 +39,7 @@ class PipelineViewPermission extends Model
     public static function effectiveFor(?User $user): array
     {
         if (!$user) {
-            return self::defaultFor(false) + ['source' => 'default'];
+            return self::defaultFor(false, null) + ['source' => 'default'];
         }
 
         $perm = self::where('user_id', $user->id)->first();
@@ -60,14 +60,18 @@ class PipelineViewPermission extends Model
         }
 
         $adminLike = $user->isAdmin() || (method_exists($user, 'isAdministrativo') && $user->isAdministrativo());
-        return self::defaultFor($adminLike) + ['source' => 'default'];
+        return self::defaultFor($adminLike, $user) + ['source' => 'default'];
     }
 
-    private static function defaultFor(bool $adminLike): array
+    private static function defaultFor(bool $adminLike, ?User $user = null): array
     {
+        // Consultor SEM regra de liberação não vê NADA (allow-list): o acesso ao pipeline só é
+        // concedido explicitamente na tela "Liberação de Visualização". Coordenador/admin mantêm
+        // o padrão (admin vê Requisição+Projetos; coordenador só Projetos).
+        $isConsultor = $user?->isConsultor() ?? false;
         return [
-            'demand'  => ['visible' => $adminLike, 'scope' => 'all', 'customer_ids' => []],
-            'project' => ['visible' => true,       'scope' => 'all', 'customer_ids' => []],
+            'demand'  => ['visible' => $adminLike,                  'scope' => 'all', 'customer_ids' => []],
+            'project' => ['visible' => $adminLike || !$isConsultor, 'scope' => 'all', 'customer_ids' => []],
         ];
     }
 }
