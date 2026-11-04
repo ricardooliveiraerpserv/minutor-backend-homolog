@@ -185,6 +185,25 @@ class UserController extends Controller
         return Excel::download(new UsersExport($users, $only), 'usuarios_' . now()->format('Y-m-d') . '.xlsx');
     }
 
+    /**
+     * Escopo multi-empresa da lista/contadores de usuários: reflete a EMPRESA ATIVA do
+     * usuário logado. Só aparecem usuários/clientes vinculados à empresa ativa (ou a "ambas").
+     * Quem NÃO tem empresa conta como ERPSERV (empresa padrão) — aparece só na ERPSERV.
+     */
+    private function applyActiveCompanyScope($query, ?\App\Models\User $user): void
+    {
+        if (!config('multiempresa.scoping_enabled') || !$user) return;
+        $activeId = (int) ($user->current_company_id ?: $user->home_company_id ?: 0);
+        if (!$activeId) return;
+        $erpservId = (int) \App\Models\Company::where('slug', 'erpserv')->value('id');
+        $query->where(function ($q) use ($activeId, $erpservId) {
+            $q->whereHas('companies', fn ($c) => $c->where('companies.id', $activeId));
+            if ($activeId === $erpservId) {
+                $q->orWhereDoesntHave('companies'); // sem empresa = ERPSERV (padrão)
+            }
+        });
+    }
+
     public function index(Request $request): JsonResponse
     {
         $user = Auth::user();
@@ -212,6 +231,9 @@ class UserController extends Controller
         if (!$canSeeAll) {
             $query->where('users.id', $user->id);
         }
+
+        // Escopo da EMPRESA ATIVA (multi-empresa): em BIZIFY só aparecem BIZIFY/ambos, etc.
+        $this->applyActiveCompanyScope($query, $user);
 
         // Filtros
         // Importante: qualificar `users.*` porque o ORDER BY pode adicionar
@@ -588,6 +610,8 @@ class UserController extends Controller
         if ($request->filled('enabled')) {
             $base->where('enabled', $request->input('enabled') === '1' || $request->input('enabled') === 1 || $request->input('enabled') === true);
         }
+        // Mesmo escopo da lista: contadores refletem a empresa ativa (BIZIFY só BIZIFY/ambos).
+        $this->applyActiveCompanyScope($base, $request->user());
         $byType = (clone $base)->selectRaw('type, count(*) as c')->groupBy('type')->pluck('c', 'type');
         return response()->json(['data' => [
             ''               => (clone $base)->count(),
