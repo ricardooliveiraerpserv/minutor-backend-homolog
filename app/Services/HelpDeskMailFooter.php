@@ -27,7 +27,20 @@ class HelpDeskMailFooter
 
     private static function logoPath(): string
     {
-        return public_path('logo-erpserv.png');
+        return public_path(self::companyLogoFile());
+    }
+
+    /**
+     * Arquivo do logo conforme a EMPRESA ativa (multi-empresa). ERPSERV (ou sem contexto) mantém
+     * o logo-erpserv.png — NÃO muda. Empresas com marca própria usam o seu (ex.: Bizify → logo-bizify.png).
+     * Fallback p/ erpserv se o arquivo não existir.
+     */
+    private static function companyLogoFile(): string
+    {
+        $cid  = app(\App\Services\CompanyContext::class)->id();
+        $map  = [2 => 'logo-bizify.png']; // 2 = BIZIFY
+        $file = $map[$cid] ?? 'logo-erpserv.png';
+        return is_file(public_path($file)) ? $file : 'logo-erpserv.png';
     }
 
     private static function whiteLogoPath(): string
