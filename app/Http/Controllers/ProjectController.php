@@ -189,6 +189,16 @@ class ProjectController extends Controller
         // parent_project_id p/ os seletores montarem a árvore (filho com seta ↳).
         if ($minimal) {
             $q = Project::select('id', 'name', 'code', 'status', 'parent_project_id', 'customer_id', 'is_investimento_comercial', 'categoria_interna');
+            // Escopo multi-empresa do dropdown: em BIZIFY os projetos vêm dos CLIENTES bizify/ambos
+            // (o company_id do projeto é carimbo arbitrário da criação). Remove o CompanyScope e
+            // filtra pelo cliente — igual ao filtro de Clientes.
+            if (config('multiempresa.scoping_enabled')) {
+                $activeId = app(\App\Services\CompanyContext::class)->id();
+                if ($activeId && \App\Models\Company::where('id', $activeId)->where('slug', 'bizify')->exists()) {
+                    $q->withoutGlobalScope(\App\Models\Scopes\CompanyScope::class)
+                      ->whereHas('customer', fn ($c) => $c->where('is_bizify_customer', true)->orWhereRaw('UPPER(name) = ?', ['BIZIFY']));
+                }
+            }
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
             elseif ($status === 'open') $q->open();
