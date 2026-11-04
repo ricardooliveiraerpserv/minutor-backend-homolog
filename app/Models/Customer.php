@@ -26,6 +26,7 @@ class Customer extends Model
         'executive_id',
         'executive_bizify_id',
         'is_bizify_customer',
+        'company_scope',
         'code_prefix',
         'fechamento_email',
         'emails_administrativos',

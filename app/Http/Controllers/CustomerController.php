@@ -211,6 +211,7 @@ class CustomerController extends Controller
             'cgc'                => $c->cgc,
             'active'             => (bool) $c->active,
             'is_bizify_customer' => (bool) $c->is_bizify_customer,
+            'company_scope'      => $c->company_scope ?: 'erpserv',
             'executive_id'       => $c->{$execCol},
             'executive_name'     => $c->{$relation}?->name,
         ]);
@@ -330,6 +331,7 @@ class CustomerController extends Controller
             'executive_id' => 'nullable|exists:users,id',
             'executive_bizify_id' => 'nullable|exists:users,id',
             'is_bizify_customer' => 'sometimes|boolean',
+            'company_scope' => 'sometimes|in:erpserv,bizify,ambos',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix',
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
@@ -343,6 +345,10 @@ class CustomerController extends Controller
         ]);
         // emails_administrativos é gravado via setAdminEmails (sincroniza fechamento_email).
         unset($validated['emails_administrativos']);
+        // company_scope é a fonte da verdade; is_bizify_customer segue dele (bizify|ambos => true).
+        if (array_key_exists('company_scope', $validated)) {
+            $validated['is_bizify_customer'] = in_array($validated['company_scope'], ['bizify', 'ambos'], true);
+        }
 
         // Remove caracteres especiais do CGC
         $validated['cgc'] = preg_replace('/[^0-9]/', '', $validated['cgc']);
@@ -503,6 +509,7 @@ class CustomerController extends Controller
             'executive_id' => 'nullable|exists:users,id',
             'executive_bizify_id' => 'nullable|exists:users,id',
             'is_bizify_customer' => 'sometimes|boolean',
+            'company_scope' => 'sometimes|in:erpserv,bizify,ambos',
             'code_prefix' => 'nullable|string|size:3|alpha|unique:customers,code_prefix,' . $customer->id,
             'emails_administrativos' => 'nullable|array',
             'emails_administrativos.*' => 'email',
@@ -553,6 +560,10 @@ class CustomerController extends Controller
         }
 
         unset($validated['emails_administrativos']); // gravado via setAdminEmails (sincroniza fechamento_email)
+        // company_scope é a fonte da verdade; is_bizify_customer segue dele (bizify|ambos => true).
+        if (array_key_exists('company_scope', $validated)) {
+            $validated['is_bizify_customer'] = in_array($validated['company_scope'], ['bizify', 'ambos'], true);
+        }
         $customer->update($validated);
 
         if ($request->has('emails_administrativos')) {
