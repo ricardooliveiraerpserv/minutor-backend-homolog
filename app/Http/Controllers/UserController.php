@@ -204,6 +204,28 @@ class UserController extends Controller
         });
     }
 
+    /**
+     * Sincroniza as EMPRESAS vinculadas do usuário (company_user) com a lista informada,
+     * usando o papel do usuário (company_user.role = users.type). "Ambos" = [1,2]. Ajusta
+     * home_company_id/current_company_id (ERPSERV se estiver no conjunto, senão a 1ª).
+     */
+    private function syncUserCompanies(\App\Models\User $user, array $companyIds): void
+    {
+        $cids = array_values(array_unique(array_filter(array_map('intval', $companyIds), fn ($x) => $x > 0)));
+        if (empty($cids)) return;
+        $role = $user->type ?: 'consultor';
+        $pivot = [];
+        foreach ($cids as $cid) { $pivot[$cid] = ['role' => $role]; }
+        $user->companies()->sync($pivot);
+        $erpservId = (int) \App\Models\Company::where('slug', 'erpserv')->value('id');
+        $home = in_array($erpservId, $cids, true) ? $erpservId : $cids[0];
+        if ((int) $user->home_company_id !== $home || !$user->current_company_id) {
+            $user->home_company_id = $home;
+            $user->current_company_id = $user->current_company_id ?: $home;
+            $user->saveQuietly();
+        }
+    }
+
     public function index(Request $request): JsonResponse
     {
         $user = Auth::user();
@@ -714,6 +736,8 @@ class UserController extends Controller
             'is_bizify' => 'sometimes|boolean',
             'is_bizify_coordinator' => 'sometimes|boolean',
             'home_company_id' => 'sometimes|nullable|integer|exists:companies,id', // empresa da folha (deriva is_bizify)
+            'company_ids' => 'sometimes|array', // empresas vinculadas (multi-empresa): [1]=ERPSERV, [2]=BIZIFY, [1,2]=Ambos
+            'company_ids.*' => 'integer|exists:companies,id',
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
@@ -820,6 +844,11 @@ class UserController extends Controller
             $user = User::create($fillableData);
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
+            }
+
+            // Empresas vinculadas (ERPSERV/BIZIFY/Ambos) — multi-empresa.
+            if ($request->has('company_ids')) {
+                $this->syncUserCompanies($user, (array) $request->input('company_ids'));
             }
 
             // Tipo de contrato: parceiro define p/ todos; consultor vinculado herda (trava)
@@ -1033,6 +1062,8 @@ class UserController extends Controller
             'is_bizify' => 'sometimes|boolean',
             'is_bizify_coordinator' => 'sometimes|boolean',
             'home_company_id' => 'sometimes|nullable|integer|exists:companies,id', // empresa da folha (deriva is_bizify)
+            'company_ids' => 'sometimes|array', // empresas vinculadas (multi-empresa): [1]=ERPSERV, [2]=BIZIFY, [1,2]=Ambos
+            'company_ids.*' => 'integer|exists:companies,id',
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'sometimes|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
@@ -1139,6 +1170,11 @@ class UserController extends Controller
             $user->update($fillableData);
             if (!empty($protectedData)) {
                 $user->forceFill($protectedData)->save();
+            }
+
+            // Empresas vinculadas (ERPSERV/BIZIFY/Ambos) — multi-empresa.
+            if ($request->has('company_ids')) {
+                $this->syncUserCompanies($user, (array) $request->input('company_ids'));
             }
 
             // Janela de pagamento nos fechamentos/folha (ao inativar/reativar OU ao ajustar o corte de um já inativo).
