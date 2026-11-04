@@ -747,8 +747,19 @@ class TimesheetController extends Controller
 
                 // Coordenador de sustentação (regra: serviço de sustentação => coordenador é
                 // sempre o(s) coordinator_type='sustentacao', ex.: Anderson Arantes).
-                $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
-                    ->where('enabled', true)->pluck('name')->all();
+                // Multi-empresa: o coordenador de sustentação só vale na(s) empresa(s) a que está
+                // vinculado. Em BIZIFY (sem coordenador cadastrado), não injeta o coordenador ERPSERV
+                // — o projeto fica SEM coordenador em vez de trazer alguém de fora.
+                $sustQuery = \App\Models\User::where('coordinator_type', 'sustentacao')
+                    ->where('enabled', true);
+                if (config('multiempresa.scoping_enabled')) {
+                    $activeCompanyId = (int) (optional(Auth::user())->current_company_id
+                        ?: optional(Auth::user())->home_company_id ?: 0);
+                    if ($activeCompanyId) {
+                        $sustQuery->whereHas('companies', fn ($c) => $c->where('companies.id', $activeCompanyId));
+                    }
+                }
+                $sustentacaoCoordNames = $sustQuery->pluck('name')->all();
 
                 $items = collect($timesheets->items())->map(function ($ts) use ($hideClientPct, $ticketTotalsMap, $conflictCandidatesByKey, $sustentacaoCoordNames) {
                     if ($hideClientPct) {
