@@ -84,7 +84,7 @@
 
     <table class="cards">
       <tr>
-        <td><div class="card-lbl">Contratadas acumuladas</div><div class="card-val">{{ $ap['contratadas'] }}</div></td>
+        <td><div class="card-lbl">Horas contratadas acumuladas</div><div class="card-val">{{ $ap['contratadas'] }}</div></td>
         <td><div class="card-lbl">Consumidas</div><div class="card-val">{{ $ap['consumido'] }}</div></td>
         <td class="c-red"><div class="card-lbl">Excedente</div><div class="card-val">{{ $ap['excedente_tot'] }}</div></td>
         <td><div class="card-lbl">Valor hora</div><div class="card-val">{{ $ap['valor_hora'] }}</div></td>
@@ -95,7 +95,7 @@
     @if ($it0)
       <div class="note">
         <b>A partir do apontamento de {{ $it0['data'] }} ({{ $it0['consultor'] }}, {{ $it0['horas'] }}h)</b>
-        o consumo acumulado ultrapassou as <b>{{ $ap['contratadas'] }}</b> contratadas. Deste apontamento em diante,
+        o consumo acumulado ultrapassou as <b>{{ $ap['contratadas'] }}</b> horas contratadas acumuladas. Deste apontamento em diante,
         os lançamentos abaixo compõem o excedente de <b>{{ $ap['excedente_tot'] }}</b>. Valor a cobrar = horas
         excedentes &times; {{ $ap['valor_hora'] }} (Hora Adicional do contrato).
       </div>
