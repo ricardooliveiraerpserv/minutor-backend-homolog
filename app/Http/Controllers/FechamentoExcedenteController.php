@@ -297,7 +297,9 @@ class FechamentoExcedenteController extends Controller
             'nao_valorizado'    => false,
             'description'       => 'Faturamento de horas excedentes — ' . $this->periodoExtenso($ym) . ($obs !== '' ? (' · ' . $obs) : ''),
             'motivo'            => 'excedentes',
-            'kanban_status'     => \App\Models\HourContribution::KANBAN_FINAL,
+            // Nasce na coluna "Novo Contrato" de Demandas e Projetos (não vai direto p/ "Aporte"),
+            // p/ o time formalizar o contrato do excedente faturado.
+            'kanban_status'     => \App\Models\HourContribution::KANBAN_NOVO,
             'contributed_by'    => $user->id,
             'contributed_at'    => now(),
         ]);
