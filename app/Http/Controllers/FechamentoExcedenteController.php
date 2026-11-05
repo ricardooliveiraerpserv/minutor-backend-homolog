@@ -354,6 +354,8 @@ class FechamentoExcedenteController extends Controller
         $s = preg_replace('/<\/(p|div|h[1-6]|li|tr|pre)>/i', "\n", $s);
         $s = strip_tags($s);
         $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        // Emojis viram "??" no DejaVu (fonte do dompdf) — removidos do relatório.
+        $s = preg_replace('/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2300}-\x{23FF}\x{2B00}-\x{2BFF}\x{FE00}-\x{FE0F}\x{200D}\x{20E3}]/u', '', $s);
         $s = preg_replace('/[ \t]+/u', ' ', $s);
         $s = preg_replace('/\n{2,}/', "\n", $s);
         return trim($s);
@@ -497,10 +499,14 @@ class FechamentoExcedenteController extends Controller
     /** Dados da view do relatório de horas excedentes de um cliente. */
     private function buildExcedenteViewData(Customer $customer, string $yearMonth): array
     {
+        // Relatório CLIENTE (cobrança): só contratos efetivamente cobráveis — excedente > 0,
+        // flag de cobrança ligada, não "não cobrar" E com VALOR a cobrar > 0 (Hora Adicional
+        // definida). Contratos com excedente mas Hora Adicional R$ 0,00 ficam só na listagem
+        // interna (com o aviso p/ definir a tarifa), NUNCA no relatório/e-mail do cliente.
         $rows = $this->buildRows(
             $this->baseQuery()->where('customer_id', $customer->id)->get(),
             $yearMonth,
-        )->filter(fn ($r) => $r['excess_hours'] > 0 && $r['charge'] && $r['status'] !== ExcessHourCharge::STATUS_NAO_COBRAR)
+        )->filter(fn ($r) => $r['excess_hours'] > 0 && $r['charge'] && $r['status'] !== ExcessHourCharge::STATUS_NAO_COBRAR && $r['excess_value'] > 0)
          ->values();
 
         $total = round($rows->sum('excess_value'), 2);
