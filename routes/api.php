@@ -912,6 +912,8 @@ Route::prefix('v1')->group(function () {
         // 👥 CUSTOMERS - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:customers.view')->group(function () {
             Route::get('/customers', [CustomerController::class, 'index'])->name('customers.index');
+            // Consulta de CNPJ (BrasilAPI) p/ auto-preencher Razão Social no cadastro de cliente.
+            Route::get('/cnpj/{cnpj}', [\App\Http\Controllers\CnpjController::class, 'show'])->name('cnpj.lookup');
             Route::get('/customers/user-linked', [CustomerController::class, 'getUserLinkedCustomers'])->name('customers.user-linked');
             // Centro de custo — leitura (template + lista por cliente). ANTES de /customers/{customer}.
             Route::get('/cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('cost-centers.template');
