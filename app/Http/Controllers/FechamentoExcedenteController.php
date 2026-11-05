@@ -123,14 +123,15 @@ class FechamentoExcedenteController extends Controller
             ->whereIn('project_id', $ids)->get()->groupBy('project_id')
             ->map(fn ($g) => (float) $g->sum('excess_hours'));
 
-        // Registro persistido desta competência (status definido na rotina).
-        $records = ExcessHourCharge::where('year_month', $yearMonth)
-            ->whereIn('project_id', $ids)->get()->keyBy('project_id');
+        // Registros persistidos por projeto. O casamento é pela competência DA APURAÇÃO (não a da
+        // requisição): BH Mensal usa o mês do CORTE (última competência fechada), que pode diferir do
+        // mês corrente — sem isso o contrato recém-faturado continuava "Pendente" ("não saiu da tela").
+        $recordsByProject = ExcessHourCharge::whereIn('project_id', $ids)->get()->groupBy('project_id');
 
-        return $projects->map(function (Project $p) use ($yearMonth, $charged, $records) {
+        return $projects->map(function (Project $p) use ($yearMonth, $charged, $recordsByProject) {
             $ap   = $this->apuracao($p, $yearMonth);
             $rate = (float) ($p->additional_hourly_rate ?? 0);
-            $rec  = $records->get($p->id);
+            $rec  = optional($recordsByProject->get($p->id))->firstWhere('year_month', (string) ($ap['ym'] ?? $yearMonth));
 
             $jaCobrado  = (float) ($charged->get($p->id) ?? 0);
             $excessPend = $this->excessPendente($ap, $jaCobrado);
