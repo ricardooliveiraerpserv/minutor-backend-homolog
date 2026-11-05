@@ -1587,30 +1587,16 @@ class Project extends Model
      */
     public function excessHoursApuracao(string $yearMonth): array
     {
-        // BH MENSAL: a cota do mês ATUAL só é incrementada na VIRADA do mês. Apurar excedente com o
-        // mês corrente (cota ainda não lançada, mas apontamentos já acontecendo) gera excedente falso.
-        // → CORTE NA VIRADA: contratadas acumuladas até o mês ANTERIOR + apontamentos até o fim do mês
-        // anterior (meses fechados), via getGeneralHoursBalanceExcludingCurrentMonth. O BH Mensal
-        // ACUMULA mês a mês — só há excedente quando o saldo fechado fica NEGATIVO.
-        if ($this->isBankHoursMonthly()) {
-            $endOfLastMonth = \Carbon\Carbon::now()->subMonth()->endOfMonth();
-            $accumulated    = (float) ($this->calculateAccumulatedSoldHours($endOfLastMonth) ?? ($this->sold_hours ?? 0));
-            $contributions  = (float) $this->getTotalAvailableHours() - (float) ($this->sold_hours ?? 0);
-            $initialBalance = (float) ($this->initial_hours_balance ?? 0);
-            $contracted     = round($accumulated + $contributions + $initialBalance, 2);
-            $balance        = $this->getGeneralHoursBalanceExcludingCurrentMonth(true);
-            $consumed       = round($contracted - $balance, 2); // consistente: contracted - consumed = balance
-            $excess         = $balance < 0 ? round(-$balance, 2) : 0.0;
-            return ['basis' => 'monthly', 'contracted' => $contracted, 'consumed' => $consumed, 'excess' => $excess];
-        }
-
-        // BH Fixo e Fechado: excedente pelo SALDO ACUMULADO (managementBreakdown). Não incrementam
-        // mensalmente, então não há o problema do mês corrente. Excedente quando o saldo fica NEGATIVO.
-        if ($this->isBankHoursFixed() || $this->isClosedContract()) {
+        // BH Fixo, Fechado E BH Mensal: excedente pelo SALDO ACUMULADO (managementBreakdown).
+        // Só há excedente quando o saldo fica NEGATIVO (horas contratadas + acumuladas
+        // esgotadas), incremental sobre o já cobrado. O BH Mensal ACUMULA mês a mês — consumir
+        // acima da cota de UM mês NÃO gera excedente se o saldo de meses anteriores ainda cobre.
+        // (Ex.: cota 50/mês, saldo +100; gasta 90 no mês → saldo +10 → sem excedente.)
+        if ($this->isBankHoursFixed() || $this->isClosedContract() || $this->isBankHoursMonthly()) {
             $bd      = $this->managementBreakdown();
             $balance = $bd['balance'];
             $excess  = $balance < 0 ? round(-$balance, 2) : 0.0;
-            $basis   = $this->isClosedContract() ? 'closed' : 'fixed';
+            $basis   = $this->isClosedContract() ? 'closed' : ($this->isBankHoursMonthly() ? 'monthly' : 'fixed');
             return ['basis' => $basis, 'contracted' => round((float) $bd['available'], 2), 'consumed' => round((float) $bd['consumed'], 2), 'excess' => $excess];
         }
 

@@ -80,12 +80,20 @@ class FechamentoExcedenteController extends Controller
      */
     private function monthlyBalanceAt(Project $p, string $yearMonth): ?array
     {
+        // CORTE NA VIRADA: o mês CORRENTE ainda não fechou — a cota mensal do BH Mensal é incrementada
+        // na virada do mês, então apurar com o mês atual (cota nova mascarando o déficit, consumo ainda
+        // parcial) gera número falso. Apuramos sempre até a última competência FECHADA (mês anterior ao
+        // atual), cortando tanto as horas compradas quanto os apontamentos do mês corrente. Para um
+        // $yearMonth já passado, usa ele mesmo; nunca ultrapassa o mês anterior ao atual.
+        $ceiling = \Carbon\Carbon::now()->subMonthNoOverflow()->format('Y-m');
+        $target  = $yearMonth < $ceiling ? $yearMonth : $ceiling;
+
         $resp = json_decode(app(ProjectController::class)->monthlyStatement($p)->getContent(), true);
         $pick = null;
         foreach (($resp['rows'] ?? []) as $r) {
             $ym = $r['year_month'] ?? '';
-            if ($ym === $yearMonth) { $pick = $r; break; }
-            if ($ym !== '' && $ym <= $yearMonth) { $pick = $r; }   // mantém a última linha <= pedido
+            if ($ym === $target) { $pick = $r; break; }
+            if ($ym !== '' && $ym <= $target) { $pick = $r; }   // mantém a última linha <= alvo (mês fechado)
         }
         if (!$pick) { return null; }
         return [
