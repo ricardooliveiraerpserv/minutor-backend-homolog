@@ -146,6 +146,9 @@ class FechamentoExcedenteController extends Controller
                 'status'          => $status,
                 'record_id'       => $rec?->id,
                 'closed_at'       => $rec?->closed_at?->toISOString(),
+                // Situação do CONTRATO (projeto) — p/ separar "Encerrados" numa aba própria na rotina.
+                'project_status'  => $p->status,
+                'encerrado'       => in_array($p->status, [Project::STATUS_FINISHED, Project::STATUS_CANCELLED], true),
             ];
         });
     }
