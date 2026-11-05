@@ -522,7 +522,9 @@ class FechamentoExcedenteController extends Controller
             ? (float) $rates->first()
             : ($excedenteTot > 0 ? round($total / $excedenteTot, 2) : 0.0);
 
-        $logoFile    = public_path('logo-erpserv.png');
+        // Logo BRANCO (header roxo do relatório). Fallback p/ o logo padrão se não existir.
+        $logoFile    = public_path('logo-erpserv-white.png');
+        if (!is_file($logoFile)) $logoFile = public_path('logo-erpserv.png');
         $logoDataUri = is_file($logoFile)
             ? 'data:image/png;base64,' . base64_encode((string) file_get_contents($logoFile))
             : null;

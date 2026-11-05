@@ -257,11 +257,11 @@ class BankHoursMonthlyController extends Controller
                 $hoursToAdd = $parentProject->sold_hours ?? 0;
             }
             
-            $accumulatedContractedHours += (int) $hoursToAdd;
+            $accumulatedContractedHours += (float) $hoursToAdd;
         }
-        
-        // Garantir que é inteiro
-        $accumulatedContractedHours = (int) $accumulatedContractedHours;
+
+        // Mantém as casas decimais (não truncar — senão o saldo diverge da Gestão de Contratos).
+        $accumulatedContractedHours = round((float) $accumulatedContractedHours, 2);
 
         // Calcular saldo de horas (soma dos saldos dos projetos pais)
         $hoursBalance = 0;
@@ -397,7 +397,8 @@ class BankHoursMonthlyController extends Controller
                 }
             }
         }
-        $contributedHours = (int) $contributedHours;
+        // Aporte com casas decimais (ex.: 4,9h) — truncar p/ inteiro (4h) quebra o saldo na visão do cliente.
+        $contributedHours = round((float) $contributedHours, 2);
 
         // Calcular consumo acumulado (horas apontadas, com regra especial para projetos fechados)
         $consumedHours = 0;

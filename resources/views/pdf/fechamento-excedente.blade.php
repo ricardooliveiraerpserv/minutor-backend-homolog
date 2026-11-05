@@ -67,6 +67,7 @@
         <div class="sub">ERPSERV &middot; Sustentação</div>
       </td>
       <td class="r">
+        @if (!empty($logoDataUri))<img src="{{ $logoDataUri }}" alt="ERPSERV" style="height:26px;width:auto;margin-bottom:5px;">@endif
         <div class="sub">Emitido em {{ $emitidoEm }}</div>
       </td>
     </tr>
