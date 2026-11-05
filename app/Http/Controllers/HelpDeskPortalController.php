@@ -259,7 +259,7 @@ class HelpDeskPortalController extends Controller
         }
         $v = $request->validate([
             'subject'             => 'required|string|max:200',
-            'description'         => 'nullable|string',
+            'description'         => 'required|string', // descrição obrigatória na abertura pelo cliente
             'category_id'         => 'nullable|exists:helpdesk_categories,id',
             'service_id'          => 'nullable|exists:helpdesk_services,id',
             'priority'            => 'nullable|in:' . implode(',', HelpDeskTicket::PRIORITIES),
@@ -270,6 +270,8 @@ class HelpDeskPortalController extends Controller
             'cc_emails.*'         => 'email',
             'tags'                => 'nullable|array',
             'tags.*'              => 'integer|exists:helpdesk_tags,id',
+        ], [
+            'description.required' => 'Descreva o chamado.',
         ]);
 
         // Perfil de acesso: ignora campos que o cliente não pode informar na abertura.
