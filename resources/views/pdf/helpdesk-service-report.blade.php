@@ -34,11 +34,17 @@
     .sla .val { font-size: 11px; font-weight: bold; margin-top: 2px; }
 
     .desc { background: #f9fafb; border: 1px solid #eef0f3; border-radius: 5px; padding: 9px 11px; font-size: 10px; line-height: 1.5; word-wrap: break-word; }
-    .desc img, .card .body img { max-width: 100%; }
+    /* Conteúdo vindo do e-mail/mensagem: nunca pode estourar a folha (senão descentraliza). */
+    .desc, .card .body { word-break: break-word; overflow-wrap: break-word; }
+    .desc img, .card .body img { max-width: 100% !important; height: auto; }
+    .desc table, .card .body table { max-width: 100% !important; width: auto !important; table-layout: auto; border-collapse: collapse; }
+    .desc td, .desc th, .card .body td, .card .body th { word-break: break-word; max-width: 100%; }
 
     .inter { width: 100%; border-collapse: collapse; }
     .inter .row td { padding: 0 0 10px; vertical-align: top; }
     .card { border: 1px solid #e6e8ec; border-radius: 6px; overflow: hidden; }
+    /* Evita cortar um card no meio entre páginas (o "final cortado"). */
+    .inter .row td, .card { page-break-inside: avoid; }
     .card .top { padding: 6px 10px; border-bottom: 1px solid #eef0f3; }
     .card .top table { width: 100%; border-collapse: collapse; }
     .who { font-size: 10px; font-weight: bold; color: #111827; }
@@ -63,7 +69,7 @@
     .hours .tot td { font-weight: bold; color: {{ $brand }}; border-top: 1px solid #e5e7eb; }
 
     .muted { color: #9ca3af; }
-    .footer { position: fixed; bottom: -1cm; left: 0; right: 0; font-size: 8px; color: #9ca3af; text-align: center; border-top: 1px solid #eee; padding-top: 4px; }
+    .footer { position: fixed; bottom: 0.4cm; left: 0; right: 0; font-size: 8px; color: #9ca3af; text-align: center; border-top: 1px solid #eee; padding-top: 4px; }
   </style>
 </head>
 <body>

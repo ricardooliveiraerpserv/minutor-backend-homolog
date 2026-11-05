@@ -733,15 +733,23 @@ class HelpDeskTicketController extends Controller
         $fmt  = fn ($d) => $d ? \Carbon\Carbon::parse($d)->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—';
         // Corpo FIEL ao chamado: se já é HTML (inclui a assinatura renderizada), mantém o HTML
         // para o dompdf renderizar igual ao chamado; se é texto puro, preserva quebras de linha.
-        $bodyHtml = function (?string $html) {
+        // Emojis viram "??" no DejaVu (fonte do dompdf) — sempre removidos.
+        $stripEmoji = fn (string $s) => preg_replace('/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2300}-\x{23FF}\x{2B00}-\x{2BFF}\x{FE00}-\x{FE0F}\x{200D}\x{20E3}]/u', '', $s);
+        $bodyHtml = function (?string $html) use ($stripEmoji) {
             $html = (string) $html;
             if (trim($html) === '') return '';
             if (strip_tags($html) === $html) {
-                // Texto puro: remove emojis (tofu no DejaVu), escapa e converte quebras.
-                $t = preg_replace('/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2300}-\x{23FF}\x{2B00}-\x{2BFF}\x{FE00}-\x{FE0F}\x{200D}]/u', '', $html);
-                return nl2br(e(trim($t)));
+                // Texto puro: remove emojis, escapa e converte quebras.
+                return nl2br(e(trim($stripEmoji($html))));
             }
-            return $html; // já é HTML (mensagem + assinatura) — renderiza como está
+            // HTML (mensagem + assinatura): o dompdf não busca imagens remotas/autenticadas
+            // (viram "?? imagem") e respeita larguras fixas que estouram a folha A4 (descentraliza).
+            // Limpamos para o relatório ficar centralizado e sem lixo.
+            $html = $stripEmoji($html);
+            $html = preg_replace('/<img\b[^>]*>/i', '', $html);               // imagens não renderizam no dompdf
+            $html = preg_replace('/\s(?:width|height)\s*=\s*("|\')[^"\']*\1/i', '', $html); // atributos de dimensão fixa
+            $html = preg_replace('/(?:max-|min-)?width\s*:\s*[^;"\']+;?/i', '', $html);      // larguras inline (tabela da assinatura)
+            return $html; // HTML já limpo — renderiza fiel, porém dentro da folha
         };
 
         $withApontamentos = $request->boolean('apontamentos');
