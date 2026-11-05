@@ -6,7 +6,7 @@
   <style>
     * { box-sizing: border-box; }
     body { font-family: 'DejaVu Sans', Arial, sans-serif; color: #1f2937; font-size: 11px; margin: 0; padding: 0; }
-    @page { margin: 1.3cm 1.2cm 1.6cm; }
+    @page { margin: 1.3cm 1.2cm 1.9cm; }
     @media screen { body { padding: 1.3cm 1.2cm; } }
 
     .header { border-bottom: 2px solid {{ $brand }}; padding-bottom: 12px; margin-bottom: 16px; }
@@ -69,7 +69,8 @@
     .hours .tot td { font-weight: bold; color: {{ $brand }}; border-top: 1px solid #e5e7eb; }
 
     .muted { color: #9ca3af; }
-    .footer { position: fixed; bottom: 0.4cm; left: 0; right: 0; font-size: 8px; color: #9ca3af; text-align: center; border-top: 1px solid #eee; padding-top: 4px; }
+    /* Fundo branco para o rodapé mascarar qualquer conteúdo que sangre na margem inferior (card alto dividido). */
+    .footer { position: fixed; bottom: 0; left: -1.2cm; right: -1.2cm; height: 1.3cm; background: #fff; font-size: 8px; color: #9ca3af; text-align: center; border-top: 1px solid #eee; padding-top: 5px; }
   </style>
 </head>
 <body>
