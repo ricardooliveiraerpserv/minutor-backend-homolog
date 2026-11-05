@@ -103,8 +103,28 @@ class HelpDeskPortalController extends Controller
         if ($scopeIds && !in_array($companyId, $scopeIds, true)) $companyId = (int) $scopeIds[0]; // fora do escopo → 1ª permitida
         $cats = \App\Models\HelpDeskCategory::withoutGlobalScopes()->where('company_id', $companyId)
             ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
-        $svcs = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
-            ->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name']);
+        // Serviços como ÁRVORE (pasta → subpasta) + dedup: os imports do Movidesk criaram pares
+        // duplicados (um sem code 16/07, um com code 17/07). Processa os PAIS antes dos filhos
+        // (parent_id null primeiro), mantém a cópia COM code e reaponta filhos/pai das removidas
+        // p/ a canônica — sem orfanar nós. selectable_by_agent recebe o selectable_by_CLIENT
+        // (o ServiceTreeSelect usa esse campo p/ decidir o que o cliente pode escolher).
+        $svcRows = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
+            ->where('active', true)->orderBy('sort_order')->orderBy('name')
+            ->get(['id', 'name', 'parent_id', 'code', 'selectable_by_client']);
+        $ordered = $svcRows->sortBy(fn ($s) => sprintf('%011d_%d', $s->parent_id ?? 0, ($s->code !== null && $s->code !== '') ? 0 : 1))->values();
+        $canon = [];
+        $remap = [];
+        foreach ($ordered as $s) {
+            $pid = $s->parent_id;
+            while ($pid !== null && isset($remap[$pid])) $pid = $remap[$pid];
+            $key = ($pid ?? 0) . '|' . mb_strtolower(trim((string) $s->name));
+            if (isset($canon[$key])) { $remap[$s->id] = $canon[$key]; } else { $canon[$key] = $s->id; }
+        }
+        $svcs = $ordered->reject(fn ($s) => isset($remap[$s->id]))->map(function ($s) use ($remap) {
+            $pid = $s->parent_id;
+            while ($pid !== null && isset($remap[$pid])) $pid = $remap[$pid];
+            return ['id' => $s->id, 'name' => $s->name, 'parent_id' => $pid, 'code' => $s->code, 'selectable_by_agent' => (bool) $s->selectable_by_client];
+        })->sortBy('name')->values();
         // Abertura em nome de outra pessoa → lista os CONTATOS da empresa do cliente. Tags → catálogo.
         // Interno (não-cliente) não abre "em nome de" no portal — só os próprios chamados.
         $onBehalf = $u->customer_id !== null && $this->access->clientOpenOnBehalf($u);
