@@ -84,7 +84,7 @@
 
     <table class="cards">
       <tr>
-        <td><div class="card-lbl">Contratadas</div><div class="card-val">{{ $ap['contratadas'] }}</div></td>
+        <td><div class="card-lbl">Contratadas acumuladas</div><div class="card-val">{{ $ap['contratadas'] }}</div></td>
         <td><div class="card-lbl">Consumidas</div><div class="card-val">{{ $ap['consumido'] }}</div></td>
         <td class="c-red"><div class="card-lbl">Excedente</div><div class="card-val">{{ $ap['excedente_tot'] }}</div></td>
         <td><div class="card-lbl">Valor hora</div><div class="card-val">{{ $ap['valor_hora'] }}</div></td>
