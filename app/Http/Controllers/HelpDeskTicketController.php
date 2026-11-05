@@ -747,6 +747,10 @@ class HelpDeskTicketController extends Controller
             // Limpamos para o relatório ficar centralizado e sem lixo.
             $html = $stripEmoji($html);
             $html = preg_replace('/<img\b[^>]*>/i', '', $html);               // imagens não renderizam no dompdf
+            // Placeholders "imagem" que o ingest de e-mail deixa no lugar de imagens cid: (viram caixinhas cinza).
+            $html = preg_replace('#<span\b[^>]*>\s*imagem\s*</span>#iu', '', $html);
+            // Tags <img> ESCAPADAS (e-mail Outlook colado: &lt;img ... alt="cidimage..." base64 &gt;) → viram muro de texto.
+            $html = preg_replace('/&lt;img\b(?:(?!&gt;).)*?&gt;/isu', '', $html);
             $html = preg_replace('/\s(?:width|height)\s*=\s*("|\')[^"\']*\1/i', '', $html); // atributos de dimensão fixa
             $html = preg_replace('/(?:max-|min-)?width\s*:\s*[^;"\']+;?/i', '', $html);      // larguras inline (tabela da assinatura)
             return $html; // HTML já limpo — renderiza fiel, porém dentro da folha
