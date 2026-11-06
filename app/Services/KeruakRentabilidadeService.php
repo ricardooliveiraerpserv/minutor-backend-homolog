@@ -79,6 +79,44 @@ class KeruakRentabilidadeService
         Cache::forget(self::CACHE_KEY . ':' . $slug);
     }
 
+    /**
+     * Testa uma URL do Keruak SEM salvar: busca, parseia e diz se vieram linhas.
+     * Usado pela tela de Configurações para validar o link antes de gravar.
+     */
+    public function testUrl(string $url): array
+    {
+        try {
+            $resp = Http::timeout(60)->get($url);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'status' => 0, 'rows' => 0, 'message' => 'Falha de conexão: ' . $e->getMessage()];
+        }
+
+        $status = $resp->status();
+        $body   = (string) $resp->body();
+
+        if (!$resp->successful()) {
+            return ['ok' => false, 'status' => $status, 'rows' => 0, 'message' => "O servidor do Keruak respondeu com HTTP {$status}."];
+        }
+
+        // Token/URL inválidos retornam 200 com uma mensagem curta (ex.: "Token Inválido!").
+        if (stripos($body, '<tbody>') === false) {
+            $hint = trim(strip_tags($body));
+            $hint = $hint !== '' ? mb_substr($hint, 0, 120) : 'resposta sem tabela de dados';
+            return ['ok' => false, 'status' => $status, 'rows' => 0, 'message' => "O Keruak não retornou a tabela de recebimentos. Resposta: \"{$hint}\". Verifique se o link/token está correto."];
+        }
+
+        $parsed = $this->parse($body);
+        $rows   = count($parsed);
+        if ($rows === 0) {
+            return ['ok' => false, 'status' => $status, 'rows' => 0, 'message' => 'A tabela foi encontrada, mas nenhuma linha de recebimento pôde ser lida.'];
+        }
+
+        $totalTitulos = 0;
+        foreach ($parsed as $r) { $totalTitulos += count($r['titulos'] ?? []); }
+
+        return ['ok' => true, 'status' => $status, 'rows' => $rows, 'message' => "OK — {$rows} cliente(s) e {$totalTitulos} título(s) de recebimento lidos."];
+    }
+
     private function companySlug(): string
     {
         $id = app(\App\Services\CompanyContext::class)->id();

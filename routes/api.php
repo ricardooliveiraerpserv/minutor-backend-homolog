@@ -2276,6 +2276,7 @@ Route::prefix('v1')->group(function () {
         // ⚙️ CONFIGURAÇÕES DO SISTEMA - Protegido por permissões específicas (Admins sempre têm acesso)
         Route::middleware('permission.or.admin:system_settings.view')->group(function () {
             Route::get('/system-settings', [SystemSettingController::class, 'index'])->name('system-settings.index');
+            Route::post('/system-settings/keruak-test', [SystemSettingController::class, 'testKeruakUrl'])->name('system-settings.keruak-test');
             Route::get('/system-settings/{key}', [SystemSettingController::class, 'show'])->name('system-settings.show');
         });
 

@@ -265,6 +265,31 @@ class SystemSettingController extends Controller
     }
 
     /**
+     * Testa uma URL do Keruak sem salvar — valida se o link retorna a tabela
+     * de recebimentos. Usado pelo botão "Testar" da tela de Configurações.
+     */
+    public function testKeruakUrl(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user->isAdmin() && !$user->hasAccess('system_settings.view')) {
+            return response()->json(['ok' => false, 'message' => 'Sem permissão.'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'url' => 'required|string|url|max:2048',
+        ], [
+            'url.required' => 'Informe a URL para testar.',
+            'url.url'      => 'Informe uma URL válida (http:// ou https://).',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['ok' => false, 'message' => $validator->errors()->first()], 422);
+        }
+
+        $result = app(\App\Services\KeruakRentabilidadeService::class)->testUrl($validator->validated()['url']);
+        return response()->json($result);
+    }
+
+    /**
      * Converter valor do tipo correto
      */
     private function castValue($value, string $type)
