@@ -419,10 +419,41 @@ class HourBankService
         // início do banco): traz o SALDO INICIAL de outro sistema quando houver.
         $prevFinalBalance = $this->getPreviousBalance($userId, (int) $current->year, (int) $current->month, $startDate);
 
+        // Meses FECHADOS (snapshot salvo) são CONGELADOS: usam o valor gravado, não recalculam —
+        // assim um fechamento já pago não muda quando uma regra nova entra (ex.: is_billable_only).
+        $closings = ConsultantHourBankClosing::where('user_id', $userId)
+            ->where('status', 'closed')->get()->keyBy('year_month');
+
         while ($current->lte($end)) {
             $year      = (int) $current->year;
             $month     = (int) $current->month;
             $yearMonth = $current->format('Y-m');
+
+            if ($frozen = $closings->get($yearMonth)) {
+                $results[$yearMonth] = [
+                    'user_id'             => $userId,
+                    'year_month'          => $yearMonth,
+                    'daily_hours'         => (float) $frozen->daily_hours,
+                    'working_days'        => (int) $frozen->working_days,
+                    'holidays_count'      => (int) $frozen->holidays_count,
+                    'expected_hours'      => (float) $frozen->expected_hours,
+                    'working_days_full'   => (int) $frozen->working_days,
+                    'expected_hours_full' => (float) $frozen->expected_hours,
+                    'is_current_month'    => false,
+                    'worked_hours'        => (float) $frozen->worked_hours,
+                    'pending_hours'       => 0.0,
+                    'conflict_hours'      => (float) ($frozen->conflict_hours ?? 0),
+                    'month_balance'       => (float) $frozen->month_balance,
+                    'previous_balance'    => (float) $frozen->previous_balance,
+                    'accumulated_balance' => (float) $frozen->accumulated_balance,
+                    'paid_hours'          => (float) $frozen->paid_hours,
+                    'final_balance'       => (float) $frozen->final_balance,
+                    'frozen'              => true,
+                ];
+                $prevFinalBalance = (float) $frozen->final_balance;
+                $current->addMonth();
+                continue;
+            }
 
             $workingFull   = $this->calculateWorkingDays($year, $month, $startDate);
             $expectedFull  = round($workingFull['working_days'] * $dailyHours, 2);
