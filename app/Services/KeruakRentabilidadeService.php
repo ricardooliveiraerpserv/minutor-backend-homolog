@@ -70,6 +70,15 @@ class KeruakRentabilidadeService
     }
 
     /** Slug da empresa ATIVA (default erpserv fora de contexto de empresa). */
+    /**
+     * Invalida o cache do "recebido" de uma empresa (ou do erpserv por padrão).
+     * Chamado ao alterar a URL do Keruak em Configurações, para a troca valer na hora.
+     */
+    public static function forgetCache(string $slug = 'erpserv'): void
+    {
+        Cache::forget(self::CACHE_KEY . ':' . $slug);
+    }
+
     private function companySlug(): string
     {
         $id = app(\App\Services\CompanyContext::class)->id();

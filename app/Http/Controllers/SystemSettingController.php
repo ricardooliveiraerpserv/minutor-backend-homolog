@@ -198,7 +198,9 @@ class SystemSettingController extends Controller
                 'movidesk_import_start_date'            => 'nullable|date',
                 'chat_notification_sound'               => 'nullable|string|in:ding,tri,chime,pop,alerta,suave',
                 'chat_notification_volume'              => 'nullable|integer|min:0|max:100',
+                'keruak_rentabilidade_url'              => 'nullable|string|url|max:2048',
             ], [
+                'keruak_rentabilidade_url.url'                      => 'Informe uma URL válida (começando com http:// ou https://).',
                 'timesheet_retroactive_limit_days.integer'         => 'O prazo deve ser um número inteiro.',
                 'timesheet_retroactive_limit_days.min'             => 'O prazo não pode ser negativo.',
                 'timesheet_retroactive_limit_days.max'             => 'O prazo não pode ser maior que 365 dias.',
@@ -235,6 +237,12 @@ class SystemSettingController extends Controller
                     $this->getSettingGroup($key),
                     $this->getSettingDescription($key)
                 );
+            }
+
+            // Trocou a URL do Keruak de rentabilidade → invalida o cache de "recebido"
+            // (erpserv) para a nova URL valer imediatamente nas duas telas que consomem.
+            if (array_key_exists('keruak_rentabilidade_url', $data)) {
+                \App\Services\KeruakRentabilidadeService::forgetCache('erpserv');
             }
 
             return response()->json([
@@ -305,6 +313,7 @@ class SystemSettingController extends Controller
             'movidesk_import_start_date'            => 'movidesk',
             'chat_notification_sound'               => 'chat',
             'chat_notification_volume'              => 'chat',
+            'keruak_rentabilidade_url'              => 'rentabilidade',
             default => 'general',
         };
     }
@@ -325,6 +334,7 @@ class SystemSettingController extends Controller
             'movidesk_import_start_date'            => 'Data a partir da qual apontamentos Movidesk serão importados (filtro por data do apontamento)',
             'chat_notification_sound'               => 'Toque global de notificação do chat (ding, tri, chime, pop, alerta, suave)',
             'chat_notification_volume'              => 'Volume global do som de notificação do chat (0 a 100)',
+            'keruak_rentabilidade_url'              => 'URL do BI do Keruak (recebimento por cliente) usada pelas telas de Rentabilidade e Visão 360 do cliente',
             default => '',
         };
     }
