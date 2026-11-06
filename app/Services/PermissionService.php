@@ -131,6 +131,9 @@ class PermissionService
         'prosight.operations.patch.view', 'prosight.operations.patch.request', 'prosight.operations.patch.register', 'prosight.operations.patch.execute',
         'prosight.compile.view', 'prosight.compile.request', 'prosight.compile.handoff',
         'vault.use', 'vault.audit.view',
+        // Gestão de OKRs (Gestão Estratégica)
+        'okr.view', 'okr.create', 'okr.update', 'okr.delete', 'okr.manage',
+        'okr.checkin', 'okr.approve', 'okr.close', 'okr.reopen',
     ];
 
     /**
@@ -185,6 +188,9 @@ class PermissionService
             // Cofre de Senhas / Ambientes — todo interno pode ABRIR o cofre; o que ele
             // enxerga depende da alocação (membership) e do zero-knowledge. Sem alocação, vê vazio.
             'vault.use', 'environments.use',
+            // Gestão de OKRs (operação completa + aprovação)
+            'okr.view', 'okr.create', 'okr.update', 'okr.manage',
+            'okr.checkin', 'okr.approve', 'okr.close', 'okr.reopen',
         ];
     }
 
@@ -207,6 +213,9 @@ class PermissionService
             'competencias.view', 'competencias.view_team', 'competencias.respond',
             // Cofre de Senhas / Ambientes — abre o cofre; visibilidade por alocação (zero-knowledge).
             'vault.use', 'environments.use',
+            // Gestão de OKRs (gestor de área)
+            'okr.view', 'okr.create', 'okr.update', 'okr.manage',
+            'okr.checkin', 'okr.close', 'okr.reopen',
         ];
     }
 
@@ -225,6 +234,8 @@ class PermissionService
             'competencias.respond',
             // Cofre de Senhas / Ambientes — abre o cofre; sem alocação vê vazio (zero-knowledge).
             'vault.use', 'environments.use',
+            // Gestão de OKRs (responsável: visualiza e atualiza o realizado dos seus KRs)
+            'okr.view', 'okr.checkin',
         ];
     }
 

@@ -86,6 +86,7 @@ class AppServiceProvider extends ServiceProvider
         Project::observe(ProjectObserver::class);
         Contract::observe(ContractObserver::class);
         HourContribution::observe(HourContributionObserver::class);
+        \App\Models\OkrMonthlyResult::observe(\App\Observers\OkrMonthlyResultObserver::class);
 
         // Registrar Policies
         Gate::policy(Timesheet::class, TimesheetPolicy::class);

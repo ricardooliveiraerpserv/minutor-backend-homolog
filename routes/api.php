@@ -686,6 +686,68 @@ Route::prefix('v1')->group(function () {
         Route::put('/task-groups/{taskGroup}',           [\App\Http\Controllers\TaskGroupController::class, 'update']);
         Route::delete('/task-groups/{taskGroup}',        [\App\Http\Controllers\TaskGroupController::class, 'destroy']);
         Route::post('/task-groups/{taskGroup}/generate', [\App\Http\Controllers\TaskGroupController::class, 'generate']);
+
+        // ===== Gestão de OKRs (Gestão Estratégica) =====
+        Route::prefix('okr')->group(function () {
+            // Leitura: gate okr.view (admin/coordenador passam direto).
+            Route::middleware('permission.or.admin:okr.view')->group(function () {
+                Route::get('/cycles',                  [\App\Http\Controllers\OkrCycleController::class, 'index']);
+                Route::get('/cycles/{cycle}',          [\App\Http\Controllers\OkrCycleController::class, 'show']);
+                Route::get('/areas',                   [\App\Http\Controllers\OkrAreaController::class, 'index']);
+                Route::get('/areas/{area}',            [\App\Http\Controllers\OkrAreaController::class, 'show']);
+                Route::get('/objectives',              [\App\Http\Controllers\OkrObjectiveController::class, 'index']);
+                Route::get('/objectives/{objective}',  [\App\Http\Controllers\OkrObjectiveController::class, 'show']);
+                Route::get('/key-results',             [\App\Http\Controllers\OkrKeyResultController::class, 'index']);
+                Route::get('/key-results/{keyResult}', [\App\Http\Controllers\OkrKeyResultController::class, 'show']);
+                // Acompanhamento Mensal
+                Route::get('/key-results/{keyResult}/monthly', [\App\Http\Controllers\OkrKeyResultController::class, 'monthly']);
+                Route::get('/monitoring',              [\App\Http\Controllers\OkrMonitoringController::class, 'index']);
+                // Dashboard executivo + fechamentos (consulta)
+                Route::get('/dashboard',               [\App\Http\Controllers\OkrDashboardController::class, 'index']);
+                Route::get('/closures',                [\App\Http\Controllers\OkrClosureController::class, 'index']);
+                // Fontes automáticas (catálogo)
+                Route::get('/automation/sources',      [\App\Http\Controllers\OkrAutomationController::class, 'sources']);
+            });
+
+            // Check-in mensal: responsável atualiza o realizado dos seus KRs.
+            Route::middleware('permission.or.admin:okr.checkin,okr.manage')->group(function () {
+                Route::put('/key-results/{keyResult}/results', [\App\Http\Controllers\OkrKeyResultController::class, 'saveResult']);
+            });
+
+            // Fechamento / reabertura mensal (gates próprios).
+            Route::middleware('permission.or.admin:okr.close')->group(function () {
+                Route::post('/closures/close', [\App\Http\Controllers\OkrClosureController::class, 'close']);
+            });
+            Route::middleware('permission.or.admin:okr.reopen')->group(function () {
+                Route::post('/closures/reopen', [\App\Http\Controllers\OkrClosureController::class, 'reopen']);
+            });
+
+            // Sincronização de fontes automáticas (gestão).
+            Route::middleware('permission.or.admin:okr.manage')->group(function () {
+                Route::post('/automation/sync', [\App\Http\Controllers\OkrAutomationController::class, 'sync']);
+            });
+
+            // Escrita: gate okr.manage (403 explícito; admin/coordenador passam direto).
+            Route::middleware('permission.or.admin:okr.manage')->group(function () {
+                Route::post('/cycles',                 [\App\Http\Controllers\OkrCycleController::class, 'store']);
+                Route::put('/cycles/{cycle}',          [\App\Http\Controllers\OkrCycleController::class, 'update']);
+                Route::delete('/cycles/{cycle}',       [\App\Http\Controllers\OkrCycleController::class, 'destroy']);
+                Route::post('/cycles/{cycle}/copy',    [\App\Http\Controllers\OkrCycleController::class, 'copy']);
+
+                Route::post('/areas',                  [\App\Http\Controllers\OkrAreaController::class, 'store']);
+                Route::put('/areas/{area}',            [\App\Http\Controllers\OkrAreaController::class, 'update']);
+                Route::delete('/areas/{area}',         [\App\Http\Controllers\OkrAreaController::class, 'destroy']);
+
+                Route::post('/objectives',             [\App\Http\Controllers\OkrObjectiveController::class, 'store']);
+                Route::put('/objectives/{objective}',  [\App\Http\Controllers\OkrObjectiveController::class, 'update']);
+                Route::delete('/objectives/{objective}', [\App\Http\Controllers\OkrObjectiveController::class, 'destroy']);
+
+                Route::post('/key-results',            [\App\Http\Controllers\OkrKeyResultController::class, 'store']);
+                Route::put('/key-results/{keyResult}', [\App\Http\Controllers\OkrKeyResultController::class, 'update']);
+                Route::delete('/key-results/{keyResult}', [\App\Http\Controllers\OkrKeyResultController::class, 'destroy']);
+                Route::put('/key-results/{keyResult}/targets', [\App\Http\Controllers\OkrKeyResultController::class, 'saveTargets']);
+            });
+        });
         Route::get('/task-groups/{taskGroup}/tracking',  [\App\Http\Controllers\TaskGroupController::class, 'tracking']);
 
         // Integração Microsoft 365 / Outlook (OAuth delegado por usuário)
