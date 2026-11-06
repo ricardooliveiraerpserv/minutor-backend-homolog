@@ -1523,8 +1523,8 @@ class TimesheetController extends Controller
         $validationRules = [
             'user_id' => 'nullable|exists:users,id',
             'date' => 'sometimes|date|before_or_equal:today',
-            'start_time' => 'sometimes|date_format:H:i',
-            'end_time' => 'sometimes|date_format:H:i|after:start_time',
+            'start_time' => 'sometimes|nullable|date_format:H:i',
+            'end_time' => 'sometimes|nullable|date_format:H:i|after:start_time',
             // Aceita HH:MM ("4:30"), decimal com ponto ou vírgula ("4.5", "4,5", "4.25"),
             // ou inteiro puro ("4"). Parseado por Timesheet::parseTotalHoursToMinutes.
             // Sintaxe ARRAY obrigatória: a regex tem `|` (alternation), que o Laravel
