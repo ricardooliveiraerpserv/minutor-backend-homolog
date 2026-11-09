@@ -1573,6 +1573,7 @@ class UserController extends Controller
             'signature.mobile'    => 'nullable|string|max:60',
             'signature.photo'     => 'nullable|string',
             'signature.show_photo'=> 'nullable|boolean',
+            'phone'               => 'sometimes|nullable|string|max:30',
         ]);
 
         if ($validator->fails()) {
@@ -1580,6 +1581,21 @@ class UserController extends Controller
         }
 
         $updateData = $validator->validated();
+
+        // Não-admin: no próprio perfil só pode alterar senha e celular (a foto tem endpoint próprio).
+        // Nome, e-mail e assinatura ficam restritos ao admin — ignorados em silêncio se enviados.
+        if (!$user->isAdmin()) {
+            unset($updateData['name'], $updateData['email'], $updateData['signature']);
+        }
+
+        // Celular: normaliza vazio → null e espelha no celular da assinatura de e-mail.
+        if (array_key_exists('phone', $updateData)) {
+            $phone = trim((string) ($updateData['phone'] ?? ''));
+            $updateData['phone'] = $phone !== '' ? $phone : null;
+            $sig = $updateData['signature'] ?? (is_array($user->signature) ? $user->signature : []);
+            $sig['mobile'] = $updateData['phone'];
+            $updateData['signature'] = $sig;
+        }
 
         // Verificar senha atual se está tentando alterar a senha
         if (isset($updateData['password'])) {
