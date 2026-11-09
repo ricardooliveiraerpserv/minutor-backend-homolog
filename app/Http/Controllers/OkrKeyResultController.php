@@ -182,6 +182,9 @@ class OkrKeyResultController extends Controller
             'action_plan' => 'nullable|string',
             'situation' => 'nullable|string|max:30',
             'reason' => 'nullable|string|max:255',
+        ], [
+            'situation.max' => 'A situação deve ter no máximo 30 caracteres.',
+            'reason.max' => 'O motivo deve ter no máximo 255 caracteres.',
         ]);
 
         // Não permite alterar mês fechado (área do KR ou fechamento global).
