@@ -84,6 +84,14 @@ class ActionReminderRule extends Model
             'cta_url'   => '/expenses',
             'workflow'  => 'expense.adjustment',
         ],
+        'okr_checkin' => [
+            'label'     => 'Check-in mensal de OKR',
+            'audience'  => 'Responsáveis por resultados-chave · mês anterior sem realizado',
+            'priority'  => 'medium',
+            'title'     => 'Check-in mensal de OKR pendente',
+            'cta_label' => 'Fazer check-in',
+            'cta_url'   => '/gestao-estrategica/acompanhamento',
+        ],
         'fix_exp_rejected' => [
             'label'     => 'Despesas rejeitadas',
             'audience'  => 'Consultores',

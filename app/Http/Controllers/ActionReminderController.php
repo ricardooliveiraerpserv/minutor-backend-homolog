@@ -112,6 +112,9 @@ class ActionReminderController extends Controller
     public static function affectedUserIds(string $key): array
     {
         switch ($key) {
+            case 'okr_checkin':
+                return \App\Services\OkrCheckinReminderService::affectedUserIds();
+
             case 'fix_ts_adjust':
                 return Timesheet::where('status', Timesheet::STATUS_ADJUSTMENT_REQUESTED)
                     ->whereNull('deleted_at')->distinct()->pluck('user_id')->filter()->values()->all();

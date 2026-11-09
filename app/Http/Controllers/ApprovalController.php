@@ -113,6 +113,19 @@ class ApprovalController extends Controller
             \Illuminate\Support\Facades\Log::warning('homeActions falhou: ' . $e->getMessage());
         }
 
+        // OKR — check-in mensal pendente dos KRs de que o usuário é responsável (qualquer perfil).
+        // Bloco isolado: uma falha aqui não derruba as demais ações do Meu Dia.
+        try {
+            $okr = \App\Services\OkrCheckinReminderService::pendingKeyResults(null, $u->id)->count();
+            if ($okr > 0) {
+                $ref = \App\Services\OkrCheckinReminderService::referenceLabel();
+                $actions[] = $this->homeAction('okr_checkin', now()->day > 10 ? 'high' : 'medium', 'Check-in mensal de OKR',
+                    "{$okr} resultado(s)-chave sem o realizado de {$ref}.", 'Fazer check-in', '/gestao-estrategica/acompanhamento', $okr);
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('homeActions OKR falhou: ' . $e->getMessage());
+        }
+
         return response()->json(['data' => $actions]);
     }
 

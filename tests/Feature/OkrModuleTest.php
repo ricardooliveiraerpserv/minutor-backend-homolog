@@ -307,6 +307,65 @@ class OkrModuleTest extends TestCase
     }
 
     /** @test */
+    public function checkin_mensal_pendente_aparece_no_meu_dia_e_no_lembrete_e_some_ao_informar_ou_fechar(): void
+    {
+        \Illuminate\Support\Carbon::setTestNow('2027-03-03 10:00:00');   // referência = fevereiro/2027
+        try {
+            $admin = $this->userOfType('admin');
+            $h = $this->authHeaders($admin);
+            $resp = $this->userOfType('consultor');
+            $hr = $this->authHeaders($resp);
+
+            $cycleId = $this->postJson($this->apiUrl('/okr/cycles'), [
+                'year' => 2027, 'name' => 'Planejamento 2027', 'status' => 'em_execucao',
+                'start_date' => '2027-01-01', 'end_date' => '2027-12-31',
+            ], $h)->assertStatus(201)->json('data.id');
+            $objId = $this->postJson($this->apiUrl('/okr/objectives'), [
+                'okr_cycle_id' => $cycleId, 'level' => 'corporativo', 'title' => 'Crescer a carteira',
+            ], $h)->assertStatus(201)->json('data.id');
+            $krId = $this->postJson($this->apiUrl('/okr/key-results'), [
+                'okr_objective_id' => $objId, 'name' => 'Conquistar 12 clientes', 'unit' => 'quantidade',
+                'direction' => 'aumentar', 'aggregation' => 'acumulativo', 'baseline_value' => 0, 'target_value' => 12,
+                'responsavel_id' => $resp->id, 'data_source_type' => 'manual',
+            ], $h)->assertStatus(201)->json('data.id');
+            $this->putJson($this->apiUrl("/okr/key-results/{$krId}/targets"), ['mode' => 'auto'], $h)->assertStatus(200);
+
+            // O guard guarda o último usuário entre requisições do teste → esquece antes de trocar de usuário.
+            $as = function (array $hh) { $this->app['auth']->forgetGuards(); return $hh; };
+            $okrAction = fn (array $hh) => collect($this->getJson($this->apiUrl('/notifications/actions'), $as($hh))->assertOk()->json('data'))
+                ->firstWhere('key', 'okr_checkin');
+
+            // Responsável vê o card no Meu Dia (fevereiro sem realizado); o admin (não responsável) não vê.
+            $card = $okrAction($hr);
+            $this->assertNotNull($card);
+            $this->assertEquals(1, $card['count']);
+            $this->assertStringContainsString('fevereiro/2027', $card['message']);
+            $this->assertSame('/gestao-estrategica/acompanhamento', $card['cta_url']);
+            $this->assertNull($okrAction($h));
+            // Lembrete recorrente alcança só o responsável.
+            $this->assertEquals([$resp->id], \App\Http\Controllers\ActionReminderController::affectedUserIds('okr_checkin'));
+
+            // Informou o realizado → some.
+            $this->putJson($this->apiUrl("/okr/key-results/{$krId}/results"), ['year_month' => '2027-02', 'actual_value' => 1], $as($hr))->assertStatus(200);
+            $this->assertNull($okrAction($hr));
+            $this->assertSame([], \App\Http\Controllers\ActionReminderController::affectedUserIds('okr_checkin'));
+
+            // Volta a pendente (realizado apagado) e some de novo ao FECHAR o mês.
+            $this->putJson($this->apiUrl("/okr/key-results/{$krId}/results"), ['year_month' => '2027-02', 'actual_value' => null], $as($hr))->assertStatus(200);
+            $this->assertNotNull($okrAction($hr));
+            $this->postJson($this->apiUrl('/okr/closures/close'), ['cycle_id' => $cycleId, 'year_month' => '2027-02'], $as($h))->assertStatus(201);
+            $this->assertNull($okrAction($hr));
+
+            // Ciclo ainda em planejamento não cobra check-in.
+            $this->postJson($this->apiUrl('/okr/closures/reopen'), ['cycle_id' => $cycleId, 'year_month' => '2027-02', 'reason' => 'teste'], $as($h))->assertStatus(200);
+            $this->putJson($this->apiUrl("/okr/cycles/{$cycleId}"), ['year' => 2027, 'name' => 'Planejamento 2027', 'status' => 'em_planejamento'], $as($h))->assertOk();
+            $this->assertNull($okrAction($hr));
+        } finally {
+            \Illuminate\Support\Carbon::setTestNow();
+        }
+    }
+
+    /** @test */
     public function consultor_nao_pode_gerenciar_okr(): void
     {
         $consultor = $this->userOfType('consultor'); // tem okr.view, não okr.manage
