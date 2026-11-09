@@ -39,6 +39,24 @@ class OkrMonitoringController extends Controller
 
         $rows = $krs->map(function (OkrKeyResult $kr) {
             $series = $this->progress->seriesForKeyResult($kr);
+
+            // Campos do check-in por mês (o grid do Acompanhamento usa `informed` p/ mostrar o realizado
+            // e pré-preenche o modal) — mesma junção de OkrKeyResultController::monthly.
+            $resultsByMonth = [];
+            foreach ($kr->monthlyResults as $r) {
+                $resultsByMonth[(int) substr($r->year_month, 5, 2)] = $r;
+            }
+            $months = array_map(function ($row) use ($resultsByMonth) {
+                $r = $resultsByMonth[$row['month']] ?? null;
+                return array_merge($row, [
+                    'informed' => $r !== null && $r->actual_value !== null,
+                    'comment' => $r?->comment,
+                    'risks' => $r?->risks,
+                    'action_plan' => $r?->action_plan,
+                    'situation' => $r?->situation,
+                ]);
+            }, $series['months']);
+
             return [
                 'id' => $kr->id,
                 'name' => $kr->name,
@@ -49,9 +67,10 @@ class OkrMonitoringController extends Controller
                 'target_value' => $kr->target_value,
                 'objective_id' => $kr->okr_objective_id,
                 'objective_title' => $kr->objective?->title,
+                'area_id' => $kr->objective?->okr_area_id,
                 'area_name' => $kr->objective?->area?->name,
                 'responsavel_name' => $kr->responsavel?->name,
-                'months' => $series['months'],
+                'months' => $months,
                 'summary' => $series['summary'],
             ];
         });

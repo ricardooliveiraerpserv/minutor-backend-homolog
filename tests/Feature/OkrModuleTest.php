@@ -173,6 +173,17 @@ class OkrModuleTest extends TestCase
         $this->assertSame('verde', $r->json('data.summary.status'));
         $this->assertSame(6, $r->json('data.summary.reference_month'));
         $this->assertDatabaseHas('okr_monthly_results', ['okr_key_result_id' => $krId, 'year_month' => '2027-02']);
+
+        // A grade do Acompanhamento (/okr/monitoring) também marca os meses informados — sem isso o
+        // realizado não aparece na tela (regressão encontrada ao validar com dados em 2026-11-09).
+        $this->app['auth']->forgetGuards();
+        $cycleId = $this->getJson($this->apiUrl('/okr/cycles'), $h)->json('data.0.id');
+        $m = $this->getJson($this->apiUrl("/okr/monitoring?cycle_id={$cycleId}"), $h)->assertOk();
+        $row = collect($m->json('data'))->firstWhere('id', $krId);
+        $this->assertTrue($row['months'][1]['informed']);     // fevereiro
+        $this->assertEquals(4, $row['months'][1]['actual']);
+        $this->assertFalse($row['months'][6]['informed']);    // julho sem realizado
+        $this->assertArrayHasKey('area_id', $row);
     }
 
     /** @test */
