@@ -1814,6 +1814,19 @@ class FechamentoConsultorController extends Controller
             $rows[] = $row;
         }
 
+        // Cada linha (trecho) sabe o total do MÊS e os demais trechos — a tela mostra o consultor
+        // em abas diferentes (horista/fixo/banco), então a linha sozinha não revela o valor do mês.
+        $monthTotal = round(array_sum(array_column($rows, 'total')), 2);
+        $tipoLabel  = ['horista' => 'Horista', 'fixo' => 'Fixo', 'banco_de_horas' => 'Banco de Horas'];
+        foreach ($rows as $i => $r) {
+            $rows[$i]['split_month_total'] = $monthTotal;
+            $rows[$i]['split_others'] = array_values(array_map(fn ($o) => [
+                'label' => $o['segment_label'],
+                'tipo'  => $tipoLabel[$o['consultant_type']] ?? $o['consultant_type'],
+                'total' => round((float) $o['total'], 2),
+            ], array_filter($rows, fn ($o, $j) => $j !== $i, ARRAY_FILTER_USE_BOTH)));
+        }
+
         return $rows;
     }
 
