@@ -483,6 +483,8 @@ class FechamentoConsultorController extends Controller
         if ($userRows->isEmpty()) return null;
         if ($userRows->count() === 1) return $userRows->first();
 
+        // Ordem cronológica dos trechos (as linhas vêm agrupadas por bucket: horista/banco/fixo).
+        $userRows = $userRows->sortBy(fn ($r) => $r['segment_from'] ?? '')->values();
         $merged = $userRows->last();
         foreach ([
             'total', 'total_despesas', 'desconto', 'adiantamento', 'emprestimo_aporte', 'adicional',
@@ -492,12 +494,66 @@ class FechamentoConsultorController extends Controller
             $merged[$f] = round($userRows->sum(fn ($r) => (float) ($r[$f] ?? 0)), 2);
         }
         $merged['all_approved']   = $userRows->every(fn ($r) => ($r['all_approved'] ?? true));
-        $merged['split_segments'] = $userRows->map(fn ($r) => [
-            'tipo'  => $r['consultant_type'] ?? null,
-            'label' => $r['segment_label'] ?? null,
-            'total' => round((float) ($r['total'] ?? 0), 2),
-        ])->values()->all();
+        $merged['split_segments'] = $userRows->map(fn ($r) => $this->splitSegmentDetail($r))->values()->all();
         return $merged;
+    }
+
+    /**
+     * Detalhe de UM trecho do mês da troca (período, dias, base e fórmula do corte) — mesma
+     * informação para a tela do admin, o Meu Painel do consultor e o relatório/PDF.
+     */
+    private function splitSegmentDetail(array $r): array
+    {
+        $tipo   = $r['consultant_type'] ?? null;
+        $dias   = (int) ($r['segment_days'] ?? 0);
+        $diasMes = (int) ($r['segment_month_days'] ?? 0);
+        $horas  = round((float) ($r['horas_trabalhadas'] ?? 0), 2);
+        $total  = round((float) ($r['total'] ?? 0), 2);
+        $extras = round((float) ($r['total_extras'] ?? 0), 2);
+        $fracao = $dias . '/' . $diasMes . ' dias';
+
+        if ($tipo === 'fixo') {
+            $mensal  = round((float) ($r['salario_mensal'] ?? $r['valor_hora'] ?? 0), 2);
+            $base    = round($total - $extras, 2);
+            $formula = $this->brl($mensal) . ' × ' . $fracao . ' = ' . $this->brl($base);
+            if ($extras > 0) $formula .= ' + extras ' . $this->brl($extras);
+            $tipoLabel = 'Fixo';
+        } elseif ($tipo === 'banco_de_horas') {
+            $mensal  = round((float) ($r['valor_hora'] ?? 0), 2);
+            $base    = round((float) ($r['fixed_salary'] ?? 0), 2);
+            $formula = $this->brl($mensal) . ' × ' . $fracao . ' = ' . $this->brl($base);
+            $hx = (float) ($r['paid_hours'] ?? 0);
+            if ($hx > 0) {
+                $formula .= ' + ' . $this->fmtHoras($hx) . 'h extra × ' . $this->brl((float) ($r['valor_hora_extra'] ?? 0)) . '/h';
+            }
+            $tipoLabel = 'Banco de Horas';
+        } else {
+            $mensal  = null;
+            $taxa    = (float) ($r['effective_rate'] ?? $r['valor_hora'] ?? 0);
+            $pagar   = (float) ($r['horas_a_pagar'] ?? $horas);
+            $base    = round($pagar * $taxa, 2);
+            $formula = $this->fmtHoras($pagar) . 'h × ' . $this->brl($taxa) . '/h = ' . $this->brl($base);
+            if ($pagar > $horas) $formula .= ' (piso garantido ' . $this->fmtHoras($pagar) . 'h, ' . $fracao . ')';
+            if ($extras > 0) $formula .= ' + extras ' . $this->brl($extras);
+            $tipoLabel = 'Horista';
+        }
+
+        return [
+            'tipo'       => $tipo,
+            'tipo_label' => $tipoLabel,
+            'label'      => $r['segment_label'] ?? null,
+            'from'       => $r['segment_from'] ?? null,
+            'to'         => $r['segment_to'] ?? null,
+            'dias'       => $dias,
+            'dias_mes'   => $diasMes,
+            'valor_mensal' => $mensal,
+            'valor_hora' => $tipo === 'horista' ? (float) ($r['effective_rate'] ?? 0) : null,
+            'horas'      => $horas,
+            'extras'     => $extras,
+            'formula'    => $formula,
+            'total'      => $total,
+            'total_fmt'  => $this->brl($total),
+        ];
     }
 
     private function buildConsultorReportView(int $userId, string $yearMonth, string $mode = 'ambos'): array
@@ -564,7 +620,11 @@ class FechamentoConsultorController extends Controller
         } else {
             $totalHoras = round(collect($rows)->sum('horas'), 2);
             $cards[] = ['label' => 'Total Horas', 'value' => $this->fmtHoras($totalHoras)];
-            if (array_key_exists('fixed_salary', $consultor)) {            // Banco de Horas
+            if (!empty($consultor['split_segments'])) {                     // Mês da troca
+                foreach ($consultor['split_segments'] as $sg) {
+                    $cards[] = ['label' => $sg['tipo_label'] . ' ' . $sg['label'], 'value' => $sg['total_fmt']];
+                }
+            } elseif (array_key_exists('fixed_salary', $consultor)) {            // Banco de Horas
                 $cards[] = ['label' => 'H Úteis Disponib.', 'value' => $this->fmtHoras((float) ($consultor['expected_hours'] ?? 0))];
                 $cards[] = ['label' => 'Base Mensal', 'value' => $this->brl((float) ($consultor['fixed_salary'] ?? 0))];
                 $cards[] = ['label' => 'Taxa/h (÷160)', 'value' => $rate4($consultor['valor_hora_extra'] ?? 0)];
@@ -646,6 +706,7 @@ class FechamentoConsultorController extends Controller
             'mode'            => $mode,
             'logoDataUri'     => $logoDataUri,
             'cards'           => $cards,
+            'cortes'          => $soDespesa ? [] : ($consultor['split_segments'] ?? []),
             'grupos'          => $grupos,
             'despesas'        => $despesas,
             'temDespesas'     => !empty($despesas) && !$soServico,
@@ -1436,6 +1497,8 @@ class FechamentoConsultorController extends Controller
                 'horas_ajuste'      => round((float) ($row['horas_ajuste'] ?? 0), 2),
                 'valor_ajuste'      => round((float) ($row['valor_ajuste'] ?? 0), 2),
                 'all_approved'      => (bool) ($row['all_approved'] ?? true),
+                // Mês da TROCA (meio do mês): detalhe de cada trecho e a conta do corte.
+                'split_segments'    => $row['split_segments'] ?? null,
                 'desconto'       => $desconto,
                 'desconto_desc'  => $row['desconto_desc'] ?? null,
                 'adiantamento'   => $adiantamento,

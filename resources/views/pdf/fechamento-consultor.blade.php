@@ -77,6 +77,36 @@
     </tr>
   </table>
 
+  {{-- Mês da TROCA de contrato/valor: cálculo do corte por trecho --}}
+  @if(!empty($cortes))
+    <div class="group-title" style="margin-top:0;">Alteração contratual no mês — cálculo proporcional</div>
+    <table class="rows" style="margin-top:4px;">
+      <thead><tr>
+        <th style="width:16%;">Período</th>
+        <th style="width:14%;">Tipo</th>
+        <th style="width:10%;" class="right">Horas</th>
+        <th style="width:42%;">Cálculo</th>
+        <th style="width:18%;" class="right">Valor</th>
+      </tr></thead>
+      <tbody>
+        @foreach($cortes as $c)
+          <tr>
+            <td class="nowrap">{{ $c['label'] }}</td>
+            <td>{{ $c['tipo_label'] }}</td>
+            <td class="right">{{ number_format((float) $c['horas'], 2, ',', '.') }}h</td>
+            <td>{{ $c['formula'] }}</td>
+            <td class="right nowrap"><strong>{{ $c['total_fmt'] }}</strong></td>
+          </tr>
+        @endforeach
+        <tr>
+          <td colspan="4" class="right"><strong>Total do mês</strong></td>
+          <td class="right nowrap"><strong>R$ {{ number_format(collect($cortes)->sum('total'), 2, ',', '.') }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="muted" style="font-size:8px;margin-bottom:8px;">Valores mensais rateados por dias corridos do trecho ÷ dias do mês.</div>
+  @endif
+
   {{-- Apontamentos por tipo de contrato → cliente --}}
   @if(($mode ?? 'ambos') !== 'despesa')
     @if(empty($grupos))
