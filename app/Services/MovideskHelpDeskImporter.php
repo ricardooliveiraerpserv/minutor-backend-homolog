@@ -164,7 +164,8 @@ class MovideskHelpDeskImporter
 
             // Não importar histórico fechado/cancelado que nunca esteve aqui — só o que está vivo
             // ou o que já espelhamos antes (para receber a atualização de fechamento).
-            if (!$exists && in_array($base, ['Closed', 'Canceled'], true)) {
+            // Contas SECUNDÁRIAS (ex.: BIZIFY) espelham 100% — inclusive o histórico fechado.
+            if ($primary && !$exists && in_array($base, ['Closed', 'Canceled'], true)) {
                 $stats['skipped']++;
                 $this->bumpCursor($lite, $maxUpdate);
                 continue;
@@ -179,14 +180,14 @@ class MovideskHelpDeskImporter
                 // APENAS tickets NOVOS. Chamados JÁ espelhados (ex.: carga histórica do dev1, cujas
                 // orgs não foram vinculadas) continuam recebendo atualização de status/interações —
                 // o update não altera customer_id quando a org é nula (resolveCustomer→null), então é seguro.
-                $org = $this->orgFor($this->extractOrgId($full), $companyId);
-                if ($this->requireLinkedOrg() && !$exists && !($org && $org->hd_customer_id)) {
+                $org = $this->orgFor($this->extractOrgId($full, $companyId), $companyId);
+                if ($primary && $this->requireLinkedOrg() && !$exists && !($org && $org->hd_customer_id)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
                 // Modelo ESPELHO: cliente migrado importa normalmente aqui (cria local); o espelhamento
                 // p/ a Conecta é feito pelo sync outbound (conecta:sync). (Antes isto pulava a criação.)
                 // "A partir do vínculo apenas": ignora chamados CRIADOS antes de a org ser vinculada.
-                if ($org && $org->hd_linked_at && $this->createdBeforeLink($full, $org)) {
+                if ($primary && $org && $org->hd_linked_at && $this->createdBeforeLink($full, $org)) {
                     $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
                 }
                 // Cliente migrado em modo "SÓ LOG": o chamado fica FORA da fila da ERPSERV
@@ -403,10 +404,15 @@ class MovideskHelpDeskImporter
 
         // Cliente/solicitante a partir do primeiro "client" do Movidesk.
         $client   = $md['clients'][0] ?? null;
-        $orgId    = $client['organization']['id'] ?? ($md['clients'][0]['organization']['id'] ?? null);
+        $orgId    = $this->extractOrgId($md, $companyId);
         $customerId = $this->resolveCustomer($orgId, $companyId);
         $reqName  = (string) ($client['businessName'] ?? '');
         $reqEmail = $this->firstEmail($client);
+        // Contas SECUNDÁRIAS (ex.: BIZIFY): sem org vinculada, amarra o cliente pelo DOMÍNIO do
+        // solicitante (Regras de Associação da empresa) e, por fim, pelo contato (users.customer_id).
+        if (!$customerId && !$this->teamFilterApplies($companyId)) {
+            $customerId = $this->resolveCustomerByEmail($reqEmail, $companyId);
+        }
         // Nome da organização do Movidesk (para clientes legados sem cadastro no Minutor).
         $orgName  = trim((string) ($client['organization']['businessName'] ?? ''));
         if ($orgName === '' && $orgId) { $orgName = trim((string) (optional($this->orgFor($orgId, $companyId))->name ?? '')); }
@@ -839,9 +845,29 @@ class MovideskHelpDeskImporter
     }
 
     /** id da organização Movidesk do chamado (1º client). */
-    private function extractOrgId(array $md)
+    private function extractOrgId(array $md, ?int $companyId = null)
     {
-        return $md['clients'][0]['organization']['id'] ?? null;
+        $client = $md['clients'][0] ?? [];
+        if (!empty($client['organization']['id'])) return $client['organization']['id'];
+        // Solicitante é a PRÓPRIA organização (personType 2 = empresa) → o id dele é o da org.
+        // (Só contas secundárias — ERPSERV mantém o comportamento histórico.)
+        if ($companyId && !$this->teamFilterApplies($companyId)
+            && (int) ($client['personType'] ?? 0) === 2 && !empty($client['id'])) return $client['id'];
+        return null;
+    }
+
+    /** Cliente pelo e-mail do solicitante: regra de associação por domínio (na empresa) → contato. */
+    private function resolveCustomerByEmail(?string $email, int $companyId): ?int
+    {
+        $email = strtolower(trim((string) $email));
+        if ($email === '' || !str_contains($email, '@')) return null;
+        $domain = \App\Models\HelpDeskAssociationRule::normalize($email);
+        $cid = \App\Models\HelpDeskAssociationRule::withoutGlobalScopes()
+            ->whereNull('deleted_at')->where('enabled', true)->where('domain', $domain)
+            ->where('company_id', $companyId)->whereNotNull('customer_id')->value('customer_id');
+        if ($cid) return (int) $cid;
+        $cid = User::whereRaw('lower(email) = ?', [$email])->whereNotNull('customer_id')->value('customer_id');
+        return $cid ? (int) $cid : null;
     }
 
     /** true se o chamado foi CRIADO antes de a org ser vinculada ao HD (deve ser ignorado). */
