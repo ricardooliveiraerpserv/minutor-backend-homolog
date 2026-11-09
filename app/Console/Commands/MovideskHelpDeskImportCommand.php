@@ -43,6 +43,10 @@ class MovideskHelpDeskImportCommand extends Command
             $this->warn('Import desabilitado (SystemSetting movidesk_hd_import_enabled=false). Use --force para testar.');
             return self::SUCCESS;
         }
+        if (($stats['skipped'] ?? 0) === -2) {
+            $this->warn('Empresa sem token Movidesk próprio (services.movidesk.tokens) — import ignorado.');
+            return self::SUCCESS;
+        }
 
         $this->info(sprintf(
             'Movidesk HD import — desde %s | varridos %d, novos %d, atualizados %d, interações %d, ignorados %d',

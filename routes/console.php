@@ -341,6 +341,16 @@ Schedule::command('movidesk:hd-import')
   ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
   ->withoutOverlapping(30)
   ->runInBackground();
+// Contas Movidesk SECUNDÁRIAS (multi-empresa: config services.movidesk.tokens, ex.: BIZIFY=2) —
+// import automático com token e cursor próprios. Nelas a Promax é cliente comum (sem filtro de equipe).
+foreach (array_keys((array) config('services.movidesk.tokens', [])) as $mdCompanyId) {
+  Schedule::command('movidesk:hd-import --company=' . (int) $mdCompanyId)
+    ->cron('*/5 * * * *')
+    ->name('movidesk-hd-import-c' . (int) $mdCompanyId)
+    ->description('Espelha chamados da conta Movidesk da empresa ' . (int) $mdCompanyId . ' no Help Desk (entrada; read-only)')
+    ->withoutOverlapping(30)
+    ->runInBackground();
+}
 } // fim hd-import gated
 
 Schedule::command('help-desk:ingest-emails --limit=25')

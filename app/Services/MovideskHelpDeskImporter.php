@@ -54,10 +54,21 @@ class MovideskHelpDeskImporter
         return SystemSetting::get('movidesk_hd_team_filter_mode', 'exclude') === 'include' ? 'include' : 'exclude';
     }
 
+    /**
+     * O filtro de equipe Promax só vale para a conta Movidesk PRINCIPAL (ERPSERV), onde a Promax
+     * tem equipes próprias atendendo. Nas demais contas (ex.: BIZIFY = 2) a Promax é CLIENTE comum
+     * → importa como qualquer cliente, sem filtro de equipe. (Decisão Ricardo 2026-11-09.)
+     */
+    private function teamFilterApplies(?int $companyId): bool
+    {
+        return !$companyId || $companyId === $this->companyId();
+    }
+
     /** Deve PULAR (não espelhar/interagir) este chamado pela equipe, respeitando o modo:
      *  exclude → pula se a equipe ESTÁ na lista; include → pula se NÃO está (mantém só as da lista). */
-    private function shouldSkipTeam(?string $ownerTeam): bool
+    private function shouldSkipTeam(?string $ownerTeam, ?int $companyId = null): bool
     {
+        if (!$this->teamFilterApplies($companyId)) { return false; }
         $t = mb_strtolower(trim((string) $ownerTeam));
         $inList = $t !== '' && in_array($t, array_map(fn ($b) => mb_strtolower(trim($b)), $this->blockedTeams()), true);
         return $this->teamFilterMode() === 'include' ? !$inList : $inList;
@@ -123,14 +134,24 @@ class MovideskHelpDeskImporter
             return $stats;
         }
 
-        $teams     = $this->blockedTeams(); // lista de equipes (exclude: excluir; include: manter só estas)
         $companyId = $companyIdOverride ?: $this->companyId();
+        $primary   = $this->teamFilterApplies($companyId);
+        // Conta secundária SEM token próprio → o MovideskService cairia no token global (ERPSERV) e
+        // gravaria chamados da ERPSERV como se fossem desta empresa. Aborta.
+        if (!$primary && empty(config("services.movidesk.tokens.{$companyId}"))) {
+            Log::warning('📥 [MOVIDESK HD] Empresa sem token Movidesk próprio — import ignorado', ['company_id' => $companyId]);
+            $stats['skipped'] = -2;
+            return $stats;
+        }
+        // Lista de equipes (exclude: excluir; include: manter só estas) — SÓ na conta principal.
+        $teams     = $primary ? $this->blockedTeams() : [];
+        $mode      = $primary ? $this->teamFilterMode() : 'exclude';
         // Multi-empresa: fixa o token Movidesk da empresa alvo p/ todas as chamadas desta varredura.
         $this->movidesk->forCompany($companyId);
-        $since     = $sinceOverride ?: $this->cursor();
+        $since     = $sinceOverride ?: $this->cursor($companyId);
         $stats['since'] = $since->toIso8601String();
 
-        $list = $this->movidesk->fetchHelpDeskTicketsSince($since, $teams, $this->teamFilterMode());
+        $list = $this->movidesk->fetchHelpDeskTicketsSince($since, $teams, $mode);
         $maxUpdate = $since;
 
         foreach ($list as $lite) {
@@ -222,7 +243,7 @@ class MovideskHelpDeskImporter
         }
 
         // Avança o cursor (com folga de 1s para trás para não perder atualizações no mesmo segundo).
-        $this->saveCursor($maxUpdate->copy()->subSecond());
+        $this->saveCursor($maxUpdate->copy()->subSecond(), $companyId);
 
         // PASSADA DEDICADA: empurra comentários pendentes de QUALQUER chamado espelhado,
         // independente de o chamado ter entrado na varredura por lastUpdate. Sem isto, uma
@@ -269,7 +290,7 @@ class MovideskHelpDeskImporter
                 $full = $this->movidesk->fetchTicket((int) $ticket->external_ref);
                 if (!$full) { continue; }
                 // Em poder de equipe da Promax → não interage (não empurra comentário).
-                if ($this->shouldSkipTeam($full['ownerTeam'] ?? null)) { continue; }
+                if ($this->shouldSkipTeam($full['ownerTeam'] ?? null, $companyId)) { continue; }
                 $before = HelpDeskTicketComment::where('ticket_id', $tid)
                     ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
                 $this->pushComments($ticket, (int) $ticket->external_ref, $full['actions'] ?? []);
@@ -327,7 +348,7 @@ class MovideskHelpDeskImporter
             try {
                 // Em poder de equipe da Promax → não interage (não empurra status).
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
-                if ($full && $this->shouldSkipTeam($full['ownerTeam'] ?? null)) { continue; }
+                if ($full && $this->shouldSkipTeam($full['ownerTeam'] ?? null, $companyId)) { continue; }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
                     HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;
@@ -1040,16 +1061,23 @@ class MovideskHelpDeskImporter
     }
 
     // ── Cursor ────────────────────────────────────────────────────────────────
-    private function cursor(): Carbon
+    /** Cursor POR EMPRESA: a principal (ERPSERV) mantém a chave histórica; as demais usam
+     *  'movidesk_hd_import_since_c<id>' — sem isso o import da 2ª conta avançava o cursor da ERPSERV. */
+    private function cursorKey(?int $companyId): string
     {
-        $raw = SystemSetting::get('movidesk_hd_import_since', null);
+        return $this->teamFilterApplies($companyId) ? 'movidesk_hd_import_since' : "movidesk_hd_import_since_c{$companyId}";
+    }
+
+    private function cursor(?int $companyId = null): Carbon
+    {
+        $raw = SystemSetting::get($this->cursorKey($companyId), null);
         if ($raw) { try { return Carbon::parse($raw); } catch (\Throwable) {} }
         // 1ª execução: pega os últimos 7 dias (fila viva), não o histórico todo.
         return now()->subDays(7);
     }
 
-    private function saveCursor(Carbon $ts): void
+    private function saveCursor(Carbon $ts, ?int $companyId = null): void
     {
-        SystemSetting::set('movidesk_hd_import_since', $ts->toIso8601String(), 'string', 'movidesk', 'Cursor do import HD Movidesk (Promax)');
+        SystemSetting::set($this->cursorKey($companyId), $ts->toIso8601String(), 'string', 'movidesk', 'Cursor do import HD Movidesk (Promax)');
     }
 }
