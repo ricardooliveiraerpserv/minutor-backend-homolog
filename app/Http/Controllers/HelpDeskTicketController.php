@@ -117,6 +117,16 @@ class HelpDeskTicketController extends Controller
         ]);
     }
 
+    /** Nome da empresa de ORIGEM quando difere da atual (chamado transferido); senão null. */
+    private function originCompanyName(HelpDeskTicket $t): ?string
+    {
+        static $names = null;
+        $o = (int) ($t->origin_company_id ?? 0);
+        if (!$o || $o === (int) $t->company_id) return null;
+        $names ??= \App\Models\Company::query()->pluck('name', 'id')->all();
+        return $names[$o] ?? null;
+    }
+
     private function decorate(HelpDeskTicket $t, ?\Illuminate\Support\Collection $events = null, $lastAgentAt = null, ?\App\Services\BusinessCalendarService $cal = null, bool $lean = false, int $interCount = 0, $meetingAt = null): array
     {
         // Solicitante resolvido SEM query extra (usa relações já eager-loaded) — p/ o card da fila.
@@ -134,6 +144,9 @@ class HelpDeskTicketController extends Controller
             // Na LISTA (lean) o card só lê os flags do SLA — listSummary pula a serialização de datas.
             'sla'                    => $lean ? $this->sla->listSummary($t, $events) : $this->sla->summary($t, $events),
             'solicitante_nome'       => $solicitante,
+            // Chamado TRANSFERIDO de outra empresa (número de origem mantido): nome da empresa de
+            // origem p/ o selo interno "Origem: X" (o cliente não vê selo — só o número de sempre).
+            'origin_company_name'    => $this->originCompanyName($t),
             'requester_user_id'      => $t->requester_user_id, // p/ o filtro "abri, mas não sou responsável"
             'created_by_id'          => $t->created_by_id,     // quem ABRIU o chamado
             'last_agent_activity_at' => $lastAgentAt ? \Illuminate\Support\Carbon::parse($lastAgentAt)->toIso8601String() : null,

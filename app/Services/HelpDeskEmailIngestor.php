@@ -191,7 +191,7 @@ class HelpDeskEmailIngestor
         // (resposta a uma resposta nossa); senão, por assunto normalizado.
         $appendExisting     = $settings['append_existing'] ?? true;
         $associateExisting  = $settings['associate_existing'] ?? 'customer';
-        $existing = $this->matchByTicketToken($subject, $acc->company_id ? (int) $acc->company_id : null);
+        $existing = $this->matchByTicketToken($subject, $acc->company_id ? (int) $acc->company_id : null, $fromEmail ?: null, $customerId ? (int) $customerId : null);
         if (!$existing && $appendExisting && $associateExisting !== 'new') {
             // Modo 'customer': só casa por assunto DENTRO do mesmo cliente. Se o remetente NÃO foi
             // associado a um cliente (sem contato/regra), NÃO anexa por assunto — senão um e-mail de
@@ -468,22 +468,35 @@ class HelpDeskEmailIngestor
     }
 
     /** Threading explícito: token [NUMERO] no assunto aponta direto pro chamado (qualquer formato). */
-    private function matchByTicketToken(string $subject, ?int $companyId = null): ?HelpDeskTicket
+    private function matchByTicketToken(string $subject, ?int $companyId = null, ?string $fromEmail = null, ?int $customerId = null): ?HelpDeskTicket
     {
         // Aceita "[HD-000168]" (legado) e "[000169]" (novo formato Movidesk).
-        // Número é único POR EMPRESA → casa só dentro da empresa dona da caixa.
-        if (preg_match('/\[((?:[A-Za-z]{1,8}-)?\d{3,})\]/', $subject, $m)) {
-            $q = fn () => HelpDeskTicket::withoutGlobalScopes()->whereNull('deleted_at')
-                ->when($companyId, fn ($w) => $w->where('company_id', $companyId))
-                ->orderBy('company_id');
-            $t = $q()->whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->first();
-            // Token legado "[BIZ-2790]" (antes de remover o prefixo) → procura o número cru.
-            if (!$t && preg_match('/^[A-Za-z]{1,8}-(\d+)$/', $m[1], $d)) {
-                $t = $q()->where('source_system', 'movidesk')->where('ticket_number', $d[1])->first();
-            }
-            return $t;
+        // O número é único POR ORIGEM (origin_company_id) e NÃO muda na transferência de empresa →
+        // a mesma caixa pode ver 2 chamados com o mesmo número (um nativo + um transferido).
+        // Candidatos: chamados da empresa da caixa (atual OU de origem). Desempate: remetente
+        // (requester/envolvidos) → cliente do remetente → empresa ATUAL = caixa → origem = caixa.
+        if (!preg_match('/\[((?:[A-Za-z]{1,8}-)?\d{3,})\]/', $subject, $m)) return null;
+        $q = fn () => HelpDeskTicket::withoutGlobalScopes()->whereNull('deleted_at')
+            ->when($companyId, fn ($w) => $w->where(fn ($x) => $x->where('company_id', $companyId)->orWhere('origin_company_id', $companyId)));
+        $cands = $q()->whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->get();
+        // Token legado "[BIZ-2790]" (antes de remover o prefixo) → procura o número cru.
+        if ($cands->isEmpty() && preg_match('/^[A-Za-z]{1,8}-(\d+)$/', $m[1], $d)) {
+            $cands = $q()->where('source_system', 'movidesk')->where('ticket_number', $d[1])->get();
         }
-        return null;
+        if ($cands->count() <= 1) return $cands->first();
+        $from = strtolower(trim((string) $fromEmail));
+        $score = function (HelpDeskTicket $t) use ($from, $customerId, $companyId) {
+            $s = 0;
+            if ($from !== '') {
+                if (strtolower(trim((string) $t->requester_email)) === $from) $s += 100;
+                elseif (in_array($from, array_map(fn ($e) => strtolower(trim((string) $e)), (array) ($t->cc_emails ?? [])), true)) $s += 60;
+            }
+            if ($customerId && (int) $t->customer_id === $customerId) $s += 40;
+            if ($companyId && (int) $t->company_id === $companyId) $s += 10;
+            if ($companyId && (int) $t->origin_company_id === $companyId) $s += 5;
+            return $s;
+        };
+        return $cands->sortByDesc(fn ($t) => $score($t) * 1000000000 + (int) $t->id)->first(); // empate → mais recente
     }
 
     /** Procura chamado aberto com o mesmo assunto (ignorando prefixos Re:/Fwd:). */

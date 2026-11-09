@@ -160,7 +160,7 @@ class MovideskHelpDeskImporter
             if ($externalId === '') { continue; }
 
             $base   = (string) ($lite['baseStatus'] ?? '');
-            $exists = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('company_id', $companyId)->exists();
+            $exists = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('origin_company_id', $companyId)->exists();
 
             // Não importar histórico fechado/cancelado que nunca esteve aqui — só o que está vivo
             // ou o que já espelhamos antes (para receber a atualização de fechamento).
@@ -198,7 +198,7 @@ class MovideskHelpDeskImporter
                 $migCust = ($org && $org->hd_customer_id) ? \App\Models\Customer::find($org->hd_customer_id) : null;
                 if ($migCust && $migCust->migrated_to_conecta_at && $migCust->conecta_ticket_log_only) {
                     $trashed = HelpDeskTicket::withTrashed()
-                        ->where('source_system', 'movidesk')->where('external_ref', $externalId)->where('company_id', $companyId)->first();
+                        ->where('source_system', 'movidesk')->where('external_ref', $externalId)->where('origin_company_id', $companyId)->first();
                     if ($trashed && method_exists($trashed, 'trashed') && $trashed->trashed()) {
                         $trashed->restore();
                     }
@@ -207,7 +207,7 @@ class MovideskHelpDeskImporter
                     $stats['updated']  += $res['created'] ? 0 : 1;
                     $stats['comments'] += $res['comments'];
                     try {
-                        $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('company_id', $companyId)->first();
+                        $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('origin_company_id', $companyId)->first();
                         if ($t) {
                             app(\App\Services\ConectaTicketPusher::class)->push($t, $res['created'] ? 'novo' : 'legado');
                             $t->delete(); // re-esconde da fila; log + Conecta são a verdade
@@ -229,7 +229,7 @@ class MovideskHelpDeskImporter
                 // (incremental; Conecta deduplica comentários). Fica nos DOIS lados.
                 if ($migCust && $migCust->migrated_to_conecta_at && $migCust->conecta_ticket_copy) {
                     try {
-                        $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('company_id', $companyId)->first();
+                        $t = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('origin_company_id', $companyId)->first();
                         if ($t) app(\App\Services\ConectaTicketPusher::class)->push($t, 'copia');
                     } catch (\Throwable $e) {
                         Log::warning('📥 [MOVIDESK HD] push cópia falhou', ['id' => $externalId, 'err' => $e->getMessage()]);
@@ -272,7 +272,7 @@ class MovideskHelpDeskImporter
         }
         $ticketIds = HelpDeskTicketComment::query()
             ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')
-            ->when($companyId, fn ($q) => $q->whereIn('ticket_id', HelpDeskTicket::where('company_id', $companyId)->select('id')))
+            ->when($companyId, fn ($q) => $q->whereIn('ticket_id', HelpDeskTicket::where('origin_company_id', $companyId)->select('id')))
             ->distinct()->pluck('ticket_id');
         if ($ticketIds->isEmpty()) {
             return 0;
@@ -281,7 +281,7 @@ class MovideskHelpDeskImporter
         foreach ($ticketIds as $tid) {
             $ticket = HelpDeskTicket::where('id', $tid)
                 ->where('source_system', 'movidesk')
-                ->when($companyId, fn ($q) => $q->where('company_id', $companyId))
+                ->when($companyId, fn ($q) => $q->where('origin_company_id', $companyId))
                 ->whereNotNull('external_ref')
                 ->first();
             if (!$ticket) {
@@ -331,7 +331,7 @@ class MovideskHelpDeskImporter
                   ->where('m.is_outbound_default', true);
             })
             ->where('t.source_system', 'movidesk')
-            ->when($companyId, fn ($q) => $q->where('t.company_id', $companyId))
+            ->when($companyId, fn ($q) => $q->where('t.origin_company_id', $companyId))
             ->whereNotNull('t.external_ref')
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
@@ -379,7 +379,7 @@ class MovideskHelpDeskImporter
 
         $res = DB::transaction(fn () => $this->upsert($full, $companyId));
         $this->rehostPendingImages(); // fora da transação
-        $hd = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', (string) $externalId)->where('company_id', $companyId)->first(['id', 'ticket_number']);
+        $hd = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', (string) $externalId)->where('origin_company_id', $companyId)->first(['id', 'ticket_number']);
         return ['created' => $res['created'], 'comments' => $res['comments'], 'ticket_id' => $hd?->id, 'hd_number' => $hd?->ticket_number];
     }
 
@@ -399,8 +399,11 @@ class MovideskHelpDeskImporter
         $base       = (string) ($md['baseStatus'] ?? '');
         $statusText = (string) ($md['status'] ?? '');
 
-        $ticket = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('company_id', $companyId)->first();
+        $ticket = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('origin_company_id', $companyId)->first();
         $created = false;
+        // Empresa ATUAL do chamado (pode ter sido transferido p/ outra empresa do grupo): o de-para de
+        // status/categoria/serviço usa o cadastro DELA. A conta de origem ($companyId) só define a busca.
+        $tc = $ticket ? (int) ($ticket->company_id ?: $companyId) : $companyId;
 
         // Cliente/solicitante a partir do primeiro "client" do Movidesk.
         $client   = $md['clients'][0] ?? null;
@@ -426,7 +429,8 @@ class MovideskHelpDeskImporter
                 'source_system' => 'movidesk',
                 'external_ref'  => $externalId,
                 'channel'       => 'movidesk',
-                'company_id'    => $companyId,
+                'company_id'        => $companyId,
+                'origin_company_id' => $companyId, // conta Movidesk de origem (não muda na transferência)
             ]);
             $created = true;
         }
@@ -466,13 +470,13 @@ class MovideskHelpDeskImporter
         $hdCatName = $ticket->category_id ? $this->nameOfId('helpdesk_categories', (int) $ticket->category_id) : null;
         $m = $this->merge3($created, $hdCatName, trim((string) ($md['category'] ?? '')) ?: null, $ticket->external_category);
         if ($m['push'] !== null) { $patch['category'] = $m['push']; $pushShadow['external_category'] = $m['shadow']; }
-        else { if ($m['setHd']) { $ticket->category_id = $m['hd'] ? $this->matchByName('helpdesk_categories', $companyId, $m['hd']) : null; } $ticket->external_category = $m['shadow']; }
+        else { if ($m['setHd']) { $ticket->category_id = $m['hd'] ? $this->matchByName('helpdesk_categories', $tc, $m['hd']) : null; } $ticket->external_category = $m['shadow']; }
 
         // Serviço — ENTRADA apenas: o Movidesk aceita o PATCH (200) mas IGNORA a troca de serviço
         // (valida pelo contexto do chamado). Então adotamos o serviço do Movidesk quando ele muda.
         $mdSvc = trim((string) ($md['serviceFirstLevel'] ?? ($md['serviceFull'][0] ?? ($md['serviceSecondLevel'] ?? '')))) ?: null;
         if ($created || $ticket->external_service !== $mdSvc) {
-            $sid = $mdSvc ? $this->matchByName('helpdesk_services', $companyId, $mdSvc) : null;
+            $sid = $mdSvc ? $this->matchByName('helpdesk_services', $tc, $mdSvc) : null;
             if ($sid) { $ticket->service_id = $sid; }
             $ticket->external_service = $mdSvc;
         }
@@ -499,12 +503,12 @@ class MovideskHelpDeskImporter
 
         // Status — merge de 3 vias. PUSH só quando há JUSTIFICATIVA configurada (Movidesk exige).
         $mdSig = trim($base . '|' . $statusText);
-        $hdOut = $ticket->status_id ? $this->outboundStatus($companyId, (int) $ticket->status_id) : null;
+        $hdOut = $ticket->status_id ? $this->outboundStatus($tc, (int) $ticket->status_id) : null;
         $hdSig = $hdOut ? trim(($hdOut['base'] ?? '') . '|' . ($hdOut['text'] ?? '')) : null;
         if ($created) {
-            $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
+            $sid = HelpDeskMovideskStatusMap::resolveInbound($tc, $base, $statusText)
                 ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText)
-                ?? optional(HelpDeskStatus::query()->where('company_id', $companyId)->where('is_default', true)->first())->id;
+                ?? optional(HelpDeskStatus::query()->where('company_id', $tc)->where('is_default', true)->first())->id;
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
         } elseif ($hdSig !== null && !empty($ticket->external_status) && $hdSig !== $ticket->external_status) {
@@ -524,15 +528,15 @@ class MovideskHelpDeskImporter
             // sem justificativa global: não empurra e não puxa (mantém o status do Minutor).
         } elseif ($mdSig !== $ticket->external_status) {
             // Só o Movidesk mudou → puxa p/ o Minutor.
-            $sid = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $statusText)
+            $sid = HelpDeskMovideskStatusMap::resolveInbound($tc, $base, $statusText)
                 ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText);
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
         }
 
         $ticket->external_synced_at = now();
-        // company_id não é fillable — garante empresa mesmo em update.
-        if ((int) $ticket->company_id !== $companyId) { $ticket->forceFill(['company_id' => $companyId]); }
+        // company_id NÃO é reimposto em update: o chamado pode ter sido TRANSFERIDO de empresa
+        // (transferCompany). A origem fica em origin_company_id.
         $ticket->save();
 
         // WRITE-BACK: empurra Categoria/Urgência/Nível (e Status quando há justificativa) p/ o Movidesk
@@ -656,7 +660,7 @@ class MovideskHelpDeskImporter
                 $match = $byDate->get($createdKey)->shift(); // consome (não reusar p/ outra ação)
                 $match->external_action_id = $aid;
                 if (empty($match->idempotency_key)) {
-                    $match->idempotency_key = 'movidesk-' . $this->movideskCompanyTag((int) $ticket->company_id) . $ticket->external_ref . '-a' . $aid;
+                    $match->idempotency_key = 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . $ticket->external_ref . '-a' . $aid;
                 }
                 $match->saveQuietly(); // sem observers (não re-empurrar nada)
                 $existing->put($aid, true);
@@ -679,7 +683,7 @@ class MovideskHelpDeskImporter
                 'source'             => 'movidesk',
                 'external_action_id' => $aid,
                 // action.id do Movidesk é sequencial POR ticket (1,2,3…) — a chave precisa do id do ticket.
-                'idempotency_key'    => 'movidesk-' . $this->movideskCompanyTag((int) $ticket->company_id) . $ticket->external_ref . '-a' . $aid,
+                'idempotency_key'    => 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . $ticket->external_ref . '-a' . $aid,
             ]);
             // Imagem inline (URL S3 Movidesk) vem com assinatura que EXPIRA em horas. Enfileira p/
             // re-hospedar FORA da transação (download é lento) — baixa agora enquanto a URL é válida.
@@ -825,8 +829,8 @@ class MovideskHelpDeskImporter
      *  Movidesk). Desde 2026-11-09 todas as empresas usam o número CRU do Movidesk (sem "BIZ-"). */
     private function ticketNumberFor(int $companyId, string $externalId): string
     {
-        // Número = o MESMO do Movidesk de origem, em TODAS as empresas (sem prefixo). A unicidade de
-        // ticket_number é POR EMPRESA (company_id, ticket_number) — ids colidem entre contas Movidesk.
+        // Número = o MESMO do Movidesk de origem, em TODAS as empresas (sem prefixo) e NUNCA muda (nem
+        // ao transferir de empresa). Unicidade POR ORIGEM (origin_company_id, ticket_number).
         return $externalId;
     }
 

@@ -440,7 +440,7 @@ class FechamentoExcedenteController extends Controller
                 // Número é único POR EMPRESA: em colisão, a ERPSERV (menor company_id) prevalece
                 // (pluck: último vence → ordena desc).
                 $solicitantes = HelpDeskTicket::whereIn('ticket_number', array_merge($tickets, $padded))
-                    ->orderByDesc('company_id')
+                    ->orderByDesc('origin_company_id')
                     ->pluck('requester_name', 'ticket_number')->all();
             }
             $solFor = function ($ticket) use ($solicitantes) {
