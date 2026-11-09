@@ -62,7 +62,7 @@ class BackfillTransferOrigin extends Command
 
         $tickets = $rows->pluck('ticket')->filter()->unique()->values()->all();
         $md = empty($tickets) ? [] : DB::table('movidesk_tickets')->whereIn('ticket_id', $tickets)->pluck('customer_id', 'ticket_id')->all();
-        $hd = empty($tickets) ? [] : DB::table('helpdesk_tickets')->whereIn('ticket_number', $tickets)->pluck('customer_id', 'ticket_number')->all();
+        $hd = empty($tickets) ? [] : DB::table('helpdesk_tickets')->whereIn('ticket_number', $tickets)->orderByDesc('company_id')->pluck('customer_id', 'ticket_number')->all();
 
         $p1 = 0;
         $p1ByCompany = [];

@@ -191,7 +191,7 @@ class HelpDeskEmailIngestor
         // (resposta a uma resposta nossa); senão, por assunto normalizado.
         $appendExisting     = $settings['append_existing'] ?? true;
         $associateExisting  = $settings['associate_existing'] ?? 'customer';
-        $existing = $this->matchByTicketToken($subject);
+        $existing = $this->matchByTicketToken($subject, $acc->company_id ? (int) $acc->company_id : null);
         if (!$existing && $appendExisting && $associateExisting !== 'new') {
             // Modo 'customer': só casa por assunto DENTRO do mesmo cliente. Se o remetente NÃO foi
             // associado a um cliente (sem contato/regra), NÃO anexa por assunto — senão um e-mail de
@@ -468,11 +468,20 @@ class HelpDeskEmailIngestor
     }
 
     /** Threading explícito: token [NUMERO] no assunto aponta direto pro chamado (qualquer formato). */
-    private function matchByTicketToken(string $subject): ?HelpDeskTicket
+    private function matchByTicketToken(string $subject, ?int $companyId = null): ?HelpDeskTicket
     {
         // Aceita "[HD-000168]" (legado) e "[000169]" (novo formato Movidesk).
+        // Número é único POR EMPRESA → casa só dentro da empresa dona da caixa.
         if (preg_match('/\[((?:[A-Za-z]{1,8}-)?\d{3,})\]/', $subject, $m)) {
-            return HelpDeskTicket::whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->first();
+            $q = fn () => HelpDeskTicket::withoutGlobalScopes()->whereNull('deleted_at')
+                ->when($companyId, fn ($w) => $w->where('company_id', $companyId))
+                ->orderBy('company_id');
+            $t = $q()->whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->first();
+            // Token legado "[BIZ-2790]" (antes de remover o prefixo) → procura o número cru.
+            if (!$t && preg_match('/^[A-Za-z]{1,8}-(\d+)$/', $m[1], $d)) {
+                $t = $q()->where('source_system', 'movidesk')->where('ticket_number', $d[1])->first();
+            }
+            return $t;
         }
         return null;
     }

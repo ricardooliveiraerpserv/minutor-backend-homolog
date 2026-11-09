@@ -822,17 +822,12 @@ class MovideskHelpDeskImporter
 
     /** Número do chamado p/ ticket Movidesk importado. ERPSERV (empresa legada) = id CRU
      *  (retrocompat); demais empresas = prefixo do slug (ids de ticket colidem entre contas
-     *  Movidesk e ticket_number é UNIQUE). Ex.: BIZIFY → "BIZ-2790". */
+     *  Movidesk). Desde 2026-11-09 todas as empresas usam o número CRU do Movidesk (sem "BIZ-"). */
     private function ticketNumberFor(int $companyId, string $externalId): string
     {
-        static $erpId = null, $prefixCache = [];
-        if ($erpId === null) { $erpId = (int) (\App\Models\Company::where('slug', 'erpserv')->value('id') ?? 1); }
-        if ($companyId === $erpId) return $externalId;
-        if (!array_key_exists($companyId, $prefixCache)) {
-            $slug = (string) (\App\Models\Company::find($companyId)?->slug ?? ('c' . $companyId));
-            $prefixCache[$companyId] = strtoupper(substr($slug, 0, 3));
-        }
-        return $prefixCache[$companyId] . '-' . $externalId;
+        // Número = o MESMO do Movidesk de origem, em TODAS as empresas (sem prefixo). A unicidade de
+        // ticket_number é POR EMPRESA (company_id, ticket_number) — ids colidem entre contas Movidesk.
+        return $externalId;
     }
 
     /** Tag de empresa p/ chaves internas (idempotency_key). ERPSERV = '' (retrocompat);
