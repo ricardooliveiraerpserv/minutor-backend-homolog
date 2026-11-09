@@ -272,6 +272,41 @@ class OkrModuleTest extends TestCase
     }
 
     /** @test */
+    public function periodo_do_planejamento_deve_estar_no_ano_do_ciclo_e_membros_da_area_sao_salvos(): void
+    {
+        $admin = $this->userOfType('admin');
+        $h = $this->authHeaders($admin);
+
+        // Período fora do ano do ciclo → 422 (início e término).
+        $this->postJson($this->apiUrl('/okr/cycles'), [
+            'year' => 2027, 'name' => 'Fora do ano', 'start_date' => '2026-11-06', 'end_date' => '2026-12-06',
+        ], $h)->assertStatus(422)->assertJsonValidationErrors(['start_date', 'end_date']);
+
+        // Término antes do início → 422.
+        $this->postJson($this->apiUrl('/okr/cycles'), [
+            'year' => 2027, 'name' => 'Invertido', 'start_date' => '2027-06-01', 'end_date' => '2027-01-31',
+        ], $h)->assertStatus(422)->assertJsonValidationErrors(['end_date']);
+
+        // Período válido → 201; salvar só limiares (sem datas) não apaga o período.
+        $r = $this->postJson($this->apiUrl('/okr/cycles'), [
+            'year' => 2027, 'name' => 'Planejamento 2027', 'start_date' => '2027-01-01', 'end_date' => '2027-12-31',
+        ], $h)->assertStatus(201);
+        $id = $r->json('data.id');
+        $this->putJson($this->apiUrl("/okr/cycles/{$id}"), [
+            'year' => 2027, 'name' => 'Planejamento 2027', 'settings' => ['semaforo' => ['verde' => 90, 'amarelo' => 70]],
+        ], $h)->assertOk()->assertJsonPath('data.start_date', '2027-01-01')->assertJsonPath('data.end_date', '2027-12-31');
+
+        // Membros da área: member_ids salva e o show devolve a lista.
+        $m1 = $this->userOfType('consultor');
+        $m2 = $this->userOfType('consultor');
+        $area = $this->postJson($this->apiUrl('/okr/areas'), ['name' => 'Comercial', 'member_ids' => [$m1->id, $m2->id]], $h)->assertStatus(201);
+        $areaId = $area->json('data.id');
+        $this->getJson($this->apiUrl("/okr/areas/{$areaId}"), $h)->assertOk()->assertJsonCount(2, 'data.members');
+        $this->putJson($this->apiUrl("/okr/areas/{$areaId}"), ['name' => 'Comercial', 'member_ids' => [$m2->id]], $h)->assertOk();
+        $this->getJson($this->apiUrl("/okr/areas/{$areaId}"), $h)->assertOk()->assertJsonCount(1, 'data.members')->assertJsonPath('data.members.0.id', $m2->id);
+    }
+
+    /** @test */
     public function consultor_nao_pode_gerenciar_okr(): void
     {
         $consultor = $this->userOfType('consultor'); // tem okr.view, não okr.manage

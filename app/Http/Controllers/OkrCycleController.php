@@ -170,13 +170,25 @@ class OkrCycleController extends Controller
             'name' => 'required|string|max:200',
             'description' => 'nullable|string',
             'responsavel_id' => 'nullable|integer|exists:users,id',
-            'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date|after_or_equal:start_date',
+            'start_date' => ['nullable', 'date', $this->withinCycleYear($request, 'início')],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date', $this->withinCycleYear($request, 'término')],
             'status' => ['sometimes', Rule::in(OkrCycle::STATUSES)],
             'settings' => 'nullable|array',
         ], [
             'year.unique' => 'Já existe um planejamento para este ano.',
+            'end_date.after_or_equal' => 'O término deve ser igual ou posterior ao início.',
         ]);
+    }
+
+    /** O período do planejamento precisa cair dentro do ano do ciclo (ex.: ciclo 2027 → datas de 2027). */
+    private function withinCycleYear(Request $request, string $label): \Closure
+    {
+        return function (string $attribute, mixed $value, \Closure $fail) use ($request, $label) {
+            $year = (int) $request->input('year');
+            if ($value && $year && (int) substr((string) $value, 0, 4) !== $year) {
+                $fail("A data de {$label} deve estar dentro do ano do planejamento ({$year}).");
+            }
+        };
     }
 
     private function serialize(OkrCycle $c): array
