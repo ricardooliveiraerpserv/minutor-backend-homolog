@@ -246,6 +246,11 @@ class HelpDeskTriggerEngine
     {
         if (!GraphMailSender::enabled()) return;
         if (!HelpDeskMailGate::allows($ticket)) return; // trava temporária de homologação (só ERPSERV)
+        // Chamado Promax atendido PELO Movidesk: o cliente é avisado pelo Movidesk → tira o cliente/
+        // solicitante dos destinatários (avisos à equipe/responsável seguem normais).
+        if (\App\Services\MovideskPushPolicy::deliversViaMovidesk($ticket)) {
+            $params['to'] = array_values(array_diff((array) ($params['to'] ?? []), ['cliente', 'requester']));
+        }
 
         $to = [];
         foreach ((array) ($params['to'] ?? []) as $target) {

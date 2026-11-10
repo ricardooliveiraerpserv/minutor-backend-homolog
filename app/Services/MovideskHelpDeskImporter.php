@@ -270,8 +270,13 @@ class MovideskHelpDeskImporter
         if (!$this->pushCommentsEnabled()) {
             return 0;
         }
-        $ticketIds = HelpDeskTicketComment::query()
-            ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')
+        // SÓ a conta Movidesk da ERPSERV escreve (BIZIFY nunca) — ver MovideskPushPolicy.
+        if (($companyId ?: $this->companyId()) !== MovideskPushPolicy::primaryCompanyId()) {
+            return 0;
+        }
+        $companyId = $companyId ?: $this->companyId();
+        $ticketIds = MovideskPushPolicy::scopeComments(HelpDeskTicketComment::query()
+            ->whereNull('source')->where('is_system', false)->whereNull('external_action_id'))
             ->when($companyId, fn ($q) => $q->whereIn('ticket_id', HelpDeskTicket::where('origin_company_id', $companyId)->select('id')))
             ->distinct()->pluck('ticket_id');
         if ($ticketIds->isEmpty()) {
@@ -290,13 +295,13 @@ class MovideskHelpDeskImporter
             try {
                 $full = $this->movidesk->fetchTicket((int) $ticket->external_ref);
                 if (!$full) { continue; }
-                // Em poder de equipe da Promax → não interage (não empurra comentário).
-                if ($this->shouldSkipTeam($full['ownerTeam'] ?? null, $companyId)) { continue; }
-                $before = HelpDeskTicketComment::where('ticket_id', $tid)
-                    ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
+                // SÓ chamado em equipe Promax (go-live: Promax segue no Movidesk; o resto é nativo no Minutor).
+                if (!MovideskPushPolicy::ticketAllowed($ticket, $full['ownerTeam'] ?? null)) { continue; }
+                $before = MovideskPushPolicy::scopeComments(HelpDeskTicketComment::where('ticket_id', $tid)
+                    ->whereNull('source')->where('is_system', false)->whereNull('external_action_id'))->count();
                 $this->pushComments($ticket, (int) $ticket->external_ref, $full['actions'] ?? []);
-                $after = HelpDeskTicketComment::where('ticket_id', $tid)
-                    ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')->count();
+                $after = MovideskPushPolicy::scopeComments(HelpDeskTicketComment::where('ticket_id', $tid)
+                    ->whereNull('source')->where('is_system', false)->whereNull('external_action_id'))->count();
                 $pushed += max(0, $before - $after);
             } catch (\Throwable $e) {
                 Log::error('📤 [MOVIDESK HD] Falha na passada de pendentes', ['ticket_id' => $tid, 'error' => $e->getMessage()]);
@@ -321,6 +326,11 @@ class MovideskHelpDeskImporter
         if (!$this->writebackEnabled() || empty($just)) {
             return 0; // sem justificativa global configurada → não empurra status
         }
+        // SÓ a conta Movidesk da ERPSERV escreve (BIZIFY nunca).
+        if (($companyId ?: $this->companyId()) !== MovideskPushPolicy::primaryCompanyId()) {
+            return 0;
+        }
+        $companyId = $companyId ?: $this->companyId();
         // Candidatos via join: mapeamento outbound_default do status do ticket (com texto),
         // cuja assinatura (base|texto) difere da sombra external_status → Minutor está à frente.
         // A justificativa NÃO é por status: usamos uma única global (associada a todos os status).
@@ -347,9 +357,9 @@ class MovideskHelpDeskImporter
             $patch = ['status' => $r->text, 'justification' => $just];
             if (!empty($r->base)) { $patch['baseStatus'] = $r->base; }
             try {
-                // Em poder de equipe da Promax → não interage (não empurra status).
+                // SÓ chamado em equipe Promax (go-live) — senão não escreve no Movidesk.
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
-                if ($full && $this->shouldSkipTeam($full['ownerTeam'] ?? null, $companyId)) { continue; }
+                if (!$full || !MovideskPushPolicy::isPromaxTeam($full['ownerTeam'] ?? null)) { continue; }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
                     HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;
@@ -457,6 +467,8 @@ class MovideskHelpDeskImporter
             $ticket->assignee_id = $ownerEmail !== '' ? $this->resolveAgentUser($ownerEmail) : null;
             $ticket->external_owner_email = $ownerEmail ?: null;
         }
+        // Equipe atual no Movidesk — decide se o chamado responde PELO Movidesk (Promax) sem chamar a API.
+        $ticket->external_owner_team = mb_substr(trim((string) ($md['ownerTeam'] ?? '')), 0, 255) ?: null;
 
         // ── CLASSIFICAÇÃO ──
         // Categoria/Serviço/Urgência: merge de 3 vias com WRITE-BACK (Minutor vence → empurra p/ Movidesk).
@@ -541,7 +553,8 @@ class MovideskHelpDeskImporter
 
         // WRITE-BACK: empurra Categoria/Urgência/Nível (e Status quando há justificativa) p/ o Movidesk
         // (só metadado, nunca interação). A sombra só avança se o PATCH tiver sucesso (falha é re-tentada).
-        if ($patch && $this->writebackEnabled()) {
+        $mdWritable = MovideskPushPolicy::isPrimaryAccount($ticket) && MovideskPushPolicy::isPromaxTeam($md['ownerTeam'] ?? null);
+        if ($patch && $this->writebackEnabled() && $mdWritable) {
             if ($this->movidesk->patchTicket((int) $externalId, $patch) && $pushShadow) {
                 foreach ($pushShadow as $col => $val) { $ticket->$col = $val; }
                 $ticket->save();
@@ -553,7 +566,7 @@ class MovideskHelpDeskImporter
         $comments = $this->importActions($ticket, $md['actions'] ?? [], $this->openingActionId($md));
 
         // SAÍDA de INTERAÇÕES: empurra p/ o Movidesk os comentários NATIVOS do Minutor ainda não enviados.
-        if ($this->pushCommentsEnabled()) {
+        if ($this->pushCommentsEnabled() && $mdWritable) {
             $this->pushComments($ticket, (int) $externalId, $md['actions'] ?? []);
         }
 
@@ -564,11 +577,11 @@ class MovideskHelpDeskImporter
     private function pushComments(HelpDeskTicket $ticket, int $externalId, array $mdActions): void
     {
         // Comentários criados NO MINUTOR (source null), não-sistema, ainda não enviados (sem action id).
-        $pending = HelpDeskTicketComment::query()
+        $pending = MovideskPushPolicy::scopeComments(HelpDeskTicketComment::query()
             ->where('ticket_id', $ticket->id)
             ->whereNull('source')
             ->where('is_system', false)
-            ->whereNull('external_action_id')
+            ->whereNull('external_action_id'))
             ->orderBy('id')
             ->get(['id', 'body', 'visibility', 'author_user_id']);
         if ($pending->isEmpty()) return;
@@ -590,7 +603,12 @@ class MovideskHelpDeskImporter
             if ($personId) { $action['createdBy'] = ['id' => (string) $personId]; }
             $ok = $this->movidesk->addActions($externalId, [$action]);
             if ($ok) {
-                $c->external_action_id = (string) (++$maxId); // id sequencial da ação recém-criada
+                // Anti-eco: grava o id REAL da ação criada (relê o chamado). Chutar "maior id + 1"
+                // erra se o cliente/Movidesk criar outra ação no mesmo instante → a nossa voltaria
+                // duplicada no próximo import. Sem leitura possível, cai no sequencial.
+                $realId = $this->locateCreatedActionId($externalId, $maxId, $type, $text);
+                $maxId = max($maxId + 1, (int) $realId);
+                $c->external_action_id = (string) ($realId ?: $maxId);
                 $c->save();
             } else {
                 break; // falhou → tenta de novo no próximo ciclo (mantém ordem)
@@ -924,7 +942,31 @@ class MovideskHelpDeskImporter
 
     private function pushCommentsEnabled(): bool
     {
-        return (bool) SystemSetting::get('movidesk_hd_push_comments_enabled', false);
+        // Ligado + corte de data definido (sem corte nada sai: protege o histórico migrado).
+        return MovideskPushPolicy::enabled();
+    }
+
+    /** Id da ação recém-criada no Movidesk: 1ª ação > $afterId do mesmo tipo e mesmo texto. */
+    private function locateCreatedActionId(int $externalId, int $afterId, int $type, string $sentHtml): ?int
+    {
+        try {
+            $full = $this->movidesk->fetchTicket($externalId);
+        } catch (\Throwable) {
+            return null;
+        }
+        $norm = fn ($v) => preg_replace('/\s+/u', ' ', trim(html_entity_decode(strip_tags(str_ireplace(['<br>', '<br/>', '<br />'], ' ', (string) $v)), ENT_QUOTES | ENT_HTML5, 'UTF-8')));
+        $want = mb_substr($norm($sentHtml), 0, 80);
+        $fallback = null;
+        $acts = $full['actions'] ?? [];
+        usort($acts, fn ($a, $b) => (int) ($a['id'] ?? 0) <=> (int) ($b['id'] ?? 0));
+        foreach ($acts as $a) {
+            $id = (int) ($a['id'] ?? 0);
+            if ($id <= $afterId || (int) ($a['type'] ?? 0) !== $type) continue;
+            $got = mb_substr($norm($a['description'] ?? ($a['htmlDescription'] ?? '')), 0, 80);
+            if ($want !== '' && $got === $want) return $id;
+            $fallback ??= $id;
+        }
+        return $fallback;
     }
 
     /**

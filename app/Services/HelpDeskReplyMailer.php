@@ -38,6 +38,11 @@ class HelpDeskReplyMailer
         if (!HelpDeskMailGate::allows($ticket)) {
             return [false, 'skip:trava_homolog_erpserv'];
         }
+        // Chamado Promax atendido PELO Movidesk: a resposta vai ao Movidesk (que avisa o cliente).
+        // Mandar e-mail daqui duplicaria o aviso e tiraria a conversa do Movidesk.
+        if (MovideskPushPolicy::deliversViaMovidesk($ticket)) {
+            return [false, 'skip:cliente_atendido_pelo_movidesk'];
+        }
 
         $from = self::resolveFromAccount($ticket);
         if (!$from) return [false, 'skip:sem_conta_microsoft365'];
@@ -386,6 +391,7 @@ class HelpDeskReplyMailer
     {
         if (!GraphMailSender::enabled()) return;
         if (!HelpDeskMailGate::allows($ticket)) return;
+        if (MovideskPushPolicy::deliversViaMovidesk($ticket)) return; // cliente atendido pelo Movidesk
 
         $from = self::resolveFromAccount($ticket);
         if (!$from) return;
