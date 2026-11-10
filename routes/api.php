@@ -625,6 +625,11 @@ Route::prefix('v1')->group(function () {
         Route::patch('/tasks/{task}/resolve', [\App\Http\Controllers\TaskController::class, 'resolve']);
         Route::put('/tasks/{task}',       [\App\Http\Controllers\TaskController::class, 'update']);
         Route::delete('/tasks/{task}',    [\App\Http\Controllers\TaskController::class, 'destroy']);
+        // Grupos de reunião (Central de Reunião: preencher Envolvidos por grupo)
+        Route::get('/meeting-groups',             [\App\Http\Controllers\MeetingGroupController::class, 'index']);
+        Route::post('/meeting-groups',            [\App\Http\Controllers\MeetingGroupController::class, 'store']);
+        Route::put('/meeting-groups/{group}',     [\App\Http\Controllers\MeetingGroupController::class, 'update']);
+        Route::delete('/meeting-groups/{group}',  [\App\Http\Controllers\MeetingGroupController::class, 'destroy']);
         // Central de Reunião (admin/coordenador; visível só aos envolvidos)
         Route::get('/meetings/tasks/pending',                [\App\Http\Controllers\MeetingController::class, 'pendingTasks']);
         // NOVO (Central de Reuniões / Teams): precede /meetings/{meeting} p/ não colidir no router.
