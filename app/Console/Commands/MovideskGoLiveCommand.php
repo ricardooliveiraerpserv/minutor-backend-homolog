@@ -43,7 +43,7 @@ class MovideskGoLiveCommand extends Command
             SystemSetting::set('movidesk_hd_push_since', $since->toIso8601String(), 'string', 'movidesk', 'Go-live: só comentários a partir desta data vão ao Movidesk');
             SystemSetting::set('movidesk_hd_push_internal', (bool) $this->option('internas'), 'boolean', 'movidesk', 'Go-live: notas internas também vão ao Movidesk');
             SystemSetting::set('movidesk_hd_push_comments_enabled', true, 'boolean', 'movidesk', 'Go-live: resposta no Minutor grava no Movidesk (Promax/ERPSERV)');
-            $this->info("ATIVADO. Respostas criadas a partir de {$since->format('d/m/Y H:i')} vão ao Movidesk (só conta ERPSERV, responsável em equipe ERPSERV).");
+            $this->info("ATIVADO. Respostas criadas a partir de {$since->format('d/m/Y H:i')} vão ao Movidesk (só conta ERPSERV; responsável da Promax não envia).");
         } elseif ($this->option('desativar')) {
             SystemSetting::set('movidesk_hd_push_comments_enabled', false, 'boolean', 'movidesk');
             $this->warn('DESATIVADO. Nada mais é gravado no Movidesk (o import segue normal).');
@@ -98,8 +98,8 @@ class MovideskGoLiveCommand extends Command
         $this->line('  [' . ($hasSupport ? 'x' : ' ') . '] Caixa suporte@erpserv.com.br cadastrada e lendo no Minutor');
         $this->line('  [' . (!$gate ? 'x' : ' ') . '] Trava helpdesk_email_erpserv_only desligada (clientes passam a receber resposta por e-mail)');
         $this->line('  [ ] Regra no Movidesk: só chamados Promax entram no Movidesk (feito por você, fora do Minutor)');
-        $this->line('  [' . ($mode !== 'include' ? 'x' : ' ') . '] Import ignora equipes Promax (só responsável em equipe ERPSERV)');
+        $this->line('  [' . ($mode !== 'include' ? 'x' : ' ') . '] Import ignora equipes Promax (responsável da Promax não integra)');
         $this->line('  [' . ($on ? 'x' : ' ') . '] Resposta no Minutor grava no Movidesk (--ativar)');
-        $this->line('  [ ] Teste real: responder no Minutor 1 chamado Promax com equipe ERPSERV e conferir a ação no Movidesk');
+        $this->line('  [ ] Teste real: responder no Minutor 1 chamado Promax (responsável ERPSERV) e conferir a ação no Movidesk');
     }
 }

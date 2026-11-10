@@ -16,14 +16,13 @@ use Carbon\Carbon;
  * chamado Promax GRAVA a resposta no Movidesk — é o Movidesk que avisa o cliente.
  *
  * ⚠️ As equipes Promax Bardahl / Manutenção Promax são o PESSOAL DA PROMAX. Enquanto o chamado está
- * com elas a ERPSERV não atende (o import nem traz — modo exclude). Só integra quando o responsável
- * é EQUIPE DA ERPSERV (a Promax transferiu p/ nós). Regra do Ricardo, reforçada em 2026-11-10.
+ * com elas a ERPSERV não atende (o import nem traz — modo exclude). Regra do Ricardo (2026-11-10):
+ * "se o responsável for da Promax, não envia" — bloqueia só as equipes Promax (sem equipe envia).
  *
  * Travas (todas precisam passar):
  *  1. `movidesk_hd_push_comments_enabled` ligado (padrão DESLIGADO);
  *  2. SÓ a conta Movidesk da ERPSERV (origin_company_id = empresa principal). BIZIFY NUNCA;
- *  3. SÓ chamados com responsável em EQUIPE DA ERPSERV: equipe preenchida e FORA da lista Promax
- *     (`movidesk_hd_blocked_teams`). Sem equipe ou em equipe Promax → não escreve;
+ *  3. responsável NÃO pode ser de equipe Promax (`movidesk_hd_blocked_teams`) → aí não escreve;
  *  4. SÓ comentários criados a partir de `movidesk_hd_push_since` (vazio = nada sai). Impede
  *     reenviar o histórico (~200 mil comentários migrados desde 2017 sem external_action_id);
  *  5. SÓ respostas ao cliente; nota interna só se `movidesk_hd_push_internal` ligado.
@@ -76,10 +75,10 @@ class MovideskPushPolicy
         return $t !== '' && in_array($t, self::promaxTeams(), true);
     }
 
-    /** Responsável é EQUIPE DA ERPSERV? (equipe preenchida e que NÃO é da Promax). */
+    /** Pode escrever pela equipe? Bloqueia SÓ se o responsável é de equipe Promax (sem equipe envia). */
     public static function isErpservTeam(?string $team): bool
     {
-        return trim((string) $team) !== '' && !self::isPromaxTeam($team);
+        return !self::isPromaxTeam($team);
     }
 
     /** Conta Movidesk de origem do chamado é a da ERPSERV? (BIZIFY e demais: nunca escreve.) */
