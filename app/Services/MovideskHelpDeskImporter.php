@@ -295,7 +295,7 @@ class MovideskHelpDeskImporter
             try {
                 $full = $this->movidesk->fetchTicket((int) $ticket->external_ref);
                 if (!$full) { continue; }
-                // SÓ chamado em equipe Promax (go-live: Promax segue no Movidesk; o resto é nativo no Minutor).
+                // SÓ chamado com responsável em equipe da ERPSERV (fora das equipes Promax).
                 if (!MovideskPushPolicy::ticketAllowed($ticket, $full['ownerTeam'] ?? null)) { continue; }
                 $before = MovideskPushPolicy::scopeComments(HelpDeskTicketComment::where('ticket_id', $tid)
                     ->whereNull('source')->where('is_system', false)->whereNull('external_action_id'))->count();
@@ -357,9 +357,9 @@ class MovideskHelpDeskImporter
             $patch = ['status' => $r->text, 'justification' => $just];
             if (!empty($r->base)) { $patch['baseStatus'] = $r->base; }
             try {
-                // SÓ chamado em equipe Promax (go-live) — senão não escreve no Movidesk.
+                // SÓ chamado com responsável em equipe da ERPSERV — senão não escreve no Movidesk.
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
-                if (!$full || !MovideskPushPolicy::isPromaxTeam($full['ownerTeam'] ?? null)) { continue; }
+                if (!$full || !MovideskPushPolicy::isErpservTeam($full['ownerTeam'] ?? null)) { continue; }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
                     HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;
@@ -467,7 +467,7 @@ class MovideskHelpDeskImporter
             $ticket->assignee_id = $ownerEmail !== '' ? $this->resolveAgentUser($ownerEmail) : null;
             $ticket->external_owner_email = $ownerEmail ?: null;
         }
-        // Equipe atual no Movidesk — decide se o chamado responde PELO Movidesk (Promax) sem chamar a API.
+        // Equipe atual no Movidesk — decide se o chamado responde PELO Movidesk (equipe ERPSERV) sem chamar a API.
         $ticket->external_owner_team = mb_substr(trim((string) ($md['ownerTeam'] ?? '')), 0, 255) ?: null;
 
         // ── CLASSIFICAÇÃO ──
@@ -553,7 +553,7 @@ class MovideskHelpDeskImporter
 
         // WRITE-BACK: empurra Categoria/Urgência/Nível (e Status quando há justificativa) p/ o Movidesk
         // (só metadado, nunca interação). A sombra só avança se o PATCH tiver sucesso (falha é re-tentada).
-        $mdWritable = MovideskPushPolicy::isPrimaryAccount($ticket) && MovideskPushPolicy::isPromaxTeam($md['ownerTeam'] ?? null);
+        $mdWritable = MovideskPushPolicy::isPrimaryAccount($ticket) && MovideskPushPolicy::isErpservTeam($md['ownerTeam'] ?? null);
         if ($patch && $this->writebackEnabled() && $mdWritable) {
             if ($this->movidesk->patchTicket((int) $externalId, $patch) && $pushShadow) {
                 foreach ($pushShadow as $col => $val) { $ticket->$col = $val; }

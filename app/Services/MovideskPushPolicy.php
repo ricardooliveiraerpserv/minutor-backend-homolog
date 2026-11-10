@@ -15,10 +15,15 @@ use Carbon\Carbon;
  * chamados da PROMAX continuam nascendo no Movidesk (espelhados no Minutor). Responder no Minutor um
  * chamado Promax GRAVA a resposta no Movidesk — é o Movidesk que avisa o cliente.
  *
+ * ⚠️ As equipes Promax Bardahl / Manutenção Promax são o PESSOAL DA PROMAX. Enquanto o chamado está
+ * com elas a ERPSERV não atende (o import nem traz — modo exclude). Só integra quando o responsável
+ * é EQUIPE DA ERPSERV (a Promax transferiu p/ nós). Regra do Ricardo, reforçada em 2026-11-10.
+ *
  * Travas (todas precisam passar):
  *  1. `movidesk_hd_push_comments_enabled` ligado (padrão DESLIGADO);
  *  2. SÓ a conta Movidesk da ERPSERV (origin_company_id = empresa principal). BIZIFY NUNCA;
- *  3. SÓ chamados em equipe Promax (`movidesk_hd_blocked_teams`), independente do modo do filtro;
+ *  3. SÓ chamados com responsável em EQUIPE DA ERPSERV: equipe preenchida e FORA da lista Promax
+ *     (`movidesk_hd_blocked_teams`). Sem equipe ou em equipe Promax → não escreve;
  *  4. SÓ comentários criados a partir de `movidesk_hd_push_since` (vazio = nada sai). Impede
  *     reenviar o histórico (~200 mil comentários migrados desde 2017 sem external_action_id);
  *  5. SÓ respostas ao cliente; nota interna só se `movidesk_hd_push_internal` ligado.
@@ -71,6 +76,12 @@ class MovideskPushPolicy
         return $t !== '' && in_array($t, self::promaxTeams(), true);
     }
 
+    /** Responsável é EQUIPE DA ERPSERV? (equipe preenchida e que NÃO é da Promax). */
+    public static function isErpservTeam(?string $team): bool
+    {
+        return trim((string) $team) !== '' && !self::isPromaxTeam($team);
+    }
+
     /** Conta Movidesk de origem do chamado é a da ERPSERV? (BIZIFY e demais: nunca escreve.) */
     public static function isPrimaryAccount(HelpDeskTicket $ticket): bool
     {
@@ -86,7 +97,7 @@ class MovideskPushPolicy
     {
         if ($ticket->source_system !== 'movidesk' || !$ticket->external_ref) return false;
         if (!self::isPrimaryAccount($ticket)) return false;
-        return self::isPromaxTeam($ownerTeam ?? $ticket->external_owner_team);
+        return self::isErpservTeam($ownerTeam ?? $ticket->external_owner_team);
     }
 
     /** Comentário elegível (corte de data + visibilidade). */
@@ -107,7 +118,7 @@ class MovideskPushPolicy
     }
 
     /**
-     * O cliente deste chamado é atendido PELO MOVIDESK (envio ligado + ERPSERV + equipe Promax)?
+     * O cliente deste chamado é atendido PELO MOVIDESK (envio ligado + conta ERPSERV + equipe ERPSERV)?
      * true → o Minutor não manda e-mail ao cliente (o Movidesk avisa).
      */
     public static function deliversViaMovidesk(?HelpDeskTicket $ticket): bool

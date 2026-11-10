@@ -11,8 +11,11 @@ use Illuminate\Support\Facades\DB;
  * GO-LIVE do Help Desk: ERPSERV 100% no Minutor; só a PROMAX segue no Movidesk.
  *
  *   php artisan movidesk:hd-golive              # só mostra o estado (não muda nada)
- *   php artisan movidesk:hd-golive --ativar     # import só Promax + resposta do Minutor grava no Movidesk
- *   php artisan movidesk:hd-golive --desativar  # volta: para de gravar no Movidesk e o import volta a "tudo menos Promax"
+ *   php artisan movidesk:hd-golive --ativar     # resposta do Minutor grava no Movidesk
+ *   php artisan movidesk:hd-golive --desativar  # para de gravar no Movidesk
+ *
+ * O filtro do import fica SEMPRE em "exclude": chamado com as equipes Promax (pessoal da Promax) não
+ * entra nem recebe escrita; só integra quando o responsável é equipe da ERPSERV.
  *
  * Opções do --ativar: --internas (nota interna também vai, como ação interna) · --desde="2026-11-20 08:00"
  * (corte; padrão = agora). Só a conta Movidesk da ERPSERV escreve; BIZIFY nunca (MovideskPushPolicy).
@@ -35,15 +38,15 @@ class MovideskGoLiveCommand extends Command
                 try { $since = \Carbon\Carbon::parse($this->option('desde')); }
                 catch (\Throwable $e) { $this->error('--desde inválido: ' . $e->getMessage()); return self::FAILURE; }
             }
-            SystemSetting::set('movidesk_hd_team_filter_mode', 'include', 'string', 'movidesk', 'Go-live: import traz SÓ as equipes Promax');
+            // Mantém (ou volta) o filtro em exclude: só entra o que está com equipe da ERPSERV.
+            SystemSetting::set('movidesk_hd_team_filter_mode', 'exclude', 'string', 'movidesk', 'Import ignora chamados com as equipes Promax (só equipe ERPSERV)');
             SystemSetting::set('movidesk_hd_push_since', $since->toIso8601String(), 'string', 'movidesk', 'Go-live: só comentários a partir desta data vão ao Movidesk');
             SystemSetting::set('movidesk_hd_push_internal', (bool) $this->option('internas'), 'boolean', 'movidesk', 'Go-live: notas internas também vão ao Movidesk');
             SystemSetting::set('movidesk_hd_push_comments_enabled', true, 'boolean', 'movidesk', 'Go-live: resposta no Minutor grava no Movidesk (Promax/ERPSERV)');
-            $this->info("ATIVADO. Respostas criadas a partir de {$since->format('d/m/Y H:i')} nos chamados Promax vão ao Movidesk.");
+            $this->info("ATIVADO. Respostas criadas a partir de {$since->format('d/m/Y H:i')} vão ao Movidesk (só conta ERPSERV, responsável em equipe ERPSERV).");
         } elseif ($this->option('desativar')) {
             SystemSetting::set('movidesk_hd_push_comments_enabled', false, 'boolean', 'movidesk');
-            SystemSetting::set('movidesk_hd_team_filter_mode', 'exclude', 'string', 'movidesk');
-            $this->warn('DESATIVADO. Nada mais é gravado no Movidesk; import voltou a "tudo menos Promax".');
+            $this->warn('DESATIVADO. Nada mais é gravado no Movidesk (o import segue normal).');
         }
 
         $this->report();
@@ -61,8 +64,8 @@ class MovideskGoLiveCommand extends Command
         $this->line('');
         $this->line('<options=bold>Movidesk (Promax)</>');
         $this->line('  Import ligado ...................... ' . $yes((bool) SystemSetting::get('movidesk_hd_import_enabled', false)));
-        $this->line('  Import traz ........................ ' . ($mode === 'include' ? 'SÓ Promax' : 'tudo MENOS Promax (pré-go-live)'));
-        $this->line('  Equipes Promax ..................... ' . implode(', ', MovideskPushPolicy::promaxTeams()));
+        $this->line('  Import traz ........................ ' . ($mode === 'include' ? '⚠️ SÓ equipes Promax (ERRADO: rode --ativar p/ voltar a exclude)' : 'só chamados com equipe da ERPSERV (ignora equipes Promax)'));
+        $this->line('  Equipes Promax (não integram) ...... ' . implode(', ', MovideskPushPolicy::promaxTeams()));
         $this->line('  Resposta grava no Movidesk ......... ' . $yes($on) . ($on ? ' (a partir de ' . $since->format('d/m/Y H:i') . ')' : ''));
         $this->line('  Notas internas também vão .......... ' . $yes(MovideskPushPolicy::pushInternal()));
         $this->line("  Conta que escreve .................. só empresa {$primary} (ERPSERV); BIZIFY nunca");
@@ -95,8 +98,8 @@ class MovideskGoLiveCommand extends Command
         $this->line('  [' . ($hasSupport ? 'x' : ' ') . '] Caixa suporte@erpserv.com.br cadastrada e lendo no Minutor');
         $this->line('  [' . (!$gate ? 'x' : ' ') . '] Trava helpdesk_email_erpserv_only desligada (clientes passam a receber resposta por e-mail)');
         $this->line('  [ ] Regra no Movidesk: só chamados Promax entram no Movidesk (feito por você, fora do Minutor)');
-        $this->line('  [' . ($mode === 'include' ? 'x' : ' ') . '] Import só Promax (--ativar)');
+        $this->line('  [' . ($mode !== 'include' ? 'x' : ' ') . '] Import ignora equipes Promax (só responsável em equipe ERPSERV)');
         $this->line('  [' . ($on ? 'x' : ' ') . '] Resposta no Minutor grava no Movidesk (--ativar)');
-        $this->line('  [ ] Teste real: responder 1 chamado Promax no Minutor e conferir a ação no Movidesk');
+        $this->line('  [ ] Teste real: responder no Minutor 1 chamado Promax com equipe ERPSERV e conferir a ação no Movidesk');
     }
 }
