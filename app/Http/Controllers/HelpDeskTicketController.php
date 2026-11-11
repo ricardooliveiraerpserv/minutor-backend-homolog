@@ -1648,6 +1648,9 @@ class HelpDeskTicketController extends Controller
                     'helpdesk_ticket_id' => $ticket->id,
                 ]);
                 $tsReq->setUserResolver(fn () => $request->user());
+                // Marca server-side: HD é o caminho oficial de sustentação/cloud → libera o bloqueio
+                // de apontamento manual no TimesheetController::store. Não vem do payload (não forjável).
+                $tsReq->attributes->set('from_helpdesk_interaction', true);
                 $tsResp = app(\App\Http\Controllers\TimesheetController::class)->store($tsReq);
                 if ($tsResp->getStatusCode() !== 201) {
                     \Illuminate\Support\Facades\DB::rollBack(); // falha NÃO é cacheada → retry pode re-tentar
@@ -2590,6 +2593,9 @@ class HelpDeskTicketController extends Controller
                 'helpdesk_ticket_id' => $ticket->id,
             ]);
             $tsReq->setUserResolver(fn () => $request->user());
+            // Marca server-side: HD é o caminho oficial de sustentação/cloud → libera o bloqueio
+            // de apontamento manual no TimesheetController::store. Não vem do payload (não forjável).
+            $tsReq->attributes->set('from_helpdesk_interaction', true);
             $tsResp = app(\App\Http\Controllers\TimesheetController::class)->store($tsReq);
 
             if ($tsResp->getStatusCode() === 201) {
