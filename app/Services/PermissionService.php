@@ -303,6 +303,8 @@ class PermissionService
             'prosight.operations.rpo.rollback',
             // Conector-5.2b — override do last-AppServer (requires_restart single-member).
             'prosight.operations.rpo.override',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 
@@ -340,6 +342,8 @@ class PermissionService
             'source_docs.view_git', 'source_docs.view_diff',
             // Qualidade: coordenador CONSULTA; disparar (run) fica p/ Admin no MVP (consome serviço externo).
             'source_docs.quality.view',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 
@@ -368,6 +372,8 @@ class PermissionService
             'prosight.environments.view',
             // Prosight — Presença (Conector): observabilidade read-only do estado observado
             'prosight.operations.view',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 
@@ -403,6 +409,8 @@ class PermissionService
             'financial.view_partner_rate',
             'partners.view',
             'reports.view',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 }
