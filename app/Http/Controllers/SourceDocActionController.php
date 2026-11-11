@@ -359,11 +359,73 @@ class SourceDocActionController extends Controller
         if ($content === null) {
             return response()->json(['message' => 'Código indisponível no momento.'], 502);
         }
-        $this->audit($doc, 'view_git', 'ok', ['commit_sha' => $ref, 'bytes' => strlen($content)], userId: $request->user()?->id);
+        $this->audit($doc, 'view_git', 'ok', [
+            'commit_sha' => $ref, 'bytes' => strlen($content), 'kind' => 'code',
+            'ip' => $request->ip(), 'user_agent' => (string) $request->userAgent(),
+        ], userId: $request->user()?->id);
 
         return response()->json(['data' => [
             'content' => $content, 'path' => $doc->path, 'lang' => $doc->lang, 'commit_sha' => $ref, 'bytes' => strlen($content),
         ]]);
+    }
+
+    /**
+     * POST /source-docs/{id}/capture-attempt {trigger} — a tela do código escureceu por suspeita de
+     * captura (PrintScreen, Cmd/Win+Shift, janela perdeu o foco, impressão). Só registra (auditoria).
+     */
+    public function captureAttempt(int $sourceDoc, Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'trigger' => ['required', 'string', 'in:printscreen,cmd_shift,focus_lost,hidden,print'],
+        ]);
+        $doc = SourceDoc::find($sourceDoc);
+        if (! $doc || ! $this->scope->canAccessDoc($request->user(), $doc)) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        $this->audit($doc, 'capture_attempt', 'blocked', [
+            'trigger' => $data['trigger'], 'ip' => $request->ip(), 'user_agent' => (string) $request->userAgent(),
+        ], userId: $request->user()?->id);
+
+        return response()->json(['data' => ['ok' => true]]);
+    }
+
+    /**
+     * GET /source-docs/{id}/access-log — quem abriu o código e tentativas de captura (SÓ ADMIN).
+     */
+    public function accessLog(int $sourceDoc, Request $request): JsonResponse
+    {
+        if (! $request->user()?->isAdmin()) {
+            return response()->json(['message' => 'Apenas administradores.'], 403);
+        }
+        $doc = SourceDoc::find($sourceDoc);
+        if (! $doc) {
+            return response()->json(['message' => 'Fonte não encontrada.'], 404);
+        }
+        $rows = SourceDocActionLog::where('source_doc_id', $doc->id)
+            ->whereIn('action', ['view_git', 'capture_attempt', 'download'])
+            ->orderByDesc('id')->limit(200)
+            ->get(['id', 'action', 'status', 'actor_user_id', 'params', 'created_at']);
+        $names = \App\Models\User::whereIn('id', $rows->pluck('actor_user_id')->filter()->unique())
+            ->get(['id', 'name', 'email'])->keyBy('id');
+
+        return response()->json(['data' => $rows->map(function ($r) use ($names) {
+            $p = is_array($r->params) ? $r->params : [];
+            $event = match (true) {
+                $r->action === 'capture_attempt' => 'capture_attempt',
+                $r->action === 'download' => 'download',
+                $r->status === 'denied' => 'denied',
+                ($p['kind'] ?? null) === 'code' || isset($p['bytes']) => 'view_code',
+                default => 'open_github',
+            };
+            $u = $r->actor_user_id ? $names->get($r->actor_user_id) : null;
+
+            return [
+                'id' => $r->id, 'event' => $event, 'status' => $r->status,
+                'user' => $u ? ['id' => $u->id, 'name' => $u->name, 'email' => $u->email] : null,
+                'trigger' => $p['trigger'] ?? null, 'ip' => $p['ip'] ?? null, 'user_agent' => $p['user_agent'] ?? null,
+                'at' => optional($r->created_at)->toIso8601String(),
+            ];
+        })->values()]);
     }
 
     /**

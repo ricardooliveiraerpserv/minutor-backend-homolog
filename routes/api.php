@@ -1745,6 +1745,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/source-docs/{sourceDoc}/publish-git', [\App\Http\Controllers\SourceDocActionController::class, 'publishGit'])->whereNumber('sourceDoc')->middleware('permission.or.admin:source_docs.reprocess');
             Route::get('/source-docs/{sourceDoc}/git-url', [\App\Http\Controllers\SourceDocActionController::class, 'gitUrl'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/source', [\App\Http\Controllers\SourceDocActionController::class, 'source'])->whereNumber('sourceDoc');
+            Route::post('/source-docs/{sourceDoc}/capture-attempt', [\App\Http\Controllers\SourceDocActionController::class, 'captureAttempt'])->whereNumber('sourceDoc')->middleware('throttle:60,1');
+            Route::get('/source-docs/{sourceDoc}/access-log', [\App\Http\Controllers\SourceDocActionController::class, 'accessLog'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/compare', [\App\Http\Controllers\SourceDocActionController::class, 'compare'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/quality', [\App\Http\Controllers\SourceDocQualityController::class, 'show'])->whereNumber('sourceDoc');
             Route::get('/source-docs/{sourceDoc}/quality/history', [\App\Http\Controllers\SourceDocQualityController::class, 'history'])->whereNumber('sourceDoc');
