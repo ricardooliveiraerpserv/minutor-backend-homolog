@@ -994,8 +994,13 @@ class TimesheetController extends Controller
             ], 422);
         }
 
-        // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação
-        if ($user->isConsultor() || $user->isParceiroAdmin()) {
+        // Bloquear consultores e parceiros sem permissão de apontar em projetos de sustentação.
+        // EXCEÇÃO: apontamento gerado pela própria interação do Help Desk (caminho OFICIAL de
+        // sustentação — "todo chamado de sustentação é apontado pelo HD"). O atributo é setado
+        // só server-side (HelpDeskTicketController::maybeCreateInteractionTimesheet); o cliente
+        // não consegue forjá-lo via payload.
+        $fromHelpDesk = (bool) $request->attributes->get('from_helpdesk_interaction', false);
+        if (!$fromHelpDesk && ($user->isConsultor() || $user->isParceiroAdmin())) {
             $isSustentacao = $project->service_type_id &&
                 \App\Models\ServiceType::where('id', $project->service_type_id)
                     ->whereIn('code', ['sustentacao', 'cloud'])
