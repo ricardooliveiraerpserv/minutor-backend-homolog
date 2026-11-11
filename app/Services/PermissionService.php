@@ -69,6 +69,8 @@ class PermissionService
      * usuário ou grupo. Esta é a fonte de verdade exposta na UI de grupos.
      */
     private const ALL_AVAILABLE = [
+        // Código-fonte (Help Desk)
+        'source_code.request',
         // Dashboard
         'dashboard.view', 'dashboard.manager', 'dashboard.consultant',
         // Dashboards (granular por tipo de contrato)
@@ -191,6 +193,8 @@ class PermissionService
             // Gestão de OKRs (operação completa + aprovação)
             'okr.view', 'okr.create', 'okr.update', 'okr.manage',
             'okr.checkin', 'okr.approve', 'okr.close', 'okr.reopen',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 
@@ -216,6 +220,8 @@ class PermissionService
             // Gestão de OKRs (gestor de área)
             'okr.view', 'okr.create', 'okr.update', 'okr.manage',
             'okr.checkin', 'okr.close', 'okr.reopen',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 
@@ -236,6 +242,8 @@ class PermissionService
             'vault.use', 'environments.use',
             // Gestão de OKRs (responsável: visualiza e atualiza o realizado dos seus KRs)
             'okr.view', 'okr.checkin',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 
@@ -271,6 +279,8 @@ class PermissionService
             'financial.view_partner_rate',
             'partners.view',
             'reports.view',
+            // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
+            'source_code.request',
         ];
     }
 }
