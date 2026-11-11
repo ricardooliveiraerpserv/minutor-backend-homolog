@@ -56,7 +56,8 @@ class GmudExtractAnalyzeJob implements ShouldQueue, NotTenantAware
         try {
             $bytes = $storage->get($package->attachment->storage_path);
         } catch (\Throwable $e) {
-            $this->fail($package, 'zip_read_failed', 'Falha ao ler o ZIP armazenado.');
+            \Illuminate\Support\Facades\Log::warning('gmud_extract.zip_read_failed', ['package' => $package->id, 'error' => $e->getMessage()]);
+            $this->fail($package, 'zip_read_failed', 'Falha ao ler o ZIP armazenado. [' . mb_substr($e->getMessage(), 0, 200) . ']');
             return;
         }
 
