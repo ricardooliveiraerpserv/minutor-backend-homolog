@@ -100,7 +100,15 @@ autorestart=true\n\
 [program:nginx]\n\
 command=nginx -g "daemon off;"\n\
 autostart=true\n\
-autorestart=true\n' > /etc/supervisord.conf
+autorestart=true\n\
+[program:queue-source-doc]\n\
+directory=/var/www\n\
+command=php /var/www/artisan queue:work database --queue=source-doc --sleep=5 --tries=1 --timeout=900 --memory=192\n\
+autostart=true\n\
+autorestart=true\n\
+stdout_logfile=/dev/stdout\n\
+stdout_logfile_maxbytes=0\n\
+redirect_stderr=true\n' > /etc/supervisord.conf
 
 EXPOSE 8080
 
