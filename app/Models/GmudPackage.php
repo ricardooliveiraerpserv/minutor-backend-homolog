@@ -19,11 +19,14 @@ class GmudPackage extends Model
         'ticket_id', 'customer_id', 'project_id', 'source_repo_id', 'attachment_id',
         'original_name', 'size_bytes', 'sha256', 'uploaded_by', 'received_at',
         'classification', 'project_name', 'project_folder', 'status', 'error',
+        // Fonte ENVIADO PELO CLIENTE (origin='cliente'): anexos de origem + remetente (auditoria/commit).
+        'origin', 'source_attachment_ids', 'sender_label',
     ];
 
     protected $casts = [
         'size_bytes'  => 'integer',
         'received_at' => 'datetime',
+        'source_attachment_ids' => 'array',
     ];
 
     public const STATUS_RECEIVED   = 'received';

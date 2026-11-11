@@ -149,6 +149,11 @@ class GmudPackageController extends Controller
     /** POST /gmud/packages/{package}/publish — destino escolhido → 1 commit atômico. Publica de fato. */
     public function publish(Request $request, GmudPackage $package, GmudPublishService $publisher): JsonResponse
     {
+        // Fonte ENVIADO PELO CLIENTE: só coordenador ou admin publicam (decisão Ricardo 2026-11-11).
+        if ($package->origin === \App\SourceCode\Gmud\ClientSourceService::ORIGIN
+            && !\App\SourceCode\Gmud\ClientSourceService::canPublish($request->user())) {
+            return response()->json(['message' => 'Só coordenador ou administrador pode publicar fonte enviado pelo cliente.'], 403);
+        }
         $data = $request->validate([
             'dest_folder'          => ['nullable', 'string', 'max:1024'],
             'repo_id'              => ['nullable', 'integer'],
@@ -209,6 +214,9 @@ class GmudPackageController extends Controller
             'files_count'    => $package->files_count ?? $package->files()->count(),
             'source_repo_id' => $package->source_repo_id,
             'project_folder' => $package->project_folder,
+            // Fonte ENVIADO PELO CLIENTE (null = GMUD da ERPSERV).
+            'origin'         => $package->origin,
+            'sender_label'   => $package->sender_label,
             // committed=true SOMENTE após publicação explícita (status=published).
             'committed'      => $package->status === GmudPackage::STATUS_PUBLISHED,
             // Nº da interação (publicação GMUD) onde o fonte foi anexado — mesmo #N do cabeçalho.

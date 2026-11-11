@@ -86,6 +86,16 @@ class OkrModuleTest extends TestCase
     }
 
     /** @test */
+    public function ciclo_excluido_nao_bloqueia_novo_planejamento_no_mesmo_ano(): void
+    {
+        $h = $this->authHeaders($this->userOfType('admin'));
+        $id = $this->postJson($this->apiUrl('/okr/cycles'), ['year' => 2027, 'name' => 'teste'], $h)->assertCreated()->json('data.id');
+        $this->postJson($this->apiUrl('/okr/cycles'), ['year' => 2027, 'name' => 'dup'], $h)->assertStatus(422);
+        $this->deleteJson($this->apiUrl("/okr/cycles/{$id}"), [], $h)->assertOk();
+        $this->postJson($this->apiUrl('/okr/cycles'), ['year' => 2027, 'name' => 'Estratégia 2027'], $h)->assertCreated();
+    }
+
+    /** @test */
     public function distribuicao_manual_substitui_as_metas(): void
     {
         $admin = $this->userOfType('admin');

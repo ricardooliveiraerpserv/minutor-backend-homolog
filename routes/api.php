@@ -1667,6 +1667,9 @@ Route::prefix('v1')->group(function () {
             Route::delete('/gmud/packages/{package}', [\App\Http\Controllers\GmudPackageController::class, 'destroy'])->whereNumber('package');
             Route::get('/gmud/packages/{package}/dirs', [\App\Http\Controllers\GmudPackageController::class, 'dirs'])->whereNumber('package');
             Route::post('/gmud/packages/{package}/publish', [\App\Http\Controllers\GmudPackageController::class, 'publish'])->whereNumber('package');
+            // Fonte ENVIADO PELO CLIENTE (e-mail/portal) → Git, reusando o motor GMUD (só coord/admin publica).
+            Route::get('/help-desk/tickets/{ticket}/client-sources', [\App\Http\Controllers\HelpDeskClientSourceController::class, 'index'])->whereNumber('ticket');
+            Route::post('/help-desk/tickets/{ticket}/client-sources', [\App\Http\Controllers\HelpDeskClientSourceController::class, 'store'])->whereNumber('ticket');
             // Envio de Fontes de PROJETO (sem ticket) — rotina standalone que reusa o motor GMUD.
             Route::get('/gmud/project-submissions', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'index'])->middleware('permission.or.admin:source_docs.gmud_publish');
             Route::post('/gmud/project-submission', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'store'])->middleware('permission.or.admin:source_docs.gmud_publish');

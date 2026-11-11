@@ -141,6 +141,10 @@ class GmudPublishService
             'commit_sha' => $commitSha, 'repo' => "{$owner}/{$repository}", 'branch' => $branch,
             'published' => count($plan), 'skipped' => $skipped, 'committed' => true,
         ]);
+        // Fonte do CLIENTE: registra no chamado (interação interna) o que foi versionado + aviso de qualidade.
+        if ($package->origin === ClientSourceService::ORIGIN) {
+            $this->logClientSourceInteraction($package, $commitSha, "{$owner}/{$repository}", $branch, $plan, $actor);
+        }
         // Reaproveita o selo legado de status de fonte no chamado.
         if ($package->ticket) {
             $package->ticket->forceFill(['gmud_source_status' => 'atualizado'])->saveQuietly();
@@ -277,7 +281,50 @@ class GmudPublishService
         $ticket = $package->ticket;
         $num = $ticket && $ticket->ticket_number ? $ticket->ticket_number : ('#' . $package->ticket_id);
         $resp = $actor->name ?: '—';
+        if ($package->origin === ClientSourceService::ORIGIN) {
+            $from = $package->sender_label ?: 'cliente';
+            return "Fonte enviado pelo cliente — chamado {$num} ({$count} fonte(s)) — enviado por: {$from} — publicado por: {$resp}";
+        }
         return "GMUD chamado {$num} — publicação governada ({$count} fonte(s)) — resp: {$resp}";
+    }
+
+    /** Interação INTERNA no chamado: commit, onde cada fonte ficou e aviso de qualidade (não trava). */
+    private function logClientSourceInteraction(GmudPackage $package, string $sha, string $repo, string $branch, array $plan, User $actor): void
+    {
+        try {
+            $files = GmudPackageFile::whereIn('id', array_keys($plan))->get(['id', 'filename', 'path_in_zip', 'quality_grade', 'quality_score'])->keyBy('id');
+            $e = fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+            $rows = '';
+            $weak = [];
+            foreach ($plan as $fid => $p) {
+                $f = $files->get($fid);
+                $name = $f ? ($f->filename ?: basename((string) $f->path_in_zip)) : basename((string) $p['dest']);
+                $grade = $f && $f->quality_grade ? strtoupper((string) $f->quality_grade) : null;
+                if ($grade && in_array($grade, ['D', 'E', 'F'], true)) $weak[] = "{$name} ({$grade})";
+                $acao = ['add' => 'novo', 'modify' => 'atualizado', 'move' => 'movido'][$p['action']] ?? $p['action'];
+                $rows .= '<li><b>' . $e($name) . '</b> → <code>' . $e($p['dest']) . '</code> · ' . $e($acao)
+                    . ($grade ? ' · nota ' . $e($grade) . ($f->quality_score !== null ? ' (' . (int) $f->quality_score . '/100)' : '') : '') . '</li>';
+            }
+            $aviso = $weak
+                ? '<p>⚠️ <b>Atenção à qualidade:</b> ' . $e(implode(', ', $weak)) . ' com nota baixa no CodeAnalysis. Foi publicado mesmo assim (não trava) — veja os achados no painel "Publicação de Fontes".</p>'
+                : '';
+            $body = '<p>📦 <b>Fonte enviado pelo cliente versionado no Git.</b></p>'
+                . '<p>Repositório <code>' . $e($repo) . '</code> @ ' . $e($branch) . ' · commit <code>' . $e(substr($sha, 0, 10)) . '</code>'
+                . ($package->sender_label ? '<br>Enviado por: ' . $e($package->sender_label) : '')
+                . '<br>Publicado por: ' . $e($actor->name) . '</p>'
+                . '<ul>' . $rows . '</ul>' . $aviso;
+            \App\Models\HelpDeskTicketComment::create([
+                'ticket_id'      => $package->ticket_id,
+                'author_user_id' => $actor->id,
+                'body'           => $body,
+                'visibility'     => 'internal',
+                'is_system'      => false,
+                'channel'        => 'system',
+                'source'         => 'client_source', // não é resposta do consultor → nunca vai ao Movidesk
+            ]);
+        } catch (\Throwable $ex) {
+            Log::warning('client_source.interaction_failed', ['package' => $package->id, 'error' => $ex->getMessage()]);
+        }
     }
 
     private function audit(GmudPackage $package, string $type, array $meta): void

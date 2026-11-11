@@ -101,10 +101,23 @@ class GmudPackageService
         return $this->makePackage($ticket, $latest, $latest->uploaded_by, 'ensure');
     }
 
-    /** Cria a linha gmud_packages a partir de um Attachment imutável e enfileira o job. Sem commit. */
-    private function makePackage(HelpDeskTicket $ticket, Attachment $att, ?int $userId, string $origin): GmudPackage
+    /**
+     * Pacote de FONTE ENVIADO PELO CLIENTE (ClientSourceService). Mesmo motor da GMUD; marca a origem.
+     * @param array{origin:string, source_attachment_ids:int[], sender:?string} $meta
+     */
+    public function receiveClientSource(HelpDeskTicket $ticket, Attachment $zip, ?int $userId, array $meta): GmudPackage
     {
-        $package = GmudPackage::create([
+        return $this->makePackage($ticket, $zip, $userId, 'cliente', [
+            'origin'                => $meta['origin'] ?? 'cliente',
+            'source_attachment_ids' => array_values($meta['source_attachment_ids'] ?? []),
+            'sender_label'          => isset($meta['sender']) ? mb_substr((string) $meta['sender'], 0, 255) : null,
+        ]);
+    }
+
+    /** Cria a linha gmud_packages a partir de um Attachment imutável e enfileira o job. Sem commit. */
+    private function makePackage(HelpDeskTicket $ticket, Attachment $att, ?int $userId, string $origin, array $extra = []): GmudPackage
+    {
+        $package = GmudPackage::create($extra + [
             'ticket_id'      => $ticket->id,
             'customer_id'    => $ticket->customer_id,
             'attachment_id'  => $att->id,
