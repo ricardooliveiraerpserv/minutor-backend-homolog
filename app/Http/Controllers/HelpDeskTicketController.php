@@ -2596,6 +2596,28 @@ class HelpDeskTicketController extends Controller
         return ($m && $m > 0) ? (int) $m : null;
     }
 
+    /**
+     * Observação do apontamento gerado pela interação: texto puro do corpo, SEM a assinatura
+     * (HTML com logo base64 ≈ 85 mil chars) e limitado a 4900 chars — o store do Timesheet
+     * valida observation|max:5000 e o corpo cru estourava → 422 "Dados de validação inválidos".
+     */
+    private function timesheetObservationFromBody(string $html): string
+    {
+        $pos = stripos($html, 'class="sigroot"');
+        if ($pos !== false) {
+            $head = substr($html, 0, $pos);
+            $cut  = strrpos($head, '<div style="margin-top:16px;">');
+            if ($cut === false) $cut = strrpos($head, '<table');
+            if ($cut !== false) $html = substr($html, 0, $cut);
+        }
+        $html = preg_replace('#<(style|script)\b[^>]*>.*?</\1>#is', '', $html) ?? $html;
+        $html = preg_replace('#<br\s*/?>|</p>|</div>|</li>#i', "\n", $html) ?? $html;
+        $txt  = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $txt  = preg_replace("/[ \t]+/", ' ', $txt) ?? $txt;
+        $txt  = preg_replace("/\n\s*\n+/", "\n", $txt) ?? $txt;
+        return mb_substr(trim($txt), 0, 4900);
+    }
+
     private function maybeCreateInteractionTimesheet(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, ?int $effortMinutes, ?string $workedDate, Request $request): ?string
     {
         // "NÃO GERA COBRANÇA": nunca movimenta horas, mesmo sendo resposta ao cliente.
@@ -2620,7 +2642,7 @@ class HelpDeskTicketController extends Controller
             if (!$effortMinutes || $effortMinutes <= 0) {
                 return 'Tempo removido da interação. O apontamento #' . $ts->id . ' vinculado foi mantido — ajuste ou remova manualmente se necessário.';
             }
-            $obs = trim((string) $comment->body);
+            $obs = $this->timesheetObservationFromBody((string) $comment->body);
             $ts->effort_minutes = $effortMinutes;
             $ts->start_time     = $comment->start_time ?: null;
             $ts->end_time       = $comment->end_time ?: null;
@@ -2655,7 +2677,7 @@ class HelpDeskTicketController extends Controller
         }
 
         $hhmm = sprintf('%d:%02d', intdiv($effortMinutes, 60), $effortMinutes % 60);
-        $obs  = trim((string) $comment->body);
+        $obs  = $this->timesheetObservationFromBody((string) $comment->body);
         if ($obs === '') {
             $obs = 'Atendimento Help Desk — chamado ' . $ticket->ticket_number;
         }
