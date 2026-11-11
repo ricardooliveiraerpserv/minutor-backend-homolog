@@ -350,6 +350,46 @@ class HelpDeskTicketController extends Controller
             ->orderByDesc('updated_at');
     }
 
+    /**
+     * Chamados (da página atual da fila) que tiveram GMUD EM PRODUÇÃO — independente do status atual
+     * (alimenta o card/filtro "GMUD em produção" da fila). Conta se QUALQUER um:
+     *  - status atual = solucao_gmud;
+     *  - passou pelo status solucao_gmud (evento de mudança de status);
+     *  - tem interação do formulário dinâmico vinculado ao status solucao_gmud (GMUD gravada);
+     *  - tem pacote de fontes da GMUD publicado no Git.
+     * 4 queries fixas (sem N+1). Retorna [ticket_id => true].
+     */
+    private function gmudProducaoTicketIds(\Illuminate\Support\Collection $tickets): array
+    {
+        $ids = $tickets->pluck('id')->filter()->values()->all();
+        if (!$ids) return [];
+        $statusIds = \Illuminate\Support\Facades\DB::table('helpdesk_statuses')->where('key', 'solucao_gmud')->pluck('id')->map(fn ($v) => (int) $v)->all();
+        $out = [];
+        foreach ($tickets as $t) {
+            if ($t->status_id && in_array((int) $t->status_id, $statusIds, true)) $out[$t->id] = true;
+        }
+        foreach (array_chunk($ids, 500) as $chunk) {
+            if ($statusIds) {
+                \Illuminate\Support\Facades\DB::table('helpdesk_ticket_events')->whereIn('ticket_id', $chunk)
+                    ->whereIn('event_type', ['status', 'status_changed'])
+                    ->whereIn('to_value', array_map('strval', $statusIds))
+                    ->distinct()->pluck('ticket_id')->each(function ($id) use (&$out) { $out[(int) $id] = true; });
+                $formIds = \Illuminate\Support\Facades\DB::table('helpdesk_forms')->whereIn('status_id', $statusIds)->pluck('id')->map(fn ($v) => (string) $v)->all();
+                if ($formIds) {
+                    \Illuminate\Support\Facades\DB::table('helpdesk_ticket_comments')->whereIn('ticket_id', $chunk)
+                        ->where('form_kind', 'dynamic')
+                        ->whereIn(\Illuminate\Support\Facades\DB::raw("(solution::jsonb->>'form_id')"), $formIds)
+                        ->distinct()->pluck('ticket_id')->each(function ($id) use (&$out) { $out[(int) $id] = true; });
+                }
+            }
+            if (\Illuminate\Support\Facades\Schema::hasTable('gmud_packages')) {
+                \Illuminate\Support\Facades\DB::table('gmud_packages')->whereIn('ticket_id', $chunk)->where('status', 'published')
+                    ->distinct()->pluck('ticket_id')->each(function ($id) use (&$out) { $out[(int) $id] = true; });
+            }
+        }
+        return $out;
+    }
+
     public function index(Request $request): JsonResponse
     {
         // 🔒 Área de ATENDIMENTO (fila/chamados do agente): cliente NÃO acessa — ele usa o
@@ -389,7 +429,9 @@ class HelpDeskTicketController extends Controller
         $meetings = $this->scheduledMeetingByTicket($tickets);
         $t2 = $mark();
         $cal = app(\App\Services\BusinessCalendarService::class);
-        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true, (int) ($interCounts->get($t->id) ?? 0), $meetings->get($t->id)));
+        $gmudIds = $this->gmudProducaoTicketIds($tickets);
+        $data = $tickets->map(fn ($t) => $this->decorate($t, $events->get($t->id) ?? collect(), $lastAgent->get($t->id), $cal, true, (int) ($interCounts->get($t->id) ?? 0), $meetings->get($t->id))
+            + ['had_gmud_producao' => isset($gmudIds[$t->id])]);
         $t3 = $mark();
 
         $payload = ['data' => $data];
