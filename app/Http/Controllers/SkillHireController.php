@@ -363,6 +363,23 @@ class SkillHireController extends Controller
             }
             $user = User::find($resp->getData(true)['id']);
 
+            // O store() oficial descarta `type`/`coordinator_type` quando quem finaliza NÃO é
+            // admin (trava A1). Aqui o perfil é restrito a consultor|coordenador pela validação
+            // do card (contratação é rotina autorizada) → grava explicitamente. Sem isso o
+            // usuário nascia SEM perfil e sumia da lista de usuários.
+            if ($user) {
+                $fix = [];
+                if ($user->type !== $perfil) {
+                    $fix['type'] = $perfil;
+                }
+                if (isset($payload['coordinator_type']) && $user->coordinator_type !== $payload['coordinator_type']) {
+                    $fix['coordinator_type'] = $payload['coordinator_type'];
+                }
+                if ($fix) {
+                    $user->forceFill($fix)->save();
+                }
+            }
+
             // Telefone + endereço (CEP/logradouro/…): fora do store() oficial.
             $extra = array_filter([
                 'phone' => $respondent?->phone,
