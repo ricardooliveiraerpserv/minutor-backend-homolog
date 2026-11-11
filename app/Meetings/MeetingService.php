@@ -29,7 +29,7 @@ class MeetingService
             // parsear direto gravaria 09:00 UTC (= 06:00 BRT). Interpreta no fuso da reunião p/ gravar
             // o UTC certo — assim card, invite e Teams batem no horário que o usuário digitou.
             $tz     = $data['timezone'] ?? 'America/Sao_Paulo';
-            $starts = Carbon::parse($data['starts_at'], $tz);
+            $starts = Carbon::parse($data['starts_at'], $tz)->utc(); // grava em UTC (o Eloquent formata no fuso do objeto, sem converter)
             $dur    = (int) ($data['duration_minutes'] ?? 30);
 
             $meeting = Meeting::create([
@@ -84,7 +84,7 @@ class MeetingService
     public function reschedule(Meeting $meeting, string $startsAt, ?int $durationMinutes = null): Meeting
     {
         // Reagendar: mesma regra de fuso do create — interpreta a hora local no fuso da reunião.
-        $starts = Carbon::parse($startsAt, $meeting->timezone ?: 'America/Sao_Paulo');
+        $starts = Carbon::parse($startsAt, $meeting->timezone ?: 'America/Sao_Paulo')->utc();
         $dur = $durationMinutes ?? $meeting->duration_minutes ?? 30;
         $meeting->update([
             'starts_at' => $starts, 'ends_at' => $starts->copy()->addMinutes($dur),
