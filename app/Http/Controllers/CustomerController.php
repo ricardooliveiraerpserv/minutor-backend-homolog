@@ -328,6 +328,7 @@ class CustomerController extends Controller
             'company_name' => 'nullable|string|max:255',
             'cgc' => 'required|string|unique:customers,cgc,NULL,id,deleted_at,NULL',
             'active' => 'nullable|boolean',
+            'has_contract' => 'sometimes|boolean', // guarda de fontes com a ERPSERV (Central de Fontes)
             'executive_id' => 'nullable|exists:users,id',
             'executive_bizify_id' => 'nullable|exists:users,id',
             'is_bizify_customer' => 'sometimes|boolean',
@@ -506,6 +507,7 @@ class CustomerController extends Controller
             'company_name' => 'nullable|string|max:255',
             'cgc' => 'sometimes|string|unique:customers,cgc,' . $customer->id . ',id,deleted_at,NULL',
             'active' => 'nullable|boolean',
+            'has_contract' => 'sometimes|boolean', // guarda de fontes com a ERPSERV (Central de Fontes)
             'executive_id' => 'nullable|exists:users,id',
             'executive_bizify_id' => 'nullable|exists:users,id',
             'is_bizify_customer' => 'sometimes|boolean',
