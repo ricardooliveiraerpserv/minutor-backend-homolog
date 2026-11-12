@@ -72,7 +72,7 @@ class PermissionService
         // Código-fonte (Help Desk)
         'source_code.request',
         // Central de Fontes (acervo, busca, impacto, publicações, CodeAnalysis, envio GMUD)
-        'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
+        'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish', 'source_docs.download',
         // Dashboard
         'dashboard.view', 'dashboard.manager', 'dashboard.consultant',
         // Dashboards (granular por tipo de contrato)
@@ -226,7 +226,7 @@ class PermissionService
             'source_code.request',
             // Central de Fontes — todos os internos exceto cliente/administrativo; o ESCOPO por empresa
             // (SourceDocCustomerScope) decide o que cada um enxerga.
-            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
+            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish', 'source_docs.download',
         ];
     }
 
@@ -251,7 +251,7 @@ class PermissionService
             'source_code.request',
             // Central de Fontes — todos os internos exceto cliente/administrativo; o ESCOPO por empresa
             // (SourceDocCustomerScope) decide o que cada um enxerga.
-            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
+            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish', 'source_docs.download',
         ];
     }
 
@@ -291,7 +291,7 @@ class PermissionService
             'source_code.request',
             // Central de Fontes — todos os internos exceto cliente/administrativo; o ESCOPO por empresa
             // (SourceDocCustomerScope) decide o que cada um enxerga.
-            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
+            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish', 'source_docs.download',
         ];
     }
 }

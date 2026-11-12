@@ -53,6 +53,9 @@ class GmudProjectSubmissionController extends Controller
         abort_unless((int) $project->customer_id === (int) $customer->id, 422, 'O projeto não pertence ao cliente selecionado.');
 
         $user = $request->user();
+        // Escopo da Central de Fontes: só envia para empresas que o usuário enxerga
+        // (coordenador: todas exceto ERPSERV; demais: alocados; ERPSERV só admin).
+        abort_unless(app(\App\SourceCode\SourceDocCustomerScope::class)->canAccessCustomerId($user, (int) $customer->id), 403, 'Você não tem acesso a esta empresa.');
 
         // Destinatário do e-mail de documentação = contato do cliente (1º com e-mail). Se não houver,
         // o e-mail é pulado (sem destinatário) — o envio continua documentado no projeto e no chamado.
@@ -246,8 +249,9 @@ class GmudProjectSubmissionController extends Controller
     }
 
     /** GET /projects/{project}/gmud-submissions — pacotes GMUD publicados do projeto (documentação). */
-    public function projectSubmissions(Project $project): JsonResponse
+    public function projectSubmissions(Request $request, Project $project): JsonResponse
     {
+        abort_unless(app(\App\SourceCode\SourceDocCustomerScope::class)->canAccessCustomerId($request->user(), (int) $project->customer_id), 403, 'Você não tem acesso a esta empresa.');
         $packages = GmudPackage::where('project_id', $project->id)
             ->where('status', GmudPackage::STATUS_PUBLISHED)
             ->with('ticket:id,ticket_number')
