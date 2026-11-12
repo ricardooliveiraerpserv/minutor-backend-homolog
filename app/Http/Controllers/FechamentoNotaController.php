@@ -271,11 +271,8 @@ class FechamentoNotaController extends Controller
     {
         try {
             if ($type === 'consultor') {
-                $data = app(FechamentoConsultorController::class)->buildConsultoresData($yearMonth);
-                $row  = collect($data['horistas'] ?? [])
-                    ->merge($data['banco_horas'] ?? [])
-                    ->merge($data['fixos'] ?? [])
-                    ->firstWhere('user_id', $id);
+                // Mesma linha do Meu Painel (ERPSERV + BIZIFY + trechos do mês da troca).
+                $row = app(FechamentoConsultorController::class)->userClosingRow($yearMonth, $id);
                 return $row ? round((float) ($row['recebimento'] ?? 0), 2) : null;
             }
             if ($type === 'parceiro') {

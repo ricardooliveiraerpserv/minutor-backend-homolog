@@ -478,6 +478,27 @@ class FechamentoConsultorController extends Controller
      * numéricos (deduções ficam só no último trecho, então a soma = valor do mês) e partimos da
      * última linha (tipo final + descrições). Fora do split: devolve a própria linha inalterada.
      */
+    /**
+     * Linha do fechamento de UM consultor no mês: junta ERPSERV + BIZIFY e os trechos do
+     * mês da troca. Fonte única do "recebimento" — usada pelo Meu Painel (myClosing) e pela
+     * conferência do valor da NFS-e (FechamentoNotaController), para as duas baterem sempre.
+     */
+    public function userClosingRow(string $yearMonth, int $userId): ?array
+    {
+        $data = $this->buildConsultoresData($yearMonth);
+        $biz  = $data['bizify'] ?? [];
+        return $this->mergeUserClosingRows(
+            collect($data['horistas'] ?? [])
+                ->merge($data['banco_horas'] ?? [])
+                ->merge($data['fixos'] ?? [])
+                // Bizify vive num bloco aninhado próprio (partição em buildConsultoresData).
+                ->merge($biz['horistas'] ?? [])
+                ->merge($biz['banco_horas'] ?? [])
+                ->merge($biz['fixos'] ?? [])
+                ->where('user_id', $userId)->values()
+        );
+    }
+
     private function mergeUserClosingRows(\Illuminate\Support\Collection $userRows): ?array
     {
         if ($userRows->isEmpty()) return null;
@@ -1464,18 +1485,7 @@ class FechamentoConsultorController extends Controller
         }
 
         // ── CONSULTOR: acha a própria linha em buildConsultoresData (horistas+banco+fixos) ──
-        $data = $this->buildConsultoresData($yearMonth);
-        $biz  = $data['bizify'] ?? [];
-        $row  = $this->mergeUserClosingRows(
-            collect($data['horistas'])
-                ->merge($data['banco_horas'])
-                ->merge($data['fixos'])
-                // Bizify vive num bloco aninhado próprio (partição em buildConsultoresData).
-                ->merge($biz['horistas'] ?? [])
-                ->merge($biz['banco_horas'] ?? [])
-                ->merge($biz['fixos'] ?? [])
-                ->where('user_id', $user->id)->values()
-        );
+        $row = $this->userClosingRow($yearMonth, (int) $user->id);
 
         if ($row) {
             $totalServico  = round((float) ($row['total'] ?? 0), 2);
