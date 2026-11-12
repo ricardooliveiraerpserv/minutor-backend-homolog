@@ -16,7 +16,7 @@ use Illuminate\Console\Command;
 class TrainingVideosPublishCommand extends Command
 {
     protected $signature = 'training-videos:publish {file} {--title=} {--id=} {--category=} {--description=}
-        {--audiences=} {--duration=} {--sort=} {--keep : Copia o arquivo em vez de mover}';
+        {--audiences=} {--duration=} {--sort=} {--cover= : Imagem de capa (jpg/png/webp)} {--keep : Copia o arquivo em vez de mover}';
 
     protected $description = 'Publica/atualiza um vídeo de treinamento (Aprenda o Minutor)';
 
@@ -46,6 +46,10 @@ class TrainingVideosPublishCommand extends Command
         $video->save();
 
         TrainingVideoController::attachFile($video, $file, basename($file), !$this->option('keep'));
+        if ($c = $this->option('cover')) {
+            if (!is_file($c)) { $this->warn("Capa não encontrada: $c"); }
+            else TrainingVideoController::attachCover($video, $c, pathinfo($c, PATHINFO_EXTENSION));
+        }
         $video->refresh();
         $this->info("OK #{$video->id} \"{$video->title}\" v{$video->version} (" . round($video->size / 1048576, 1) . ' MB) público=' . (implode(',', $video->audiences ?: []) ?: 'todos'));
         return 0;

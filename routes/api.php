@@ -148,6 +148,8 @@ Route::prefix('v1')->group(function () {
         ->middleware('signed')->name('notifications.respond-email-guests');
     // 🎓 Aprenda o Minutor — stream do vídeo (link assinado de 6h gerado por /training-videos/{id}/play;
     // a tag <video> não envia Bearer). BinaryFileResponse → suporta Range (avançar/voltar).
+    Route::get('/training-videos/{video}/cover', [\App\Http\Controllers\TrainingVideoController::class, 'cover'])
+        ->whereNumber('video')->middleware('signed')->name('training-videos.cover');
     Route::get('/training-videos/{video}/stream', [\App\Http\Controllers\TrainingVideoController::class, 'stream'])
         ->whereNumber('video')->middleware('signed')->name('training-videos.stream');
     // PESQUISA por e-mail (link assinado, sem login): formulário (GET) + envio (POST).
@@ -1488,6 +1490,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/training-videos/{video}/play',   [\App\Http\Controllers\TrainingVideoController::class, 'play'])->whereNumber('video')->name('training-videos.play');
         Route::post('/training-videos/uploads/chunk', [\App\Http\Controllers\TrainingVideoController::class, 'uploadChunk'])->name('training-videos.upload-chunk');
         Route::post('/training-videos',               [\App\Http\Controllers\TrainingVideoController::class, 'store'])->name('training-videos.store');
+        Route::post('/training-videos/{video}/cover', [\App\Http\Controllers\TrainingVideoController::class, 'uploadCover'])->whereNumber('video')->name('training-videos.upload-cover');
         Route::put('/training-videos/{video}',        [\App\Http\Controllers\TrainingVideoController::class, 'update'])->whereNumber('video')->name('training-videos.update');
         Route::delete('/training-videos/{video}',     [\App\Http\Controllers\TrainingVideoController::class, 'destroy'])->whereNumber('video')->name('training-videos.destroy');
 

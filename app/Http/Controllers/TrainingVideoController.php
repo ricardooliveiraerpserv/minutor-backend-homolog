@@ -36,6 +36,10 @@ class TrainingVideoController extends Controller
             'category'           => $v->category,
             'audiences'          => array_values((array) ($v->audiences ?? [])),
             'has_file'           => (bool) $v->file_path,
+            // Capa: link assinado (a tag <img> não envia Bearer). Versão no link → cache novo ao trocar.
+            'cover_url'          => $v->cover_path ? URL::temporarySignedRoute('training-videos.cover', now()->addHours(12), [
+                'video' => $v->id, 'c' => substr(md5($v->cover_path), 0, 8),
+            ]) : null,
             'original_name'      => $v->original_name,
             'size'               => $v->size,
             'duration_seconds'   => $v->duration_seconds,
@@ -51,11 +55,14 @@ class TrainingVideoController extends Controller
     {
         $user = $request->user();
         $manage = $user->isAdmin() && $request->boolean('manage');
+        // Admin pode pré-visualizar a biblioteca de UM perfil (?profile=consultor_horista …).
+        $profile = $user->isAdmin() ? $request->query('profile') : null;
+        if ($profile !== null && !array_key_exists($profile, TrainingVideo::AUDIENCES)) $profile = null;
         $rows = TrainingVideo::query()
             ->when(!$manage, fn ($q) => $q->where('active', true)->whereNotNull('file_path'))
             ->orderBy('category')->orderBy('sort_order')->orderBy('title')
             ->get()
-            ->filter(fn ($v) => $manage || $v->visibleTo($user))
+            ->filter(fn ($v) => $manage || ($profile ? $v->visibleToProfile($profile) : $v->visibleTo($user)))
             ->values()
             ->map(fn ($v) => $this->present($v));
 
@@ -85,6 +92,35 @@ class TrainingVideoController extends Controller
             'Cache-Control' => 'private, max-age=21600',
             'Accept-Ranges' => 'bytes',
         ]);
+    }
+
+    public function cover(Request $request, TrainingVideo $video)
+    {
+        if (!$video->cover_path || !Storage::disk('local')->exists($video->cover_path)) abort(404);
+        return response()->file(Storage::disk('local')->path($video->cover_path), ['Cache-Control' => 'private, max-age=43200']);
+    }
+
+    /** Grava/troca a capa (imagem). Usado pela tela (multipart) e pelo script. */
+    public static function attachCover(TrainingVideo $video, string $absSource, string $ext): void
+    {
+        $disk = Storage::disk('local');
+        $ext = in_array(strtolower($ext), ['jpg', 'jpeg', 'png', 'webp'], true) ? strtolower($ext) : 'jpg';
+        $disk->makeDirectory(TrainingVideo::DIR . '/covers');
+        $rel = TrainingVideo::DIR . '/covers/' . $video->id . '_' . Str::random(8) . '.' . $ext;
+        copy($absSource, $disk->path($rel));
+        @chmod($disk->path($rel), 0644);
+        $old = $video->cover_path;
+        $video->forceFill(['cover_path' => $rel])->save();
+        if ($old && $old !== $rel) $disk->delete($old);
+    }
+
+    public function uploadCover(Request $request, TrainingVideo $video): JsonResponse
+    {
+        if ($r = $this->deny($request)) return $r;
+        $request->validate(['cover' => 'required|file|mimes:jpg,jpeg,png,webp|max:5120']);
+        $f = $request->file('cover');
+        self::attachCover($video, $f->getRealPath(), $f->getClientOriginalExtension() ?: $f->extension());
+        return response()->json(['data' => $this->present($video->fresh())]);
     }
 
     /** Upload em partes: append sequencial em _tmp/{upload_id}.part (idempotente por offset). */
@@ -208,6 +244,7 @@ class TrainingVideoController extends Controller
     {
         if ($r = $this->deny($request)) return $r;
         if ($video->file_path) Storage::disk('local')->delete($video->file_path);
+        if ($video->cover_path) Storage::disk('local')->delete($video->cover_path);
         $video->delete();
         return response()->json(['ok' => true]);
     }
