@@ -83,8 +83,12 @@ class SourceDocTreeController extends Controller
         $settings = \App\Models\SourceDocCustomerSetting::whereIn('customer_id', $data->pluck('customer_id')->all() ?: [0])
             ->get()->keyBy('customer_id');
         $includeHidden = $request->boolean('include_hidden');
-        $data = $data->map(function ($row) use ($settings) {
+        // Cadastro do cliente → "Contrato" (guarda de fontes com a ERPSERV). Sem contrato, os fontes
+        // da Central são só para CONSULTA (a guarda é do cliente) — o FE mostra a legenda.
+        $contracts = \App\Models\Customer::whereIn('id', $data->pluck('customer_id')->all() ?: [0])->pluck('has_contract', 'id');
+        $data = $data->map(function ($row) use ($settings, $contracts) {
             $s = $settings->get($row['customer_id']);
+            $row['has_contract'] = (bool) ($contracts[$row['customer_id']] ?? false);
             $row['own_source'] = (bool) ($s->own_source ?? false);
             $row['hidden'] = (bool) ($s->hidden ?? false);
             return $row;
