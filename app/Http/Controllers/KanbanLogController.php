@@ -6,16 +6,37 @@ use Illuminate\Http\JsonResponse;
 
 class KanbanLogController extends Controller
 {
+    /** 'coordinator:94' (coluna do coordenador no kanban) → 'Coordenador · Nome' (antes aparecia cru no Histórico). */
+    private function colLabel(?string $col, array $names): ?string
+    {
+        if ($col && str_starts_with($col, 'coordinator:')) {
+            $id = (int) substr($col, strlen('coordinator:'));
+            return 'Coordenador · ' . ($names[$id] ?? ('#' . $id));
+        }
+        return $col;
+    }
+
+    /** Nomes dos coordenadores citados nas colunas dos logs (1 query). */
+    private function coordNames($logs): array
+    {
+        $ids = collect($logs)->flatMap(fn ($l) => [$l->from_column, $l->to_column])
+            ->filter(fn ($c) => $c && str_starts_with($c, 'coordinator:'))
+            ->map(fn ($c) => (int) substr($c, strlen('coordinator:')))->unique()->values()->all();
+        return $ids ? \App\Models\User::whereIn('id', $ids)->pluck('name', 'id')->all() : [];
+    }
+
     public function contractLogs(\App\Models\Contract $contract): JsonResponse
     {
-        $logs = \App\Models\ContractKanbanLog::with('movedBy:id,name')
+        $raw = \App\Models\ContractKanbanLog::with('movedBy:id,name')
             ->where('contract_id', $contract->id)
             ->orderBy('created_at', 'desc')
-            ->get()
+            ->get();
+        $names = $this->coordNames($raw);
+        $logs = $raw
             ->map(fn($l) => [
                 'id'         => $l->id,
-                'from_column'=> $l->from_column,
-                'to_column'  => $l->to_column,
+                'from_column'=> $this->colLabel($l->from_column, $names),
+                'to_column'  => $this->colLabel($l->to_column, $names),
                 'moved_by'   => $l->movedBy?->name ?? '—',
                 'created_at' => $l->created_at?->toISOString(),
             ]);
@@ -42,14 +63,16 @@ class KanbanLogController extends Controller
 
     public function requestLogs(\App\Models\ContractRequest $contractRequest): JsonResponse
     {
-        $logs = \App\Models\ContractRequestKanbanLog::with('movedBy:id,name')
+        $raw = \App\Models\ContractRequestKanbanLog::with('movedBy:id,name')
             ->where('contract_request_id', $contractRequest->id)
             ->orderBy('created_at', 'desc')
-            ->get()
+            ->get();
+        $names = $this->coordNames($raw);
+        $logs = $raw
             ->map(fn($l) => [
                 'id'         => $l->id,
-                'from_column'=> $l->from_column,
-                'to_column'  => $l->to_column,
+                'from_column'=> $this->colLabel($l->from_column, $names),
+                'to_column'  => $this->colLabel($l->to_column, $names),
                 'moved_by'   => $l->movedBy?->name ?? '—',
                 'created_at' => $l->created_at?->toISOString(),
             ]);
