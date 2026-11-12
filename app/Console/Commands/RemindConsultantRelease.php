@@ -45,7 +45,7 @@ class RemindConsultantRelease extends Command
             $n = $items->count();
             try {
                 $url = '/timesheets?consultor_atraso=1';
-                $msg = "Você tem {$n} apontamento(s) em atraso ainda NÃO contabilizado(s) no seu pagamento. Fale com o seu coordenador para liberar as horas antes do fechamento.";
+                $msg = "Você tem {$n} apontamento(s) em atraso ainda NÃO contabilizado(s) no seu pagamento. " . Timesheet::atrasoLiberacaoOrientacao($owner, ' antes do fechamento');
                 $attrs = [
                     'title' => 'Apontamento em atraso — não contabilizado', 'message' => $msg,
                     'type' => 'action', 'priority' => 'high', 'target_users' => [$owner->id],

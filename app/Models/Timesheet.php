@@ -813,6 +813,18 @@ class Timesheet extends Model
      * para o pagamento dele — precisa o coordenador liberar. Notificação (sino) + e-mail
      * (workflow), UMA vez por lote pendente. O lembrete no fechamento fica no comando agendado.
      */
+    /**
+     * Orientação de quem libera as horas em atraso. Coordenador (projetos ou sustentação) não tem
+     * "seu coordenador" — ele mesmo libera em Atrasos (integração) → Aguardando consultor.
+     */
+    public static function atrasoLiberacaoOrientacao(?\App\Models\User $owner, string $sufixo = ''): string
+    {
+        if ($owner && $owner->type === 'coordenador') {
+            return 'Como coordenador, libere as horas em Atrasos (integração), na aba Aguardando consultor' . $sufixo . '.';
+        }
+        return 'Fale com o seu coordenador para liberar as horas' . $sufixo . '.';
+    }
+
     public function notifyConsultorAtrasoPendente(): void
     {
         $owner = $this->user;
@@ -823,9 +835,10 @@ class Timesheet extends Model
             ->whereNotNull('late_approved_at')->where('consultant_released', false)
             ->whereNull('deleted_at')->count();
 
-        $message = $total > 1
-            ? "Você tem {$total} apontamentos em atraso que ainda NÃO estão sendo contabilizados no seu pagamento. Fale com o seu coordenador para liberar as horas."
-            : "Seu apontamento de {$dia} entrou em atraso e ainda NÃO está sendo contabilizado no seu pagamento. Fale com o seu coordenador para liberar as horas.";
+        $message = ($total > 1
+            ? "Você tem {$total} apontamentos em atraso que ainda NÃO estão sendo contabilizados no seu pagamento."
+            : "Seu apontamento de {$dia} entrou em atraso e ainda NÃO está sendo contabilizado no seu pagamento.")
+            . ' ' . static::atrasoLiberacaoOrientacao($owner);
 
         // Pop-up in-app (um por consultor; reaproveita o aviso vivo).
         try {
