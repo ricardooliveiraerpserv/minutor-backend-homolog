@@ -1827,7 +1827,7 @@ class ContractController extends Controller
         }
         $get = fn ($c, $k) => is_array($c) ? ($c[$k] ?? null) : ($c->{$k} ?? null);
         $byCustomer = function ($items, ?array $ids) use ($get) {
-            if ($ids === null) return $items;
+            if ($ids === null) return collect($items)->values();   // sempre Collection (antes array quebrava o ->all())
             return collect($items)->filter(fn ($c) => in_array((int) $get($c, 'customer_id'), $ids, true))->values();
         };
 
