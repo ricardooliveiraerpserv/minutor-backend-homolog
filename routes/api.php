@@ -146,6 +146,10 @@ Route::prefix('v1')->group(function () {
     // Grava os acompanhantes informados na página pós-confirmação do e-mail (POST assinado, sem login).
     Route::post('/notifications/{notification}/respond-email-guests', [\App\Http\Controllers\NotificationController::class, 'respondEmailGuests'])
         ->middleware('signed')->name('notifications.respond-email-guests');
+    // 🎓 Aprenda o Minutor — stream do vídeo (link assinado de 6h gerado por /training-videos/{id}/play;
+    // a tag <video> não envia Bearer). BinaryFileResponse → suporta Range (avançar/voltar).
+    Route::get('/training-videos/{video}/stream', [\App\Http\Controllers\TrainingVideoController::class, 'stream'])
+        ->whereNumber('video')->middleware('signed')->name('training-videos.stream');
     // PESQUISA por e-mail (link assinado, sem login): formulário (GET) + envio (POST).
     Route::get('/surveys/{survey}/email-form',    [\App\Http\Controllers\NotificationSurveyController::class, 'emailForm'])
         ->middleware('signed')->name('surveys.email-form');
@@ -1478,6 +1482,14 @@ Route::prefix('v1')->group(function () {
         // Cadastro de Perfil → Módulos de navegação (Administrativo / Serviços)
         Route::get('/profile-modules', [\App\Http\Controllers\ProfileModuleController::class, 'index'])->name('profile-modules.index');
         Route::put('/profile-modules/{profile}', [\App\Http\Controllers\ProfileModuleController::class, 'update'])->name('profile-modules.update');
+
+        // 🎓 Aprenda o Minutor — vídeos de treinamento por perfil (todos os usuários; gestão = admin no controller)
+        Route::get('/training-videos',                [\App\Http\Controllers\TrainingVideoController::class, 'index'])->name('training-videos.index');
+        Route::get('/training-videos/{video}/play',   [\App\Http\Controllers\TrainingVideoController::class, 'play'])->whereNumber('video')->name('training-videos.play');
+        Route::post('/training-videos/uploads/chunk', [\App\Http\Controllers\TrainingVideoController::class, 'uploadChunk'])->name('training-videos.upload-chunk');
+        Route::post('/training-videos',               [\App\Http\Controllers\TrainingVideoController::class, 'store'])->name('training-videos.store');
+        Route::put('/training-videos/{video}',        [\App\Http\Controllers\TrainingVideoController::class, 'update'])->whereNumber('video')->name('training-videos.update');
+        Route::delete('/training-videos/{video}',     [\App\Http\Controllers\TrainingVideoController::class, 'destroy'])->whereNumber('video')->name('training-videos.destroy');
 
         // Configurador de navegação: módulos dinâmicos + associação de itens de menu
         Route::get('/nav-config',                  [\App\Http\Controllers\NavConfigController::class, 'index'])->name('nav-config.index');
