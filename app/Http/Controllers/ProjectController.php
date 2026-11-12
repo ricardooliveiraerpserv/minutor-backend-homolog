@@ -4601,7 +4601,7 @@ class ProjectController extends Controller
         $adj = [];
         foreach ($stages as $st) {
             foreach ($st->deliveries as $d) {
-                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                if ($d->depends_on_delivery_id && ($d->dependency_type ?? 'FS') === 'FS') {   // sem tipo = FS (único suportado)
                     $adj[$d->depends_on_delivery_id][] = $d->id;
                 }
             }
@@ -4718,7 +4718,7 @@ class ProjectController extends Controller
         // Enriquecer cada delivery com os 4 campos derivados
         foreach ($stages as $st) {
             foreach ($st->deliveries as $d) {
-                if ($d->depends_on_delivery_id && $d->dependency_type === 'FS') {
+                if ($d->depends_on_delivery_id && ($d->dependency_type ?? 'FS') === 'FS') {   // sem tipo = FS (único suportado)
                     $predStatus = $statusById[$d->depends_on_delivery_id] ?? null;
                     $state = $predStatus === \App\Models\StageDelivery::STATUS_DONE ? 'done' : 'pending';
                     $d->setAttribute('predecessor', [

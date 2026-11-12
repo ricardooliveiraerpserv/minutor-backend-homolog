@@ -267,7 +267,7 @@ class StageDeliveryController extends Controller
         // Bloqueio operacional: predecessor FS pending impede sair de backlog (ADR 0009 appendix)
         $movingOutOfBacklog = $delivery->status === StageDelivery::STATUS_BACKLOG
             && $data['status'] !== StageDelivery::STATUS_BACKLOG;
-        if ($movingOutOfBacklog && $delivery->depends_on_delivery_id && $delivery->dependency_type === 'FS') {
+        if ($movingOutOfBacklog && $delivery->depends_on_delivery_id && ($delivery->dependency_type ?? 'FS') === 'FS') {   // sem tipo = FS
             $predecessor = StageDelivery::find($delivery->depends_on_delivery_id);
             if ($predecessor && $predecessor->status !== StageDelivery::STATUS_DONE) {
                 return response()->json([

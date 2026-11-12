@@ -76,6 +76,19 @@ class StageDelivery extends Model
 
     public const DEPENDENCY_TYPES = ['FS'];
 
+    /**
+     * Dependência sem tipo = FS (termina → começa), o único tipo suportado. O "Depende de" da tabela
+     * do cronograma gravava só o depends_on_delivery_id → o bloqueio da predecessora e o caminho
+     * crítico (que exigem dependency_type='FS') não funcionavam. Sem predecessora, o tipo é limpo.
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (StageDelivery $d) {
+            if ($d->depends_on_delivery_id && !$d->dependency_type) $d->dependency_type = 'FS';
+            if (!$d->depends_on_delivery_id) $d->dependency_type = null;
+        });
+    }
+
     protected $casts = [
         'hours_planned'    => 'decimal:2',
         'allow_negative_hours' => 'boolean',
