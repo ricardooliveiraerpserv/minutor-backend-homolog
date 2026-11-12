@@ -176,7 +176,12 @@ class TrainingVideoController extends Controller
         $newVersion = $video->file_path ? ($video->version + 1) : max(1, (int) $video->version);
         $rel = TrainingVideo::DIR . '/' . $video->id . '_v' . $newVersion . '_' . Str::random(6) . '.' . $ext;
         $dest = $disk->path($rel);
-        $move ? rename($absSource, $dest) : copy($absSource, $dest);
+        // rename entre sistemas de arquivos diferentes (/tmp → volume de storage) falha no container
+        // → copia e, se for "mover", apaga a origem só depois da cópia completa.
+        if (!($move && @rename($absSource, $dest))) {
+            if (!copy($absSource, $dest)) throw new \RuntimeException('Falha ao gravar o vídeo no storage.');
+            if ($move) @unlink($absSource);
+        }
         // MP4 com o índice (moov) no fim não começa a tocar no navegador → reorganiza (sem perda).
         if (in_array($ext, ['mp4', 'm4v', 'mov'], true)) {
             $tmp = $dest . '.fs';
