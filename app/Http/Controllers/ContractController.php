@@ -1788,6 +1788,13 @@ class ContractController extends Controller
             ->orderBy('name')
             ->get();
 
+        // ── Escopo NO SERVIDOR (Liberação de Visualização) ─────────────────────────────────
+        // Antes o filtro por cliente era só na tela: o payload levava os cards de TODOS os
+        // clientes. Agora o servidor só devolve o que o usuário pode ver. Parceiro (externo)
+        // SEM regra de liberação: só os projetos em que a equipe do parceiro está alocada.
+        [$demandCards, $transitionCards, $requestCards, $projectCards, $sustentacaoGroups, $sustentacaoAutoCards, $aporteCards] =
+            $this->applyKanbanServerScope($user, $isCliente, $pipelineView, $demandCards, $transitionCards, $requestCards, $projectCards, $sustentacaoGroups, $sustentacaoAutoCards, $aporteCards);
+
         return response()->json([
             'demand_cards'          => $demandCards,
             'transition_cards'      => $transitionCards,
@@ -1805,6 +1812,61 @@ class ContractController extends Controller
             // O FE usa isto p/ mostrar/esconder as partes (demand/project) e filtrar por cliente.
             'pipeline_view'         => $pipelineView,
         ]);
+    }
+
+    /**
+     * Aplica a Liberação de Visualização do pipeline no SERVIDOR (cliente e admin/administrativo
+     * não mudam). Parte Demanda = demand/transition/request; parte Projetos = project/sustentação/aporte.
+     * scope 'specific' → só os clientes liberados; visible=false → parte vazia.
+     * Parceiro sem regra própria → Demanda oculta e Projetos só onde a equipe do parceiro está alocada.
+     */
+    private function applyKanbanServerScope($user, bool $isCliente, array $pv, $demand, $transition, $request, $project, array $sustGroups, $sustAuto, $aporte): array
+    {
+        if (!$user || $isCliente || $user->isAdmin() || (method_exists($user, 'isAdministrativo') && $user->isAdministrativo())) {
+            return [$demand, $transition, $request, $project, $sustGroups, $sustAuto, $aporte];
+        }
+        $get = fn ($c, $k) => is_array($c) ? ($c[$k] ?? null) : ($c->{$k} ?? null);
+        $byCustomer = function ($items, ?array $ids) use ($get) {
+            if ($ids === null) return $items;
+            return collect($items)->filter(fn ($c) => in_array((int) $get($c, 'customer_id'), $ids, true))->values();
+        };
+
+        // Parceiro sem regra: projetos com algum usuário do parceiro alocado.
+        $partnerProjectIds = null;
+        if (method_exists($user, 'isParceiroAdmin') && $user->isParceiroAdmin() && ($pv['source'] ?? '') !== 'custom') {
+            $partnerProjectIds = $user->partner_id
+                ? \Illuminate\Support\Facades\DB::table('project_consultants')
+                    ->join('users', 'users.id', '=', 'project_consultants.user_id')
+                    ->where('users.partner_id', $user->partner_id)
+                    ->distinct()->pluck('project_consultants.project_id')->map(fn ($v) => (int) $v)->all()
+                : [];
+            $pv['demand']['visible'] = false;
+        }
+
+        $dIds = ($pv['demand']['scope'] ?? 'all') === 'specific' ? array_map('intval', $pv['demand']['customer_ids'] ?? []) : null;
+        $pIds = ($pv['project']['scope'] ?? 'all') === 'specific' ? array_map('intval', $pv['project']['customer_ids'] ?? []) : null;
+
+        if (!($pv['demand']['visible'] ?? true)) {
+            $demand = collect(); $transition = collect(); $request = collect();
+        } else {
+            $demand = $byCustomer($demand, $dIds); $transition = $byCustomer($transition, $dIds); $request = $byCustomer($request, $dIds);
+        }
+
+        if (!($pv['project']['visible'] ?? true)) {
+            return [$demand, $transition, $request, collect(), array_map(fn () => [], $sustGroups), collect(), collect()];
+        }
+        $project = $byCustomer($project, $pIds); $sustAuto = $byCustomer($sustAuto, $pIds); $aporte = $byCustomer($aporte, $pIds);
+        foreach ($sustGroups as $k => $cards) $sustGroups[$k] = $byCustomer($cards, $pIds)->all();
+
+        if ($partnerProjectIds !== null) {
+            $inProj = fn ($items, string $key) => collect($items)->filter(fn ($c) => in_array((int) $get($c, $key), $partnerProjectIds, true))->values();
+            $project = $inProj($project, 'id'); $aporte = $inProj($aporte, 'project_id'); $sustAuto = $inProj($sustAuto, 'project_id');
+            foreach ($sustGroups as $k => $cards) {
+                $sustGroups[$k] = collect($cards)->filter(fn ($c) => in_array((int) ($get($c, 'project_id') ?? $get($c, 'id')), $partnerProjectIds, true)
+                    && ($get($c, 'project_id') !== null || isset($c['sustentacao_column'])))->values()->all();
+            }
+        }
+        return [$demand, $transition, $request, $project, $sustGroups, $sustAuto, $aporte];
     }
 
     public function kanbanMove(Request $request, Contract $contract): JsonResponse
