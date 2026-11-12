@@ -5349,9 +5349,16 @@ class ProjectController extends Controller
         $allowWeekend = $simulate['allow_weekend_work'] ?? (bool) $project->allow_weekend_work;
         $allowHoliday = $simulate['allow_holiday_work'] ?? (bool) $project->allow_holiday_work;
         $newOpts = ['allow_weekend' => (bool) $allowWeekend, 'allow_holiday' => (bool) $allowHoliday];
+        // O FE salva o calendário ANTES de simular e manda só as flags que MUDARAM → o valor do projeto
+        // já é o novo. Flag simulada igual à do projeto = já gravada → o "antes" é o inverso dela.
+        // (Antes comparava novo×novo: "SIM → SIM" e 0 atividades impactadas.)
+        $prevFlag = fn (string $key, string $col) => array_key_exists($key, $simulate)
+            && (bool) $simulate[$key] === (bool) $project->{$col}
+            ? !(bool) $simulate[$key]
+            : (bool) $project->{$col};
         $oldOpts = [
-            'allow_weekend' => (bool) $project->allow_weekend_work,
-            'allow_holiday' => (bool) $project->allow_holiday_work,
+            'allow_weekend' => $prevFlag('allow_weekend_work', 'allow_weekend_work'),
+            'allow_holiday' => $prevFlag('allow_holiday_work', 'allow_holiday_work'),
         ];
 
         $deliveries = \App\Models\StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
@@ -5381,10 +5388,10 @@ class ProjectController extends Controller
 
         $changes = [];
         if (array_key_exists('allow_weekend_work', $simulate)) {
-            $changes[] = "Sábado/domingo: " . ((bool) $project->allow_weekend_work ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_weekend_work'] ? 'SIM' : 'NÃO');
+            $changes[] = "Sábado/domingo: " . ($oldOpts['allow_weekend'] ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_weekend_work'] ? 'SIM' : 'NÃO');
         }
         if (array_key_exists('allow_holiday_work', $simulate)) {
-            $changes[] = "Feriados: " . ((bool) $project->allow_holiday_work ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_holiday_work'] ? 'SIM' : 'NÃO');
+            $changes[] = "Feriados: " . ($oldOpts['allow_holiday'] ? 'SIM' : 'NÃO') . " → " . ($simulate['allow_holiday_work'] ? 'SIM' : 'NÃO');
         }
 
         return response()->json([
