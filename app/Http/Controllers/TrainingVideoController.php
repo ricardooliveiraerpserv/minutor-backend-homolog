@@ -141,6 +141,16 @@ class TrainingVideoController extends Controller
         $rel = TrainingVideo::DIR . '/' . $video->id . '_v' . $newVersion . '_' . Str::random(6) . '.' . $ext;
         $dest = $disk->path($rel);
         $move ? rename($absSource, $dest) : copy($absSource, $dest);
+        // MP4 com o índice (moov) no fim não começa a tocar no navegador → reorganiza (sem perda).
+        if (in_array($ext, ['mp4', 'm4v', 'mov'], true)) {
+            $tmp = $dest . '.fs';
+            try {
+                if (\App\Support\Mp4FastStart::process($dest, $tmp)) rename($tmp, $dest);
+            } catch (\Throwable $e) {
+                \Log::warning('training-videos: faststart falhou', ['file' => $rel, 'err' => $e->getMessage()]);
+            }
+            if (file_exists($tmp)) @unlink($tmp);
+        }
         @chmod($dest, 0644);
         $old = $video->file_path;
         $video->forceFill([
