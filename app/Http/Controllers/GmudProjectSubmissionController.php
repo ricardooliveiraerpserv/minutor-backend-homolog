@@ -188,8 +188,11 @@ class GmudProjectSubmissionController extends Controller
         // whereHas('project') aplica o CompanyScope do Project → a lista fica escopada à EMPRESA ATIVA
         // (o projeto/cliente resolvem e o "Ver no projeto" funciona; sem isto, GMUD de outra empresa
         // aparecia com projeto "—" e o link dava 404 por escopo). Troque de empresa p/ ver a de cada uma.
-        $packages = GmudPackage::whereHas('project')
-            ->where('classification', 'projeto')
+        $q = GmudPackage::whereHas('project')
+            ->where('classification', 'projeto');
+        // Escopo de CLIENTE da Central de Fontes (coordenador: todos exceto ERPSERV; demais: alocados).
+        app(\App\SourceCode\SourceDocCustomerScope::class)->applyScope($q, $request->user(), 'gmud_packages.customer_id');
+        $packages = $q
             ->where('status', GmudPackage::STATUS_PUBLISHED)
             ->with(['ticket:id,ticket_number', 'project:id,name,code', 'customer:id,name'])
             ->withCount(['files as published_files_count' => fn ($q) => $q->where('is_source', true)->whereNotNull('dest_git_path')->where('action', '!=', 'skip')])

@@ -1710,7 +1710,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
             Route::get('/source-docs/gmud-commits', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudCommits']);
             Route::get('/source-docs/gmud-packages', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudPackages']);
-            Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests']); // leitura escopada por empresa
             Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/repos/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRepoSettings'])->middleware('permission.or.admin:source_docs.inventory');
@@ -1792,7 +1792,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/source-docs/open-tickets', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'openTickets']);
             Route::get('/source-docs/gmud-commits', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudCommits']);
             Route::get('/source-docs/gmud-packages', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'gmudPackages']);
-            Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests'])->middleware('permission.or.admin:source_docs.inventory');
+            Route::get('/source-docs/source-requests', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'listRequests']); // leitura escopada por empresa
             Route::patch('/source-docs/source-requests/{id}', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRequest'])->whereNumber('id')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/customers/{customer}/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateSettings'])->whereNumber('customer')->middleware('permission.or.admin:source_docs.inventory');
             Route::put('/source-docs/repos/settings', [\App\Http\Controllers\SourceDocCustomerAdminController::class, 'updateRepoSettings'])->middleware('permission.or.admin:source_docs.inventory');

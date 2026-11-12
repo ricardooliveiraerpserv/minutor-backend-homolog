@@ -71,6 +71,8 @@ class PermissionService
     private const ALL_AVAILABLE = [
         // Código-fonte (Help Desk)
         'source_code.request',
+        // Central de Fontes (acervo, busca, impacto, publicações, CodeAnalysis, envio GMUD)
+        'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
         // Dashboard
         'dashboard.view', 'dashboard.manager', 'dashboard.consultant',
         // Dashboards (granular por tipo de contrato)
@@ -222,6 +224,9 @@ class PermissionService
             'okr.checkin', 'okr.close', 'okr.reopen',
             // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
             'source_code.request',
+            // Central de Fontes — todos os internos exceto cliente/administrativo; o ESCOPO por empresa
+            // (SourceDocCustomerScope) decide o que cada um enxerga.
+            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
         ];
     }
 
@@ -244,6 +249,9 @@ class PermissionService
             'okr.view', 'okr.checkin',
             // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
             'source_code.request',
+            // Central de Fontes — todos os internos exceto cliente/administrativo; o ESCOPO por empresa
+            // (SourceDocCustomerScope) decide o que cada um enxerga.
+            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
         ];
     }
 
@@ -281,6 +289,9 @@ class PermissionService
             'reports.view',
             // Solicitação de código-fonte (Help Desk) — todos os perfis internos, exceto cliente.
             'source_code.request',
+            // Central de Fontes — todos os internos exceto cliente/administrativo; o ESCOPO por empresa
+            // (SourceDocCustomerScope) decide o que cada um enxerga.
+            'source_docs.view', 'source_docs.quality.view', 'source_docs.view_git', 'source_docs.gmud_publish',
         ];
     }
 }

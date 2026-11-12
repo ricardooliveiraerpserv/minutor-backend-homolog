@@ -29,9 +29,10 @@ use Illuminate\Support\Facades\DB;
  *   1) Cliente externo  → SOMENTE o próprio cliente. NUNCA global, mesmo que
  *                         tenha admin/permissão/config indevida. Regra de maior precedência.
  *   2) Admin            → global por política administrativa.
- *   3) view_all_customers → global por permissão explícita e auditável.
- *   4) Demais internos  → união dos vínculos REAIS (executivo, coordenador, consultor);
+ *   3) view_all_customers / COORDENADOR → todas as empresas, EXCETO a ERPSERV.
+ *   4) Demais internos  → união dos vínculos REAIS (empresas em que está alocado), sem a ERPSERV;
  *                         vazio ⇒ [] (nega).
+ *   A ERPSERV (cliente interno) é exclusiva do admin.
  */
 class SourceDocCustomerScope
 {
@@ -162,13 +163,27 @@ class SourceDocCustomerScope
             return null;
         }
 
-        // (3) view_all_customers — global por permissão explícita e auditável.
-        if ($user->hasAccess('source_docs.view_all_customers')) {
-            return null;
+        // A empresa ERPSERV (cliente interno) é EXCLUSIVA do admin — some para todos os demais.
+        $erpserv = $this->erpservCustomerIds();
+
+        // (3) view_all_customers e COORDENADOR — todas as empresas, exceto a ERPSERV.
+        if ($user->hasAccess('source_docs.view_all_customers') || $user->isCoordenador()) {
+            return Customer::query()->whereNotIn('id', $erpserv)->pluck('id')
+                ->map(fn ($id) => (int) $id)->values()->all();
         }
 
-        // (4) Demais internos — união dos vínculos reais. Deny-by-default se vazio.
-        return $this->unionOfRealLinks($user);
+        // (4) Demais internos — união dos vínculos reais (empresas em que está alocado), sem a ERPSERV.
+        //     Deny-by-default se vazio.
+        return array_values(array_diff($this->unionOfRealLinks($user), $erpserv));
+    }
+
+    /** Cliente(s) ERPSERV — pelo CNPJ (23.870.826/0001-07) ou pelo nome exato. */
+    private function erpservCustomerIds(): array
+    {
+        return Customer::withoutGlobalScopes()
+            ->where(fn ($q) => $q->whereRaw("regexp_replace(coalesce(cgc,''), '[^0-9]', '', 'g') = ?", ['23870826000107'])
+                ->orWhereRaw('upper(trim(name)) = ?', ['ERPSERV']))
+            ->pluck('id')->map(fn ($id) => (int) $id)->all();
     }
 
     /**
