@@ -355,6 +355,8 @@ class CommunicationController extends Controller
     /** Marca como lidos os comunicados do cliente (todos os visíveis, ou um subconjunto por ids). */
     public function markRead(Request $request): JsonResponse
     {
+        // "Ver como" (impersonação): não registra leitura/aceite em nome do cliente.
+        if (($request->user()?->currentAccessToken()?->name ?? null) === 'impersonation') return response()->json(['ok' => true, 'impersonating' => true]);
         $u = $this->client($request);
         $v = $request->validate(['ids' => 'nullable|array', 'ids.*' => 'integer']);
 
@@ -376,6 +378,8 @@ class CommunicationController extends Controller
 
     public function ack(Request $request): JsonResponse
     {
+        // "Ver como" (impersonação): não registra leitura/aceite em nome do cliente.
+        if (($request->user()?->currentAccessToken()?->name ?? null) === 'impersonation') return response()->json(['ok' => true, 'impersonating' => true]);
         $u = $this->client($request);
         $v = $request->validate(['id' => 'required|integer']);
         $exists = Communication::visible()->forClient($u)->whereKey($v['id'])->exists();

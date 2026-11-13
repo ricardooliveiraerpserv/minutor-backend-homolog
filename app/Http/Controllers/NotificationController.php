@@ -341,9 +341,16 @@ class NotificationController extends Controller
             ->max('m.id');
     }
 
+    /** "Ver como" (token de impersonação): só visualiza — NUNCA registra leitura/aceite/resposta em nome do alvo. */
+    private function isImpersonating(Request $request): bool
+    {
+        return ($request->user()?->currentAccessToken()?->name ?? null) === 'impersonation';
+    }
+
     /** Registra visualização (não-bloqueante). */
     public function view(Request $request, AppNotification $notification): JsonResponse
     {
+        if ($this->isImpersonating($request)) return response()->json(['data' => ['viewed' => false, 'impersonating' => true]]);
         $u = $this->readerOrAbort($request);
         // Cliente só marca o que de fato lhe é visível.
         abort_if($u->type === 'cliente' && !$this->clientVisibleQuery($u)->whereKey($notification->id)->exists(), 404);
@@ -355,6 +362,7 @@ class NotificationController extends Controller
     /** Registra ACEITE com auditoria (ip, user-agent, versão). */
     public function ack(Request $request, AppNotification $notification): JsonResponse
     {
+        if ($this->isImpersonating($request)) return response()->json(['message' => 'Em "Ver como" a confirmação não é registrada.'], 403);
         $u = $this->readerOrAbort($request);
         abort_if($u->type === 'cliente' && !$this->clientVisibleQuery($u)->whereKey($notification->id)->exists(), 404);
         $r = NotificationRead::firstOrNew(['notification_id' => $notification->id, 'user_id' => $u->id]);
@@ -370,6 +378,7 @@ class NotificationController extends Controller
     /** Registra a RESPOSTA do usuário a um botão de decisão (e marca como respondido → sai de pendente). */
     public function respond(Request $request, AppNotification $notification): JsonResponse
     {
+        if ($this->isImpersonating($request)) return response()->json(['message' => 'Em "Ver como" a resposta não é registrada.'], 403);
         $u = $this->internalOrAbort($request);
         $action  = (string) $request->input('action');
         $actions = (array) ($notification->actions ?? []);
