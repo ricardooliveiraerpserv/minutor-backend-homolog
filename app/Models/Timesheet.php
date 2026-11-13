@@ -825,8 +825,16 @@ class Timesheet extends Model
         return 'Fale com o seu coordenador para liberar as horas' . $sufixo . '.';
     }
 
+    /** Rotina de Atrasos (lembretes/avisos/contador) — desligada desde 13/11/2026 (fim da integração). */
+    public static function atrasosRoutineEnabled(): bool
+    {
+        try { return \App\Models\SystemSetting::get('timesheet_atrasos_routine_enabled', '0') === '1'; }
+        catch (\Throwable $e) { return false; }
+    }
+
     public function notifyConsultorAtrasoPendente(): void
     {
+        if (!static::atrasosRoutineEnabled()) return;
         $owner = $this->user;
         if (!$owner) return;
 

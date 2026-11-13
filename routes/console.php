@@ -45,11 +45,17 @@ Schedule::command('projects:ensure-monthly-update')
 
 // Atrasos — lembrete no fechamento: apontamentos de atraso ainda não liberados p/ o
 // consultor (não entram no pagamento/banco). O comando só age na janela de fechamento.
+// DESATIVADO 13/11/2026 (fim da integração de apontamentos do Movidesk): rotina de Atrasos
+// desligada por padrão. Religar: system_settings.timesheet_atrasos_routine_enabled = '1'.
+try { $atrasosRoutineOn = \App\Models\SystemSetting::get('timesheet_atrasos_routine_enabled', '0') === '1'; }
+catch (\Throwable $e) { $atrasosRoutineOn = false; }
+if ($atrasosRoutineOn) {
 Schedule::command('timesheets:remind-consultant-release')
   ->dailyAt('08:15')
   ->timezone('America/Sao_Paulo')
   ->name('timesheets-remind-consultant-release')
   ->withoutOverlapping();
+}
 
 // Encerra os MESES ABERTOS (ProjectOpenPeriod) de competências anteriores à vigente, às 06h.
 // Mês imediatamente anterior só fecha APÓS o 2º dia útil (carência); meses mais antigos sempre.
@@ -86,6 +92,11 @@ Schedule::command('timesheets:resolve-stale-conflicts')
   ->runInBackground();
 
 // Sync de apontamentos Movidesk (fallback do webhook — garante que nenhum apontamento seja perdido)
+// Fim da integração de APONTAMENTOS (go-live 13/11/2026: apontamento direto no Minutor) — desligar com
+// system_settings.movidesk_timesheet_sync_enabled = '0' (vale p/ este sync e o reresolve-defaults).
+try { $mdTimesheetSyncOn = \App\Models\SystemSetting::get('movidesk_timesheet_sync_enabled', '1') !== '0'; }
+catch (\Throwable $e) { $mdTimesheetSyncOn = true; }
+if ($mdTimesheetSyncOn) {
 Schedule::command('movidesk:sync')
   ->cron('*/5 * * * *')
   ->name('movidesk-sync')
@@ -96,6 +107,7 @@ Schedule::command('movidesk:sync')
   // → varreduras ainda mais longas. 30min evita o pile-up sem travar em caso de sweep lento.
   ->withoutOverlapping(30)
   ->runInBackground();
+}
 
 // Espelho ERPSERV→Conecta: chamados/interações novos de clientes migrados. O comando se
 // auto-trava pelo flag conecta_sync_enabled (default OFF) → agendar é inócuo até habilitar.
@@ -326,12 +338,14 @@ Schedule::command('closing:log')
 // relê tickets recentes (~6h); chamado cujo solicitante foi trocado DEPOIS de sair da janela
 // fica preso no padrão. Este passe re-lê esses tickets e corrige cliente+projeto (upgrade
 // padrão→real). Limite baixo + throttle de cache pra não sobrecarregar a API do Movidesk.
+if ($mdTimesheetSyncOn) {
 Schedule::command('movidesk:reresolve-defaults --execute --limit=40')
   ->hourly()
   ->name('movidesk-reresolve-defaults')
   ->description('Re-resolve apontamentos parados no cliente padrão do Movidesk (corrige cliente+projeto)')
   ->withoutOverlapping(120)
   ->runInBackground();
+}
 
 // ============= HELP DESK + integração Movidesk (inerte: gated por flags) =============
 // Import de tickets do HD — também sob a flag movidesk_ticket_syncs_enabled (OFF em prod até o upgrade).

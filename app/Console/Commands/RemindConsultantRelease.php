@@ -20,6 +20,7 @@ class RemindConsultantRelease extends Command
 
     public function handle(): int
     {
+        if (!Timesheet::atrasosRoutineEnabled()) { $this->info('Rotina de Atrasos desativada (timesheet_atrasos_routine_enabled).'); return self::SUCCESS; }
         $now = Carbon::now('America/Sao_Paulo');
         $inWindow = $now->day <= 2 || $now->day >= 26; // janela de fechamento
         if (!$inWindow && !$this->option('force')) {

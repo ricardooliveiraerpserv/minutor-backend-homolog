@@ -21,7 +21,7 @@ class NavResetTree extends Command
             'servicos' => [
                 ['group' => 'Projetos', 'icon' => 'Layers', 'children' => ['/contratos/pipeline', '/investimento-comercial']],
                 ['group' => 'Sustentação', 'icon' => 'Headphones', 'children' => ['/sustentacao']],
-                ['group' => 'Operação', 'icon' => 'Clock', 'children' => ['/timesheets', '/expenses', '/relatorios/apontamentos', '/approvals', '/timesheets/atrasos', '/auditoria/apontamentos']],
+                ['group' => 'Operação', 'icon' => 'Clock', 'children' => ['/timesheets', '/expenses', '/relatorios/apontamentos', '/approvals', '/auditoria/apontamentos']],
             ],
             'administrativo' => [
                 ['group' => 'Gestão Contratual', 'icon' => 'Layers', 'children' => ['/gestao-projetos', '/contratos/kanban']],

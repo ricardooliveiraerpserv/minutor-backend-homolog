@@ -154,7 +154,7 @@ class NotificationController extends Controller
         // já fechada) — sinaliza no menu "Atrasos (integração)". Mesmo conjunto da tela.
         // CLIENTE: atrasos de integração são dado interno (contagem global) → sempre 0.
         $isCliente = $u->type === 'cliente';
-        $atrasos = $isCliente ? 0 : \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
+        $atrasos = ($isCliente || !\App\Models\Timesheet::atrasosRoutineEnabled()) ? 0 : \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
             ->whereNull('deleted_at')->count();
 
         // Comunicados não lidos (menu "Comunicados" do cliente) — mesmo conjunto de /communications/unread.
