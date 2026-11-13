@@ -202,12 +202,12 @@ class MicrosoftCalendarService
     // =====================================================================================
 
     /** Cria um EVENTO (com reunião online do Teams, se isOnlineMeeting no payload). Retorna o evento ou null. */
-    public static function createEvent(string $accessToken, array $payload): ?array
+    public static function createEvent(string $accessToken, array $payload, int $timeout = 25): ?array
     {
         try {
             // Reunião do Teams com muitos convidados pode levar > 15s no Graph (cria o onlineMeeting
             // + dispara os convites). 60s.
-            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout(60)
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(8)->timeout($timeout)
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->post(self::GRAPH_BASE . '/me/events', $payload);
             if ($r->successful()) { self::$lastError = null; return $r->json(); }
@@ -229,7 +229,7 @@ class MicrosoftCalendarService
     public static function calendarTeamsInfo(string $accessToken): ?array
     {
         try {
-            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout(15)
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(5)->timeout(6)
                 ->get(self::GRAPH_BASE . '/me/calendar', ['$select' => 'allowedOnlineMeetingProviders,defaultOnlineMeetingProvider,owner']);
             if (!$r->successful()) return ['status' => $r->status(), 'code' => data_get($r->json(), 'error.code')];
             return [
@@ -262,10 +262,10 @@ class MicrosoftCalendarService
     }
 
     /** Remove (cancela) um evento — o Graph avisa os convidados. Retorna true se ok. */
-    public static function deleteEvent(string $accessToken, string $eventId): bool
+    public static function deleteEvent(string $accessToken, string $eventId, int $timeout = 15): bool
     {
         try {
-            $r = Http::withToken($accessToken)->timeout(15)
+            $r = Http::withToken($accessToken)->connectTimeout(5)->timeout($timeout)
                 ->delete(self::GRAPH_BASE . '/me/events/' . rawurlencode($eventId));
             return $r->successful();
         } catch (\Throwable) {

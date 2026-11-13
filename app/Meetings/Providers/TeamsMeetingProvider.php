@@ -39,60 +39,47 @@ class TeamsMeetingProvider implements MeetingProvider
         }
 
         $payload = $this->payload($meeting);
-        $ev = MicrosoftCalendarService::createEvent($token, $payload);
-        $extra = [];
+        // Orçamento de tempo: o proxy corta a requisição em ~60s (504). 1ª tentativa até 25s.
+        $ev = MicrosoftCalendarService::createEvent($token, $payload, 25);
         if (!$ev) {
-            $firstError = MicrosoftCalendarService::$lastError;
-            // 5xx/timeout do Graph com o payload completo (muitos convidados / corpo HTML grande):
-            // tenta em 2 etapas — cria a reunião enxuta (só assunto/horário/Teams) e depois
-            // adiciona convidados + texto via PATCH (é o PATCH que dispara os convites).
-            $retryable = ($firstError['status'] ?? 0) === 0 || ($firstError['status'] ?? 0) >= 500;
-            if ($retryable) {
-                [$ev, $extra] = $this->createInTwoSteps($token, $payload);
-            }
-            if (!$ev) {
-                return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => [
-                    'reason' => 'graph_error',
-                    'graph'  => MicrosoftCalendarService::$lastError ?? $firstError, // motivo devolvido pela Microsoft
-                    'first_graph' => $firstError,
-                    'attendees' => count($payload['attendees']),
-                    'body_kb'   => (int) ceil(strlen($payload['body']['content'] ?? '') / 1024),
-                    'scopes' => MicrosoftCalendarService::tokenScopes($token), // permissões da conexão do organizador
-                    'calendar' => MicrosoftCalendarService::calendarTeamsInfo($token), // provedores de reunião online da caixa
-                ]];
-            }
-            $extra['first_graph'] = $firstError;
+            $err = MicrosoftCalendarService::$lastError;
+            return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => [
+                'reason' => 'graph_error',
+                'graph'  => $err,                                          // motivo devolvido pela Microsoft
+                'attendees' => count($payload['attendees']),
+                'scopes' => MicrosoftCalendarService::tokenScopes($token), // permissões da conexão do organizador
+                // Diagnóstico: a agenda em si funciona? (evento simples, sem Teams, apagado em seguida)
+                'probe'  => $this->probePlainEvent($token, $payload),
+            ]];
         }
 
         return [
             'external_meeting_id' => $ev['id'] ?? null,
             'join_url'            => data_get($ev, 'onlineMeeting.joinUrl'),
-            'provider_data'       => ['event_id' => $ev['id'] ?? null, 'web_link' => $ev['webLink'] ?? null, 'organizer' => $this->organizerEmail($meeting)] + $extra,
+            'provider_data'       => ['event_id' => $ev['id'] ?? null, 'web_link' => $ev['webLink'] ?? null, 'organizer' => $this->organizerEmail($meeting)],
         ];
     }
 
-    /** @return array{0: ?array, 1: array} [evento, info extra p/ provider_data] */
-    private function createInTwoSteps(string $token, array $payload): array
+    /**
+     * Cria um evento SEM reunião online e SEM convidados (ninguém é avisado) e o apaga logo depois.
+     * Separa "a agenda da conta está fora" de "só a geração do link do Teams falha".
+     * @return array{calendar_ok: bool, error?: ?array, teams?: ?array}
+     */
+    private function probePlainEvent(string $token, array $payload): array
     {
-        $min = [
-            'subject' => $payload['subject'],
+        $ev = MicrosoftCalendarService::createEvent($token, [
+            'subject' => '[Minutor] teste de agenda — pode ignorar',
             'start'   => $payload['start'],
             'end'     => $payload['end'],
-            'isOnlineMeeting' => true,
-            'onlineMeetingProvider' => 'teamsForBusiness',
-            'allowNewTimeProposals' => false,
-        ];
-        $ev = MicrosoftCalendarService::createEvent($token, $min);
-        if (!$ev || empty($ev['id'])) return [null, []];
-
-        $patch = ['attendees' => $payload['attendees'], 'body' => $payload['body']];
-        $ok = MicrosoftCalendarService::updateEvent($token, $ev['id'], $patch, 60);
-        if (!$ok) {
-            // Corpo pode ser o problema: tenta só os convidados (o essencial — o convite).
-            $ok = MicrosoftCalendarService::updateEvent($token, $ev['id'], ['attendees' => $payload['attendees']], 60);
+            'showAs'  => 'free',
+            'isReminderOn' => false,
+        ], 12);
+        if (!$ev || empty($ev['id'])) {
+            return ['calendar_ok' => false, 'error' => MicrosoftCalendarService::$lastError];
         }
-        Log::info('📅 [MEETINGS] Teams criado em 2 etapas', ['event' => $ev['id'], 'invites_ok' => (bool) $ok, 'attendees' => count($payload['attendees'])]);
-        return [$ok ?: $ev, ['two_step' => true, 'invites_failed' => !$ok]];
+        MicrosoftCalendarService::deleteEvent($token, $ev['id'], 8);
+        Log::warning('📅 [MEETINGS] agenda OK mas Teams falhou', ['event' => $ev['id']]);
+        return ['calendar_ok' => true, 'teams' => MicrosoftCalendarService::calendarTeamsInfo($token)];
     }
 
     public function update(Meeting $meeting): array
