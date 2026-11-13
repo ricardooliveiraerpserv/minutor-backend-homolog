@@ -42,7 +42,7 @@ class TrainingVideo extends Model
     /** O vídeo é do público de um perfil do Configurador? (vazio = todos). */
     public function visibleToProfile(string $profile): bool
     {
-        $aud = array_values(array_filter((array) ($this->audiences ?? [])));
+        [$aud] = self::splitAudiences((array) ($this->audiences ?? []));
         return !$aud || in_array($profile, $aud, true);
     }
 
@@ -51,8 +51,31 @@ class TrainingVideo extends Model
     {
         if ($user->isAdmin()) return true;
         if (!$this->active) return false;
-        $aud = array_values(array_filter((array) ($this->audiences ?? [])));
-        if (!$aud) return true;
-        return (bool) array_intersect($aud, $user->configuradorProfileKeys());
+        [$profiles, $customers, $managerOnly] = self::splitAudiences((array) ($this->audiences ?? []));
+        if ($profiles && !array_intersect($profiles, $user->configuradorProfileKeys())) return false;
+        // Restrições extras (vídeo exclusivo de um cliente, ex.: Indicadores da AUSTER):
+        // 'customer:ID' → só usuários desse cliente; 'cliente_gestor' → só o Gestor do cliente.
+        if ($customers && !in_array((int) $user->customer_id, $customers, true)) return false;
+        if ($managerOnly && $user->type === 'cliente' && !$user->is_customer_manager) return false;
+        return true;
+    }
+
+    /** Token de restrição válido em audiences (além das chaves de perfil). */
+    public static function isRestrictionToken(string $t): bool
+    {
+        return $t === 'cliente_gestor' || (bool) preg_match('/^customer:\d+$/', $t);
+    }
+
+    /** @return array{0: string[], 1: int[], 2: bool} perfis, clientes, só gestor */
+    public static function splitAudiences(array $aud): array
+    {
+        $aud = array_values(array_filter($aud));
+        $customers = []; $profiles = []; $manager = false;
+        foreach ($aud as $t) {
+            if ($t === 'cliente_gestor') { $manager = true; continue; }
+            if (preg_match('/^customer:(\d+)$/', $t, $m)) { $customers[] = (int) $m[1]; continue; }
+            $profiles[] = $t;
+        }
+        return [$profiles, $customers, $manager];
     }
 }

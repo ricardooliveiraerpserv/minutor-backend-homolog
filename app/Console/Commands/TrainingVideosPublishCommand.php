@@ -32,7 +32,7 @@ class TrainingVideosPublishCommand extends Command
         $aud = null;
         if ($this->option('audiences') !== null) {
             $aud = array_values(array_filter(array_map('trim', explode(',', (string) $this->option('audiences')))));
-            $bad = array_diff($aud, array_keys(TrainingVideo::AUDIENCES));
+            $bad = array_filter(array_diff($aud, array_keys(TrainingVideo::AUDIENCES)), fn ($t) => !TrainingVideo::isRestrictionToken($t));
             if ($bad) { $this->error('Perfis inválidos: ' . implode(', ', $bad)); return 1; }
         }
 

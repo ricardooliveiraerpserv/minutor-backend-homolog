@@ -157,7 +157,7 @@ class TrainingVideoController extends Controller
             'description'      => 'nullable|string|max:4000',
             'category'         => 'nullable|string|max:80',
             'audiences'        => 'nullable|array',
-            'audiences.*'      => 'string|in:' . implode(',', array_keys(TrainingVideo::AUDIENCES)),
+            'audiences.*'      => ['string', function ($attr, $val, $fail) { if (!array_key_exists($val, TrainingVideo::AUDIENCES) && !TrainingVideo::isRestrictionToken((string) $val)) $fail('Público inválido.'); }],
             'sort_order'       => 'nullable|integer',
             'active'           => 'sometimes|boolean',
             'duration_seconds' => 'nullable|integer|min:0',
