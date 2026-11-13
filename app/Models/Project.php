@@ -262,6 +262,13 @@ class Project extends Model
                     ->withTimestamps();
     }
 
+    /** O usuário é COORDENADOR deste projeto? (aponta em qualquer atividade, sem precisar de alocação) */
+    public function isCoordinatedBy(?int $userId): bool
+    {
+        if (!$userId) return false;
+        return $this->coordinators()->where('users.id', $userId)->exists();
+    }
+
     /**
      * Relacionamento com coordenadores (many-to-many)
      */

@@ -3664,7 +3664,9 @@ class TimesheetController extends Controller
             ->where('user_id', $timesheetUserId)
             ->first();
         $isResponsible = $delivery && (int) $delivery->responsible_user_id === (int) $timesheetUserId;
-        if (! $alloc && ! $isResponsible) {
+        // Coordenador do projeto aponta em qualquer atividade dele, sem precisar estar alocado.
+        $isProjectCoordinator = $project->isCoordinatedBy($timesheetUserId);
+        if (! $alloc && ! $isResponsible && ! $isProjectCoordinator) {
             abort(response()->json([
                 'code'          => 'CRONOGRAMA_NOT_ALLOCATED',
                 'type'          => 'error',

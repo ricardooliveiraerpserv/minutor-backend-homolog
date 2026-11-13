@@ -144,12 +144,15 @@ class ProjectStageController extends Controller
         $filterUserId = $isConsultor
             ? (int) $user->id
             : ($request->filled('user_id') ? (int) $request->input('user_id') : null);
+        // Coordenador do projeto aponta em QUALQUER atividade (não precisa estar alocado):
+        // lista todas, mas o saldo continua calculado para ele (filterUserId).
+        $listAll = $filterUserId && $project->isCoordinatedBy($filterUserId);
 
         $stages = $project->stages()
-            ->with(['deliveries' => function ($q) use ($filterUserId) {
+            ->with(['deliveries' => function ($q) use ($filterUserId, $listAll) {
                 $q->select('id', 'stage_id', 'title', 'status', 'order_index', 'hours_planned', 'allow_negative_hours')
                   ->orderBy('order_index');
-                if ($filterUserId) {
+                if ($filterUserId && ! $listAll) {
                     $q->where(function ($w) use ($filterUserId) {
                         $w->where('responsible_user_id', $filterUserId)
                           ->orWhereHas('allocations', fn ($a) => $a->where('user_id', $filterUserId));
