@@ -81,14 +81,15 @@ class CronogramaTemplateService
      * Cria a árvore do payload no projeto de destino, ancorando em $startDate.
      * Preserva hierarquia, horas, cliente e dependências (remapeadas).
      */
-    public function materialize(Project $target, array $payload, string $startDate): void
+    /** @return array{stages: array<string, ProjectStage>, deliveries: array<string, StageDelivery>} criados, por ref */
+    public function materialize(Project $target, array $payload, string $startDate): array
     {
         $anchor = Carbon::parse($startDate)->startOfDay();
         $date = fn ($offset) => $offset === null ? null : $anchor->copy()->addDays((int) $offset)->toDateString();
 
         $stages = $payload['stages'] ?? [];
 
-        DB::transaction(function () use ($target, $stages, $date) {
+        $result = DB::transaction(function () use ($target, $stages, $date) {
             $stageMap = [];     // ref → ProjectStage
             $deliveryMap = [];  // ref → StageDelivery
             $depsToWire = [];   // [newDeliveryId => depends_on_ref]
@@ -114,6 +115,8 @@ class CronogramaTemplateService
                     'order_index'       => $order,
                     'stage_start_at'    => $date($s['start_offset'] ?? null),
                     'expected_end_date' => $date($s['end_offset'] ?? null),
+                    // Opcional (import do layout Excel): responsável da etapa, pelo e-mail → id.
+                    'responsible_user_id' => $s['responsible_user_id'] ?? null,
                 ]);
                 $stageMap[$s['ref']] = $stage;
 
@@ -131,6 +134,9 @@ class CronogramaTemplateService
                         'client_involved'  => $d['client_involved'] ?? false,
                         'client_email'     => $d['client_email'] ?? null,
                         'extra_clients'    => $d['extra_clients'] ?? null,
+                        // Opcionais (import do layout Excel).
+                        'responsible_user_id' => $d['responsible_user_id'] ?? null,
+                        'description'      => $d['description'] ?? null,
                     ]);
                     $deliveryMap[$d['ref']] = $delivery;
                     if (!empty($d['depends_on_ref'])) {
@@ -149,8 +155,11 @@ class CronogramaTemplateService
                     ]);
                 }
             }
+
+            return ['stages' => $stageMap, 'deliveries' => $deliveryMap];
         });
 
         $target->recalcExpectedEndFromSchedule();
+        return $result;
     }
 }

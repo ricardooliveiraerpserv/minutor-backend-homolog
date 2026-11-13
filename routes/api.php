@@ -1225,6 +1225,9 @@ Route::prefix('v1')->group(function () {
             Route::delete('/cronograma-templates/{template}', [CronogramaTemplateController::class, 'destroy'])->name('cronograma-templates.destroy');
             Route::post('/projects/{project}/cronograma/apply-template', [CronogramaTemplateController::class, 'apply'])->name('projects.cronograma.apply-template');
             Route::post('/projects/{project}/cronograma/copy-from', [CronogramaTemplateController::class, 'copyFromProject'])->name('projects.cronograma.copy-from');
+            // Layout Excel do cronograma: exportar (modelo/backup) e importar (cria etapas/atividades; usuários pelo e-mail).
+            Route::get('/projects/{project}/cronograma/layout', [\App\Http\Controllers\CronogramaLayoutController::class, 'export'])->name('projects.cronograma.layout.export');
+            Route::post('/projects/{project}/cronograma/layout/import', [\App\Http\Controllers\CronogramaLayoutController::class, 'import'])->name('projects.cronograma.layout.import');
 
             Route::get('/stages/{stage}', [ProjectStageController::class, 'show'])->name('stages.show');
             Route::get('/stages/{stage}/activity', [ProjectStageController::class, 'activity'])->name('stages.activity');
