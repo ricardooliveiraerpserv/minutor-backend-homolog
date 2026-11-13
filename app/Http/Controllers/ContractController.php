@@ -3331,8 +3331,21 @@ class ContractController extends Controller
      * contrato e sugere o novo valor. NÃO aplica nada (regra: sempre mostrar antes).
      * GET /contracts/{id}/adjustment-preview?index_type=IPCA[&start_date&end_date]
      */
+    /**
+     * Reajuste de contrato (aplicar, estornar, avisar, inclusão manual, listas): só admin ou administrativo.
+     * Antes só exigia login — a restrição era apenas o menu da tela /fechamento/reajustes.
+     */
+    private function ensureReajusteAccess(): void
+    {
+        $u = auth()->user();
+        if (!$u || !($u->isAdmin() || $u->isAdministrativo())) {
+            abort(403, 'Reajuste de contrato é restrito ao administrador e ao administrativo.');
+        }
+    }
+
     public function adjustmentPreview(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate([
             'index_type' => 'required|string',
             'start_date' => 'nullable|date',
@@ -3387,6 +3400,7 @@ class ContractController extends Controller
      */
     public function applyAdjustment(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate([
             'indice'         => 'required|string',
             'percentual'     => 'required|numeric',
@@ -3504,6 +3518,7 @@ class ContractController extends Controller
      */
     public function renewWithoutAdjustment(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         if (!$contract->data_vencimento) {
             return response()->json(['message' => 'Contrato sem data de vencimento para renovar.'], 422);
         }
@@ -3545,6 +3560,7 @@ class ContractController extends Controller
      */
     public function notifyClientAdjustment(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate([
             'emails'   => 'nullable|array',
             'emails.*' => 'email',
@@ -3683,6 +3699,7 @@ class ContractController extends Controller
     /** GET /contracts/reajustes/summary — KPIs do dashboard de reajustes. */
     public function reajustesSummary(Request $request): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $rows = $this->reajustesData();
 
         $venc  = $rows->where('status_reajuste', 'vencido');
@@ -3706,6 +3723,7 @@ class ContractController extends Controller
     /** GET /contracts/reajustes — lista priorizada (vencidos → próximos → maior impacto). */
     public function reajustesList(Request $request): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate([
             'status'     => 'nullable|in:em_dia,proximo,vencido,recente',
             'index_type' => 'nullable|string',
@@ -3854,6 +3872,7 @@ class ContractController extends Controller
     /** POST /contracts/reajustes/manual */
     public function manualReajusteStore(Request $request): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $m = \App\Models\ManualReajuste::create($this->validateManual($request));
         return response()->json($this->manualRow($m), 201);
     }
@@ -3861,6 +3880,7 @@ class ContractController extends Controller
     /** PATCH /contracts/reajustes/manual/{manual} */
     public function manualReajusteUpdate(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $manual->update($this->validateManual($request));
         return response()->json($this->manualRow($manual->fresh()));
     }
@@ -3868,6 +3888,7 @@ class ContractController extends Controller
     /** DELETE /contracts/reajustes/manual/{manual} */
     public function manualReajusteDestroy(\App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $manual->delete();
         return response()->json(['ok' => true]);
     }
@@ -3901,6 +3922,7 @@ class ContractController extends Controller
     /** GET /contracts/reajustes/manual/{manual}/adjustment-preview */
     public function manualAdjustmentPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate(['index_type' => 'required|string']);
         if (!EconomicIndexService::supports($validated['index_type'])) {
             return response()->json(['message' => 'Índice não suportado. Use IPCA ou IGP-M.'], 422);
@@ -3937,6 +3959,7 @@ class ContractController extends Controller
     /** POST /contracts/reajustes/manual/{manual}/apply-adjustment */
     public function manualApplyAdjustment(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate([
             'indice'         => 'required|string',
             'percentual'     => 'required|numeric',
@@ -3996,6 +4019,7 @@ class ContractController extends Controller
     /** POST /contracts/{contract}/reverse-adjustment — estorna o último reajuste. */
     public function reverseAdjustment(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $change = $contract->valueChanges()->whereNull('reversed_at')->latest('id')->first();
         if (!$change) return response()->json(['message' => 'Nenhum reajuste para estornar.'], 422);
         if ($change->created_at && $change->created_at->lt(now()->subDays(30))) {
@@ -4060,6 +4084,7 @@ class ContractController extends Controller
     /** POST /contracts/reajustes/manual/{manual}/reverse-adjustment — estorna o último reajuste. */
     public function manualReverseAdjustment(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $change = $manual->valueChanges()->whereNull('reversed_at')->latest('id')->first();
         if (!$change) return response()->json(['message' => 'Nenhum reajuste para estornar.'], 422);
         if ($change->created_at && $change->created_at->lt(now()->subDays(30))) {
@@ -4108,6 +4133,7 @@ class ContractController extends Controller
     /** GET /contracts/reajustes/manual/{manual}/value-changes */
     public function manualValueChanges(\App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $rows = $manual->valueChanges()->whereNull('reversed_at')->with('user:id,name')->latest('created_at')->get()
             ->map(fn ($h) => [
                 'id'                => $h->id,
@@ -4125,6 +4151,7 @@ class ContractController extends Controller
     /** POST /contracts/reajustes/manual/{manual}/notify-client-adjustment */
     public function manualNotify(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $validated = $request->validate([
             'emails'   => 'nullable|array',
             'emails.*' => 'email',
@@ -4184,6 +4211,7 @@ class ContractController extends Controller
     /** GET /contracts/{contract}/adjustment-email-preview — HTML do e-mail (prévia + corpo editável). */
     public function contractAdjustmentEmailPreview(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $tipo = (string) $request->input('tipo', $request->boolean('estorno') ? 'estorno' : 'reajuste');
         $change = $tipo === 'estorno_resend'
             ? $contract->valueChanges()->whereNotNull('reversed_at')->latest('id')->first()
@@ -4204,6 +4232,7 @@ class ContractController extends Controller
     /** GET /contracts/reajustes/manual/{manual}/adjustment-email-preview — HTML do e-mail (prévia + corpo editável). */
     public function manualAdjustmentEmailPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $tipo = (string) $request->input('tipo', $request->boolean('estorno') ? 'estorno' : 'reajuste');
         $change = $tipo === 'estorno_resend'
             ? $manual->valueChanges()->whereNotNull('reversed_at')->latest('id')->first()
@@ -4223,12 +4252,14 @@ class ContractController extends Controller
     /** POST /contracts/{contract}/resend-adjustment — reenvia comunicado (reajuste|estorno). */
     public function resendAdjustment(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         return $this->resendReajusteEmail($request, $contract, 'contract');
     }
 
     /** POST /contracts/reajustes/manual/{manual}/resend-adjustment */
     public function manualResendAdjustment(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         return $this->resendReajusteEmail($request, $manual, 'manual');
     }
 
@@ -4309,6 +4340,7 @@ class ContractController extends Controller
     /** GET /contracts/{contract}/aviso-preview?index_type=IPCA|IGPM[&mensagem=] */
     public function contractAvisoPreview(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $v = $request->validate(['index_type' => 'required|string']);
         if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
         $base = $this->valorBaseReajuste($contract);
@@ -4332,6 +4364,7 @@ class ContractController extends Controller
     /** POST /contracts/{contract}/aviso-send */
     public function contractAvisoSend(Request $request, Contract $contract): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $v = $request->validate(['index_type' => 'required|string', 'emails' => 'nullable|array', 'emails.*' => 'email', 'mensagem' => 'nullable|string', 'salvar' => 'nullable|boolean']);
         if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
         $base = $this->valorBaseReajuste($contract);
@@ -4359,6 +4392,7 @@ class ContractController extends Controller
     /** GET /contracts/reajustes/manual/{manual}/aviso-preview */
     public function manualAvisoPreview(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $v = $request->validate(['index_type' => 'required|string']);
         if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
         $base = (float) ($manual->valor_inicial ?? 0);
@@ -4381,6 +4415,7 @@ class ContractController extends Controller
     /** POST /contracts/reajustes/manual/{manual}/aviso-send */
     public function manualAvisoSend(Request $request, \App\Models\ManualReajuste $manual): JsonResponse
     {
+        $this->ensureReajusteAccess();
         $v = $request->validate(['index_type' => 'required|string', 'emails' => 'nullable|array', 'emails.*' => 'email', 'mensagem' => 'nullable|string', 'salvar' => 'nullable|boolean']);
         if (!EconomicIndexService::supports($v['index_type'])) return response()->json(['message' => 'Índice não suportado.'], 422);
         $base = (float) ($manual->valor_inicial ?? 0);
