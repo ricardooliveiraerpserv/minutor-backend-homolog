@@ -38,16 +38,61 @@ class TeamsMeetingProvider implements MeetingProvider
             return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => ['reason' => 'not_connected']];
         }
 
-        $ev = MicrosoftCalendarService::createEvent($token, $this->payload($meeting));
+        $payload = $this->payload($meeting);
+        $ev = MicrosoftCalendarService::createEvent($token, $payload);
+        $extra = [];
         if (!$ev) {
-            return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => ['reason' => 'graph_error']];
+            $firstError = MicrosoftCalendarService::$lastError;
+            // 5xx/timeout do Graph com o payload completo (muitos convidados / corpo HTML grande):
+            // tenta em 2 etapas — cria a reunião enxuta (só assunto/horário/Teams) e depois
+            // adiciona convidados + texto via PATCH (é o PATCH que dispara os convites).
+            $retryable = ($firstError['status'] ?? 0) === 0 || ($firstError['status'] ?? 0) >= 500;
+            if ($retryable) {
+                [$ev, $extra] = $this->createInTwoSteps($token, $payload);
+            }
+            if (!$ev) {
+                return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => [
+                    'reason' => 'graph_error',
+                    'graph'  => MicrosoftCalendarService::$lastError ?? $firstError, // motivo devolvido pela Microsoft
+                    'first_graph' => $firstError,
+                    'attendees' => count($payload['attendees']),
+                    'body_kb'   => (int) ceil(strlen($payload['body']['content'] ?? '') / 1024),
+                    'scopes' => MicrosoftCalendarService::tokenScopes($token), // permissões da conexão do organizador
+                ]];
+            }
+            $extra['first_graph'] = $firstError;
         }
 
         return [
             'external_meeting_id' => $ev['id'] ?? null,
             'join_url'            => data_get($ev, 'onlineMeeting.joinUrl'),
-            'provider_data'       => ['event_id' => $ev['id'] ?? null, 'web_link' => $ev['webLink'] ?? null, 'organizer' => $this->organizerEmail($meeting)],
+            'provider_data'       => ['event_id' => $ev['id'] ?? null, 'web_link' => $ev['webLink'] ?? null, 'organizer' => $this->organizerEmail($meeting)] + $extra,
         ];
+    }
+
+    /** @return array{0: ?array, 1: array} [evento, info extra p/ provider_data] */
+    private function createInTwoSteps(string $token, array $payload): array
+    {
+        $min = [
+            'subject' => $payload['subject'],
+            'start'   => $payload['start'],
+            'end'     => $payload['end'],
+            'isOnlineMeeting' => true,
+            'onlineMeetingProvider' => 'teamsForBusiness',
+            'allowNewTimeProposals' => false,
+            'transactionId' => substr(($payload['transactionId'] ?? 'minutor-') . '-2s', 0, 40),
+        ];
+        $ev = MicrosoftCalendarService::createEvent($token, $min);
+        if (!$ev || empty($ev['id'])) return [null, []];
+
+        $patch = ['attendees' => $payload['attendees'], 'body' => $payload['body']];
+        $ok = MicrosoftCalendarService::updateEvent($token, $ev['id'], $patch, 60);
+        if (!$ok) {
+            // Corpo pode ser o problema: tenta só os convidados (o essencial — o convite).
+            $ok = MicrosoftCalendarService::updateEvent($token, $ev['id'], ['attendees' => $payload['attendees']], 60);
+        }
+        Log::info('📅 [MEETINGS] Teams criado em 2 etapas', ['event' => $ev['id'], 'invites_ok' => (bool) $ok, 'attendees' => count($payload['attendees'])]);
+        return [$ok ?: $ev, ['two_step' => true, 'invites_failed' => !$ok]];
     }
 
     public function update(Meeting $meeting): array
@@ -116,6 +161,9 @@ class TeamsMeetingProvider implements MeetingProvider
             'isOnlineMeeting' => true,
             'onlineMeetingProvider' => 'teamsForBusiness',
             'allowNewTimeProposals' => false,
+            // Idempotência: mesma reunião (organizador+assunto+início) não vira 2 eventos se a 1ª
+            // chamada estourar o tempo e o usuário tentar de novo.
+            'transactionId' => 'minutor-' . substr(sha1(($this->actingUserId($meeting) ?? 0) . '|' . $meeting->title . '|' . Carbon::parse($meeting->starts_at)->toIso8601String()), 0, 32),
         ];
     }
 

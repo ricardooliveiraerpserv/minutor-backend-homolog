@@ -15,6 +15,18 @@ class MicrosoftCalendarService
 {
     private const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 
+    /** Último erro do Graph em createEvent (status/código/mensagem) — p/ a UI mostrar o motivo real. */
+    public static ?array $lastError = null;
+
+    /** Permissões (scp) gravadas no access token delegado — diagnóstico (ex.: falta Calendars.ReadWrite). */
+    public static function tokenScopes(string $accessToken): ?string
+    {
+        $parts = explode('.', $accessToken);
+        if (count($parts) < 2) return null;
+        $json = json_decode(base64_decode(strtr($parts[1], '-_', '+/')) ?: '', true);
+        return is_array($json) ? ($json['scp'] ?? null) : null;
+    }
+
     private static function cfg(): array
     {
         return config('services.microsoft_calendar', []);
@@ -193,23 +205,42 @@ class MicrosoftCalendarService
     public static function createEvent(string $accessToken, array $payload): ?array
     {
         try {
-            $r = Http::withToken($accessToken)->acceptJson()->timeout(15)
+            // Reunião do Teams com muitos convidados pode levar > 15s no Graph (cria o onlineMeeting
+            // + dispara os convites). 60s; o transactionId do payload evita duplicar ao tentar de novo.
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout(60)
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->post(self::GRAPH_BASE . '/me/events', $payload);
-            return $r->successful() ? $r->json() : null;
-        } catch (\Throwable) {
+            if ($r->successful()) { self::$lastError = null; return $r->json(); }
+            self::$lastError = [
+                'status'  => $r->status(),
+                'code'    => data_get($r->json(), 'error.code'),
+                'message' => mb_substr((string) data_get($r->json(), 'error.message', $r->body()), 0, 400),
+            ];
+            \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph createEvent falhou', self::$lastError);
+            return null;
+        } catch (\Throwable $e) {
+            self::$lastError = ['status' => 0, 'code' => 'exception', 'message' => mb_substr($e->getMessage(), 0, 400)];
+            \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph createEvent exceção', self::$lastError);
             return null;
         }
     }
 
     /** Atualiza (PATCH) um evento existente — ex.: reagendar start/end. Retorna o evento ou null. */
-    public static function updateEvent(string $accessToken, string $eventId, array $payload): ?array
+    public static function updateEvent(string $accessToken, string $eventId, array $payload, int $timeout = 15): ?array
     {
         try {
-            $r = Http::withToken($accessToken)->acceptJson()->timeout(15)
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout($timeout)
                 ->patch(self::GRAPH_BASE . '/me/events/' . rawurlencode($eventId), $payload);
-            return $r->successful() ? $r->json() : null;
-        } catch (\Throwable) {
+            if ($r->successful()) return $r->json();
+            self::$lastError = [
+                'status'  => $r->status(),
+                'code'    => data_get($r->json(), 'error.code'),
+                'message' => mb_substr((string) data_get($r->json(), 'error.message', $r->body()), 0, 400),
+            ];
+            \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph updateEvent falhou', self::$lastError);
+            return null;
+        } catch (\Throwable $e) {
+            self::$lastError = ['status' => 0, 'code' => 'exception', 'message' => mb_substr($e->getMessage(), 0, 400)];
             return null;
         }
     }
