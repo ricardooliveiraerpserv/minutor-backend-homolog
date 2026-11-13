@@ -18,6 +18,9 @@ class MicrosoftCalendarService
     /** Último erro do Graph em createEvent (status/código/mensagem) — p/ a UI mostrar o motivo real. */
     public static ?array $lastError = null;
 
+    /** false quando a última leitura da agenda falhou (Graph fora/lento) — o sync NÃO sobrescreve o cache. */
+    public static ?bool $lastFetchOk = null;
+
     /** Permissões (scp) gravadas no access token delegado — diagnóstico (ex.: falta Calendars.ReadWrite). */
     public static function tokenScopes(string $accessToken): ?string
     {
@@ -124,7 +127,13 @@ class MicrosoftCalendarService
                 ->timeout(12) // nunca segura a agenda por causa de um Graph lento
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->get($url);
-            if (!$r->successful()) return [];
+            if (!$r->successful()) {
+                self::$lastFetchOk = false;
+                MicrosoftHealth::record('agenda', false, ['status' => $r->status(), 'code' => data_get($r->json(), 'error.code'), 'message' => (string) data_get($r->json(), 'error.message')]);
+                return [];
+            }
+            self::$lastFetchOk = true;
+            MicrosoftHealth::record('agenda', true);
 
             return collect($r->json('value', []))->map(function ($e) {
                 // Reunião CANCELADA não deve entrar na agenda nem gerar lembrete "entrar na reunião".
@@ -155,7 +164,9 @@ class MicrosoftCalendarService
                     'convidados'  => $convidados,
                 ];
             })->filter()->values()->all();
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            self::$lastFetchOk = false;
+            MicrosoftHealth::record('agenda', false, ['status' => 0, 'code' => 'exception', 'message' => $e->getMessage()]);
             return [];
         }
     }
@@ -190,7 +201,10 @@ class MicrosoftCalendarService
         $token = self::freshTokenFor($i);
         if (!$token) return null;
 
+        self::$lastFetchOk = null;
         $events = self::fetchEvents($token, now()->startOfMonth(), now()->addMonths(2)->endOfMonth());
+        // Microsoft fora/lenta: mantém a última agenda boa em vez de gravar "0 eventos" por cima.
+        if (self::$lastFetchOk === false) return null;
         $i->update(['cached_events' => $events, 'last_sync_at' => now()]);
 
         return count($events);
@@ -205,40 +219,82 @@ class MicrosoftCalendarService
     public static function createEvent(string $accessToken, array $payload, int $timeout = 25): ?array
     {
         try {
-            // Reunião do Teams com muitos convidados pode levar > 15s no Graph (cria o onlineMeeting
-            // + dispara os convites). 60s.
+            // Teto curto: o proxy corta a requisição do usuário em ~60s (504).
             $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(8)->timeout($timeout)
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->post(self::GRAPH_BASE . '/me/events', $payload);
-            if ($r->successful()) { self::$lastError = null; return $r->json(); }
+            $svc = !empty($payload['isOnlineMeeting']) ? 'teams' : 'agenda';
+            if ($r->successful()) { self::$lastError = null; MicrosoftHealth::record($svc, true); return $r->json(); }
             self::$lastError = [
                 'status'  => $r->status(),
                 'code'    => data_get($r->json(), 'error.code'),
                 'message' => mb_substr((string) data_get($r->json(), 'error.message', $r->body()), 0, 400),
             ];
+            MicrosoftHealth::record($svc, false, self::$lastError);
             \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph createEvent falhou', self::$lastError);
             return null;
         } catch (\Throwable $e) {
             self::$lastError = ['status' => 0, 'code' => 'exception', 'message' => mb_substr($e->getMessage(), 0, 400)];
+            MicrosoftHealth::record(!empty($payload['isOnlineMeeting']) ? 'teams' : 'agenda', false, self::$lastError);
             \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph createEvent exceção', self::$lastError);
             return null;
         }
     }
 
-    /** Diagnóstico: provedores de reunião online permitidos no calendário da conta (ex.: teamsForBusiness). */
-    public static function calendarTeamsInfo(string $accessToken): ?array
+    /**
+     * Procura na agenda do organizador um evento com o MESMO assunto e início — usado antes de criar
+     * (tentativa anterior estourou o tempo e a Microsoft criou depois) e após timeout/5xx (a
+     * Microsoft pode ter criado mesmo sem responder). Evita reunião duplicada.
+     * @return array{found: ?array, ok: bool} ok=false quando a consulta em si falhou.
+     */
+    public static function findEvent(string $accessToken, string $subject, Carbon $start, Carbon $end, int $timeout = 8): array
     {
         try {
-            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(5)->timeout(6)
-                ->get(self::GRAPH_BASE . '/me/calendar', ['$select' => 'allowedOnlineMeetingProviders,defaultOnlineMeetingProvider,owner']);
-            if (!$r->successful()) return ['status' => $r->status(), 'code' => data_get($r->json(), 'error.code')];
-            return [
-                'allowed' => $r->json('allowedOnlineMeetingProviders'),
-                'default' => $r->json('defaultOnlineMeetingProvider'),
-            ];
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(5)->timeout($timeout)
+                ->withHeaders(['Prefer' => 'outlook.timezone="UTC"'])
+                ->get(self::GRAPH_BASE . '/me/calendarView', [
+                    'startDateTime' => $start->copy()->utc()->subMinute()->toIso8601String(),
+                    'endDateTime'   => $end->copy()->utc()->addMinute()->toIso8601String(),
+                    '$select'       => 'id,subject,start,isCancelled,isOnlineMeeting,onlineMeeting,webLink,attendees',
+                    '$top'          => 50,
+                ]);
+            if (!$r->successful()) {
+                MicrosoftHealth::record('agenda', false, ['status' => $r->status(), 'code' => data_get($r->json(), 'error.code'), 'message' => (string) data_get($r->json(), 'error.message')]);
+                return ['found' => null, 'ok' => false];
+            }
+            MicrosoftHealth::record('agenda', true);
+            $want = mb_strtolower(trim($subject));
+            $found = collect($r->json('value', []))->first(function ($e) use ($want, $start) {
+                if (data_get($e, 'isCancelled') === true) return false;
+                if (mb_strtolower(trim((string) data_get($e, 'subject'))) !== $want) return false;
+                $st = data_get($e, 'start.dateTime');
+                return $st && abs(Carbon::parse($st, 'UTC')->diffInSeconds($start->copy()->utc(), false)) <= 60;
+            });
+            return ['found' => $found, 'ok' => true];
         } catch (\Throwable $e) {
-            return ['status' => 0, 'code' => 'exception'];
+            MicrosoftHealth::record('agenda', false, ['status' => 0, 'code' => 'exception', 'message' => $e->getMessage()]);
+            return ['found' => null, 'ok' => false];
         }
+    }
+
+    /** Teste SOMENTE LEITURA da agenda (próxima 1h) — nunca grava nada. */
+    public static function probeRead(string $accessToken, int $timeout = 8): array
+    {
+        try {
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(5)->timeout($timeout)
+                ->get(self::GRAPH_BASE . '/me/calendarView', [
+                    'startDateTime' => now()->utc()->toIso8601String(),
+                    'endDateTime'   => now()->utc()->addHour()->toIso8601String(),
+                    '$select'       => 'id',
+                    '$top'          => 1,
+                ]);
+            if ($r->successful()) { MicrosoftHealth::record('agenda', true); return ['calendar_ok' => true]; }
+            $err = ['status' => $r->status(), 'code' => data_get($r->json(), 'error.code'), 'message' => (string) data_get($r->json(), 'error.message')];
+        } catch (\Throwable $e) {
+            $err = ['status' => 0, 'code' => 'exception', 'message' => $e->getMessage()];
+        }
+        MicrosoftHealth::record('agenda', false, $err);
+        return ['calendar_ok' => false, 'error' => MicrosoftHealth::sanitize($err)];
     }
 
     /** Atualiza (PATCH) um evento existente — ex.: reagendar start/end. Retorna o evento ou null. */
@@ -247,12 +303,13 @@ class MicrosoftCalendarService
         try {
             $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout($timeout)
                 ->patch(self::GRAPH_BASE . '/me/events/' . rawurlencode($eventId), $payload);
-            if ($r->successful()) return $r->json();
+            if ($r->successful()) { MicrosoftHealth::record('agenda', true); return $r->json(); }
             self::$lastError = [
                 'status'  => $r->status(),
                 'code'    => data_get($r->json(), 'error.code'),
                 'message' => mb_substr((string) data_get($r->json(), 'error.message', $r->body()), 0, 400),
             ];
+            MicrosoftHealth::record('agenda', false, self::$lastError);
             \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph updateEvent falhou', self::$lastError);
             return null;
         } catch (\Throwable $e) {

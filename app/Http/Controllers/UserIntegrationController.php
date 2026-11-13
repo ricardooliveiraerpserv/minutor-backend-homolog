@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\UserIntegration;
 use App\Services\MicrosoftCalendarService;
+use App\Services\MicrosoftHealth;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -105,11 +106,52 @@ class UserIntegrationController extends Controller
         if (!$i) return response()->json(['message' => 'Outlook não conectado.'], 422);
 
         $synced = MicrosoftCalendarService::syncEvents($i);
+        if ($synced === null && MicrosoftCalendarService::$lastFetchOk === false) {
+            return response()->json(['message' => 'A Microsoft não respondeu (instabilidade do Microsoft 365, não é falha do Minutor). Sua agenda continua com os dados da última sincronização.', 'kind' => 'microsoft_unavailable'], 503);
+        }
         if ($synced === null) return response()->json(['message' => 'Não foi possível renovar o acesso. Reconecte sua conta Microsoft.'], 422);
 
         return response()->json(['data' => [
             'synced'       => $synced,
             'last_sync_at' => $i->last_sync_at->toIso8601String(),
+        ]]);
+    }
+
+    /**
+     * Saúde das integrações Microsoft (Agenda, Teams, E-mail) + incidentes publicados pela Microsoft.
+     * ?check=1 roda verificações agora (somente leitura): agenda do próprio usuário e, p/ admin, a
+     * caixa de e-mail do Help Desk. Limitado a 1 verificação a cada 30s por usuário.
+     */
+    public function health(Request $request): JsonResponse
+    {
+        $u = $request->user();
+        abort_unless($u, 401);
+        $admin = method_exists($u, 'isAdmin') && $u->isAdmin();
+        $i = $this->integration($request);
+
+        $checked = false;
+        if ($request->boolean('check') && \Illuminate\Support\Facades\Cache::add("ms_health_check:{$u->id}", 1, 30)) {
+            $checked = true;
+            if ($i && MicrosoftCalendarService::configured() && ($tok = MicrosoftCalendarService::freshTokenFor($i))) {
+                MicrosoftCalendarService::probeRead($tok);
+            }
+            if ($admin && \App\Services\GraphMailReader::enabled()) {
+                $acc = \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->first();
+                if ($acc) {
+                    try { \App\Services\GraphMailReader::inboxStatus((string) $acc->email); } catch (\Throwable) {}
+                }
+            }
+        }
+
+        $services = MicrosoftHealth::snapshot($admin ? ['agenda', 'teams', 'email'] : ['agenda', 'teams']);
+        return response()->json(['data' => [
+            'checked_now' => $checked,
+            'generated_at' => now()->toIso8601String(),
+            'connected'   => (bool) $i,
+            'services'    => $services,
+            // SharePoint: o Minutor não usa — aparece só nos incidentes da Microsoft.
+            'sharepoint'  => ['used' => false],
+            'incidents'   => $admin ? MicrosoftHealth::incidents() : null,
         ]]);
     }
 

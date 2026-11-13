@@ -37,6 +37,12 @@ class GraphMailReader
      *
      * @throws \RuntimeException em qualquer falha de obtenção.
      */
+    /** Token app-only (mesmo cache) — usado também pela Saúde da integração (incidentes da Microsoft). */
+    public static function appToken(): string
+    {
+        return self::token();
+    }
+
     protected static function token(): string
     {
         $c = config('services.graph_reader');
@@ -87,12 +93,19 @@ class GraphMailReader
         }
 
         $url  = sprintf('%s/users/%s/mailFolders/Inbox', self::GRAPH_BASE, rawurlencode($mailbox));
-        $resp = Http::withToken($token)->acceptJson()
-            ->get($url, ['$select' => 'totalItemCount,unreadItemCount']);
+        try {
+            $resp = Http::withToken($token)->acceptJson()->connectTimeout(8)->timeout(15)
+                ->get($url, ['$select' => 'totalItemCount,unreadItemCount']);
+        } catch (\Throwable $e) {
+            MicrosoftHealth::record('email', false, ['status' => 0, 'code' => 'exception', 'message' => $e->getMessage()]);
+            return [false, 'A Microsoft não respondeu (instabilidade do Microsoft 365). Tente de novo em alguns minutos.', null];
+        }
 
         if ($resp->successful()) {
+            MicrosoftHealth::record('email', true);
             return [true, null, (int) ($resp->json('totalItemCount') ?? 0)];
         }
+        MicrosoftHealth::record('email', false, ['status' => $resp->status(), 'code' => $resp->json('error.code'), 'message' => (string) $resp->json('error.message')]);
 
         // Mensagens de erro mais úteis para os casos comuns do Graph.
         $msg = $resp->json('error.message') ?: ('HTTP ' . $resp->status());

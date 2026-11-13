@@ -5,6 +5,7 @@ namespace App\Meetings\Providers;
 use App\Models\Meeting;
 use App\Models\UserIntegration;
 use App\Services\MicrosoftCalendarService;
+use App\Services\MicrosoftHealth;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 
@@ -39,47 +40,62 @@ class TeamsMeetingProvider implements MeetingProvider
         }
 
         $payload = $this->payload($meeting);
-        // Orçamento de tempo: o proxy corta a requisição em ~60s (504). 1ª tentativa até 25s.
-        $ev = MicrosoftCalendarService::createEvent($token, $payload, 25);
-        if (!$ev) {
-            $err = MicrosoftCalendarService::$lastError;
-            return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => [
-                'reason' => 'graph_error',
-                'graph'  => $err,                                          // motivo devolvido pela Microsoft
-                'attendees' => count($payload['attendees']),
-                'scopes' => MicrosoftCalendarService::tokenScopes($token), // permissões da conexão do organizador
-                // Diagnóstico: a agenda em si funciona? (evento simples, sem Teams, apagado em seguida)
-                'probe'  => $this->probePlainEvent($token, $payload),
-            ]];
+        $start = Carbon::parse($meeting->starts_at);
+        $end   = Carbon::parse($meeting->ends_at);
+
+        // 1) Já existe? (uma tentativa anterior estourou o tempo e a Microsoft criou depois) → reaproveita.
+        $pre = MicrosoftCalendarService::findEvent($token, $payload['subject'], $start, $end);
+        if ($pre['found'] && data_get($pre['found'], 'onlineMeeting.joinUrl')) {
+            $this->syncAttendees($token, $pre['found'], $payload['attendees']);
+            return $this->success($meeting, $pre['found'], ['reused' => true]);
         }
 
+        // 2) Cria (teto 25s: o proxy corta a requisição em ~60s). transactionId = idempotência no Graph.
+        $ev = MicrosoftCalendarService::createEvent($token, $payload, 25);
+        if ($ev) return $this->success($meeting, $ev);
+
+        $err  = MicrosoftCalendarService::$lastError;
+        $kind = MicrosoftHealth::classify($err);
+
+        // 3) Timeout/5xx: a Microsoft pode ter criado mesmo sem responder — confere antes de dizer "falhou".
+        $post = ['found' => null, 'ok' => $pre['ok']];
+        if ($kind === 'microsoft_unavailable' && $pre['ok']) {
+            $post = MicrosoftCalendarService::findEvent($token, $payload['subject'], $start, $end);
+            if ($post['found'] && data_get($post['found'], 'onlineMeeting.joinUrl')) {
+                return $this->success($meeting, $post['found'], ['recovered_after_error' => true]);
+            }
+        }
+
+        $scopes = MicrosoftCalendarService::tokenScopes($token);
+        return ['external_meeting_id' => null, 'join_url' => null, 'provider_data' => [
+            'reason'  => 'graph_error',
+            'kind'    => $kind,                               // microsoft_unavailable | auth | rejected
+            // not_created: a Microsoft recusou; unknown: não respondeu e não deu p/ confirmar na agenda.
+            'outcome' => ($kind === 'microsoft_unavailable' && (($err['status'] ?? 0) === 0 || !$post['ok'])) ? 'unknown' : 'not_created',
+            'graph'   => MicrosoftHealth::sanitize($err),
+            'attendees' => count($payload['attendees']),
+            'missing_write' => $scopes !== null && !preg_match('/Calendars\.ReadWrite/i', $scopes),
+            // A leitura da agenda respondeu? (consulta acima — somente leitura, nada é gravado)
+            'probe'   => ['calendar_ok' => (bool) $pre['ok']],
+        ]];
+    }
+
+    private function success(Meeting $meeting, array $ev, array $extra = []): array
+    {
         return [
             'external_meeting_id' => $ev['id'] ?? null,
             'join_url'            => data_get($ev, 'onlineMeeting.joinUrl'),
-            'provider_data'       => ['event_id' => $ev['id'] ?? null, 'web_link' => $ev['webLink'] ?? null, 'organizer' => $this->organizerEmail($meeting)],
+            'provider_data'       => ['event_id' => $ev['id'] ?? null, 'web_link' => $ev['webLink'] ?? null, 'organizer' => $this->organizerEmail($meeting)] + $extra,
         ];
     }
 
-    /**
-     * Cria um evento SEM reunião online e SEM convidados (ninguém é avisado) e o apaga logo depois.
-     * Separa "a agenda da conta está fora" de "só a geração do link do Teams falha".
-     * @return array{calendar_ok: bool, error?: ?array, teams?: ?array}
-     */
-    private function probePlainEvent(string $token, array $payload): array
+    /** Reaproveitando um evento: inclui quem ainda não está convidado (best-effort, não bloqueia). */
+    private function syncAttendees(string $token, array $ev, array $attendees): void
     {
-        $ev = MicrosoftCalendarService::createEvent($token, [
-            'subject' => '[Minutor] teste de agenda — pode ignorar',
-            'start'   => $payload['start'],
-            'end'     => $payload['end'],
-            'showAs'  => 'free',
-            'isReminderOn' => false,
-        ], 12);
-        if (!$ev || empty($ev['id'])) {
-            return ['calendar_ok' => false, 'error' => MicrosoftCalendarService::$lastError];
-        }
-        MicrosoftCalendarService::deleteEvent($token, $ev['id'], 8);
-        Log::warning('📅 [MEETINGS] agenda OK mas Teams falhou', ['event' => $ev['id']]);
-        return ['calendar_ok' => true, 'teams' => MicrosoftCalendarService::calendarTeamsInfo($token)];
+        $have = collect(data_get($ev, 'attendees', []))->map(fn ($a) => mb_strtolower((string) data_get($a, 'emailAddress.address')))->all();
+        $missing = collect($attendees)->reject(fn ($a) => in_array(mb_strtolower((string) data_get($a, 'emailAddress.address')), $have, true));
+        if ($missing->isEmpty() || empty($ev['id'])) return;
+        MicrosoftCalendarService::updateEvent($token, $ev['id'], ['attendees' => array_values(array_merge(data_get($ev, 'attendees', []), $missing->values()->all()))], 10);
     }
 
     public function update(Meeting $meeting): array
@@ -117,7 +133,7 @@ class TeamsMeetingProvider implements MeetingProvider
     }
 
     /** Token delegado válido do organizador (renova se preciso). null se não tiver conta conectada. */
-    private function tokenFor(Meeting $meeting): ?string
+    protected function tokenFor(Meeting $meeting): ?string
     {
         $uid = $this->actingUserId($meeting);
         if (!$uid) return null;
@@ -148,6 +164,9 @@ class TeamsMeetingProvider implements MeetingProvider
             'isOnlineMeeting' => true,
             'onlineMeetingProvider' => 'teamsForBusiness',
             'allowNewTimeProposals' => false,
+            // Idempotência: se uma tentativa estourar o tempo e o usuário tentar de novo, o Graph
+            // devolve o MESMO evento em vez de criar outro (organizador + assunto + início).
+            'transactionId' => 'minutor-' . substr(sha1(($this->actingUserId($meeting) ?? 0) . '|' . $meeting->title . '|' . Carbon::parse($meeting->starts_at)->toIso8601String()), 0, 32),
         ];
     }
 

@@ -766,6 +766,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/integrations/microsoft/connect',    [\App\Http\Controllers\UserIntegrationController::class, 'connect']);
         Route::post('/integrations/microsoft/disconnect', [\App\Http\Controllers\UserIntegrationController::class, 'disconnect']);
         Route::post('/integrations/microsoft/sync',       [\App\Http\Controllers\UserIntegrationController::class, 'sync']);
+        Route::get('/integrations/microsoft/health',      [\App\Http\Controllers\UserIntegrationController::class, 'health']);
 
         // Aniversários — parabenização entre a equipe
         Route::get('/birthdays/today',            [\App\Http\Controllers\BirthdayController::class, 'today']);
