@@ -499,8 +499,15 @@ class StageDeliveryController extends Controller
 
         $chain = [];
         $visited = [];
+        // Calendário operacional do projeto (fim de semana/feriado liberados) — antes a cascata
+        // sempre pulava sábado/domingo/feriado, mesmo em projeto com calendário especial.
+        $project = $delivery->stage?->project;
+        $calOpts = [
+            'allow_weekend' => (bool) ($project->allow_weekend_work ?? false),
+            'allow_holiday' => (bool) ($project->allow_holiday_work ?? false),
+        ];
 
-        $walk = function (StageDelivery $node, ?Carbon $newEnd) use (&$walk, &$chain, &$visited, $calendar) {
+        $walk = function (StageDelivery $node, ?Carbon $newEnd) use (&$walk, &$chain, &$visited, $calendar, $calOpts) {
             // FS é o único tipo de dependência hoje; trata null como FS (a coluna
             // "Depende de" seta só o depends_on_delivery_id, sem o dependency_type).
             $deps = StageDelivery::where('depends_on_delivery_id', $node->id)
@@ -515,9 +522,9 @@ class StageDeliveryController extends Controller
                 $predEnd = $newEnd ?: ($node->due_date ? Carbon::parse($node->due_date) : null);
                 if (!$predEnd) continue;
 
-                $suggestedStart = $calendar->nextBusinessDay($predEnd->copy()->addDay());
+                $suggestedStart = $calendar->nextBusinessDay($predEnd->copy()->addDay(), $calOpts);
                 $suggestedEnd   = $hours > 0
-                    ? $calendar->addBusinessHours($suggestedStart, $hours, 8.0)
+                    ? $calendar->addBusinessHours($suggestedStart, $hours, 8.0, $calOpts)
                     : $suggestedStart;
 
                 $chain[] = [
