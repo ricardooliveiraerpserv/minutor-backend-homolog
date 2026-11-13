@@ -33,6 +33,8 @@ class ClientActivityController extends Controller
                 $q->where(fn ($w) => $w->where('client_involved', true)->where('client_user_id', $user->id))
                   ->orWhere('responsible_user_id', $user->id);
             })
+            // Segurança: só atividades de projetos do PRÓPRIO customer.
+            ->whereHas('stage.project', fn ($p) => $p->where('customer_id', (int) $user->customer_id ?: -1))
             ->with([
                 'stage:id,project_id,name',
                 'stage.project:id,name,customer_id',
@@ -219,7 +221,8 @@ class ClientActivityController extends Controller
             $u = request()->user();
             $uid = (int) $u?->id;
             $project = $d->stage?->project;
-            $sameCustomer = $project && (int) $u?->customer_id === (int) $project->customer_id;
+            // Pode conversar quem pode abrir o projeto (gestor do customer OU participante).
+            $sameCustomer = $project && \App\Support\ClientAccess::canAccessProject($project, $u);
             $base['client_involved'] = (bool) $d->client_involved;
             $base['is_responsible'] = (int) $d->responsible_user_id === $uid;
             // Cliente do MESMO customer do projeto pode comentar em qualquer atividade (conversa por projeto, sem horas).
@@ -232,7 +235,7 @@ class ClientActivityController extends Controller
         return $base;
     }
 
-    /** Ver/conversar: cliente do MESMO customer do projeto pode abrir qualquer atividade (conversa por projeto). */
+    /** Ver/conversar: gestor do customer do projeto OU cliente participante do projeto. */
     private function ensureAccess(StageDelivery $delivery, Request $request): ?JsonResponse
     {
         $user = $request->user();
@@ -244,11 +247,10 @@ class ClientActivityController extends Controller
         }
         $delivery->loadMissing('stage.project');
         $project = $delivery->stage?->project;
-        if ($project && (int) $user->customer_id === (int) $project->customer_id) return null;
-        // Fallback (compat): envolvido/responsável OU aprovador designado.
-        $uid = (int) $user->id;
-        if (ClientProjectController::canOpen($delivery, $uid)) return null;
-        if ($project && ClientProjectController::canApprove($delivery, $uid, $project)) return null;
+        // Segurança: gestor do MESMO customer OU participante do projeto (convidado / envolvido /
+        // responsável em atividade) do MESMO customer. Convidado não abre por URL atividade de
+        // projeto fora do seu menu; ninguém abre atividade de outro customer.
+        if ($project && \App\Support\ClientAccess::canAccessProject($project, $user)) return null;
         return response()->json(['message' => 'Você não participa deste projeto.'], 403);
     }
 
@@ -263,9 +265,13 @@ class ClientActivityController extends Controller
             return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
         }
         $uid = (int) $user->id;
-        if (ClientProjectController::canOpen($delivery, $uid)) return null;
         $delivery->loadMissing('stage.project');
         $project = $delivery->stage?->project;
+        // Nunca projeto de outro customer (nem se a atividade apontar p/ este usuário).
+        if (! $project || (int) $user->customer_id <= 0 || (int) $user->customer_id !== (int) $project->customer_id) {
+            return response()->json(['message' => 'Você não pode aprovar esta atividade.'], 403);
+        }
+        if (ClientProjectController::canOpen($delivery, $uid)) return null;
         if ($project && ClientProjectController::canApprove($delivery, $uid, $project)) return null;
         return response()->json(['message' => 'Você não pode aprovar esta atividade.'], 403);
     }

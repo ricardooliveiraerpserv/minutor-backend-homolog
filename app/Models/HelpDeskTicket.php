@@ -77,6 +77,13 @@ class HelpDeskTicket extends Model
 
     public const PRIORITIES = ['baixa', 'normal', 'alta', 'urgente'];
     public const CHANNELS   = ['portal', 'email', 'telefone', 'interno', 'movidesk'];
+    /** Rótulos de prioridade — 'normal' é exibido como "Média" para TODOS (agente e cliente). */
+    public const PRIORITY_LABELS = ['baixa' => 'Baixa', 'normal' => 'Média', 'alta' => 'Alta', 'urgente' => 'Urgente'];
+
+    public static function priorityLabel(?string $priority): string
+    {
+        return self::PRIORITY_LABELS[(string) $priority] ?? (string) $priority;
+    }
 
     /** Chave no AttachableEntitiesRegistry. */
     public static function attachmentEntityType(): string

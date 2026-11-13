@@ -7,7 +7,7 @@ use App\Models\NotificationRead;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
-/** Central de Notificações (tela inicial). Só usuários internos; cliente não vê. */
+/** Central de Notificações (tela inicial). Internos; o CLIENTE só lê as próprias (sino do portal — clientIndex). */
 class NotificationController extends Controller
 {
     private const INTERNAL = ['admin', 'administrativo', 'coordenador', 'consultor'];
@@ -27,6 +27,17 @@ class NotificationController extends Controller
         return $u;
     }
 
+    /**
+     * Leitor das PRÓPRIAS notificações: internos + CLIENTE (sino do portal). O cliente usa
+     * uma query restrita (clientVisibleQuery) — só o que foi endereçado a ele/à empresa dele.
+     */
+    private function readerOrAbort(Request $request): \App\Models\User
+    {
+        $u = $request->user();
+        abort_if(!$u || (!in_array($u->type, self::INTERNAL, true) && $u->type !== 'cliente'), 403, 'Notificações indisponíveis para este perfil.');
+        return $u;
+    }
+
     /** Pode publicar/gerenciar publicações (admin, coordenador, administrativo). */
     private function canManage(?\App\Models\User $u): bool
     {
@@ -43,7 +54,10 @@ class NotificationController extends Controller
     /** Notificações visíveis ao usuário + estado de leitura/aceite + flags computadas. */
     public function index(Request $request): JsonResponse
     {
-        $u = $this->internalOrAbort($request);
+        $u = $this->readerOrAbort($request);
+        if ($u->type === 'cliente') {
+            return $this->clientIndex($u);
+        }
 
         $rows = $this->visibleQuery($u)
             ->with(['poll.options', 'survey.questions.options'])
@@ -125,7 +139,8 @@ class NotificationController extends Controller
         })->count();
 
         // Notificações visíveis ao usuário ainda não vistas (ou com aceite pendente).
-        $notifs = $this->visibleQuery($u)->get(['id', 'requires_ack', 'version']);
+        $notifs = ($u->type === 'cliente' ? $this->clientVisibleQuery($u) : $this->visibleQuery($u))
+            ->get(['id', 'requires_ack', 'version']);
         $reads = NotificationRead::where('user_id', $u->id)
             ->whereIn('notification_id', $notifs->pluck('id'))->get()->keyBy('notification_id');
         $unread = $notifs->filter(function ($n) use ($reads) {
@@ -137,15 +152,26 @@ class NotificationController extends Controller
 
         // Apontamentos aguardando liberação (chegaram pela integração em competência
         // já fechada) — sinaliza no menu "Atrasos (integração)". Mesmo conjunto da tela.
-        $atrasos = \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
+        // CLIENTE: atrasos de integração são dado interno (contagem global) → sempre 0.
+        $isCliente = $u->type === 'cliente';
+        $atrasos = $isCliente ? 0 : \App\Models\Timesheet::where('status', \App\Models\Timesheet::STATUS_LATE)
             ->whereNull('deleted_at')->count();
 
+        // Comunicados não lidos (menu "Comunicados" do cliente) — mesmo conjunto de /communications/unread.
+        $unreadCommunications = 0;
+        if ($isCliente) {
+            $readIds = \App\Models\CommunicationRead::where('user_id', $u->id)->pluck('communication_id');
+            $unreadCommunications = \App\Models\Communication::visible()->forClient($u)
+                ->whereNotIn('id', $readIds)->count();
+        }
+
         return [
-            'pending_tasks'        => $pendingTasks,
-            'overdue_tasks'        => $overdueTasks,
-            'unread_notifications' => $unread,
-            'atrasos'              => $atrasos,
-            'critical'             => $overdueTasks > 0,
+            'pending_tasks'         => $pendingTasks,
+            'overdue_tasks'         => $overdueTasks,
+            'unread_notifications'  => $unread,
+            'unread_communications' => $unreadCommunications,
+            'atrasos'               => $atrasos,
+            'critical'              => $overdueTasks > 0,
         ];
         });
 
@@ -170,6 +196,75 @@ class NotificationController extends Controller
             ->where(fn ($q) => $q->whereNull('excluded_user_ids')->orWhereJsonDoesntContain('excluded_user_ids', $u->id))
             ->where('visible', true)        // ocultas não aparecem na Central (mas o e-mail ainda sai)
             ->where('is_template', false);  // modelos nunca aparecem p/ usuários
+    }
+
+    /**
+     * Query de notificações VISÍVEIS a um CLIENTE (sino do portal). Mais restrita que a interna:
+     *  - só o que foi endereçado a ELE (target_users), ao perfil 'cliente' ou à empresa dele;
+     *    nunca por autoria (o comentário que o próprio cliente fez gera notificação p/ a equipe),
+     *    tipo de contrato ou vínculo (critérios internos);
+     *  - sem tipos internos (conclusão de tarefa, apontamento, lembretes de ação/recorrência).
+     */
+    private function clientVisibleQuery(\App\Models\User $u)
+    {
+        $internalTitles = array_values(array_diff(
+            array_merge(self::COMPLETION_TITLES, self::APONTAMENTO_TITLES),
+            ['Novo comentário no projeto'],   // comentário do projeto É do interesse do cliente
+        ));
+        $reminderIds = \App\Models\ActionReminderRule::whereNotNull('notification_id')->pluck('notification_id');
+
+        return AppNotification::query()
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->where(fn ($q) => $q
+                ->whereJsonContains('target_users', $u->id)
+                ->orWhereJsonContains('target_roles', 'cliente')
+                ->when($u->customer_id, fn ($w) => $w
+                    ->orWhere('target_customer_id', $u->customer_id)
+                    ->orWhereJsonContains('target_customer_ids', $u->customer_id)))
+            ->where(fn ($q) => $q->whereNull('excluded_user_ids')->orWhereJsonDoesntContain('excluded_user_ids', $u->id))
+            ->where('visible', true)
+            ->where('is_template', false)
+            ->whereNotIn('type', ['poll', 'survey'])   // enquete/pesquisa: fluxo interno (votação)
+            ->whereNotIn('title', $internalTitles)
+            ->when($reminderIds->isNotEmpty(), fn ($q) => $q->whereNotIn('id', $reminderIds));
+    }
+
+    /** Lista do sino do CLIENTE — payload enxuto (sem alvos/ids internos). */
+    private function clientIndex(\App\Models\User $u): JsonResponse
+    {
+        $rows = $this->clientVisibleQuery($u)
+            ->orderByDesc('created_at')
+            ->limit(50)
+            ->get(['id', 'title', 'message', 'type', 'priority', 'requires_ack', 'version', 'cta_label', 'cta_url', 'created_at']);
+
+        $reads = NotificationRead::where('user_id', $u->id)
+            ->whereIn('notification_id', $rows->pluck('id'))->get()->keyBy('notification_id');
+
+        $data = $rows->map(function (AppNotification $n) use ($reads) {
+            $r = $reads->get($n->id);
+            $acked  = $r && $r->ack_at && (int) $r->acked_version >= (int) $n->version;
+            $viewed = (bool) ($r && $r->viewed_at);
+            return [
+                'id'           => $n->id,
+                'title'        => $n->title,
+                'message'      => $n->message,
+                'type'         => $n->type,
+                'priority'     => $n->priority,
+                'requires_ack' => (bool) $n->requires_ack,
+                'cta_label'    => $n->cta_label,
+                'cta_url'      => $n->cta_url,
+                'created_at'   => $n->created_at?->toIso8601String(),
+                'viewed'       => $viewed,
+                'acked'        => $acked,
+                'pending_ack'  => $n->requires_ack && !$acked,
+            ];
+        });
+
+        return response()->json(['data' => [
+            'notifications' => $data->values(),
+            'pending_ack'   => $data->where('pending_ack', true)->count(),
+            'unviewed'      => $data->where('viewed', false)->count(),
+        ]]);
     }
 
     /**
@@ -249,7 +344,9 @@ class NotificationController extends Controller
     /** Registra visualização (não-bloqueante). */
     public function view(Request $request, AppNotification $notification): JsonResponse
     {
-        $u = $this->internalOrAbort($request);
+        $u = $this->readerOrAbort($request);
+        // Cliente só marca o que de fato lhe é visível.
+        abort_if($u->type === 'cliente' && !$this->clientVisibleQuery($u)->whereKey($notification->id)->exists(), 404);
         $r = NotificationRead::firstOrNew(['notification_id' => $notification->id, 'user_id' => $u->id]);
         if (!$r->viewed_at) { $r->viewed_at = now(); $r->save(); }
         return response()->json(['data' => ['viewed' => true]]);
@@ -258,7 +355,8 @@ class NotificationController extends Controller
     /** Registra ACEITE com auditoria (ip, user-agent, versão). */
     public function ack(Request $request, AppNotification $notification): JsonResponse
     {
-        $u = $this->internalOrAbort($request);
+        $u = $this->readerOrAbort($request);
+        abort_if($u->type === 'cliente' && !$this->clientVisibleQuery($u)->whereKey($notification->id)->exists(), 404);
         $r = NotificationRead::firstOrNew(['notification_id' => $notification->id, 'user_id' => $u->id]);
         $r->viewed_at      = $r->viewed_at ?? now();
         $r->ack_at         = now();

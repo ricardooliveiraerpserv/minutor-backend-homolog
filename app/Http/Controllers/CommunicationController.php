@@ -369,6 +369,8 @@ class CommunicationController extends Controller
                 ['read_at' => $now],
             );
         }
+        // Badge do menu (/me/badges, cache 15s) reflete a leitura na hora.
+        \Illuminate\Support\Facades\Cache::forget("badges:{$u->id}");
         return response()->json(['data' => ['marked' => $ids->count()]]);
     }
 

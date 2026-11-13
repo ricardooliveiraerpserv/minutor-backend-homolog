@@ -57,20 +57,43 @@ class HelpDeskPortalController extends Controller
             ->groupBy('ticket_id');
     }
 
-    /** Garante que o chamado pertence à empresa do cliente. */
+    /**
+     * Garante que o chamado pertence à empresa do cliente E que o PERFIL de acesso do Help Desk
+     * (escopo de visão: own / department / same_org / none) permite enxergá-lo. Usado por TODAS as
+     * ações do portal (ver, comentar, anexar, baixar, aceitar, recusar) — mesma regra do
+     * myTickets/showTicket: nada além do que o perfil selecionado permite.
+     */
     private function ownTicket(Request $request, HelpDeskTicket $ticket): void
     {
         $u = $request->user();
         // SOLICITANTE do chamado — mesmo sendo agente/admin (sem customer_id): o chamado é dele,
         // então pode ver/aceitar/recusar. Casa por user_id OU por e-mail (chamado de origem e-mail
         // não tem requester_user_id). Só depois disso cai na regra de "cliente da mesma customer".
-        if ($u && (
+        $isRequester = $u && (
             ($ticket->requester_user_id && (int) $ticket->requester_user_id === (int) $u->id)
             || ($ticket->requester_email && $u->email && strcasecmp((string) $ticket->requester_email, (string) $u->email) === 0)
-        )) {
-            return;
+        );
+        if (! $isRequester) {
+            abort_unless((int) $ticket->customer_id === $this->customerId($request), 404);
         }
-        abort_unless((int) $ticket->customer_id === $this->customerId($request), 404);
+        $this->ensureViewScope($u, $ticket, (bool) $isRequester);
+    }
+
+    /** Escopo de visão do perfil HD (idêntico ao showTicket/myTickets). */
+    private function ensureViewScope($u, HelpDeskTicket $ticket, bool $isRequester = false): void
+    {
+        $scope = $this->access->clientViewScope($u);
+        abort_if($scope === 'none', 403, 'Seu perfil de acesso não permite visualizar chamados.');
+        // O próprio solicitante (por user_id ou e-mail — mesma regra da lista do portal) é "own".
+        if ($isRequester) return;
+        abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
+        if ($scope === 'department') {
+            $dept = $u->helpdesk_department_id;
+            $reqDept = $ticket->requester_user_id
+                ? optional(\App\Models\User::find($ticket->requester_user_id))->helpdesk_department_id : null;
+            $sameDept = $dept && $reqDept && (int) $dept === (int) $reqDept;
+            abort_unless($sameDept || (int) $ticket->requester_user_id === (int) $u->id, 404);
+        }
     }
 
     /** Anexos públicos (visíveis ao cliente) de um chamado. */
@@ -110,7 +133,15 @@ class HelpDeskPortalController extends Controller
         // (o ServiceTreeSelect usa esse campo p/ decidir o que o cliente pode escolher).
         $svcRows = \App\Models\HelpDeskService::withoutGlobalScopes()->where('company_id', $companyId)
             ->where('active', true)->orderBy('sort_order')->orderBy('name')
-            ->get(['id', 'name', 'parent_id', 'code', 'selectable_by_client']);
+            ->get(['id', 'name', 'parent_id', 'code', 'selectable_by_client', 'visible_to_client']);
+        // Só serviços VISÍVEIS ao cliente (flag do cadastro). Nó oculto sai da árvore; seus filhos
+        // visíveis sobem p/ o ancestral visível mais próximo (não ficam órfãos no seletor).
+        $hiddenParent = $svcRows->reject(fn ($s) => (bool) $s->visible_to_client)->pluck('parent_id', 'id')->all();
+        $svcRows = $svcRows->filter(fn ($s) => (bool) $s->visible_to_client)->each(function ($s) use ($hiddenParent) {
+            $pid = $s->parent_id; $guard = 0;
+            while ($pid !== null && array_key_exists($pid, $hiddenParent) && $guard++ < 50) $pid = $hiddenParent[$pid];
+            $s->parent_id = $pid;
+        })->values();
         $ordered = $svcRows->sortBy(fn ($s) => sprintf('%011d_%d', $s->parent_id ?? 0, ($s->code !== null && $s->code !== '') ? 0 : 1))->values();
         $canon = [];
         $remap = [];
@@ -205,18 +236,8 @@ class HelpDeskPortalController extends Controller
 
     public function showTicket(Request $request, HelpDeskTicket $ticket): JsonResponse
     {
-        $this->ownTicket($request, $ticket);
+        $this->ownTicket($request, $ticket); // inclui o escopo de visão do perfil HD
         $u = $request->user();
-        $scope = $this->access->clientViewScope($u);
-        abort_if($scope === 'none', 403, 'Seu perfil de acesso não permite visualizar chamados.');
-        abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
-        if ($scope === 'department') {
-            $dept = $u->helpdesk_department_id;
-            $reqDept = $ticket->requester_user_id
-                ? optional(\App\Models\User::find($ticket->requester_user_id))->helpdesk_department_id : null;
-            $sameDept = $dept && $reqDept && (int) $dept === (int) $reqDept;
-            abort_unless($sameDept || (int) $ticket->requester_user_id === (int) $u->id, 404);
-        }
         $ticket->load(['status:id,key,label,color,is_open,is_resolved,is_terminal,sla_paused', 'service:id,name', 'assignee:id,name', 'category:id,name', 'justification:id,name', 'tags:id,name', 'customer:id,name', 'team:id,name', 'contact:id,name', 'requester:id,name', 'previousTicket:id,ticket_number,customer_id', 'continuations:id,ticket_number,customer_id,previous_ticket_id']);
         $events   = $ticket->events()->where('event_type', 'status_changed')->orderBy('created_at')->get(['from_value', 'to_value', 'created_at']);
         $comments = $ticket->comments()->where('visibility', 'customer')->with('author:id,name')->orderBy('created_at')->get();
@@ -318,6 +339,20 @@ class HelpDeskPortalController extends Controller
         $status = HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->where('is_default', true)->orderBy('sort_order')->first()
             ?? HelpDeskStatus::withoutGlobalScopes()->where('company_id', $companyId)->orderBy('sort_order')->first()
             ?? $status;
+
+        // Catálogo: categoria/serviço precisam ser DA EMPRESA do chamado; o serviço precisa estar
+        // VISÍVEL e SELECIONÁVEL pelo cliente (flags do cadastro). Mensagem clara (422).
+        if (!empty($v['category_id'])) {
+            $okCat = \App\Models\HelpDeskCategory::withoutGlobalScopes()->whereKey($v['category_id'])
+                ->where('company_id', $companyId)->where('active', true)->exists();
+            abort_unless($okCat, 422, 'A categoria selecionada não pertence à empresa do chamado. Recarregue a tela e escolha novamente.');
+        }
+        if (!empty($v['service_id'])) {
+            $svc = \App\Models\HelpDeskService::withoutGlobalScopes()->whereKey($v['service_id'])
+                ->where('active', true)->first(['id', 'company_id', 'visible_to_client', 'selectable_by_client']);
+            abort_unless($svc && (int) $svc->company_id === (int) $companyId, 422, 'O serviço selecionado não pertence à empresa do chamado. Recarregue a tela e escolha novamente.');
+            abort_unless($svc->visible_to_client && $svc->selectable_by_client, 422, 'O serviço selecionado não pode ser escolhido na abertura pelo cliente. Escolha outro serviço.');
+        }
 
         // Cliente migrado em modo "SÓ LOG": o chamado do portal NÃO entra na fila da ERPSERV —
         // é empurrado pra Conecta (nasce lá) e registrado no log, sem criar o ticket local.

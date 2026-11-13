@@ -783,7 +783,7 @@ class HelpDeskTicketController extends Controller
         abort_unless($this->access->canPrint($request->user()), 403, 'Seu perfil de acesso não permite gerar o relatório.');
         $ticket->loadMissing('status:id,key,label,color', 'category:id,name', 'service:id,name', 'customer:id,name', 'contact:id,name', 'requester:id,name', 'assignee:id,name', 'team:id,name');
 
-        $PRIO = ['baixa' => 'Baixa', 'normal' => 'Normal', 'alta' => 'Alta', 'urgente' => 'Urgente'];
+        $PRIO = HelpDeskTicket::PRIORITY_LABELS; // 'normal' → "Média" (mesmo rótulo do agente)
         $CH   = ['portal' => 'Portal', 'email' => 'E-mail', 'telefone' => 'Telefone', 'interno' => 'Interno', 'movidesk' => 'Movidesk'];
         $fmt  = fn ($d) => $d ? \Carbon\Carbon::parse($d)->timezone('America/Sao_Paulo')->format('d/m/Y H:i') : '—';
         // Corpo FIEL ao chamado: se já é HTML (inclui a assinatura renderizada), mantém o HTML
@@ -1415,6 +1415,23 @@ class HelpDeskTicketController extends Controller
         return response()->json(['data' => $users->concat($contacts)->values()]);
     }
 
+    /**
+     * Cliente "interno" = sem cliente OU o customer homônimo de uma empresa do grupo (company
+     * type=internal: ERPSERV/BIZIFY). Casa pelo nome (regra do requesters()) ou pelo SLUG da
+     * empresa (mesma regra do FE: slug do nome do cliente = slug da empresa, ou contém o slug).
+     */
+    private function isInternalCustomer($customerId): bool
+    {
+        if (!$customerId) return true;
+        $name = \App\Models\Customer::whereKey((int) $customerId)->value('name');
+        if (!$name) return false;
+        $slug  = \Illuminate\Support\Str::slug($name);
+        $parts = explode('-', $slug);
+        return \App\Models\Company::where('type', 'internal')->get(['name', 'slug'])
+            ->contains(fn ($c) => mb_strtolower((string) $c->name) === mb_strtolower($name)
+                || ($c->slug && ($c->slug === $slug || in_array($c->slug, $parts, true))));
+    }
+
     public function store(Request $request): JsonResponse
     {
         abort_unless($this->access->canOpen($request->user()), 403, 'Seu perfil de acesso não permite abrir chamados.');
@@ -1428,34 +1445,64 @@ class HelpDeskTicketController extends Controller
         if (!$this->access->informAllowed($u, 'urgency'))  unset($v['priority']);
         if (!$this->access->informAllowed($u, 'tags'))     $tagIds = null;
 
-        $v['priority']      = $v['priority'] ?? 'normal';
-        $v['channel']       = $v['channel'] ?? 'interno';
-        $v['status_id']     = $v['status_id'] ?? optional(HelpDeskStatus::default())->id;
-        $v['created_by_id'] = $request->user()?->id;
-        // Categoria pode trazer fila padrão se nenhuma foi informada.
-        if (empty($v['team_id']) && !empty($v['category_id'])) {
-            $v['team_id'] = optional(HelpDeskCategory::find($v['category_id']))->default_team_id;
-        }
-        $v['last_activity_at'] = now();
-
         // Multi-empresa: quem atende 2+ empresas pode ESCOLHER a empresa do chamado na abertura.
-        // Sem escolha, o trait carimba a empresa ativa (comportamento atual).
+        // Sem escolha, vale a empresa ativa (o trait carimba). A empresa escolhida passa a ser o
+        // CONTEXTO deste request durante a criação → status inicial, catálogo, SLA e NÚMERO saem
+        // da empresa DO CHAMADO (antes vinham da empresa ativa).
+        $ctx = app(\App\Services\CompanyContext::class);
         $chosenCompany = (int) $request->input('company_id');
         if ($chosenCompany) {
             abort_unless($this->access->attendsCompany($u, $chosenCompany), 422, 'Você não atende a empresa selecionada para o chamado.');
         }
+        $switchCtx = $chosenCompany && (int) $ctx->id() !== $chosenCompany;
+        if ($switchCtx) $ctx->set($chosenCompany);
+        try {
+            $ticketCompany = $chosenCompany ?: $ctx->id();
 
-        $ticket = HelpDeskTicket::create($v);
-        // Empresa escolhida sobrepõe a empresa ativa carimbada pelo trait (company_id não é fillable).
-        if ($chosenCompany && (int) $ticket->company_id !== $chosenCompany) {
-            $ticket->forceFill(['company_id' => $chosenCompany])->save();
+            // Categoria/serviço/fila/SLA/tags precisam ser DA EMPRESA DO CHAMADO (o modal recarrega o
+            // catálogo ao trocar de empresa; aqui garante no servidor). company_id NULL = global.
+            $belongs = function (string $model, $id) use ($ticketCompany): bool {
+                if (!$id || !$ticketCompany) return true;
+                return $model::query()->withoutCompanyScope()->whereKey($id)
+                    ->where(fn ($q) => $q->where('company_id', $ticketCompany)->orWhereNull('company_id'))->exists();
+            };
+            abort_unless($belongs(HelpDeskCategory::class, $v['category_id'] ?? null), 422, 'A categoria selecionada não pertence à empresa do chamado.');
+            abort_unless($belongs(\App\Models\HelpDeskService::class, $v['service_id'] ?? null), 422, 'O serviço selecionado não pertence à empresa do chamado.');
+            abort_unless($belongs(\App\Models\HelpDeskTeam::class, $v['team_id'] ?? null), 422, 'A fila selecionada não pertence à empresa do chamado.');
+            abort_unless($belongs(\App\Models\HelpDeskSlaPolicy::class, $v['sla_policy_id'] ?? null), 422, 'A política de SLA selecionada não pertence à empresa do chamado.');
+            if ($tagIds && $ticketCompany) {
+                $tagIds = \App\Models\HelpDeskTag::query()->withoutCompanyScope()->whereIn('id', $tagIds)
+                    ->where(fn ($q) => $q->where('company_id', $ticketCompany)->orWhereNull('company_id'))->pluck('id')->all();
+            }
+
+            $v['priority']      = $v['priority'] ?? 'normal';
+            $v['channel']       = $v['channel'] ?? 'interno';
+            $v['status_id']     = $v['status_id'] ?? optional(HelpDeskStatus::default())->id;
+            $v['created_by_id'] = $u?->id;
+            // Chamado INTERNO (sem cliente externo) sem solicitante informado → solicitante = quem abriu.
+            if (empty($v['requester_user_id']) && empty($v['customer_contact_id']) && $this->isInternalCustomer($v['customer_id'] ?? null)) {
+                $v['requester_user_id'] = $u?->id;
+            }
+            // Categoria pode trazer fila padrão se nenhuma foi informada.
+            if (empty($v['team_id']) && !empty($v['category_id'])) {
+                $v['team_id'] = optional(HelpDeskCategory::query()->withoutCompanyScope()->find($v['category_id']))->default_team_id;
+            }
+            $v['last_activity_at'] = now();
+
+            $ticket = HelpDeskTicket::create($v);
+            // Empresa escolhida sobrepõe a carimbada pelo trait (company_id não é fillable).
+            if ($chosenCompany && (int) $ticket->company_id !== $chosenCompany) {
+                $ticket->forceFill(['company_id' => $chosenCompany])->save();
+            }
+            // Número no formato CONFIGURADO (prefixo + dígitos + sequência) DA EMPRESA DO CHAMADO.
+            $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next($ticket->company_id ? (int) $ticket->company_id : null)]);
+            if ($tagIds) $ticket->tags()->sync($tagIds);
+
+            // SLA: resolve política + prazos a partir da prioridade (catálogo da empresa do chamado).
+            $this->sla->apply($ticket);
+        } finally {
+            if ($switchCtx) $ctx->forget(); // volta a resolver a empresa ativa do request
         }
-        // Número no formato CONFIGURADO (prefixo + dígitos + sequência) — não hardcoded HD-######.
-        $ticket->update(['ticket_number' => \App\Services\HelpDeskTicketNumber::next()]);
-        if ($tagIds) $ticket->tags()->sync($tagIds);
-
-        // SLA: resolve política + prazos a partir da prioridade.
-        $this->sla->apply($ticket);
 
         HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject]);
         \App\Services\HelpDeskTriggerEngine::queue('ticket_created', $ticket, ['actor_id' => $u?->id, 'actor_email' => $u?->email]);

@@ -25,7 +25,8 @@ class ProjectCommentController extends Controller
     private function authorize(User $user, Project $project): bool
     {
         if ($user->isCliente()) {
-            return (int) $user->customer_id === (int) $project->customer_id;
+            // Gestor do MESMO customer OU participante (convidado/envolvido/responsável) — nunca outro customer.
+            return \App\Support\ClientAccess::canAccessProject($project, $user);
         }
         return in_array($user->type, self::TEAM, true);
     }
@@ -53,6 +54,18 @@ class ProjectCommentController extends Controller
         $project = $message->project_id ? Project::find($message->project_id) : null;
         if ($project && ! $this->authorize($user, $project)) {
             return response()->json(['message' => 'Sem permissão'], 403);
+        }
+        if ($user->isCliente()) {
+            // Cliente: só mensagens visíveis a ele, de projeto/requisição que ele acessa.
+            if ($message->visibility !== 'client') {
+                return response()->json(['message' => 'Sem permissão'], 403);
+            }
+            if (! $project) {
+                $req = $message->contract_request_id ? \App\Models\ContractRequest::find($message->contract_request_id) : null;
+                if (! \App\Support\ClientAccess::canAccessContractRequest($req, $user)) {
+                    return response()->json(['message' => 'Sem permissão'], 403);
+                }
+            }
         }
 
         if ($message->pinned_at) {
@@ -190,7 +203,7 @@ class ProjectCommentController extends Controller
         if (empty($recipients)) return;
 
         $base    = rtrim((string) config('app.frontend_url', config('app.url')), '/');
-        $url     = $base . '/contratos/pipeline?project=' . $project->id . '&tab=comments';
+        $url     = $base . '/contratos/pipeline?project=' . $project->id . '&tab=comentarios';
         $excerpt = \Illuminate\Support\Str::limit((string) ($msg->message ?: '(anexo)'), 500);
         $nome    = $project->name ?: $project->code ?: ('Projeto #' . $project->id);
 
@@ -251,7 +264,8 @@ class ProjectCommentController extends Controller
     {
         $user = auth()->user();
 
-        if ($user->isCliente() && (int) $user->customer_id !== (int) $message->project?->customer_id) {
+        if ($user->isCliente()
+            && ($message->visibility !== 'client' || ! \App\Support\ClientAccess::canAccessProject($message->project, $user))) {
             return response()->json(['message' => 'Sem permissão'], 403);
         }
 

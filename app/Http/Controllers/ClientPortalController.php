@@ -180,6 +180,13 @@ class ClientPortalController extends Controller
     {
         $user = $request->user();
 
+        // Segurança: cliente só enxerga o PRÓPRIO customer (antes recebia a lista de TODOS os clientes).
+        if ($user->isCliente()) {
+            return response()->json(
+                Customer::where('id', (int) $user->customer_id ?: -1)->get(['id', 'name'])
+            );
+        }
+
         if ($user->isCoordenador()) {
             $isSustentacao = $user->coordinator_type === 'sustentacao';
             $customerIds = Project::where(function ($q) use ($user, $isSustentacao) {
@@ -614,7 +621,7 @@ class ClientPortalController extends Controller
     }
 
     /**
-     * Resumo executivo do cliente: tickets abertos no Movidesk, qtd projetos,
+     * Resumo executivo do cliente: tickets (Help Desk do Minutor), qtd projetos,
      * horas contratadas total e saúde dos projetos não-fechados.
      * Substitui a antiga "Visão Executiva" por uma visão minimalista.
      */
@@ -651,38 +658,43 @@ class ClientPortalController extends Controller
             }
         }
 
-        // Tickets em aberto agora (estado atual, qualquer data) — mesma regra de SustentacaoController.
-        $openTicketsBaseQuery = MovideskTicket::where('customer_id', $customerId)
-            ->where(function ($q) {
-                $q->whereIn('base_status', ['New', 'InAttendance'])
-                  ->orWhere(function ($qq) {
-                      $qq->where('base_status', 'Stopped')
-                         ->whereIn('status', ['Pendente Terceiros', 'Pendente TOTVS', 'Agendado']);
-                  });
-            });
-        $openTicketsTotal = (clone $openTicketsBaseQuery)->count();
+        // TICKETS — fonte: Help Desk do Minutor (helpdesk_tickets), que já contém todos os
+        // chamados importados do Movidesk + os novos abertos no Minutor (pós cut-over nada se perde).
+        // Data de ABERTURA: chamado importado do Movidesk tem created_at = hora da importação, então
+        // usa o created_date original (movidesk_tickets, mesmo cliente) quando existir; senão created_at.
+        // Query crua (sem CompanyScope): o filtro é o customer_id do cliente, em qualquer empresa.
+        $hdTickets = fn () => DB::table('helpdesk_tickets as ht')
+            ->leftJoin('movidesk_tickets as mt', function ($j) {
+                $j->on('mt.ticket_id', '=', 'ht.external_ref')
+                  ->on('mt.customer_id', '=', 'ht.customer_id')
+                  ->where('ht.source_system', '=', 'movidesk');
+            })
+            ->where('ht.customer_id', $customerId)
+            ->whereNull('ht.deleted_at');
+        $openedAt = 'COALESCE(mt.created_date, ht.created_at)';
 
-        // Tickets abertos NO MÊS atual — usa created_date (abertura real no
-        // Movidesk). created_at é só a hora do sync e ficava inflado porque
-        // todo ticket sincronizado recentemente tinha created_at no mês corrente,
-        // mesmo sendo de outro cliente que voltou a aparecer no sync.
+        // Tickets em aberto agora (estado atual): status não resolvido e não terminal.
+        $openTicketsTotal = $hdTickets()
+            ->join('helpdesk_statuses as hs', 'hs.id', '=', 'ht.status_id')
+            ->where('hs.is_resolved', false)
+            ->where('hs.is_terminal', false)
+            ->count('ht.id');
+
+        // Tickets abertos NO MÊS atual (data de abertura real).
         $startMonth = now()->startOfMonth();
         $endMonth   = now()->endOfMonth();
-        $openTicketsCurrentMonth = MovideskTicket::where('customer_id', $customerId)
-            ->whereBetween('created_date', [$startMonth, $endMonth])
-            ->count();
+        $openTicketsCurrentMonth = $hdTickets()
+            ->whereRaw("{$openedAt} between ? and ?", [$startMonth, $endMonth])
+            ->count('ht.id');
 
         // Série mensal — últimos 12 meses (inclui o mês atual).
-        // Agrupa projetos contratados pela start_date: quantos projetos foram
-        // iniciados no mês e quantas horas eles totalizam.
         $monthsBack = 11;
         $start12     = now()->startOfMonth()->subMonths($monthsBack);
-        // Tickets abertos por mês (created_date no Movidesk)
-        $rawTickets = MovideskTicket::where('customer_id', $customerId)
-            ->whereNotNull('created_date')
-            ->where('created_date', '>=', $start12)
-            ->selectRaw("TO_CHAR(created_date, 'YYYY-MM') as ym, COUNT(*) as c")
-            ->groupByRaw("TO_CHAR(created_date, 'YYYY-MM')")
+        // Tickets abertos por mês (data de abertura)
+        $rawTickets = $hdTickets()
+            ->whereRaw("{$openedAt} >= ?", [$start12])
+            ->selectRaw("TO_CHAR({$openedAt}, 'YYYY-MM') as ym, COUNT(ht.id) as c")
+            ->groupByRaw("TO_CHAR({$openedAt}, 'YYYY-MM')")
             ->pluck('c', 'ym')->toArray();
 
         // Horas consumidas por mês — soma de effort_minutes APENAS dos projetos
@@ -879,11 +891,11 @@ class ClientPortalController extends Controller
             return response()->json(['message' => 'Projeto não encontrado.'], 404);
         }
 
-        // Cliente só pode ver projetos do próprio customer; admin/coord não-cliente passam.
-        if ($user && method_exists($user, 'isCliente') && $user->isCliente()) {
-            if ((int) $user->customer_id !== (int) $project->customer_id) {
-                return response()->json(['message' => 'Acesso negado.'], 403);
-            }
+        // Cliente: gestor do PRÓPRIO customer OU participante do projeto (convidado / envolvido /
+        // responsável em atividade). Admin/coord não-cliente passam.
+        $isClient = \App\Support\ClientAccess::isClient($user);
+        if ($isClient && ! \App\Support\ClientAccess::canAccessProject($project, $user)) {
+            return response()->json(['message' => 'Acesso negado.'], 403);
         }
 
         // Status macro humano — mapping fixo, NÃO expõe status técnico
@@ -949,6 +961,29 @@ class ClientPortalController extends Controller
             }
         }
 
+        $projectOut = [
+            'id'   => $project->id,
+            'name' => $project->name,
+            'code' => $project->code,
+            'customer' => $project->customer ? [
+                'id'   => $project->customer->id,
+                'name' => $project->customer->name,
+            ] : null,
+        ];
+
+        // Perfil CLIENTE: só status — SEM horas (vendidas/consumidas) e SEM "atualizações
+        // recentes" (que expunham nome do consultor + horas apontadas). health/status_macro/
+        // progresso continuam calculados aqui no servidor (podem usar horas internamente).
+        if ($isClient) {
+            return response()->json([
+                'project'           => $projectOut,
+                'status_macro'      => $statusMacro,
+                'progress_pct'      => $progressPct,
+                'expected_end_date' => $project->expected_end_date?->toDateString(),
+                'health'            => $health,
+            ]);
+        }
+
         // Atualizações macro — só timesheets aprovados + entregas concluídas (sem
         // status_changed técnico). Limitado a 10 itens mais recentes.
         $approvedTimesheets = Timesheet::where('project_id', $project->id)
@@ -986,15 +1021,7 @@ class ClientPortalController extends Controller
         $updates = $updates->sortByDesc('when')->take(10)->values();
 
         return response()->json([
-            'project' => [
-                'id'   => $project->id,
-                'name' => $project->name,
-                'code' => $project->code,
-                'customer' => $project->customer ? [
-                    'id'   => $project->customer->id,
-                    'name' => $project->customer->name,
-                ] : null,
-            ],
+            'project' => $projectOut,
             'status_macro'         => $statusMacro,
             'progress_pct'         => $progressPct,
             'expected_end_date'    => $project->expected_end_date?->toDateString(),

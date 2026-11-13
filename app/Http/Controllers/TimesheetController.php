@@ -227,8 +227,10 @@ class TimesheetController extends Controller
         if ($user->isCliente()) {
             // Cliente vê apenas apontamentos do seu cliente (empresa)
             // Somente status pendente e aprovado — conflitante, rejeitado e ajustes são omitidos
-            $query->where('timesheets.customer_id', $user->customer_id)
+            $query->where('timesheets.customer_id', (int) $user->customer_id ?: -1) // sem customer → nada
                   ->whereIn('timesheets.status', ['pending', 'approved']);
+            // Convidado (não-gestor): só apontamentos dos projetos em que participa.
+            \App\Support\ClientAccess::restrictNonManagerToParticipation($query, $user, 'timesheets.project_id');
         } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
             $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
             $query->whereIn('timesheets.user_id', $partnerUserIds);
@@ -3094,8 +3096,9 @@ class TimesheetController extends Controller
 
         // Visibilidade por perfil — replica regras do index()
         if ($user->isCliente()) {
-            $base->where('timesheets.customer_id', $user->customer_id)
+            $base->where('timesheets.customer_id', (int) $user->customer_id ?: -1)
                  ->whereIn('timesheets.status', ['pending', 'approved']);
+            \App\Support\ClientAccess::restrictNonManagerToParticipation($base, $user, 'timesheets.project_id');
         } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
             $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
             $base->whereIn('timesheets.user_id', $partnerUserIds);
@@ -3215,7 +3218,8 @@ class TimesheetController extends Controller
 
         // Visibilidade por perfil — replica summaryByTicket/index.
         if ($user->isCliente()) {
-            $base->where('timesheets.customer_id', $user->customer_id)->whereIn('timesheets.status', ['pending', 'approved']);
+            $base->where('timesheets.customer_id', (int) $user->customer_id ?: -1)->whereIn('timesheets.status', ['pending', 'approved']);
+            \App\Support\ClientAccess::restrictNonManagerToParticipation($base, $user, 'timesheets.project_id');
         } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
             $base->whereIn('timesheets.user_id', \App\Models\User::where('partner_id', $user->partner_id)->pluck('id'));
         } elseif (!$user->isAdmin() && !$user->hasAccess('hours.view_all')) {

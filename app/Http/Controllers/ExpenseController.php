@@ -252,8 +252,10 @@ class ExpenseController extends Controller
         if ($user->isCliente()) {
             // Cliente vê apenas despesas do seu cliente, somente pendentes e aprovadas
             $query->whereHas('project', function ($q) use ($user) {
-                $q->where('customer_id', $user->customer_id);
+                $q->where('customer_id', (int) $user->customer_id ?: -1); // sem customer → nada
             })->whereNotIn('expenses.status', ['rejected', 'adjustment_requested']);
+            // Convidado (não-gestor): só despesas dos projetos em que participa.
+            \App\Support\ClientAccess::restrictNonManagerToParticipation($query, $user, 'expenses.project_id');
         } elseif ($user->type === 'parceiro_admin' && $request->boolean('team_view') && $user->partner_id) {
             $partnerUserIds = \App\Models\User::where('partner_id', $user->partner_id)->pluck('id');
             $query->whereIn('expenses.user_id', $partnerUserIds);

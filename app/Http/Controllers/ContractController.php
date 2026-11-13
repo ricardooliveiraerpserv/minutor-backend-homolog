@@ -1415,6 +1415,9 @@ class ContractController extends Controller
               ->whereNull('sustentacao_column')
               ->orderBy('kanban_order');
 
+            if ($isCliente && ! $user->customer_id) {
+                $demandQuery->whereRaw('1 = 0'); // cliente sem customer: nada (antes: sem filtro)
+            }
             if ($isCliente && $user->customer_id) {
                 $demandQuery->where('customer_id', $user->customer_id);
                 // Cliente comum (não-gestor) não vê demandas pré-projeto: só enxerga
@@ -1501,13 +1504,12 @@ class ContractController extends Controller
 
         if ($isConsultor) {
             $projectQuery->whereHas('consultants', fn($q) => $q->where('users.id', $user->id));
-        } elseif ($isCliente && $user->customer_id) {
-            $projectQuery->where('customer_id', $user->customer_id);
-            // Cliente comum: só os projetos em que foi convidado (project_client_viewers).
-            // Gestor do cliente enxerga todos os projetos da sua empresa.
-            if (!$user->is_customer_manager) {
-                $projectQuery->whereHas('clientViewers', fn($q) => $q->where('users.id', $user->id));
-            }
+        } elseif ($isCliente) {
+            // Cliente: SÓ projetos do seu customer. Gestor → todos da empresa; convidado → os que
+            // participa: convidado (project_client_viewers) OU envolvido/responsável em atividade
+            // do cronograma (mesma regra do ClientProjectController::participatesInProject).
+            // Cliente sem customer_id → nenhum (ClientAccess::scopeProjects).
+            \App\Support\ClientAccess::scopeProjects($projectQuery, $user);
         } elseif ($user?->isCoordenador()) {
             $projectQuery->where(function ($q) {
                 $q->whereDoesntHave('serviceType')
@@ -1667,6 +1669,9 @@ class ContractController extends Controller
                 })
                 ->whereIn('status', [\App\Models\ContractRequest::STATUS_PENDENTE, \App\Models\ContractRequest::STATUS_EM_ANALISE, \App\Models\ContractRequest::STATUS_APROVADO]);
 
+            if ($isCliente && ! $user->customer_id) {
+                $reqQuery->whereRaw('1 = 0'); // cliente sem customer: nada (antes: sem filtro)
+            }
             if ($isCliente && $user->customer_id) {
                 $reqQuery->where('customer_id', $user->customer_id);
                 // Cliente comum só vê as requisições que ele mesmo abriu OU foi convidado a ver;
@@ -1720,16 +1725,9 @@ class ContractController extends Controller
                 ->whereHas('project', fn($q) => $q->whereNull('parent_project_id'))
                 ->orderByDesc('contributed_at');
 
-            if ($isCliente && $user->customer_id) {
-                $uid = $user->id;
-                $isManager = $user->is_customer_manager;
-                $aporteQuery->whereHas('project', function ($q) use ($user, $uid, $isManager) {
-                    $q->where('customer_id', $user->customer_id);
-                    // Cliente comum só vê aportes dos projetos em que foi convidado.
-                    if (!$isManager) {
-                        $q->whereHas('clientViewers', fn($v) => $v->where('users.id', $uid));
-                    }
-                });
+            if ($isCliente) {
+                // Mesma regra de projetos: customer do cliente; convidado só nos que participa.
+                $aporteQuery->whereHas('project', fn ($q) => \App\Support\ClientAccess::scopeProjects($q, $user));
             }
 
             // FASE 11.7 — proposta agora vive na camada Attachment (HOUR_CONTRIBUTION.proposal).
@@ -1880,6 +1878,18 @@ class ContractController extends Controller
         $toColumn      = $request->input('to_column');
         $coordinatorId = $request->input('coordinator_id');
         $fromColumn    = $this->resolveColumnName($contract);
+
+        // Segurança (cliente): mesmo contrato do seu customer (gestor — middleware client.project)
+        // e só entre as colunas que o FE permite ao cliente. Internos: inalterado.
+        if (auth()->user()?->isCliente()) {
+            if (! \App\Support\ClientAccess::canAccessContract($contract, auth()->user())
+                || $contract->is_aditivo || $contract->project_id || $contract->kanban_status === 'novo_projeto') {
+                return response()->json(['message' => 'Você não pode mover este card.'], 403);
+            }
+            if (($err = $this->denyPipelineMove(auth()->user(), (string) $fromColumn, (string) $toColumn)) !== null) {
+                return $err;
+            }
+        }
 
         // Aditivo: card só transita entre "Novo Contrato" (demanda) e a coluna "Aditivos".
         if ($contract->is_aditivo) {
@@ -2097,7 +2107,8 @@ class ContractController extends Controller
         ]);
 
         $user = auth()->user();
-        if ($user?->isConsultor()) {
+        // Consultor e cliente não movem projetos (FE: getAvailableProjectCols/colCanDrag → nada).
+        if ($user?->isConsultor() || $user?->isCliente()) {
             return response()->json(['message' => 'Sem permissão para mover projetos.'], 403);
         }
 
@@ -2428,12 +2439,56 @@ class ContractController extends Controller
         return response()->json(['ok' => true]);
     }
 
+    /** Colunas de Demanda em que o CLIENTE interage (FE: DEMAND_COLS.clientVisible). */
+    private const CLIENT_DRAG_COLUMNS = ['backlog', 'novo_projeto', 'em_validacao'];
+    /** Colunas em que o CLIENTE pode SOLTAR (clientVisible + clientCanDrop: Em Revisão / Aprovado). */
+    private const CLIENT_DROP_COLUMNS = ['backlog', 'novo_projeto', 'em_validacao', 'em_revisao', 'aprovado'];
+
+    /**
+     * Autorização do MOVE no pipeline Demandas e Projetos — espelha o FE (contratos/pipeline
+     * colCanDrag/colCanDrop/onDragEnd): consultor não move; cliente só arrasta DE colunas [C]
+     * (Backlog, Novo Projeto, Em Validação) PARA colunas [C] ou Em Revisão/Aprovado, e só cards
+     * a que tem acesso. Demais perfis internos: inalterado (sem restrição extra).
+     */
+    private function denyPipelineMove($user, string $fromColumn, string $toColumn): ?JsonResponse
+    {
+        if (! $user) {
+            return response()->json(['message' => 'Não autenticado.'], 401);
+        }
+        if ($user->isConsultor()) {
+            return response()->json(['message' => 'Sem permissão para mover este card.'], 403);
+        }
+        if ($user->isCliente()) {
+            if (! in_array($fromColumn, self::CLIENT_DRAG_COLUMNS, true)
+                || ! in_array($toColumn, self::CLIENT_DROP_COLUMNS, true)) {
+                return response()->json(['message' => 'Você não pode mover este card para esta coluna.'], 403);
+            }
+        }
+        return null;
+    }
+
     public function requestKanbanMove(Request $request, \App\Models\ContractRequest $contractRequest): JsonResponse
     {
         $request->validate(['kanban_column' => 'required|string']);
 
         $fromColumn = $contractRequest->kanban_column ?? 'backlog';
         $toColumn   = $request->input('kanban_column');
+
+        // Segurança: antes não havia autorização nenhuma neste endpoint.
+        $user = $request->user();
+        if ($user?->isCliente()) {
+            // Cliente: requisição do SEU customer e (não-gestor) aberta por ele OU convidado nela.
+            if (! \App\Support\ClientAccess::canAccessContractRequest($contractRequest, $user)) {
+                return response()->json(['message' => 'Sem acesso a esta requisição.'], 403);
+            }
+            // Mesmo bloqueio do FE: decisão "novo projeto" tomada → card não se move.
+            if ($contractRequest->req_decision === 'novo_projeto') {
+                return response()->json(['message' => 'Esta requisição já foi definida e não pode ser movida.'], 403);
+            }
+        }
+        if (($err = $this->denyPipelineMove($user, (string) $fromColumn, (string) $toColumn)) !== null) {
+            return $err;
+        }
 
         // Backstop de integridade: uma requisição NUNCA habita colunas da fase Projeto.
         // A requisição só vira projeto pela definição do coordenador em "Aguardando Início

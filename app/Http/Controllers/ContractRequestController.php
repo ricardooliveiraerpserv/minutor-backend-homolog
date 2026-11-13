@@ -31,6 +31,10 @@ class ContractRequestController extends Controller
             });
 
         // Cliente vê apenas requisições do próprio customer onde foi criador OU está em cópia (watcher).
+        // Cliente SEM customer_id não vê nada (antes caía sem filtro → todas as requisições).
+        if ($user?->isCliente() && ! $user->customer_id) {
+            $query->whereRaw('1 = 0');
+        }
         if ($user?->isCliente() && $user->customer_id) {
             $query->where('customer_id', $user->customer_id)
                 ->where(function ($q) use ($user) {

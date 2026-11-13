@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\Log;
  * Alertas automáticos de consumo de horas por contrato.
  *
  * Regra de consumo = a MESMA da Gestão de Contratos (Project::managementBreakdown):
- * horas aprovadas + pendentes, apuradas pelo tipo do contrato (BH Fixo/Fechado =
- * contrato integral; BH Mensal = acumulado mês a mês). O percentual dispara faixas
+ * horas aprovadas + pendentes, apuradas pelo tipo do contrato (BH Fixo = contrato
+ * integral; BH Mensal = acumulado mês a mês). Contrato FECHADO não recebe alerta. O percentual dispara faixas
  * de 70/80/90/100% e, a partir daí, a cada 10% (110, 120, ...). Quando o consumo
  * salta várias faixas de uma vez, só a MAIOR é enviada.
  *
@@ -101,6 +101,11 @@ class ContractHoursConsumptionAlertService
         $project = $this->loadProject((int) $alert->project_id);
         if (!$project) {
             $alert->update(['status' => 'failed', 'error' => 'Projeto não encontrado.']);
+            return $alert->fresh();
+        }
+
+        if ($project->isClosedContract()) {
+            $alert->update(['status' => 'failed', 'error' => 'Projetos fechados não têm alerta de horas.']);
             return $alert->fresh();
         }
 
@@ -279,12 +284,18 @@ class ContractHoursConsumptionAlertService
         ];
     }
 
-    /** Só contratos com limite de horas (BH Fixo, BH Mensal, Fechado). */
-    private function isAlertable(Project $project): bool
+    /**
+     * Só contratos de BANCO DE HORAS (BH Fixo, BH Mensal). Fechado NÃO tem alerta de horas
+     * (decisão do dono: "Projetos fechados não tem alerta de horas") — vale p/ envio automático,
+     * manual e reenvio.
+     */
+    public function isAlertable(Project $project): bool
     {
+        if ($project->isClosedContract()) {
+            return false;
+        }
         return $project->isBankHoursMonthly()
-            || $project->isBankHoursFixed()
-            || $project->isClosedContract();
+            || $project->isBankHoursFixed();
     }
 
     private function basis(Project $project): string

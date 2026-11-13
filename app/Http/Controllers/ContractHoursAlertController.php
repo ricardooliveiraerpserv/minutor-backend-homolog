@@ -51,7 +51,10 @@ class ContractHoursAlertController extends Controller
         if (!$contract->project_id) {
             return response()->json(['message' => 'Contrato sem projeto vinculado.'], 422);
         }
-        $project = Project::find($contract->project_id);
+        $project = Project::with('contractType')->find($contract->project_id);
+        if ($project && $project->isClosedContract()) {
+            return response()->json(['message' => 'Projetos fechados não têm alerta de horas.'], 422);
+        }
         $alert = $this->service->sendManual($project);
         return response()->json([
             'message' => $alert->status === 'sent' ? 'Alerta enviado.' : 'Não foi possível enviar — verifique os destinatários.',
@@ -79,6 +82,9 @@ class ContractHoursAlertController extends Controller
 
     public function sendManualByProject(Project $project): JsonResponse
     {
+        if ($project->loadMissing('contractType')->isClosedContract()) {
+            return response()->json(['message' => 'Projetos fechados não têm alerta de horas.'], 422);
+        }
         $alert = $this->service->sendManual($project);
         $contract = Contract::where('project_id', $project->id)->first();
         return response()->json([

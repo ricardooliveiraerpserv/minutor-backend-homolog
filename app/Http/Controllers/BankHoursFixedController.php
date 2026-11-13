@@ -655,23 +655,27 @@ class BankHoursFixedController extends Controller
             }
         }
 
-        // BH Fixo individual com "cliente NÃO acompanha apontamento": na visão do CLIENTE,
-        // esconde o detalhe e mostra tudo consumido (saldo 0). Admin/coord seguem vendo o real.
+        // BH Fixo individual com "cliente NÃO acompanha apontamento": na visão do CLIENTE NÃO
+        // devolve consumo/saldo (null) — o FE mostra "Acompanhamento de horas não disponível para
+        // este contrato", igual à Home do cliente. (Antes mostrava tudo consumido / saldo 0.)
+        // Admin/coord seguem vendo o real.
         $isClienteViewer = $user && method_exists($user, 'isCliente') && $user->isCliente();
+        $consumptionHidden = false;
         if ($isClienteViewer && $projectId) {
             $selProj = Project::find($projectId);
             if ($selProj && !$selProj->clientSeesTimesheets()) {
-                $consumedHours       = round($contractedHours + $contributedHours, 2);
-                $hoursBalance        = 0.0;
-                $monthConsumedHours  = 0.0;
-                $exceededHours       = 0.0;
+                $consumptionHidden   = true;
+                $consumedHours       = null;
+                $hoursBalance        = null;
+                $monthConsumedHours  = null;
+                $exceededHours       = null;
                 $amountToPay         = null;
-                $projectsConsumedHours          = $consumedHours;
-                $projectsMonthConsumedHours     = 0.0;
-                $maintenanceConsumedHours       = 0.0;
-                $maintenanceMonthConsumedHours  = 0.0;
-                $architectureConsumedHours      = 0.0;
-                $architectureMonthConsumedHours = 0.0;
+                $projectsConsumedHours          = null;
+                $projectsMonthConsumedHours     = null;
+                $maintenanceConsumedHours       = null;
+                $maintenanceMonthConsumedHours  = null;
+                $architectureConsumedHours      = null;
+                $architectureMonthConsumedHours = null;
             }
         }
 
@@ -698,6 +702,8 @@ class BankHoursFixedController extends Controller
                 'has_support' => $hasSupport,
                 'has_architecture' => $hasArchitecture,
                 'has_children' => $hasChildren,
+                // true → cliente NÃO acompanha apontamento deste contrato (consumo/saldo = null).
+                'consumption_hidden' => $consumptionHidden,
                 'customer_id' => $customerId,
                 'project_id' => $projectId ? (int) $projectId : null
             ]
@@ -876,7 +882,8 @@ class BankHoursFixedController extends Controller
         // selecionado. O filtro de data vale só pros números de consumo, não pra lista.
         // (Removido o filtro por start_date no período que escondia projetos sem início no mês.)
 
-        $projectsData = $projects->map(function($project) {
+        $hideForClient = $user->isCliente();
+        $projectsData = $projects->map(function($project) use ($hideForClient) {
             $totalAvailable = $project->getTotalAvailableHours();
 
             $isClosedContract = $project->contractType &&
@@ -903,7 +910,8 @@ class BankHoursFixedController extends Controller
                 'status_display' => $project->getStatusDisplayAttribute(),
                 'sold_hours' => $project->sold_hours,
                 'hour_contribution' => $project->hour_contribution,  // @deprecated - mantido para compatibilidade
-                'consumed_hours' => $consumed,
+                // Cliente sem "acompanha apontamento"/extrato: NÃO recebe consumo/saldo (null).
+                'consumed_hours' => ($hideForClient && !($project->clientSeesTimesheets() && $project->extrato_visivel_cliente !== false)) ? null : $consumed,
                 // Cliente só vê o consumo/saldo se AMBAS as chaves de visibilidade
                 // estiverem ligadas: "Cliente acompanha apontamentos"
                 // (client_follows_timesheets) E "Cliente vê o Extrato"
@@ -911,7 +919,7 @@ class BankHoursFixedController extends Controller
                 // null/true contam como ligado.
                 'consumo_visivel_cliente' => $project->clientSeesTimesheets()
                     && $project->extrato_visivel_cliente !== false,
-                'hours_balance' => $adjustedBalance,
+                'hours_balance' => ($hideForClient && !($project->clientSeesTimesheets() && $project->extrato_visivel_cliente !== false)) ? null : $adjustedBalance,
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
                 // ✨ Novos campos calculados usando hour_contributions table
@@ -4902,8 +4910,22 @@ class BankHoursFixedController extends Controller
      * Lista timesheets por categoria de service_type (architecture | maintenance).
      * Usado pelos modais "Ver Apontamentos" nas abas correspondentes do dashboard.
      */
+    /**
+     * Cliente + project_id de projeto com "cliente NÃO acompanha apontamento" → não vê
+     * apontamentos/tickets/horas desse projeto (mesma regra do dashboard e do projectTimesheetsModal).
+     */
+    private function clientConsumptionHidden(Request $request): bool
+    {
+        $user = $request->user();
+        $pid  = $request->get('project_id');
+        if (!$user || !method_exists($user, 'isCliente') || !$user->isCliente() || !$pid) return false;
+        $p = Project::find($pid);
+        return $p && !$p->clientSeesTimesheets();
+    }
+
     public function categoryTimesheetsModal(Request $request): JsonResponse
     {
+        if ($this->clientConsumptionHidden($request)) return response()->json(['success' => true, 'data' => []]);
         $user = $request->user();
         $category = (string) $request->get('category', '');
 
@@ -5115,6 +5137,7 @@ class BankHoursFixedController extends Controller
      */
     public function projectTimesheetsPdf(Request $request)
     {
+        if ($this->clientConsumptionHidden($request)) return response()->json(['success' => false, 'message' => 'Acompanhamento de horas não disponível para este contrato.'], 403);
         $user       = $request->user();
         $projectId  = $request->get('project_id');
         // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
@@ -5218,6 +5241,7 @@ class BankHoursFixedController extends Controller
      */
     public function projectTicketSummary(Request $request): JsonResponse
     {
+        if ($this->clientConsumptionHidden($request)) return response()->json(['tickets' => []]);
         $user       = $request->user();
         $projectId  = $request->get('project_id');
         // A2 (IDOR): cliente enxerga SEMPRE o próprio customer_id (ignora o do request); staff usa o request.
@@ -5313,6 +5337,7 @@ class BankHoursFixedController extends Controller
      */
     public function categoryTicketSummary(Request $request): JsonResponse
     {
+        if ($this->clientConsumptionHidden($request)) return response()->json(['tickets' => []]);
         $user = $request->user();
         $category = (string) $request->get('category', 'maintenance');
 

@@ -408,6 +408,11 @@ class MeetingController extends Controller
 
     private function indexNew(Request $request): JsonResponse
     {
+        // Cliente não lista reuniões por origem (devolvia até 300 reuniões de qualquer chamado/projeto,
+        // inclusive de outros clientes). O cliente vê as dele via /help-desk/portal/meetings.
+        if ($request->user()?->isCliente()) {
+            return response()->json(['data' => []]);
+        }
         $q = Meeting::with(['participantRows', 'organizer:id,name'])->orderByDesc('starts_at');
 
         if ($request->filled('origin_type') && $request->filled('origin_id')) {

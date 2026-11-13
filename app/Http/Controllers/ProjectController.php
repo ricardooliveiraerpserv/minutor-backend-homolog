@@ -181,6 +181,7 @@ class ProjectController extends Controller
         if ($codeExact) {
             $excludeId = $request->get('exclude_id');
             $query2 = Project::where('code', $codeExact);
+            \App\Support\ClientAccess::scopeProjects($query2, $request->user());
             if ($excludeId) $query2->where('id', '!=', $excludeId);
             return response()->json(['total' => $query2->exists() ? 1 : 0, 'data' => []]);
         }
@@ -199,6 +200,8 @@ class ProjectController extends Controller
                       ->whereHas('customer', fn ($c) => $c->where('is_bizify_customer', true)->orWhereRaw('UPPER(name) = ?', ['BIZIFY']));
                 }
             }
+            // Segurança: cliente SÓ enxerga projetos do SEU customer (gestor) ou em que participa (convidado).
+            \App\Support\ClientAccess::scopeProjects($q, $request->user());
             if ($search) $q->where(fn($x) => $x->where('name', 'ilike', "%{$search}%")->orWhere('code', 'ilike', "%{$search}%"));
             if ($status === 'active') $q->active();
             elseif ($status === 'open') $q->open();
@@ -284,6 +287,10 @@ class ProjectController extends Controller
         }
 
         $query = Project::with($withRelations);
+
+        // Segurança (perfil cliente): força customer_id = customer do cliente e, p/ convidado,
+        // só projetos em que participa — independente de customer_id/consultant_only enviados.
+        \App\Support\ClientAccess::scopeProjects($query, $request->user(), 'projects.');
 
         // "Meus Projetos" (activity_allocated): id do consultor cujas horas próprias a lista deve
         // mostrar (disponibilizadas/apontadas/saldo DELE, não os totais do projeto). Preenchido só

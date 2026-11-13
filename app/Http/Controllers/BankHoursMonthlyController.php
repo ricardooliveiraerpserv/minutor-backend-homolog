@@ -682,10 +682,29 @@ class BankHoursMonthlyController extends Controller
             $contributionHistory = array_slice($contributionHistory, 0, 50);
         }
 
+        // Mesma regra do BH Fixo / Home do cliente: projeto com "cliente NÃO acompanha
+        // apontamento" → na visão do CLIENTE não devolve consumo/saldo/extrato (null); o FE
+        // mostra "Acompanhamento de horas não disponível para este contrato". Interno: inalterado.
+        $consumptionHidden = false;
+        if ($user->isCliente() && $projectId) {
+            $selProj = Project::find($projectId);
+            if ($selProj && !$selProj->clientSeesTimesheets()) {
+                $consumptionHidden = true;
+                $monthlyStatement = null;
+                $extratoVisivelCliente = false;
+                $consumedHours = $monthConsumedHours = null;
+                $projectsConsumedHours = $projectsMonthConsumedHours = null;
+                $maintenanceConsumedHours = $maintenanceMonthConsumedHours = null;
+                $hoursBalance = $hoursBalanceExcludingCurrentMonth = null;
+                $exceededHours = $amountToPay = null;
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Dados do dashboard obtidos com sucesso',
             'data' => [
+                'consumption_hidden' => $consumptionHidden,
                 'contracted_hours' => $contractedHours,
                 'extrato_visivel_cliente' => $extratoVisivelCliente,
                 'monthly_statement' => $monthlyStatement,
@@ -887,7 +906,9 @@ class BankHoursMonthlyController extends Controller
         // contrato sempre aparecem, independente do mês/período. A data vale só pros
         // números de consumo, não pra lista. (Removido o filtro por start_date.)
 
-        $projectsData = $projects->map(function($project) {
+        $hideForClient = $user->isCliente();
+        $projectsData = $projects->map(function($project) use ($hideForClient) {
+            $visible = $project->clientSeesTimesheets() && $project->extrato_visivel_cliente !== false;
             return [
                 'id' => $project->id,
                 'name' => $project->name,
@@ -902,9 +923,9 @@ class BankHoursMonthlyController extends Controller
                 // (client_follows_timesheets) E "Cliente vê o Extrato"
                 // (extrato_visivel_cliente). Qualquer uma em false → front mostra "—".
                 // null/true contam como ligado.
-                'consumo_visivel_cliente' => $project->clientSeesTimesheets()
-                    && $project->extrato_visivel_cliente !== false,
-                'hours_balance' => round($project->getGeneralHoursBalance(), 2),
+                'consumo_visivel_cliente' => $visible,
+                // Cliente sem visibilidade de consumo NÃO recebe o saldo (antes ia o número real).
+                'hours_balance' => ($hideForClient && !$visible) ? null : round($project->getGeneralHoursBalance(), 2),
                 'start_date' => $project->start_date ? $project->start_date->format('Y-m-d') : null,
                 'parent_project_id' => $project->parent_project_id,
                 // ✨ Novos campos calculados usando hour_contributions table

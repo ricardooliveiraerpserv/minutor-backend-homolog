@@ -69,9 +69,21 @@ class HelpDeskController extends Controller
         return response()->json(['data' => $rows]);
     }
 
-    public function meta(): JsonResponse
+    public function meta(\Illuminate\Http\Request $request): JsonResponse
     {
+        // Multi-empresa: o modal "Novo chamado" recarrega o catálogo (categorias/serviços/filas/
+        // SLA/justificativas/tags) da EMPRESA DO CHAMADO escolhida (?company_id=), não da ativa.
+        // Só empresas que o agente ATENDE. Sem o parâmetro → empresa ativa (comportamento atual).
+        $cid = (int) $request->query('company_id');
+        if ($cid) {
+            abort_unless(app(\App\Services\HelpDeskAccessPolicy::class)->attendsCompany(auth()->user(), $cid), 403, 'Você não atende a empresa selecionada.');
+        }
+        $co = function ($q) use ($cid) {
+            if (! $cid) return $q;
+            return $q->withoutCompanyScope()->where($q->getModel()->getTable() . '.company_id', $cid);
+        };
         return response()->json(['data' => [
+            'company_id' => $cid ?: null, // empresa a que o catálogo abaixo se refere (null = ativa)
             'priorities' => HelpDeskTicket::PRIORITIES,
             'channels'   => HelpDeskTicket::CHANNELS,
             // Status são por EMPRESA (BelongsToCompany). Sem empresa ativa no request, a query
@@ -83,18 +95,20 @@ class HelpDeskController extends Controller
                 if (! empty($cos)) { $q->whereIn('company_id', $cos); }
                 return $q->orderBy('sort_order')->orderBy('id')->get()->unique('key')->values();
             })(),
-            'categories' => HelpDeskCategory::where('active', true)->orderBy('sort_order')->orderBy('name')
+            'categories' => $co(HelpDeskCategory::query())->where('active', true)->orderBy('sort_order')->orderBy('name')
                 ->get(['id', 'parent_id', 'name', 'color', 'default_team_id', 'sla_policy_id']),
-            'teams'      => HelpDeskTeam::where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name', 'color']),
-            'sla_policies' => HelpDeskSlaPolicy::where('active', true)->orderByDesc('is_default')->orderBy('name')->get(['id', 'name', 'is_default']),
+            'teams'      => $co(HelpDeskTeam::query())->where('active', true)->orderBy('sort_order')->orderBy('name')->get(['id', 'name', 'color']),
+            'sla_policies' => $co(HelpDeskSlaPolicy::query())->where('active', true)->orderByDesc('is_default')->orderBy('name')->get(['id', 'name', 'is_default']),
             // Árvore completa (pais + filhos) ativa; o FE monta a hierarquia e desabilita os não-selecionáveis.
-            'services'     => HelpDeskService::where('active', true)
+            'services'     => $co(HelpDeskService::query())->where('active', true)
                 ->when(!app(\App\Services\HelpDeskAccessPolicy::class)->canSeeAllCatalog(auth()->user()),
                     fn ($q) => $q->where('visible_to_agent', true))
                 ->orderBy('sort_order')->orderBy('name')->get(['id', 'parent_id', 'name', 'code', 'selectable_by_agent']),
-            'justifications' => HelpDeskTicketJustification::where('active', true)
+            'justifications' => $co(HelpDeskTicketJustification::query())->where('active', true)
                 ->orderBy('sort_order')->orderBy('name')->get(['id', 'status_id', 'name']),
-            'priority_labels' => ['baixa' => 'Baixa', 'normal' => 'Média', 'alta' => 'Alta', 'urgente' => 'Urgente'],
+            'priority_labels' => HelpDeskTicket::PRIORITY_LABELS,
+            // Catálogo de TAGs (da empresa do chamado) — campo "TAGs" do modal Novo chamado.
+            'tags'       => $co(\App\Models\HelpDeskTag::query())->orderBy('name')->get(['id', 'name', 'color']),
             // Perfil de acesso do agente logado: o que pode informar na abertura + se pode abrir.
             'my_inform'  => app(\App\Services\HelpDeskAccessPolicy::class)->informMap(auth()->user(), ['service', 'category', 'urgency', 'subject', 'tags']),
             'can_open'   => app(\App\Services\HelpDeskAccessPolicy::class)->canOpen(auth()->user()),

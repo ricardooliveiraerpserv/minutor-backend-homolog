@@ -463,7 +463,7 @@ class HelpDeskTriggerEngine
             '{ticket.subject}'                 => (string) $ticket->subject,
             '{ticket.description}'             => self::plainText((string) $ticket->description),
             '{ticket.status}'                  => (string) optional($ticket->status)->label,
-            '{ticket.priority}'                => (string) $ticket->priority,
+            '{ticket.priority}'                => HelpDeskTicket::priorityLabel($ticket->priority), // rótulo ("Média"), não a chave crua
             '{ticket.category}'                => (string) optional($ticket->category)->name,
             '{ticket.service}'                 => (string) optional($ticket->service)->name,
             '{ticket.team}'                    => (string) optional($ticket->team)->name,

@@ -78,8 +78,9 @@ class ClientProjectController extends Controller
         if (!$user || !$user->isCliente()) {
             return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
         }
-        if ((int) $user->customer_id !== (int) $project->customer_id
-            && ! self::participatesInProject($project, (int) $user->id)) {
+        // Segurança: gestor do MESMO customer OU participante (convidado / envolvido / responsável
+        // em atividade) do MESMO customer. Convidado não abre por URL projeto fora do seu menu.
+        if (! \App\Support\ClientAccess::canAccessProject($project, $user)) {
             return response()->json(['message' => 'Você não participa deste projeto.'], 403);
         }
 
@@ -207,14 +208,7 @@ class ClientProjectController extends Controller
     /** O cliente participa do projeto: viewer global OU envolvido/responsável em ≥1 atividade. */
     public static function participatesInProject(Project $project, int $uid): bool
     {
-        if ($project->clientViewers()->where('users.id', $uid)->exists()) return true;
-        return StageDelivery::whereHas('stage', fn ($q) => $q->where('project_id', $project->id))
-            ->where(function ($q) use ($uid) {
-                $q->where(function ($w) use ($uid) {
-                    $w->where('client_involved', true)->where('client_user_id', $uid);
-                })->orWhere('responsible_user_id', $uid);
-            })
-            ->exists();
+        return \App\Support\ClientAccess::participates($project, $uid);
     }
 
     /**
@@ -244,11 +238,9 @@ class ClientProjectController extends Controller
         if (!$user || !$user->isCliente()) {
             return response()->json(['message' => 'Endpoint exclusivo do perfil cliente.'], 403);
         }
-        // Gestor do cliente enxerga todos os projetos da sua empresa.
-        if ($user->is_customer_manager && (int) $user->customer_id === (int) $project->customer_id) {
-            return null;
-        }
-        if (!self::participatesInProject($project, (int) $user->id)) {
+        // Gestor do cliente enxerga todos os projetos da sua empresa; convidado só os que participa
+        // — e NUNCA projeto de outro customer (ClientAccess).
+        if (! \App\Support\ClientAccess::canAccessProject($project, $user)) {
             return response()->json(['message' => 'Você não participa deste projeto.'], 403);
         }
         return null;

@@ -216,7 +216,9 @@ Route::prefix('v1')->group(function () {
     Route::post('/connector/patch-executions/{id}/result', [\App\Http\Controllers\PatchController::class, 'result'])
         ->whereNumber('id')->middleware(['throttle:120,1', 'connector.agent'])->name('connector.patch.result');
 
-    Route::middleware(['auth:sanctum', 'company.context'])->group(function () {
+    // client.project: rede de segurança — cliente só acessa {project}/{projectId} do SEU customer
+    // (gestor) ou em que participa (convidado/envolvido/responsável). Internos passam direto.
+    Route::middleware(['auth:sanctum', 'company.context', 'client.project'])->group(function () {
 
         // 🔐 COFRE DE SENHAS (Vault) — dependência do módulo Ambientes (Prosight).
         Route::prefix('vault')->middleware('permission.or.admin:vault.use')->group(function () {
@@ -507,8 +509,8 @@ Route::prefix('v1')->group(function () {
             $c = \App\Http\Controllers\ClientKanbanController::class;
             Route::get('/assignable-users', [$c, 'assignableUsers'])->name('assignable-users');
             Route::get('/erpserv-users', [$c, 'erpservUsers'])->name('erpserv-users');
-            Route::get('/customers', [$c, 'customersWithUsers'])->name('customers');
-            Route::get('/customers/{customer}/users', [$c, 'customerUsers'])->name('customers.users');
+            Route::get('/customers', [$c, 'customersWithUsers'])->name('customers')->middleware('block.cliente'); // lista TODOS os customers — só agente
+            Route::get('/customers/{customer}/users', [$c, 'customerUsers'])->name('customers.users')->middleware('block.cliente');
             // Quadros
             Route::get('/boards', [$c, 'index'])->name('boards.index');
             Route::post('/boards', [$c, 'storeBoard'])->name('boards.store');
@@ -787,7 +789,7 @@ Route::prefix('v1')->group(function () {
 
         // === DASHBOARDS ===
         // Dashboard de Banco de Horas Fixo - Protegido por permissão dashboards.view
-        Route::middleware('permission.or.admin:dashboards.view')->group(function () {
+        Route::middleware(['permission.or.admin:dashboards.view', 'client.manager'])->group(function () {
             Route::get('/dashboards/bank-hours-fixed', [BankHoursFixedController::class, 'bankHoursFixed'])
                 ->name('dashboards.bank-hours-fixed');
             Route::get('/dashboards/bank-hours-fixed/projects', [BankHoursFixedController::class, 'bankHoursFixedProjects'])
@@ -850,7 +852,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // Dashboard de Banco de Horas Mensais - Protegido por permissão dashboards.view
-        Route::middleware('permission.or.admin:dashboards.view')->group(function () {
+        Route::middleware(['permission.or.admin:dashboards.view', 'client.manager'])->group(function () {
             Route::get('/dashboards/bank-hours-monthly', [BankHoursMonthlyController::class, 'bankHoursMonthly'])
                 ->name('dashboards.bank-hours-monthly');
             Route::get('/dashboards/bank-hours-monthly/projects', [BankHoursMonthlyController::class, 'bankHoursMonthlyProjects'])
@@ -896,7 +898,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // Dashboard de Sustentação On Demand - Protegido por permissão dashboards.view
-        Route::middleware('permission.or.admin:dashboards.view')->group(function () {
+        Route::middleware(['permission.or.admin:dashboards.view', 'client.manager'])->group(function () {
             Route::get('/dashboards/on-demand', [OnDemandController::class, 'onDemand'])
                 ->name('dashboards.on-demand');
             Route::get('/dashboards/on-demand/projects', [OnDemandController::class, 'onDemandProjects'])
@@ -942,7 +944,7 @@ Route::prefix('v1')->group(function () {
         });
 
         // Dashboard de Projetos Fechados - Protegido por permissão dashboards.view
-        Route::middleware('permission.or.admin:dashboards.view')->group(function () {
+        Route::middleware(['permission.or.admin:dashboards.view', 'client.manager'])->group(function () {
             Route::get('/dashboards/fechado', [FechadoController::class, 'fechado'])
                 ->name('dashboards.fechado');
             Route::get('/dashboards/fechado/projects', [FechadoController::class, 'fechadoProjects'])
@@ -964,22 +966,23 @@ Route::prefix('v1')->group(function () {
             Route::patch('/executives/{user}', [ExecutiveController::class, 'toggle'])->name('executives.toggle');
         });
 
-        // 🏢 CLIENT PORTAL
-        Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal');
+        // 🏢 CLIENT PORTAL — telas da EMPRESA: cliente só o GESTOR (client.manager → 403 p/ convidado).
+        // operational-summary (abaixo) segue a regra de participação do projeto (ClientAccess).
+        Route::get('/client/portal', [ClientPortalController::class, 'portal'])->name('client.portal')->middleware('client.manager');
         Route::get('/client/portal/customers', [ClientPortalController::class, 'customers'])->name('client.portal.customers');
-        Route::get('/client/portal/cost-centers', [ClientPortalController::class, 'costCenters'])->name('client.portal.cost-centers');
+        Route::get('/client/portal/cost-centers', [ClientPortalController::class, 'costCenters'])->name('client.portal.cost-centers')->middleware('client.manager');
         // Cliente gerencia os PRÓPRIOS centros de custo (cadastro no menu do portal).
-        Route::get('/client/portal/my-cost-centers', [\App\Http\Controllers\CostCenterController::class, 'myIndex'])->name('client.portal.my-cost-centers.index');
-        Route::post('/client/portal/my-cost-centers', [\App\Http\Controllers\CostCenterController::class, 'myStore'])->name('client.portal.my-cost-centers.store');
-        Route::post('/client/portal/my-cost-centers/import', [\App\Http\Controllers\CostCenterController::class, 'myImport'])->name('client.portal.my-cost-centers.import');
-        Route::get('/client/portal/my-cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('client.portal.my-cost-centers.template');
-        Route::put('/client/portal/my-cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'myUpdate'])->name('client.portal.my-cost-centers.update');
-        Route::delete('/client/portal/my-cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'myDestroy'])->name('client.portal.my-cost-centers.destroy');
+        Route::get('/client/portal/my-cost-centers', [\App\Http\Controllers\CostCenterController::class, 'myIndex'])->name('client.portal.my-cost-centers.index')->middleware('client.manager');
+        Route::post('/client/portal/my-cost-centers', [\App\Http\Controllers\CostCenterController::class, 'myStore'])->name('client.portal.my-cost-centers.store')->middleware('client.manager');
+        Route::post('/client/portal/my-cost-centers/import', [\App\Http\Controllers\CostCenterController::class, 'myImport'])->name('client.portal.my-cost-centers.import')->middleware('client.manager');
+        Route::get('/client/portal/my-cost-centers/template', [\App\Http\Controllers\CostCenterController::class, 'template'])->name('client.portal.my-cost-centers.template')->middleware('client.manager');
+        Route::put('/client/portal/my-cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'myUpdate'])->name('client.portal.my-cost-centers.update')->middleware('client.manager');
+        Route::delete('/client/portal/my-cost-centers/{costCenter}', [\App\Http\Controllers\CostCenterController::class, 'myDestroy'])->name('client.portal.my-cost-centers.destroy')->middleware('client.manager');
         // Cliente distribui o rateio dos PRÓPRIOS projetos.
-        Route::get('/client/portal/my-projects', [\App\Http\Controllers\CostCenterController::class, 'myProjects'])->name('client.portal.my-projects');
-        Route::get('/client/portal/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'myRateio'])->name('client.portal.project-rateio');
-        Route::put('/client/portal/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'mySaveRateio'])->name('client.portal.project-rateio.save');
-        Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary');
+        Route::get('/client/portal/my-projects', [\App\Http\Controllers\CostCenterController::class, 'myProjects'])->name('client.portal.my-projects')->middleware('client.manager');
+        Route::get('/client/portal/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'myRateio'])->name('client.portal.project-rateio')->middleware('client.manager');
+        Route::put('/client/portal/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'mySaveRateio'])->name('client.portal.project-rateio.save')->middleware('client.manager');
+        Route::get('/client/portal/summary', [ClientPortalController::class, 'summary'])->name('client.portal.summary')->middleware('client.manager');
         Route::get('/client/portal/projects/{projectId}/operational-summary', [ClientPortalController::class, 'operationalSummary'])
             ->name('client.portal.project-operational-summary');
 
@@ -1112,29 +1115,29 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('permission.or.admin:projects.view')->group(function () {
             Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
-            Route::get('/projects/ic-summary', [ProjectController::class, 'icSummary'])->name('projects.ic-summary');
-            Route::get('/projects/ic-analytics', [ProjectController::class, 'icAnalytics'])->name('projects.ic-analytics');
-            Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant');
-            Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict');
+            Route::get('/projects/ic-summary', [ProjectController::class, 'icSummary'])->name('projects.ic-summary')->middleware('block.cliente');
+            Route::get('/projects/ic-analytics', [ProjectController::class, 'icAnalytics'])->name('projects.ic-analytics')->middleware('block.cliente');
+            Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant')->middleware('block.cliente');
+            Route::get('/projects/movidesk-integration-conflict', [ProjectController::class, 'movideskIntegrationConflict'])->name('projects.movidesk-conflict')->middleware('block.cliente');
             Route::get('/projects/kanban-column-history', [\App\Http\Controllers\KanbanLogController::class, 'columnHistory'])->name('projects.kanban-column-history'); // ANTES de /projects/{project}
             // Rateio do projeto por centro de custo (% do valor total do projeto).
             Route::get('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'rateio'])->name('projects.rateio');
-            Route::put('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'saveRateio'])->name('projects.rateio.save');
+            Route::put('/projects/{project}/rateio', [\App\Http\Controllers\CostCenterController::class, 'saveRateio'])->name('projects.rateio.save')->middleware('client.manager');
             // Alerta de consumo de horas — painel na Gestão de Contratos (/gestao-projetos), por projeto
             // Rateio de horas — config dos projetos-servidor e seus destinos.
-            Route::get('/rateio-hours/projects',                            [\App\Http\Controllers\RateioHoursController::class, 'index'])->name('rateio-hours.index');
-            Route::get('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'targets'])->name('rateio-hours.targets');
-            Route::put('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'saveTargets'])->name('rateio-hours.targets.save');
-            Route::put('/rateio-hours/projects/{project}/team',             [\App\Http\Controllers\RateioHoursController::class, 'saveTeam'])->name('rateio-hours.team.save');
-            Route::get('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'plans'])->name('rateio-hours.plans');
-            Route::put('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'savePlans'])->name('rateio-hours.plans.save');
-            Route::get('/rateio-hours/projects/{project}/timesheets',       [\App\Http\Controllers\RateioHoursController::class, 'timesheets'])->name('rateio-hours.timesheets');
-            Route::put('/rateio-hours/projects/{project}/timesheets/{timesheet}/override', [\App\Http\Controllers\RateioHoursController::class, 'overrideTimesheet'])->name('rateio-hours.timesheets.override');
-            Route::delete('/rateio-hours/projects/{project}/timesheets/{timesheet}', [\App\Http\Controllers\RateioHoursController::class, 'destroyTimesheet'])->name('rateio-hours.timesheets.destroy');
-            Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index');
-            Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts');
-            Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send');
-            Route::post('/projects/{project}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resendByProject'])->name('projects.hours-alerts.resend');
+            Route::get('/rateio-hours/projects',                            [\App\Http\Controllers\RateioHoursController::class, 'index'])->name('rateio-hours.index')->middleware('block.cliente');
+            Route::get('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'targets'])->name('rateio-hours.targets')->middleware('block.cliente');
+            Route::put('/rateio-hours/projects/{project}/targets',          [\App\Http\Controllers\RateioHoursController::class, 'saveTargets'])->name('rateio-hours.targets.save')->middleware('block.cliente');
+            Route::put('/rateio-hours/projects/{project}/team',             [\App\Http\Controllers\RateioHoursController::class, 'saveTeam'])->name('rateio-hours.team.save')->middleware('block.cliente');
+            Route::get('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'plans'])->name('rateio-hours.plans')->middleware('block.cliente');
+            Route::put('/rateio-hours/projects/{project}/plans',            [\App\Http\Controllers\RateioHoursController::class, 'savePlans'])->name('rateio-hours.plans.save')->middleware('block.cliente');
+            Route::get('/rateio-hours/projects/{project}/timesheets',       [\App\Http\Controllers\RateioHoursController::class, 'timesheets'])->name('rateio-hours.timesheets')->middleware('block.cliente');
+            Route::put('/rateio-hours/projects/{project}/timesheets/{timesheet}/override', [\App\Http\Controllers\RateioHoursController::class, 'overrideTimesheet'])->name('rateio-hours.timesheets.override')->middleware('block.cliente');
+            Route::delete('/rateio-hours/projects/{project}/timesheets/{timesheet}', [\App\Http\Controllers\RateioHoursController::class, 'destroyTimesheet'])->name('rateio-hours.timesheets.destroy')->middleware('block.cliente');
+            Route::get('/projects/{project}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'indexByProject'])->name('projects.hours-alerts.index')->middleware('block.cliente');
+            Route::put('/projects/{project}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContactsByProject'])->name('projects.hours-alerts.contacts')->middleware('block.cliente');
+            Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send')->middleware('block.cliente');
+            Route::post('/projects/{project}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resendByProject'])->name('projects.hours-alerts.resend')->middleware('block.cliente');
             Route::get('/projects/audit', [\App\Http\Controllers\ProjectAuditController::class, 'index'])->name('projects.audit'); // ANTES de /projects/{project}
             Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
@@ -1312,7 +1315,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/timesheet-transfer-rules/by-origin', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'byOrigin']);
         Route::get('/timesheet-transfer-rules/origin-logs', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'originLogs']);
         Route::post('/timesheet-transfer-rules/set-origin', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'setOrigin']);
-        Route::get('/timesheets/{id}/transfer-origin', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'timesheetOrigin'])->whereNumber('id');
+        Route::get('/timesheets/{id}/transfer-origin', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'timesheetOrigin'])->whereNumber('id')->middleware('block.cliente');
         Route::post('/timesheet-transfer-rules', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'store']);
         Route::post('/timesheet-transfer-rules/preview', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'preview']);
         Route::put('/timesheet-transfer-rules/{rule}', [\App\Http\Controllers\TimesheetTransferRuleController::class, 'update'])->whereNumber('rule');
@@ -1327,7 +1330,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/timesheets/reprocess-movidesk', [TimesheetController::class, 'reprocessMovidesk'])->name('timesheets.reprocess-movidesk');
         Route::get('/timesheets/summary-by-ticket', [TimesheetController::class, 'summaryByTicket'])->name('timesheets.summary-by-ticket');
         Route::get('/timesheets/summary-by-project', [TimesheetController::class, 'summaryByProject'])->name('timesheets.summary-by-project');
-        Route::get('/timesheets/atrasos', [TimesheetController::class, 'atrasos'])->name('timesheets.atrasos');
+        Route::get('/timesheets/atrasos', [TimesheetController::class, 'atrasos'])->name('timesheets.atrasos')->middleware('block.cliente'); // sem escopo por cliente
 
         // Saldo inicial de ticket (admin/coord) — soma no histórico do ticket
         Route::get   ('/ticket-initial-balances/lookup', [\App\Http\Controllers\TicketInitialBalanceController::class, 'lookup'])->name('ticket-initial-balances.lookup');
@@ -1514,11 +1517,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/categories',             [\App\Http\Controllers\HelpDeskCategoryController::class, 'store']);
         Route::get('/help-desk/comm-template',  [\App\Http\Controllers\HelpDeskTriggerController::class, 'commTemplate']);
         Route::put('/help-desk/comm-template',  [\App\Http\Controllers\HelpDeskTriggerController::class, 'updateCommTemplate']);
-        Route::get('/help-desk/contacts', [\App\Http\Controllers\HelpDeskTicketController::class, 'searchContacts']);
-        Route::get('/help-desk/requesters', [\App\Http\Controllers\HelpDeskTicketController::class, 'requesters']);
+        Route::get('/help-desk/contacts', [\App\Http\Controllers\HelpDeskTicketController::class, 'searchContacts'])->middleware('block.cliente');
+        Route::get('/help-desk/requesters', [\App\Http\Controllers\HelpDeskTicketController::class, 'requesters'])->middleware('block.cliente');
         Route::get('/help-desk/email-accounts',                      [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'index']);
         Route::post('/help-desk/email-accounts',                     [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'store']);
-        Route::get('/help-desk/email-suggestions', [\App\Http\Controllers\HelpDeskTicketController::class, 'emailSuggestions']);
+        Route::get('/help-desk/email-suggestions', [\App\Http\Controllers\HelpDeskTicketController::class, 'emailSuggestions'])->middleware('block.cliente');
         Route::get('/help-desk/justifications',                      [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'index']);
         Route::post('/help-desk/justifications',                     [\App\Http\Controllers\HelpDeskTicketJustificationController::class, 'store']);
         Route::get('/help-desk/meta',   [\App\Http\Controllers\HelpDeskController::class, 'meta']);
@@ -1601,7 +1604,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/triggers/recipes',     [\App\Http\Controllers\HelpDeskTriggerController::class, 'recipes']);
         Route::put('/help-desk/triggers/{trigger}',   [\App\Http\Controllers\HelpDeskTriggerController::class, 'update']);
         Route::delete('/help-desk/triggers/{trigger}', [\App\Http\Controllers\HelpDeskTriggerController::class, 'destroy']);
-        Route::get('/help-desk/customers/{customer}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'customerContext']);
+        Route::get('/help-desk/customers/{customer}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'customerContext'])->middleware('block.cliente');
         Route::post('/help-desk/email-accounts/{emailAccount}/test', [\App\Http\Controllers\HelpDeskEmailAccountController::class, 'test']);
         Route::get('/help-desk/kb/articles/{article}',   [\App\Http\Controllers\HelpDeskKbArticleController::class, 'show']);
         Route::put('/help-desk/kb/articles/{article}',   [\App\Http\Controllers\HelpDeskKbArticleController::class, 'update']);
@@ -1625,15 +1628,15 @@ Route::prefix('v1')->group(function () {
         Route::get('/help-desk/tickets/{ticket}/apontamento-options', [\App\Http\Controllers\HelpDeskTicketController::class, 'apontamentoOptions']);
         Route::get('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'attachments']);
         Route::post('/help-desk/tickets/{ticket}/attachments', [\App\Http\Controllers\HelpDeskTicketController::class, 'uploadAttachment']);
-        Route::get('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'comments']);
+        Route::get('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'comments'])->middleware('block.cliente');
         Route::post('/help-desk/tickets/{ticket}/comments', [\App\Http\Controllers\HelpDeskTicketController::class, 'addComment']);
         Route::post('/help-desk/tickets/{ticket}/presence', [\App\Http\Controllers\HelpDeskPresenceController::class, 'heartbeat'])->whereNumber('ticket');
         Route::get('/help-desk/tickets/{ticket}/context', [\App\Http\Controllers\HelpDeskTicketController::class, 'context']);
         Route::post('/help-desk/tickets/{ticket}/finalize', [\App\Http\Controllers\HelpDeskTicketController::class, 'finalize']);
         Route::patch('/help-desk/tickets/{ticket}/status', [\App\Http\Controllers\HelpDeskTicketController::class, 'changeStatus']);
         Route::post('/help-desk/tickets/{ticket}/restore-reactivation', [\App\Http\Controllers\HelpDeskTicketController::class, 'restoreReactivation']);
-        Route::get('/help-desk/tickets/{ticket}/timeline', [\App\Http\Controllers\HelpDeskTicketController::class, 'timeline']);
-        Route::get('/help-desk/tickets/{ticket}/timesheets', [\App\Http\Controllers\HelpDeskTicketController::class, 'timesheets']);
+        Route::get('/help-desk/tickets/{ticket}/timeline', [\App\Http\Controllers\HelpDeskTicketController::class, 'timeline'])->middleware('block.cliente');
+        Route::get('/help-desk/tickets/{ticket}/timesheets', [\App\Http\Controllers\HelpDeskTicketController::class, 'timesheets'])->middleware('block.cliente');
         Route::get('/help-desk/kb/articles/{article}/attachments', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'attachments']);
         Route::post('/help-desk/kb/articles/{article}/attachments', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'uploadAttachment']);
         Route::post('/help-desk/kb/articles/{article}/publish', [\App\Http\Controllers\HelpDeskKbArticleController::class, 'publish']);
@@ -1675,7 +1678,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/help-desk/portal/tickets/{ticket}/accept', [\App\Http\Controllers\HelpDeskPortalController::class, 'accept']);
         Route::post('/help-desk/portal/tickets/{ticket}/reject', [\App\Http\Controllers\HelpDeskPortalController::class, 'reject']);
         Route::get('/help-desk/portal/tickets/{ticket}/comments/{comment}/attachments/{attachment}/download', [\App\Http\Controllers\HelpDeskPortalController::class, 'downloadCommentAttachment']);
-        Route::patch('/contracts/{contract}/helpdesk-integration',   [ContractController::class, 'toggleHelpdeskIntegration'])->name('contracts.helpdesk-integration');
+        Route::patch('/contracts/{contract}/helpdesk-integration',   [ContractController::class, 'toggleHelpdeskIntegration'])->name('contracts.helpdesk-integration')->middleware('block.cliente');
         // ===== Central Fontes / Código-Fonte (portado do homolog 2026-09-24) =====
             Route::post('/help-desk/tickets/{ticket}/gmud/packages', [\App\Http\Controllers\GmudPackageController::class, 'store'])->whereNumber('ticket');
             Route::post('/help-desk/tickets/{ticket}/gmud/packages/ensure', [\App\Http\Controllers\GmudPackageController::class, 'ensure'])->whereNumber('ticket');
@@ -1983,8 +1986,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('/partners/{partner}', [PartnerController::class, 'destroy'])->name('partners.destroy');
         });
 
-        // 🏦 BANCO DE HORAS (CONSULTORES)
-        Route::middleware('auth:sanctum')->group(function () {
+        // 🏦 BANCO DE HORAS (CONSULTORES) — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             Route::get('/consultant-hour-bank/consultants', [ConsultantHourBankController::class, 'consultants']);
             Route::get('/consultant-hour-bank/{userId}/range', [ConsultantHourBankController::class, 'range']);
             Route::get('/consultant-hour-bank/{userId}/preview', [ConsultantHourBankController::class, 'preview']);
@@ -1993,8 +1996,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/consultant-hour-bank/{userId}/reopen', [ConsultantHourBankController::class, 'reopen']);
         });
 
-        // 💰 FECHAMENTO ADMINISTRATIVO
-        Route::middleware('auth:sanctum')->group(function () {
+        // 💰 FECHAMENTO ADMINISTRATIVO — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             Route::get('/fechamento',                                  [\App\Http\Controllers\FechamentoController::class, 'index']);
             Route::get('/fechamento/{yearMonth}/producao',             [\App\Http\Controllers\FechamentoController::class, 'producao']);
             Route::get('/fechamento/{yearMonth}/custo',                [\App\Http\Controllers\FechamentoController::class, 'custo']);
@@ -2005,8 +2008,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento/{yearMonth}/reabrir',             [\App\Http\Controllers\FechamentoController::class, 'reabrir']);
         });
 
-        // 📋 FECHAMENTO POR CONTRATO
-        Route::middleware('auth:sanctum')->group(function () {
+        // 📋 FECHAMENTO POR CONTRATO — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             Route::get('/fechamento-contrato', [\App\Http\Controllers\FechamentoContratoController::class, 'index']);
             Route::post('/on-demand/invoiced', [\App\Http\Controllers\OnDemandInvoicedController::class, 'toggle']);
             // Tela gerencial de contratos On Demand + liberação de faturamento por competência.
@@ -2015,8 +2018,8 @@ Route::prefix('v1')->group(function () {
             Route::get('/on-demand/billing-release/history', [\App\Http\Controllers\OnDemandBillingReleaseController::class, 'history']);
         });
 
-        // 🧾 FECHAMENTO CLIENTE
-        Route::middleware('auth:sanctum')->group(function () {
+        // 🧾 FECHAMENTO CLIENTE — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             Route::get('/fechamento-cliente',                                                      [\App\Http\Controllers\FechamentoClienteController::class, 'index']);
             Route::get('/fechamento-cliente/despesas-resumo',                                       [\App\Http\Controllers\FechamentoClienteController::class, 'despesasResumo']);
             Route::get('/fechamento-cliente/apontamentos-geral',                                    [\App\Http\Controllers\FechamentoClienteController::class, 'apontamentosGeral']);
@@ -2035,8 +2038,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-cliente/{customerId}/fechamento-email',                       [\App\Http\Controllers\FechamentoClienteController::class, 'saveFechamentoEmail']);
         });
 
-        // ⏱️ FECHAMENTO DE HORAS EXCEDENTES (BH Mensal / BH Fixo)
-        Route::middleware('auth:sanctum')->group(function () {
+        // ⏱️ FECHAMENTO DE HORAS EXCEDENTES (BH Mensal / BH Fixo) — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             Route::get('/fechamento-excedente',                                        [\App\Http\Controllers\FechamentoExcedenteController::class, 'index']);
             Route::get('/fechamento-excedente/{customerId}/{yearMonth}/report-html',    [\App\Http\Controllers\FechamentoExcedenteController::class, 'reportHtml']);
             Route::get('/fechamento-excedente/{customerId}/{yearMonth}/export-excel',    [\App\Http\Controllers\FechamentoExcedenteController::class, 'exportExcel']);
@@ -2048,8 +2051,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-excedente/{project}/{yearMonth}',                  [\App\Http\Controllers\FechamentoExcedenteController::class, 'salvar']);
         });
 
-        // 🤝 FECHAMENTO PARCEIRO
-        Route::middleware('auth:sanctum')->group(function () {
+        // 🤝 FECHAMENTO PARCEIRO — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             Route::get('/fechamento-parceiro',                                                     [\App\Http\Controllers\FechamentoParceiroController::class, 'index']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/consultores',                 [\App\Http\Controllers\FechamentoParceiroController::class, 'consultores']);
             Route::get('/fechamento-parceiro/{partnerId}/{yearMonth}/despesas',                    [\App\Http\Controllers\FechamentoParceiroController::class, 'despesas']);
@@ -2064,8 +2067,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/fechamento-parceiro/{partnerId}/{yearMonth}/ajustes',                     [\App\Http\Controllers\FechamentoParceiroController::class, 'salvarAjustes']);
         });
 
-        // 👤 FECHAMENTO CONSULTOR
-        Route::middleware('auth:sanctum')->group(function () {
+        // 👤 FECHAMENTO CONSULTOR — interno (cliente barrado)
+        Route::middleware(['auth:sanctum', 'block.cliente'])->group(function () {
             // 💰 Relatórios novos (pagamentos consultores+parceiros; rentabilidade consultor×projeto)
             Route::get('/relatorios/pagamentos/{yearMonth}',                             [\App\Http\Controllers\RelatorioPagamentoController::class, 'pagamentos']);
             Route::get('/relatorios/rentabilidade/clientes/{yearMonth}',                 [\App\Http\Controllers\RelatorioRentabilidadeController::class, 'clientes']);
@@ -2179,10 +2182,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/messages/{message}/attachments/{attachment}/download', [ProjectMessageController::class, 'downloadAttachment'])->name('project-messages.attachment-download');
 
         // 👤 CONTATOS DE CLIENTES
-        Route::get('/customer-contacts',                           [CustomerContactController::class, 'index'])->name('customer-contacts.index');
-        Route::post('/customer-contacts',                          [CustomerContactController::class, 'store'])->name('customer-contacts.store');
-        Route::put('/customer-contacts/{customerContact}',         [CustomerContactController::class, 'update'])->name('customer-contacts.update');
-        Route::delete('/customer-contacts/{customerContact}',      [CustomerContactController::class, 'destroy'])->name('customer-contacts.destroy');
+        Route::get('/customer-contacts',                           [CustomerContactController::class, 'index'])->name('customer-contacts.index')->middleware('block.cliente');
+        Route::post('/customer-contacts',                          [CustomerContactController::class, 'store'])->name('customer-contacts.store')->middleware('block.cliente');
+        Route::put('/customer-contacts/{customerContact}',         [CustomerContactController::class, 'update'])->name('customer-contacts.update')->middleware('block.cliente');
+        Route::delete('/customer-contacts/{customerContact}',      [CustomerContactController::class, 'destroy'])->name('customer-contacts.destroy')->middleware('block.cliente');
 
         // 👤 CONTATOS DE PROJETOS
         Route::get('/projects/{project}/contacts',  [ProjectContactController::class, 'index'])->name('project-contacts.index');
@@ -2212,77 +2215,77 @@ Route::prefix('v1')->group(function () {
         Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');
         Route::get('/contracts/coordinators',                        [ContractController::class, 'coordinators'])->name('contracts.coordinators');
         Route::patch('/contracts/{contract}/kanban-move',            [ContractController::class, 'kanbanMove'])->name('contracts.kanban-move');
-        Route::patch('/contracts/{contract}/sustentacao-move',       [ContractController::class, 'sustentacaoMove'])->name('contracts.sustentacao-move');
+        Route::patch('/contracts/{contract}/sustentacao-move',       [ContractController::class, 'sustentacaoMove'])->name('contracts.sustentacao-move')->middleware('block.cliente');
         Route::patch('/projects/{project}/kanban-move',              [ContractController::class, 'projectMove'])->name('projects.kanban-move');
         Route::get('/contracts/{contract}/kanban-logs',              [\App\Http\Controllers\KanbanLogController::class, 'contractLogs'])->name('contracts.kanban-logs');
         Route::get('/contracts/{contract}/events',                    [ContractController::class, 'events'])->name('contracts.events');
-        Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
-        Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay');
-        Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report');
-        Route::get('/contracts/data-quality/vencimentos',             [ContractController::class, 'dataQualityVencimentos'])->name('contracts.data-quality-vencimentos');
-        Route::get('/contracts/recorrentes',                          [ContractController::class, 'recorrentes'])->name('contracts.recorrentes');
-        Route::post('/contracts/recorrentes/import',                  [ContractController::class, 'importAniversario'])->name('contracts.recorrentes-import');
-        Route::patch('/contracts/{contract}/recorrente',              [ContractController::class, 'updateRecorrente'])->name('contracts.recorrente-update');
+        Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay')->middleware('block.cliente');
+        Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report')->middleware('block.cliente');
+        Route::get('/contracts/data-quality/vencimentos',             [ContractController::class, 'dataQualityVencimentos'])->name('contracts.data-quality-vencimentos')->middleware('block.cliente');
+        Route::get('/contracts/recorrentes',                          [ContractController::class, 'recorrentes'])->name('contracts.recorrentes')->middleware('block.cliente');
+        Route::post('/contracts/recorrentes/import',                  [ContractController::class, 'importAniversario'])->name('contracts.recorrentes-import')->middleware('block.cliente');
+        Route::patch('/contracts/{contract}/recorrente',              [ContractController::class, 'updateRecorrente'])->name('contracts.recorrente-update')->middleware('block.cliente');
         // Reajuste sob demanda (índice IPCA/IGP-M via BCB → prévia → aplicação manual + histórico)
         Route::get('/economic-index',                                 [\App\Http\Controllers\EconomicIndexController::class, 'show'])->name('economic-index.show');
-        Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview');
-        Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment');
+        Route::get('/contracts/{contract}/adjustment-preview',        [ContractController::class, 'adjustmentPreview'])->name('contracts.adjustment-preview')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/apply-adjustment',         [ContractController::class, 'applyAdjustment'])->name('contracts.apply-adjustment')->middleware('block.cliente');
         // Transferência de horas entre contratos do MESMO cliente (grava par de aportes; só admin).
-        Route::get('/contracts/{contract}/transfer-info',             [ContractController::class, 'transferInfo'])->name('contracts.transfer-info');
-        Route::post('/contracts/{contract}/transfer-hours',           [ContractController::class, 'transferHours'])->name('contracts.transfer-hours');
-        Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment');
-        Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment');
+        Route::get('/contracts/{contract}/transfer-info',             [ContractController::class, 'transferInfo'])->name('contracts.transfer-info')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/transfer-hours',           [ContractController::class, 'transferHours'])->name('contracts.transfer-hours')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/renew-no-adjustment',      [ContractController::class, 'renewWithoutAdjustment'])->name('contracts.renew-no-adjustment')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/notify-client-adjustment', [ContractController::class, 'notifyClientAdjustment'])->name('contracts.notify-client-adjustment')->middleware('block.cliente');
         // Dashboard de reajustes (resumo/KPIs + lista priorizada + histórico)
-        Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary');
-        Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list');
+        Route::get('/contracts/reajustes/summary',                    [ContractController::class, 'reajustesSummary'])->name('contracts.reajustes-summary')->middleware('block.cliente');
+        Route::get('/contracts/reajustes',                            [ContractController::class, 'reajustesList'])->name('contracts.reajustes-list')->middleware('block.cliente');
         // Inclusão manual de reajuste (sem contrato) — só rastreio
-        Route::post('/contracts/reajustes/manual',                    [ContractController::class, 'manualReajusteStore'])->name('contracts.reajustes-manual-store');
-        Route::patch('/contracts/reajustes/manual/{manual}',          [ContractController::class, 'manualReajusteUpdate'])->name('contracts.reajustes-manual-update');
-        Route::delete('/contracts/reajustes/manual/{manual}',         [ContractController::class, 'manualReajusteDestroy'])->name('contracts.reajustes-manual-destroy');
+        Route::post('/contracts/reajustes/manual',                    [ContractController::class, 'manualReajusteStore'])->name('contracts.reajustes-manual-store')->middleware('block.cliente');
+        Route::patch('/contracts/reajustes/manual/{manual}',          [ContractController::class, 'manualReajusteUpdate'])->name('contracts.reajustes-manual-update')->middleware('block.cliente');
+        Route::delete('/contracts/reajustes/manual/{manual}',         [ContractController::class, 'manualReajusteDestroy'])->name('contracts.reajustes-manual-destroy')->middleware('block.cliente');
         // Fluxo de reajuste da inclusão manual (preview/aplicar/histórico/notificar/prévia e-mail)
-        Route::get('/contracts/reajustes/manual/{manual}/adjustment-preview',        [ContractController::class, 'manualAdjustmentPreview'])->name('contracts.reajustes-manual-preview');
-        Route::post('/contracts/reajustes/manual/{manual}/apply-adjustment',         [ContractController::class, 'manualApplyAdjustment'])->name('contracts.reajustes-manual-apply');
-        Route::get('/contracts/reajustes/manual/{manual}/value-changes',             [ContractController::class, 'manualValueChanges'])->name('contracts.reajustes-manual-changes');
-        Route::post('/contracts/reajustes/manual/{manual}/notify-client-adjustment', [ContractController::class, 'manualNotify'])->name('contracts.reajustes-manual-notify');
-        Route::get('/contracts/reajustes/manual/{manual}/adjustment-email-preview',  [ContractController::class, 'manualAdjustmentEmailPreview'])->name('contracts.reajustes-manual-email-preview');
-        Route::post('/contracts/reajustes/manual/{manual}/reverse-adjustment',        [ContractController::class, 'manualReverseAdjustment'])->name('contracts.reajustes-manual-reverse');
-        Route::post('/contracts/reajustes/manual/{manual}/resend-adjustment',         [ContractController::class, 'manualResendAdjustment'])->name('contracts.reajustes-manual-resend');
-        Route::get('/contracts/reajustes/manual/{manual}/aviso-preview',              [ContractController::class, 'manualAvisoPreview'])->name('contracts.reajustes-manual-aviso-preview');
-        Route::post('/contracts/reajustes/manual/{manual}/aviso-send',                [ContractController::class, 'manualAvisoSend'])->name('contracts.reajustes-manual-aviso-send');
+        Route::get('/contracts/reajustes/manual/{manual}/adjustment-preview',        [ContractController::class, 'manualAdjustmentPreview'])->name('contracts.reajustes-manual-preview')->middleware('block.cliente');
+        Route::post('/contracts/reajustes/manual/{manual}/apply-adjustment',         [ContractController::class, 'manualApplyAdjustment'])->name('contracts.reajustes-manual-apply')->middleware('block.cliente');
+        Route::get('/contracts/reajustes/manual/{manual}/value-changes',             [ContractController::class, 'manualValueChanges'])->name('contracts.reajustes-manual-changes')->middleware('block.cliente');
+        Route::post('/contracts/reajustes/manual/{manual}/notify-client-adjustment', [ContractController::class, 'manualNotify'])->name('contracts.reajustes-manual-notify')->middleware('block.cliente');
+        Route::get('/contracts/reajustes/manual/{manual}/adjustment-email-preview',  [ContractController::class, 'manualAdjustmentEmailPreview'])->name('contracts.reajustes-manual-email-preview')->middleware('block.cliente');
+        Route::post('/contracts/reajustes/manual/{manual}/reverse-adjustment',        [ContractController::class, 'manualReverseAdjustment'])->name('contracts.reajustes-manual-reverse')->middleware('block.cliente');
+        Route::post('/contracts/reajustes/manual/{manual}/resend-adjustment',         [ContractController::class, 'manualResendAdjustment'])->name('contracts.reajustes-manual-resend')->middleware('block.cliente');
+        Route::get('/contracts/reajustes/manual/{manual}/aviso-preview',              [ContractController::class, 'manualAvisoPreview'])->name('contracts.reajustes-manual-aviso-preview')->middleware('block.cliente');
+        Route::post('/contracts/reajustes/manual/{manual}/aviso-send',                [ContractController::class, 'manualAvisoSend'])->name('contracts.reajustes-manual-aviso-send')->middleware('block.cliente');
         // Prévia do e-mail de reajuste (contrato) + estorno + reenvio
-        Route::get('/contracts/{contract}/adjustment-email-preview',  [ContractController::class, 'contractAdjustmentEmailPreview'])->name('contracts.adjustment-email-preview');
-        Route::post('/contracts/{contract}/reverse-adjustment',       [ContractController::class, 'reverseAdjustment'])->name('contracts.reverse-adjustment');
-        Route::post('/contracts/{contract}/resend-adjustment',        [ContractController::class, 'resendAdjustment'])->name('contracts.resend-adjustment');
-        Route::get('/contracts/{contract}/aviso-preview',             [ContractController::class, 'contractAvisoPreview'])->name('contracts.aviso-preview');
-        Route::post('/contracts/{contract}/aviso-send',               [ContractController::class, 'contractAvisoSend'])->name('contracts.aviso-send');
-        Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes');
+        Route::get('/contracts/{contract}/adjustment-email-preview',  [ContractController::class, 'contractAdjustmentEmailPreview'])->name('contracts.adjustment-email-preview')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/reverse-adjustment',       [ContractController::class, 'reverseAdjustment'])->name('contracts.reverse-adjustment')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/resend-adjustment',        [ContractController::class, 'resendAdjustment'])->name('contracts.resend-adjustment')->middleware('block.cliente');
+        Route::get('/contracts/{contract}/aviso-preview',             [ContractController::class, 'contractAvisoPreview'])->name('contracts.aviso-preview')->middleware('block.cliente');
+        Route::post('/contracts/{contract}/aviso-send',               [ContractController::class, 'contractAvisoSend'])->name('contracts.aviso-send')->middleware('block.cliente');
+        Route::get('/contracts/{contract}/value-changes',             [ContractController::class, 'valueChanges'])->name('contracts.value-changes')->middleware('block.cliente');
         Route::get('/projects/{project}/kanban-logs',                [\App\Http\Controllers\KanbanLogController::class, 'projectLogs'])->name('projects.kanban-logs');
         Route::get('/contract-requests/{contractRequest}/kanban-logs', [\App\Http\Controllers\KanbanLogController::class, 'requestLogs'])->name('contract-requests.kanban-logs');
 
         Route::prefix('contracts')->group(function () {
-            Route::get('/',                                         [ContractController::class, 'index'])->name('contracts.index');
-            Route::post('/',                                        [ContractController::class, 'store'])->name('contracts.store');
+            Route::get('/',                                         [ContractController::class, 'index'])->name('contracts.index')->middleware('block.cliente');
+            Route::post('/',                                        [ContractController::class, 'store'])->name('contracts.store')->middleware('block.cliente');
             // Aditivo (antes do /{contract} pra não casar 'aditivo' como id)
-            Route::get('/aditivo/eligible-projects',               [ContractController::class, 'aditivoEligibleProjects'])->name('contracts.aditivo.eligible');
-            Route::post('/aditivo',                                [ContractController::class, 'storeAditivo'])->name('contracts.aditivo.store');
-            Route::put('/aditivo/{contract}',                      [ContractController::class, 'updateAditivo'])->name('contracts.aditivo.update');
-            Route::get('/deletion-logs',                           [ContractController::class, 'deletionLogs'])->name('contracts.deletion-logs');
+            Route::get('/aditivo/eligible-projects',               [ContractController::class, 'aditivoEligibleProjects'])->name('contracts.aditivo.eligible')->middleware('block.cliente');
+            Route::post('/aditivo',                                [ContractController::class, 'storeAditivo'])->name('contracts.aditivo.store')->middleware('block.cliente');
+            Route::put('/aditivo/{contract}',                      [ContractController::class, 'updateAditivo'])->name('contracts.aditivo.update')->middleware('block.cliente');
+            Route::get('/deletion-logs',                           [ContractController::class, 'deletionLogs'])->name('contracts.deletion-logs')->middleware('block.cliente');
             // Alerta de consumo de horas — config geral (antes de /{contract} pra não casar como id)
-            Route::get('/hours-alerts/settings',                   [\App\Http\Controllers\ContractHoursAlertController::class, 'settings'])->name('contracts.hours-alerts.settings');
-            Route::put('/hours-alerts/settings',                   [\App\Http\Controllers\ContractHoursAlertController::class, 'updateSettings'])->name('contracts.hours-alerts.settings.update');
+            Route::get('/hours-alerts/settings',                   [\App\Http\Controllers\ContractHoursAlertController::class, 'settings'])->name('contracts.hours-alerts.settings')->middleware('block.cliente');
+            Route::put('/hours-alerts/settings',                   [\App\Http\Controllers\ContractHoursAlertController::class, 'updateSettings'])->name('contracts.hours-alerts.settings.update')->middleware('block.cliente');
             Route::get('/{contract}',                              [ContractController::class, 'show'])->name('contracts.show');
-            Route::put('/{contract}',                              [ContractController::class, 'update'])->name('contracts.update');
-            Route::delete('/{contract}',                           [ContractController::class, 'destroy'])->name('contracts.destroy');
-            Route::patch('/{contract}/status',                     [ContractController::class, 'updateStatus'])->name('contracts.update-status');
-            Route::post('/{contract}/generate-project',            [ContractController::class, 'generateProject'])->name('contracts.generate-project');
-            Route::post('/{contract}/attachments',                 [ContractController::class, 'uploadAttachment'])->name('contracts.upload-attachment');
+            Route::put('/{contract}',                              [ContractController::class, 'update'])->name('contracts.update')->middleware('block.cliente');
+            Route::delete('/{contract}',                           [ContractController::class, 'destroy'])->name('contracts.destroy')->middleware('block.cliente');
+            Route::patch('/{contract}/status',                     [ContractController::class, 'updateStatus'])->name('contracts.update-status')->middleware('block.cliente');
+            Route::post('/{contract}/generate-project',            [ContractController::class, 'generateProject'])->name('contracts.generate-project')->middleware('block.cliente');
+            Route::post('/{contract}/attachments',                 [ContractController::class, 'uploadAttachment'])->name('contracts.upload-attachment')->middleware('block.cliente');
             Route::get('/{contract}/attachments/{attachment}',     [ContractController::class, 'downloadAttachment'])->name('contracts.download-attachment');
-            Route::delete('/{contract}/attachments/{attachment}',  [ContractController::class, 'deleteAttachment'])->name('contracts.delete-attachment');
+            Route::delete('/{contract}/attachments/{attachment}',  [ContractController::class, 'deleteAttachment'])->name('contracts.delete-attachment')->middleware('block.cliente');
             // Alerta de consumo de horas — histórico + reenvio manual por contrato
-            Route::get('/{contract}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'index'])->name('contracts.hours-alerts.index');
-            Route::post('/{contract}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resend'])->name('contracts.hours-alerts.resend');
-            Route::put('/{contract}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContacts'])->name('contracts.hours-alerts.contacts');
-            Route::post('/{contract}/hours-alerts/send',           [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManual'])->name('contracts.hours-alerts.send');
+            Route::get('/{contract}/hours-alerts',                 [\App\Http\Controllers\ContractHoursAlertController::class, 'index'])->name('contracts.hours-alerts.index')->middleware('block.cliente');
+            Route::post('/{contract}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resend'])->name('contracts.hours-alerts.resend')->middleware('block.cliente');
+            Route::put('/{contract}/hours-alerts/contacts',        [\App\Http\Controllers\ContractHoursAlertController::class, 'setContacts'])->name('contracts.hours-alerts.contacts')->middleware('block.cliente');
+            Route::post('/{contract}/hours-alerts/send',           [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManual'])->name('contracts.hours-alerts.send')->middleware('block.cliente');
         });
 
         // 📋 REQUISIÇÕES DE CONTRATO (clientes enviam necessidades)
@@ -2293,7 +2296,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/contract-requests/contact-suggestions',  [\App\Http\Controllers\ContractRequestController::class, 'contactSuggestions'])->name('contract-requests.contact-suggestions');
         Route::get('/contract-requests/{contractRequest}',    [\App\Http\Controllers\ContractRequestController::class, 'show'])->name('contract-requests.show');
         Route::delete('/contract-requests/{contractRequest}', [\App\Http\Controllers\ContractRequestController::class, 'destroy'])->name('contract-requests.destroy');
-        Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review');
+        Route::patch('/contract-requests/{contractRequest}/review', [\App\Http\Controllers\ContractRequestController::class, 'review'])->name('contract-requests.review')->middleware('block.cliente');
         Route::patch('/contract-requests/{contractRequest}/kanban-move', [\App\Http\Controllers\ContractController::class, 'requestKanbanMove'])->name('contract-requests.kanban-move');
         Route::post('/contract-requests/{contractRequest}/plan-decision', [\App\Http\Controllers\ContractController::class, 'requestPlanDecision'])->name('contract-requests.plan-decision');
         Route::post('/contract-requests/{contractRequest}/finalize', [\App\Http\Controllers\ContractController::class, 'requestFinalize'])->name('contract-requests.finalize');
