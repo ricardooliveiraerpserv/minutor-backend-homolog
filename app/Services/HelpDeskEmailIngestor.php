@@ -155,7 +155,13 @@ class HelpDeskEmailIngestor
         // Janela "importar somente a partir de".
         if (!empty($settings['import_from'])) {
             try {
-                if ($receivedAt->lt(Carbon::parse($settings['import_from'])->startOfDay())) {
+                // Aceita data (Y-m-d → início do dia) ou data+hora (Y-m-d\TH:i, corte exato p/ virada
+                // de caixa — ex.: go-live, e-mails anteriores já viraram ticket no Movidesk). Horário
+                // digitado em Brasília (servidor roda em UTC).
+                $raw = (string) $settings['import_from'];
+                $cut = Carbon::parse($raw, 'America/Sao_Paulo');
+                if (!preg_match('/\d{1,2}:\d{2}/', $raw)) $cut = $cut->startOfDay();
+                if ($receivedAt->lt($cut->utc())) {
                     $this->ledger($acc, $messageId, $fromEmail, $subject, 'ignored', 'antes_de_import_from', $receivedAt, $sum);
                     return;
                 }
