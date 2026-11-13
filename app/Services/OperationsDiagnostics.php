@@ -73,7 +73,7 @@ class OperationsDiagnostics
         foreach (collect($b['filas'] ?? []) as $f) {
             if (($f['aguardando'] ?? 0) > 0 && ($f['parada_min'] ?? 0) >= self::FILA_PARADA_MIN) {
                 $out[] = $this->item('warning', 'fila_parada',
-                    "Fila {$f['nome']} parada há {$f['parada_min']} min.",
+                    (($f['team_id'] ?? null) ? "Fila {$f['nome']} parada há " : 'Chamados sem fila aguardando há ').self::fmtDur((int) $f['parada_min']).'.',
                     ['kind' => 'open_queue', 'team_id' => $f['team_id'], 'label' => 'Entrar na fila']);
             }
         }
@@ -84,7 +84,7 @@ class OperationsDiagnostics
             $min = (int) Carbon::parse($s['ultimo_evento'])->diffInMinutes($now);
             if ($min >= self::SESSAO_ABANDONO_MIN) {
                 $out[] = $this->item('warning', 'sessao_abandonada',
-                    "Sessão de {$s['nome']} parada há {$min} min.",
+                    "Sessão de {$s['nome']} parada há ".self::fmtDur($min).'.',
                     ['kind' => 'open_tickets', 'query' => ['assignee_id' => $s['user_id']], 'label' => 'Ver chamados']);
             }
         }
@@ -147,5 +147,18 @@ class OperationsDiagnostics
     private function frase(string $severity, string $message, ?array $action): array
     {
         return ['severity' => $severity, 'message' => $message, 'action' => $action];
+    }
+
+    /** Formata minutos como "45 min", "3h 20min", "2 dias 4h", "99 dias". */
+    public static function fmtDur(int $min): string
+    {
+        if ($min < 60) return "{$min} min";
+        if ($min < 1440) {
+            $h = intdiv($min, 60); $m = $min % 60;
+            return $m ? "{$h}h {$m}min" : "{$h}h";
+        }
+        $d = intdiv($min, 1440); $h = intdiv($min % 1440, 60);
+        $dl = $d === 1 ? '1 dia' : "{$d} dias";
+        return ($h && $d < 7) ? "{$dl} {$h}h" : $dl;
     }
 }
