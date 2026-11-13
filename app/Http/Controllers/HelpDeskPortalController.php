@@ -359,12 +359,16 @@ class HelpDeskPortalController extends Controller
         $portalCustomer = \App\Models\Customer::find($cid);
         if ($portalCustomer && $portalCustomer->migrated_to_conecta_at && $portalCustomer->conecta_ticket_log_only) {
             $ref = 'portal-' . $cid . '-' . $request->user()->id . '-' . uniqid();
+            // Número do chamado na sequência da empresa → enviado à Conecta (vira o ticket_number lá)
+            // e devolvido ao cliente na confirmação, para ele saber qual é o seu chamado.
+            $numero = \App\Services\HelpDeskTicketNumber::next($companyId);
             $payload = [
                 'customer_cgc'  => $portalCustomer->cgc,
                 'customer_name' => $portalCustomer->name,
                 'ticket' => [
                     'source_system' => 'erpserv_portal',
                     'external_ref'  => $ref,
+                    'ticket_number' => $numero,
                     'subject'       => (string) ($v['subject'] ?? ''),
                     'description'   => (string) ($v['description'] ?? ''),
                     'priority'      => $v['priority'] ?? 'normal',
@@ -378,6 +382,7 @@ class HelpDeskPortalController extends Controller
                 'data'              => null,
                 'migrated'          => true,
                 'conecta_ticket_id' => $log->conecta_ticket_id,
+                'numero'            => $numero,
                 'message'           => 'Seu chamado foi registrado no atendimento (Conecta).',
             ], 201);
         }
