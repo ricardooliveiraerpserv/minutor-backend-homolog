@@ -206,7 +206,7 @@ class MicrosoftCalendarService
     {
         try {
             // Reunião do Teams com muitos convidados pode levar > 15s no Graph (cria o onlineMeeting
-            // + dispara os convites). 60s; o transactionId do payload evita duplicar ao tentar de novo.
+            // + dispara os convites). 60s.
             $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout(60)
                 ->withHeaders(['Prefer' => 'outlook.timezone="America/Sao_Paulo"'])
                 ->post(self::GRAPH_BASE . '/me/events', $payload);
@@ -222,6 +222,22 @@ class MicrosoftCalendarService
             self::$lastError = ['status' => 0, 'code' => 'exception', 'message' => mb_substr($e->getMessage(), 0, 400)];
             \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph createEvent exceção', self::$lastError);
             return null;
+        }
+    }
+
+    /** Diagnóstico: provedores de reunião online permitidos no calendário da conta (ex.: teamsForBusiness). */
+    public static function calendarTeamsInfo(string $accessToken): ?array
+    {
+        try {
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout(15)
+                ->get(self::GRAPH_BASE . '/me/calendar', ['$select' => 'allowedOnlineMeetingProviders,defaultOnlineMeetingProvider,owner']);
+            if (!$r->successful()) return ['status' => $r->status(), 'code' => data_get($r->json(), 'error.code')];
+            return [
+                'allowed' => $r->json('allowedOnlineMeetingProviders'),
+                'default' => $r->json('defaultOnlineMeetingProvider'),
+            ];
+        } catch (\Throwable $e) {
+            return ['status' => 0, 'code' => 'exception'];
         }
     }
 

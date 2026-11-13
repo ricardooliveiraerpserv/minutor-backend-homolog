@@ -58,6 +58,7 @@ class TeamsMeetingProvider implements MeetingProvider
                     'attendees' => count($payload['attendees']),
                     'body_kb'   => (int) ceil(strlen($payload['body']['content'] ?? '') / 1024),
                     'scopes' => MicrosoftCalendarService::tokenScopes($token), // permissões da conexão do organizador
+                    'calendar' => MicrosoftCalendarService::calendarTeamsInfo($token), // provedores de reunião online da caixa
                 ]];
             }
             $extra['first_graph'] = $firstError;
@@ -80,7 +81,6 @@ class TeamsMeetingProvider implements MeetingProvider
             'isOnlineMeeting' => true,
             'onlineMeetingProvider' => 'teamsForBusiness',
             'allowNewTimeProposals' => false,
-            'transactionId' => substr(($payload['transactionId'] ?? 'minutor-') . '-2s', 0, 40),
         ];
         $ev = MicrosoftCalendarService::createEvent($token, $min);
         if (!$ev || empty($ev['id'])) return [null, []];
@@ -161,9 +161,6 @@ class TeamsMeetingProvider implements MeetingProvider
             'isOnlineMeeting' => true,
             'onlineMeetingProvider' => 'teamsForBusiness',
             'allowNewTimeProposals' => false,
-            // Idempotência: mesma reunião (organizador+assunto+início) não vira 2 eventos se a 1ª
-            // chamada estourar o tempo e o usuário tentar de novo.
-            'transactionId' => 'minutor-' . substr(sha1(($this->actingUserId($meeting) ?? 0) . '|' . $meeting->title . '|' . Carbon::parse($meeting->starts_at)->toIso8601String()), 0, 32),
         ];
     }
 

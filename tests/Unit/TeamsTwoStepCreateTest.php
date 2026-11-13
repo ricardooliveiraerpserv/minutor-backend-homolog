@@ -16,7 +16,7 @@ class TeamsTwoStepCreateTest extends TestCase
             'graph.microsoft.com/v1.0/me/events/*' => Http::response(['id' => 'E1', 'onlineMeeting' => ['joinUrl' => 'https://teams/j']], 200),
             'graph.microsoft.com/v1.0/me/events' => Http::response(['id' => 'E1', 'onlineMeeting' => ['joinUrl' => 'https://teams/j']], 201),
         ]);
-        $payload = ['subject' => 'R', 'start' => [], 'end' => [], 'transactionId' => 'minutor-abc',
+        $payload = ['subject' => 'R', 'start' => [], 'end' => [], 
             'attendees' => [['emailAddress' => ['address' => 'a@x.com'], 'type' => 'required']],
             'body' => ['contentType' => 'HTML', 'content' => '<p>oi</p>']];
         $m = new \ReflectionMethod(TeamsMeetingProvider::class, 'createInTwoSteps');
