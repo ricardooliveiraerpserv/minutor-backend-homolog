@@ -158,6 +158,11 @@ class StageDeliveryController extends Controller
             'extra_clients.*.email'        => 'nullable|email|max:180',
             'extra_clients.*.name'         => 'nullable|string|max:180',
         ]);
+        // "Aguardando cliente" = pedido de aprovação ao cliente: só via request-approval (mensagem
+        // obrigatória + e-mail). Mudar o status direto deixava o cliente sem aviso e sem contexto.
+        if (($data['status'] ?? null) === StageDelivery::STATUS_WAITING_CLIENT && $delivery->status !== StageDelivery::STATUS_WAITING_CLIENT) {
+            return response()->json(['message' => 'Para colocar em "Aguardando cliente", use "Solicitar aprovação do cliente" (mensagem ao cliente obrigatória).'], 422);
+        }
 
         // Guard contra ciclo: atividade não pode depender de si mesma
         if (array_key_exists('depends_on_delivery_id', $data)
@@ -263,6 +268,11 @@ class StageDeliveryController extends Controller
             'sibling_ids'   => 'sometimes|array',
             'sibling_ids.*' => 'integer|exists:stage_deliveries,id',
         ]);
+        // "Aguardando cliente" = pedido de aprovação ao cliente: só via request-approval (mensagem
+        // obrigatória + e-mail). Mudar o status direto deixava o cliente sem aviso e sem contexto.
+        if (($data['status'] ?? null) === StageDelivery::STATUS_WAITING_CLIENT && $delivery->status !== StageDelivery::STATUS_WAITING_CLIENT) {
+            return response()->json(['message' => 'Para colocar em "Aguardando cliente", use "Solicitar aprovação do cliente" (mensagem ao cliente obrigatória).'], 422);
+        }
 
         // Bloqueio operacional: predecessor FS pending impede sair de backlog (ADR 0009 appendix)
         $movingOutOfBacklog = $delivery->status === StageDelivery::STATUS_BACKLOG

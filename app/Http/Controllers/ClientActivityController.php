@@ -45,6 +45,37 @@ class ClientActivityController extends Controller
         return response()->json(['items' => $items]);
     }
 
+    /**
+     * Atividades que aguardam a aprovação DESTE cliente (todas as do seu customer em que ele é
+     * aprovador — mesma regra do Aprovar). Usado no aviso da Home e em Demandas e Projetos.
+     */
+    public function pendingApprovals(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user || !$user->isCliente() || !$user->customer_id) {
+            return response()->json(['items' => []]);
+        }
+        $uid = (int) $user->id;
+        $items = StageDelivery::query()
+            ->where('status', StageDelivery::STATUS_WAITING_CLIENT)
+            ->where('approval_status', StageDelivery::APPROVAL_PENDING)
+            ->whereHas('stage.project', fn ($q) => $q->where('customer_id', $user->customer_id))
+            ->with(['stage:id,project_id,name', 'stage.project:id,name,code,customer_id'])
+            ->orderBy('approval_requested_at')
+            ->get()
+            ->filter(fn ($d) => $d->stage?->project && ClientProjectController::canApprove($d, $uid, $d->stage->project))
+            ->map(fn ($d) => [
+                'id'           => $d->id,
+                'title'        => $d->title,
+                'project_id'   => $d->stage->project->id,
+                'project_name' => $d->stage->project->name,
+                'project_code' => $d->stage->project->code,
+                'requested_at' => $d->approval_requested_at?->toIso8601String(),
+            ])->values();
+
+        return response()->json(['items' => $items]);
+    }
+
     public function show(StageDelivery $delivery, Request $request): JsonResponse
     {
         if (($err = $this->ensureAccess($delivery, $request)) !== null) return $err;

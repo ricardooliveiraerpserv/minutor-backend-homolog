@@ -1190,6 +1190,7 @@ Route::prefix('v1')->group(function () {
         // ══════════════════════════════════════════════════════════════════
 
         // Cronograma: visão do cliente (cliente envolvido em atividade pontual / visão do projeto em dias).
+        Route::get('/client/pending-approvals', [\App\Http\Controllers\ClientActivityController::class, 'pendingApprovals'])->name('client.pending-approvals');
         Route::get('/client/activities', [\App\Http\Controllers\ClientActivityController::class, 'index'])->name('client.activities.index');
         Route::get('/client/activities/{delivery}', [\App\Http\Controllers\ClientActivityController::class, 'show'])->name('client.activities.show');
         Route::get('/client/activities/{delivery}/timeline', [\App\Http\Controllers\ClientActivityController::class, 'timeline'])->name('client.activities.timeline');
