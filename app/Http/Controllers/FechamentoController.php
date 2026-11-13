@@ -325,6 +325,22 @@ class FechamentoController extends Controller
 
     // ─── Validar ─────────────────────────────────────────────────────────────
 
+    /**
+     * Pendências que IMPEDEM o fechamento (decisão do Ricardo 12/11/2026: opção B — bloquear).
+     * Apontamentos e despesas pendentes ou com ajuste solicitado na competência.
+     * @return array{0:int,1:int} [apontamentos, despesas]
+     */
+    public function pendenciasFechamento(string $yearMonth): array
+    {
+        [$from, $to] = $this->period($yearMonth);
+        $ts = Timesheet::whereBetween('date', [$from, $to])
+            ->whereIn('status', [Timesheet::STATUS_PENDING, 'adjustment_requested'])
+            ->whereNull('deleted_at')->count();
+        $ex = Expense::whereBetween('expense_date', [$from, $to])
+            ->whereIn('status', ['pending', 'adjustment_requested'])->count();
+        return [$ts, $ex];
+    }
+
     public function validar(string $yearMonth): JsonResponse
     {
         try {
@@ -338,45 +354,31 @@ class FechamentoController extends Controller
             return response()->json(['pode_fechar' => false, 'ja_fechado' => true, 'alertas' => []]);
         }
 
-        [$from, $to] = $this->period($yearMonth);
-
         try {
-            $apontamentosPendentes = Timesheet::whereBetween('date', [$from, $to])
-                ->where('status', Timesheet::STATUS_PENDING)
-                ->whereNull('deleted_at')
-                ->count();
+            [$apontamentosPendentes, $despesasPendentes] = $this->pendenciasFechamento($yearMonth);
         } catch (\Throwable $e) {
-            \Log::error('validar: Timesheet falhou', ['error' => $e->getMessage()]);
-            $apontamentosPendentes = 0;
-        }
-
-        try {
-            $despesasPendentes = Expense::whereBetween('expense_date', [$from, $to])
-                ->where('status', 'pending')
-                ->count();
-        } catch (\Throwable $e) {
-            \Log::error('validar: Expense falhou', ['error' => $e->getMessage()]);
-            $despesasPendentes = 0;
+            \Log::error('validar: pendências falharam', ['error' => $e->getMessage()]);
+            [$apontamentosPendentes, $despesasPendentes] = [0, 0];
         }
 
         $alertas = [];
         if ($apontamentosPendentes > 0) {
             $alertas[] = [
-                'tipo'      => 'warning',
-                'mensagem'  => "{$apontamentosPendentes} apontamento(s) pendente(s) — aprovações continuam liberadas após o fechamento",
-                'link_path' => "/timesheets?status=pending",
+                'tipo'      => 'error',
+                'mensagem'  => "{$apontamentosPendentes} apontamento(s) pendente(s) ou com ajuste — aprove ou resolva antes de fechar",
+                'link_path' => "/approvals?tab=timesheets",
             ];
         }
         if ($despesasPendentes > 0) {
             $alertas[] = [
-                'tipo'      => 'warning',
-                'mensagem'  => "{$despesasPendentes} despesa(s) pendente(s) — aprovações continuam liberadas após o fechamento",
-                'link_path' => "/expenses?status=pending",
+                'tipo'      => 'error',
+                'mensagem'  => "{$despesasPendentes} despesa(s) pendente(s) ou com ajuste — aprove ou resolva antes de fechar",
+                'link_path' => "/approvals?tab=expenses",
             ];
         }
 
         return response()->json([
-            'pode_fechar'            => true,
+            'pode_fechar'            => ($apontamentosPendentes + $despesasPendentes) === 0,
             'ja_fechado'             => false,
             'apontamentos_pendentes' => $apontamentosPendentes,
             'despesas_pendentes'     => $despesasPendentes,
@@ -397,6 +399,14 @@ class FechamentoController extends Controller
         $mesSolicitado = \Carbon\Carbon::createFromFormat('Y-m', $yearMonth)->startOfMonth();
         if ($mesSolicitado->greaterThanOrEqualTo($mesAtual)) {
             return response()->json(['message' => 'Só é permitido fechar competências de meses anteriores ao mês atual.'], 422);
+        }
+
+        [$tsPend, $exPend] = $this->pendenciasFechamento($yearMonth);
+        if ($tsPend + $exPend > 0) {
+            return response()->json([
+                'message' => "Não é possível fechar: {$tsPend} apontamento(s) e {$exPend} despesa(s) pendentes ou com ajuste nesta competência.",
+                'code'    => 'PENDENCIAS',
+            ], 422);
         }
 
         $producao = $this->producaoData($yearMonth);

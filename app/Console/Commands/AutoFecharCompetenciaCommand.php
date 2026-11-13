@@ -38,6 +38,14 @@ class AutoFecharCompetenciaCommand extends Command
             return 0;
         }
 
+        // Opção B: com pendências o robô NÃO fecha — fica para o administrativo resolver e fechar.
+        [$tsPend, $exPend] = app(FechamentoController::class)->pendenciasFechamento($mesAnterior);
+        if ($tsPend + $exPend > 0) {
+            $this->warn("Competência {$mesAnterior} NÃO fechada: {$tsPend} apontamento(s) e {$exPend} despesa(s) pendentes.");
+            \Log::warning('fechamento:auto-fechar — não fechou por pendências', ['yearMonth' => $mesAnterior, 'apontamentos' => $tsPend, 'despesas' => $exPend]);
+            return 0;
+        }
+
         $this->info("Fechando competência {$mesAnterior} automaticamente...");
 
         try {
