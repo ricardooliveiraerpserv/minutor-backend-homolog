@@ -378,12 +378,16 @@ class CronogramaLayoutController extends Controller
             foreach ($respByRef as $ref => $userId) {
                 $d = $map['deliveries'][$ref] ?? null;
                 if (!$d || !$userId) continue;
-                StageAllocation::create([
-                    'stage_id' => $d->stage_id, 'delivery_id' => $d->id, 'user_id' => $userId,
-                    'planned_hours' => (float) ($d->hours_planned ?? 0),
-                    'allocation_start_at' => $d->planned_start_at, 'allocation_end_at' => $d->due_date,
-                    'is_primary' => true,
-                ]);
+                // O banco aceita 1 alocação por (etapa, consultor) — índice único stage_id+user_id.
+                // Se o consultor já tem alocação nesta etapa, fica só como Responsável da atividade.
+                if (!StageAllocation::where('stage_id', $d->stage_id)->where('user_id', $userId)->exists()) {
+                    StageAllocation::create([
+                        'stage_id' => $d->stage_id, 'delivery_id' => $d->id, 'user_id' => $userId,
+                        'planned_hours' => (float) ($d->hours_planned ?? 0),
+                        'allocation_start_at' => $d->planned_start_at, 'allocation_end_at' => $d->due_date,
+                        'is_primary' => true,
+                    ]);
+                }
                 $u = User::find($userId);
                 if ($u && in_array($u->type, ['consultor', 'parceiro_admin'], true)) {
                     $project->consultants()->syncWithoutDetaching([$userId]);
