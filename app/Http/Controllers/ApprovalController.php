@@ -380,7 +380,7 @@ class ApprovalController extends Controller
             $sustentacaoCoordNames = \App\Models\User::where('coordinator_type', 'sustentacao')
                 ->where('enabled', true)->pluck('name')->all();
 
-            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap, $sustentacaoCoordNames) {
+            $items = collect($timesheets->items())->map(function ($ts) use ($ticketTotalsMap, $sustentacaoCoordNames, $user) {
                 $arr = $ts->toArray();
                 $tk = (string) ($ts->ticket ?? '');
                 $arr['ticket_total_minutes'] = ($tk !== '' && preg_match('/^\d{5}$/', $tk) && $ts->customer_id)
@@ -407,6 +407,8 @@ class ApprovalController extends Controller
                 }
                 $arr['coordinator_label'] = $coordLabel;
                 $arr['real_project'] = $ts->realProject ? ['id' => $ts->realProject->id, 'name' => $ts->realProject->name] : null;
+                // Permissão real do usuário (o 'Todos' lista o time inteiro, mas só aprova quem coordena).
+                try { $arr['can_approve'] = (bool) $ts->canBeApprovedBy($user); } catch (\Throwable $e) { $arr['can_approve'] = true; }
                 return $arr;
             })->all();
 
@@ -502,10 +504,19 @@ class ApprovalController extends Controller
             $query = $this->buildExpenseQuery($user, $request);
 
             $expenses = $query->paginate($perPage);
+            $expItems = collect($expenses->items())->map(function ($e) use ($user) {
+                $arr = $e->toArray();
+                // Mesma regra do ExpenseController@approve: ninguém aprova a própria; admin aprova as demais.
+                try {
+                    $arr['can_approve'] = (int) $e->user_id !== (int) $user->id
+                        && ($user->isAdmin() || (bool) $e->canBeApprovedBy($user));
+                } catch (\Throwable $ex) { $arr['can_approve'] = true; }
+                return $arr;
+            })->values();
 
             return response()->json([
                 'success' => true,
-                'data' => $expenses->items(),
+                'data' => $expItems,
                 'pagination' => [
                     'current_page' => $expenses->currentPage(),
                     'last_page' => $expenses->lastPage(),
