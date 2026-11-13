@@ -3103,6 +3103,86 @@ class ContractController extends Controller
         ]);
     }
 
+    /**
+     * GET /contracts/data-quality/vencimentos — saneamento cadastral (somente leitura).
+     * Universo: contratos não-aditivos ativos (sem projeto vinculado, ou com projeto que não
+     * esteja encerrado/cancelado), na empresa ativa (CompanyScope). "Sem vencimento" =
+     * data_vencimento nula. Restrito ao administrador e ao administrativo.
+     */
+    public function dataQualityVencimentos(Request $request): JsonResponse
+    {
+        $u = $request->user();
+        if (!$u || !($u->isAdmin() || $u->isAdministrativo())) {
+            return response()->json(['message' => 'Relatório restrito ao administrador e ao administrativo.'], 403);
+        }
+
+        $statusLabels = [
+            Contract::STATUS_RASCUNHO          => 'Rascunho',
+            Contract::STATUS_APROVADO          => 'Aprovado',
+            Contract::STATUS_INICIO_AUTORIZADO => 'Início autorizado',
+            Contract::STATUS_ATIVO             => 'Ativo',
+        ];
+        $faturamentoLabels = [
+            'on_demand'          => 'On Demand',
+            'banco_horas_mensal' => 'Banco de Horas Mensal',
+            'banco_horas_fixo'   => 'Banco de Horas Fixo',
+            'por_servico'        => 'Por Serviço',
+            'saas'               => 'SaaS',
+        ];
+
+        $contratos = Contract::query()
+            ->where(fn ($q) => $q->where('is_aditivo', false)->orWhereNull('is_aditivo'))
+            ->where(function ($q) {
+                $q->whereNull('project_id')
+                  ->orWhereHas('project', fn ($p) => $p->whereNotIn('status', [
+                      \App\Models\Project::STATUS_FINISHED,
+                      \App\Models\Project::STATUS_CANCELLED,
+                  ]));
+            })
+            ->with([
+                'customer:id,name',
+                'contractType:id,name',
+                'executivoConta:id,name',
+                'vendedor:id,name',
+                'createdBy:id,name',
+            ])
+            ->get();
+
+        $total = $contratos->count();
+        $sem   = $contratos->filter(fn (Contract $c) => $c->data_vencimento === null)->values();
+
+        $linhas = $sem->map(function (Contract $c) use ($statusLabels, $faturamentoLabels) {
+            $responsavel = $c->executivoConta?->name ?? $c->vendedor?->name ?? $c->createdBy?->name;
+            return [
+                'id'               => $c->id,
+                'projeto'          => (string) ($c->project_name ?: ('Contrato #' . $c->id)),
+                'cliente'          => (string) ($c->customer?->name ?? '—'),
+                'crm_status'       => null,
+                'tipo'             => (string) ($c->contractType?->name ?? 'Sem tipo'),
+                'tipo_faturamento' => $c->tipo_faturamento ? ($faturamentoLabels[$c->tipo_faturamento] ?? $c->tipo_faturamento) : null,
+                'responsavel'      => (string) ($responsavel ?? '—'),
+                'status'           => (string) ($statusLabels[$c->status] ?? ($c->status ?: '—')),
+                'tem_projeto'      => $c->project_id !== null,
+                'criado_em'        => optional($c->created_at)->format('d/m/Y'),
+            ];
+        })->sortBy([['cliente', 'asc'], ['projeto', 'asc']])->values();
+
+        $agrupa = fn (string $campo, string $chave) => $linhas->groupBy($campo)
+            ->map(fn ($g, $k) => [$chave => (string) $k, 'qtd' => $g->count()])
+            ->sortByDesc('qtd')->values();
+
+        return response()->json(['data' => [
+            'total_contratos'            => $total,
+            'com_vencimento'             => $total - $sem->count(),
+            'sem_vencimento'             => $sem->count(),
+            'pct_sem_vencimento'         => $total > 0 ? round($sem->count() * 100 / $total, 1) : 0,
+            'sem_vencimento_sem_projeto' => $sem->whereNull('project_id')->count(),
+            'por_tipo'                   => $agrupa('tipo', 'tipo'),
+            'por_status'                 => $agrupa('status', 'status'),
+            'contratos'                  => $linhas,
+        ]]);
+    }
+
     public function recorrentes(Request $request): JsonResponse
     {
         $rows = Contract::query()

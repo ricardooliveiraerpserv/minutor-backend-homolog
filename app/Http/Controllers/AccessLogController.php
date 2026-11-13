@@ -110,7 +110,9 @@ class AccessLogController extends Controller
                 COALESCE(ll.logins, 0) as logins, ll.first_login, ll.last_login,
                 pr.status as presence_status, pr.last_seen_at")
             // último acesso = o mais recente entre presença e login; nunca-acessou por último.
-            ->orderByRaw('GREATEST(COALESCE(pr.last_seen_at, \'epoch\'), COALESCE(users.last_login_at, \'epoch\')) DESC');
+            ->orderByRaw('GREATEST(COALESCE(pr.last_seen_at, \'epoch\'), COALESCE(users.last_login_at, \'epoch\')) DESC')
+            // desempate estável (nunca-acessou empatam em 'epoch') → paginação ("Carregar mais") sem repetir/pular.
+            ->orderBy('users.id');
 
         $page = $q->paginate(min((int) $request->input('pageSize', 40), 100));
         $now = now();

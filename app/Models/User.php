@@ -401,7 +401,8 @@ class User extends Authenticatable
         }
         if ($type === 'consultor') {
             $ct = match ($this->consultant_type) {
-                'bh_fixo', 'bh_mensal' => 'banco_de_horas',
+                // o cadastro grava 'banco_de_horas'; 'bh_fixo'/'bh_mensal' = valores legados
+                'banco_de_horas', 'bh_fixo', 'bh_mensal' => 'banco_de_horas',
                 'fixo'                 => 'fixo',
                 default                => 'horista',
             };

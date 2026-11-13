@@ -66,6 +66,9 @@ class SkillHireController extends Controller
 
         $respondent->update(['classification' => 'erpserv']);
 
+        // Mesmo fluxo da inclusão pela tela de Contratação: tarefa de passagem + aviso hire.new.
+        $this->afterCardCreated($card, $request->user()?->id, false, (string) $respondent->name);
+
         return response()->json($this->card($card->load('respondent', 'createdUser')), 201);
     }
 
@@ -120,17 +123,31 @@ class SkillHireController extends Controller
             'created_by'    => $request->user()?->id,
         ]);
 
-        // Script: "não esquecer de atribuir a tarefa para a Jeniffer" → cria a tarefa automaticamente
-        // (aparece nas Minhas Tarefas dela). Não bloqueia a inclusão se a Jeniffer não existir.
+        // Mesmo fluxo pós-criação da rotina de Contratação (tarefa da Jeniffer + aviso ao administrativo).
+        $this->afterCardCreated($card, $request->user()?->id, $isPartner, trim($v['title']));
+
+        return response()->json($this->card($card->load('createdUser')), 201);
+    }
+
+    /**
+     * Fluxo comum após criar um card de contratação — usado pela inclusão avulsa (store) e pelo
+     * "Contratar" do perfil do profissional (hire):
+     *  - Script: "não esquecer de atribuir a tarefa para a Jeniffer" → cria a tarefa automaticamente
+     *    (aparece nas Minhas Tarefas dela). Não bloqueia a inclusão se a Jeniffer não existir.
+     *  - Avisa o administrativo (e-mail via Central de Workflows + pop-up in-app). O pop-up
+     *    recorrente / atraso fica a cargo do command diário `contratacao:notify-administrativo`.
+     */
+    private function afterCardCreated(SkillHireCard $card, ?int $actorId, bool $isPartner, string $nome): void
+    {
         $jeniffer = User::where('enabled', true)
             ->where(fn ($q) => $q->where('name', 'ilike', '%jenif%')->orWhere('name', 'ilike', '%jennif%'))
             ->orderBy('id')->first();
         if ($jeniffer) {
             Task::create([
-                'user_id'     => $request->user()?->id,
-                'created_by'  => $request->user()?->id,
+                'user_id'     => $actorId,
+                'created_by'  => $actorId,
                 'assigned_to' => $jeniffer->id,
-                'title'       => ($isPartner ? 'Contratação de parceiro: ' : 'Passagem de contratação: ') . trim($v['title']),
+                'title'       => ($isPartner ? 'Contratação de parceiro: ' : 'Passagem de contratação: ') . $nome,
                 'description' => $isPartner
                     ? 'Novo parceiro incluído pela rotina. Providenciar assinatura do contrato e documentação; ao concluir, o parceiro é criado no cadastro.'
                     : 'Nova contratação incluída pela rotina. Providenciar assinatura, recursos e onboarding.',
@@ -142,12 +159,7 @@ class SkillHireController extends Controller
             ]);
         }
 
-        // Avisa o administrativo (e-mail via Central de Workflows + pop-up in-app).
-        // Não bloqueia a inclusão. O pop-up recorrente / atraso fica a cargo do
-        // command diário `contratacao:notify-administrativo`.
         \App\Services\HireNotifier::onCreated($card);
-
-        return response()->json($this->card($card->load('createdUser')), 201);
     }
 
     public function show(int $id): JsonResponse

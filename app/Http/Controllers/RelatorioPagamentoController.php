@@ -14,6 +14,11 @@ class RelatorioPagamentoController extends Controller
 {
     public function pagamentos(Request $request, string $yearMonth): JsonResponse
     {
+        // Valores de pagamento de consultores/parceiros: dado sensível, tela do módulo Administrativo.
+        $u = $request->user();
+        if (!$u || !($u->isAdmin() || $u->isAdministrativo())) {
+            return response()->json(['message' => 'Relatório de Pagamentos restrito ao administrador e ao administrativo.'], 403);
+        }
         $vinculoLabel  = ['horista' => 'Horista', 'banco_de_horas' => 'Banco de Horas', 'fixo' => 'Fixo'];
         $contratoLabel = ['cooperado' => 'Cooperado', 'clt' => 'CLT', 'pj' => 'PJ'];
 

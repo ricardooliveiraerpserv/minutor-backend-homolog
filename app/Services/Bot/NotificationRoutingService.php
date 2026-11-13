@@ -149,12 +149,14 @@ class NotificationRoutingService
     {
         return match ($rule->target_type) {
             'user' => User::where('id', (int) $rule->target_value)->where('enabled', true)->get(),
+            // "Todos admins": admins + executivos. Coordenadores NÃO entram (o código antigo
+            // procurava 'coordinator', que não existe — na prática nunca receberam; mantido
+            // assim de propósito p/ não passar a notificar todos os coordenadores sem decisão).
             'all_admins' => User::where('enabled', true)->where(function ($q) {
                 $q->where('type', 'admin')
-                  ->orWhere('type', 'coordinator')
                   ->orWhere('is_executive', true);
             })->get(),
-            'role' => User::where('enabled', true)->where('type', $rule->target_value)->get(),
+            'role' => $this->usersByRole((string) $rule->target_value),
             'group' => $rule->target_value
                 ? (Conversation::where('id', (int) $rule->target_value)
                     ->where('type', ConversationType::Group->value)
@@ -167,6 +169,24 @@ class NotificationRoutingService
                 : collect(),
             'all_users' => User::where('enabled', true)->limit(500)->get(),
             default => collect(),
+        };
+    }
+
+    /**
+     * Papéis da regra (ROLES, em inglês por compatibilidade com regras já gravadas)
+     * traduzidos para os tipos reais de users.type. Valores já em português
+     * (ex.: 'coordenador') também são aceitos.
+     */
+    private function usersByRole(string $role)
+    {
+        $q = User::where('enabled', true);
+        return match ($role) {
+            'executive'   => $q->where('is_executive', true)->get(),
+            'coordinator' => $q->where('type', 'coordenador')->get(),
+            'consultant'  => $q->where('type', 'consultor')->get(),
+            'partner'     => $q->where('type', 'parceiro_admin')->get(),
+            ''            => collect(),
+            default       => $q->where('type', $role)->get(),
         };
     }
 

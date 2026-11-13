@@ -229,8 +229,8 @@ class HelpDeskTriggerController extends Controller
          'desc' => 'Quando o serviço for X, define automaticamente a equipe/categoria/urgência.',
          'inputs' => [['k' => 'service_id', 'label' => 'Quando o serviço for', 'type' => 'service'], ['k' => 'field', 'label' => 'Definir o campo', 'type' => 'field'], ['k' => 'value', 'label' => 'Com o valor', 'type' => 'fieldvalue']]],
         ['key' => 'autoclose_idle', 'name' => 'Auto-fechar chamados parados', 'icon' => 'TimerOff',
-         'desc' => 'Fecha automaticamente chamados que ficam parados num status por X dias sem atividade.',
-         'inputs' => [['k' => 'status_id', 'label' => 'Quando estiver no status', 'type' => 'status'], ['k' => 'days', 'label' => 'Parado por (dias)', 'type' => 'number'], ['k' => 'to_status', 'label' => 'Mudar para o status', 'type' => 'status']]],
+         'desc' => 'Fecha automaticamente chamados que ficam parados num status por X dias corridos sem atividade (dias × 24 horas corridas, contando fins de semana e feriados). Para horas úteis, use "Criar do zero" com a condição "Tempo parado (horas úteis)".',
+         'inputs' => [['k' => 'status_id', 'label' => 'Quando estiver no status', 'type' => 'status'], ['k' => 'days', 'label' => 'Parado por (dias corridos — 24 horas corridas cada)', 'type' => 'number'], ['k' => 'to_status', 'label' => 'Mudar para o status', 'type' => 'status']]],
     ];
 
     /** Traduz (receita, inputs) → {event, conditions, actions}. */

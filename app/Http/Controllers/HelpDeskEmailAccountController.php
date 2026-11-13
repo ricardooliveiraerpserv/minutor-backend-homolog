@@ -38,7 +38,7 @@ class HelpDeskEmailAccountController extends Controller
             'smtp_port'       => 'nullable|integer|min:1|max:65535',
             'smtp_encryption' => 'nullable|in:ssl,tls,none',
             'settings'        => 'nullable|array',
-            'default_team_id' => 'nullable|exists:helpdesk_teams,id',
+            'default_team_id' => 'nullable|integer|exists:helpdesk_teams,id,deleted_at,NULL', // equipe padrão dos chamados abertos por esta caixa (usada pela ingestão)
             'company_id'      => 'nullable|integer|exists:companies,id', // empresa do grupo (ERPSERV/BIZIFY) — chamados criados por esta caixa nascem nela
             'enabled'         => 'nullable|boolean',
         ];
@@ -47,6 +47,7 @@ class HelpDeskEmailAccountController extends Controller
     public function store(Request $request): JsonResponse
     {
         $v = $request->validate($this->rules(true));
+        $this->assertTeamMatchesCompany($v['default_team_id'] ?? null, $v['company_id'] ?? null);
         $acc = HelpDeskEmailAccount::create($v);
         return response()->json(['data' => $acc->fresh()->load('team:id,name')], 201);
     }
@@ -55,8 +56,27 @@ class HelpDeskEmailAccountController extends Controller
     {
         $v = $request->validate($this->rules(false));
         if (blank($v['password'] ?? null)) unset($v['password']); // não sobrescreve se veio vazio
+        $this->assertTeamMatchesCompany(
+            array_key_exists('default_team_id', $v) ? $v['default_team_id'] : $emailAccount->default_team_id,
+            array_key_exists('company_id', $v) ? $v['company_id'] : $emailAccount->company_id,
+        );
         $emailAccount->update($v);
         return response()->json(['data' => $emailAccount->fresh()->load('team:id,name')]);
+    }
+
+    /**
+     * A equipe padrão precisa ser da mesma empresa da caixa (ERPSERV × BIZIFY): senão o chamado
+     * nasceria numa empresa e cairia na fila de outra. Equipe sem empresa (legado) é aceita.
+     */
+    private function assertTeamMatchesCompany(?int $teamId, ?int $companyId): void
+    {
+        if (!$teamId || !$companyId) return;
+        $team = \App\Models\HelpDeskTeam::withoutGlobalScopes()->find($teamId);
+        if ($team && $team->company_id && (int) $team->company_id !== (int) $companyId) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'default_team_id' => 'A equipe padrão precisa ser da mesma empresa da conta de e-mail.',
+            ]);
+        }
     }
 
     public function destroy(HelpDeskEmailAccount $emailAccount): JsonResponse

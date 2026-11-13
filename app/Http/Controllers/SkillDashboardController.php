@@ -280,12 +280,15 @@ class SkillDashboardController extends Controller
 
     private function responseRateBlock(): array
     {
+        // Convites desabilitados (disabled_at) saem das contagens — mesma regra do card da pesquisa.
         $global = SkillSurveyInvite::query()
+            ->whereNull('disabled_at')
             ->selectRaw("count(*) as invited, count(*) filter (where status = 'submitted') as submitted")
             ->first();
 
         $byType = SkillSurveyInvite::query()
             ->join('skill_surveys', 'skill_surveys.id', '=', 'skill_survey_invites.survey_id')
+            ->whereNull('skill_survey_invites.disabled_at')
             ->groupBy('skill_surveys.type')
             ->selectRaw('skill_surveys.type, count(*) as invited, count(*) filter (where skill_survey_invites.status = \'submitted\') as submitted')
             ->get()

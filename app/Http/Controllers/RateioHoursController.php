@@ -16,6 +16,17 @@ use Illuminate\Http\Request;
  */
 class RateioHoursController extends Controller
 {
+    /**
+     * Escritas do Rateio de Horas (destinos, equipe, períodos, ajuste manual e exclusão) re-dividem
+     * consumo/faturamento de clientes → restritas ao admin e ao administrativo (a rota só exige
+     * projects.view, que outros perfis também têm). Leituras seguem com o gate da rota.
+     */
+    private function ensureCanWrite(): void
+    {
+        $u = auth()->user();
+        abort_unless($u && ($u->isAdmin() || $u->isAdministrativo()), 403, 'Apenas administradores e o administrativo podem alterar o rateio de horas.');
+    }
+
     /** Lista os projetos de rateio (servidores) com contagem de destinos. */
     public function index(): JsonResponse
     {
@@ -64,6 +75,7 @@ class RateioHoursController extends Controller
     /** Salva os destinos + % (soma deve fechar 100%). Destino pode ser de QUALQUER cliente. */
     public function saveTargets(Project $project, Request $request): JsonResponse
     {
+        $this->ensureCanWrite();
         if (!$project->is_rateio) {
             return response()->json(['message' => 'Projeto não é de rateio.'], 422);
         }
@@ -109,6 +121,7 @@ class RateioHoursController extends Controller
      */
     public function saveTeam(Project $project, Request $request): JsonResponse
     {
+        $this->ensureCanWrite();
         if (!$project->is_rateio) {
             return response()->json(['message' => 'Projeto não é de rateio.'], 422);
         }
@@ -158,6 +171,7 @@ class RateioHoursController extends Controller
      */
     public function savePlans(Project $project, Request $request): JsonResponse
     {
+        $this->ensureCanWrite();
         if (!$project->is_rateio) {
             return response()->json(['message' => 'Projeto não é de rateio.'], 422);
         }
@@ -279,6 +293,7 @@ class RateioHoursController extends Controller
      */
     public function overrideTimesheet(Project $project, Timesheet $timesheet, Request $request): JsonResponse
     {
+        $this->ensureCanWrite();
         if (!$project->is_rateio) {
             return response()->json(['message' => 'Projeto não é de rateio.'], 422);
         }
@@ -322,6 +337,7 @@ class RateioHoursController extends Controller
      */
     public function destroyTimesheet(Project $project, Timesheet $timesheet): JsonResponse
     {
+        $this->ensureCanWrite();
         if (!$project->is_rateio) {
             return response()->json(['message' => 'Projeto não é de rateio.'], 422);
         }

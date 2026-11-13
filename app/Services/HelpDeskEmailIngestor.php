@@ -34,6 +34,9 @@ class HelpDeskEmailIngestor
 {
     private ?User $actor = null;
 
+    /** Ação gravada no ledger para o e-mail em processamento (usada p/ "marcar como lido"). */
+    private ?string $lastLedgerAction = null;
+
     public function __construct(
         private HelpDeskSlaService $sla,
         private AttachmentService $attachments,
@@ -73,10 +76,22 @@ class HelpDeskEmailIngestor
                 // Mais antigas primeiro, p/ manter a ordem cronológica das respostas.
                 $messages = array_reverse($messages);
 
+                // Opção da conta "Marcar e-mail como lido ao importá-lo" (settings.mark_read).
+                $markRead = !empty(((array) ($acc->settings ?? []))['mark_read']);
+
                 foreach ($messages as $msg) {
                     $sum['fetched']++;
                     try {
+                        $this->lastLedgerAction = null;
                         $this->processOne($acc, $msg, $sum);
+                        // Só marca o que foi de fato IMPORTADO (virou chamado ou resposta); e-mail
+                        // ignorado (bounce, anti-loop, remetente barrado) continua como estava.
+                        // Interruptor global (env HD_MARK_READ_ENABLED, padrão DESLIGADO): só liga após decisão do Ricardo
+                        // e da permissão Mail.ReadWrite no Azure — muda o estado da caixa de suporte.
+                        if ($markRead && env('HD_MARK_READ_ENABLED', false) && in_array($this->lastLedgerAction, ['ticket_created', 'comment_appended'], true)
+                            && empty($msg['isRead'])) {
+                            GraphMailReader::markAsRead((string) $acc->email, (string) ($msg['id'] ?? ''));
+                        }
                     } catch (\Throwable $e) {
                         $sum['errors']++;
                         $sum['details'][] = "Conta #{$acc->id}: erro em '" . ($msg['id'] ?? '?') . "': " . $e->getMessage();
@@ -707,6 +722,7 @@ class HelpDeskEmailIngestor
             'comment_id'       => $commentId,
             'received_at'      => $receivedAt,
         ]);
+        $this->lastLedgerAction = $action;
         if ($action === 'ignored') $sum['ignored']++;
     }
 }

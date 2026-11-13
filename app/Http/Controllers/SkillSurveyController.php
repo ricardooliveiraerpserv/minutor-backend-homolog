@@ -262,7 +262,9 @@ class SkillSurveyController extends Controller
 
         $userIds = $data['user_ids'] ?? [];
         if (! empty($data['all'])) {
+            // "Enviar p/ todos": só usuários ATIVOS (enabled) — inativos não são convidados.
             $userIds = User::whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor'])
+                ->where('enabled', true)
                 ->pluck('id')->all();
         }
         abort_if(empty($userIds), 422, 'Selecione ao menos um destinatário.');

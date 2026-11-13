@@ -147,6 +147,34 @@ class GraphMailReader
     }
 
     /**
+     * Marca uma mensagem como lida (PATCH isRead=true). Melhor esforço: exige a permissão de
+     * aplicativo Mail.ReadWrite no Azure — com só Mail.Read o Graph devolve 403. Nesse caso
+     * guarda uma trava em cache por 1 h para não repetir a chamada a cada e-mail/rodada.
+     * Nunca lança exceção (não pode atrapalhar a ingestão).
+     */
+    public static function markAsRead(string $mailbox, string $messageId): bool
+    {
+        if (!self::enabled() || trim($mailbox) === '' || trim($messageId) === '') return false;
+        if (Cache::get('graph_reader_mark_read_forbidden')) return false;
+
+        try {
+            $token = self::token();
+            $url   = sprintf('%s/users/%s/messages/%s', self::GRAPH_BASE, rawurlencode(trim($mailbox)), rawurlencode($messageId));
+            $resp  = Http::withToken($token)->acceptJson()->connectTimeout(8)->timeout(15)->patch($url, ['isRead' => true]);
+            if ($resp->successful()) return true;
+            if (in_array($resp->status(), [401, 403], true)) {
+                Cache::put('graph_reader_mark_read_forbidden', true, now()->addHour());
+                \Log::warning('Graph: sem permissão para marcar e-mail como lido (requer Mail.ReadWrite de aplicativo).', [
+                    'mailbox' => $mailbox, 'status' => $resp->status(), 'error' => $resp->json('error.code'),
+                ]);
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Graph: falha ao marcar e-mail como lido: ' . $e->getMessage(), ['mailbox' => $mailbox]);
+        }
+        return false;
+    }
+
+    /**
      * Baixa os anexos (fileAttachment) de uma mensagem. Retorna lista de
      * ['name','mime','bytes' (binário já decodificado),'inline' (bool)].
      * Ignora itemAttachment/referenceAttachment (sem contentBytes).

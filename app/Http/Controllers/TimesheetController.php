@@ -1038,12 +1038,12 @@ class TimesheetController extends Controller
                 'code'          => 'PERIOD_CLOSED',
                 'type'          => 'error',
                 'message'       => 'Competência fechada',
-                'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos. Solicite a reabertura no painel de Fechamento Semanal.",
+                'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita novos apontamentos. Solicite a reabertura no painel de Fechamento de Competências.",
             ] : [
                 'code'          => 'WEEK_CLOSED',
                 'type'          => 'error',
                 'message'       => 'Semana fechada',
-                'detailMessage' => 'O prazo de digitação de horas desta semana (2º dia útil da semana seguinte, 23:59) já venceu. Solicite a reabertura da semana.',
+                'detailMessage' => 'O prazo de digitação de horas desta semana (1º dia útil da semana seguinte, 23:59) já venceu. Solicite a reabertura da semana.',
             ], 422);
         }
 
@@ -1684,7 +1684,7 @@ class TimesheetController extends Controller
                     'code'          => 'PERIOD_CLOSED',
                     'type'          => 'error',
                     'message'       => 'Competência fechada',
-                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações. Solicite a reabertura no painel de Fechamento Semanal.",
+                    'detailMessage' => "A competência {$serviceDate->translatedFormat('F Y')} está fechada e não aceita alterações. Solicite a reabertura no painel de Fechamento de Competências.",
                 ], 422);
             }
             if ($editClosing->isWeekClosed($serviceDate->toDateString(), $editPid, $editUid)) {

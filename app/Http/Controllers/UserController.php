@@ -1607,9 +1607,41 @@ class UserController extends Controller
             );
         }
 
-        $count = User::whereIn('id', $ids)->delete();
+        // Mesma trava da exclusão individual: quem tem apontamento ou despesa NÃO é excluído
+        // (deve ser desativado). Esses são pulados e reportados pelo nome.
+        $withTimesheets = \App\Models\Timesheet::whereIn('user_id', $ids)->distinct()->pluck('user_id');
+        $withExpenses   = \App\Models\Expense::whereIn('user_id', $ids)->distinct()->pluck('user_id');
+        $blockedIds = $withTimesheets->merge($withExpenses)->map(fn ($id) => (int) $id)->unique()->values();
 
-        return response()->json(['message' => "{$count} usuário(s) excluído(s)"]);
+        $blocked = User::whereIn('id', $blockedIds)->orderBy('name')->get(['id', 'name', 'email'])
+            ->map(fn (User $u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])
+            ->values();
+
+        $deletableIds = $ids->map(fn ($id) => (int) $id)->diff($blockedIds)->values();
+
+        if ($deletableIds->isEmpty() && $blocked->isNotEmpty()) {
+            return response()->json([
+                'success'    => false,
+                'error_code' => 'USER_HAS_MOVEMENTS',
+                'message'    => 'Nenhum usuário excluído: todos os selecionados possuem apontamentos ou despesas registrados. Desative-os em vez de excluí-los.',
+                'deleted'    => 0,
+                'blocked'    => $blocked,
+            ], 422);
+        }
+
+        $count = User::whereIn('id', $deletableIds)->delete();
+
+        $message = "{$count} usuário(s) excluído(s)";
+        if ($blocked->isNotEmpty()) {
+            $message .= '. ' . $blocked->count() . ' não excluído(s) por possuir(em) apontamentos ou despesas (desative em vez de excluir): '
+                . $blocked->pluck('name')->implode(', ');
+        }
+
+        return response()->json([
+            'message' => $message,
+            'deleted' => $count,
+            'blocked' => $blocked,
+        ]);
     }
 
     /**

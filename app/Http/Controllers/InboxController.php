@@ -69,7 +69,10 @@ class InboxController extends Controller
             'metadata'    => 'nullable|array',
             'reply_to_id' => 'nullable|integer|exists:messages,id',
             'files'       => 'nullable|array|max:10',
-            'files.*'     => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z', // 20 MB; whitelist anti-RCE/XSS
+            // 20 MB; whitelist anti-RCE/XSS. Inclui os formatos da gravação de áudio do chat
+            // (webm/m4a/ogg — o `mimes` compara a extensão deduzida do conteúdo: webm de
+            // áudio costuma ser detectado como video/webm, m4a como audio/mp4 ou video/mp4).
+            'files.*'     => 'file|max:20480|mimes:pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,ppt,pptx,csv,txt,zip,rar,7z,webm,weba,m4a,mp4,ogg,oga,ogx,opus',
         ];
         $data = $request->validate($rules);
 
@@ -89,10 +92,18 @@ class InboxController extends Controller
         if ($hasFiles) {
             foreach ($request->file('files') as $file) {
                 $stored = $file->store("chat/{$conv->id}", 'public');
+                $mime = $file->getMimeType() ?: 'application/octet-stream';
+                // Gravação de áudio: o conteúdo webm/mp4/ogg é detectado como vídeo/contêiner,
+                // então usamos o tipo informado pelo navegador (audio/*) para o player de áudio.
+                $clientMime = (string) $file->getClientMimeType();
+                if (str_starts_with($clientMime, 'audio/')
+                    && in_array($mime, ['video/webm', 'video/mp4', 'application/ogg', 'video/ogg'], true)) {
+                    $mime = strtok($clientMime, ';') ?: $mime;
+                }
                 $msg->attachments()->create([
                     'filename'    => $file->getClientOriginalName(),
                     'stored_path' => $stored,
-                    'mime'        => $file->getMimeType() ?: 'application/octet-stream',
+                    'mime'        => $mime,
                     'size'        => $file->getSize(),
                 ]);
             }

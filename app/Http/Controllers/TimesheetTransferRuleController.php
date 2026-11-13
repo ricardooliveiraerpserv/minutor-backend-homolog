@@ -39,6 +39,9 @@ class TimesheetTransferRuleController extends Controller
     {
         $this->ensureAdmin();
         $v = $this->validateRule($request);
+        if ($request->boolean('apply_now') && ! (bool) ($v['active'] ?? true)) {
+            return response()->json(['message' => 'Regra inativa: ative a regra antes de aplicá-la nos apontamentos existentes.'], 422);
+        }
         $rule = new TimesheetTransferRule($v);
         $rule->company_id = optional(Project::find($v['target_project_id']))->company_id;
         $rule->created_by = $request->user()?->id;
@@ -58,6 +61,9 @@ class TimesheetTransferRuleController extends Controller
     {
         $this->ensureAdmin();
         $v = $this->validateRule($request);
+        if ($request->boolean('apply_now') && ! (array_key_exists('active', $v) ? (bool) $v['active'] : (bool) $rule->active)) {
+            return response()->json(['message' => 'Regra inativa: ative a regra antes de aplicá-la nos apontamentos existentes.'], 422);
+        }
         $rule->fill($v);
         $rule->company_id = optional(Project::find($v['target_project_id']))->company_id;
         $rule->save();
@@ -83,6 +89,10 @@ class TimesheetTransferRuleController extends Controller
     public function apply(Request $request, TimesheetTransferRule $rule): JsonResponse
     {
         $this->ensureAdmin();
+        // Regra inativa não move nada (exceto prévia/dry-run, que não grava).
+        if (! $request->boolean('dry_run') && ! $rule->active) {
+            return response()->json(['message' => 'Regra inativa: ative a regra antes de aplicá-la nos apontamentos existentes.'], 422);
+        }
         $result = $this->service->applyRule($rule, $request->boolean('dry_run'), $request->user()?->id);
         return response()->json(['data' => $result]);
     }

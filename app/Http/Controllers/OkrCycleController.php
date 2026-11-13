@@ -160,12 +160,24 @@ class OkrCycleController extends Controller
 
     private function validatePayload(Request $request, ?int $ignoreId = null): array
     {
+        // "Ano único" é POR EMPRESA (índice (company_id, year)), igual à cópia: na edição vale a
+        // empresa do próprio ciclo; na criação, a empresa ativa (a mesma que o BelongsToCompany
+        // carimba). Sem empresa resolvida (scoping desligado), mantém a checagem global.
+        $companyId = $ignoreId
+            ? OkrCycle::withoutGlobalScopes()->whereKey($ignoreId)->value('company_id')
+            : (config('multiempresa.scoping_enabled') ? app(\App\Services\CompanyContext::class)->id() : null);
+
+        $unique = Rule::unique('okr_cycles', 'year')
+            ->ignore($ignoreId)
+            ->whereNull('deleted_at');
+        if ($companyId) {
+            $unique = $unique->where(fn ($q) => $q->where('company_id', $companyId));
+        }
+
         return $request->validate([
             'year' => [
                 'required', 'integer', 'min:2000', 'max:2100',
-                Rule::unique('okr_cycles', 'year')
-                    ->ignore($ignoreId)
-                    ->whereNull('deleted_at'),
+                $unique,
             ],
             'name' => 'required|string|max:200',
             'description' => 'nullable|string',

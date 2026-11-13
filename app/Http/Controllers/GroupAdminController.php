@@ -40,6 +40,40 @@ class GroupAdminController extends Controller
         return response()->json(['message' => 'Apenas administradores ou executivos podem gerenciar grupos.'], 403);
     }
 
+    private function isAdminOrExecutive(Request $request): bool
+    {
+        $u = $request->user();
+        return $u->type === 'admin' || (bool) $u->is_executive;
+    }
+
+    /**
+     * Gestão de um grupo pelo modal "Gerenciar grupo" do Chat: admin/executivo
+     * pode tudo; o CRIADOR do grupo também pode (renomear, adicionar, remover,
+     * excluir); qualquer membro pode ver os membros e sair do grupo.
+     * Antes só admin/executivo passava — o criador comum via "Sem membros." e
+     * nem conseguia sair do grupo.
+     */
+    private function authorizeGroup(Request $request, Conversation $group, string $action, ?int $targetUserId = null): ?JsonResponse
+    {
+        if ($this->isAdminOrExecutive($request)) {
+            return null;
+        }
+        $uid = (int) $request->user()->id;
+        $isCreator = $uid === (int) $group->created_by;
+        $isMember = $group->participants()->where('user_id', $uid)->exists();
+
+        $allowed = match ($action) {
+            'view'   => $isMember,
+            'manage' => $isCreator,
+            'remove' => $isCreator || ($isMember && $targetUserId === $uid),
+            default  => false,
+        };
+
+        return $allowed
+            ? null
+            : response()->json(['message' => 'Apenas o criador do grupo, administradores ou executivos podem fazer esta alteração.'], 403);
+    }
+
     public function index(Request $request): JsonResponse
     {
         if ($deny = $this->authorizeAdmin($request)) return $deny;
@@ -64,9 +98,8 @@ class GroupAdminController extends Controller
 
     public function members(Request $request, int $id): JsonResponse
     {
-        if ($deny = $this->authorizeAdmin($request)) return $deny;
-
         $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
+        if ($deny = $this->authorizeGroup($request, $group, 'view')) return $deny;
 
         $members = ConversationParticipant::where('conversation_id', $group->id)
             ->with('user:id,name,email')
@@ -153,10 +186,10 @@ class GroupAdminController extends Controller
 
     public function rename(Request $request, int $id): JsonResponse
     {
-        if ($deny = $this->authorizeAdmin($request)) return $deny;
+        $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
+        if ($deny = $this->authorizeGroup($request, $group, 'manage')) return $deny;
 
         $data = $request->validate(['name' => 'required|string|max:120']);
-        $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
         $group->update(['title' => trim($data['name'])]);
 
         return response()->json(['data' => ['id' => $group->id, 'title' => $group->title]]);
@@ -164,9 +197,8 @@ class GroupAdminController extends Controller
 
     public function destroy(Request $request, int $id): JsonResponse
     {
-        if ($deny = $this->authorizeAdmin($request)) return $deny;
-
         $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
+        if ($deny = $this->authorizeGroup($request, $group, 'manage')) return $deny;
         // messages e participants têm cascadeOnDelete
         $group->delete();
 
@@ -175,10 +207,10 @@ class GroupAdminController extends Controller
 
     public function addMember(Request $request, int $id): JsonResponse
     {
-        if ($deny = $this->authorizeAdmin($request)) return $deny;
+        $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
+        if ($deny = $this->authorizeGroup($request, $group, 'manage')) return $deny;
 
         $data = $request->validate(['user_id' => 'required|integer|exists:users,id']);
-        $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
 
         ConversationParticipant::firstOrCreate(
             ['conversation_id' => $group->id, 'user_id' => $data['user_id']],
@@ -190,9 +222,8 @@ class GroupAdminController extends Controller
 
     public function removeMember(Request $request, int $id, int $userId): JsonResponse
     {
-        if ($deny = $this->authorizeAdmin($request)) return $deny;
-
         $group = Conversation::where('type', ConversationType::Group->value)->findOrFail($id);
+        if ($deny = $this->authorizeGroup($request, $group, 'remove', $userId)) return $deny;
 
         if ($userId === (int) $group->created_by) {
             return response()->json(['message' => 'Não é possível remover o criador do grupo.'], 422);
@@ -201,6 +232,11 @@ class GroupAdminController extends Controller
         ConversationParticipant::where('conversation_id', $group->id)
             ->where('user_id', $userId)
             ->delete();
+
+        // Quem saiu do grupo (e não é admin/executivo) não pode mais listar os membros.
+        if ($userId === (int) $request->user()->id && ! $this->isAdminOrExecutive($request)) {
+            return response()->json(['data' => ['id' => $group->id, 'left' => true]]);
+        }
 
         return $this->members($request, $id);
     }
@@ -239,7 +275,11 @@ class GroupAdminController extends Controller
      */
     public function availableUsers(Request $request): JsonResponse
     {
-        if ($deny = $this->authorizeAdmin($request)) return $deny;
+        // Criador de algum grupo também busca usuários para adicionar (modal do Chat).
+        $isGroupCreator = Conversation::where('type', ConversationType::Group->value)
+            ->where('created_by', $request->user()->id)
+            ->exists();
+        if (! $isGroupCreator && ($deny = $this->authorizeAdmin($request))) return $deny;
 
         $q = trim((string) $request->query('q', ''));
         $query = User::query()->select('id', 'name', 'email', 'type')

@@ -39,7 +39,7 @@ class ExecutiveController extends Controller
     public function all(Request $request): JsonResponse
     {
         $filter = $request->query('filter');
-        $perPage = (int) $request->query('pageSize', 50);
+        $perPage = max(1, min((int) $request->query('pageSize', 50), 500));
 
         $query = User::whereNull('customer_id')
             ->where('is_executive', false)
@@ -48,7 +48,11 @@ class ExecutiveController extends Controller
             ->orderBy('name');
 
         if ($filter) {
-            $query->where('name', 'ilike', "%{$filter}%");
+            // A busca do modal "Adicionar Executivo" é feita no servidor, por nome ou e-mail.
+            $query->where(function ($q) use ($filter) {
+                $q->where('name', 'ilike', "%{$filter}%")
+                  ->orWhere('email', 'ilike', "%{$filter}%");
+            });
         }
 
         $paginator = $query->paginate($perPage);

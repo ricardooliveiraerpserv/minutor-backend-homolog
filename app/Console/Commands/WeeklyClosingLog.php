@@ -10,7 +10,7 @@ use Illuminate\Console\Command;
 
 /**
  * Gera o LOG de encerramentos (idempotente) para acompanhamento:
- *  - semanas cujo prazo (2º dia útil da semana seguinte) já venceu (>= ativação);
+ *  - semanas cujo prazo (1º dia útil da semana seguinte) já venceu (>= ativação);
  *  - reaberturas (semana/mês) cujo auto_close_at (23:59 do dia) já passou.
  * O BLOQUEIO em si é lazy (não depende deste command) — isto só registra os eventos.
  */

@@ -157,7 +157,7 @@ class NavConfigController extends Controller
             'coordenador_projetos'     => $q->where('type', 'coordenador')->where('coordinator_type', 'projetos'),
             'coordenador_sustentacao'  => $q->where('type', 'coordenador')->where('coordinator_type', 'sustentacao'),
             'consultor_horista'        => $q->where('type', 'consultor')->where('consultant_type', 'horista'),
-            'consultor_banco_de_horas' => $q->where('type', 'consultor')->whereIn('consultant_type', ['bh_fixo', 'bh_mensal']),
+            'consultor_banco_de_horas' => $q->where('type', 'consultor')->whereIn('consultant_type', ['banco_de_horas', 'bh_fixo', 'bh_mensal']),
             'consultor_fixo'           => $q->where('type', 'consultor')->where('consultant_type', 'fixo'),
             'parceiro_gestor'          => $q->where('type', 'parceiro_admin')->where('is_executive', true),
             'parceiro_simples'         => $q->where('type', 'parceiro_admin')->where('is_executive', false),
@@ -318,10 +318,22 @@ class NavConfigController extends Controller
             'screen_key'  => 'required|string|max:160',
             'label'       => 'required|string|max:80',
             'description' => 'nullable|string|max:200',
+            'action_key'  => 'nullable|string|max:40',
         ]);
-        $key = Str::slug($v['label'], '_') ?: ('act_' . Str::random(4));
-        $base = $key; $i = 1;
-        while (ScreenAction::where('screen_key', $v['screen_key'])->where('action_key', $key)->exists()) { $key = $base . '_' . (++$i); }
+        // Respeita a chave enviada pelo FE (ações "de fábrica" do catálogo, ex.: resend_welcome) —
+        // assim, excluir e recriar a ação mantém a chave que o backend verifica (screen.action:...).
+        // Só gera pelo slug do rótulo quando não vier chave ou ela for inválida.
+        $sent = trim((string) ($v['action_key'] ?? ''));
+        if ($sent !== '' && preg_match('/^[a-z0-9][a-z0-9_.\-]{0,39}$/', $sent)) {
+            if (ScreenAction::where('screen_key', $v['screen_key'])->where('action_key', $sent)->exists()) {
+                return response()->json(['message' => 'Esta ação já existe no catálogo desta tela.'], 409);
+            }
+            $key = $sent;
+        } else {
+            $key = Str::slug($v['label'], '_') ?: ('act_' . Str::random(4));
+            $base = $key; $i = 1;
+            while (ScreenAction::where('screen_key', $v['screen_key'])->where('action_key', $key)->exists()) { $key = $base . '_' . (++$i); }
+        }
         $max = (int) ScreenAction::where('screen_key', $v['screen_key'])->max('sort_order');
         ScreenAction::create([
             'screen_key'  => $v['screen_key'],

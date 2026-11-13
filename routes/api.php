@@ -2218,6 +2218,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/contracts/{contract}/snapshot',                  [ContractController::class, 'snapshot'])->name('contracts.snapshot');
         Route::post('/contracts/{contract}/snapshot/replay',          [ContractController::class, 'replay'])->name('contracts.snapshot.replay');
         Route::get('/contracts/consistency-report',                   [ContractController::class, 'consistencyReport'])->name('contracts.consistency-report');
+        Route::get('/contracts/data-quality/vencimentos',             [ContractController::class, 'dataQualityVencimentos'])->name('contracts.data-quality-vencimentos');
         Route::get('/contracts/recorrentes',                          [ContractController::class, 'recorrentes'])->name('contracts.recorrentes');
         Route::post('/contracts/recorrentes/import',                  [ContractController::class, 'importAniversario'])->name('contracts.recorrentes-import');
         Route::patch('/contracts/{contract}/recorrente',              [ContractController::class, 'updateRecorrente'])->name('contracts.recorrente-update');

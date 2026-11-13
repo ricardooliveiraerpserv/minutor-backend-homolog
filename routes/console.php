@@ -249,10 +249,11 @@ Schedule::command('attachments:integrity-check')
 //   ->runInBackground();
 
 // Alertas proativos do BOT (banco de horas crítico, despesas/timesheets pendentes,
-// tickets parados). Roda 1x ao dia às 8h e popula o OperationalFeed — a partir
-// daí, as notification_rules existentes encaminham pros responsáveis.
+// tickets parados). Roda 1x ao dia às 8h (horário de Brasília) e popula o OperationalFeed.
+// app.timezone é UTC: sem ->timezone() rodava às 08:00 UTC (≈ 05:00 BRT).
 Schedule::command('bot:proactive-alerts')
   ->dailyAt('08:00')
+  ->timezone('America/Sao_Paulo')
   ->name('bot-proactive-alerts')
   ->description('Detecta anomalias e cria alertas no OperationalFeed')
   ->withoutOverlapping()

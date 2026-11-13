@@ -918,6 +918,11 @@ class RelatorioRentabilidadeController extends Controller
 
     public function statusClientesConfigUpdate(Request $request): JsonResponse
     {
+        // Limiares são globais (valem para todos) → só admin e administrativo alteram.
+        $u = $request->user();
+        if (!$u || !($u->isAdmin() || $u->isAdministrativo())) {
+            return response()->json(['message' => 'Apenas administradores e o administrativo podem alterar a configuração de status de clientes.'], 403);
+        }
         $data = $request->validate([
             'ativo_ate' => ['required', 'integer', 'min:0', 'max:60'],
             'inativo_a_partir' => ['required', 'integer', 'min:1', 'max:120'],
