@@ -33,8 +33,10 @@ class AusterIndicatorsController extends Controller
             return response()->json(['message' => 'Não autenticado'], 401);
         }
         if ($user->isAdmin()) return null;
-        // Cliente da Auster vê os próprios indicadores
-        if ($user->type === 'cliente' && (int) $user->customer_id === self::AUSTER_CUSTOMER_ID) {
+        // Cliente da Auster vê os próprios indicadores — só o GESTOR do cliente (acesso a TODOS os
+        // projetos em Demandas e Projetos, marcado no cadastro do usuário). Mesmo critério do menu;
+        // sem isso, quem vê só os cards convidados abria os indicadores da empresa pelo link.
+        if ($user->type === 'cliente' && (int) $user->customer_id === self::AUSTER_CUSTOMER_ID && $user->is_customer_manager) {
             return null;
         }
         return response()->json(['message' => 'Acesso negado'], 403);
