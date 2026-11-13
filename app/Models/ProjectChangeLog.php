@@ -36,6 +36,64 @@ class ProjectChangeLog extends Model
     ];
 
     /**
+     * Campos numéricos em que null/'' e 0 significam a mesma coisa (saldo/custo inicial "sem valor"
+     * = zero). Fora desta lista null ≠ 0 (ex.: limite de despesa null = sem limite).
+     */
+    public const NULL_EQUALS_ZERO_FIELDS = [
+        'initial_cost', 'initial_hours_balance', 'initial_hours_consumed',
+    ];
+
+    /**
+     * true quando "antes" e "depois" são o MESMO valor, só com outra representação
+     * (ex.: decimal "0.00" → "0", "150.5" → "150.50", true → "1", data com/sem hora).
+     * Usado para não gravar (Observer) e não exibir (Auditoria) alterações fantasmas.
+     */
+    public static function isNoopChange(string $field, mixed $old, mixed $new): bool
+    {
+        $norm = function (mixed $v) {
+            if (is_bool($v)) return $v ? '1' : '0';
+            if ($v instanceof \DateTimeInterface) return $v->format('Y-m-d H:i:s');
+            if (is_array($v) || is_object($v)) return json_encode($v, JSON_UNESCAPED_UNICODE);
+            if ($v === null) return null;
+            $v = trim((string) $v);
+            return $v === '' ? null : $v;
+        };
+        $o = $norm($old);
+        $n = $norm($new);
+
+        if (in_array($field, self::NULL_EQUALS_ZERO_FIELDS, true)) {
+            if ($o === null && is_numeric($n)) $o = '0';
+            if ($n === null && is_numeric($o)) $n = '0';
+        }
+        if ($o === $n) return true;
+        if ($o === null || $n === null) return false;
+
+        // Números: compara pelo valor (até 6 casas), não pelo texto.
+        if (is_numeric($o) && is_numeric($n)) {
+            return abs((float) $o - (float) $n) < 0.000001;
+        }
+        // Booleanos gravados como texto.
+        $boolMap = ['true' => '1', 'false' => '0'];
+        if (isset($boolMap[strtolower($o)]) || isset($boolMap[strtolower($n)])) {
+            return ($boolMap[strtolower($o)] ?? $o) === ($boolMap[strtolower($n)] ?? $n);
+        }
+        // Datas: "2026-01-01" ≡ "2026-01-01 00:00:00" ≡ "2026-01-01T00:00:00.000000Z".
+        $dateRe = '/^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/';
+        if (preg_match($dateRe, $o) && preg_match($dateRe, $n)) {
+            $to = strtotime($o);
+            $tn = strtotime($n);
+            return $to !== false && $to === $tn;
+        }
+        // JSON equivalente (ordem/espaços diferentes).
+        if (($o[0] === '{' || $o[0] === '[') && ($n[0] === '{' || $n[0] === '[')) {
+            $jo = json_decode($o, true);
+            $jn = json_decode($n, true);
+            return $jo !== null && $jo == $jn;
+        }
+        return false;
+    }
+
+    /**
      * Get the project that owns the change log.
      */
     public function project(): BelongsTo

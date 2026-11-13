@@ -60,12 +60,19 @@ class ProjectObserver
             if (in_array($field, $this->auditBlacklist, true)) {
                 continue;
             }
+            $old = $this->stringifyValue($project->getOriginal($field));
+            $new = $this->stringifyValue($project->$field);
+            // Não grava alteração fantasma: o form reenvia o mesmo valor com outra representação
+            // (ex.: "Custo inicial 0.00 → 0"), e o Eloquent marca como "dirty" pelo texto.
+            if (ProjectChangeLog::isNoopChange($field, $old, $new)) {
+                continue;
+            }
             ProjectChangeLog::create([
                 'project_id' => $project->id,
                 'changed_by' => $userId,
                 'field_name' => $field,
-                'old_value'  => $this->stringifyValue($project->getOriginal($field)),
-                'new_value'  => $this->stringifyValue($project->$field),
+                'old_value'  => $old,
+                'new_value'  => $new,
                 'reason'     => null,
             ]);
         }

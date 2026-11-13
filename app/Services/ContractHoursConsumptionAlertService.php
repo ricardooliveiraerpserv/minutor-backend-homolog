@@ -123,10 +123,17 @@ class ContractHoursConsumptionAlertService
         $error  = 'Nenhum destinatário configurado (contato marcado para receber alerta de consumo ou executivo de contas).';
         $sentAt = null;
 
+        $mailerLogged = false;
         if (!empty($rcpt['to'])) {
+            // HÁ destinatário: zera a mensagem de "sem destinatário". Antes ela sobrava quando o
+            // envio falhava sem exceção (o WorkflowMailer captura o erro e só retorna false) →
+            // o registro saía "Falhou · Nenhum destinatário configurado" com o "Para:" preenchido.
+            $error = null;
             $ok = false;
             try {
                 $ok = $this->mailer->send(self::WORKFLOW_KEY, $ctx, $vars);
+                // O WorkflowMailer já grava o próprio registro (enviado/falhou, com o erro real).
+                $mailerLogged = true;
             } catch (\Throwable $e) {
                 Log::warning('[hours_alert] falha no envio', ['project' => $project->id, 'err' => $e->getMessage()]);
                 $error = 'Falha no envio do e-mail: ' . $e->getMessage();
@@ -135,12 +142,9 @@ class ContractHoursConsumptionAlertService
                 $status = 'sent';
                 $error  = null;
                 $sentAt = now();
-            } elseif ($status !== 'no_recipient' && !$error) {
-                $status = 'failed';
-                $error  = 'Falha no envio do e-mail.';
             } else {
                 $status = 'failed';
-                $error  = $error ?: 'Falha no envio do e-mail.';
+                $error  = $error ?: 'Falha no envio do e-mail (detalhe do erro no registro do envio em Workflows › Envios).';
             }
         }
 
@@ -165,8 +169,9 @@ class ContractHoursConsumptionAlertService
 
         $alert = $existing ? tap($existing)->update($payload)->fresh() : ContractHoursAlert::create($payload);
 
-        // Espelha no log central de envios (tela "Envios por rotina"). Best-effort.
-        \App\Models\WorkflowEmailLog::record('contract.hours_alert', $payload['status'], [
+        // Espelha no log central de envios (tela "Envios por rotina") só quando o WorkflowMailer NÃO
+        // gravou (sem destinatário / exceção antes de gravar) — senão o mesmo envio aparecia duplicado.
+        if (!$mailerLogged) \App\Models\WorkflowEmailLog::record('contract.hours_alert', $payload['status'], [
             'subject'     => 'Alerta de consumo — ' . ($payload['classification'] ?? ''),
             'to'          => $payload['recipients_to'] ?? [],
             'cc'          => $payload['recipients_cc'] ?? [],

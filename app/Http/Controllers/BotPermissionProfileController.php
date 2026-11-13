@@ -27,6 +27,8 @@ class BotPermissionProfileController extends Controller
 
     public function update(Request $request, string $type): JsonResponse
     {
+        // Segurança: alterar a política padrão do BOT por perfil é recurso de admin.
+        abort_unless(auth()->user()?->isAdmin(), 403, 'Apenas administradores podem alterar as permissões do BOT Minutor.');
         $profile = BotPermissionProfile::query()->where('profile_type', $type)->firstOrFail();
 
         $data = $request->validate([

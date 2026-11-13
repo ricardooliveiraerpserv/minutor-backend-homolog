@@ -36,6 +36,13 @@ class NotificationRoutingService
     public function create(array $data): BotNotificationRule
     {
         $validated = $this->validate($data);
+        // E-mail/Teams ainda são placeholder (NotificationEngine::deliverEmail só grava log).
+        // Regra nova não pode nascer num canal que não entrega; regras antigas seguem como estão.
+        if (in_array($validated['channel'] ?? null, ['email', 'teams'], true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'channel' => 'O canal E-mail ainda não envia mensagens (em breve). Escolha Inbox ou Grupo.',
+            ]);
+        }
         return BotNotificationRule::create($validated);
     }
 
@@ -43,6 +50,13 @@ class NotificationRoutingService
     {
         $rule = $this->find($id);
         $validated = $this->validate($data, partial: true);
+        // Não deixa trocar PARA e-mail/Teams (placeholder); manter o canal que a regra já tinha é ok.
+        if (isset($validated['channel']) && $validated['channel'] !== $rule->channel
+            && in_array($validated['channel'], ['email', 'teams'], true)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'channel' => 'O canal E-mail ainda não envia mensagens (em breve). Escolha Inbox ou Grupo.',
+            ]);
+        }
         $rule->update($validated);
         return $rule->refresh();
     }

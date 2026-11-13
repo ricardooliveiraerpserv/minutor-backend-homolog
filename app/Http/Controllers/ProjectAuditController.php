@@ -103,6 +103,8 @@ class ProjectAuditController extends Controller
             if ($from)           $q->whereDate('l.created_at', '>=', $from);
             if ($to)             $q->whereDate('l.created_at', '<=', $to);
             foreach ($q->orderByDesc('l.created_at')->limit(5000)->get() as $r) {
+                // Esconde registros antigos sem mudança real (ex.: "0.00 → 0"). Não apaga do banco.
+                if (\App\Models\ProjectChangeLog::isNoopChange((string) $r->field_name, $r->old_value, $r->new_value)) continue;
                 $rows->push(['source' => 'projeto', 'project_id' => $r->project_id, 'code' => $r->code, 'name' => $r->name,
                     'field_name' => $r->field_name, 'old_value' => $r->old_value, 'new_value' => $r->new_value,
                     'user_name' => $r->user_name, 'at' => $r->created_at]);

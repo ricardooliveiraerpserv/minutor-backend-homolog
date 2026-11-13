@@ -36,6 +36,16 @@ class BotConfigController extends Controller
     ) {
     }
 
+    /**
+     * Segurança: as escritas do BOT (Geral, Providers, Agents, Skills, Regras) e a leitura
+     * de providers (credenciais/env de chave) são recurso de admin — não basta estar logado.
+     * Grupos têm regra própria em GroupAdminController (admin/executivo/criador).
+     */
+    private function ensureAdmin(): void
+    {
+        abort_unless(auth()->user()?->isAdmin(), 403, 'Apenas administradores podem alterar a configuração do BOT Minutor.');
+    }
+
     // ── GENERAL ──────────────────────────────────────────────────────
     public function showConfig(): JsonResponse
     {
@@ -62,6 +72,7 @@ class BotConfigController extends Controller
 
     public function updateConfig(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $data = $request->validate([
             'active_provider_id'         => 'nullable|integer|exists:ai_providers,id',
             'default_model'              => 'nullable|string|max:80',
@@ -83,6 +94,7 @@ class BotConfigController extends Controller
     // ── PROVIDERS ────────────────────────────────────────────────────
     public function providers(): JsonResponse
     {
+        $this->ensureAdmin();
         $items = AiProviderConfig::query()->orderBy('id')->get()->map(fn ($p) => [
             'id'            => $p->id,
             'slug'          => $p->slug,
@@ -98,6 +110,7 @@ class BotConfigController extends Controller
 
     public function updateProvider(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $provider = AiProviderConfig::findOrFail($id);
         $data = $request->validate([
             'name'          => 'sometimes|string|max:80',
@@ -112,6 +125,7 @@ class BotConfigController extends Controller
 
     public function storeProvider(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $data = $request->validate([
             'slug'          => 'required|string|max:40|alpha_dash|unique:ai_providers,slug',
             'name'          => 'required|string|max:80',
@@ -126,6 +140,7 @@ class BotConfigController extends Controller
 
     public function destroyProvider(int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $provider = AiProviderConfig::findOrFail($id);
         if (BotConfig::query()->where('active_provider_id', $id)->exists()) {
             return response()->json([
@@ -163,6 +178,7 @@ class BotConfigController extends Controller
 
     public function updateAgent(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $agent = BotAgent::findOrFail($id);
         $data = $request->validate([
             'name'                 => 'sometimes|string|max:120',
@@ -185,6 +201,7 @@ class BotConfigController extends Controller
 
     public function storeAgent(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $data = $request->validate([
             'slug'                 => 'required|string|max:80|alpha_dash|unique:bot_agents,slug',
             'name'                 => 'required|string|max:120',
@@ -213,6 +230,7 @@ class BotConfigController extends Controller
 
     public function destroyAgent(int $id): JsonResponse
     {
+        $this->ensureAdmin();
         BotAgent::findOrFail($id)->delete();
         return $this->agents();
     }
@@ -226,6 +244,7 @@ class BotConfigController extends Controller
 
     public function updateSkill(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $skill = BotSkill::findOrFail($id);
         $data = $request->validate([
             'name'        => 'sometimes|string|max:120',
@@ -241,6 +260,7 @@ class BotConfigController extends Controller
 
     public function storeSkill(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         $data = $request->validate([
             'slug'        => 'required|string|max:80|alpha_dash|unique:bot_skills,slug',
             'name'        => 'required|string|max:120',
@@ -256,6 +276,7 @@ class BotConfigController extends Controller
 
     public function destroySkill(int $id): JsonResponse
     {
+        $this->ensureAdmin();
         BotSkill::findOrFail($id)->delete();
         return $this->skills();
     }
@@ -268,6 +289,7 @@ class BotConfigController extends Controller
 
     public function storeRule(Request $request): JsonResponse
     {
+        $this->ensureAdmin();
         try {
             $rule = $this->routing->create($request->all());
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -280,6 +302,7 @@ class BotConfigController extends Controller
 
     public function updateRule(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         try {
             $rule = $this->routing->update($id, $request->all());
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -290,6 +313,7 @@ class BotConfigController extends Controller
 
     public function destroyRule(int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $this->routing->delete($id);
         return response()->json(['deleted' => true]);
     }
@@ -306,6 +330,7 @@ class BotConfigController extends Controller
      */
     public function testRule(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         $data = $request->validate([
             'feed_id' => 'nullable|integer|exists:operational_feed,id',
         ]);
@@ -329,6 +354,7 @@ class BotConfigController extends Controller
      */
     public function dispatchTestRule(Request $request, int $id): JsonResponse
     {
+        $this->ensureAdmin();
         try {
             $result = $this->routing->dispatchTest($id, $this->notificationEngine);
         } catch (\DomainException $e) {
