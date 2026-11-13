@@ -46,6 +46,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'company.context'     => \App\Http\Middleware\ResolveActiveCompany::class,
             'client.manager'      => \App\Http\Middleware\ClientManagerOnly::class,   // telas da empresa: cliente só gestor
             'client.project'      => \App\Http\Middleware\ClientProjectAccess::class, // cliente só acessa projeto do seu customer + participação
+            'client.redact'       => \App\Http\Middleware\ClientRedactProjectFinancials::class, // cliente sem valores/custos de projeto
         ]);
 
         // Guest em rota /api não tem pra onde redirecionar: devolvendo null aqui, o

@@ -1114,7 +1114,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/my-projects', [ProjectController::class, 'myProjects'])->name('projects.my');
 
         Route::middleware('permission.or.admin:projects.view')->group(function () {
-            Route::get('/projects', [ProjectController::class, 'index'])->name('projects.index');
+            Route::get('/projects', [ProjectController::class, 'index'])->middleware('client.redact')->name('projects.index');
             Route::get('/projects/ic-summary', [ProjectController::class, 'icSummary'])->name('projects.ic-summary')->middleware('block.cliente');
             Route::get('/projects/ic-analytics', [ProjectController::class, 'icAnalytics'])->name('projects.ic-analytics')->middleware('block.cliente');
             Route::get('/projects/hours-per-consultant', [ProjectController::class, 'hoursPerConsultant'])->name('projects.hours-per-consultant')->middleware('block.cliente');
@@ -1139,7 +1139,7 @@ Route::prefix('v1')->group(function () {
             Route::post('/projects/{project}/hours-alerts/send',          [\App\Http\Controllers\ContractHoursAlertController::class, 'sendManualByProject'])->name('projects.hours-alerts.send')->middleware('block.cliente');
             Route::post('/projects/{project}/hours-alerts/{alert}/resend', [\App\Http\Controllers\ContractHoursAlertController::class, 'resendByProject'])->name('projects.hours-alerts.resend')->middleware('block.cliente');
             Route::get('/projects/audit', [\App\Http\Controllers\ProjectAuditController::class, 'index'])->name('projects.audit'); // ANTES de /projects/{project}
-            Route::get('/projects/{project}', [ProjectController::class, 'show'])->name('projects.show');
+            Route::get('/projects/{project}', [ProjectController::class, 'show'])->middleware('client.redact')->name('projects.show');
             Route::get('/projects/{project}/change-history', [ProjectController::class, 'changeHistory'])->name('projects.change-history');
             Route::get('/projects/{project}/sold-hours-history', [ProjectController::class, 'soldHoursHistoryIndex'])->name('projects.sold-hours-history.index');
             Route::get('/projects/{project}/contract-request', [ProjectController::class, 'contractRequest'])->name('projects.contract-request');
@@ -2212,7 +2212,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/projects-open-periods/{period}/close', [ProjectController::class, 'closeOnePeriod'])->name('projects.open-periods.close-one');
 
         // 📄 CONTRATOS
-        Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->name('contracts.kanban');
+        Route::get('/contracts/kanban',                              [ContractController::class, 'kanban'])->middleware('client.redact')->name('contracts.kanban');
         Route::get('/contracts/coordinators',                        [ContractController::class, 'coordinators'])->name('contracts.coordinators');
         Route::patch('/contracts/{contract}/kanban-move',            [ContractController::class, 'kanbanMove'])->name('contracts.kanban-move');
         Route::patch('/contracts/{contract}/sustentacao-move',       [ContractController::class, 'sustentacaoMove'])->name('contracts.sustentacao-move')->middleware('block.cliente');
