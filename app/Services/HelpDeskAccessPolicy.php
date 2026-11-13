@@ -443,6 +443,9 @@ class HelpDeskAccessPolicy
     /** Cliente pode abrir chamados? (perfil cliente: tickets.open != none) */
     public function clientCanOpen(?User $user): bool
     {
+        // Cliente SEM Perfil de Help Desk não abre chamado pelo Minutor (só com perfil atribuído).
+        // Chamados por e-mail (caixa do suporte) seguem pelo ingestor, independentes disso.
+        if ($user && $user->type === 'cliente' && !$this->profile($user)) return false;
         return $this->unrestricted($user) ? true : $this->perm($user, 'tickets.open', 'same_org') !== 'none';
     }
 
