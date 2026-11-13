@@ -75,6 +75,17 @@ class SourceCodeRequestController extends Controller
                     'channel'           => 'interno',
                     'source_system'     => 'source_code',
                 ]);
+            if (empty($v['ticket_id'])) {
+                // Chamado novo precisa de NÚMERO (formato configurado da empresa do chamado) e SLA,
+                // como qualquer chamado. Nasce Fechado → resolvido/encerrado agora (SLA sem violação).
+                $ticket->forceFill([
+                    'ticket_number' => \App\Services\HelpDeskTicketNumber::next($ticket->company_id),
+                    'resolved_at'   => now(),
+                    'closed_at'     => now(),
+                ])->save();
+                app(\App\Services\HelpDeskSlaService::class)->apply($ticket);
+                \App\Models\HelpDeskTicketEvent::log($ticket->id, 'created', ['to_value' => $ticket->subject]);
+            }
 
             $comment = $ticket->comments()->create([
                 'author_user_id' => $user->id,
