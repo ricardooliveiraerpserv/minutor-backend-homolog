@@ -32,7 +32,12 @@ class RelatorioRentabilidadeController extends Controller
         // abertura/revisita. Chave por mês+intervalo+empresa+escopo. X-Cache-Warm=1 força recompute.
         $__companyId = app(\App\Services\CompanyContext::class)->id() ?? '0';
         $__scope     = optional(\Illuminate\Support\Facades\Auth::user())->isAdmin() ? 'admin' : ('u' . (\Illuminate\Support\Facades\Auth::id() ?? 'g'));
-        $__cacheKey  = "rentab:{$yearMonth}:{$from}:{$to}:c{$__companyId}:{$__scope}";
+        // ?scope=sustentacao → Rentabilidade embutida no PORTAL DE SUSTENTAÇÃO: só os projetos do Portal
+        // (mesma regra dos Apontamentos do Portal — SustentacaoScopeService: sustentação, que inclui os
+        // contratos Cloud, + Investimento Suporte + projetos que o coord. de sustentação coordena).
+        $__sustScope = $request->query('scope') === 'sustentacao';
+        $__sustIds   = $__sustScope ? app(\App\Services\SustentacaoScopeService::class)->projectIds() : null;
+        $__cacheKey  = "rentab:{$yearMonth}:{$from}:{$to}:c{$__companyId}:{$__scope}" . ($__sustScope ? ':sust' : '');
         if ($request->header('X-Cache-Warm') !== '1') {
             try {
                 $__hit = \Illuminate\Support\Facades\Cache::get($__cacheKey);
@@ -58,6 +63,7 @@ class RelatorioRentabilidadeController extends Controller
             ->where('is_billable_only', false)
             ->where('is_internal_action', false)
             ->whereNotIn('user_id', $this->rentabHiddenUserIds()) // oculta usuários da Rentabilidade (config admin) — fora dos dados E dos totais
+            ->when($__sustScope, fn ($q) => empty($__sustIds) ? $q->whereRaw('1 = 0') : $q->whereIn('project_id', $__sustIds))
             ->get();
 
         // R$/H do PROJETO = valor-hora do ÚLTIMO APORTE valorizado, datado, até a competência, senão o
@@ -214,7 +220,9 @@ class RelatorioRentabilidadeController extends Controller
         }
 
         $fixosZerados = [];
-        foreach ($fixosQuery->get() as $u) {
+        // No Portal (scope=sustentacao) só entra quem apontou em projeto do Portal: fixo sem
+        // apontamento na sustentação não é custo da sustentação.
+        if (!$__sustScope) foreach ($fixosQuery->get() as $u) {
             if (isset($jaNoRelatorio[$u->id])) continue; // já aparece (tem apontamento)
             $meta = $costMeta($u);
             if ($meta['type'] !== 'monthly' || $meta['salary'] <= 0) continue; // só recebe fixo com salário
