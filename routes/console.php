@@ -395,3 +395,12 @@ Schedule::command('projects:warm-gestao-cache')
   ->withoutOverlapping(10)
   ->name('warm-gestao-cache')
   ->description('Aquece o cache da Gestão de Contratos (evita miss frio)');
+
+// Regra: todo cliente ativo tem repositório Git conectado (chave Contrato permanece inativa).
+// Rede de segurança p/ clientes criados fora do Eloquent (o observer cobre o caminho normal).
+Schedule::command('source-repos:backfill --sleep=1500')
+  ->dailyAt('03:40')
+  ->timezone('America/Sao_Paulo')
+  ->withoutOverlapping(60)
+  ->name('source-repos-backfill')
+  ->description('Cria/conecta repositório Git para clientes ativos sem vínculo');

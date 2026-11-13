@@ -44,7 +44,7 @@ class SourceRepoBackfillCommand extends Command
         if ($limit > 0) {
             $query->limit($limit);
         }
-        $targets = $query->get(['id', 'name']);
+        $targets = $query->get();
 
         $dry = (bool) $this->option('dry-run');
         $sleepMs = max(0, (int) $this->option('sleep'));
@@ -53,6 +53,9 @@ class SourceRepoBackfillCommand extends Command
         $ok = 0;
         $fail = 0;
         foreach ($targets as $c) {
+            if (! $prov->shouldProvision($c)) {
+                continue;
+            }
             $name = $prov->repoName($c);
             if ($dry) {
                 $this->line("• #{$c->id}  {$c->name}  →  {$prov->owner()}/{$name}");

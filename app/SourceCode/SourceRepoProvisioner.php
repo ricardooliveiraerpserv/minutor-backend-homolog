@@ -36,6 +36,10 @@ class SourceRepoProvisioner
         if (!$customer->active) {
             return false;
         }
+        // Registros-modelo (ex.: "📋 TEMPLATE — Modelo de Preenchimento") não são clientes reais.
+        if (preg_match('/\bTEMPLATE\b|modelo de preenchimento/iu', (string) $customer->name)) {
+            return false;
+        }
         // crm_status pode não existir (prod) → getAttribute retorna null → não é lead/prospect.
         return !in_array($customer->getAttribute('crm_status'), ['lead', 'prospect'], true);
     }
