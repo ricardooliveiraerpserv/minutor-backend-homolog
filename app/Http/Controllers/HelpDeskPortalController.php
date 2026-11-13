@@ -383,7 +383,7 @@ class HelpDeskPortalController extends Controller
                 'migrated'          => true,
                 'conecta_ticket_id' => $log->conecta_ticket_id,
                 'numero'            => $numero,
-                'message'           => 'Seu chamado foi registrado no atendimento (Conecta).',
+                'message'           => 'Seu chamado foi registrado no atendimento.',
             ], 201);
         }
 
