@@ -230,7 +230,13 @@ class ClientProjectController extends Controller
         }
         $amSpecific  = (bool) $delivery->client_involved && (int) $delivery->client_user_id === $uid;
         $hasSpecific = (bool) $delivery->client_involved && $delivery->client_user_id !== null;
-        return $amSpecific || (!$hasSpecific && self::participatesInProject($project, $uid));
+        if ($amSpecific) return true;
+        if ($hasSpecific) return false;
+        // Aprovação geral do cliente do projeto: participante convidado OU gestor do cliente
+        // (o gestor enxerga todos os projetos da empresa e vê o selo "Aprovar").
+        if (self::participatesInProject($project, $uid)) return true;
+        return \App\Models\User::query()->whereKey($uid)->where('type', 'cliente')
+            ->where('customer_id', $project->customer_id)->where('is_customer_manager', true)->exists();
     }
 
     private function ensureProjectAccess(Project $project, $user): ?JsonResponse

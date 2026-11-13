@@ -117,26 +117,38 @@ class DeliveryApprovalService
 
     private function notifyClient(StageDelivery $delivery): void
     {
-        if (!$delivery->client_involved) {
-            return;
+        // Destinatários: o cliente ESPECÍFICO da atividade (se houver); senão, quem acompanha o
+        // projeto pelo portal — participantes convidados + gestores do cliente (mesma regra de
+        // quem pode aprovar). Antes só enviava com cliente específico, então a aprovação "geral"
+        // nunca avisava ninguém.
+        $delivery->loadMissing(['stage.project', 'client:id,name,email']);
+        $project = $delivery->stage?->project;
+        $to = []; // email => nome
+        if ($delivery->client_involved && ($delivery->client_email || $delivery->client?->email)) {
+            $e = strtolower(trim((string) ($delivery->client_email ?: $delivery->client?->email)));
+            $to[$e] = $delivery->client?->name ?? $e;
+        } elseif ($project) {
+            $users = $project->clientViewers()->where('users.type', 'cliente')->get(['users.id', 'users.name', 'users.email', 'users.enabled'])
+                ->merge(User::query()->where('type', 'cliente')->where('customer_id', $project->customer_id)
+                    ->where('is_customer_manager', true)->get(['id', 'name', 'email', 'enabled']));
+            foreach ($users as $u) {
+                if ($u->enabled === false || !$u->email) continue;
+                $to[strtolower(trim($u->email))] = $u->name;
+            }
         }
+        if (!$to) return;
 
-        $email = $delivery->client_email;
-        if (!$email && $delivery->client_user_id) {
-            $delivery->loadMissing('client:id,name,email');
-            $email = $delivery->client?->email;
-        }
-        if (!$email) {
-            return;
-        }
-
-        try {
-            Mail::to($email)->send(new DeliveryApprovalRequestMail($delivery));
-        } catch (\Throwable $e) {
-            Log::warning('Falha ao enviar e-mail de aprovação ao cliente', [
-                'delivery_id' => $delivery->id,
-                'error'       => $e->getMessage(),
-            ]);
+        foreach ($to as $email => $name) {
+            try {
+                // Fila: o e-mail é montado DEPOIS que a mensagem obrigatória do pedido é gravada
+                // (StageDeliveryController::requestApproval grava a mensagem logo após mudar o status).
+                Mail::to($email)->queue(new DeliveryApprovalRequestMail($delivery, $name));
+            } catch (\Throwable $e) {
+                Log::warning('Falha ao enviar e-mail de aprovação ao cliente', [
+                    'delivery_id' => $delivery->id,
+                    'error'       => $e->getMessage(),
+                ]);
+            }
         }
     }
 }
