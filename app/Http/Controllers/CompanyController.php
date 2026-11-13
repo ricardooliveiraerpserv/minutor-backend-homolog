@@ -122,7 +122,11 @@ class CompanyController extends Controller
     /** Usuários vinculados à empresa, com o papel. */
     public function companyUsers(Request $request, Company $company): JsonResponse
     {
-        if ($r = $this->denyNonAdmin($request)) return $r;
+        // Leitura liberada ao ADMINISTRATIVO (tela Empresas do Grupo); vincular/alterar/remover segue admin-only.
+        $u = $request->user();
+        if (!$u || !($u->isAdmin() || $u->isAdministrativo())) {
+            return response()->json(['message' => 'Sem permissão.'], 403);
+        }
 
         $users = $company->users()->orderBy('name')->get()->map(fn (User $u) => [
             'id' => $u->id, 'name' => $u->name, 'email' => $u->email, 'role' => $u->pivot->role,
