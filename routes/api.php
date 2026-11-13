@@ -1493,6 +1493,7 @@ Route::prefix('v1')->group(function () {
         // 🎓 Aprenda o Minutor — vídeos de treinamento por perfil (todos os usuários; gestão = admin no controller)
         Route::get('/training-videos',                [\App\Http\Controllers\TrainingVideoController::class, 'index'])->name('training-videos.index');
         Route::get('/training-videos/{video}/play',   [\App\Http\Controllers\TrainingVideoController::class, 'play'])->whereNumber('video')->name('training-videos.play');
+        Route::post('/training-videos/{video}/watched', [\App\Http\Controllers\TrainingVideoController::class, 'watched'])->whereNumber('video')->name('training-videos.watched');
         Route::post('/training-videos/uploads/chunk', [\App\Http\Controllers\TrainingVideoController::class, 'uploadChunk'])->name('training-videos.upload-chunk');
         Route::post('/training-videos',               [\App\Http\Controllers\TrainingVideoController::class, 'store'])->name('training-videos.store');
         Route::post('/training-videos/{video}/cover', [\App\Http\Controllers\TrainingVideoController::class, 'uploadCover'])->whereNumber('video')->name('training-videos.upload-cover');

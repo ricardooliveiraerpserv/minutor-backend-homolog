@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\TrainingVideo;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
@@ -27,7 +28,7 @@ class TrainingVideoController extends Controller
         return $request->user()?->isAdmin() ? null : response()->json(['message' => 'Apenas administradores.'], 403);
     }
 
-    private function present(TrainingVideo $v): array
+    private function present(TrainingVideo $v, ?array $watched = null): array
     {
         return [
             'id'                 => $v->id,
@@ -48,6 +49,8 @@ class TrainingVideoController extends Controller
             'active'             => $v->active,
             'content_updated_at' => optional($v->content_updated_at)->toIso8601String(),
             'created_at'         => optional($v->created_at)->toIso8601String(),
+            // Versão que ESTE usuário já assistiu (null = nunca assistiu). < version → "Atualizado".
+            'watched_version'    => $watched[$v->id] ?? null,
         ];
     }
 
@@ -58,13 +61,15 @@ class TrainingVideoController extends Controller
         // Admin pode pré-visualizar a biblioteca de UM perfil (?profile=consultor_horista …).
         $profile = $user->isAdmin() ? $request->query('profile') : null;
         if ($profile !== null && !array_key_exists($profile, TrainingVideo::AUDIENCES)) $profile = null;
+        $watched = DB::table('training_video_views')->where('user_id', $user->id)
+            ->pluck('watched_version', 'training_video_id')->map(fn ($x) => (int) $x)->all();
         $rows = TrainingVideo::query()
             ->when(!$manage, fn ($q) => $q->where('active', true)->whereNotNull('file_path'))
             ->orderBy('category')->orderBy('sort_order')->orderBy('title')
             ->get()
             ->filter(fn ($v) => $manage || ($profile ? $v->visibleToProfile($profile) : $v->visibleTo($user)))
             ->values()
-            ->map(fn ($v) => $this->present($v));
+            ->map(fn ($v) => $this->present($v, $watched));
 
         return response()->json([
             'data'      => $rows,
@@ -82,6 +87,25 @@ class TrainingVideoController extends Controller
             'video' => $video->id, 'v' => $video->version,
         ]);
         return response()->json(['url' => $url]);
+    }
+
+    /** Marca o vídeo como assistido (versão atual) pelo usuário — chamado quando começa a tocar. */
+    public function watched(Request $request, TrainingVideo $video): JsonResponse
+    {
+        $user = $request->user();
+        if (!$video->visibleTo($user)) return response()->json(['message' => 'Vídeo indisponível.'], 404);
+        // Ver como: não registra nada em nome do usuário.
+        if (($user->currentAccessToken()?->name ?? null) === 'impersonation') {
+            return response()->json(['ok' => true, 'impersonating' => true]);
+        }
+        $now = now();
+        DB::statement('INSERT INTO training_video_views (training_video_id, user_id, watched_version, first_watched_at, last_watched_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (training_video_id, user_id) DO UPDATE SET
+              watched_version = GREATEST(training_video_views.watched_version, EXCLUDED.watched_version),
+              last_watched_at = EXCLUDED.last_watched_at, updated_at = EXCLUDED.updated_at',
+            [$video->id, $user->id, (int) $video->version, $now, $now, $now, $now]);
+        return response()->json(['ok' => true, 'watched_version' => (int) $video->version]);
     }
 
     public function stream(Request $request, TrainingVideo $video)
