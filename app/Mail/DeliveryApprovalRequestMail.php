@@ -44,7 +44,7 @@ class DeliveryApprovalRequestMail extends Mailable
             'stageName'     => $this->delivery->stage?->name,
             'recipientName' => $this->recipientName,
             'requestedBy'   => $requestedBy,
-            'message'       => is_array($msg?->payload) ? ($msg->payload['text'] ?? null) : null,
+            'approvalMessage' => is_array($msg?->payload) ? ($msg->payload['text'] ?? null) : null,
             'url'           => $url,
         ]);
     }

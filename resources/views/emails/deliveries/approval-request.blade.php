@@ -46,8 +46,8 @@
               <td style="color:#FFFFFF;padding:5px 0;font-weight:700;">{{ optional($d->approval_requested_at ?? now())->timezone('America/Sao_Paulo')->format('d/m/Y H:i') }}</td>
             </tr>
           </table>
-          @if(!empty($message))
-          <div style="margin-top:16px;padding:14px 16px;background:#000000;border:1px solid #3F3F46;border-radius:10px;color:#FFFFFF;font-size:14px;line-height:1.6;white-space:pre-wrap;">{{ $message }}</div>
+          @if(!empty($approvalMessage))
+          <div style="margin-top:16px;padding:14px 16px;background:#000000;border:1px solid #3F3F46;border-radius:10px;color:#FFFFFF;font-size:14px;line-height:1.6;white-space:pre-wrap;">{{ $approvalMessage }}</div>
           @endif
         </div>
       </td>
