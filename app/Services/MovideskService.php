@@ -47,8 +47,19 @@ class MovideskService
         return $this;
     }
 
+    /** Empresas SEM nenhuma comunicação com o Movidesk (decisão Ricardo 14/11/2026: BIZIFY = 100% Minutor). */
+    public static function companyBlocked(?int $companyId): bool
+    {
+        if (!$companyId) return false;
+        $raw = \App\Models\SystemSetting::get('movidesk_companies_off', [2]);
+        if (is_string($raw)) { $raw = json_decode($raw, true) ?? array_filter(explode(',', $raw)); }
+        return in_array((int) $companyId, array_map('intval', (array) $raw), true);
+    }
+
     private function token(): ?string
     {
+        // Empresa desligada do Movidesk → sem token → nenhuma chamada sai (import, orgs, horas, escrita...).
+        if ($this->companyId && self::companyBlocked($this->companyId)) return null;
         // Token por empresa (services.movidesk.tokens[companyId]) com fallback pro global.
         if ($this->companyId) {
             $perCompany = config("services.movidesk.tokens.{$this->companyId}");

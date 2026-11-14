@@ -135,6 +135,7 @@ class MovideskHelpDeskImporter
         }
 
         $companyId = $companyIdOverride ?: $this->companyId();
+        if (MovideskService::companyBlocked($companyId)) { $stats['skipped'] = -3; return $stats; } // empresa sem Movidesk
         $primary   = $this->teamFilterApplies($companyId);
         // Conta secundária SEM token próprio → o MovideskService cairia no token global (ERPSERV) e
         // gravaria chamados da ERPSERV como se fossem desta empresa. Aborta.
@@ -396,6 +397,7 @@ class MovideskHelpDeskImporter
     public function importOne(int $externalId, ?int $companyId = null): array
     {
         $companyId = $companyId ?: $this->companyId();
+        if (MovideskService::companyBlocked($companyId)) return ['created' => false, 'comments' => 0, 'ticket_id' => null, 'hd_number' => null];
         // Multi-empresa: usa o token Movidesk da empresa alvo (ERPSERV=global, Bizify=2, etc.).
         $this->movidesk->forCompany($companyId);
         $full = $this->movidesk->fetchTicket($externalId);
