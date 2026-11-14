@@ -357,7 +357,7 @@ class MovideskHelpDeskImporter
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
             ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
-            ->limit(500)
+            ->limit(30) // lote pequeno por ciclo (API do Movidesk tem limite de requisições)
             ->get();
         if ($rows->isEmpty()) {
             return 0;
