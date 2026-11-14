@@ -400,6 +400,8 @@ class UserController extends Controller
         // a seleção de Empresa/Equipe (senão a coluna "apaga" ao recarregar).
         $teamsByUser = \DB::table('helpdesk_team_user')
             ->whereIn('user_id', $pageUserIds)
+            // Equipe EXCLUÍDA não conta (senão o "N selecionados" mostra a mais do que a lista exibe).
+            ->whereIn('helpdesk_team_id', \DB::table('helpdesk_teams')->whereNull('deleted_at')->select('id'))
             ->get(['user_id', 'helpdesk_team_id'])
             ->groupBy('user_id');
 

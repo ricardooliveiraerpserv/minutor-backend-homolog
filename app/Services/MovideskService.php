@@ -1698,6 +1698,71 @@ class MovideskService
         }
     }
 
+    /**
+     * CRIA um chamado no Movidesk (POST /tickets). Usado SÓ pela cópia Promax (MovideskPromaxCopyService).
+     * @return string|null id do chamado criado.
+     */
+    public function createTicket(array $payload): ?string
+    {
+        try {
+            $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&returnAllProperties=false';
+            $response = Http::timeout(40)->withHeaders(['Content-Type' => 'application/json'])->post($url, $payload);
+            if (!$response->successful()) {
+                Log::warning('📤 [MOVIDESK WB] createTicket falhou', ['status' => $response->status(), 'body' => substr($response->body(), 0, 400)]);
+                return null;
+            }
+            $id = $response->json('id');
+            Log::info('📤 [MOVIDESK WB] createTicket ok', ['id' => $id]);
+            return $id !== null ? (string) $id : null;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção em createTicket', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /** CRIA uma pessoa (contato cliente) no Movidesk, vinculada à organização. @return string|null id. */
+    public function createPerson(string $name, string $email, ?string $orgMovideskId): ?string
+    {
+        try {
+            $payload = [
+                'isActive' => true, 'personType' => 1, 'profileType' => 2,
+                'businessName' => mb_substr($name !== '' ? $name : $email, 0, 100),
+                'emails' => [['emailType' => 'Profissional', 'email' => $email, 'isDefault' => true]],
+            ];
+            if ($orgMovideskId) { $payload['relationships'] = [['id' => $orgMovideskId, 'forceChildrenToHaveSomeAgreement' => false]]; }
+            $url = "{$this->baseUrl()}/persons?token=" . urlencode($this->token()) . '&returnAllProperties=false';
+            $response = Http::timeout(30)->withHeaders(['Content-Type' => 'application/json'])->post($url, $payload);
+            if (!$response->successful()) {
+                Log::warning('📤 [MOVIDESK WB] createPerson falhou', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                return null;
+            }
+            $id = $response->json('id');
+            return $id !== null ? (string) $id : null;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção em createPerson', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /** Id de pessoa (agente) no Movidesk pelo NOME exato (ex.: "Suporte ERPSERV"). */
+    public function findPersonIdByName(string $name): ?string
+    {
+        if (trim($name) === '' || !$this->token()) return null;
+        try {
+            $filter = "businessName eq '" . str_replace("'", "''", $name) . "'";
+            $url = "{$this->baseUrl()}/persons?token=" . urlencode($this->token())
+                . '&$select=id,businessName,profileType&$top=5&$filter=' . rawurlencode($filter);
+            $resp = Http::timeout(20)->get($url);
+            if (!$resp->successful()) return null;
+            foreach ((array) $resp->json() as $p) {
+                if ((int) ($p['profileType'] ?? 0) !== 2 && !empty($p['id'])) return (string) $p['id']; // agente (1) ou ambos (3)
+            }
+            return null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
     public function patchTicket(int $ticketId, array $payload): bool
     {
         if (empty($payload)) return true;

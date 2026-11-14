@@ -159,6 +159,12 @@ class MovideskHelpDeskImporter
             $externalId = (string) ($lite['id'] ?? '');
             if ($externalId === '') { continue; }
 
+            // CÓPIA Promax criada PELO Minutor (MovideskPromaxCopyService): o original é o chamado do
+            // Minutor — não importa de volta (senão duplica). Fluxo de mão única Minutor → Movidesk.
+            if ($primary && HelpDeskTicket::where('movidesk_copy_id', $externalId)->exists()) {
+                $stats['skipped']++; $this->bumpCursor($lite, $maxUpdate); continue;
+            }
+
             $base   = (string) ($lite['baseStatus'] ?? '');
             $exists = HelpDeskTicket::where('source_system', 'movidesk')->where('external_ref', $externalId)->where('origin_company_id', $companyId)->exists();
 
@@ -253,6 +259,11 @@ class MovideskHelpDeskImporter
         // PASSADA DEDICADA DE STATUS: mudança de status no Minutor vai pro Movidesk sozinha,
         // independente do chamado ter entrado na varredura por lastUpdate.
         $stats['status_pushed'] = $this->pushPendingStatuses($companyId);
+        // CÓPIA Promax (chamado aberto no Minutor via suporte@ → cópia no Movidesk). Flag própria, padrão off.
+        if ($primary) {
+            try { $stats['promax_copy'] = app(MovideskPromaxCopyService::class)->run(); }
+            catch (\Throwable $e) { Log::error('📤 [MOVIDESK COPIA] falhou', ['error' => $e->getMessage()]); }
+        }
         // Re-hospeda imagens inline das interações novas (fora da transação; URL S3 expira em horas).
         $stats['images'] = $this->rehostPendingImages();
 
@@ -628,7 +639,7 @@ class MovideskHelpDeskImporter
      * Movidesk aceita só texto na escrita (htmlDescription é read-only) — então tratamos também
      * TABELAS (assinaturas montadas em <table>): célula → espaço, linha/tabela/bloco → quebra,
      * senão a assinatura sai como texto corrido grudado. */
-    private function htmlToText(string $html): string
+    public function htmlToText(string $html): string
     {
         $s = $html;
         // Remove a ASSINATURA padrão (montada em <table>) — não deve ir pro Movidesk.
@@ -933,7 +944,7 @@ class MovideskHelpDeskImporter
      * 1) movidesk_agents.user_id; 2) movidesk_agents por e-mail; 3) pessoa no Movidesk por e-mail (API).
      * null → ação vai sem autor (comportamento antigo).
      */
-    private function authorMovideskId(?int $userId): ?string
+    public function authorMovideskId(?int $userId): ?string
     {
         if (!$userId) return null;
         if (array_key_exists($userId, $this->authorMdCache)) return $this->authorMdCache[$userId];
@@ -955,7 +966,7 @@ class MovideskHelpDeskImporter
     }
 
     /** Id da ação recém-criada no Movidesk: 1ª ação > $afterId do mesmo tipo e mesmo texto. */
-    private function locateCreatedActionId(int $externalId, int $afterId, int $type, string $sentHtml): ?int
+    public function locateCreatedActionId(int $externalId, int $afterId, int $type, string $sentHtml): ?int
     {
         try {
             $full = $this->movidesk->fetchTicket($externalId);
