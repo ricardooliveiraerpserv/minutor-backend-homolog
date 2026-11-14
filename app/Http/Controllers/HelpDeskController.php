@@ -24,8 +24,10 @@ class HelpDeskController extends Controller
         if ($request->boolean('candidates')) {
             // is_bizify separa ERPSERV (false) × BIZIFY (true) — para vincular à equipe só os da empresa.
             return response()->json(['data' => User::whereIn('type', ['admin', 'administrativo', 'coordenador', 'consultor', 'parceiro_admin'])
-                ->with('partner:id,name')->orderBy('name')->get(['id', 'name', 'type', 'is_bizify', 'partner_id'])
-                ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'type' => $u->type, 'is_bizify' => $u->is_bizify, 'partner_name' => $u->partner?->name])]);
+                ->with(['partner:id,name', 'companies:id'])->orderBy('name')->get(['id', 'name', 'type', 'is_bizify', 'partner_id'])
+                // company_ids = empresas que a pessoa ATENDE (vínculo em Usuários) — além do is_bizify.
+                ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'type' => $u->type, 'is_bizify' => $u->is_bizify, 'partner_name' => $u->partner?->name,
+                    'company_ids' => $u->companies->pluck('id')->map(fn ($i) => (int) $i)->values()])]);
         }
         // Multi-empresa: se vier company_id (empresa do ticket), lista os agentes que ATENDEM
         // essa empresa pelo PERFIL DE ACESSO — incluindo os "ambas" (independe da equipe/empresa
