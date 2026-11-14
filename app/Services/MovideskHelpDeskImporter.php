@@ -463,10 +463,18 @@ class MovideskHelpDeskImporter
         // RESPONSÁVEL: sincroniza o assignee com o owner do Movidesk (mapeado por e-mail → usuário).
         // Só reaplica quando o responsável MUDOU no Movidesk — não desfaz reatribuição feita no Minutor.
         $ownerEmail = mb_strtolower(trim((string) ($md['owner']['email'] ?? '')));
-        if ($created || mb_strtolower(trim((string) $ticket->external_owner_email)) !== $ownerEmail) {
-            $ticket->assignee_id = $ownerEmail !== '' ? $this->resolveAgentUser($ownerEmail) : null;
-            $ticket->external_owner_email = $ownerEmail ?: null;
+        // O RESPONSÁVEL do Minutor NUNCA é alterado pela integração depois que o chamado existe
+        // (decisão Ricardo 14/11/2026, go-live: agentes desativados no Movidesk repassam os chamados
+        // p/ o agente genérico, e isso não pode mexer no responsável real do Minutor).
+        // Só na CRIAÇÃO o owner do Movidesk vira o responsável. A sombra segue atualizada (informativo).
+        if ($created) {
+            // Agente GENÉRICO do Movidesk ("Suporte ERPSERV", usa o e-mail do Ricardo) não é pessoa:
+            // chamado novo com ele como owner entra SEM responsável (vai para a Triagem).
+            $ownerName = mb_strtolower(trim((string) ($md['owner']['businessName'] ?? '')));
+            $generic = in_array($ownerName, ['suporte erpserv'], true);
+            $ticket->assignee_id = ($ownerEmail !== '' && !$generic) ? $this->resolveAgentUser($ownerEmail) : null;
         }
+        $ticket->external_owner_email = $ownerEmail ?: null;
         // Equipe atual no Movidesk — decide se o chamado responde PELO Movidesk (equipe ERPSERV) sem chamar a API.
         $ticket->external_owner_team = mb_substr(trim((string) ($md['ownerTeam'] ?? '')), 0, 255) ?: null;
 
