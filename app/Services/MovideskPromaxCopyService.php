@@ -18,7 +18,8 @@ use Illuminate\Support\Facades\Log;
  * todo chamado do cliente Promax (domínio promax.com.br / promax.bardahl.com.br → cliente 269 pelas Regras
  * de Associação) ganha uma CÓPIA no Movidesk (conta ERPSERV), de MÃO ÚNICA Minutor → Movidesk:
  *   - abertura: solicitante (pessoa do Movidesk; criada na org Promax se não existir), dono "Suporte ERPSERV",
- *     tag "minutor" (as automações do Movidesk filtram essa tag → o Movidesk NÃO dispara workflow/e-mail);
+ *     tag "minutor" e campo "Envia E-mail?" = Não (os gatilhos de e-mail ao cliente do Movidesk checam esse
+ *     campo → o Movidesk NÃO manda e-mail; criação via API também não casa com "aberto via e-mail/agente");
  *   - toda interação (resposta do agente E resposta do cliente por e-mail) vira ação no Movidesk;
  *   - status segue o de-para outbound (helpdesk_movidesk_status_map) + justificativa global.
  * Os workflows/e-mails ao cliente continuam SEMPRE do Minutor (o chamado não é source_system=movidesk,
@@ -138,6 +139,17 @@ class MovideskPromaxCopyService
             'tags' => [SystemSetting::get('movidesk_promax_copy_tag', 'minutor')],
             'actions' => [['type' => 2, 'origin' => 3, 'description' => $body, 'createdBy' => ['id' => $personId]]],
         ];
+        // "Envia E-mail?" = Não → os gatilhos de e-mail ao cliente do Movidesk (nova ação, resolvido,
+        // cancelado) já checam esse campo e NÃO disparam: o e-mail ao cliente é sempre do Minutor.
+        $fid = (int) SystemSetting::get('movidesk_promax_copy_noemail_field_id', 235235);
+        if ($fid > 0) {
+            $payload['customFieldValues'] = [[
+                'customFieldId' => $fid,
+                'customFieldRuleId' => (int) SystemSetting::get('movidesk_promax_copy_noemail_rule_id', 123791),
+                'line' => 1,
+                'items' => [['customFieldItem' => (string) SystemSetting::get('movidesk_promax_copy_noemail_item', 'Não')]],
+            ]];
+        }
         $ownerId = $this->ownerId();
         if ($ownerId) { $payload['owner'] = ['id' => $ownerId]; }
         $team = trim((string) SystemSetting::get('movidesk_promax_copy_owner_team', ''));
