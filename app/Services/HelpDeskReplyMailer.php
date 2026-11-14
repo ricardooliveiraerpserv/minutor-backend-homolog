@@ -339,7 +339,7 @@ class HelpDeskReplyMailer
             ->whereNotNull('from_email')->orderBy('id')->first();
         if ($led?->from_email) return $led->from_email;
 
-        return optional($ticket->requester)->email;
+        return optional($ticket->requester)->email ?: ($ticket->requester_email ?: null);
     }
 
     /**
