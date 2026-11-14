@@ -84,7 +84,7 @@ class HelpDeskTriggerController extends Controller
             'catalog'     => HelpDeskTrigger::conditionCatalog(),
             'operators'   => HelpDeskTrigger::OPERATORS,
             'actionTypes' => HelpDeskTrigger::ACTION_TYPES,
-            'recipients'  => ['responsavel' => 'Responsável pelo chamado', 'cliente' => 'Cliente (solicitante)', 'requester' => 'Usuário solicitante', 'coordenador_sustentacao' => 'Coordenador de Sustentação', 'participantes' => 'Participantes da reunião'],
+            'recipients'  => ['responsavel' => 'Responsável pelo chamado', 'cliente' => 'Cliente (solicitante)', 'requester' => 'Usuário solicitante', 'coordenador_sustentacao' => 'Coordenador de Sustentação', 'agentes_coordenacao' => 'Agentes com perfil de Coordenação (da empresa)', 'participantes' => 'Participantes da reunião'],
             'blocks'      => \App\Services\HelpDeskMailComposer::BLOCKS,
             // Fontes de opções (referenciadas por 'source' no catálogo).
             'channels'     => collect(\App\Models\HelpDeskTicket::CHANNELS)->map(fn ($c) => ['id' => $c, 'name' => $c]),

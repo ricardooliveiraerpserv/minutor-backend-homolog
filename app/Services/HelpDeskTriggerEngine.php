@@ -395,6 +395,17 @@ class HelpDeskTriggerEngine
                 ->when($cid, fn ($q) => $q->whereHas('companies', fn ($c) => $c->where('companies.id', $cid)))
                 ->pluck('email')->filter()->values()->all();
         }
+        // Quem tem PERFIL DE ACESSO HD de coordenação (ex.: "Agentes (Coordenação)"), ativo e vinculado
+        // à empresa do chamado. Usado na BIZIFY (sem coordenador de sustentação) p/ avisar chamado novo.
+        if ($target === 'agentes_coordenacao') {
+            $cid = (int) ($ticket->company_id ?: 0);
+            $profileIds = \App\Models\HelpDeskAccessProfile::where('kind', 'agent')
+                ->where('name', 'ilike', '%coordena%')->pluck('id');
+            return \App\Models\User::whereIn('helpdesk_access_profile_id', $profileIds)
+                ->where('type', '<>', 'cliente')->where('enabled', true)
+                ->when($cid, fn ($q) => $q->whereHas('companies', fn ($c) => $c->where('companies.id', $cid)))
+                ->pluck('email')->filter()->unique()->values()->all();
+        }
         // Participantes da reunião vinculada ao chamado (a última agendada).
         if ($target === 'participantes') {
             $meeting = self::latestMeetingFor($ticket);
