@@ -385,7 +385,12 @@ class HelpDeskTriggerEngine
     private static function resolveRecipients(string $target, HelpDeskTicket $ticket): array
     {
         if ($target === 'coordenador_sustentacao') {
+            // Só coordenadores VINCULADOS à empresa do chamado (company_user). Coordenador é ERPSERV-only
+            // (decisão Ricardo): chamado da BIZIFY não tem coordenador de sustentação → ninguém recebe.
+            $cid = (int) ($ticket->company_id ?: 0);
             return \App\Models\User::where('type', 'coordenador')->where('coordinator_type', 'sustentacao')
+                ->where('enabled', true)
+                ->when($cid, fn ($q) => $q->whereHas('companies', fn ($c) => $c->where('companies.id', $cid)))
                 ->pluck('email')->filter()->values()->all();
         }
         // Participantes da reunião vinculada ao chamado (a última agendada).
