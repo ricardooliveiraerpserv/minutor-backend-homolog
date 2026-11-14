@@ -72,11 +72,11 @@ class MovideskGoLiveCommand extends Command
         $this->line('  Status/categoria vão ao Movidesk ... ' . $yes((bool) SystemSetting::get('movidesk_hd_writeback_enabled', false)) . ' (movidesk_hd_writeback_enabled + justificativa)');
 
         if ($on) {
-            $pending = MovideskPushPolicy::scopeComments(DB::table('helpdesk_ticket_comments as c')
-                ->join('helpdesk_tickets as t', 't.id', '=', 'c.ticket_id')
-                ->where('t.source_system', 'movidesk')->where('t.origin_company_id', $primary)
-                ->whereNull('c.source')->where('c.is_system', false)->whereNull('c.external_action_id')
-                ->whereNull('c.deleted_at'))
+            // Sem JOIN (scopeComments usa created_at/visibility sem prefixo → ambíguo com join).
+            $pending = MovideskPushPolicy::scopeComments(DB::table('helpdesk_ticket_comments')
+                ->whereIn('ticket_id', DB::table('helpdesk_tickets')->where('source_system', 'movidesk')->where('origin_company_id', $primary)->select('id'))
+                ->whereNull('source')->where('is_system', false)->whereNull('external_action_id')
+                ->whereNull('deleted_at'))
                 ->count();
             $this->line("  Respostas aguardando envio ......... {$pending}");
         }
