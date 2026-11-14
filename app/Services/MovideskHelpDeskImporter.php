@@ -358,8 +358,11 @@ class MovideskHelpDeskImporter
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
             ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
-            ->limit(30) // lote pequeno por ciclo (API do Movidesk tem limite de requisições)
-            ->get();
+            ->get()
+            // Anti-vaivém ANTES do lote: senão os primeiros N (equivalentes) ocupam o lote para sempre.
+            ->reject(fn ($r) => $this->inboundSid((int) $r->company_id, (string) $r->external_status) === (int) $r->status_id)
+            ->take(30) // lote pequeno por ciclo (API do Movidesk tem limite de requisições)
+            ->values();
         if ($rows->isEmpty()) {
             return 0;
         }
@@ -367,7 +370,6 @@ class MovideskHelpDeskImporter
         foreach ($rows as $r) {
             // Anti-vaivém: o status do Minutor É o equivalente do que veio do Movidesk (de-para N→1,
             // ex.: Movidesk "Resolvido" → Minutor "Fechado") → não foi o Minutor que mudou; não empurra.
-            if ($this->inboundSid((int) $r->company_id, (string) $r->external_status) === (int) $r->status_id) continue;
             $sig = trim(($r->base ?? '') . '|' . ($r->text ?? ''));
             $patch = ['status' => $r->text, 'justification' => $just];
             if (!empty($r->base)) { $patch['baseStatus'] = $r->base; }
