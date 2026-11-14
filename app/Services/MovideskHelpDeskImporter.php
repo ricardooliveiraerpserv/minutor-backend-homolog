@@ -378,15 +378,17 @@ class MovideskHelpDeskImporter
                 // SÓ chamado com responsável em equipe da ERPSERV — senão não escreve no Movidesk.
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
                 if (!$full) { continue; }
+                // toBase(): atualização SÓ da sombra Movidesk NÃO mexe no updated_at — senão chamados já
+                // fechados sobem p/ o topo da fila (ordenada por updated_at) e escondem o backlog (14/11).
                 // Sombra desatualizada: o Movidesk JÁ está no status alvo (ou o chamado foi p/ equipe
                 // Promax, que não recebe escrita) → só realinha a sombra, sem escrever no Movidesk.
                 $mdNow = trim((string) ($full['baseStatus'] ?? '') . '|' . (string) ($full['status'] ?? ''));
                 if ($mdNow === $sig || !MovideskPushPolicy::isErpservTeam($full['ownerTeam'] ?? null)) {
-                    HelpDeskTicket::where('id', $r->id)->update(['external_status' => $mdNow, 'external_owner_team' => mb_substr(trim((string) ($full['ownerTeam'] ?? '')), 0, 255) ?: null, 'external_synced_at' => now()]);
+                    HelpDeskTicket::where('id', $r->id)->toBase()->update(['external_status' => $mdNow, 'external_owner_team' => mb_substr(trim((string) ($full['ownerTeam'] ?? '')), 0, 255) ?: null, 'external_synced_at' => now()]);
                     continue;
                 }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
-                    HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
+                    HelpDeskTicket::where('id', $r->id)->toBase()->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;
                 }
             } catch (\Throwable $e) {
