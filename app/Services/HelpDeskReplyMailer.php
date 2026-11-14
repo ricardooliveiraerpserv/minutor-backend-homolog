@@ -26,7 +26,10 @@ class HelpDeskReplyMailer
     public static function sendPublicComment(HelpDeskTicket $ticket, HelpDeskTicketComment $comment, array $extraCc = [], bool $isSolutionUpdate = false): array
     {
         // Só resposta pública feita por um AGENTE (usuário). Inbound (author_contact_id) não reenvia.
-        if ($comment->visibility !== 'customer' || empty($comment->author_user_id)) {
+        // Exceção: ação de AGENTE feita no Movidesk numa cópia Promax (source=movidesk) — o agente da Promax
+        // não é usuário do Minutor; o MovideskPromaxCopyService só despacha esse e-mail p/ ação de agente.
+        $fromMovideskAgent = ($comment->source ?? null) === 'movidesk' && !empty($ticket->movidesk_copy_id);
+        if ($comment->visibility !== 'customer' || (empty($comment->author_user_id) && !$fromMovideskAgent)) {
             return [false, 'skip:nao_e_resposta_publica_de_agente'];
         }
         if (trim(strip_tags((string) $comment->body)) === '') {
