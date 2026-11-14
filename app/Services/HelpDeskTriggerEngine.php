@@ -31,7 +31,9 @@ class HelpDeskTriggerEngine
      */
     public static function queue(string $event, HelpDeskTicket $ticket, array $context = []): void
     {
-        \App\Jobs\ProcessHelpDeskTriggersJob::dispatch($event, $ticket->id, $context)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+        // idle_in_status é varredura horária (centenas de jobs) → fila 'low': o worker processa 'emails'
+        // antes, então resposta ao cliente / aviso de status não espera atrás da varredura.
+        \App\Jobs\ProcessHelpDeskTriggersJob::dispatch($event, $ticket->id, $context)->onConnection(config('queue.helpdesk_email_connection'))->onQueue($event === 'idle_in_status' ? 'low' : 'emails');
     }
 
     public static function dispatch(string $event, HelpDeskTicket $ticket, array $context = []): void
