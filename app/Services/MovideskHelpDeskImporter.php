@@ -357,10 +357,11 @@ class MovideskHelpDeskImporter
             ->whereNotNull('t.external_ref')
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
-            ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
+            ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 't.external_owner_team', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
             ->get()
             // Anti-vaivém ANTES do lote: senão os primeiros N (equivalentes) ocupam o lote para sempre.
-            ->reject(fn ($r) => $this->inboundSid((int) $r->company_id, (string) $r->external_status) === (int) $r->status_id)
+            ->reject(fn ($r) => $this->inboundSid((int) $r->company_id, (string) $r->external_status) === (int) $r->status_id
+                || MovideskPushPolicy::isPromaxTeam($r->external_owner_team ?? null)) // equipe Promax não recebe escrita
             ->take(30) // lote pequeno por ciclo (API do Movidesk tem limite de requisições)
             ->values();
         if ($rows->isEmpty()) {
@@ -376,7 +377,14 @@ class MovideskHelpDeskImporter
             try {
                 // SÓ chamado com responsável em equipe da ERPSERV — senão não escreve no Movidesk.
                 $full = $this->movidesk->fetchTicket((int) $r->external_ref);
-                if (!$full || !MovideskPushPolicy::isErpservTeam($full['ownerTeam'] ?? null)) { continue; }
+                if (!$full) { continue; }
+                // Sombra desatualizada: o Movidesk JÁ está no status alvo (ou o chamado foi p/ equipe
+                // Promax, que não recebe escrita) → só realinha a sombra, sem escrever no Movidesk.
+                $mdNow = trim((string) ($full['baseStatus'] ?? '') . '|' . (string) ($full['status'] ?? ''));
+                if ($mdNow === $sig || !MovideskPushPolicy::isErpservTeam($full['ownerTeam'] ?? null)) {
+                    HelpDeskTicket::where('id', $r->id)->update(['external_status' => $mdNow, 'external_owner_team' => mb_substr(trim((string) ($full['ownerTeam'] ?? '')), 0, 255) ?: null, 'external_synced_at' => now()]);
+                    continue;
+                }
                 if ($this->movidesk->patchTicket((int) $r->external_ref, $patch)) {
                     HelpDeskTicket::where('id', $r->id)->update(['external_status' => $sig, 'external_synced_at' => now()]);
                     $pushed++;
