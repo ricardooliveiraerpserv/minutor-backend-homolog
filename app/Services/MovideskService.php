@@ -99,7 +99,7 @@ class MovideskService
             $response = Http::timeout(12)->retry(2, 500)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'customFieldValues($expand=items),clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+                '$expand' => 'customFieldValues($expand=items),clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email,profileType),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
             ]);
 
             if ($response->successful()) {
@@ -1716,6 +1716,75 @@ class MovideskService
             return $id !== null ? (string) $id : null;
         } catch (\Throwable $e) {
             Log::error('📤 [MOVIDESK WB] Exceção em createTicket', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    /**
+     * Anexa arquivos a uma AÇÃO existente do chamado (POST /ticketFileUpload, multipart).
+     * @param array $files [['name'=>..., 'content'=>bytes, 'mime'=>...], ...]
+     */
+    public function uploadActionFiles(int $ticketId, int $actionId, array $files): bool
+    {
+        if (empty($files)) return true;
+        try {
+            $req = Http::timeout(120);
+            foreach (array_values($files) as $i => $f) {
+                $req = $req->attach('file' . $i, $f['content'], $f['name'], ['Content-Type' => $f['mime'] ?? 'application/octet-stream']);
+            }
+            $url = "{$this->baseUrl()}/ticketFileUpload?token=" . urlencode($this->token()) . '&id=' . $ticketId . '&actionId=' . $actionId;
+            $resp = $req->post($url);
+            if (!$resp->successful()) {
+                Log::warning('📤 [MOVIDESK WB] upload de anexo falhou', ['id' => $ticketId, 'action' => $actionId, 'status' => $resp->status(), 'body' => substr($resp->body(), 0, 300)]);
+                return false;
+            }
+            Log::info('📤 [MOVIDESK WB] anexos enviados', ['id' => $ticketId, 'action' => $actionId, 'n' => count($files)]);
+            return true;
+        } catch (\Throwable $e) {
+            Log::error('📤 [MOVIDESK WB] Exceção no upload de anexo', ['id' => $ticketId, 'error' => $e->getMessage()]);
+            return false;
+        }
+    }
+
+    /**
+     * Ids (+lastUpdate) dos chamados com a TAG $tag alterados desde $since. 1 chamada (paginada).
+     * @return array<int,array{id:string,lastUpdate:?string}>|null  null = falha na API
+     */
+    public function listTicketIdsUpdatedSince(\Carbon\Carbon $since, string $tag): ?array
+    {
+        $out = [];
+        $skip = 0;
+        $filter = "lastUpdate gt " . $since->copy()->utc()->format('Y-m-d\\TH:i:s\\Z') . " and tags/any(t: t eq '" . str_replace("'", "''", $tag) . "')";
+        for ($page = 0; $page < 10; $page++) {
+            try {
+                $resp = Http::timeout(60)->get("{$this->baseUrl()}/tickets", [
+                    'token' => $this->token(), '$select' => 'id,lastUpdate', '$filter' => $filter,
+                    '$orderby' => 'lastUpdate', '$top' => 200, '$skip' => $skip,
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('📥 [MOVIDESK COPIA] listagem falhou', ['error' => $e->getMessage()]);
+                return null;
+            }
+            if (!$resp->successful()) {
+                Log::warning('📥 [MOVIDESK COPIA] listagem falhou', ['status' => $resp->status(), 'body' => substr($resp->body(), 0, 200)]);
+                return null;
+            }
+            $rows = $resp->json() ?: [];
+            foreach ($rows as $r) $out[] = ['id' => (string) $r['id'], 'lastUpdate' => $r['lastUpdate'] ?? null];
+            if (count($rows) < 200) break;
+            $skip += 200;
+        }
+        return $out;
+    }
+
+    /** Baixa um anexo do Movidesk pelo `path` (GET /storage/download). null em falha. */
+    public function downloadFile(string $path): ?array
+    {
+        try {
+            $resp = Http::timeout(120)->get("{$this->baseUrl()}/storage/download", ['token' => $this->token(), 'id' => $path]);
+            if (!$resp->successful()) return null;
+            return ['content' => $resp->body(), 'mime' => (string) ($resp->header('Content-Type') ?: 'application/octet-stream')];
+        } catch (\Throwable) {
             return null;
         }
     }

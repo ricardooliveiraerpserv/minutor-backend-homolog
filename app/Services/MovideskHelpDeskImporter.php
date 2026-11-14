@@ -583,6 +583,15 @@ class MovideskHelpDeskImporter
         // A ação de ABERTURA vira a "descrição inicial" do chamado — NÃO deve virar também uma
         // interação (senão duplica: descrição + comentário #1 iguais).
         $comments = $this->importActions($ticket, $md['actions'] ?? [], $this->openingActionId($md));
+        // Anexos da ação de ABERTURA viram anexos do CHAMADO (a abertura é a descrição, não interação).
+        if ($created) {
+            $openId = $this->openingActionId($md);
+            foreach ($md['actions'] ?? [] as $a) {
+                if ((string) ($a['id'] ?? '') === (string) $openId && !empty($a['attachments'])) {
+                    $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET', 'id' => (int) $ticket->id, 'atts' => $a['attachments'], 'vis' => 'customer', 'actor' => null];
+                }
+            }
+        }
 
         // SAÍDA de INTERAÇÕES: empurra p/ o Movidesk os comentários NATIVOS do Minutor ainda não enviados.
         if ($this->pushCommentsEnabled() && $mdWritable) {
@@ -629,6 +638,9 @@ class MovideskHelpDeskImporter
                 $maxId = max($maxId + 1, (int) $realId);
                 $c->external_action_id = (string) ($realId ?: $maxId);
                 $c->save();
+                // Anexos da interação sobem junto, na MESMA ação.
+                try { app(MovideskAttachmentSync::class)->push('HELPDESK_TICKET_COMMENT', (int) $c->id, $externalId, (int) $c->external_action_id); }
+                catch (\Throwable $e) { Log::warning('📤 [MOVIDESK ANEXO] push falhou', ['comment' => $c->id, 'e' => $e->getMessage()]); }
             } else {
                 break; // falhou → tenta de novo no próximo ciclo (mantém ordem)
             }
@@ -668,7 +680,7 @@ class MovideskHelpDeskImporter
     }
 
     /** Importa as ações do Movidesk como interações do HD (dedup por external_action_id). */
-    private function importActions(HelpDeskTicket $ticket, array $actions, ?string $skipActionId = null): int
+    public function importActions(HelpDeskTicket $ticket, array $actions, ?string $skipActionId = null): int
     {
         if (!$actions) return 0;
 
@@ -697,7 +709,7 @@ class MovideskHelpDeskImporter
                 $match = $byDate->get($createdKey)->shift(); // consome (não reusar p/ outra ação)
                 $match->external_action_id = $aid;
                 if (empty($match->idempotency_key)) {
-                    $match->idempotency_key = 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . $ticket->external_ref . '-a' . $aid;
+                    $match->idempotency_key = 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . ($ticket->external_ref ?: ('c' . $ticket->movidesk_copy_id)) . '-a' . $aid;
                 }
                 $match->saveQuietly(); // sem observers (não re-empurrar nada)
                 $existing->put($aid, true);
@@ -720,10 +732,14 @@ class MovideskHelpDeskImporter
                 'source'             => 'movidesk',
                 'external_action_id' => $aid,
                 // action.id do Movidesk é sequencial POR ticket (1,2,3…) — a chave precisa do id do ticket.
-                'idempotency_key'    => 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . $ticket->external_ref . '-a' . $aid,
+                'idempotency_key'    => 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . ($ticket->external_ref ?: ('c' . $ticket->movidesk_copy_id)) . '-a' . $aid,
             ]);
             // Imagem inline (URL S3 Movidesk) vem com assinatura que EXPIRA em horas. Enfileira p/
             // re-hospedar FORA da transação (download é lento) — baixa agora enquanto a URL é válida.
+            // Arquivos anexados na ação → baixa p/ o Minutor (fora da transação).
+            if (!empty($a['attachments'])) {
+                $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET_COMMENT', 'id' => (int) $comment->id, 'atts' => $a['attachments'], 'vis' => $isPublic ? 'customer' : 'internal', 'actor' => $authorId];
+            }
             if (preg_match('~s3[.-][^/]*amazonaws\.com/[^?"\']*movidesk~i', $body)) {
                 $this->pendingImageComments[] = ['c' => (int) $comment->id, 't' => (int) $ticket->id];
             }
@@ -739,8 +755,17 @@ class MovideskHelpDeskImporter
      * <img src> pro nosso endpoint de download. Roda FORA da transação (download lento). Best-effort:
      * URL expirada (403) ou falha → deixa o <img> como está, sem quebrar o import.
      */
-    private function rehostPendingImages(): int
+    public function rehostPendingImages(): int
     {
+        // Anexos (arquivos) das ações importadas — download fora da transação.
+        if ($this->pendingFilePulls) {
+            $pulls = $this->pendingFilePulls; $this->pendingFilePulls = [];
+            $sync = app(MovideskAttachmentSync::class);
+            foreach ($pulls as $p) {
+                try { $sync->pull($p['e'], $p['id'], $p['atts'], $p['vis'], $p['actor']); }
+                catch (\Throwable $e) { Log::warning('📥 [MOVIDESK ANEXO] pull falhou', ['e' => $e->getMessage()]); }
+            }
+        }
         if (!$this->pendingImageComments) return 0;
         $pending = $this->pendingImageComments;
         $this->pendingImageComments = [];
@@ -937,6 +962,8 @@ class MovideskHelpDeskImporter
     private array $authorMdCache = [];
     /** Comentários novos com imagem inline S3 a re-hospedar (fora da transação). [{c:commentId,t:ticketId}] */
     private array $pendingImageComments = [];
+    /** Anexos (arquivos) de ações do Movidesk a baixar FORA da transação. [{e,id,atts,vis,actor}] */
+    private array $pendingFilePulls = [];
     private ?\App\Models\User $imageActor = null;
 
     /**

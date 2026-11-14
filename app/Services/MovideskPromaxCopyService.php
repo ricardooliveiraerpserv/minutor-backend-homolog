@@ -98,6 +98,10 @@ class MovideskPromaxCopyService
         }
         if ($dry) return $stats;
 
+        // VOLTA (Movidesk → Minutor): o que a Promax fizer na cópia (ações, anexos, status).
+        try { $stats['pulled'] = $this->pullChanged($onlyTicketId); }
+        catch (\Throwable $e) { $stats['errors']++; Log::error('📥 [MOVIDESK COPIA] volta falhou', ['error' => $e->getMessage()]); }
+
         $copies = HelpDeskTicket::query()->whereNotNull('movidesk_copy_id')
             ->when($onlyTicketId, fn ($q) => $q->where('id', $onlyTicketId))
             ->where('updated_at', '>=', now()->subDays(60))
@@ -160,6 +164,9 @@ class MovideskPromaxCopyService
         $id = $this->movidesk->createTicket($payload);
         if (!$id) return false;
 
+        // Anexos da abertura sobem na ação 1 (a abertura).
+        try { app(MovideskAttachmentSync::class)->push('HELPDESK_TICKET', (int) $t->id, (int) $id, 1); }
+        catch (\Throwable $e) { Log::warning('📤 [MOVIDESK COPIA] anexos da abertura falharam', ['ticket_id' => $t->id, 'e' => $e->getMessage()]); }
         $t->movidesk_copy_id = $id;
         $t->movidesk_copy_at = now();
         $t->movidesk_copy_status = 'New|Novo'; // nasce "Novo" no Movidesk; pushStatus alinha ao Minutor
@@ -215,8 +222,81 @@ class MovideskPromaxCopyService
             $maxId = max($maxId + 1, (int) $real);
             $c->external_action_id = (string) ($real ?: $maxId);
             $c->saveQuietly();
+            try { app(MovideskAttachmentSync::class)->push('HELPDESK_TICKET_COMMENT', (int) $c->id, $ext, (int) $c->external_action_id); }
+            catch (\Throwable $e) { Log::warning('📤 [MOVIDESK COPIA] anexos da interação falharam', ['comment' => $c->id, 'e' => $e->getMessage()]); }
             $n++;
         }
+        return $n;
+    }
+
+    /** Status do Minutor equivalente a uma assinatura "base|texto" do Movidesk (de-para inbound). */
+    private function inboundStatusId(HelpDeskTicket $t, string $sig): ?int
+    {
+        if ($sig === '' || !str_contains($sig, '|')) return null;
+        [$base, $text] = explode('|', $sig, 2);
+        $id = HelpDeskMovideskStatusMap::resolveInbound((int) $t->company_id, $base, $text)
+            ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $text);
+        return $id ? (int) $id : null;
+    }
+
+    /**
+     * VOLTA: lista (1 chamada) as cópias alteradas no Movidesk desde o cursor e sincroniza cada uma:
+     * ações novas (com anexos) viram interações; status muda no Minutor se SÓ o Movidesk mudou.
+     */
+    private function pullChanged(?int $onlyTicketId = null): int
+    {
+        $cursorKey = 'movidesk_promax_copy_pull_cursor';
+        $since = $onlyTicketId ? now()->subDays(30)
+            : (($c = SystemSetting::get($cursorKey)) ? Carbon::parse($c) : (self::since() ?? now()));
+        $ids = $this->movidesk->listTicketIdsUpdatedSince($since, (string) SystemSetting::get('movidesk_promax_copy_tag', 'minutor'));
+        if ($ids === null) return 0; // falha na API → mantém o cursor
+        $max = $since->copy();
+        $n = 0;
+        foreach ($ids as $row) {
+            $lu = !empty($row['lastUpdate']) ? Carbon::parse($row['lastUpdate']) : null;
+            if ($lu && $lu->gt($max)) $max = $lu;
+            $t = HelpDeskTicket::where('movidesk_copy_id', (string) $row['id'])
+                ->when($onlyTicketId, fn ($q) => $q->where('id', $onlyTicketId))->first();
+            if (!$t) continue;
+            $full = $this->movidesk->fetchTicket((int) $t->movidesk_copy_id);
+            if (!$full) continue;
+            // Ações novas (dedup por external_action_id; a 1 é a abertura = nossa descrição).
+            $before = HelpDeskTicketComment::withTrashed()->where('ticket_id', $t->id)->max('id') ?? 0;
+            $n += $this->importer->importActions($t, $full['actions'] ?? [], '1');
+            $this->importer->rehostPendingImages();
+            // Avisos PELO MINUTOR (o Movidesk está silenciado p/ cópias): resposta de agente → e-mail ao
+            // cliente; resposta do cliente (portal Movidesk) → gatilho que avisa o responsável.
+            $profileByAction = [];
+            foreach ($full['actions'] ?? [] as $a) { $profileByAction[(string) ($a['id'] ?? '')] = (int) ($a['createdBy']['profileType'] ?? 0); }
+            $new = HelpDeskTicketComment::where('ticket_id', $t->id)->where('id', '>', $before)->where('source', 'movidesk')->get();
+            foreach ($new as $c) {
+                $isClient = ($profileByAction[(string) $c->external_action_id] ?? 0) === 2;
+                try {
+                    if (!$isClient && $c->visibility === 'customer') {
+                        \App\Jobs\SendHelpDeskEmailJob::dispatch($t->id, $c->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+                    }
+                    \App\Services\HelpDeskTriggerEngine::queue('comment_added', $t->fresh(), ['comment_by' => $isClient ? 'client' : 'agent', 'visibility' => $c->visibility, 'via' => 'movidesk_copia']);
+                } catch (\Throwable $e) {
+                    Log::warning('📥 [MOVIDESK COPIA] aviso da interação falhou', ['comment' => $c->id, 'e' => $e->getMessage()]);
+                }
+            }
+            // Status: 3 vias (sombra = movidesk_copy_status).
+            $mdSig = trim((string) ($full['baseStatus'] ?? '') . '|' . (string) ($full['status'] ?? ''));
+            $shadow = (string) $t->movidesk_copy_status;
+            if ($mdSig !== '|' && $mdSig !== $shadow) {
+                $minutorUnchanged = $this->inboundStatusId($t, $shadow) === (int) $t->status_id || $shadow === '';
+                if ($minutorUnchanged) {
+                    $sid = $this->inboundStatusId($t, $mdSig);
+                    if ($sid && $sid !== (int) $t->status_id) {
+                        $t->status_id = $sid; $t->save();
+                        try { \App\Services\HelpDeskTriggerEngine::queue('status_changed', $t->fresh(), ['via' => 'movidesk_copia']); } catch (\Throwable) {}
+                    }
+                    HelpDeskTicket::where('id', $t->id)->update(['movidesk_copy_status' => $mdSig]);
+                }
+                // Minutor também mudou → Minutor vence (a passada de ida empurra).
+            }
+        }
+        if (!$onlyTicketId) SystemSetting::set($cursorKey, $max->copy()->subSecond()->toIso8601String(), 'string', 'movidesk', 'Cópia Promax: cursor da volta');
         return $n;
     }
 
@@ -244,6 +324,8 @@ class MovideskPromaxCopyService
         if (!$map || trim((string) $map->movidesk_status_text) === '') return false;
         $sig = trim(($map->movidesk_base_status ?? '') . '|' . $map->movidesk_status_text);
         if ($sig === (string) $t->movidesk_copy_status) return false;
+        // Anti-vaivém: se o status atual do Minutor É o equivalente da sombra (veio do Movidesk), não empurra.
+        if ($this->inboundStatusId($t, (string) $t->movidesk_copy_status) === (int) $t->status_id) return false;
 
         $patch = ['status' => $map->movidesk_status_text];
         if (!empty($map->movidesk_base_status)) $patch['baseStatus'] = $map->movidesk_base_status;
