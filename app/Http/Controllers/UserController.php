@@ -171,7 +171,7 @@ class UserController extends Controller
             if ($request->filled('sustentacao'))     { $query->where('can_timesheet_sustentacao', in_array($request->input('sustentacao'), ['1', 1, true], true)); }
             if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
             if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
-            if ($request->filled('partner_id'))      { $query->where('partner_id', $request->partner_id); }
+            if ($request->filled('partner_id'))      { $query->whereIn('partner_id', array_filter(array_map('intval', explode(',', (string) $request->partner_id)))); }
             if ($request->filled('customer_id'))     { $query->where('customer_id', $request->customer_id); }
         }
 
@@ -323,7 +323,8 @@ class UserController extends Controller
         }
 
         if ($request->filled('partner_id')) {
-            $query->where('partner_id', $request->partner_id);
+            // Aceita vários parceiros: partner_id=1,5,9
+            $query->whereIn('partner_id', array_filter(array_map('intval', explode(',', (string) $request->partner_id))));
         }
 
         if ($request->filled('customer_id')) {
