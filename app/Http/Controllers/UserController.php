@@ -172,7 +172,7 @@ class UserController extends Controller
             if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
             if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
             if ($request->filled('partner_id'))      { $query->whereIn('partner_id', array_filter(array_map('intval', explode(',', (string) $request->partner_id)))); }
-            if ($request->filled('customer_id'))     { $query->where('customer_id', $request->customer_id); }
+            if ($request->filled('customer_id'))     { $query->whereIn('customer_id', array_filter(array_map('intval', explode(',', (string) $request->customer_id)))); }
         }
 
         $users = $query->orderBy('name')->get();
@@ -328,7 +328,8 @@ class UserController extends Controller
         }
 
         if ($request->filled('customer_id')) {
-            $query->where('customer_id', $request->customer_id);
+            // Aceita vários clientes: customer_id=1,5,9
+            $query->whereIn('customer_id', array_filter(array_map('intval', explode(',', (string) $request->customer_id))));
         }
 
         // Filtro "só gestores do cliente".
