@@ -356,14 +356,17 @@ class MovideskHelpDeskImporter
             ->whereNotNull('t.external_ref')
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
-            ->select('t.id', 't.external_ref', 't.external_status', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
-            ->limit(200)
+            ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
+            ->limit(500)
             ->get();
         if ($rows->isEmpty()) {
             return 0;
         }
         $pushed = 0;
         foreach ($rows as $r) {
+            // Anti-vaivém: o status do Minutor É o equivalente do que veio do Movidesk (de-para N→1,
+            // ex.: Movidesk "Resolvido" → Minutor "Fechado") → não foi o Minutor que mudou; não empurra.
+            if ($this->inboundSid((int) $r->company_id, (string) $r->external_status) === (int) $r->status_id) continue;
             $sig = trim(($r->base ?? '') . '|' . ($r->text ?? ''));
             $patch = ['status' => $r->text, 'justification' => $just];
             if (!empty($r->base)) { $patch['baseStatus'] = $r->base; }
@@ -542,7 +545,8 @@ class MovideskHelpDeskImporter
                 ?? optional(HelpDeskStatus::query()->where('company_id', $tc)->where('is_default', true)->first())->id;
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
-        } elseif ($hdSig !== null && !empty($ticket->external_status) && $hdSig !== $ticket->external_status) {
+        } elseif ($hdSig !== null && !empty($ticket->external_status) && $hdSig !== $ticket->external_status
+            && $this->inboundSid($tc, (string) $ticket->external_status) !== (int) $ticket->status_id) {
             // Minutor mudou o status → empurra pro Movidesk. O Movidesk exige justificativa em TODA
             // troca de status; usamos UMA justificativa global (SystemSetting) associada a todos os
             // status no Movidesk. Sem ela configurada, não empurra (evita 400).
@@ -938,6 +942,16 @@ class MovideskHelpDeskImporter
         if (!$created || !$org->hd_linked_at) return false;
         try { return Carbon::parse($created)->lt($org->hd_linked_at); }
         catch (\Throwable) { return false; }
+    }
+
+    /** Status do Minutor equivalente a uma sombra "base|texto" do Movidesk (de-para inbound). */
+    private function inboundSid(int $companyId, string $sig): ?int
+    {
+        if ($sig === '' || !str_contains($sig, '|')) return null;
+        [$base, $text] = explode('|', $sig, 2);
+        $id = HelpDeskMovideskStatusMap::resolveInbound($companyId, $base, $text)
+            ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $text);
+        return $id ? (int) $id : null;
     }
 
     /** Write-back (Fase 2) habilitado? Empurra classificação do Minutor p/ o Movidesk. */
