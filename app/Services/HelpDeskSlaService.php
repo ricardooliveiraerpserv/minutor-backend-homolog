@@ -206,7 +206,21 @@ class HelpDeskSlaService
             $p = $this->policyById($catPolicyId); // política escolhida na categoria
             if ($p && $p->active) return $p;
         }
-        return $this->defaultPolicy();
+        return $this->defaultPolicyFor((int) ($t->company_id ?: 0)) ?? $this->defaultPolicy();
+    }
+
+    /** @var array<int,?HelpDeskSlaPolicy> política padrão POR EMPRESA do chamado (não depende do contexto ativo). */
+    private array $defaultByCompany = [];
+
+    private function defaultPolicyFor(int $companyId): ?HelpDeskSlaPolicy
+    {
+        if (!$companyId) return null;
+        if (!array_key_exists($companyId, $this->defaultByCompany)) {
+            $this->defaultByCompany[$companyId] = HelpDeskSlaPolicy::withoutGlobalScopes()
+                ->where('company_id', $companyId)->where('is_default', true)->where('active', true)
+                ->whereNull('deleted_at')->orderBy('id')->first();
+        }
+        return $this->defaultByCompany[$companyId];
     }
 
     /**
