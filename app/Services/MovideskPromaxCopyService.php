@@ -141,15 +141,17 @@ class MovideskPromaxCopyService
         ];
         // "Envia E-mail?" = Não → os gatilhos de e-mail ao cliente do Movidesk (nova ação, resolvido,
         // cancelado) já checam esse campo e NÃO disparam: o e-mail ao cliente é sempre do Minutor.
-        $fid = (int) SystemSetting::get('movidesk_promax_copy_noemail_field_id', 235235);
-        if ($fid > 0) {
-            $payload['customFieldValues'] = [[
-                'customFieldId' => $fid,
-                'customFieldRuleId' => (int) SystemSetting::get('movidesk_promax_copy_noemail_rule_id', 123791),
-                'line' => 1,
-                'items' => [['customFieldItem' => (string) SystemSetting::get('movidesk_promax_copy_noemail_item', 'Não')]],
-            ]];
+        // A regra de exibição do "Envia E-mail?" (123791) exige "Fonte atualizado no VCS?" (55719, regra 26925)
+        // = NÃO — por isso vão os dois. Configurável: movidesk_promax_copy_custom_fields (JSON [[id,rule,item],...]).
+        $cf = SystemSetting::get('movidesk_promax_copy_custom_fields', null);
+        if (is_string($cf)) { $cf = json_decode($cf, true); }
+        if (!is_array($cf)) { $cf = [[55719, 26925, 'NÃO'], [235235, 123791, 'Não']]; }
+        $vals = [];
+        foreach ($cf as $c) {
+            if (count($c) < 3 || !(int) $c[0]) continue;
+            $vals[] = ['customFieldId' => (int) $c[0], 'customFieldRuleId' => (int) $c[1], 'line' => 1, 'items' => [['customFieldItem' => (string) $c[2]]]];
         }
+        if ($vals) { $payload['customFieldValues'] = $vals; }
         $ownerId = $this->ownerId();
         if ($ownerId) { $payload['owner'] = ['id' => $ownerId]; }
         $team = trim((string) SystemSetting::get('movidesk_promax_copy_owner_team', ''));
@@ -193,6 +195,7 @@ class MovideskPromaxCopyService
         $ext = (int) $t->movidesk_copy_id;
         $full = $this->movidesk->fetchTicket($ext);
         if (!$full) return 0;
+        $this->ensureTag($ext, $full);
         $maxId = 0;
         foreach ($full['actions'] ?? [] as $a) { $maxId = max($maxId, (int) ($a['id'] ?? 0)); }
         $requesterId = null;
@@ -217,6 +220,19 @@ class MovideskPromaxCopyService
         return $n;
     }
 
+    /**
+     * Garante a tag "minutor" na cópia ANTES de escrever: as automações do Movidesk filtram por ela (não
+     * mandam e-mail), e há gatilhos que SUBSTITUEM todas as tags (ex.: "Definir TAGs") e a apagariam.
+     */
+    private function ensureTag(int $ext, array $full): void
+    {
+        $tag = (string) SystemSetting::get('movidesk_promax_copy_tag', 'minutor');
+        $tags = array_values(array_filter((array) ($full['tags'] ?? [])));
+        if (in_array($tag, $tags, true)) return;
+        $tags[] = $tag;
+        $this->movidesk->patchTicket($ext, ['tags' => $tags]);
+    }
+
     /** Status do Minutor → Movidesk (de-para outbound + justificativa global). */
     private function pushStatus(HelpDeskTicket $t): bool
     {
@@ -232,6 +248,8 @@ class MovideskPromaxCopyService
         $patch = ['status' => $map->movidesk_status_text];
         if (!empty($map->movidesk_base_status)) $patch['baseStatus'] = $map->movidesk_base_status;
         if ($just !== '') $patch['justification'] = $just;
+        $full = $this->movidesk->fetchTicket((int) $t->movidesk_copy_id);
+        if ($full) $this->ensureTag((int) $t->movidesk_copy_id, $full);
         if (!$this->movidesk->patchTicket((int) $t->movidesk_copy_id, $patch)) return false;
         HelpDeskTicket::where('id', $t->id)->update(['movidesk_copy_status' => $sig]); // sem tocar updated_at do modelo
         return true;
