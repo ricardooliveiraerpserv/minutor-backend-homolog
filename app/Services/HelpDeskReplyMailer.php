@@ -43,6 +43,9 @@ class HelpDeskReplyMailer
         }
         // Chamado Promax atendido PELO Movidesk: a resposta vai ao Movidesk (que avisa o cliente).
         // Mandar e-mail daqui duplicaria o aviso e tiraria a conversa do Movidesk.
+        if (HelpDeskMailGate::clientBlocked($ticket)) {
+            return [false, 'skip:cliente_sem_email'];
+        }
         if (MovideskPushPolicy::deliversViaMovidesk($ticket)) {
             return [false, 'skip:cliente_atendido_pelo_movidesk'];
         }
@@ -353,7 +356,8 @@ class HelpDeskReplyMailer
     {
         if (!$to) return [false, 'skip:sem_destinatario'];
         if (!GraphMailSender::enabled()) return [false, 'skip:graph_desligado'];
-        if (!HelpDeskMailGate::allows($ticket)) return [false, 'skip:trava_homolog_erpserv'];
+        if (!HelpDeskMailGate::allows($new)) return [false, 'skip:trava_homolog_erpserv'];
+        if (HelpDeskMailGate::clientBlocked($new)) return [false, 'skip:cliente_sem_email'];
 
         // O link do E-MAIL aponta sempre para o chamado ATUAL (o novo). O link do chamado ANTERIOR
         // fica só dentro do novo chamado (na plataforma), na descrição — não vai no e-mail.
@@ -395,6 +399,7 @@ class HelpDeskReplyMailer
         if (!GraphMailSender::enabled()) return;
         if (!HelpDeskMailGate::allows($ticket)) return;
         if (MovideskPushPolicy::deliversViaMovidesk($ticket)) return; // cliente atendido pelo Movidesk
+        if (HelpDeskMailGate::clientBlocked($ticket)) return;         // cliente sem e-mail (ex.: VEDAMOTORS)
 
         $from = self::resolveFromAccount($ticket);
         if (!$from) return;

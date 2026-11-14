@@ -71,7 +71,8 @@ class HelpDeskMailComposer
         // Chamado RESOLVIDO (aguardando aceite): botões Aceitar (verde) / Recusar (vermelho) via link
         // assinado — o cliente decide direto do e-mail, SEM login. Encerra ou reabre "Em atendimento".
         $acceptReject = '';
-        if (optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal) {
+        // Aceite/recusa é decisão do SOLICITANTE: só no e-mail ao cliente (nunca ao responsável/equipe).
+        if ($audience === 'cliente' && optional($ticket->status)->is_resolved && !optional($ticket->status)->is_terminal) {
             $aUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'accept', (int) $ticket->reopen_count);
             $rUrl = \App\Http\Controllers\HelpDeskAcceptController::actionUrl($ticket->id, 'reject', (int) $ticket->reopen_count);
             $acceptReject = '<tr><td align="center" style="padding:22px 28px 0">'
@@ -372,7 +373,7 @@ class HelpDeskMailComposer
         $body = self::updateHeaderHtml($ticket, false, $greeting)
             . ($content !== '' ? '<div style="margin:4px 0 8px">' . $content . '</div>' : '')
             . $blocksHtml
-            . self::acceptButtonsHtml($ticket)
+            . ($audience === 'cliente' ? self::acceptButtonsHtml($ticket) : '') // aceite só p/ o solicitante
             . self::ticketLinkHtml($ticket)
             . self::conversationHistoryHtml($ticket);
 

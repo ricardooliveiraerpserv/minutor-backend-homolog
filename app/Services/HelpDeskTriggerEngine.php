@@ -250,7 +250,8 @@ class HelpDeskTriggerEngine
         if (!HelpDeskMailGate::allows($ticket)) return; // trava temporária de homologação (só ERPSERV)
         // Chamado Promax atendido PELO Movidesk: o cliente é avisado pelo Movidesk → tira o cliente/
         // solicitante dos destinatários (avisos à equipe/responsável seguem normais).
-        if (\App\Services\MovideskPushPolicy::deliversViaMovidesk($ticket)) {
+        if (\App\Services\MovideskPushPolicy::deliversViaMovidesk($ticket) || HelpDeskMailGate::clientBlocked($ticket)) {
+            // (também cliente bloqueado p/ e-mail — ex.: VEDAMOTORS não recebe nenhum e-mail do HD)
             $params['to'] = array_values(array_diff((array) ($params['to'] ?? []), ['cliente', 'requester']));
         }
 
@@ -264,7 +265,7 @@ class HelpDeskTriggerEngine
         if (!empty($params['skip_actor']) && !empty($context['actor_email'])) {
             $to = array_values(array_filter($to, fn ($e) => strcasecmp($e, $context['actor_email']) !== 0));
         }
-        $to = array_values(array_unique($to));
+        $to = array_values(array_unique(HelpDeskMailGate::stripClientEmails($ticket, $to)));
         if (empty($to)) return;
 
         $from = self::senderAccount($params['sender_account_id'] ?? null, $ticket);

@@ -65,4 +65,37 @@ class HelpDeskMailGate
         return strcasecmp(trim((string) $c->name), 'ERPSERV') === 0
             || (string) $c->cgc === self::ERPSERV_CGC;
     }
+
+    /**
+     * Clientes que NÃO recebem nenhum e-mail do Help Desk (gatilhos/respostas/avisos) — ex.: VEDAMOTORS
+     * (decisão Ricardo 14/11/2026). Avisos internos (responsável/equipe) seguem normais.
+     * Setting `helpdesk_email_blocked_customers` = lista de customer_id (JSON ou "1,2").
+     */
+    public static function blockedCustomerIds(): array
+    {
+        try {
+            $raw = SystemSetting::get('helpdesk_email_blocked_customers', []);
+        } catch (\Throwable $e) {
+            return [];
+        }
+        if (is_string($raw)) $raw = json_decode($raw, true) ?? array_filter(explode(',', $raw));
+        return array_values(array_filter(array_map('intval', (array) $raw)));
+    }
+
+    /** true = o CLIENTE deste chamado não recebe e-mail. */
+    public static function clientBlocked(?HelpDeskTicket $ticket): bool
+    {
+        if (!$ticket || !$ticket->customer_id) return false;
+        return in_array((int) $ticket->customer_id, self::blockedCustomerIds(), true);
+    }
+
+    /** Remove de $emails os endereços do lado CLIENTE de um chamado bloqueado (solicitante, cópias, usuários do cliente). */
+    public static function stripClientEmails(HelpDeskTicket $ticket, array $emails): array
+    {
+        if (!self::clientBlocked($ticket)) return $emails;
+        $deny = array_map('mb_strtolower', array_filter(array_merge([(string) $ticket->requester_email], (array) $ticket->cc_emails)));
+        $clientUsers = \App\Models\User::where('customer_id', $ticket->customer_id)->pluck('email')->map(fn ($e) => mb_strtolower((string) $e))->all();
+        $deny = array_merge($deny, $clientUsers);
+        return array_values(array_filter($emails, fn ($e) => !in_array(mb_strtolower(trim((string) $e)), $deny, true)));
+    }
 }
