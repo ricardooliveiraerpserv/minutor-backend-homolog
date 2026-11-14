@@ -27,7 +27,15 @@ class SendHelpDeskEmailJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
-    public int $tries = 5;
+    // Prazo em vez de nº de tentativas: o RateLimited (20/min) "solta" o job de volta na fila e isso
+    // CONTAVA como tentativa → em rajada (centenas de jobs) quase tudo estourava $tries e era descartado
+    // sem enviar (14/11/2026: 322 gatilhos + e-mails perdidos). Agora espera até 6 h; só ERRO real conta.
+    public int $maxExceptions = 5;
+
+    public function retryUntil(): \DateTimeInterface
+    {
+        return now()->addHours(6);
+    }
     public int $timeout = 180;
 
     public function __construct(public int $ticketId, public int $commentId, public array $extraCc = [], public bool $isSolutionUpdate = false)
