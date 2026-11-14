@@ -172,7 +172,7 @@ class UserController extends Controller
             if ($request->filled('exclude_type'))    { $query->where('type', '!=', $request->exclude_type); }
             if ($request->filled('is_executive'))    { $query->where('is_executive', true); }
             if ($request->filled('partner_id'))      { $query->whereIn('partner_id', array_filter(array_map('intval', explode(',', (string) $request->partner_id)))); }
-            if ($request->filled('customer_id'))     { $query->whereIn('customer_id', array_filter(array_map('intval', explode(',', (string) $request->customer_id)))); }
+            if ($request->filled('customer_id'))     { self::applyCustomerFilter($query, (string) $request->customer_id); }
         }
 
         $users = $query->orderBy('name')->get();
@@ -328,8 +328,8 @@ class UserController extends Controller
         }
 
         if ($request->filled('customer_id')) {
-            // Aceita vários clientes: customer_id=1,5,9
-            $query->whereIn('customer_id', array_filter(array_map('intval', explode(',', (string) $request->customer_id))));
+            // Aceita vários clientes: customer_id=1,5,9 — e 'none' = usuários SEM cliente vinculado.
+            self::applyCustomerFilter($query, (string) $request->customer_id);
         }
 
         // Filtro "só gestores do cliente".
@@ -2456,5 +2456,17 @@ class UserController extends Controller
 
         // Embaralhar a string
         return str_shuffle($password);
+    }
+
+    /** Filtro de cliente: lista "1,5,9" e/ou "none" (sem cliente vinculado). */
+    private static function applyCustomerFilter($query, string $raw): void
+    {
+        $parts = array_map('trim', explode(',', $raw));
+        $ids = array_values(array_filter(array_map('intval', $parts)));
+        $none = in_array('none', $parts, true);
+        $query->where(function ($q) use ($ids, $none) {
+            if ($ids) $q->whereIn('customer_id', $ids);
+            if ($none) $q->orWhereNull('customer_id');
+        });
     }
 }
