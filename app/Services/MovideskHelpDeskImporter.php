@@ -929,9 +929,8 @@ class MovideskHelpDeskImporter
         $client = $md['clients'][0] ?? [];
         if (!empty($client['organization']['id'])) return $client['organization']['id'];
         // Solicitante é a PRÓPRIA organização (personType 2 = empresa) → o id dele é o da org.
-        // (Só contas secundárias — ERPSERV mantém o comportamento histórico.)
-        if ($companyId && !$this->teamFilterApplies($companyId)
-            && (int) ($client['personType'] ?? 0) === 2 && !empty($client['id'])) return $client['id'];
+        // Vale p/ TODAS as contas (14/11/2026: ERPSERV abre chamado Promax com solicitante = empresa).
+        if ((int) ($client['personType'] ?? 0) === 2 && !empty($client['id'])) return $client['id'];
         return null;
     }
 
