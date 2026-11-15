@@ -672,6 +672,10 @@ class MovideskHelpDeskImporter
     public function htmlToText(string $html): string
     {
         $s = $html;
+        // Blocos NÃO-visíveis (CSS da assinatura responsiva, scripts, head, comentários) — o conteúdo
+        // deles vazava como texto ("@media only screen ... .sigroot{...}") no Movidesk (15/11).
+        $s = preg_replace('/<(style|script|head|title|xml)\b[^>]*>.*?<\/\1\s*>/is', '', $s) ?? $s;
+        $s = preg_replace('/<!--.*?-->/s', '', $s) ?? $s;
         // Remove a ASSINATURA padrão (montada em <table>) — não deve ir pro Movidesk.
         // Greedy do 1º <table> ao último </table> cobre tabelas aninhadas da assinatura.
         $stripped = preg_replace('/<table\b.*<\/table>/is', '', $s);
