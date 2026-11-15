@@ -351,7 +351,7 @@ Schedule::command('movidesk:reresolve-defaults --execute --limit=40')
 // Import de tickets do HD — também sob a flag movidesk_ticket_syncs_enabled (OFF em prod até o upgrade).
 if (($ticketSyncsOn ?? true)) {
 Schedule::command('movidesk:hd-import')
-  ->cron('*/5 * * * *')
+  ->cron('* * * * *') // a cada 1 min (Ricardo 15/11/2026: fluxo menor pós go-live; run ~30s, sem sobreposição)
   ->name('movidesk-hd-import')
   ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
   ->withoutOverlapping(30)
