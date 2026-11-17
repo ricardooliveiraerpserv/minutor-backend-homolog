@@ -31,11 +31,11 @@ class ParcelaGenerator
 
     public function __construct(private readonly RetencoesCalculator $retencoes) {}
 
-    /** @return array{criadas:int,atualizadas:int,inalteradas:int,travadas:int,sem_contrato:array<int,string>} */
+    /** @return array{criadas:int,atualizadas:int,inalteradas:int,travadas:int,outra_empresa:int,sem_contrato:array<int,string>} */
     public function gerar(int $companyId, string $ym, ?int $userId = null): array
     {
         $this->validarCompetencia($ym);
-        $res = ['criadas' => 0, 'atualizadas' => 0, 'inalteradas' => 0, 'travadas' => 0, 'sem_contrato' => []];
+        $res = ['criadas' => 0, 'atualizadas' => 0, 'inalteradas' => 0, 'travadas' => 0, 'outra_empresa' => 0, 'sem_contrato' => []];
 
         foreach ($this->recorrentes($companyId, $ym) as $p) $this->gravar($p, $userId, $res);
         foreach ($this->doFechamento($companyId, $ym, $res) as $p) $this->gravar($p, $userId, $res);
@@ -65,7 +65,7 @@ class ParcelaGenerator
     {
         return FinContractBilling::query()
             ->where('ativo', true)->where('regra_recorrente', '!=', 'none')
-            ->whereHas('contract', fn ($q) => $q->withoutGlobalScopes()->where('company_id', $companyId))
+            ->where(fn ($w) => $w->where('company_id', $companyId)->orWhereHas('contract', fn ($q) => $q->withoutGlobalScopes()->where('company_id', $companyId)))
             ->with(['contract' => fn ($q) => $q->withoutGlobalScopes()->with(['project', 'contractType'])])
             ->get()
             ->map(fn (FinContractBilling $cfg) => $this->parcelaRecorrente($cfg->contract, $cfg, $ym))
@@ -154,7 +154,7 @@ class ParcelaGenerator
             foreach ($servicos as $p) {
                 $c = $this->contratoDoProjeto((int) $p['projeto_id']);
                 if (! $c) { $res['sem_contrato'][] = 'On Demand ' . trim(($p['projeto_codigo'] ?? '') . ' ' . ($p['projeto_nome'] ?? '')); continue; }
-                if ((int) $c->company_id !== $companyId) continue;
+                if ($this->empresaDoContrato($c) !== $companyId) { $res['outra_empresa']++; continue; }
                 $bruto = round((float) $p['total_receita'], 2);
                 $desc = $somaServicos > 0 ? round($descontoTotal * $bruto / $somaServicos, 2) : 0.0;
                 $horas = (float) ($p['horas_cobradas'] ?? $p['horas'] ?? 0);
@@ -173,7 +173,7 @@ class ParcelaGenerator
                 $pid = $projetoDaDespesa[$d['id']] ?? null;
                 $c = $pid ? $this->contratoDoProjeto((int) $pid) : null;
                 if (! $c) { $res['sem_contrato'][] = 'Despesa #' . $d['id'] . ' (' . ($d['projeto'] ?? '?') . ')'; continue; }
-                if ((int) $c->company_id !== $companyId) continue;
+                if ($this->empresaDoContrato($c) !== $companyId) { $res['outra_empresa']++; continue; }
                 $porContrato[$c->id]['c'] = $c;
                 $porContrato[$c->id]['itens'][] = ['id' => $d['id'], 'data' => $d['data'] ?? null, 'descricao' => $d['descricao'] ?? null, 'valor' => (float) $d['valor']];
             }
@@ -195,7 +195,7 @@ class ParcelaGenerator
         foreach (ExcessHourCharge::withoutGlobalScopes()->where('year_month', $ym)->where('status', 'cobrado')->get() as $e) {
             $c = $this->contratoDoProjeto((int) $e->project_id);
             if (! $c) { $res['sem_contrato'][] = 'Excedente projeto #' . $e->project_id; continue; }
-            if ((int) $c->company_id !== $companyId) continue;
+            if ($this->empresaDoContrato($c) !== $companyId) { $res['outra_empresa']++; continue; }
             $valor = round((float) $e->excess_value, 2);
             if ($valor <= 0) continue;
             $cfg = FinContractBilling::paraContrato($c);
@@ -211,7 +211,7 @@ class ParcelaGenerator
     private function montar(Contract $c, FinContractBilling $cfg, string $ym, string $origem, string $ref, string $documento,
         float $bruto, float $desconto, ?float $horas, string $descricao, array $detalhes): array
     {
-        $empresa = $this->empresa((int) $c->company_id);
+        $empresa = $this->empresa($this->empresaDoContrato($c));
         $calc = $this->retencoes->calcular($bruto, $desconto, $documento, $cfg, $empresa);
         $emissao = Carbon::createFromFormat('Y-m-d', $ym . '-01')->addMonth()->day(min(28, max(1, (int) $cfg->dia_faturamento)));
         $hoje = now()->format('Y-m');
@@ -219,7 +219,7 @@ class ParcelaGenerator
         return [
             'chave' => ['contract_id' => $c->id, 'competencia' => $ym, 'origem' => $origem, 'origem_ref' => $ref],
             'dados' => [
-                'company_id' => $c->company_id,
+                'company_id' => $this->empresaDoContrato($c),
                 'customer_id' => $c->customer_id,
                 'project_id' => $c->project_id,
                 'documento' => $documento,
@@ -270,6 +270,12 @@ class ParcelaGenerator
             $c = $pai ? $busca((int) $pai) : null;
         }
         return $this->contratoPorProjeto[$projectId] = $c;
+    }
+
+    /** Empresa do contrato; contratos antigos sem company_id herdam a do projeto. */
+    private function empresaDoContrato(Contract $c): int
+    {
+        return (int) ($c->company_id ?: $c->project?->company_id ?: 0);
     }
 
     private function empresa(int $companyId): ?FinCompanySetting

@@ -44,7 +44,7 @@ class ParcelaController extends FinanceiroController
     {
         $this->autorizar($request);
         $c = $this->contratoDaEmpresa($request, $contract);
-        $empresa = (int) $c->company_id;
+        $empresa = (int) ($c->company_id ?: $c->project?->company_id);
         $data = $request->validate([
             'ativo' => 'sometimes|boolean',
             'regra_recorrente' => ['sometimes', Rule::in(FinContractBilling::REGRAS)],
@@ -77,7 +77,7 @@ class ParcelaController extends FinanceiroController
         }
 
         $cfg = FinContractBilling::firstOrNew(['contract_id' => $c->id]);
-        $cfg->fill($data + ['company_id' => $c->company_id, 'updated_by' => $request->user()->id]);
+        $cfg->fill($data + ['company_id' => $empresa, 'updated_by' => $request->user()->id]);
         if (! $cfg->exists && ! array_key_exists('regra_recorrente', $data)) {
             $cfg->regra_recorrente = FinContractBilling::regraSugerida($c);
         }
@@ -204,7 +204,8 @@ class ParcelaController extends FinanceiroController
     private function contratoDaEmpresa(Request $request, int $id): Contract
     {
         $c = Contract::withoutGlobalScopes()->with(['customer', 'project', 'contractType'])->findOrFail($id);
-        abort_unless((int) $c->company_id === $this->empresaId($request), 404, 'Contrato não pertence à empresa ativa.');
+        // contratos antigos sem company_id herdam a empresa do projeto
+        abort_unless((int) ($c->company_id ?: $c->project?->company_id) === $this->empresaId($request), 404, 'Contrato não pertence à empresa ativa.');
         return $c;
     }
 }
