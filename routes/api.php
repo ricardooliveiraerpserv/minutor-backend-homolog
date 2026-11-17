@@ -263,6 +263,7 @@ Route::prefix('v1')->group(function () {
             // F2 — aba Faturamento do contrato + parcelas
             Route::get('/contratos/{contract}/faturamento', [\App\Http\Controllers\Financeiro\ParcelaController::class, 'contrato'])->whereNumber('contract');
             Route::put('/contratos/{contract}/faturamento', [\App\Http\Controllers\Financeiro\ParcelaController::class, 'salvarContrato'])->whereNumber('contract');
+            Route::get('/projetos/{project}/faturamento',   [\App\Http\Controllers\Financeiro\ParcelaController::class, 'projeto'])->whereNumber('project');
             Route::get('/parcelas',                     [\App\Http\Controllers\Financeiro\ParcelaController::class, 'index']);
             Route::get('/parcelas/opcoes',              [\App\Http\Controllers\Financeiro\ParcelaController::class, 'opcoes']);
             Route::post('/parcelas',                    [\App\Http\Controllers\Financeiro\ParcelaController::class, 'store']);

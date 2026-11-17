@@ -183,6 +183,8 @@ class FinanceiroParcelasTest extends TestCase
         $this->withHeaders($h)->getJson("/api/v1/financeiro/contratos/{$c->id}/faturamento")
             ->assertOk()->assertJsonPath('regra_sugerida', 'mensalidade')->assertJsonPath('config_salva', false);
         $this->withHeaders($h)->getJson("/api/v1/financeiro/contratos/{$outra->id}/faturamento")->assertNotFound();
+        $this->withHeaders($h)->getJson("/api/v1/financeiro/projetos/{$c->project_id}/faturamento")->assertOk()->assertJsonPath('contrato.id', $c->id);
+        $this->withHeaders($h)->getJson("/api/v1/financeiro/projetos/{$outra->project_id}/faturamento")->assertNotFound();
 
         $this->withHeaders($h)->putJson("/api/v1/financeiro/contratos/{$c->id}/faturamento", ['regra_recorrente' => 'valor_fixo'])->assertStatus(422);
         $this->withHeaders($h)->putJson("/api/v1/financeiro/contratos/{$c->id}/faturamento", [

@@ -40,6 +40,20 @@ class ParcelaController extends FinanceiroController
         ]);
     }
 
+    /** Mesma aba, a partir do PROJETO (modal do projeto ativo): resolve o contrato dele ou do projeto-pai. */
+    public function projeto(Request $request, int $project, ParcelaGenerator $gen): JsonResponse
+    {
+        $this->autorizar($request);
+        $busca = fn (int $pid) => Contract::withoutGlobalScopes()->where('project_id', $pid)
+            ->orderByRaw("CASE WHEN status = 'ativo' THEN 0 ELSE 1 END")->orderByDesc('id')->value('id');
+        $id = $busca($project);
+        if (! $id && ($pai = \App\Models\Project::withoutGlobalScopes()->whereKey($project)->value('parent_project_id'))) {
+            $id = $busca((int) $pai);
+        }
+        abort_unless($id, 404, 'Este projeto não tem contrato vinculado.');
+        return $this->contrato($request, (int) $id, $gen);
+    }
+
     public function salvarContrato(Request $request, int $contract): JsonResponse
     {
         $this->autorizar($request);
