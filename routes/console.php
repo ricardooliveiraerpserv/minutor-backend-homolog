@@ -182,6 +182,13 @@ Schedule::command('fechamento:auto-fechar')
   ->description('Fecha a competência do mês anterior no 2º dia útil do mês atual')
   ->withoutOverlapping();
 
+// Financeiro (F2) — gera/atualiza parcelas do mês anterior e do atual. Idempotente; não emite nada.
+Schedule::command('financeiro:gerar-parcelas')
+  ->dailyAt('06:30')
+  ->name('financeiro-gerar-parcelas')
+  ->description('Gera parcelas de faturamento (recorrentes, On Demand, excedentes, despesas)')
+  ->withoutOverlapping();
+
 // Reset das alocações de Investimento Interno — roda diariamente às 00:05
 // e só age no 2º dia útil. Alocações feitas após esse horário no mesmo dia
 // são preservadas.

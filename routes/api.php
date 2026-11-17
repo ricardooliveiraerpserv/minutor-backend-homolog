@@ -260,6 +260,16 @@ Route::prefix('v1')->group(function () {
             Route::put('/favorecidos/{id}',             [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'update'])->whereNumber('id');
             Route::delete('/favorecidos/{id}',          [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'destroy'])->whereNumber('id');
 
+            // F2 — aba Faturamento do contrato + parcelas
+            Route::get('/contratos/{contract}/faturamento', [\App\Http\Controllers\Financeiro\ParcelaController::class, 'contrato'])->whereNumber('contract');
+            Route::put('/contratos/{contract}/faturamento', [\App\Http\Controllers\Financeiro\ParcelaController::class, 'salvarContrato'])->whereNumber('contract');
+            Route::get('/parcelas',                     [\App\Http\Controllers\Financeiro\ParcelaController::class, 'index']);
+            Route::get('/parcelas/opcoes',              [\App\Http\Controllers\Financeiro\ParcelaController::class, 'opcoes']);
+            Route::post('/parcelas',                    [\App\Http\Controllers\Financeiro\ParcelaController::class, 'store']);
+            Route::post('/parcelas/gerar',              [\App\Http\Controllers\Financeiro\ParcelaController::class, 'gerar'])->middleware('throttle:20,1');
+            Route::put('/parcelas/{id}',                [\App\Http\Controllers\Financeiro\ParcelaController::class, 'update'])->whereNumber('id');
+            Route::post('/parcelas/{id}/cancelar',      [\App\Http\Controllers\Financeiro\ParcelaController::class, 'cancelar'])->whereNumber('id');
+
             Route::get('/clientes/{customer}/fiscal',   [\App\Http\Controllers\Financeiro\ClienteFiscalController::class, 'show'])->whereNumber('customer');
             Route::put('/clientes/{customer}/fiscal',   [\App\Http\Controllers\Financeiro\ClienteFiscalController::class, 'update'])->whereNumber('customer');
         });
