@@ -288,8 +288,8 @@ class HelpDeskTicketController extends Controller
             ->whereNull('merged_into_id') // chamados mesclados somem das listagens (ficam no destino)
             ->when($request->filled('company_id'), fn ($q) => $q->where('company_id', $request->company_id)) // filtro rápido por empresa (dentro do escopo)
             ->when($request->filled('status_id'), fn ($q) => $q->where('status_id', $request->status_id))
-            ->when($request->filled('status_key'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('key', $request->status_key)))
-            ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->where('is_open', true)))
+            ->when($request->filled('status_key'), fn ($q) => $q->whereHas('status', fn ($s) => $s->withoutCompanyScope()->where('key', $request->status_key)))
+            ->when($request->boolean('open'), fn ($q) => $q->whereHas('status', fn ($s) => $s->withoutCompanyScope()->where('is_open', true)))
             ->when($request->filled('priority'), fn ($q) => $q->where('priority', $request->priority))
             ->when($request->filled('customer_id'), fn ($q) => $q->where('customer_id', $request->customer_id))
             ->when($request->filled('contract_id'), fn ($q) => $q->where('contract_id', $request->contract_id))
@@ -314,7 +314,7 @@ class HelpDeskTicketController extends Controller
                 if ($u && !$u->isAdmin() && !$u->isHelpDeskAdmin()) $q->where('assignee_id', $u->id);
                 $q->whereNotNull('dev_delivery_at')
                   ->whereDate('dev_delivery_at', '<=', $this->lastBusinessDayBeforeToday())
-                  ->whereHas('status', fn ($s) => $s->where('key', 'em_desenvolvimento'));
+                  ->whereHas('status', fn ($s) => $s->withoutCompanyScope()->where('key', 'em_desenvolvimento'));
             })
             // Busca ÚNICA da fila — respeita todos os filtros (roda dentro do filtered()): assunto,
             // descrição, cliente, solicitante/responsável/contato E conteúdo das interações.
@@ -341,7 +341,7 @@ class HelpDeskTicketController extends Controller
             ->when(!$request->boolean('include_promax') && optional($request->user())->type !== 'cliente', fn ($q) => self::scopeNotPromaxHeld($q))
             // Filtro por número do chamado TOTVS — traz o chamado que tenha QUALQUER interação com esse número.
             ->when($request->filled('totvs_ticket_number'), fn ($q) => $q->whereHas('comments', fn ($c) => $c->where('totvs_ticket_number', 'ilike', '%' . $request->input('totvs_ticket_number') . '%')))
-            ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
+            ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->withoutCompanyScope()->where('is_terminal', false)->where('is_resolved', false)))
             // ESCALA: filtro de DATA no banco (usa índice created_at) — a fila deixa de carregar "os N
             // mais recentes de toda a história" e passa a varrer só o período pedido.
             ->when($request->filled('created_from'), fn ($q) => $q->where('created_at', '>=', $request->input('created_from')))
@@ -350,7 +350,9 @@ class HelpDeskTicketController extends Controller
             // independente de quantos encerrados existam no histórico. Encerrados antigos ficam no Histórico.
             // Usa status_id (índice) em vez de whereHas (subquery) p/ o planner fazer bitmap-OR de índices.
             ->when($request->boolean('queue'), function ($q) use ($request) {
-                $activeIds = HelpDeskStatus::where('is_terminal', false)->where('is_resolved', false)->pluck('id')->all();
+                // withoutCompanyScope: status de TODAS as empresas (fila unificada ERPSERV+BIZIFY). Antes só
+                // pegava os status da empresa ATIVA → chamado ativo da outra empresa sumia da fila/busca em "Todas".
+                $activeIds = HelpDeskStatus::query()->withoutCompanyScope()->where('is_terminal', false)->where('is_resolved', false)->pluck('id')->all();
                 $q->where(fn ($w) => $w
                     ->whereIn('status_id', $activeIds)
                     ->orWhere('updated_at', '>=', now()->subDays((int) $request->input('queue_recent_days', 45))));
