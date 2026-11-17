@@ -148,6 +148,27 @@ class FinanceiroParcelasTest extends TestCase
         $this->assertSame('1182.51', $ex->valor_liquido);
     }
 
+    public function test_liberacao_on_demand_e_despesa_sem_fechamento_encerrado(): void
+    {
+        $c = $this->contrato('on_demand');
+        \App\Models\OnDemandBillingRelease::create(['project_id' => $c->project_id, 'year_month' => '2026-09', 'released_at' => now()]);
+        \App\Models\Expense::withoutGlobalScopes()->forceCreate([
+            'user_id' => ($this->autor ??= User::factory()->create())->id, 'project_id' => $c->project_id,
+            'expense_category_id' => \App\Models\ExpenseCategory::factory()->create()->id, 'expense_date' => '2026-09-15',
+            'description' => 'Hotel', 'amount' => 834.50, 'status' => 'approved', 'charge_client' => true,
+            'expense_type' => 'reimbursement', 'payment_method' => 'pix', 'company_id' => $this->erp->id,
+        ]);
+
+        $r = app(ParcelaGenerator::class)->gerar($this->erp->id, '2026-09');
+        // projeto liberado sem horas apontadas → sem parcela On Demand; despesa → 1 nota de débito
+        $this->assertSame(1, $r['criadas'], json_encode($r));
+        $nd = FinInstallment::withoutGlobalScopes()->where('contract_id', $c->id)->first();
+        $this->assertSame('despesa', $nd->origem);
+        $this->assertSame('nota_debito', $nd->documento);
+        $this->assertSame('834.50', $nd->valor_liquido);
+        $this->assertSame('liberacao_on_demand', $nd->detalhes['fonte']);
+    }
+
     public function test_api_aba_faturamento_e_isolamento(): void
     {
         $u = User::factory()->create(['type' => 'admin', 'current_company_id' => $this->erp->id]);

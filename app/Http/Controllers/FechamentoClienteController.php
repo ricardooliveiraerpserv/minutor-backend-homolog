@@ -425,6 +425,19 @@ class FechamentoClienteController extends Controller
         return round(max(0.0, $creditTotal - $consumedBefore), 2);
     }
 
+    /**
+     * Financeiro (parcelas): MESMO cálculo do fechamento de cliente, sem duplicar regra —
+     * serviços On Demand (taxa por competência, multiplicadores, crédito abatido) e despesas
+     * cobráveis (com os acréscimos do fechamento) de um cliente numa competência.
+     */
+    public function dadosParaFaturamento(int $customerId, string $yearMonth, ?int $projectId = null): array
+    {
+        return [
+            'servicos' => $this->apontamentosData($customerId, $yearMonth, $yearMonth, 'on_demand', $projectId),
+            'despesas' => $this->despesasData($customerId, $yearMonth, $yearMonth),
+        ];
+    }
+
     private function apontamentosData(int $customerId, string $fromMonth, string $toMonth, ?string $contractCode = null, ?int $projectId = null): array
     {
         $from = "{$fromMonth}-01";

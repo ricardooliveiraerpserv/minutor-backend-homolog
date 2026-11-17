@@ -2,6 +2,7 @@
 
 namespace App\Services\Financeiro;
 
+use App\Http\Controllers\FechamentoClienteController;
 use App\Models\Contract;
 use App\Models\ExcessHourCharge;
 use App\Models\Expense;
@@ -9,6 +10,7 @@ use App\Models\FechamentoCliente;
 use App\Models\Financeiro\FinCompanySetting;
 use App\Models\Financeiro\FinContractBilling;
 use App\Models\Financeiro\FinInstallment;
+use App\Models\OnDemandBillingRelease;
 use App\Models\Project;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -16,8 +18,8 @@ use Illuminate\Support\Collection;
 /**
  * Gera as parcelas de UMA empresa numa competência (YYYY-MM), a partir de:
  *  - recorrente: contratos com regra de recorrência (mensalidade / banco de horas / valor fixo);
- *  - on_demand: fechamentos de cliente ENCERRADOS (snapshot por projeto, já com crédito abatido);
- *  - despesa:   despesas cobráveis do snapshot do fechamento → nota de débito por contrato;
+ *  - on_demand: projetos On Demand LIBERADOS no mês (ou fechamento encerrado) — cálculo do fechamento;
+ *  - despesa:   despesas cobráveis do mês encerrado → nota de débito por contrato;
  *  - excedente: excess_hour_charges com status "cobrado".
  * Idempotente: chave (contract_id, competencia, origem, origem_ref). Parcela processada/cancelada
  * nunca é alterada. Valores e retenções são recalculados enquanto a parcela está prevista/pronta.
@@ -94,31 +96,68 @@ class ParcelaGenerator
             $this->rotuloRecorrente($cfg, $ym), ['regra' => $cfg->regra_recorrente, 'periodicidade' => $cfg->periodicidade]);
     }
 
+    /**
+     * On Demand + despesas por cliente. Fluxo real do Minutor: o coordenador LIBERA o mês do
+     * projeto On Demand para faturamento (on_demand_billing_releases) — o fechamento de cliente
+     * raramente é "encerrado". Regras:
+     *  - On Demand: só projetos LIBERADOS no mês (ou presentes num fechamento encerrado).
+     *  - Valores: snapshot congelado se o fechamento estiver encerrado; senão o MESMO cálculo
+     *    ao vivo do fechamento de cliente (FechamentoClienteController::dadosParaFaturamento).
+     *  - Despesas cobráveis: só depois que o mês terminou (ou do snapshot encerrado).
+     *  - Desconto do fechamento (mesmo aberto) rateado entre as parcelas On Demand do cliente.
+     */
     private function doFechamento(int $companyId, string $ym, array &$res): array
     {
         $out = [];
-        $fechamentos = FechamentoCliente::withoutGlobalScopes()->where('year_month', $ym)->where('status', 'closed')->get();
-        foreach ($fechamentos as $f) {
-            // On Demand: um item por projeto do snapshot (crédito já abatido em total_receita).
-            $projetos = collect($f->snapshot_contratos['projetos'] ?? [])->filter(fn ($p) => (float) ($p['total_receita'] ?? 0) > 0);
-            $somaServicos = (float) $projetos->sum('total_receita');
+        $mesEncerrado = $ym < now()->format('Y-m');
+        $fechados = FechamentoCliente::withoutGlobalScopes()->where('year_month', $ym)->get()->keyBy('customer_id');
+        $liberados = OnDemandBillingRelease::where('year_month', $ym)->pluck('project_id')->map(fn ($v) => (int) $v)->all();
+
+        $clientes = collect();
+        if ($liberados) {
+            $clientes = $clientes->merge(Project::withoutGlobalScopes()->whereIn('id', $liberados)->pluck('customer_id'));
+        }
+        $clientes = $clientes->merge($fechados->filter(fn ($f) => $f->status === 'closed')->keys());
+        if ($mesEncerrado) {
+            [$ini, $fim] = [Carbon::createFromFormat('Y-m-d', $ym . '-01')->startOfMonth(), Carbon::createFromFormat('Y-m-d', $ym . '-01')->endOfMonth()];
+            $clientes = $clientes->merge(Expense::withoutGlobalScopes()->where('expenses.charge_client', true)->where('expenses.status', Expense::STATUS_APPROVED)
+                ->whereBetween('expenses.expense_date', [$ini->toDateString(), $fim->toDateString()])
+                ->join('projects', 'projects.id', '=', 'expenses.project_id')->distinct()->pluck('projects.customer_id'));
+        }
+
+        $ctrl = app(FechamentoClienteController::class);
+        foreach ($clientes->filter()->unique() as $customerId) {
+            $f = $fechados->get($customerId);
+            $encerrado = $f && $f->status === 'closed';
+            if ($encerrado) {
+                $servicos = collect($f->snapshot_contratos['projetos'] ?? []);
+                $despesas = collect($f->snapshot_despesas ?? []);
+            } else {
+                $dados = $ctrl->dadosParaFaturamento((int) $customerId, $ym);
+                $servicos = collect($dados['servicos']['projetos'] ?? [])->filter(fn ($p) => in_array((int) $p['projeto_id'], $liberados, true));
+                $despesas = $mesEncerrado ? collect($dados['despesas']) : collect();
+            }
+            $fonte = $encerrado ? 'fechamento_encerrado' : 'liberacao_on_demand';
+
+            // On Demand
+            $servicos = $servicos->filter(fn ($p) => (float) ($p['total_receita'] ?? 0) > 0)->values();
+            $somaServicos = (float) $servicos->sum('total_receita');
             $descontoTotal = (float) ($f->desconto ?? 0);
-            foreach ($projetos as $p) {
+            foreach ($servicos as $p) {
                 $c = $this->contratoDoProjeto((int) $p['projeto_id']);
-                if (! $c) { $res['sem_contrato'][] = 'On Demand ' . ($p['projeto_codigo'] ?? '') . ' ' . ($p['projeto_nome'] ?? ''); continue; }
+                if (! $c) { $res['sem_contrato'][] = 'On Demand ' . trim(($p['projeto_codigo'] ?? '') . ' ' . ($p['projeto_nome'] ?? '')); continue; }
                 if ((int) $c->company_id !== $companyId) continue;
                 $bruto = round((float) $p['total_receita'], 2);
                 $desc = $somaServicos > 0 ? round($descontoTotal * $bruto / $somaServicos, 2) : 0.0;
+                $horas = (float) ($p['horas_cobradas'] ?? $p['horas'] ?? 0);
                 $cfg = FinContractBilling::paraContrato($c);
-                $out[] = $this->montar($c, $cfg, $ym, 'on_demand', 'fc:' . $f->id . ':p:' . $p['projeto_id'], $cfg->documento, $bruto, $desc,
-                    (float) ($p['horas_cobradas'] ?? $p['horas'] ?? 0),
-                    'On Demand ' . $this->mesAno($ym) . ' — ' . ($p['horas_cobradas'] ?? $p['horas'] ?? 0) . ' h',
-                    ['fechamento_cliente_id' => $f->id, 'projeto_id' => $p['projeto_id'], 'valor_hora' => $p['valor_hora'] ?? null,
+                $out[] = $this->montar($c, $cfg, $ym, 'on_demand', 'p:' . $p['projeto_id'], $cfg->documento, $bruto, $desc, $horas,
+                    'On Demand ' . $this->mesAno($ym) . ' — ' . $horas . ' h',
+                    ['fonte' => $fonte, 'fechamento_cliente_id' => $f?->id, 'projeto_id' => $p['projeto_id'], 'valor_hora' => $p['valor_hora'] ?? null,
                         'credito_abatido' => $p['credito_abatido'] ?? 0, 'desconto_fechamento' => $descontoTotal]);
             }
 
-            // Despesas cobráveis → nota de débito agrupada por contrato.
-            $despesas = collect($f->snapshot_despesas ?? []);
+            // Despesas cobráveis → nota de débito por contrato
             if ($despesas->isEmpty()) continue;
             $projetoDaDespesa = Expense::withoutGlobalScopes()->whereIn('id', $despesas->pluck('id'))->pluck('project_id', 'id');
             $porContrato = [];
@@ -134,9 +173,9 @@ class ParcelaGenerator
                 $total = round(array_sum(array_column($g['itens'], 'valor')), 2);
                 if ($total <= 0) continue;
                 $cfg = FinContractBilling::paraContrato($g['c']);
-                $out[] = $this->montar($g['c'], $cfg, $ym, 'despesa', 'fc:' . $f->id, 'nota_debito', $total, 0.0, null,
+                $out[] = $this->montar($g['c'], $cfg, $ym, 'despesa', 'desp', 'nota_debito', $total, 0.0, null,
                     'Reembolso de despesas ' . $this->mesAno($ym) . ' (' . count($g['itens']) . ')',
-                    ['fechamento_cliente_id' => $f->id, 'despesas' => $g['itens']]);
+                    ['fonte' => $fonte, 'fechamento_cliente_id' => $f?->id, 'despesas' => $g['itens']]);
             }
         }
         return $out;
