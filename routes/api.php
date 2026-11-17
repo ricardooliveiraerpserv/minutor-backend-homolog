@@ -271,6 +271,14 @@ Route::prefix('v1')->group(function () {
             Route::put('/parcelas/{id}',                [\App\Http\Controllers\Financeiro\ParcelaController::class, 'update'])->whereNumber('id');
             Route::post('/parcelas/{id}/cancelar',      [\App\Http\Controllers\Financeiro\ParcelaController::class, 'cancelar'])->whereNumber('id');
 
+            // F3 — notas (NFS-e / Nota de Débito)
+            Route::post('/parcelas/{parcela}/emitir',   [\App\Http\Controllers\Financeiro\NotaController::class, 'emitir'])->whereNumber('parcela')->middleware('throttle:60,1');
+            Route::post('/parcelas/emitir-lote',        [\App\Http\Controllers\Financeiro\NotaController::class, 'emitirLote'])->middleware('throttle:10,1');
+            Route::get('/notas',                        [\App\Http\Controllers\Financeiro\NotaController::class, 'index']);
+            Route::get('/notas/{id}/pdf',               [\App\Http\Controllers\Financeiro\NotaController::class, 'pdf'])->whereNumber('id');
+            Route::post('/notas/{id}/cancelar',         [\App\Http\Controllers\Financeiro\NotaController::class, 'cancelar'])->whereNumber('id');
+            Route::post('/notas/{id}/descartar',        [\App\Http\Controllers\Financeiro\NotaController::class, 'descartar'])->whereNumber('id');
+
             Route::get('/clientes/{customer}/fiscal',   [\App\Http\Controllers\Financeiro\ClienteFiscalController::class, 'show'])->whereNumber('customer');
             Route::put('/clientes/{customer}/fiscal',   [\App\Http\Controllers\Financeiro\ClienteFiscalController::class, 'update'])->whereNumber('customer');
         });
