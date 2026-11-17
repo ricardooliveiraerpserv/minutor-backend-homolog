@@ -680,7 +680,13 @@ class CustomerController extends Controller
                     })
                     ->orWhereHas('coordinators', function ($coordinatorQuery) use ($targetUserId) {
                         $coordinatorQuery->where('user_id', $targetUserId);
-                    });
+                    })
+                    // Mesmo escopo do dropdown de projetos do apontamento e do "Meus Projetos":
+                    // aprovador, grupo de consultores e alocação no cronograma também valem.
+                    ->orWhereHas('approvers', fn ($a) => $a->where('user_id', $targetUserId))
+                    ->orWhereHas('consultantGroups.consultants', fn ($g) => $g->where('users.id', $targetUserId))
+                    ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId))
+                    ->orWhereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId));
                 });
             })->pluck('id');
 

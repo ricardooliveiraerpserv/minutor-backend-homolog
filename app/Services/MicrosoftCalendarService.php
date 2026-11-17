@@ -318,6 +318,34 @@ class MicrosoftCalendarService
         }
     }
 
+    /**
+     * REENVIA o convite: encaminha (forward) o evento aos destinatários — eles recebem o convite de
+     * reunião de novo (com o link do Teams). Retorna true se ok.
+     * @param array<int, array{email:string, name?:string|null}> $to
+     */
+    public static function forwardEvent(string $accessToken, string $eventId, array $to, string $comment = '', int $timeout = 20): bool
+    {
+        try {
+            $r = Http::withToken($accessToken)->acceptJson()->connectTimeout(10)->timeout($timeout)
+                ->post(self::GRAPH_BASE . '/me/events/' . rawurlencode($eventId) . '/forward', [
+                    'toRecipients' => array_values(array_map(fn ($p) => ['emailAddress' => ['address' => $p['email'], 'name' => $p['name'] ?? $p['email']]], $to)),
+                    'comment' => $comment,
+                ]);
+            if ($r->successful()) { MicrosoftHealth::record('agenda', true); return true; }
+            self::$lastError = [
+                'status'  => $r->status(),
+                'code'    => data_get($r->json(), 'error.code'),
+                'message' => mb_substr((string) data_get($r->json(), 'error.message', $r->body()), 0, 400),
+            ];
+            MicrosoftHealth::record('agenda', false, self::$lastError);
+            \Illuminate\Support\Facades\Log::warning('📅 [MEETINGS] Graph forwardEvent falhou', self::$lastError);
+            return false;
+        } catch (\Throwable $e) {
+            self::$lastError = ['status' => 0, 'code' => 'exception', 'message' => mb_substr($e->getMessage(), 0, 400)];
+            return false;
+        }
+    }
+
     /** Remove (cancela) um evento — o Graph avisa os convidados. Retorna true se ok. */
     public static function deleteEvent(string $accessToken, string $eventId, int $timeout = 15): bool
     {

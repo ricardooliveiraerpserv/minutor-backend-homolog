@@ -18,6 +18,9 @@ class HelpDeskOpsController extends Controller
 {
     public function index(OperationsCenterService $center, OperationsDiagnostics $diag): JsonResponse
     {
+        // Central de Operações: SÓ admin do sistema ou perfil HD "Administradores…" (Ricardo 17/11/2026).
+        $u = auth()->user();
+        abort_unless($u && ($u->isAdmin() || $u->isHelpDeskAdmin()), 403, 'Acesso restrito aos administradores do Help Desk.');
         $blocos = $center->build();
         $diagnostico = $diag->analyze($blocos);
 

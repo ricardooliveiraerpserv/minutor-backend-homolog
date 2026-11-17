@@ -148,10 +148,19 @@ Route::prefix('v1')->group(function () {
         ->middleware('signed')->name('notifications.respond-email-guests');
     // 🎓 Aprenda o Minutor — stream do vídeo (link assinado de 6h gerado por /training-videos/{id}/play;
     // a tag <video> não envia Bearer). BinaryFileResponse → suporta Range (avançar/voltar).
+    // Vídeo de uma PUBLICAÇÃO (Meu Dia / Comunicados) — link assinado (12h) gerado no payload (video_url).
+    Route::get('/notifications/{notification}/video', [\App\Http\Controllers\NotificationController::class, 'video'])
+        ->whereNumber('notification')->middleware('signed')->name('notifications.video');
+    Route::get('/communications/{communication}/video', [\App\Http\Controllers\CommunicationController::class, 'video'])
+        ->whereNumber('communication')->middleware('signed')->name('communications.video');
     Route::get('/training-videos/{video}/cover', [\App\Http\Controllers\TrainingVideoController::class, 'cover'])
         ->whereNumber('video')->middleware('signed')->name('training-videos.cover');
     Route::get('/training-videos/{video}/stream', [\App\Http\Controllers\TrainingVideoController::class, 'stream'])
-        ->whereNumber('video')->middleware('signed')->name('training-videos.stream');
+        ->whereNumber('video')->middleware('signed:relative')->name('training-videos.stream'); // assinatura só do caminho: toca pelo domínio do app (Safari)
+    // CONECTOR MCP (Claude: chat/PowerPoint/Excel) — só leitura, só admin. Auth = token pessoal no caminho
+    // (`php artisan mcp:token {user}`), revogável. Limite de requisições por token.
+    Route::match(['get', 'post', 'delete'], '/mcp/{token}', [\App\Http\Controllers\McpController::class, 'handle'])
+        ->where('token', '[A-Za-z0-9|%]+')->middleware('throttle:120,1')->name('mcp.handle');
     // PESQUISA por e-mail (link assinado, sem login): formulário (GET) + envio (POST).
     Route::get('/surveys/{survey}/email-form',    [\App\Http\Controllers\NotificationSurveyController::class, 'emailForm'])
         ->middleware('signed')->name('surveys.email-form');
@@ -219,6 +228,36 @@ Route::prefix('v1')->group(function () {
     // client.project: rede de segurança — cliente só acessa {project}/{projectId} do SEU customer
     // (gestor) ou em que participa (convidado/envolvido/responsável). Internos passam direto.
     Route::middleware(['auth:sanctum', 'company.context', 'client.project'])->group(function () {
+
+        // 💰 FINANCEIRO (substituição do Keruak) — F1 cadastros. Acesso: admin/administrativo
+        // (checado nos controllers); tudo na EMPRESA ATIVA.
+        Route::prefix('financeiro')->middleware('block.cliente')->group(function () {
+            Route::get('/empresa',                      [\App\Http\Controllers\Financeiro\EmpresaFiscalController::class, 'show']);
+            Route::put('/empresa',                      [\App\Http\Controllers\Financeiro\EmpresaFiscalController::class, 'update']);
+            Route::post('/empresa/certificado',         [\App\Http\Controllers\Financeiro\EmpresaFiscalController::class, 'uploadCertificado'])->middleware('throttle:10,1');
+            Route::delete('/empresa/certificado',       [\App\Http\Controllers\Financeiro\EmpresaFiscalController::class, 'removerCertificado']);
+
+            Route::get('/contas-bancarias',             [\App\Http\Controllers\Financeiro\ContaBancariaController::class, 'index']);
+            Route::post('/contas-bancarias',            [\App\Http\Controllers\Financeiro\ContaBancariaController::class, 'store']);
+            Route::put('/contas-bancarias/{id}',        [\App\Http\Controllers\Financeiro\ContaBancariaController::class, 'update'])->whereNumber('id');
+            Route::delete('/contas-bancarias/{id}',     [\App\Http\Controllers\Financeiro\ContaBancariaController::class, 'destroy'])->whereNumber('id');
+            Route::put('/contas-bancarias/{id}/credenciais', [\App\Http\Controllers\Financeiro\ContaBancariaController::class, 'credenciais'])->whereNumber('id')->middleware('throttle:10,1');
+
+            Route::get('/plano-contas',                 [\App\Http\Controllers\Financeiro\PlanoContasController::class, 'index']);
+            Route::post('/plano-contas',                [\App\Http\Controllers\Financeiro\PlanoContasController::class, 'store']);
+            Route::post('/plano-contas/padrao',         [\App\Http\Controllers\Financeiro\PlanoContasController::class, 'aplicarPadrao']);
+            Route::put('/plano-contas/{id}',            [\App\Http\Controllers\Financeiro\PlanoContasController::class, 'update'])->whereNumber('id');
+            Route::delete('/plano-contas/{id}',         [\App\Http\Controllers\Financeiro\PlanoContasController::class, 'destroy'])->whereNumber('id');
+
+            Route::get('/favorecidos',                  [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'index']);
+            Route::post('/favorecidos',                 [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'store']);
+            Route::post('/favorecidos/importar-consultores', [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'importarConsultores']);
+            Route::put('/favorecidos/{id}',             [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'update'])->whereNumber('id');
+            Route::delete('/favorecidos/{id}',          [\App\Http\Controllers\Financeiro\FavorecidoController::class, 'destroy'])->whereNumber('id');
+
+            Route::get('/clientes/{customer}/fiscal',   [\App\Http\Controllers\Financeiro\ClienteFiscalController::class, 'show'])->whereNumber('customer');
+            Route::put('/clientes/{customer}/fiscal',   [\App\Http\Controllers\Financeiro\ClienteFiscalController::class, 'update'])->whereNumber('customer');
+        });
 
         // 🔐 COFRE DE SENHAS (Vault) — dependência do módulo Ambientes (Prosight).
         Route::prefix('vault')->middleware('permission.or.admin:vault.use')->group(function () {
@@ -434,6 +473,8 @@ Route::prefix('v1')->group(function () {
             Route::post('/environments/{envId}/favorite',  [\App\Http\Controllers\EnvironmentController::class, 'toggleFavorite'])->name('environments.favorite.toggle');
             // Clientes-vault
             Route::get('/clients',                         [\App\Http\Controllers\EnvironmentController::class, 'clients'])->name('environments.clients.index');
+            Route::get('/vault-inactive',                  [\App\Http\Controllers\EnvironmentController::class, 'vaultInactive'])->name('environments.vault-inactive');
+            Route::put('/clients/{customerId}/vault-status', [\App\Http\Controllers\EnvironmentController::class, 'setVaultStatus'])->name('environments.clients.vault-status');
             Route::post('/clients',                        [\App\Http\Controllers\EnvironmentController::class, 'createClient'])->name('environments.clients.store');
             Route::delete('/clients/{customerId}',         [\App\Http\Controllers\EnvironmentController::class, 'destroyClient'])->name('environments.clients.destroy');
             // Escrow corporativo: backfill de pasta existente + leitura p/ recuperação
@@ -586,6 +627,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/impersonate/partners',   [\App\Http\Controllers\ImpersonationController::class, 'partners'])->name('impersonate.partners');
         Route::post('/impersonate',           [\App\Http\Controllers\ImpersonationController::class, 'impersonate'])->name('impersonate.start');
         Route::post('/notifications/preview',     [\App\Http\Controllers\NotificationController::class, 'preview']);
+        Route::post('/notifications/recipient-users', [\App\Http\Controllers\NotificationController::class, 'recipientUsers']);
+        Route::post('/notifications/video-chunk', [\App\Http\Controllers\NotificationController::class, 'videoChunk']);
         Route::post('/notifications',             [\App\Http\Controllers\NotificationController::class, 'store']);
         Route::put('/notifications/{notification}',    [\App\Http\Controllers\NotificationController::class, 'update']);
         Route::delete('/notifications/{notification}', [\App\Http\Controllers\NotificationController::class, 'destroy']);
@@ -654,6 +697,8 @@ Route::prefix('v1')->group(function () {
         Route::delete('/meetings/{meeting}/tasks/{task}',    [\App\Http\Controllers\MeetingController::class, 'deleteTask']);
         // NOVO — ações da reunião (Central de Reuniões / card do chamado).
         Route::post('/meetings/{meeting}/cancel',            [\App\Http\Controllers\MeetingController::class, 'cancel']);
+        Route::get('/meetings/{meeting}/invitees',           [\App\Http\Controllers\MeetingController::class, 'invitees']);
+        Route::post('/meetings/{meeting}/resend-invites',    [\App\Http\Controllers\MeetingController::class, 'resendInvites']);
         Route::post('/meetings/{meeting}/start',             [\App\Http\Controllers\MeetingController::class, 'start']);
         Route::post('/meetings/{meeting}/end',               [\App\Http\Controllers\MeetingController::class, 'end']);
         Route::post('/meetings/{meeting}/log-hours',         [\App\Http\Controllers\MeetingController::class, 'logHours']);
@@ -670,9 +715,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/communications/mark-read',     [\App\Http\Controllers\CommunicationController::class, 'markRead']);  // marca lido
         Route::post('/communications/ack',           [\App\Http\Controllers\CommunicationController::class, 'ack']);       // confirma recebimento (requires_ack)
         Route::get('/communications/meta',           [\App\Http\Controllers\CommunicationController::class, 'meta']);
+        Route::get('/mail/sender-options',           [\App\Http\Controllers\CommunicationController::class, 'senderOptions']);
         Route::get('/communications/customer-users', [\App\Http\Controllers\CommunicationController::class, 'customerUsers']);
         Route::post('/communications/preview',       [\App\Http\Controllers\CommunicationController::class, 'preview']);
         Route::post('/communications/send',          [\App\Http\Controllers\CommunicationController::class, 'send']);
+        Route::post('/communications/{communication}/resend', [\App\Http\Controllers\CommunicationController::class, 'resend'])->whereNumber('communication');
         Route::get('/communications',                [\App\Http\Controllers\CommunicationController::class, 'index']);
         Route::get('/distribution-lists',            [\App\Http\Controllers\DistributionListController::class, 'index']);
         Route::post('/distribution-lists',           [\App\Http\Controllers\DistributionListController::class, 'store']);
@@ -1617,6 +1664,7 @@ Route::prefix('v1')->group(function () {
         Route::delete('/help-desk/kb/categories/{kbCategory}', [\App\Http\Controllers\HelpDeskKbCategoryController::class, 'destroy']);
         Route::patch('/help-desk/people/access-profile/bulk',        [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'bulkSetAccessProfile']);
         Route::patch('/help-desk/people/{user}/access-profile',      [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setAccessProfile']);
+        Route::patch('/help-desk/people/{user}/helpdesk-companies',  [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setHelpdeskCompanies']);
         Route::patch('/help-desk/people/{user}/companies',           [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setCompanies']);
         Route::patch('/help-desk/people/{user}/teams',               [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setTeams']);
         Route::patch('/help-desk/people/{user}/can-timesheet-sustentacao', [\App\Http\Controllers\HelpDeskAccessProfileController::class, 'setCanTimesheetSustentacao']);
@@ -1694,6 +1742,7 @@ Route::prefix('v1')->group(function () {
             // Fonte ENVIADO PELO CLIENTE (e-mail/portal) → Git, reusando o motor GMUD (só coord/admin publica).
             Route::get('/help-desk/tickets/{ticket}/client-sources', [\App\Http\Controllers\HelpDeskClientSourceController::class, 'index'])->whereNumber('ticket');
             Route::post('/help-desk/tickets/{ticket}/client-sources', [\App\Http\Controllers\HelpDeskClientSourceController::class, 'store'])->whereNumber('ticket');
+            Route::post('/help-desk/tickets/{ticket}/client-sources/{package}/notify-versioned', [\App\Http\Controllers\HelpDeskTicketController::class, 'notifyClientSourceVersioned'])->whereNumber('ticket')->whereNumber('package');
             // Envio de Fontes de PROJETO (sem ticket) — rotina standalone que reusa o motor GMUD.
             Route::get('/gmud/project-submissions', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'index'])->middleware('permission.or.admin:source_docs.gmud_publish');
             Route::post('/gmud/project-submission', [\App\Http\Controllers\GmudProjectSubmissionController::class, 'store'])->middleware('permission.or.admin:source_docs.gmud_publish');
@@ -1850,6 +1899,12 @@ Route::prefix('v1')->group(function () {
         Route::get('/users/counts', [UserController::class, 'counts'])->name('users.counts'); // ANTES de /users/{user}
         // Consulta de regime tributário por CNPJ (Receita/BrasilAPI). 2 segmentos → não colide com /users/{user}.
         Route::get('/users/cnpj-lookup/{cnpj}', [UserController::class, 'cnpjLookup'])->name('users.cnpj-lookup');
+        // Cadastro de usuário: lista de clientes + "Novo cliente" (quem cadastra/edita usuário, sem precisar da tela Clientes).
+        Route::middleware('permission.or.admin:users.create,users.update')->group(function () {
+            Route::get('/users/customer-options', [UserController::class, 'customerOptions'])->name('users.customer-options');
+            Route::post('/users/quick-customer', [UserController::class, 'quickCustomer'])->name('users.quick-customer');
+            Route::post('/users/client-user', [UserController::class, 'storeClientUser'])->name('users.client-user');
+        });
         Route::get('/users/{user}', [UserController::class, 'show'])->name('users.show');
 
         Route::middleware(['permission.or.admin:users.create', 'screen.action:/users,create'])->group(function () {

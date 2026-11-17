@@ -360,6 +360,11 @@ class HelpDeskAccessPolicy
     public function companiesScope(?User $user): array
     {
         if (!$user) return [];
+        // 0) CLIENTE com "Empresas do Help Desk" definidas → abas do portal/abrir chamado seguem essa
+        //    lista, independente das empresas do Minutor (ex.: Promax: Minutor só ERPSERV, HD nas duas).
+        if ($user->type === 'cliente' && is_array($user->helpdesk_company_ids) && count($user->helpdesk_company_ids)) {
+            return array_values(array_unique(array_map('intval', $user->helpdesk_company_ids)));
+        }
         // 1) Cadastro do usuário (company_user) manda — para agente e cliente.
         $own = $user->companies()->pluck('companies.id')->map(fn ($v) => (int) $v)->unique()->values()->all();
         if ($own) return $own;

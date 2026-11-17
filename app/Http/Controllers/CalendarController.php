@@ -181,13 +181,17 @@ class CalendarController extends Controller
         } catch (\Throwable) { /* nunca trava o calendário */ }
 
         // 7) 📹 Reuniões do Minutor (módulo novo) do usuário (organizador/criador/participante) no mês.
-        //    Só as SEM evento externo (external_meeting_id NULL); com Teams ligado, a reunião já entra
-        //    pela sincronização do Outlook (evita duplicar).
+        //    Reuniões do Teams também entram (quem NÃO conectou o Outlook não as via); se o evento já
+        //    veio pela sincronização do Outlook (mesmo link ou mesmo dia+título), não duplica.
         try {
+            $norm = fn ($t) => mb_strtolower(trim(preg_replace('/\s+/u', ' ', (string) $t)));
+            $outlookKeys = $eventos->where('tipo', 'outlook')->flatMap(fn ($e) => array_filter([
+                $e['link'] ? 'l:' . $e['link'] : null,
+                'd:' . $e['data'] . '|' . $norm($e['titulo']),
+            ]))->flip();
             \App\Models\Meeting::query()
                 ->whereNotNull('origin_type')
                 ->where('status', '!=', 'canceled')
-                ->whereNull('external_meeting_id')
                 ->whereNotNull('starts_at')
                 ->whereMonth('starts_at', $month)->whereYear('starts_at', $year)
                 ->where(function ($q) use ($u) {
@@ -198,11 +202,15 @@ class CalendarController extends Controller
                 ->with('organizer:id,name')
                 ->orderBy('starts_at')
                 ->get()
-                ->each(function (\App\Models\Meeting $m) use (&$eventos) {
+                ->each(function (\App\Models\Meeting $m) use (&$eventos, $outlookKeys, $norm) {
                     $tz = $m->timezone ?: 'America/Sao_Paulo';
                     $s  = $m->starts_at?->copy()->timezone($tz);
                     $e  = $m->ends_at?->copy()->timezone($tz);
                     if (!$s) return;
+                    if ($m->external_meeting_id && (
+                        ($m->join_url && isset($outlookKeys['l:' . $m->join_url]))
+                        || isset($outlookKeys['d:' . $s->toDateString() . '|' . $norm($m->title)])
+                    )) return; // já está na agenda via Outlook
                     $eventos->push([
                         'tipo'        => 'meeting',
                         'data'        => $s->toDateString(),

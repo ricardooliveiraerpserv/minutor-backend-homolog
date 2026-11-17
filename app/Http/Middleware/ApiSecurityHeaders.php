@@ -26,7 +26,15 @@ class ApiSecurityHeaders
         // NAVEGADOR do cliente, via link do e-mail) precisam de estilos inline, imagens data: (logo
         // + prints colados), script inline (editor de recusa) e enviar o form → CSP relaxada só nelas.
         $htmlPages = ['hd.accept', 'hd.accept.do', 'hd.reject.do'];
-        if (in_array(optional($request->route())->getName(), $htmlPages, true)) {
+        // MÍDIA (vídeo/imagem/arquivo servido direto): sem CSP restritiva — o Safari aplica a CSP do
+        // próprio arquivo ao <video> e recusava tocar ("Não foi possível carregar o vídeo").
+        $ct = (string) $response->headers->get('Content-Type');
+        $isMedia = $response instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse
+            || $response instanceof \Symfony\Component\HttpFoundation\StreamedResponse
+            || preg_match('#^(video|audio|image)/#i', $ct);
+        if ($isMedia) {
+            $response->headers->remove('Content-Security-Policy');
+        } elseif (in_array(optional($request->route())->getName(), $htmlPages, true)) {
             $response->headers->set('Content-Security-Policy',
                 "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'");
         } else {

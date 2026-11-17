@@ -127,7 +127,7 @@ class HelpDeskAcceptController extends Controller
         if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando aceite. Obrigado!</p>');
         }
-        $fechado = HelpDeskStatus::where('key', 'fechado')->first();
+        $fechado = HelpDeskStatus::forCompany($ticket->company_id, 'fechado');
         abort_unless($fechado, 500, 'Status "fechado" não configurado.');
         $old = $ticket->status;
         $ticket->status_id = $fechado->id;
@@ -198,7 +198,7 @@ class HelpDeskAcceptController extends Controller
         if (!$this->awaitingAcceptance($ticket)) {
             return $this->page('Chamado já atualizado', '<p>Este chamado não está mais aguardando aceite. Nossa equipe já pode ter retomado o atendimento.</p>');
         }
-        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        $em = HelpDeskStatus::forCompany($ticket->company_id, 'em_andamento');
         abort_unless($em, 500, 'Status "em atendimento" não configurado.');
         $old = $ticket->status;
         $ticket->status_id   = $em->id;

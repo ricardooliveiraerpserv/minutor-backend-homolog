@@ -147,6 +147,7 @@
               <tr>
                 <th class="nowrap" style="width:62px;">Data</th>
                 <th>Consultor</th>
+                @if(!empty($temOrigem))<th>Cliente</th><th>Projeto</th>@endif
                 <th style="width:96px;">{{ ($vedamotors ?? false) ? 'Ticket ERPSERV' : 'Ticket' }}</th>
                 <th>{{ ($vedamotors ?? false) ? 'Ticket Vedamotors' : 'Título' }}</th>
                 <th class="right nowrap" style="width:54px;">Horas</th>
@@ -157,12 +158,13 @@
                 <tr class="ap-row">
                   <td class="nowrap">{{ $l['data'] }}</td>
                   <td>{{ $l['consultor'] }}</td>
+                  @if(!empty($temOrigem))<td>{{ $l['origem_cliente'] ?: '—' }}</td><td>{{ $l['origem_projeto'] ?: '—' }}</td>@endif
                   <td>{{ $l['ticket'] ?: '—' }}</td>
                   <td>{{ $l['titulo'] ?: '—' }}</td>
                   <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
                 </tr>
                 <tr class="desc-row">
-                  <td colspan="5"><span class="desc-label">Descrição:</span>{!! $l['observacao_html'] ?? '—' !!}</td>
+                  <td colspan="{{ !empty($temOrigem) ? 7 : 5 }}"><span class="desc-label">Descrição:</span>{!! $l['observacao_html'] ?? '—' !!}</td>
                 </tr>
               @endforeach
             </tbody>
@@ -176,7 +178,8 @@
             <tr>
               <th class="nowrap" style="width:62px;">Data</th>
               <th>Consultor</th>
-              <th style="width:96px;">{{ ($vedamotors ?? false) ? 'Ticket ERPSERV' : 'Ticket' }}</th>
+              @if(!empty($temOrigem))<th>Cliente</th><th>Projeto</th>@endif
+                <th style="width:96px;">{{ ($vedamotors ?? false) ? 'Ticket ERPSERV' : 'Ticket' }}</th>
               <th>{{ ($vedamotors ?? false) ? 'Ticket Vedamotors' : 'Título' }}</th>
               <th class="right nowrap" style="width:54px;">Horas</th>
             </tr>
@@ -186,12 +189,13 @@
               <tr class="ap-row">
                 <td class="nowrap">{{ $l['data'] }}</td>
                 <td>{{ $l['consultor'] }}</td>
-                <td>{{ $l['ticket'] ?: '—' }}</td>
+                @if(!empty($temOrigem))<td>{{ $l['origem_cliente'] ?: '—' }}</td><td>{{ $l['origem_projeto'] ?: '—' }}</td>@endif
+                  <td>{{ $l['ticket'] ?: '—' }}</td>
                 <td>{{ $l['titulo'] ?: '—' }}</td>
                 <td class="right nowrap">{{ $l['horas_fmt'] }}</td>
               </tr>
               <tr class="desc-row">
-                <td colspan="5"><span class="desc-label">Descrição:</span>{!! $l['observacao_html'] ?? '—' !!}</td>
+                <td colspan="{{ !empty($temOrigem) ? 7 : 5 }}"><span class="desc-label">Descrição:</span>{!! $l['observacao_html'] ?? '—' !!}</td>
               </tr>
             @endforeach
           </tbody>

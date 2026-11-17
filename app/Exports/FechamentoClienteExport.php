@@ -71,7 +71,15 @@ class FechamentoClienteExport implements FromArray, WithHeadings, WithStyles, Wi
             $this->vedamotors ? 'Ticket Vedamotors' : 'Título',
             'Horas',
             'Descrição',
+            // ASISTO: apontamentos migrados → origem em COLUNAS próprias (não na descrição).
+            ...($this->temOrigem() ? ['Cliente de origem', 'Projeto de origem'] : []),
         ];
+    }
+
+    private function temOrigem(): bool
+    {
+        foreach ($this->rows as $r) { if (!empty($r['origem_cliente'])) return true; }
+        return false;
     }
 
     public function array(): array
@@ -115,6 +123,7 @@ class FechamentoClienteExport implements FromArray, WithHeadings, WithStyles, Wi
                     $r['titulo'] ?? '',
                     $horas,
                     $descricao,
+                    ...($this->temOrigem() ? [$r['origem_cliente'] ?? '', $r['origem_projeto'] ?? ''] : []),
                 ];
             }
 
@@ -150,12 +159,14 @@ class FechamentoClienteExport implements FromArray, WithHeadings, WithStyles, Wi
             'E' => 22, // título / ticket vedamotors
             'F' => 10, // horas
             'G' => 60, // descrição
+            'H' => 22, // cliente de origem (ASISTO)
+            'I' => 34, // projeto de origem (ASISTO)
         ];
     }
 
     public function styles(Worksheet $sheet): array
     {
-        $lastCol = 'G';
+        $lastCol = $this->temOrigem() ? 'I' : 'G';
 
         // Cabeçalho
         $sheet->getStyle("A1:{$lastCol}1")->applyFromArray([

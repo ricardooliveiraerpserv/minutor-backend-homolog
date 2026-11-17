@@ -31,18 +31,85 @@ class CommunicationController extends Controller
         $this->authorizeManager($request);
         return response()->json(['data' => [
             'tipos'     => [['id' => 'aviso', 'name' => 'Aviso'], ['id' => 'formal', 'name' => 'Comunicação formal'], ['id' => 'marketing', 'name' => 'Marketing']],
-            'customers' => Customer::orderBy('name')->limit(2000)->get(['id', 'name']),
+            'customers' => $this->scopeCustomersToCompany(Customer::query())->orderBy('name')->limit(2000)->get(['id', 'name']),
+            'hd_profiles' => $this->hdProfiles(),
         ]]);
     }
 
+    /** Empresa ativa (multi-empresa ligado) ou null. */
+    private function activeCompanyId(): ?int
+    {
+        if (!config('multiempresa.scoping_enabled')) return null;
+        return app(\App\Services\CompanyContext::class)->id();
+    }
+
+    private function erpservId(): int
+    {
+        return (int) (\App\Models\Company::where('slug', 'erpserv')->value('id') ?: 1);
+    }
+
+    /** Clientes (customers) da empresa: company_scope erpserv|bizify|ambos (sem valor = ERPSERV). */
+    private function scopeCustomersToCompany($q, ?int $cid = null)
+    {
+        $cid ??= $this->activeCompanyId();
+        if (!$cid) return $q;
+        if ($cid === $this->erpservId()) {
+            return $q->where(fn ($w) => $w->whereIn('company_scope', ['erpserv', 'ambos'])->orWhereNull('company_scope'));
+        }
+        return $q->whereIn('company_scope', ['bizify', 'ambos']);
+    }
+
+    /** Usuários-cliente vinculados à empresa (company_user); sem vínculo = ERPSERV. */
+    private function scopeUsersToCompany($q, ?int $cid = null)
+    {
+        $cid ??= $this->activeCompanyId();
+        if (!$cid) return $q;
+        $erp = $this->erpservId();
+        return $q->where(function ($w) use ($cid, $erp) {
+            $w->whereHas('companies', fn ($c) => $c->where('companies.id', $cid));
+            if ($cid === $erp) $w->orWhereDoesntHave('companies');
+        });
+    }
+
+    /**
+     * Perfis de Acesso do Help Desk de CLIENTE, agrupados por nome (ERPSERV e BIZIFY têm cópias
+     * com o mesmo nome) → [{key, name, ids[], users}] — o FE escolhe por grupo e envia os ids.
+     */
+    private function hdProfiles(): array
+    {
+        // Perfis agrupados por NOME (ids das 2 empresas): o cliente "ambos" tem UM perfil só.
+        // A contagem é só dos usuários-cliente da empresa ativa.
+        $rows = \App\Models\HelpDeskAccessProfile::withoutGlobalScopes()
+            ->whereNull('deleted_at')->where('kind', 'cliente')->where('enabled', true)
+            ->orderBy('sort_order')->orderBy('id')->get(['id', 'name']);
+        $counts = $this->scopeUsersToCompany(User::where('type', 'cliente'))->where('enabled', true)->whereNotNull('helpdesk_access_profile_id')
+            ->selectRaw('helpdesk_access_profile_id, count(*) n')->groupBy('helpdesk_access_profile_id')
+            ->pluck('n', 'helpdesk_access_profile_id');
+        $out = [];
+        foreach ($rows as $p) {
+            $name = trim(preg_replace('/^Cliente\s*[—-]\s*/u', '', $p->name));
+            $key  = mb_strtolower($name);
+            $out[$key] ??= ['key' => $key, 'name' => $name, 'ids' => [], 'users' => 0];
+            $out[$key]['ids'][]  = $p->id;
+            $out[$key]['users'] += (int) ($counts[$p->id] ?? 0);
+        }
+        return array_values($out);
+    }
+
     /** Usuários (contatos) dos clientes selecionados — carregados automaticamente. */
+    /** Remetentes que o usuário pode escolher nos formulários de envio (publicações e comunicações). */
+    public function senderOptions(Request $request): JsonResponse
+    {
+        return response()->json(['data' => \App\Services\SenderMailbox::options($request->user())]);
+    }
+
     public function customerUsers(Request $request): JsonResponse
     {
         $this->authorizeManager($request);
         $ids = array_filter((array) $request->query('customer_ids', []));
         if (empty($ids)) return response()->json(['data' => []]);
         $rows = User::where('type', 'cliente')->where('enabled', true)->whereIn('customer_id', $ids)->whereNotNull('email')
-            ->orderBy('name')->get(['id', 'name', 'email', 'customer_id']);
+            ->orderBy('name')->get(['id', 'name', 'email', 'customer_id', 'helpdesk_access_profile_id']);
         return response()->json(['data' => $rows]);
     }
 
@@ -115,6 +182,7 @@ class CommunicationController extends Controller
         $u = $this->authorizeManager($request);
         $v = $this->validateStructured($request, false);
         $structure = $this->resolveSignature($v['structure'], $u);
+        if ($request->filled('video_upload_id') || $request->boolean('has_video')) $structure['video'] = true;
         $html = CommunicationRenderer::render($v['tipo_comunicacao'], $v['title'], $structure, HelpDeskMailFooter::whiteLogoDataUri());
         $count = count($this->resolveEmails($request));
         return response()->json(['data' => ['html' => $html, 'recipients' => $count]]);
@@ -136,7 +204,15 @@ class CommunicationController extends Controller
             'expires_at'       => 'required|date',
             'confirm'          => 'nullable|boolean',
             'lista_distribuicao_id' => 'nullable|integer|exists:distribution_lists,id',
+            'hd_profile_ids'   => 'nullable|array',
+            'hd_profile_ids.*' => 'integer',
+            'video_upload_id'  => ['nullable', 'string', 'regex:/^[A-Za-z0-9-]{8,64}$/'],
+            'video_name'       => 'nullable|string|max:255',
         ]);
+        // Vídeo: confere o upload ANTES de mandar o e-mail (o e-mail já anuncia o vídeo).
+        $videoUid = (string) ($extra['video_upload_id'] ?? '');
+        $videoTmp = $videoUid !== '' ? \Illuminate\Support\Facades\Storage::disk('local')->path(\App\Models\AppNotification::VIDEO_DIR . '/_tmp/' . $videoUid . '.part') : null;
+        abort_if($videoTmp && (!file_exists($videoTmp) || filesize($videoTmp) === 0), 422, 'Upload do vídeo não encontrado — envie o arquivo novamente.');
 
         if (($extra['all_customers'] ?? false) && !($extra['confirm'] ?? false)) {
             abort(422, 'Envio para TODOS os clientes exige confirmação.');
@@ -146,13 +222,14 @@ class CommunicationController extends Controller
         abort_if(empty($emails), 422, 'Nenhum destinatário válido.');
         abort_unless(GraphMailSender::enabled(), 422, 'Envio de e-mail não está configurado no servidor.');
 
-        // Comunicados saem do NOREPLY (config do mailbox Graph → MAIL_FROM_ADDRESS=noreply); HelpDeskEmailAccount só fallback.
-        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
-            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        // Remetente ESCOLHIDO no formulário (padrão: o próprio e-mail de quem envia). Se a Microsoft
+        // recusar o envio em nome da pessoa, SenderMailbox cai no não-responder.
+        $from = \App\Services\SenderMailbox::resolve($u, $request->input('from_email'));
         abort_unless($from, 422, 'Nenhuma conta de envio configurada.');
 
         // Assinatura padrão (remetente ou empresa) injetada na estrutura.
         $structure = $this->resolveSignature($v['structure'], $u);
+        if ($videoTmp) $structure['video'] = true;
 
         // E-mail completo (template visual fixo por tipo) + fragmento p/ a aba Comunicados.
         $bodyInner = CommunicationRenderer::body($v['tipo_comunicacao'], $structure);
@@ -164,8 +241,9 @@ class CommunicationController extends Controller
             $assets = array_merge($assets, \App\Services\SignatureRenderer::inlineAssets());
         }
         $inline = array_merge($assets, $imgAtts);
-        [$ok, $err] = GraphMailSender::sendAs($from, [$from], [], $v['title'], $html, [], $inline, false, $emails);
+        [$ok, $err] = \App\Services\SenderMailbox::sendAs($from, [$from], [], $v['title'], $html, [], $inline, false, $emails);
         abort_if(!$ok, 422, 'Falha no envio: ' . $err);
+        $usedFrom = \App\Services\SenderMailbox::$lastUsed; $fellBack = \App\Services\SenderMailbox::$lastFellBack;
 
         $comm = Communication::create([
             'tipo_comunicacao'      => $v['tipo_comunicacao'],
@@ -178,11 +256,111 @@ class CommunicationController extends Controller
             'all_customers'         => (bool) ($extra['all_customers'] ?? false),
             'expires_at'            => $extra['expires_at'] ?? null,
             'lista_distribuicao_id' => $extra['lista_distribuicao_id'] ?? null,
+            'hd_profile_ids'        => array_values(array_map('intval', (array) ($extra['hd_profile_ids'] ?? []))) ?: null,
             'recipients_count'      => count($emails),
             'sent_by'               => $u->id,
+            'from_email'            => $usedFrom,
         ]);
 
-        return response()->json(['data' => ['sent' => count($emails), 'communication_id' => $comm->id]], 201);
+        if ($videoTmp) $this->attachVideo($comm, $videoTmp, (string) ($extra['video_name'] ?? 'video.mp4'));
+
+        return response()->json(['data' => ['sent' => count($emails), 'communication_id' => $comm->id, 'from' => $usedFrom, 'fell_back' => $fellBack]], 201);
+    }
+
+    /**
+     * REENVIAR / ENVIAR PARA NOVAS PESSOAS uma comunicação já enviada.
+     * - mode=all:   reenvia o e-mail a TODOS os destinatários atuais.
+     * - mode=pick:  reenvia só aos e-mails escolhidos (que já são destinatários).
+     * - mode=new:   inclui novas pessoas (contatos/usuários e e-mails externos) — passam a ver no
+     *               Minutor (aba Comunicados) e recebem o e-mail. Ninguém que já recebeu é reenviado.
+     */
+    public function resend(Request $request, Communication $communication): JsonResponse
+    {
+        $u = $this->authorizeManager($request);
+        $v = $request->validate([
+            'mode'              => 'required|in:all,pick,new',
+            'emails'            => 'nullable|array', 'emails.*' => 'email',
+            'user_ids'          => 'nullable|array', 'user_ids.*' => 'integer|exists:users,id',
+            'external_emails'   => 'nullable|array', 'external_emails.*' => 'email',
+            'confirm'           => 'nullable|boolean',
+        ]);
+        abort_unless(GraphMailSender::enabled(), 422, 'Envio de e-mail não está configurado no servidor.');
+        $c = $communication;
+        $current = $this->resolveEmails(Request::create('/', 'POST', [
+            'all_customers' => (bool) $c->all_customers, 'user_ids' => (array) $c->user_ids,
+            'external_emails' => (array) $c->external_emails, 'hd_profile_ids' => (array) ($c->hd_profile_ids ?? []),
+        ]));
+
+        if ($v['mode'] === 'all') {
+            abort_if(count($current) > 50 && !($v['confirm'] ?? false), 422, 'Reenvio para ' . count($current) . ' destinatários exige confirmação.');
+            $to = $current;
+        } elseif ($v['mode'] === 'pick') {
+            $want = array_map(fn ($e) => mb_strtolower(trim($e)), (array) ($v['emails'] ?? []));
+            $to = array_values(array_intersect($current, $want));
+        } else {
+            $newUsers = array_values(array_unique(array_map('intval', (array) ($v['user_ids'] ?? []))));
+            $newExt = array_values(array_unique(array_map(fn ($e) => mb_strtolower(trim($e)), (array) ($v['external_emails'] ?? []))));
+            $cand = $this->resolveEmails(Request::create('/', 'POST', ['user_ids' => $newUsers, 'external_emails' => $newExt]));
+            $to = array_values(array_diff($cand, $current)); // só quem ainda NÃO recebia
+            $c->forceFill([
+                'user_ids'         => array_values(array_unique(array_merge((array) $c->user_ids, $newUsers))),
+                'external_emails'  => array_values(array_unique(array_merge((array) $c->external_emails, $newExt))),
+                'recipients_count' => (int) $c->recipients_count + count($to),
+            ])->save();
+        }
+        abort_if(empty($to), 422, $v['mode'] === 'new' ? 'Essas pessoas já recebem esta comunicação.' : 'Nenhum destinatário válido.');
+
+        [$ok, $err] = $this->mailCommunication($c, $to);
+        abort_if(!$ok, 422, 'Falha no envio: ' . $err);
+        return response()->json(['data' => ['sent' => count($to)]]);
+    }
+
+    /** Monta o e-mail da comunicação (mesmo template do envio original) e envia em CCO. */
+    private function mailCommunication(Communication $c, array $emails): array
+    {
+        $from = \App\Services\SenderMailbox::forRecord($c->from_email);
+        if (!$from) return [false, 'Nenhuma conta de envio configurada.'];
+        $structure = (array) $c->structure;
+        $html = CommunicationRenderer::render($c->tipo_comunicacao, $c->title, $structure);
+        [$html, $imgAtts] = HelpDeskMailComposer::inlineImages($html);
+        $assets = array_filter([HelpDeskMailFooter::inlineWhiteLogo(), HelpDeskMailFooter::inlineLogo()]);
+        if (is_array($structure['signature'] ?? null)) {
+            $assets = array_merge($assets, \App\Services\SignatureRenderer::inlineAssets());
+        }
+        return \App\Services\SenderMailbox::sendAs($from, [$from], [], $c->title, $html, [], array_merge($assets, $imgAtts), false, $emails);
+    }
+
+    /** Move o upload (partes já montadas) p/ o destino final + faststart. */
+    private function attachVideo(Communication $c, string $src, string $name): void
+    {
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+        $name = mb_substr($name, 0, 255);
+        $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION)) ?: 'mp4';
+        if (!in_array($ext, ['mp4', 'webm', 'mov', 'm4v'], true)) $ext = 'mp4';
+        $rel = \App\Models\AppNotification::VIDEO_DIR . '/comm_' . $c->id . '_' . \Illuminate\Support\Str::random(8) . '.' . $ext;
+        $dest = $disk->path($rel);
+        if (!@rename($src, $dest)) { copy($src, $dest); @unlink($src); }
+        if (in_array($ext, ['mp4', 'm4v', 'mov'], true)) {
+            $tmp = $dest . '.fs';
+            try { if (\App\Support\Mp4FastStart::process($dest, $tmp)) rename($tmp, $dest); } catch (\Throwable) {}
+            if (file_exists($tmp)) @unlink($tmp);
+        }
+        @chmod($dest, 0644);
+        $c->forceFill(['video_path' => $rel, 'video_name' => $name, 'video_size' => filesize($dest)])->save();
+    }
+
+    /** Stream do vídeo (link ASSINADO — <video> não manda Bearer). */
+    public function video(Request $request, int $communication)
+    {
+        $path = Communication::whereKey($communication)->value('video_path');
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+        if (!$path || !$disk->exists($path)) abort(404);
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        return response()->file($disk->path($path), [
+            'Content-Type'  => match ($ext) { 'webm' => 'video/webm', 'mov' => 'video/quicktime', default => 'video/mp4' },
+            'Cache-Control' => 'private, max-age=21600',
+            'Accept-Ranges' => 'bytes',
+        ]);
     }
 
     /** Histórico de envios. */
@@ -207,6 +385,7 @@ class CommunicationController extends Controller
             'sent_by'      => $c->sentBy?->name,
             'expires_at'   => $c->expires_at?->toIso8601String(),
             'created_at'   => $c->created_at?->toIso8601String(),
+            'video_url'    => $c->video_url,
         ]);
         return response()->json(['data' => $data]);
     }
@@ -254,6 +433,7 @@ class CommunicationController extends Controller
             'read'       => $readIds->has($c->id),
             'expires_at' => $c->expires_at?->toIso8601String(),
             'created_at' => $c->created_at?->toIso8601String(),
+            'video_url'  => $c->video_url,
         ]);
         return response()->json(['data' => $data]);
     }
@@ -281,6 +461,7 @@ class CommunicationController extends Controller
             'sent_by'    => $c->sentBy?->name,
             'expires_at' => $c->expires_at?->toIso8601String(),
             'created_at' => $c->created_at?->toIso8601String(),
+            'video_url'  => $c->video_url,
         ]);
         return response()->json(['data' => $data]);
     }
@@ -293,7 +474,7 @@ class CommunicationController extends Controller
 
         $userIds = collect();
         if ($communication->all_customers) {
-            $userIds = User::where('type', 'cliente')->pluck('id');
+            $userIds = $this->scopeUsersToCompany(User::where('type', 'cliente'), $communication->company_id ? (int) $communication->company_id : null)->pluck('id');
         } else {
             if (!empty($communication->customer_ids)) {
                 $userIds = $userIds->merge(User::whereIn('customer_id', (array) $communication->customer_ids)->pluck('id'));
@@ -302,13 +483,24 @@ class CommunicationController extends Controller
                 $userIds = $userIds->merge((array) $communication->user_ids);
             }
         }
-        $users = User::whereIn('id', $userIds->unique()->values())->get(['id', 'name', 'email', 'type']);
+        $prof = array_filter((array) ($communication->hd_profile_ids ?? []));
+        if ($prof) {
+            // Público amplo filtrado por Perfil do HD; os escolhidos nominalmente continuam.
+            $explicit = collect((array) ($communication->user_ids ?? []));
+            $userIds = User::whereIn('id', $userIds->unique()->values())
+                ->where(fn ($w) => $w->whereIn('helpdesk_access_profile_id', $prof)->orWhereIn('id', $explicit))->pluck('id');
+        }
+        // Mesma regra do ENVIO: só ativos e com e-mail (antes o log contava inativos → total inflado).
+        $users = User::whereIn('id', $userIds->unique()->values())->where('enabled', true)->whereNotNull('email')
+            ->get(['id', 'name', 'email', 'type', 'customer_id']);
+        $custNames = \App\Models\Customer::withoutGlobalScopes()->whereIn('id', $users->pluck('customer_id')->filter()->unique()->values())->pluck('name', 'id');
         $reads = CommunicationRead::where('communication_id', $communication->id)->get()->keyBy('user_id');
 
         $rows = $users->map(fn (User $u) => [
             'user_id'      => $u->id,
             'user_name'    => $u->name,
             'user_email'   => $u->email,
+            'customer'     => $u->customer_id ? $custNames->get($u->customer_id) : null,
             'is_client'    => $u->type === 'cliente',
             'viewed_at'    => $reads->get($u->id)?->read_at?->toIso8601String(),
             'response'     => null,
@@ -400,15 +592,20 @@ class CommunicationController extends Controller
         $all       = $request->boolean('all_customers');
         $userIds   = array_filter((array) $request->input('user_ids', []));
         $external  = (array) $request->input('external_emails', []);
+        $prof      = array_values(array_filter(array_map('intval', (array) $request->input('hd_profile_ids', []))));
 
         // user_ids = contatos escolhidos (o FE carrega os usuários do cliente e deixa selecionar).
         // customer_ids vai só p/ o histórico. all_customers = todos os contatos de cliente.
         // Usuários inativos (enabled=false) NUNCA recebem comunicado (regra: inativo não é notificado).
         $emails = collect();
         if ($all) {
-            $emails = $emails->merge(User::where('type', 'cliente')->where('enabled', true)->whereNotNull('email')->pluck('email'));
+            // TODOS = todos os clientes DA EMPRESA ATIVA (ERPSERV ≠ BIZIFY).
+            $emails = $emails->merge($this->scopeUsersToCompany(User::where('type', 'cliente'))->where('enabled', true)->whereNotNull('email')
+                ->when($prof, fn ($q) => $q->whereIn('helpdesk_access_profile_id', $prof))->pluck('email'));
         } elseif ($userIds) {
-            $emails = $emails->merge(User::whereIn('id', $userIds)->where('enabled', true)->whereNotNull('email')->pluck('email'));
+            // Contatos escolhidos: o FE já marca só os do(s) perfil(is) — reforço no servidor.
+            $emails = $emails->merge(User::whereIn('id', $userIds)->where('enabled', true)->whereNotNull('email')
+                ->when($prof, fn ($q) => $q->where(fn ($w) => $w->where('type', '!=', 'cliente')->orWhereIn('helpdesk_access_profile_id', $prof)))->pluck('email'));
         }
         $emails = $emails->merge($external);
 

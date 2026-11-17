@@ -117,6 +117,11 @@ class ClientSourceService
         if (empty($ids)) {
             throw new GmudPublishException('Selecione ao menos um fonte anexado ao chamado.');
         }
+        // Só fonte COMPACTADO (.zip) vai para o Git. Fonte solto (.prw/.tlpp…) → pedir ao cliente o reenvio em .zip.
+        $soltos = array_values(array_filter($ids, fn ($id) => ($valid->get($id)['kind'] ?? '') !== 'zip'));
+        if ($soltos) {
+            throw new GmudPublishException('Fonte sem compactação não pode ir para o Git. Peça ao cliente para reenviar os fontes em um arquivo .zip.');
+        }
         if (!$ticket->customer_id) {
             throw new GmudPublishException('O chamado não tem cliente vinculado — vincule o cliente antes de versionar o fonte.');
         }

@@ -466,6 +466,60 @@ class MeetingController extends Controller
         return response()->json(['data' => $this->decorate($m->fresh(['participantRows']), true)]);
     }
 
+    /** Convidados da reunião (p/ o modal "Reenviar convite"). */
+    public function invitees(Request $request, int $meeting): JsonResponse
+    {
+        $m = $this->findNew($meeting);
+        $this->assertCanResend($request->user(), $m);
+        $this->syncAudienceFromPublication($m);
+        $rows = $m->participantRows()->get()->filter(fn ($p) => filled($p->email) && $p->role !== 'organizer')
+            ->map(fn ($p) => ['user_id' => $p->user_id, 'name' => $p->name ?: $p->email, 'email' => $p->email, 'response' => $p->response])
+            ->sortBy('name', SORT_NATURAL | SORT_FLAG_CASE)->values();
+        return response()->json(['data' => $rows]);
+    }
+
+    /**
+     * REENVIAR CONVITE (Teams): inclui na reunião quem ainda falta (público da publicação de origem)
+     * e encaminha o convite aos e-mails escolhidos (vazio = todos os convidados).
+     */
+    public function resendInvites(Request $request, int $meeting): JsonResponse
+    {
+        $m = $this->findNew($meeting);
+        $this->assertCanResend($request->user(), $m);
+        abort_if($m->status === 'canceled', 422, 'A reunião está cancelada.');
+        abort_unless($m->provider === 'teams', 422, 'Reenvio disponível só para reuniões do Teams.');
+        $v = $request->validate(['emails' => 'nullable|array', 'emails.*' => 'email']);
+        $this->syncAudienceFromPublication($m);
+        $r = app(\App\Meetings\Providers\TeamsMeetingProvider::class)->resendInvites($m->fresh('participantRows'), $v['emails'] ?? []);
+        abort_unless($r['ok'], 502, $r['error'] ?? 'Falha ao reenviar o convite.');
+        \App\Models\MeetingEvent::create(['meeting_id' => $m->id, 'event_type' => 'invites_resent', 'meta' => ['count' => $r['sent']], 'triggered_by' => $request->user()->id]);
+        return response()->json(['data' => ['sent' => $r['sent']]]);
+    }
+
+    private function assertCanResend(?User $u, \App\Models\Meeting $m): void
+    {
+        abort_unless($u && ($u->isAdmin() || $u->isAdministrativo() || (int) $m->organizer_user_id === $u->id || (int) $m->created_by_id === $u->id), 403, 'Só o organizador pode reenviar o convite.');
+    }
+
+    /** Reunião criada por uma PUBLICAÇÃO (origin AGENDA): garante que todo o público dela é participante. */
+    private function syncAudienceFromPublication(\App\Models\Meeting $m): void
+    {
+        if ($m->origin_type !== 'AGENDA' || !$m->origin_id) return;
+        $n = \App\Models\AppNotification::find($m->origin_id);
+        if (!$n) return;
+        $ctl = app(\App\Http\Controllers\NotificationController::class);
+        $users = $ctl->audienceUsers($n);
+        $have = $m->participantRows()->pluck('user_id')->filter()->map(fn ($x) => (int) $x)->flip();
+        foreach ($users as $u) {
+            if (isset($have[(int) $u->id]) || (int) $u->id === (int) $m->organizer_user_id) continue;
+            \App\Models\MeetingParticipant::create([
+                'meeting_id' => $m->id, 'user_id' => $u->id, 'email' => $u->email,
+                'name' => mb_substr(trim(preg_replace('/\s+/u', ' ', (string) $u->name)), 0, 190),
+                'role' => 'required', 'response' => 'none', 'is_external' => false,
+            ]);
+        }
+    }
+
     public function cancel(Request $request, int $meeting): JsonResponse
     {
         $m = $this->findNew($meeting);

@@ -43,7 +43,13 @@ class Company extends Model
     public static function userCanUseSourceModule(): bool
     {
         $user = auth()->user();
-        return $user ? $user->companies()->where('allow_source_requests', true)->exists() : false;
+        if (!$user) return false;
+        if ($user->companies()->where('allow_source_requests', true)->exists()) return true;
+        // Sem vínculo em company_user = usuário ERPSERV (regra do multi-empresa) → segue a flag da ERPSERV.
+        if (!$user->companies()->exists()) {
+            return (bool) static::where('slug', 'erpserv')->value('allow_source_requests');
+        }
+        return false;
     }
 
     public function users(): BelongsToMany

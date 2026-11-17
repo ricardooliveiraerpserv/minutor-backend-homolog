@@ -30,6 +30,7 @@ class HelpDeskResumeScheduled extends Command
             ->limit(500)->get();
 
         foreach ($due as $ticket) {
+            $em = HelpDeskStatus::forCompany($ticket->company_id, 'em_andamento') ?? $em; // status da EMPRESA do chamado
             $sla->resumeSchedule($ticket);
             HelpDeskTicketEvent::log($ticket->id, 'schedule_resumed', ['meta' => ['auto' => true]]);
 

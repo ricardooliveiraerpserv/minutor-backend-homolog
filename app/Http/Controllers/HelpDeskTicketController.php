@@ -309,6 +309,9 @@ class HelpDeskTicketController extends Controller
             // homologação já passou — em DIAS ÚTEIS (considera fins de semana e feriados). Vencido ⟺
             // dev_delivery_at <= B, onde B = último dia útil ANTES de hoje.
             ->when($request->boolean('dev_overdue'), function ($q) {
+                // Entregas vencidas de TODOS: só admin/perfil HD Administradores; demais veem só as suas.
+                $u = auth()->user();
+                if ($u && !$u->isAdmin() && !$u->isHelpDeskAdmin()) $q->where('assignee_id', $u->id);
                 $q->whereNotNull('dev_delivery_at')
                   ->whereDate('dev_delivery_at', '<=', $this->lastBusinessDayBeforeToday())
                   ->whereHas('status', fn ($s) => $s->where('key', 'em_desenvolvimento'));
@@ -319,6 +322,8 @@ class HelpDeskTicketController extends Controller
                 $s = '%' . $request->search . '%';
                 $q->where(fn ($w) => $w
                     ->where('subject', 'ilike', $s)
+                    ->orWhere('ticket_number', 'ilike', $s) // nº do chamado também pela busca geral
+                    ->orWhere('legacy_ticket_number', 'ilike', $s) // nº antigo (Promax que adotou o nº do Movidesk)
                     ->orWhere('description', 'ilike', $s)
                     ->orWhere('requester_name', 'ilike', $s)
                     ->orWhereHas('customer', fn ($c) => $c->where('name', 'ilike', $s))
@@ -330,7 +335,10 @@ class HelpDeskTicketController extends Controller
                 // filtrar. A busca rápida cobre assunto, descrição, cliente e pessoas.
             })
             // Filtro DEDICADO por número do chamado (campo separado da busca geral).
-            ->when($request->filled('ticket'), fn ($q) => $q->where('ticket_number', 'ilike', '%' . $request->ticket . '%'))
+            ->when($request->filled('ticket'), fn ($q) => $q->where(fn ($w) => $w->where('ticket_number', 'ilike', '%' . $request->ticket . '%')->orWhere('legacy_ticket_number', 'ilike', '%' . $request->ticket . '%')))
+            // Chamado da Promax COM A EQUIPE PROMAX no Movidesk → NÃO existe p/ a equipe da ERPSERV (nem
+            // na busca) até a Promax transferir p/ nós. Cliente (portal) continua vendo o próprio chamado.
+            ->when(!$request->boolean('include_promax') && optional($request->user())->type !== 'cliente', fn ($q) => self::scopeNotPromaxHeld($q))
             // Filtro por número do chamado TOTVS — traz o chamado que tenha QUALQUER interação com esse número.
             ->when($request->filled('totvs_ticket_number'), fn ($q) => $q->whereHas('comments', fn ($c) => $c->where('totvs_ticket_number', 'ilike', '%' . $request->input('totvs_ticket_number') . '%')))
             ->when($request->boolean('active'), fn ($q) => $q->whereHas('status', fn ($w) => $w->where('is_terminal', false)->where('is_resolved', false)))
@@ -498,7 +506,7 @@ class HelpDeskTicketController extends Controller
                 ELSE 50
             END";
 
-        $query = HelpDeskTicket::query()
+        $query = self::scopeNotPromaxHeld(HelpDeskTicket::query())
             ->with(['customer:id,name', 'assignee:id,name', 'status:id,label,color', 'contact:id,name', 'requester:id,name'])
             ->whereNull('merged_into_id')
             ->where(function ($w) use ($like) {
@@ -1143,8 +1151,27 @@ class HelpDeskTicketController extends Controller
         $d = intdiv($h, 24); $hh = $h % 24; return $d . 'd' . ($hh ? ' ' . $hh . 'h' : '');
     }
 
+    /** Exclui chamados da Promax que estão com a equipe Promax no Movidesk (não transferidos p/ nós). */
+    public static function scopeNotPromaxHeld($q)
+    {
+        $teams = \App\Services\MovideskPushPolicy::promaxTeams();
+        if (!$teams) return $q;
+        return $q->where(fn ($w) => $w->whereNull('helpdesk_tickets.movidesk_copy_id')->orWhereNull('helpdesk_tickets.external_owner_team')
+            ->orWhereRaw('lower(trim(helpdesk_tickets.external_owner_team)) not in (' . implode(',', array_fill(0, count($teams), '?')) . ')', $teams));
+    }
+
+    /** Abrir pelo link/número um chamado que está com a Promax → equipe ERPSERV não vê. */
+    private function abortIfPromaxHeld(?\App\Models\User $user, HelpDeskTicket $ticket): void
+    {
+        if (optional($user)->type === 'cliente') return;
+        if ($ticket->movidesk_copy_id && \App\Services\MovideskPushPolicy::isPromaxTeam($ticket->external_owner_team)) {
+            abort(404, 'Este chamado está com a equipe Promax no Movidesk (nº ' . $ticket->movidesk_copy_id . ') e só entra no Minutor quando for transferido para a ERPSERV.');
+        }
+    }
+
     public function show(HelpDeskTicket $ticket): JsonResponse
     {
+        $this->abortIfPromaxHeld(\Illuminate\Support\Facades\Auth::user(), $ticket);
         abort_unless($this->access->canSee(\Illuminate\Support\Facades\Auth::user(), $ticket), 403, 'Seu perfil de acesso não permite ver este chamado.');
         $ticket->load([
             'customer:id,name,cgc', 'contact:id,name,email,phone', 'requester:id,name,email',
@@ -1580,6 +1607,7 @@ class HelpDeskTicketController extends Controller
             'note'             => 'nullable|string|max:500',
             'justification_id' => 'nullable|exists:helpdesk_ticket_justifications,id', // motivo vinculado ao status
             'dev_delivery_at'  => 'nullable|date_format:Y-m-d', // previsão de entrega em homologação (Em Desenvolvimento)
+            'notify_client'    => 'nullable|boolean', // correção de status pela EDIÇÃO da interação → avisa o cliente
         ]);
         abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite editar este chamado.');
         $new = HelpDeskStatus::find($v['status_id']);
@@ -1639,6 +1667,25 @@ class HelpDeskTicketController extends Controller
         }
         if ($statusChanged) {
             \App\Services\HelpDeskTriggerEngine::queue('status_changed', $ticket->fresh(), ['actor_id' => $u?->id, 'actor_email' => $u?->email]);
+        }
+        // Correção de status feita na EDIÇÃO da interação (o consultor tinha posto o status errado):
+        // o cliente recebe o comunicado de que o status foi alterado — interação pública + e-mail.
+        if ($statusChanged && !empty($v['notify_client']) && !$isClose) {
+            $label = e((string) ($new->label ?? $new->key));
+            $c = $ticket->comments()->create([
+                'author_user_id' => $u?->id,
+                'body'           => '<p>O status do seu chamado foi alterado para <strong>' . $label . '</strong>.</p>',
+                'visibility'     => 'customer',
+                'channel'        => 'interno',
+            ]);
+            $ticket->update(['last_activity_at' => now()]);
+            HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'visibility' => 'customer', 'via' => 'status_correction']]);
+            try {
+                \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $c->id)
+                    ->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('hd.status_correction_mail_failed', ['ticket' => $ticket->id, 'error' => $e->getMessage()]);
+            }
         }
         return response()->json(['data' => $this->decorate($this->withRels(HelpDeskTicket::query())->find($ticket->id))]);
     }
@@ -1721,6 +1768,19 @@ class HelpDeskTicketController extends Controller
     }
 
     /** Transição de status com efeitos de SLA (resolução/reabertura/fechamento). Reutilizável. */
+    /**
+     * Macro é GLOBAL (vale p/ ERPSERV e BIZIFY), mas guarda o status pelo ID — que é POR EMPRESA.
+     * Resolve o status equivalente (mesma `key`) na empresa do chamado. Antes, na BIZIFY o status
+     * da macro (id da ERPSERV) não era encontrado e a macro gravava a nota SEM mudar o status.
+     */
+    private function statusForTicketCompany(HelpDeskTicket $ticket, int $statusId): ?HelpDeskStatus
+    {
+        $src = HelpDeskStatus::withoutGlobalScopes()->find($statusId);
+        if (!$src) return null;
+        if (!$ticket->company_id || (int) $src->company_id === (int) $ticket->company_id) return $src;
+        return HelpDeskStatus::withoutGlobalScopes()->where('key', $src->key)->where('company_id', $ticket->company_id)->where('active', true)->first() ?: $src;
+    }
+
     private function transitionStatus(HelpDeskTicket $ticket, HelpDeskStatus $new, ?string $note = null): void
     {
         if ((int) $new->id === (int) $ticket->status_id) {
@@ -1780,6 +1840,81 @@ class HelpDeskTicketController extends Controller
      * a resposta ao cliente e muda o status. Tudo atômico (1 transação). Banco de horas, 360 e
      * fechamento atualizam sozinhos (leem `timesheets`).
      */
+    /**
+     * Fonte DO CLIENTE versionado no Git → avisa o cliente (resposta na conversa + e-mail pelo fluxo
+     * normal, inclusive cópia Promax→Movidesk) e, conforme o agente escolher, ENCERRA (resolvido) ou
+     * MANTÉM em atendimento.
+     */
+    public function notifyClientSourceVersioned(Request $request, HelpDeskTicket $ticket, int $package): JsonResponse
+    {
+        $user = $request->user();
+        abort_unless($this->access->canEdit($user, $ticket), 403, 'Seu perfil não permite responder este chamado.');
+        $v = $request->validate([
+            'close' => 'required|boolean', 'commit_sha' => 'nullable|string|max:64',
+            // Classificação que faltar p/ encerrar pode vir preenchida pelo próprio modal.
+            'category_id' => 'nullable|integer|exists:helpdesk_categories,id',
+            'service_id'  => 'nullable|integer|exists:helpdesk_services,id',
+            'priority'    => 'nullable|in:baixa,normal,alta,urgente',
+            'level'       => 'nullable|in:N1,N2,N3',
+        ]);
+        $pkg = \App\Models\GmudPackage::where('id', $package)->where('ticket_id', $ticket->id)->firstOrFail();
+        foreach (['category_id', 'service_id', 'priority', 'level'] as $f) {
+            if (!empty($v[$f])) $ticket->{$f} = $v[$f];
+        }
+
+        $resolved = null;
+        if ($v['close']) {
+            $resolved = HelpDeskStatus::where('key', 'resolvido')->where('active', true)
+                ->when($ticket->company_id, fn ($q) => $q->where('company_id', $ticket->company_id))->first()
+                ?: HelpDeskStatus::where('is_resolved', true)->where('active', true)
+                    ->when($ticket->company_id, fn ($q) => $q->where('company_id', $ticket->company_id))->orderBy('sort_order')->first();
+            abort_unless($resolved, 422, 'Status "Resolvido" não encontrado para encerrar o chamado.');
+            $faltando = array_keys(array_filter(['Categoria' => !$ticket->category_id, 'Serviço' => !$ticket->service_id, 'Urgência' => !$ticket->priority, 'Nível' => !$ticket->level]));
+            if (!empty($faltando)) {
+                return response()->json([
+                    'message' => 'Para encerrar, preencha: ' . implode(', ', $faltando) . '. A mensagem ainda NÃO foi enviada.',
+                    'missing' => array_values(array_map(fn ($f) => ['Categoria' => 'category_id', 'Serviço' => 'service_id', 'Urgência' => 'priority', 'Nível' => 'level'][$f], $faltando)),
+                ], 422);
+            }
+        }
+
+        $files = $pkg->files()->where('is_source', true)->where(fn ($q) => $q->whereNull('action')->orWhere('action', '!=', 'skip'))
+            ->pluck('filename')->unique()->values()->all();
+        $lista = $files ? '<ul>' . implode('', array_map(fn ($f) => '<li>' . e($f) . '</li>', array_slice($files, 0, 30))) . '</ul>' : '';
+        $body = '<p>Olá!</p><p>Os fontes que você nos enviou foram <strong>versionados no nosso repositório Git</strong>'
+            . ($v['commit_sha'] ? ' (versão <code>' . e(substr($v['commit_sha'], 0, 7)) . '</code>)' : '') . '.</p>'
+            . $lista
+            . ($v['close']
+                ? '<p>Com isso, estamos <strong>encerrando este chamado</strong>. Se precisar de algo mais, é só responder este e-mail.</p>'
+                : '<p>Seguimos com o atendimento deste chamado e voltamos a falar em breve.</p>');
+
+        $comment = $ticket->comments()->create([
+            'author_user_id' => $user->id,
+            'body'           => $body,
+            'visibility'     => 'customer',
+            'channel'        => 'interno',
+        ]);
+
+        if ($v['close']) {
+            $this->transitionStatus($ticket, $resolved, 'Fonte do cliente versionado no Git');
+        } else {
+            $em = HelpDeskStatus::where('key', 'em_andamento')->where('active', true)
+                ->when($ticket->company_id, fn ($q) => $q->where('company_id', $ticket->company_id))->first();
+            $cur = $ticket->status;
+            if ($em && !($cur?->is_open && $cur?->key !== 'novo')) $this->transitionStatus($ticket, $em, 'Fonte do cliente versionado no Git');
+            else { $ticket->last_activity_at = now(); $ticket->save(); }
+        }
+
+        try {
+            \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail de fonte versionado falhou ao despachar: ' . $e->getMessage());
+        }
+        HelpDeskTicketEvent::log($ticket->id, 'client_source_notified', ['meta' => ['package_id' => $pkg->id, 'closed' => (bool) $v['close']]]);
+
+        return response()->json(['data' => ['comment_id' => $comment->id, 'closed' => (bool) $v['close']]]);
+    }
+
     public function finalize(Request $request, HelpDeskTicket $ticket): JsonResponse
     {
         abort_unless($this->access->canEdit($request->user(), $ticket), 403, 'Seu perfil não permite finalizar este chamado.');
@@ -1915,6 +2050,7 @@ class HelpDeskTicketController extends Controller
     public function detail(Request $request, HelpDeskTicket $ticket, AttachmentService $svc): JsonResponse
     {
         $user = $request->user();
+        $this->abortIfPromaxHeld($user, $ticket);
         // $ticket já veio do route-model-binding: eager-load das relações no próprio modelo em vez de
         // refazer o SELECT do ticket (withRels(...)->find). Mesma decoração, uma query a menos.
         $ticket->load($this->detailRels());
@@ -1954,12 +2090,15 @@ class HelpDeskTicketController extends Controller
     public function executePlaybook(Request $request, HelpDeskTicket $ticket, \App\Models\Playbook $playbook): JsonResponse
     {
         abort_unless($playbook->scope === 'help_desk' && $playbook->active, 404);
+        // Regra (Ricardo 16/11/2026): macro SÓ traz o TEXTO para a interação — NÃO define status,
+        // prioridade, fila, responsável nem nada. O status é sempre definido pelo agente.
+        return response()->json(['message' => 'Macros só inserem texto na interação; o status é definido pelo agente.'], 422);
         $a = $playbook->actions ?? [];
 
         if (!empty($a['start_finalize'])) {
             return response()->json(['data' => [
                 'start_finalize' => true,
-                'defaults'       => ['reply' => $a['reply'] ?? null, 'status_id' => $a['finalize_status_id'] ?? ($a['status_id'] ?? null)],
+                'defaults'       => ['reply' => $a['reply'] ?? null, 'status_id' => ($fs = $a['finalize_status_id'] ?? ($a['status_id'] ?? null)) ? ($this->statusForTicketCompany($ticket, (int) $fs)?->id ?? $fs) : null],
                 'checklist'      => $a['checklist'] ?? [],
             ]]);
         }
@@ -1990,7 +2129,7 @@ class HelpDeskTicketController extends Controller
                 HelpDeskTicketEvent::log($ticket->id, 'comment', ['meta' => ['comment_id' => $c->id, 'visibility' => 'internal']]);
             }
             if (!empty($a['status_id'])) {
-                $st = HelpDeskStatus::find($a['status_id']);
+                $st = $this->statusForTicketCompany($ticket, (int) $a['status_id']);
                 if ($st) $this->transitionStatus($ticket, $st); // SLA pausa/retoma segue o status alvo
             }
             HelpDeskTicketEvent::log($ticket->id, 'playbook', ['to_value' => $playbook->name, 'meta' => ['playbook_id' => $playbook->id]]);
@@ -2020,7 +2159,7 @@ class HelpDeskTicketController extends Controller
             $p = \App\Models\Project::find($ticket->project_id);
             return ($p && !$p->is_investimento_comercial) ? (int) $p->id : null;
         }
-        $ativos = ['started', 'liberado_para_testes', 'paused', 'awaiting_start'];
+        $ativos = ['started', 'liberado_para_testes']; // só projetos EM ANDAMENTO (sem pausado/aguardando início/encerrado)
         foreach ([['contract_id', $ticket->contract_id], ['customer_id', $ticket->customer_id]] as [$col, $val]) {
             if (!$val) continue;
             $ids = \App\Models\Project::where($col, $val)->whereNull('deleted_at')
@@ -2033,7 +2172,7 @@ class HelpDeskTicketController extends Controller
     /** Projetos candidatos quando a inferência é ambígua (FE mostra seletor). Sem projetos de investimento. */
     private function candidateProjects(HelpDeskTicket $ticket): array
     {
-        $ativos = ['started', 'liberado_para_testes', 'paused', 'awaiting_start'];
+        $ativos = ['started', 'liberado_para_testes']; // só projetos EM ANDAMENTO (sem pausado/aguardando início/encerrado)
         $q = \App\Models\Project::query()->whereNull('deleted_at')->where('is_investimento_comercial', false)->whereIn('status', $ativos);
         if ($ticket->contract_id) $q->where('contract_id', $ticket->contract_id);
         elseif ($ticket->customer_id) $q->where('customer_id', $ticket->customer_id);
@@ -2050,54 +2189,44 @@ class HelpDeskTicketController extends Controller
      */
     public function apontamentoOptions(HelpDeskTicket $ticket): JsonResponse
     {
-        $ativos = ['started', 'liberado_para_testes', 'paused', 'awaiting_start'];
-        $options = [];
+        // Projetos de SUSTENTAÇÃO do cliente entram como Contrato/Projeto do chamado, exceto ENCERRADO,
+        // PAUSADO ou CANCELADO (Ricardo 17/11/2026). Antes dependia da categoria do contrato
+        // ("sustentacao") e do status "em andamento" — contratos de sustentação cadastrados como
+        // categoria "projeto" (ex.: PRS010-21) ou "Aguardando início" (FMR004-26) ficavam de fora.
+        $bloqueados = ['finished', 'paused', 'cancelled'];
+        $labels = ['finished' => 'Encerrado', 'paused' => 'Pausado', 'cancelled' => 'Cancelado'];
+        $options = []; $inactive = [];
         if ($ticket->customer_id) {
-            $contracts = \App\Models\Contract::where('customer_id', $ticket->customer_id)
-                ->whereNull('deleted_at')
-                ->where(fn ($q) => $q->where('categoria', 'sustentacao')->orWhereNotNull('sustentacao_column'))
-                ->with(['contractType:id,name', 'serviceType:id,name'])
-                ->get();
-            foreach ($contracts as $c) {
-                $label = $c->contractType->name ?? $c->serviceType->name ?? $c->sustentacao_column ?? ucfirst((string) ($c->categoria ?: 'Contrato'));
-                $projects = \App\Models\Project::where('contract_id', $c->id)->whereNull('deleted_at')
-                    ->where('is_investimento_comercial', false)->whereIn('status', $ativos)
-                    ->orderBy('name')->get(['id', 'name']);
-                foreach ($projects as $p) {
-                    $options[] = [
-                        'contract_id'  => (int) $c->id,
-                        'project_id'   => (int) $p->id,
-                        'label'        => $label,          // nome/tipo do contrato (On Demand, Cloud, …)
-                        'project_name' => $p->name,
-                        'type'         => $label,          // tipo do contrato (On Demand / Banco de Horas Mensal / …)
-                    ];
-                }
-            }
-
-            // Projetos COMUNS (não-sustentação) marcados p/ receber chamados (flag no projeto).
-            // Permite vincular o chamado a projetos sem contrato de sustentação.
-            $hdProjects = \App\Models\Project::where('customer_id', $ticket->customer_id)
+            $projects = \App\Models\Project::where('customer_id', $ticket->customer_id)
                 ->whereNull('deleted_at')
                 ->where('is_investimento_comercial', false)
-                ->where('helpdesk_integration_enabled', true)
-                ->whereIn('status', $ativos)
+                // SÓ SUSTENTAÇÃO (tipo de serviço Sustentação ou contrato de sustentação). Projeto comum
+                // entra só se marcado explicitamente p/ receber chamados (helpdesk_integration_enabled).
+                ->where(fn ($q) => $q->whereHas('serviceType', fn ($st) => $st->where('name', 'ilike', '%sustenta%'))
+                    ->orWhereHas('contract', fn ($c) => $c->where('categoria', 'sustentacao')->orWhereNotNull('sustentacao_column'))
+                    ->orWhere('helpdesk_integration_enabled', true))
                 ->with(['contractType:id,name', 'serviceType:id,name'])
                 ->orderBy('name')->get();
-            foreach ($hdProjects as $p) {
-                if (collect($options)->firstWhere('project_id', (int) $p->id)) continue; // já veio via contrato
+            foreach ($projects as $p) {
+                if (in_array($p->status, $bloqueados, true)) {
+                    $inactive[] = ['project_id' => (int) $p->id, 'code' => $p->code, 'name' => $p->name, 'status' => $labels[$p->status] ?? $p->status];
+                    continue;
+                }
+                $tipo = $p->contractType->name ?? $p->serviceType->name ?? 'Projeto';
                 $options[] = [
                     'contract_id'  => $p->contract_id ? (int) $p->contract_id : null,
                     'project_id'   => (int) $p->id,
-                    'label'        => $p->name,   // projeto comum: mostra o NOME do projeto
+                    'label'        => $p->code ? "{$p->code} · {$tipo}" : $tipo,
                     'project_name' => $p->name,
-                    'type'         => $p->contractType->name ?? $p->serviceType->name ?? 'Projeto',
+                    'type'         => $tipo,
                 ];
             }
         }
         return response()->json(['data' => [
-            'options' => $options,
-            'auto'    => count($options) === 1 ? $options[0] : null,
-            'current' => ['contract_id' => $ticket->contract_id ? (int) $ticket->contract_id : null, 'project_id' => $ticket->project_id ? (int) $ticket->project_id : null],
+            'options'  => $options,
+            'inactive' => $options ? [] : $inactive,
+            'auto'     => count($options) === 1 ? $options[0] : null,
+            'current'  => ['contract_id' => $ticket->contract_id ? (int) $ticket->contract_id : null, 'project_id' => $ticket->project_id ? (int) $ticket->project_id : null],
         ]]);
     }
 
@@ -2250,9 +2379,12 @@ class HelpDeskTicketController extends Controller
         // 183 comentários = 183 queries). aggregateLoader agrupa por entity_id (= id do comentário).
         $attByComment = $svc->aggregateLoader('HELPDESK_TICKET_COMMENT', $comments->pluck('id')->all());
         $commentSeq = $this->commentSeqMap($ticket);
-        $data = $comments->map(function ($c) use ($attByComment, $user, $commentSeq) {
+        // Status do apontamento vinculado (1 query): aprovado → o tempo da interação não pode mais ser editado.
+        $tsStatus = \App\Models\Timesheet::whereIn('id', $comments->pluck('timesheet_id')->filter()->unique()->values())->pluck('status', 'id');
+        $data = $comments->map(function ($c) use ($attByComment, $user, $commentSeq, $tsStatus) {
             $arr = $c->toArray();
             $arr['seq'] = $c->is_system ? null : ($commentSeq[$c->id] ?? null);
+            $arr['timesheet_status'] = $c->timesheet_id ? ($tsStatus[$c->timesheet_id] ?? null) : null;
             $arr['attachments'] = ($attByComment->get($c->id) ?? collect())->values();
             $arr['can_edit'] = $this->access->canEditComment($user, $c);
             // Só faz sentido "virar artigo" a partir de interação da EQUIPE (não do cliente/sistema).
@@ -2320,9 +2452,14 @@ class HelpDeskTicketController extends Controller
             'no_charge'   => 'nullable|boolean',
             'solution'    => 'nullable|array',
             'form_kind'   => 'nullable|string|max:20',
+            'visibility'  => 'nullable|in:customer,internal', // trocar interna ↔ pública na edição
         ]);
 
         $update = ['body' => $v['body'] ?? $comment->body];
+        $oldVisibility = $comment->visibility;
+        if (!empty($v['visibility']) && $v['visibility'] !== $comment->visibility && !$comment->is_system) {
+            $update['visibility'] = $v['visibility'];
+        }
         if ($request->has('solution')) {
             $update['solution'] = $v['solution'] ?? null;
         }
@@ -2331,6 +2468,20 @@ class HelpDeskTicketController extends Controller
         }
         // Só mexe no tempo se o request trouxe algum campo de tempo (edições antigas só de corpo não zeram).
         $touchedTime = $request->hasAny(['worked_date', 'start_time', 'end_time', 'total_hours', 'no_charge']);
+        // Apontamento JÁ APROVADO → o tempo fica travado (o texto da interação continua editável).
+        if ($touchedTime && $comment->timesheet_id) {
+            $ts = \App\Models\Timesheet::find($comment->timesheet_id);
+            if ($ts && $ts->status === \App\Models\Timesheet::STATUS_APPROVED) {
+                $mins = $this->computeEffortMinutes($v);
+                $same = (int) $mins === (int) $comment->effort_minutes
+                    && ($v['start_time'] ?? null) == ($comment->start_time ? substr((string) $comment->start_time, 0, 5) : null)
+                    && ($v['end_time'] ?? null) == ($comment->end_time ? substr((string) $comment->end_time, 0, 5) : null)
+                    && (($v['worked_date'] ?? null) ?: null) == ($comment->worked_date ? substr((string) $comment->worked_date, 0, 10) : null)
+                    && (bool) ($v['no_charge'] ?? $comment->no_charge) === (bool) $comment->no_charge;
+                abort_unless($same, 422, 'O apontamento #' . $ts->id . ' desta interação já foi APROVADO — o tempo não pode mais ser alterado. Você ainda pode editar o texto.');
+                $touchedTime = false; // nada mudou no tempo → não ressincroniza
+            }
+        }
         if ($request->has('no_charge')) {
             $update['no_charge'] = (bool) $v['no_charge'];
         }
@@ -2348,7 +2499,8 @@ class HelpDeskTicketController extends Controller
             if ($this->apontamentoEligible($ticket, $comment->visibility, $noCharge, $effortMinutes)
                 && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
                 $conflict = $this->findInteractionTimeConflict(
-                    $ticket->customer_id, $workedDate ?: now()->toDateString(), $v['start_time'], $v['end_time'], $comment->timesheet_id
+                    $ticket->customer_id, $workedDate ?: now()->toDateString(), $v['start_time'], $v['end_time'], $comment->timesheet_id,
+                    (int) ($comment->timesheet_id ? (\App\Models\Timesheet::whereKey($comment->timesheet_id)->value('user_id') ?: 0) : 0) ?: ((int) $comment->author_user_id ?: null)
                 );
                 if ($conflict) {
                     return $this->timeConflictResponse($conflict);
@@ -2381,6 +2533,19 @@ class HelpDeskTicketController extends Controller
         }
 
         HelpDeskTicketEvent::log($ticket->id, 'comment_edited', ['meta' => ['comment_id' => $comment->id]]);
+
+        // Interna → PÚBLICA: o cliente passa a ver e recebe por e-mail (mesmo fluxo da resposta).
+        // Pública → interna: some do portal do cliente (o e-mail já enviado não volta).
+        if (isset($update['visibility'])) {
+            HelpDeskTicketEvent::log($ticket->id, 'visibility_changed', ['from_value' => $oldVisibility, 'to_value' => $update['visibility'], 'meta' => ['comment_id' => $comment->id]]);
+            if ($update['visibility'] === 'customer') {
+                try {
+                    \App\Jobs\SendHelpDeskEmailJob::dispatch($ticket->id, $comment->id)->onConnection(config('queue.helpdesk_email_connection'))->onQueue('emails');
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning('HelpDesk: e-mail da interação que virou pública falhou: ' . $e->getMessage());
+                }
+            }
+        }
 
         $arr = $comment->fresh()->load('author:id,name')->toArray();
         $arr['attachments'] = $svc->listFor('HELPDESK_TICKET_COMMENT', $comment->id, $request->user())->values();
@@ -2434,6 +2599,7 @@ class HelpDeskTicketController extends Controller
             'no_charge'       => 'nullable|boolean',
             'solution'        => 'nullable|array', // Detalhamento da Solução / GMUD (estruturado)
             'form_kind'       => 'nullable|string|max:20', // 'solution' | 'gmud'
+            'dry_run'         => 'nullable|boolean', // ENSAIO: valida tudo (inclusive o apontamento) e DESFAZ
         ]);
         // Minutos trabalhados: total_hours prevalece; senão deriva de início→fim.
         $effortMinutes = $this->computeEffortMinutes($v);
@@ -2455,7 +2621,7 @@ class HelpDeskTicketController extends Controller
         if ($this->apontamentoEligible($ticket, $v['visibility'] ?? 'internal', (bool) ($v['no_charge'] ?? false), $effortMinutes)
             && filled($v['start_time'] ?? null) && filled($v['end_time'] ?? null)) {
             $conflict = $this->findInteractionTimeConflict(
-                $ticket->customer_id, $workedDate ?: now()->toDateString(), $v['start_time'], $v['end_time'], null
+                $ticket->customer_id, $workedDate ?: now()->toDateString(), $v['start_time'], $v['end_time'], null, (int) auth()->id()
             );
             if ($conflict) {
                 return $this->timeConflictResponse($conflict);
@@ -2536,6 +2702,11 @@ class HelpDeskTicketController extends Controller
                 if ($apontErro !== null) {
                     throw new \RuntimeException('__APONT_BLOCK__' . $apontErro);
                 }
+                // ENSAIO (dry_run): tudo validou — DESFAZ a transação (comentário, apontamento, eventos).
+                // O composer chama isto ANTES de mudar o status: se a interação seria recusada, nada muda.
+                if (!empty($v['dry_run'])) {
+                    throw new \RuntimeException('__DRY_RUN_OK__');
+                }
                 return $comment;
             });
         } catch (\Illuminate\Database\QueryException $e) {
@@ -2550,6 +2721,9 @@ class HelpDeskTicketController extends Controller
         } catch (\RuntimeException $e) {
             // Apontamento bloqueado por regra (saldo/horas negativas, fechamento de competência, projeto)
             // → a interação inteira foi revertida. Devolve o motivo ao usuário.
+            if ($e->getMessage() === '__DRY_RUN_OK__') {
+                return response()->json(['data' => ['ok' => true, 'dry_run' => true]], 200);
+            }
             if (str_starts_with($e->getMessage(), '__APONT_BLOCK__')) {
                 return response()->json(['code' => 'APONTAMENTO_BLOCKED', 'message' => substr($e->getMessage(), 15)], 422);
             }
@@ -2639,11 +2813,16 @@ class HelpDeskTicketController extends Controller
      * mesma data cujo intervalo [start,end] sobreponha [start,end] informado. Compara em PHP
      * (H:i) p/ ser robusto ao tipo da coluna. Retorna o conflitante ou null.
      */
-    private function findInteractionTimeConflict(?int $customerId, ?string $date, ?string $start, ?string $end, ?int $excludeTimesheetId): ?\App\Models\Timesheet
+    private function findInteractionTimeConflict(?int $customerId, ?string $date, ?string $start, ?string $end, ?int $excludeTimesheetId, ?int $userId = null): ?\App\Models\Timesheet
     {
         if (!$customerId || !$date || !$start || !$end) return null;
+        // Conflito é INDIVIDUAL (Ricardo 16/11/2026): só com apontamentos do PRÓPRIO consultor —
+        // consultores diferentes podem atender o mesmo cliente no mesmo horário.
+        $userId = $userId ?: (int) auth()->id();
+        if (!$userId) return null;
 
         $candidates = \App\Models\Timesheet::query()
+            ->where('user_id', $userId)
             ->where('customer_id', $customerId)
             ->whereDate('date', $date)
             ->whereNull('deleted_at')
@@ -2671,7 +2850,7 @@ class HelpDeskTicketController extends Controller
         $e = $ts->end_time instanceof \Carbon\Carbon ? $ts->end_time->format('H:i') : substr((string) $ts->end_time, 0, 5);
         return response()->json([
             'code'    => 'TIMESHEET_CONFLICT',
-            'message' => "Conflito de horário: este cliente já tem um apontamento das {$s} às {$e}"
+            'message' => "Conflito de horário: você já tem um apontamento neste cliente das {$s} às {$e}"
                 . ($ts->user?->name ? " ({$ts->user->name})" : '') . '. Ajuste o horário.',
         ], 422);
     }

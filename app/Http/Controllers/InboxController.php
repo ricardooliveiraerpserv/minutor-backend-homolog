@@ -20,7 +20,7 @@ class InboxController extends Controller
     public function conversations(Request $request): JsonResponse
     {
         $user = $request->user();
-        $this->inbox->ensureBotConversation($user);
+        if (\App\Models\User::isBotAllowed($user)) $this->inbox->ensureBotConversation($user);
 
         $items = $this->inbox->listConversations($user);
         return response()->json(['data' => $items]);

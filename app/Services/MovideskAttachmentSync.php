@@ -55,9 +55,14 @@ class MovideskAttachmentSync
      * VOLTA: baixa os anexos de uma ação do Movidesk e grava na entidade do Minutor.
      * @param array $mdAttachments [['fileName'=>..., 'path'=>...], ...]
      */
-    public function pull(string $entityType, int $entityId, array $mdAttachments, string $visibility, ?int $actorId = null): int
+    public function pull(string $entityType, int $entityId, array $mdAttachments, string $visibility, ?int $actorId = null, ?int $companyId = null): int
     {
         if (!$mdAttachments) return 0;
+        // Download com o TOKEN DA CONTA do chamado (BIZIFY ≠ ERPSERV). Antes usava sempre o token
+        // global (ERPSERV) → anexos da BIZIFY não baixavam. Conta principal (ERPSERV) = null (global).
+        $primary = \App\Services\MovideskPushPolicy::primaryCompanyId();
+        $prevCompany = $this->movidesk->currentCompany(); // restaura no fim (instância pode ser compartilhada)
+        $this->movidesk->forCompany($companyId && $companyId !== $primary ? $companyId : null);
         $svc = app(AttachmentService::class);
         $actor = ($actorId ? User::find($actorId) : null) ?? User::query()->orderBy('id')->first();
         $n = 0;
@@ -70,6 +75,7 @@ class MovideskAttachmentSync
             $file = $this->movidesk->downloadFile($path);
             if (!$file || strlen($file['content']) === 0) { Log::warning('📥 [MOVIDESK ANEXO] download falhou', ['path' => $path]); continue; }
             $name = (string) ($md['fileName'] ?? ('anexo-' . substr($path, 0, 8)));
+            if (!pathinfo($name, PATHINFO_EXTENSION) && str_starts_with(strtolower((string) $file['mime']), 'text/plain')) $name .= '.txt';
             $tmp = tempnam(sys_get_temp_dir(), 'mvatt');
             file_put_contents($tmp, $file['content']);
             try {
@@ -90,6 +96,7 @@ class MovideskAttachmentSync
                 @unlink($tmp);
             }
         }
+        $this->movidesk->forCompany($prevCompany);
         return $n;
     }
 }

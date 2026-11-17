@@ -34,7 +34,7 @@ class ProjectAuditController extends Controller
         'tipo_faturamento' => 'Tipo de faturamento', 'tipo_alocacao' => 'Tipo de alocação',
         'architect_id' => 'Arquiteto', 'executivo_conta_id' => 'Executivo de conta', 'vendedor_id' => 'Vendedor',
         'condicao_pagamento' => 'Condição de pagamento', 'observacoes_contrato' => 'Observações do contrato',
-        'allow_manual_timesheets' => 'Permite apontamento manual', 'allow_negative_balance' => 'Permite saldo negativo',
+        'allow_manual_timesheets' => 'Permite apontamento manual', 'allow_negative_balance' => 'Permite saldo negativo', 'allow_negative_via_ticket' => 'Permite saldo negativo via chamado',
         'client_follows_timesheets' => 'Cliente acompanha apontamentos', 'extrato_visivel_cliente' => 'Extrato visível ao cliente',
         'initial_hours_balance' => 'Saldo inicial de horas', 'initial_hours_consumed' => 'Horas iniciais consumidas',
         'initial_cost' => 'Custo inicial', 'kanban_coordinator_override_id' => 'Coordenador (Kanban)',
@@ -51,7 +51,7 @@ class ProjectAuditController extends Controller
 
     private const BOOL_FIELDS = [
         'charge_excess_hours', 'unlimited_expense', 'cobra_despesa_cliente', 'allow_manual_timesheets',
-        'allow_negative_balance', 'client_follows_timesheets', 'extrato_visivel_cliente', 'save_erpserv',
+        'allow_negative_balance', 'allow_negative_via_ticket', 'client_follows_timesheets', 'extrato_visivel_cliente', 'save_erpserv',
         'is_manual_code', 'is_investimento_comercial', 'movidesk_integration_enabled',
     ];
 

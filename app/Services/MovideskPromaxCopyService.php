@@ -52,12 +52,90 @@ class MovideskPromaxCopyService
         return array_values(array_filter(array_map('intval', (array) $raw)));
     }
 
+    /**
+     * Clientes que CONTINUAM sendo atendidos pelo Movidesk da ERPSERV (o Minutor escreve de volta
+     * ações/status, e o Movidesk entrega ao cliente): Promax + clientes ligados por integração
+     * Movidesk↔Movidesk (PierServ, Moove — o gatilho "Webhook para integração entre Movidesks"
+     * repassa à conta deles). Setting 'movidesk_writeback_extra_customer_ids' (padrão [244] PierServ).
+     */
+    public static function writebackCustomerIds(): array
+    {
+        $raw = SystemSetting::get('movidesk_writeback_extra_customer_ids', [244]);
+        if (is_string($raw)) { $raw = json_decode($raw, true) ?: array_filter(explode(',', $raw)); }
+        $extra = array_values(array_filter(array_map('intval', (array) $raw)));
+        return array_values(array_unique(array_merge(self::customerIds(), $extra)));
+    }
+
     /** @return string[] canais que geram cópia (padrão: só e-mail = suporte@). */
     public static function channels(): array
     {
         $raw = SystemSetting::get('movidesk_promax_copy_channels', ['email']);
         if (is_string($raw)) { $raw = json_decode($raw, true) ?: array_filter(explode(',', $raw)); }
         return array_values(array_filter(array_map(fn ($c) => trim((string) $c), (array) $raw)));
+    }
+
+    /** Chamado vai ganhar cópia (e ainda não tem)? → o gatilho "chamado criado" espera a cópia. */
+    public static function shouldDeferCreated(HelpDeskTicket $t): bool
+    {
+        if (!self::enabled() || $t->movidesk_copy_id) return false;
+        try {
+            return app(self::class)->candidatesQuery()->where('id', $t->id)->exists();
+        } catch (\Throwable) { return false; }
+    }
+
+    /** Dispara o gatilho "chamado criado" que estava adiado (cópia pronta ou desistiu de esperar). */
+    private function fireDeferredCreated(HelpDeskTicket $t): void
+    {
+        $raw = HelpDeskTicket::withoutGlobalScopes()->where('id', $t->id)->value('deferred_created_context');
+        if ($raw === null) return;
+        $ctx = is_array($raw) ? $raw : (json_decode((string) $raw, true) ?: []);
+        HelpDeskTicket::withoutGlobalScopes()->where('id', $t->id)->update(['deferred_created_context' => null]);
+        try { HelpDeskTriggerEngine::queue('ticket_created', $t->fresh(), $ctx + ['_copy_ready' => true]); }
+        catch (\Throwable $e) { Log::warning('📤 [MOVIDESK COPIA] gatilho adiado falhou', ['ticket_id' => $t->id, 'e' => $e->getMessage()]); }
+    }
+
+    /**
+     * Mesmo número nas duas pontas: o chamado do Minutor ADOTA o número do Movidesk (que não aceita o
+     * nosso). O antigo vai p/ legacy_ticket_number (e-mails/buscas com ele continuam funcionando).
+     */
+    public function adoptMovideskNumber(HelpDeskTicket $t, string $mdId): void
+    {
+        if ($t->legacy_ticket_number || (string) $t->ticket_number === $mdId) return;
+        $origin = (int) ($t->origin_company_id ?: $t->company_id);
+        $clash = HelpDeskTicket::withoutGlobalScopes()->where('id', '!=', $t->id)->where('ticket_number', $mdId)
+            ->where(fn ($q) => $q->where('origin_company_id', $origin)->orWhere('company_id', $origin))->exists();
+        if ($clash) { Log::warning('📤 [MOVIDESK COPIA] número do Movidesk já usado — mantém o do Minutor', ['ticket_id' => $t->id, 'md' => $mdId]); return; }
+        $old = (string) $t->ticket_number;
+        HelpDeskTicket::withoutGlobalScopes()->where('id', $t->id)->update(['legacy_ticket_number' => $old, 'ticket_number' => $mdId]);
+        $t->legacy_ticket_number = $old; $t->ticket_number = $mdId;
+        try { HelpDeskTicketEvent::log($t->id, 'renumbered', ['from_value' => $old, 'to_value' => $mdId, 'meta' => ['via' => 'promax_copy']]); } catch (\Throwable) {}
+    }
+
+    /**
+     * Responsável/equipe da CÓPIA no Movidesk → Minutor. Equipe Promax assumiu → o chamado SAI da fila
+     * da ERPSERV (tira o responsável); voltou p/ equipe da ERPSERV → volta p/ a fila.
+     */
+    public function syncOwner(HelpDeskTicket $t, array $full): void
+    {
+        $team = mb_substr(trim((string) ($full['ownerTeam'] ?? '')), 0, 255) ?: null;
+        $name = mb_substr(trim((string) ($full['owner']['businessName'] ?? '')), 0, 255) ?: null;
+        $email = mb_substr(trim((string) ($full['owner']['email'] ?? '')), 0, 255) ?: null;
+        $wasPromax = MovideskPushPolicy::isPromaxTeam($t->external_owner_team);
+        $isPromax = MovideskPushPolicy::isPromaxTeam($team);
+        if ($team === $t->external_owner_team && $name === $t->external_owner_name) return;
+        $upd = ['external_owner_team' => $team, 'external_owner_name' => $name, 'external_owner_email' => $email];
+        if ($isPromax && !$wasPromax && $t->assignee_id) {
+            try { HelpDeskTicketEvent::log($t->id, 'assigned', ['field' => 'assignee', 'from_value' => (string) $t->assignee_id, 'to_value' => null, 'meta' => ['reason' => 'promax_assumiu', 'movidesk_owner' => $name, 'movidesk_team' => $team]]); } catch (\Throwable) {}
+            $upd['assignee_id'] = null;
+        }
+        HelpDeskTicket::withoutGlobalScopes()->where('id', $t->id)->update($upd);
+        if ($isPromax !== $wasPromax) {
+            try { HelpDeskTicketEvent::log($t->id, $isPromax ? 'with_promax' : 'back_from_promax', ['to_value' => $name, 'meta' => ['team' => $team]]); } catch (\Throwable) {}
+        }
+        // Promax TRANSFERIU p/ a ERPSERV → o chamado "entra" no Minutor: avisa a equipe p/ triagem.
+        if ($wasPromax && !$isPromax) {
+            try { HelpDeskTriggerEngine::queue('ticket_created', $t->fresh(), ['_copy_ready' => true, '_only_team' => true, 'comment_by' => 'client']); } catch (\Throwable) {}
+        }
     }
 
     /** Chamados que precisam de cópia (ainda sem movidesk_copy_id). */
@@ -97,6 +175,11 @@ class MovideskPromaxCopyService
             }
         }
         if ($dry) return $stats;
+        // Cópia não saiu em 10 min → não segura mais a confirmação ao cliente.
+        foreach (HelpDeskTicket::withoutGlobalScopes()->whereNotNull('deferred_created_context')->whereNull('movidesk_copy_id')
+                     ->where('created_at', '<', now()->subMinutes(10))->limit(50)->get() as $late) {
+            $this->fireDeferredCreated($late);
+        }
 
         // VOLTA (Movidesk → Minutor): o que a Promax fizer na cópia (ações, anexos, status).
         try { $stats['pulled'] = $this->pullChanged($onlyTicketId); }
@@ -129,10 +212,12 @@ class MovideskPromaxCopyService
         $org = MovideskOrganization::where('hd_customer_id', $t->customer_id)
             ->where('company_id', MovideskPushPolicy::primaryCompanyId())->first();
         $personId = $this->movidesk->findPersonIdByEmail($email)
-            ?: $this->movidesk->createPerson((string) $t->requester_name, $email, $org?->movidesk_id);
+            ?: $this->movidesk->createPerson((string) $t->requester_name, $email, $org?->movidesk_id,
+                // pessoa nova entra no DEPARTAMENTO do Movidesk equivalente ao dela no Minutor
+                app(\App\Services\MovideskDepartmentSync::class)->movideskDepartmentFor((int) $t->customer_id, $email));
         if (!$personId) { Log::warning('📤 [MOVIDESK COPIA] sem pessoa no Movidesk', ['ticket_id' => $t->id, 'email' => $email]); return false; }
 
-        $body = $this->importer->htmlToText((string) $t->description);
+        $body = $this->importer->htmlForMovidesk((string) $t->description); // texto + assinatura
         if ($body === '') $body = htmlspecialchars((string) $t->subject, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
         $payload = [
@@ -156,10 +241,15 @@ class MovideskPromaxCopyService
             $vals[] = ['customFieldId' => (int) $c[0], 'customFieldRuleId' => (int) $c[1], 'line' => 1, 'items' => [['customFieldItem' => (string) $c[2]]]];
         }
         if ($vals) { $payload['customFieldValues'] = $vals; }
-        $ownerId = $this->ownerId();
-        if ($ownerId) { $payload['owner'] = ['id' => $ownerId]; }
-        $team = trim((string) SystemSetting::get('movidesk_promax_copy_owner_team', ''));
+        // Chamado da Promax nasce na EQUIPE PROMAX (triagem deles). Só entra na fila da ERPSERV quando
+        // a Promax TRANSFERIR p/ uma equipe da ERPSERV no Movidesk (decisão Ricardo 16/11/2026).
+        // Com equipe Promax não vai "owner" (o agente genérico Suporte ERPSERV é da equipe Atendimento).
+        $team = trim((string) SystemSetting::get('movidesk_promax_copy_owner_team', 'Promax Bardahl'));
         if ($team !== '') { $payload['ownerTeam'] = $team; }
+        if (!MovideskPushPolicy::isPromaxTeam($team)) {
+            $ownerId = $this->ownerId();
+            if ($ownerId) { $payload['owner'] = ['id' => $ownerId]; }
+        }
 
         $id = $this->movidesk->createTicket($payload);
         if (!$id) return false;
@@ -170,7 +260,14 @@ class MovideskPromaxCopyService
         $t->movidesk_copy_id = $id;
         $t->movidesk_copy_at = now();
         $t->movidesk_copy_status = 'New|Novo'; // nasce "Novo" no Movidesk; pushStatus alinha ao Minutor
+        if (MovideskPushPolicy::isPromaxTeam($team)) {
+            // Fora da fila da ERPSERV desde já (até a Promax transferir p/ nós).
+            $t->external_owner_team = $team;
+            if ($t->assignee_id) { $t->assignee_id = null; }
+        }
         $t->saveQuietly();
+        $this->adoptMovideskNumber($t, (string) $id);
+        $this->fireDeferredCreated($t); // confirmação ao cliente sai agora, já com o número final
         try {
             HelpDeskTicketEvent::log($t->id, 'movidesk_copy', ['to_value' => $id, 'meta' => ['via' => 'promax_copy']]);
         } catch (\Throwable) {}
@@ -210,7 +307,7 @@ class MovideskPromaxCopyService
 
         $n = 0;
         foreach ($pending as $c) {
-            $text = $this->importer->htmlToText((string) $c->body);
+            $text = $this->importer->htmlForMovidesk((string) $c->body); // texto + assinatura
             if ($text === '') { $c->external_action_id = '0'; $c->saveQuietly(); continue; }
             $type = $c->visibility === 'customer' ? 2 : 1;
             $action = ['type' => $type, 'description' => $text];
@@ -260,6 +357,7 @@ class MovideskPromaxCopyService
             if (!$t) continue;
             $full = $this->movidesk->fetchTicket((int) $t->movidesk_copy_id);
             if (!$full) continue;
+            $this->syncOwner($t, $full);
             // Ações novas (dedup por external_action_id; a 1 é a abertura = nossa descrição).
             $before = HelpDeskTicketComment::withTrashed()->where('ticket_id', $t->id)->max('id') ?? 0;
             $n += $this->importer->importActions($t, $full['actions'] ?? [], '1');
@@ -288,7 +386,15 @@ class MovideskPromaxCopyService
                 if ($minutorUnchanged) {
                     $sid = $this->inboundStatusId($t, $mdSig);
                     if ($sid && $sid !== (int) $t->status_id) {
+                        $oldKey = optional($t->status)->key;
                         $t->status_id = $sid; $t->save();
+                        // Registra na timeline: status veio do MOVIDESK (equipe Promax alterou a cópia).
+                        try {
+                            HelpDeskTicketEvent::log($t->id, 'status_changed', [
+                                'field' => 'status', 'from_value' => $oldKey, 'to_value' => optional($t->fresh()->status)->key,
+                                'meta' => ['via' => 'movidesk_copia', 'movidesk_id' => $t->movidesk_copy_id, 'movidesk_status' => $mdSig],
+                            ]);
+                        } catch (\Throwable) {}
                         try { \App\Services\HelpDeskTriggerEngine::queue('status_changed', $t->fresh(), ['via' => 'movidesk_copia']); } catch (\Throwable) {}
                     }
                     HelpDeskTicket::where('id', $t->id)->update(['movidesk_copy_status' => $mdSig]);

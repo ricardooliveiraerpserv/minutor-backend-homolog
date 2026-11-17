@@ -109,6 +109,8 @@ class NotificationEngine
         $recipients = $this->routing->resolveRecipients($rule, $feed);
         $count = 0;
         foreach ($recipients as $user) {
+            // BOT Minutor é EXCLUSIVO de admin (alertas trazem dados de clientes: saldo, churn…).
+            if (!\App\Models\User::isBotAllowed($user)) continue;
             if ($type === MessageType::AiInsight) {
                 $this->bot->deliverAiInsight($user, $feed->title, $feed->message, $metadata);
             } else {

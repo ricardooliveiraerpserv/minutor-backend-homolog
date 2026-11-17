@@ -343,9 +343,10 @@ class AttachableEntitiesRegistry
                     return false;
                 },
                 // Comprimidos liberados: o campo "Código Fonte (RDMAKE/Patch)" exige .zip/.rar/.7z etc.
-                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES],
-                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz'],
-                'max_size_mb' => 50,
+                // + vídeo/gif/Office antigo/e-mail: anexos que chegam do Movidesk e por e-mail (antes recusados).
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'video/mp4', 'video/quicktime', 'video/webm', 'image/gif', 'image/bmp', 'application/msword', 'application/vnd.ms-excel', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'text/plain', 'message/rfc822', 'application/vnd.ms-outlook'],
+                'allowed_extensions' => ['pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz','mp4','mov','webm','gif','bmp','doc','xls','ppt','pptx','eml','msg','log'],
+                'max_size_mb' => 100,
             ],
             'HELPDESK_TICKET_COMMENT' => [
                 'model' => HelpDeskTicketComment::class,
@@ -362,13 +363,15 @@ class AttachableEntitiesRegistry
                     return false;
                 },
                 // Comprimidos liberados (.zip/.rar…) + FONTES do GitHub (texto): ADVPL/Protheus e afins.
-                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'application/octet-stream', 'application/xml', 'application/json'],
+                'allowed_mime' => [...self::MIME_DOCS_AND_IMAGES, ...self::MIME_ARCHIVES, 'application/octet-stream', 'application/xml', 'application/json', 'video/mp4', 'video/quicktime', 'video/webm', 'image/gif', 'image/bmp', 'application/msword', 'application/vnd.ms-excel', 'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'text/plain', 'message/rfc822', 'application/vnd.ms-outlook'],
                 'allowed_extensions' => [
                     'pdf','png','jpg','jpeg','webp','docx','xlsx','txt','csv','zip','rar','7z','tar','gz','tgz',
                     // Fontes (Solicitação de Código-Fonte):
                     'prw','prx','prg','ppr','ppx','ppp','tlpp','tlp','ch','apl','apo','apw','aph','apu','sql','xml','json','md',
+                    // Vídeo/gif/Office antigo/e-mail (anexos do Movidesk e do e-mail):
+                    'mp4','mov','webm','gif','bmp','doc','xls','ppt','pptx','eml','msg','log',
                 ],
-                'max_size_mb' => 50,
+                'max_size_mb' => 100,
             ],
 
             // ── COFRE DE AMBIENTES — arquivos CIFRADOS no client (.enc wrapper de .ovpn/.pfx/.ini) ──

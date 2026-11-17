@@ -42,9 +42,13 @@ class HelpDeskPortalController extends Controller
     private function scopeByDepartment(\Illuminate\Database\Eloquent\Builder $q, \App\Models\User $user, int $cid): \Illuminate\Database\Eloquent\Builder
     {
         $dept = $user->helpdesk_department_id;
-        if (!$dept) return $q->where('requester_user_id', $user->id);
-        return $q->whereIn('requester_user_id', \App\Models\User::query()
-            ->where('customer_id', $cid)->where('helpdesk_department_id', $dept)->select('id'));
+        $email = mb_strtolower((string) $user->email);
+        if (!$dept) return $q->where(fn ($w) => $w->where('requester_user_id', $user->id)
+            ->orWhereRaw('lower(requester_email) = ?', [$email]));
+        // Mesmo depto: por user_id OU pelo e-mail do solicitante (chamado importado sem user_id).
+        $deptUsers = \App\Models\User::query()->where('customer_id', $cid)->where('helpdesk_department_id', $dept);
+        return $q->where(fn ($w) => $w->whereIn('requester_user_id', (clone $deptUsers)->select('id'))
+            ->orWhereIn(\Illuminate\Support\Facades\DB::raw('lower(requester_email)'), (clone $deptUsers)->selectRaw('lower(email)')));
     }
 
     /** Eventos status_changed de vários tickets em UMA query (SLA pausado sem N+1). */
@@ -89,8 +93,9 @@ class HelpDeskPortalController extends Controller
         abort_if($scope === 'own' && (int) $ticket->requester_user_id !== (int) $u->id, 404);
         if ($scope === 'department') {
             $dept = $u->helpdesk_department_id;
-            $reqDept = $ticket->requester_user_id
-                ? optional(\App\Models\User::find($ticket->requester_user_id))->helpdesk_department_id : null;
+            $reqUser = $ticket->requester_user_id ? \App\Models\User::find($ticket->requester_user_id)
+                : ($ticket->requester_email ? \App\Models\User::whereRaw('lower(email) = ?', [mb_strtolower((string) $ticket->requester_email)])->first() : null);
+            $reqDept = optional($reqUser)->helpdesk_department_id;
             $sameDept = $dept && $reqDept && (int) $dept === (int) $reqDept;
             abort_unless($sameDept || (int) $ticket->requester_user_id === (int) $u->id, 404);
         }
@@ -222,9 +227,18 @@ class HelpDeskPortalController extends Controller
         } else {
             $cid = $this->customerId($request);
             $scope = $this->access->clientViewScope($user); // own | department | same_org | none
-            $q = HelpDeskTicket::where('customer_id', $cid)
+            // Solicitante = user_id OU e-mail (chamado importado do Movidesk/e-mail pode vir só com o
+            // e-mail). O chamado DELE aparece mesmo sem cliente vinculado (mesma regra do ownTicket).
+            $email = mb_strtolower((string) $user->email);
+            $isMine = fn ($w) => $w->where('requester_user_id', $user->id)
+                ->orWhere(fn ($e) => $e->whereNotNull('requester_email')->whereRaw('lower(requester_email) = ?', [$email]));
+            // Empresa: a ABA do portal (company_id) define a empresa — não a empresa ativa da sessão.
+            // Sem o withoutGlobalScope, a aba BIZIFY de um cliente "Ambos" com ERPSERV ativa vinha vazia.
+            $q = HelpDeskTicket::withoutGlobalScope(\App\Models\Scopes\CompanyScope::class)
+                ->when(!$reqCompany && $scopeIds, fn ($qq) => $qq->whereIn('company_id', $scopeIds))
+                ->where(fn ($w) => $w->where('customer_id', $cid)->orWhere($isMine))
                 ->whereNull('merged_into_id') // chamados mesclados não aparecem na lista do cliente
-                ->when($scope === 'own', fn ($qq) => $qq->where('requester_user_id', $user->id)) // só os que ELE abriu
+                ->when($scope === 'own', fn ($qq) => $qq->where($isMine)) // só os que ELE abriu
                 ->when($scope === 'department', fn ($qq) => $this->scopeByDepartment($qq, $user, $cid)) // do mesmo depto dele
                 ->when($scope === 'none', fn ($qq) => $qq->whereRaw('1 = 0'));
             $tickets = $withRels($q)->get();
@@ -460,7 +474,7 @@ class HelpDeskPortalController extends Controller
     {
         $this->ownTicket($request, $ticket);
         abort_unless(optional($ticket->status)->is_resolved, 422, 'O chamado não está resolvido.');
-        $fechado = HelpDeskStatus::where('key', 'fechado')->first();
+        $fechado = HelpDeskStatus::forCompany($ticket->company_id, 'fechado');
         abort_unless($fechado, 500, 'Status "fechado" não configurado.');
         $old = $ticket->status;
         // Transição ATÔMICA: só o 1º request (status ainda resolvido) efetiva. Duplo-clique/duplo-submit
@@ -502,7 +516,7 @@ class HelpDeskPortalController extends Controller
         $this->ownTicket($request, $ticket);
         abort_unless(optional($ticket->status)->is_resolved, 422, 'O chamado não está resolvido.');
         $v = $request->validate(['reason' => 'required|string|max:2000']);
-        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        $em = HelpDeskStatus::forCompany($ticket->company_id, 'em_andamento');
         abort_unless($em, 500, 'Status "em andamento" não configurado.');
         $old = $ticket->status;
         // Transição ATÔMICA: só o 1º request (status ainda resolvido) efetiva a recusa → evita

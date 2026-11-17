@@ -96,6 +96,10 @@ class MovideskPushPolicy
     {
         if ($ticket->source_system !== 'movidesk' || !$ticket->external_ref) return false;
         if (!self::isPrimaryAccount($ticket)) return false;
+        // Só PROMAX continua sendo atendida pelo Movidesk (decisão Ricardo 16/11/2026). Demais clientes:
+        // o Minutor NÃO escreve no Movidesk (nada de ação/status que dispare e-mail do Movidesk) e é o
+        // próprio Minutor quem manda os e-mails ao cliente (deliversViaMovidesk = false).
+        if (!in_array((int) $ticket->customer_id, MovideskPromaxCopyService::writebackCustomerIds(), true)) return false;
         return self::isErpservTeam($ownerTeam ?? $ticket->external_owner_team);
     }
 

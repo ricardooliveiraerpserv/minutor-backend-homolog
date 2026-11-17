@@ -167,7 +167,7 @@ class GmudProjectSubmissionController extends Controller
 
         // ENCERRA o chamado (idempotente: se já terminal, mantém).
         if (! optional($ticket->status)->is_terminal) {
-            if ($closedId = $this->closedStatusId()) {
+            if ($closedId = (optional(HelpDeskStatus::forCompany($ticket->company_id, 'fechado'))->id ?? $this->closedStatusId())) {
                 $ticket->forceFill(['status_id' => $closedId])->save();
                 HelpDeskTicketEvent::log($ticket->id, 'status_changed', ['meta' => ['to_status_id' => $closedId, 'reason' => 'gmud_project_finalize']]);
             }

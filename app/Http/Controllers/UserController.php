@@ -672,6 +672,90 @@ class UserController extends Controller
      * inferido (MEI / Simples Nacional / demais), para preencher a ficha do
      * consultor. Usado pelo botão "Consultar Receita" no cadastro.
      */
+    /**
+     * Clientes p/ o seletor "Empresa" do cadastro de usuário — quem cadastra usuário precisa ver os
+     * clientes mesmo sem a permissão da tela de Clientes (customers.view).
+     */
+    public function customerOptions(): JsonResponse
+    {
+        $items = \App\Models\Customer::query()->orderBy('name')
+            ->get(['id', 'name', 'company_name', 'cgc', 'active', 'helpdesk_default_access_profile_id', 'company_scope']);
+        // Empresas do grupo p/ o seletor "Empresas" (a rota /companies é só do admin).
+        $companies = \App\Models\Company::query()->orderBy('id')->get(['id', 'name', 'slug']);
+        return response()->json(['items' => $items, 'companies' => $companies, 'hasNext' => false]);
+    }
+
+    /**
+     * NOVO USUÁRIO DO CLIENTE (botão na tela de Usuários p/ quem não é admin): cria a pessoa com perfil
+     * CLIENTE vinculada a um cliente (empresa) + configurações do Help Desk (perfil de acesso, departamento,
+     * empresas do grupo). Reaproveita o UserController@store (validações, senha temporária, boas-vindas).
+     */
+    public function storeClientUser(Request $request): JsonResponse
+    {
+        $v = $request->validate([
+            'name'  => 'required|string|max:255',
+            'email' => 'required|email|max:255|unique:users,email',
+            'phone' => 'nullable|string|max:40',
+            'customer_id' => 'required|integer|exists:customers,id',
+            'is_customer_manager' => 'sometimes|boolean',
+            'helpdesk_access_profile_id' => 'required|integer|exists:helpdesk_access_profiles,id',
+            'helpdesk_department_id' => 'nullable|integer|exists:helpdesk_departments,id',
+            'company_ids' => 'required|array|min:1',
+            'company_ids.*' => 'integer|exists:companies,id',
+        ], [
+            'email.unique' => 'Este e-mail já está cadastrado no sistema.',
+            'customer_id.required' => 'Selecione o cliente.',
+            'helpdesk_access_profile_id.required' => 'Selecione o perfil do Help Desk.',
+            'company_ids.required' => 'Selecione a(s) empresa(s) que atendem este usuário.',
+        ]);
+        $prof = \App\Models\HelpDeskAccessProfile::withoutGlobalScopes()->find($v['helpdesk_access_profile_id']);
+        abort_if(!$prof || $prof->kind !== 'cliente', 422, 'Selecione um perfil de Help Desk de CLIENTE.');
+        if (!empty($v['helpdesk_department_id'])) {
+            $dep = \App\Models\HelpDeskDepartment::find($v['helpdesk_department_id']);
+            abort_if(!$dep || (int) $dep->customer_id !== (int) $v['customer_id'], 422, 'O departamento não pertence a este cliente.');
+        }
+
+        $sub = Request::create($request->getPathInfo(), 'POST', [
+            'name' => $v['name'], 'email' => $v['email'], 'phone' => $v['phone'] ?? null, 'type' => 'cliente',
+            'customer_id' => $v['customer_id'], 'is_customer_manager' => (bool) ($v['is_customer_manager'] ?? false),
+            'company_ids' => $v['company_ids'], 'enabled' => true,
+        ]);
+        $sub->setUserResolver($request->getUserResolver());
+        $sub->headers->replace($request->headers->all());
+        app()->instance('request', $sub);
+        try { $resp = $this->store($sub); } finally { app()->instance('request', $request); }
+        if ($resp->getStatusCode() !== 201) return $resp;
+
+        $id = (int) ($resp->getData(true)['id'] ?? 0);
+        $user = User::find($id);
+        if ($user) {
+            $user->helpdesk_access_profile_id = $v['helpdesk_access_profile_id'];   // fora do mass-assign
+            $user->helpdesk_department_id = $v['helpdesk_department_id'] ?? null;
+            $user->save();
+        }
+        return response()->json(['id' => $id, 'name' => $user?->name, 'email' => $user?->email], 201);
+    }
+
+    /**
+     * NOVO CLIENTE a partir do cadastro de usuário (botão "Novo cliente"): quem tem acesso ao cadastro
+     * de usuários inclui o cliente p/ vincular ao usuário + configura o Help Desk (perfil padrão).
+     * Campos limitados ao essencial; mesma validação/regras do cadastro de Clientes (CustomerController@store).
+     */
+    public function quickCustomer(Request $request): JsonResponse
+    {
+        $data = $request->only(['name', 'company_name', 'cgc', 'company_scope', 'helpdesk_default_access_profile_id', 'emails_administrativos']);
+        $data['active'] = true;
+        $sub = Request::create($request->getPathInfo(), 'POST', $data);
+        $sub->setUserResolver($request->getUserResolver());
+        $sub->headers->replace($request->headers->all());
+        app()->instance('request', $sub);
+        try {
+            return app(\App\Http\Controllers\CustomerController::class)->store($sub);
+        } finally {
+            app()->instance('request', $request);
+        }
+    }
+
     public function cnpjLookup(string $cnpj, ReceitaCnpjService $receita): JsonResponse
     {
         try {
@@ -745,7 +829,7 @@ class UserController extends Controller
             'is_diretor_projetos' => 'sometimes|boolean',
             'dashboard_types' => 'nullable|array',
             'dashboard_types.*' => 'string|in:bank_hours_fixed',
-            'type' => 'nullable|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin',
+            'type' => 'required|in:admin,administrativo,coordenador,consultor,cliente,parceiro_admin', // sem tipo o usuário some das listas (Equipe/Cliente)
             'coordinator_type' => 'nullable|in:projetos,sustentacao',
             'can_timesheet_sustentacao' => 'sometimes|boolean',
             'extra_permissions'   => 'nullable|array',
@@ -756,11 +840,16 @@ class UserController extends Controller
             'email.required' => 'O e-mail é obrigatório.',
             'email.email'    => 'O e-mail informado é inválido.',
             'email.unique'   => 'Este e-mail já está cadastrado no sistema.',
+            'type.required'  => 'Selecione o perfil do usuário.',
             'password.min'   => 'A senha deve ter pelo menos 6 caracteres.',
         ]);
 
         if ($validator->fails()) {
             return $this->validationErrorResponse($validator->errors()->all());
+        }
+        // CLIENTE: "Empresas (Minutor)" é OBRIGATÓRIO no cadastro (define o seletor de empresa do topo).
+        if ($request->input('type') === 'cliente' && empty(array_filter((array) $request->input('company_ids', [])))) {
+            return $this->validationErrorResponse(['Selecione a(s) empresa(s) do Minutor deste cliente (ERPSERV, BIZIFY ou Ambos).']);
         }
 
         DB::beginTransaction();
@@ -779,8 +868,11 @@ class UserController extends Controller
             // A1 (segurança): só ADMIN define papel/permissão. Um users.create não-admin
             // não pode criar um admin nem conceder permissões/flags de papel.
             if (!Auth::user()->isAdmin()) {
+                // Perfil privilegiado (admin/administrativo) só por admin. Os demais perfis SEGUEM —
+                // antes o tipo era descartado e o usuário nascia SEM perfil (sumia das listas).
+                abort_if(in_array($userData['type'] ?? '', ['admin', 'administrativo'], true), 403, 'Apenas administradores podem criar usuários Admin ou Administrativo.');
                 unset(
-                    $userData['type'], $userData['extra_permissions'], $userData['is_executive'],
+                    $userData['extra_permissions'], $userData['is_executive'],
                     $userData['is_bizify'], $userData['is_diretor_projetos'], $userData['coordinator_type'],
                     $userData['can_timesheet_sustentacao'], $userData['dashboard_types']
                 );

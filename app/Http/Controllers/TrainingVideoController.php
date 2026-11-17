@@ -83,9 +83,11 @@ class TrainingVideoController extends Controller
         if (!$video->file_path || !$video->visibleTo($request->user())) {
             return response()->json(['message' => 'Vídeo indisponível.'], 404);
         }
+        // Assinatura RELATIVA (sem domínio): a tela toca o vídeo pelo próprio domínio do app
+        // (app.minutor…/api/v1 → repassado à API) — o Safari recusava o <video> vindo de outro domínio.
         $url = URL::temporarySignedRoute('training-videos.stream', now()->addHours(6), [
             'video' => $video->id, 'v' => $video->version,
-        ]);
+        ], false);
         return response()->json(['url' => $url]);
     }
 

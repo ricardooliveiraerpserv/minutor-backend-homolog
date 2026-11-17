@@ -215,6 +215,13 @@ class TimesheetTransferRuleController extends Controller
                 'transfer_source_project_id'  => $srcPid,
                 'transfer_rule_id'            => $ruleId,
             ]);
+            // ASISTO: observação com a origem (Cliente · Projeto · Ticket) atualizada.
+            $fresh = \App\Models\Timesheet::find($ts->id);
+            if ($fresh) {
+                $before = $fresh->observation;
+                \App\Services\TimesheetTransferService::stampOriginNote($fresh);
+                if ($fresh->observation !== $before) \App\Models\Timesheet::where('id', $ts->id)->update(['observation' => $fresh->observation]);
+            }
             \App\Models\TimesheetOriginLog::create([
                 'timesheet_id'       => $ts->id,
                 'source_customer_id' => $srcCid,

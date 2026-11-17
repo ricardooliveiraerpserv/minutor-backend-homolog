@@ -33,6 +33,18 @@ class CompanyController extends Controller
                 'allow_source_requests' => (bool) $c->allow_source_requests,
             ]);
 
+        // Sem vínculo em company_user = usuário ERPSERV (regra do multi-empresa).
+        if ($data->isEmpty() && !$user->companies()->exists()) {
+            $e = Company::where('slug', 'erpserv')->where('status', 'active')->first();
+            if ($e) {
+                $data = collect([[
+                    'id' => $e->id, 'name' => $e->name, 'slug' => $e->slug, 'color' => $e->color,
+                    'type' => $e->type, 'role' => null, 'active' => true,
+                    'allow_source_requests' => (bool) $e->allow_source_requests,
+                ]]);
+            }
+        }
+
         return response()->json([
             'data'              => $data,
             'active_company_id' => $user->current_company_id,

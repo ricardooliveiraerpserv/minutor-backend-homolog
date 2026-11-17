@@ -359,7 +359,11 @@ class ProjectController extends Controller
                             $subQ->where('users.id', $targetUserId);
                         })->orWhereHas('coordinators', function ($subQ) use ($targetUserId) {
                             $subQ->where('user_id', $targetUserId);
-                        });
+                        })
+                        // Alocado no CRONOGRAMA (responsável por atividade ou alocado em etapa) — o mesmo
+                        // critério do "Meus Projetos": se aparece lá, tem que dar p/ apontar.
+                        ->orWhereHas('stages.deliveries', fn ($d) => $d->where('responsible_user_id', $targetUserId))
+                        ->orWhereHas('stages.allocations', fn ($a) => $a->where('user_id', $targetUserId));
                     });
                 }
             }
@@ -1173,6 +1177,7 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'allow_negative_via_ticket' => 'nullable|boolean',
             'allow_weekend_work' => 'nullable|boolean',
             'allow_holiday_work' => 'nullable|boolean',
             'client_follows_timesheets' => 'nullable|boolean',
@@ -1714,6 +1719,7 @@ class ProjectController extends Controller
             'expense_responsible_party' => ['nullable', Rule::in(['consultancy', 'client'])],
             'timesheet_retroactive_limit_days' => 'nullable|integer|min:0|max:365',
             'allow_negative_balance' => 'nullable|boolean',
+            'allow_negative_via_ticket' => 'nullable|boolean',
             'allow_weekend_work' => 'nullable|boolean',
             'allow_holiday_work' => 'nullable|boolean',
             'client_follows_timesheets' => 'nullable|boolean',

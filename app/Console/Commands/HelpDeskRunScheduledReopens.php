@@ -32,6 +32,7 @@ class HelpDeskRunScheduledReopens extends Command
 
         $count = 0;
         foreach ($due as $ticket) {
+            $em = HelpDeskStatus::forCompany($ticket->company_id, 'em_andamento') ?? $em; // status da EMPRESA do chamado
             $old = $ticket->status;
             $note = $ticket->reopen_scheduled_note;
 

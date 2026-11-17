@@ -41,6 +41,8 @@ class MovideskService
      * Fixa a empresa das próximas chamadas à API Movidesk — usado p/ importar/sincronizar uma
      * 2ª empresa (ex.: Bizify = 2) com o token dela, sem afetar a ERPSERV (que não seta e usa o global).
      */
+    public function currentCompany(): ?int { return $this->companyId; }
+
     public function forCompany(?int $companyId): static
     {
         $this->companyId = $companyId && $companyId > 0 ? $companyId : null;
@@ -110,7 +112,7 @@ class MovideskService
             $response = Http::timeout(12)->retry(2, 500)->get("{$this->baseUrl()}/tickets", [
                 'token'   => $this->token(),
                 'id'      => $ticketId,
-                '$expand' => 'customFieldValues($expand=items),clients($expand=organization),owner,actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email,profileType),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+                '$expand' => 'customFieldValues($expand=items),clients($expand=organization),owner,statusHistories($expand=changedBy($select=id,businessName,email,profileType)),actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email,profileType),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments,createdDate)',
             ]);
 
             if ($response->successful()) {
@@ -142,7 +144,7 @@ class MovideskService
         $response = Http::timeout(30)->get("{$this->baseUrl()}/tickets", [
             'token'   => $this->token(),
             'id'      => $ticketId,
-            '$expand' => 'actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments)',
+            '$expand' => 'actions($expand=timeAppointments($expand=createdBy),createdBy($select=id,businessName,email,profileType),attachments;$select=id,type,isPublic,htmlDescription,timeAppointments,attachments,createdDate)',
         ]);
 
         if (!$response->successful()) {
@@ -1692,6 +1694,8 @@ class MovideskService
      */
     public function addActions(int $ticketId, array $actions): bool
     {
+        // 🔒 Contas SECUNDÁRIAS (ex.: BIZIFY) são SÓ LEITURA no Movidesk: nunca escrevem.
+        if ($this->companyId && $this->companyId !== \App\Services\MovideskPushPolicy::primaryCompanyId()) { \Illuminate\Support\Facades\Log::warning('🔒 [MOVIDESK] escrita bloqueada p/ empresa ' . $this->companyId . ' (só leitura)', ['metodo' => __FUNCTION__]); return false; }
         if (empty($actions)) return true;
         try {
             $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&id=' . $ticketId;
@@ -1715,6 +1719,8 @@ class MovideskService
      */
     public function createTicket(array $payload): ?string
     {
+        // 🔒 Contas SECUNDÁRIAS (ex.: BIZIFY) são SÓ LEITURA no Movidesk: nunca escrevem.
+        if ($this->companyId && $this->companyId !== \App\Services\MovideskPushPolicy::primaryCompanyId()) { \Illuminate\Support\Facades\Log::warning('🔒 [MOVIDESK] escrita bloqueada p/ empresa ' . $this->companyId . ' (só leitura)', ['metodo' => __FUNCTION__]); return null; }
         try {
             $url = "{$this->baseUrl()}/tickets?token=" . urlencode($this->token()) . '&returnAllProperties=false';
             $response = Http::timeout(40)->withHeaders(['Content-Type' => 'application/json'])->post($url, $payload);
@@ -1737,6 +1743,8 @@ class MovideskService
      */
     public function uploadActionFiles(int $ticketId, int $actionId, array $files): bool
     {
+        // 🔒 Contas SECUNDÁRIAS (ex.: BIZIFY) são SÓ LEITURA no Movidesk: nunca escrevem.
+        if ($this->companyId && $this->companyId !== \App\Services\MovideskPushPolicy::primaryCompanyId()) { \Illuminate\Support\Facades\Log::warning('🔒 [MOVIDESK] escrita bloqueada p/ empresa ' . $this->companyId . ' (só leitura)', ['metodo' => __FUNCTION__]); return false; }
         if (empty($files)) return true;
         try {
             $req = Http::timeout(120);
@@ -1801,17 +1809,62 @@ class MovideskService
     }
 
     /** CRIA uma pessoa (contato cliente) no Movidesk, vinculada à organização. @return string|null id. */
-    public function createPerson(string $name, string $email, ?string $orgMovideskId): ?string
+    /**
+     * Departamentos (personType 4) filhos de uma organização + as PESSOAS de cada um (só leitura).
+     * @return array{deps: array<string,string>, people: list<array{id:string,name:string,email:string,active:bool,dep:?string}>}
+     *         deps = [movideskDepId => nome]; dep da pessoa = nome do departamento (null = raiz da org).
+     */
+    public function orgDepartmentsAndPeople(string $orgMovideskId, bool $withPeople = true): array
     {
+        $out = ['deps' => [], 'people' => []];
+        if (!$this->token()) return $out;
+        $get = function (array $q) {
+            $r = Http::timeout(90)->get($this->baseUrl() . '/persons', array_merge(['token' => $this->token()], $q));
+            if (!$r->ok()) throw new \RuntimeException('Movidesk persons ' . $r->status());
+            return (array) $r->json();
+        };
+        $orgQ = str_replace("'", "''", $orgMovideskId);
+        foreach ($get(['$select' => 'id,businessName,personType', '$filter' => "personType eq 4 and relationships/any(r: r/id eq '{$orgQ}')", '$top' => 500]) as $d) {
+            $out['deps'][(string) $d['id']] = trim((string) $d['businessName']);
+        }
+        if (!$withPeople) return $out;
+        $skip = 0;
+        do {
+            $ps = $get(['$select' => 'id,businessName,personType,isActive', '$expand' => 'emails,relationships',
+                '$filter' => "personType eq 1 and relationships/any(r: startswith(r/id, '{$orgQ}'))", '$top' => 500, '$skip' => $skip]);
+            foreach ($ps as $p) {
+                $rel = collect($p['relationships'] ?? [])->first(fn ($x) => str_starts_with((string) ($x['id'] ?? ''), $orgMovideskId));
+                $depId = str_contains((string) ($rel['id'] ?? ''), '/') ? substr((string) $rel['id'], strrpos((string) $rel['id'], '/') + 1) : null;
+                $out['people'][] = [
+                    'id' => (string) $p['id'], 'name' => (string) $p['businessName'], 'active' => (bool) ($p['isActive'] ?? true),
+                    'dep' => $depId ? ($out['deps'][$depId] ?? (str_contains((string) ($rel['name'] ?? ''), '/') ? trim(substr($rel['name'], strrpos($rel['name'], '/') + 1)) : null)) : null,
+                    'email' => mb_strtolower((string) (collect($p['emails'] ?? [])->sortByDesc('isDefault')->pluck('email')->first() ?? '')),
+                ];
+            }
+            $skip += 500;
+            if (count($ps) === 500) usleep(1300000);
+        } while (count($ps) === 500);
+        return $out;
+    }
+
+    public function createPerson(string $name, string $email, ?string $orgMovideskId, ?string $departmentMovideskId = null): ?string
+    {
+        // 🔒 Contas SECUNDÁRIAS (ex.: BIZIFY) são SÓ LEITURA no Movidesk: nunca escrevem.
+        if ($this->companyId && $this->companyId !== \App\Services\MovideskPushPolicy::primaryCompanyId()) { \Illuminate\Support\Facades\Log::warning('🔒 [MOVIDESK] escrita bloqueada p/ empresa ' . $this->companyId . ' (só leitura)', ['metodo' => __FUNCTION__]); return null; }
         try {
             $payload = [
                 'isActive' => true, 'personType' => 1, 'profileType' => 2,
                 'businessName' => mb_substr($name !== '' ? $name : $email, 0, 100),
                 'emails' => [['emailType' => 'Profissional', 'email' => $email, 'isDefault' => true]],
             ];
-            if ($orgMovideskId) { $payload['relationships'] = [['id' => $orgMovideskId, 'forceChildrenToHaveSomeAgreement' => false]]; }
+            if ($orgMovideskId) { $payload['relationships'] = [['id' => $departmentMovideskId ?: $orgMovideskId, 'forceChildrenToHaveSomeAgreement' => false]]; }
             $url = "{$this->baseUrl()}/persons?token=" . urlencode($this->token()) . '&returnAllProperties=false';
             $response = Http::timeout(30)->withHeaders(['Content-Type' => 'application/json'])->post($url, $payload);
+            if (!$response->successful() && $departmentMovideskId && $orgMovideskId) {
+                // Departamento recusado → cria na organização (raiz), como antes.
+                $payload['relationships'] = [['id' => $orgMovideskId, 'forceChildrenToHaveSomeAgreement' => false]];
+                $response = Http::timeout(30)->withHeaders(['Content-Type' => 'application/json'])->post($url, $payload);
+            }
             if (!$response->successful()) {
                 Log::warning('📤 [MOVIDESK WB] createPerson falhou', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
                 return null;
@@ -1845,6 +1898,8 @@ class MovideskService
 
     public function patchTicket(int $ticketId, array $payload): bool
     {
+        // 🔒 Contas SECUNDÁRIAS (ex.: BIZIFY) são SÓ LEITURA no Movidesk: nunca escrevem.
+        if ($this->companyId && $this->companyId !== \App\Services\MovideskPushPolicy::primaryCompanyId()) { \Illuminate\Support\Facades\Log::warning('🔒 [MOVIDESK] escrita bloqueada p/ empresa ' . $this->companyId . ' (só leitura)', ['metodo' => __FUNCTION__]); return false; }
         if (empty($payload)) return true;
         // Trava de segurança: nunca escrever ações/mensagens por aqui.
         unset($payload['actions']);

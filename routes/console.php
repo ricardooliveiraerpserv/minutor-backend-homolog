@@ -124,7 +124,11 @@ Schedule::command('conecta:sync')
 // try/catch: no BUILD (package:discover) não há DB → assume ligado, não quebra o build.
 try { $ticketSyncsOn = \App\Models\SystemSetting::get('movidesk_ticket_syncs_enabled', '1') !== '0'; }
 catch (\Throwable $e) { $ticketSyncsOn = true; }
-if ($ticketSyncsOn) {
+// Portal de Sustentação (portal-sync/sync-orgs/retry): flag PRÓPRIA — pós go-live do HD (16/11/2026)
+// fica OFF em prod; só a integração Promax (hd-import + cópia Minutor→Movidesk) segue ligada.
+try { $portalSyncsOn = \App\Models\SystemSetting::get('movidesk_portal_syncs_enabled', '1') !== '0'; }
+catch (\Throwable $e) { $portalSyncsOn = true; }
+if ($ticketSyncsOn && $portalSyncsOn) {
 
 // Slow-lane: tickets que falharam no sync principal (timeout 5s) são reprocessados
 // aqui de hora em hora via fetchTicketLight (timeout 30s, $expand mínimo).
@@ -153,6 +157,13 @@ Schedule::command('movidesk:sync-orgs')
   ->name('movidesk-sync-orgs')
   ->description('Sincroniza organizações do Movidesk e popula CNPJs nos tickets')
   ->withoutOverlapping(180)
+  ->runInBackground();
+
+// Departamentos Promax: Movidesk × Minutor (cria faltantes, preenche vazios, relata divergências)
+Schedule::command('movidesk:promax-departments')
+  ->dailyAt('06:40')
+  ->name('movidesk-promax-departments')
+  ->withoutOverlapping(60)
   ->runInBackground();
 
 } // ── fim dos syncs de TICKET/ORG (pausáveis via movidesk_ticket_syncs_enabled)
@@ -354,7 +365,7 @@ Schedule::command('movidesk:hd-import')
   ->cron('* * * * *') // a cada 1 min (Ricardo 15/11/2026: fluxo menor pós go-live; run ~30s, sem sobreposição)
   ->name('movidesk-hd-import')
   ->description('Espelha chamados Promax do Movidesk no Help Desk (entrada; read-only)')
-  ->withoutOverlapping(30)
+  ->withoutOverlapping(5) // trava expira em 5 min (run ~30s): processo morto não para a integração por 30 min
   ->runInBackground();
 // Contas Movidesk SECUNDÁRIAS (multi-empresa: config services.movidesk.tokens, ex.: BIZIFY=2) —
 // import automático com token e cursor próprios. Nelas a Promax é cliente comum (sem filtro de equipe).

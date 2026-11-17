@@ -26,7 +26,7 @@ class ClientRedactProjectFinancials
         // horas internas (coordenação, aportes, saldo, disponível, composição das vendidas)
         'consultant_hours', 'coordinator_hours', 'coordination_hours', 'coordination_consumed_hours',
         'total_contributions_hours', 'vendidas_projeto_hours', 'vendidas_aporte_hours',
-        'general_hours_balance', 'total_available_hours', 'allow_negative_balance', 'hour_contributions',
+        'general_hours_balance', 'total_available_hours', 'allow_negative_balance', 'allow_negative_via_ticket', 'hour_contributions',
         // custo / capacidade de consultores
         'rate_type', 'daily_hours', 'capacity_hours', 'allocated_hours', 'bank_hours_initial_balance',
         'salary', 'cost', 'cost_hour', 'custo', 'custo_hora', 'margin', 'margem', 'expected_cost', 'real_cost',

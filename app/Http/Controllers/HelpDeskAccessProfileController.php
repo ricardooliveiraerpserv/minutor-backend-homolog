@@ -182,6 +182,23 @@ class HelpDeskAccessProfileController extends Controller
         return response()->json(['data' => ['id' => $user->id, 'company_ids' => $ids]]);
     }
 
+    /**
+     * Empresas do HELP DESK do cliente (abas do portal), independentes das do Minutor (company_user).
+     * Lista vazia = volta a seguir as empresas do Minutor.
+     */
+    public function setHelpdeskCompanies(Request $request, User $user): JsonResponse
+    {
+        $v = $request->validate([
+            'company_ids'   => 'present|array',
+            'company_ids.*' => 'integer|exists:companies,id',
+        ]);
+        abort_unless($user->type === 'cliente', 422, 'Empresas do Help Desk se aplicam só a usuários de cliente.');
+        $ids = array_values(array_unique(array_map('intval', $v['company_ids'])));
+        $user->helpdesk_company_ids = $ids ?: null;
+        $user->save();
+        return response()->json(['data' => ['id' => $user->id, 'helpdesk_company_ids' => $user->helpdesk_company_ids]]);
+    }
+
     /** Atualização em massa: aplica um perfil de acesso a vários usuários de uma vez. */
     public function bulkSetAccessProfile(Request $request): JsonResponse
     {

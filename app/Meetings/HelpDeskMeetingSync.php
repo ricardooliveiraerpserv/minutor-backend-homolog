@@ -31,14 +31,25 @@ class HelpDeskMeetingSync
     {
         $ticket = $this->ticketFor($meeting);
         if (!$ticket) return;
-        // Não mexe em chamado encerrado/resolvido.
-        if (optional($ticket->status)->is_terminal || optional($ticket->status)->is_resolved) return;
+        // Teams sem link (conta Microsoft não conectada / falha) → a reunião é desfeita logo em seguida:
+        // NÃO posta interação nem manda e-mail ao cliente sem o link.
+        if ($this->semLink($meeting)) return;
 
-        $status = HelpDeskStatus::where('key', 'reuniao_agendada')->where('active', true)->first();
-        if (!$status) return;
-
-        // 1) Interação no corpo do chamado com os dados da reunião.
+        // 1) Interação no corpo do chamado com os dados da reunião — SEMPRE (inclusive chamado
+        //    resolvido/encerrado: a reunião aconteceu e precisa constar no histórico + e-mail ao cliente).
         $comment = $this->postInteraction($ticket, $meeting);
+
+        // Chamado ENCERRADO (fechado/cancelado): só registra a interação, não mexe em status/SLA.
+        if (optional($ticket->status)->is_terminal) {
+            $this->dispatchMeetingEmail($ticket, $comment, $meeting);
+            return;
+        }
+        // Resolvido → reunião agendada REABRE o atendimento (vai p/ "Reunião agendada" abaixo).
+
+        $status = HelpDeskStatus::where('key', 'reuniao_agendada')->where('active', true)
+            ->when($ticket->company_id, fn ($q) => $q->where('company_id', $ticket->company_id))->first()
+            ?: HelpDeskStatus::where('key', 'reuniao_agendada')->where('active', true)->first();
+        if (!$status) { $this->dispatchMeetingEmail($ticket, $comment, $meeting); return; }
 
         // 2) Reagendar sobre agendamento vigente: retoma antes (assa a pausa anterior no prazo).
         if ($ticket->sla_paused_at || $ticket->scheduled_until) {
@@ -85,10 +96,12 @@ class HelpDeskMeetingSync
     {
         $ticket = $this->ticketFor($meeting);
         if (!$ticket) return;
+        // Reunião que nunca teve link (Teams falhou) não foi anunciada → nada a cancelar no chamado.
+        if ($this->semLink($meeting)) return;
         // Só age se o chamado ainda está no status de reunião (não pisa em mudança manual posterior).
         if (optional($ticket->status)->key !== 'reuniao_agendada') return;
 
-        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        $em = HelpDeskStatus::forCompany($ticket->company_id, 'em_andamento');
 
         if ($ticket->sla_paused_at || $ticket->scheduled_until) {
             $this->sla->resumeSchedule($ticket);
@@ -116,6 +129,11 @@ class HelpDeskMeetingSync
 
         // E-mail de cancelamento pelo MESMO fluxo das interações (threaded) → cliente + participantes + criador.
         $this->dispatchMeetingEmail($ticket, $comment, $meeting);
+    }
+
+    private function semLink(Meeting $meeting): bool
+    {
+        return $meeting->provider === 'teams' && blank($meeting->join_url);
     }
 
     /** Corpo da interação de reunião CANCELADA — mesmo padrão do convite (assunto, quando) + nota do SLA. */

@@ -402,7 +402,9 @@ class HelpDeskEmailIngestor
      *  status de espera agendado, grava o snapshot p/ o botão "voltar ao status anterior com a data". */
     private function moveToEmAndamento(HelpDeskTicket $t): void
     {
-        $em = HelpDeskStatus::where('key', 'em_andamento')->first();
+        // Status da EMPRESA do chamado (sem o filtro de empresa ativa — senão um chamado BIZIFY recebia o status da ERPSERV).
+        $em = HelpDeskStatus::withoutGlobalScopes()->where('company_id', $t->company_id)->where('key', 'em_andamento')->where('active', true)->first()
+            ?? HelpDeskStatus::where('key', 'em_andamento')->first();
         if (!$em || $t->status_id === $em->id) return;
         $old = $t->status;
         $wasResolved = (bool) optional($old)->is_resolved;
@@ -499,7 +501,8 @@ class HelpDeskEmailIngestor
         if (!preg_match('/\[((?:[A-Za-z]{1,8}-)?\d{3,})\]/', $subject, $m)) return null;
         $q = fn () => HelpDeskTicket::withoutGlobalScopes()->whereNull('deleted_at')
             ->when($companyId, fn ($w) => $w->where(fn ($x) => $x->where('company_id', $companyId)->orWhere('origin_company_id', $companyId)));
-        $cands = $q()->whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->get();
+        // legacy_ticket_number: chamado Promax que adotou o número do Movidesk — e-mails antigos ainda trazem o número anterior.
+        $cands = $q()->where(fn ($w) => $w->whereRaw('upper(ticket_number) = ?', [strtoupper($m[1])])->orWhereRaw('upper(legacy_ticket_number) = ?', [strtoupper($m[1])]))->get();
         // Token legado "[BIZ-2790]" (antes de remover o prefixo) → procura o número cru.
         if ($cands->isEmpty() && preg_match('/^[A-Za-z]{1,8}-(\d+)$/', $m[1], $d)) {
             $cands = $q()->where('source_system', 'movidesk')->where('ticket_number', $d[1])->get();

@@ -145,7 +145,7 @@ class HelpDeskMergeService
                 //    'fechado') — fica evidente que saiu de circulação. O status original vai no log
                 //    (meta.source_status_id) e é restaurado no unmerge.
                 $srcStatusId = $src->status_id;
-                $closedId = \App\Models\HelpDeskStatus::where('key', 'fechado')->value('id');
+                $closedId = optional(\App\Models\HelpDeskStatus::forCompany($src->company_id, 'fechado'))->id;
                 $src->merged_into_id = $target->id;
                 if ($closedId && (int) $src->status_id !== (int) $closedId) {
                     HelpDeskTicketEvent::log($src->id, 'status_changed', ['from_value' => $srcStatusId, 'to_value' => $closedId]);
@@ -264,7 +264,7 @@ class HelpDeskMergeService
             $restoreStatusId = (int) data_get($log, 'meta.source_status_id');
             $status = $restoreStatusId ? \App\Models\HelpDeskStatus::find($restoreStatusId) : null;
             if (!$status || $status->is_terminal) {
-                $status = \App\Models\HelpDeskStatus::where('key', 'em_andamento')->first();
+                $status = \App\Models\HelpDeskStatus::forCompany($source->company_id, 'em_andamento');
             }
 
             $source->merged_into_id = null;

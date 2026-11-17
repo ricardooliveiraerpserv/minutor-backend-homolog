@@ -472,7 +472,7 @@ class FechamentoClienteController extends Controller
                 ->each(fn ($p) => $projects[$p->id] = $p);
         }
 
-        $timesheets = Timesheet::with('user:id,name')
+        $timesheets = Timesheet::with(['user:id,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
             ->select('timesheets.*', 'movidesk_tickets.titulo as ticket_titulo', 'movidesk_tickets.solicitante as ticket_solicitante')
             ->leftJoin('movidesk_tickets', 'movidesk_tickets.ticket_id', '=', 'timesheets.ticket')
             ->whereBetween('timesheets.date', [$from, $to])
@@ -532,6 +532,8 @@ class FechamentoClienteController extends Controller
                     'ticket'           => $t->ticket,
                     'titulo'           => $t->ticket_titulo,
                     'solicitante'      => $solicitante,
+                    'origem_cliente'   => $t->sourceCustomer?->name,
+                    'origem_projeto'   => $t->sourceProject ? trim(($t->sourceProject->code ? $t->sourceProject->code . ' ' : '') . $t->sourceProject->name) : null,
                     'observacao'       => $t->observation,
                     // Uplift já embutido nas horas acima — não expõe o fator separadamente.
                     'client_extra_pct' => null,
@@ -905,7 +907,7 @@ class FechamentoClienteController extends Controller
         // Apontamentos detalhados por projeto (se solicitado)
         $timesheetsByProject = [];
         if ($includeTimesheets) {
-            $allTs = Timesheet::with('user:id,name')
+            $allTs = Timesheet::with(['user:id,name', 'sourceCustomer:id,name', 'sourceProject:id,code,name'])
                 ->whereBetween('date', [$from, $to])
                 ->whereNotIn('status', $excludeStatuses)
                 ->whereNull('deleted_at')
@@ -920,6 +922,8 @@ class FechamentoClienteController extends Controller
                     'colaborador' => $t->user?->name ?? '—',
                     'horas'       => $t->billableHours(),
                     'ticket'      => $t->ticket,
+                    'origem_cliente' => $t->sourceCustomer?->name,
+                    'origem_projeto' => $t->sourceProject ? trim(($t->sourceProject->code ? $t->sourceProject->code . ' ' : '') . $t->sourceProject->name) : null,
                     'observacao'  => $t->observation,
                 ])->values()->toArray();
             }
@@ -1299,6 +1303,8 @@ class FechamentoClienteController extends Controller
                     'titulo'     => $titulo,
                     'horas'      => (float) ($ap['horas'] ?? 0),
                     'observacao' => $ap['observacao'] ?? null,
+                    'origem_cliente' => $ap['origem_cliente'] ?? null,
+                    'origem_projeto' => $ap['origem_projeto'] ?? null,
                 ];
             }
         }
@@ -1443,6 +1449,8 @@ class FechamentoClienteController extends Controller
             'horas_fmt'   => $this->fmtHoras((float) ($l['horas'] ?? 0)),
             'observacao'  => $l['observacao'] ?? null,
             'observacao_html' => $cleanObs($l['observacao'] ?? null),
+            'origem_cliente'  => $l['origem_cliente'] ?? null,
+            'origem_projeto'  => $l['origem_projeto'] ?? null,
         ];
 
         $grupos = [];
@@ -1666,6 +1674,7 @@ class FechamentoClienteController extends Controller
         ], $ticketSummary);
 
         return [
+            'temOrigem' => collect($rows)->contains(fn ($r) => !empty($r['origem_cliente'])), // ASISTO: colunas Cliente/Projeto de origem
             'clienteName'          => $customer->name,
             'periodo'              => $periodo,
             'logoDataUri'          => $logoDataUri,

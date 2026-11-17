@@ -50,6 +50,37 @@ class TimesheetTransferService
      * Aplica a regra num Timesheet EM MEMÓRIA (chamado no boot 'saving'). Move project/real/cliente.
      * Retorna true se moveu (os campos são alterados no modelo; a gravação é do caller).
      */
+    /**
+     * ASISTO (só ela — Ricardo 17/11/2026): o apontamento migrado para um projeto da ASISTO leva na
+     * OBSERVAÇÃO a origem — "Cliente · Projeto · Ticket" — para aparecer no fechamento, no portal do
+     * cliente (monitor) e em qualquer relatório que mostre a observação. Idempotente (marca [Origem]).
+     */
+    public static function isAsistoCustomer(?int $customerId): bool
+    {
+        static $cache = [];
+        if (! $customerId) return false;
+        return $cache[$customerId] ??= (bool) \App\Models\Customer::withoutGlobalScopes()
+            ->whereKey($customerId)->where('name', 'ilike', 'ASISTO%')->exists();
+    }
+
+    public static function stampOriginNote(Timesheet $ts): void
+    {
+        // DESLIGADO (Ricardo 17/11/2026): a origem NÃO vai na descrição — vai em COLUNAS próprias
+        // (origem_cliente / origem_projeto) no fechamento, monitor e Excel.
+        return;
+        if (! self::isAsistoCustomer($ts->customer_id ? (int) $ts->customer_id : null)) return;
+        if (! $ts->transfer_source_customer_id) return;
+        $obs = (string) ($ts->observation ?? '');
+        // Já carimbado → substitui a linha [Origem] (origem pode ter sido corrigida manualmente).
+        $obs = trim((string) preg_replace('/^\[Origem\][^\n]*\n?/u', '', $obs));
+        $cli  = \App\Models\Customer::withoutGlobalScopes()->find($ts->transfer_source_customer_id)?->name ?? '—';
+        $proj = $ts->transfer_source_project_id ? Project::withoutGlobalScopes()->find($ts->transfer_source_project_id) : null;
+        $projTxt = $proj ? trim(($proj->code ? $proj->code . ' ' : '') . $proj->name) : '—';
+        $ticket  = trim((string) ($ts->ticket ?? '')) ?: '—';
+        $note = "[Origem] Cliente: {$cli} · Projeto: {$projTxt} · Ticket: {$ticket}";
+        $ts->observation = $obs === '' ? $note : $note . "\n" . $obs;
+    }
+
     public function applyToModel(Timesheet $ts): bool
     {
         if (! $ts->customer_id || ! $ts->date) {
@@ -83,6 +114,7 @@ class TimesheetTransferService
         if ($target->customer_id) {
             $ts->customer_id = (int) $target->customer_id;
         }
+        self::stampOriginNote($ts);
         return true;
     }
 
@@ -148,6 +180,7 @@ class TimesheetTransferService
                 if ($target->customer_id) {
                     $ts->customer_id = (int) $target->customer_id;
                 }
+                self::stampOriginNote($ts);
                 $ts->save(); // dispara o boot (recalcula pct/company_id); o hook de regra é no-op (já no destino)
                 try {
                     TimesheetLog::create([

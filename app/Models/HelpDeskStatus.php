@@ -30,6 +30,17 @@ class HelpDeskStatus extends Model
     public function tickets(): HasMany { return $this->hasMany(HelpDeskTicket::class, 'status_id'); }
 
     /** Status inicial padrão de um ticket novo. */
+    /**
+     * Status (por chave) da EMPRESA DO CHAMADO — ignora a "empresa ativa" da sessão. Sem isso, ação
+     * feita com a ERPSERV ativa num chamado BIZIFY (aceite/recusa, reabertura…) gravava o status da
+     * ERPSERV. Fallback: o da empresa ativa (comportamento antigo).
+     */
+    public static function forCompany(?int $companyId, string $key): ?self
+    {
+        return ($companyId ? static::withoutGlobalScopes()->where('company_id', $companyId)->where('key', $key)->where('active', true)->first() : null)
+            ?? static::where('key', $key)->first();
+    }
+
     public static function default(): ?self
     {
         return static::where('is_default', true)->orderBy('sort_order')->first()

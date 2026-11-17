@@ -18,9 +18,23 @@ class AppNotification extends Model
     protected $fillable = [
         'title', 'message', 'type', 'priority', 'target_roles', 'target_users',
         'target_contract_types', 'target_bonds', 'excluded_user_ids', 'target_customer_id', 'target_customer_ids', 'send_email', 'visible',
-        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'guest_other_user_ids', 'version', 'created_by', 'expires_at',
+        'requires_ack', 'cta_label', 'cta_url', 'actions', 'allow_guests', 'guest_other_user_ids', 'version', 'created_by', 'expires_at', 'from_email',
         'recurrence', 'recurrence_value', 'recurrence_weekdays', 'last_fired_at', 'resent_at', 'is_template', 'template_name',
     ];
+
+    /** Vídeo opcional da publicação: o caminho fica oculto; o front recebe só o link ASSINADO. */
+    protected $hidden = ['video_path'];
+    protected $appends = ['video_url'];
+
+    public const VIDEO_DIR = 'notification-videos';
+
+    public function getVideoUrlAttribute(): ?string
+    {
+        if (empty($this->attributes['video_path'] ?? null)) return null;
+        return \Illuminate\Support\Facades\URL::temporarySignedRoute('notifications.video', now()->addHours(12), [
+            'notification' => $this->id, 'v' => substr(md5((string) $this->attributes['video_path']), 0, 8),
+        ]);
+    }
 
     protected $casts = [
         'target_roles'          => 'array',

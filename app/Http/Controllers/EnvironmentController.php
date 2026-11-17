@@ -539,6 +539,35 @@ class EnvironmentController extends Controller
     // ── Dashboard e busca ─────────────────────────────────────────────────────
 
     /** Indicadores do cofre (só sobre metadados CLARO; nunca toca segredos). */
+    /** Ambientes de clientes INATIVOS NO COFRE ficam fora de alertas/avisos. */
+    private function withoutVaultInactive($q)
+    {
+        $inactive = \Illuminate\Support\Facades\DB::table('customers')->where('vault_inactive', true)->pluck('id');
+        return $inactive->isEmpty() ? $q : $q->where(fn ($w) => $w->whereNull('customer_id')->orWhereNotIn('customer_id', $inactive));
+    }
+
+    /** IDs dos clientes inativados NO COFRE (aba "Inativos" junto com os inativos do cadastro). */
+    public function vaultInactive(Request $request): JsonResponse
+    {
+        $this->guardInternal($request);
+        return response()->json(['data' => \Illuminate\Support\Facades\DB::table('customers')->where('vault_inactive', true)->pluck('id')]);
+    }
+
+    /** Inativa/reativa o cliente SÓ NO COFRE (admin do cofre). Não altera o cadastro de clientes. */
+    public function setVaultStatus(Request $request, int $customerId): JsonResponse
+    {
+        $user = $this->guardInternal($request);
+        abort_unless($user->type === 'admin' || $user->hasAccess('environments.admin'), 403, 'Apenas o admin do cofre pode inativar clientes no cofre.');
+        $v = $request->validate(['inactive' => 'required|boolean']);
+        $n = \Illuminate\Support\Facades\DB::table('customers')->where('id', $customerId)->update([
+            'vault_inactive'    => $v['inactive'],
+            'vault_inactive_at' => $v['inactive'] ? now() : null,
+            'vault_inactive_by' => $v['inactive'] ? $user->id : null,
+        ]);
+        abort_unless($n > 0, 404);
+        return response()->json(['data' => ['customer_id' => $customerId, 'vault_inactive' => (bool) $v['inactive']]]);
+    }
+
     public function dashboard(Request $request): JsonResponse
     {
         $user = $this->guardInternal($request);
@@ -552,7 +581,8 @@ class EnvironmentController extends Controller
             + \App\Models\EnvVpn::whereIn('environment_id', $envIds)->where('critical', true)->count()
             + \App\Models\EnvCertificate::whereIn('environment_id', $envIds)->where('critical', true)->count();
 
-        $certsVencendo = \App\Models\EnvCertificate::whereIn('environment_id', $envIds)
+        $activeEnvIds = $this->withoutVaultInactive(EnvEnvironment::whereIn('id', $envIds))->pluck('id');
+        $certsVencendo = \App\Models\EnvCertificate::whereIn('environment_id', $activeEnvIds)
             ->whereNotNull('valid_to')
             ->whereBetween('valid_to', [now()->startOfDay(), now()->addDays(30)])
             ->count();
@@ -587,7 +617,7 @@ class EnvironmentController extends Controller
         $limit = now()->addDays($days)->endOfDay();
 
         $vaultIds = VaultMember::where('user_id', $user->id)->pluck('vault_id');
-        $envIds = EnvEnvironment::whereIn('vault_id', $vaultIds)->pluck('id');
+        $envIds = $this->withoutVaultInactive(EnvEnvironment::whereIn('vault_id', $vaultIds))->pluck('id');
 
         $certificates = \App\Models\EnvCertificate::with('environment:id,name,customer_id', 'environment.customer:id,name')
             ->whereIn('environment_id', $envIds)

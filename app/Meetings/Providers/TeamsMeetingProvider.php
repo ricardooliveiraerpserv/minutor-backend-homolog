@@ -89,6 +89,35 @@ class TeamsMeetingProvider implements MeetingProvider
         ];
     }
 
+    /**
+     * Reenviar convite: garante todos os participantes do Minutor como convidados do evento e
+     * ENCAMINHA o convite aos escolhidos ($emails vazio = todos). Retorna ['ok'=>bool,'sent'=>int,'error'=>?string].
+     */
+    public function resendInvites(Meeting $meeting, array $emails = []): array
+    {
+        if (!self::enabled()) return ['ok' => false, 'sent' => 0, 'error' => 'Integração com o Teams desligada.'];
+        $token = $this->tokenFor($meeting);
+        if (!$token) return ['ok' => false, 'sent' => 0, 'error' => 'O organizador não tem a conta Microsoft conectada ao Minutor.'];
+        $meeting->loadMissing('participantRows');
+        $payload = $this->payload($meeting);
+        $eventId = data_get($meeting->provider_data, 'event_id') ?: $meeting->external_meeting_id;
+        $found = MicrosoftCalendarService::findEvent($token, $payload['subject'], Carbon::parse($meeting->starts_at), Carbon::parse($meeting->ends_at))['found'] ?? null;
+        if ($found) { $this->syncAttendees($token, $found, $payload['attendees']); $eventId = $found['id'] ?? $eventId; }
+        if (!$eventId) return ['ok' => false, 'sent' => 0, 'error' => 'Evento não encontrado na agenda do organizador.'];
+
+        $want = array_map(fn ($e) => mb_strtolower(trim((string) $e)), $emails);
+        $to = collect($payload['attendees'])
+            ->map(fn ($a) => ['email' => (string) data_get($a, 'emailAddress.address'), 'name' => data_get($a, 'emailAddress.name')])
+            ->filter(fn ($p) => $p['email'] !== '' && (!$want || in_array(mb_strtolower($p['email']), $want, true)))
+            ->unique(fn ($p) => mb_strtolower($p['email']))->values();
+        if ($to->isEmpty()) return ['ok' => false, 'sent' => 0, 'error' => 'Nenhum participante com e-mail para reenviar.'];
+        $sent = 0;
+        foreach ($to->chunk(20) as $chunk) {
+            if (MicrosoftCalendarService::forwardEvent($token, $eventId, $chunk->values()->all(), 'Reenvio do convite da reunião.')) $sent += $chunk->count();
+        }
+        return ['ok' => $sent > 0, 'sent' => $sent, 'error' => $sent > 0 ? null : (MicrosoftCalendarService::$lastError['message'] ?? 'A Microsoft recusou o reenvio.')];
+    }
+
     /** Reaproveitando um evento: inclui quem ainda não está convidado (best-effort, não bloqueia). */
     private function syncAttendees(string $token, array $ev, array $attendees): void
     {

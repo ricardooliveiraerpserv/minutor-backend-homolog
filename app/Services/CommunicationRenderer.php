@@ -66,6 +66,7 @@ class CommunicationRenderer
             . self::benefitsIcons($s, $color)
             . self::ctaCentered($s, $color)
             . self::authority($s['autoridade'] ?? '', $color)
+            . self::videoRow($s, $color)
             . self::signatureSection($s["signature"] ?? null, $logo)
             . self::footerRow();
     }
@@ -81,6 +82,7 @@ class CommunicationRenderer
             . self::labeledLine('Prazo', $s['prazo'] ?? '', $color)
             . self::labeledRich('Ação esperada', $s['acao_esperada'] ?? '', $color)
             . self::labeledLine('Contato', $s['contato'] ?? '', $color)
+            . self::videoRow($s, $color)
             . self::signatureSection($s["signature"] ?? null, $logo)
             . self::footerRow();
     }
@@ -92,6 +94,7 @@ class CommunicationRenderer
             . self::richBlock($s['content'] ?? '', '6px 36px 6px', 15)
             . self::labeledLine('Data/Hora', $s['datahora'] ?? '', $color)
             . self::labeledLine('Observação', $s['observacao'] ?? '', $color)
+            . self::videoRow($s, $color)
             . self::signatureSection($s["signature"] ?? null, $logo)
             . self::footerRow();
     }
@@ -185,6 +188,19 @@ class CommunicationRenderer
             . '</td></tr></table></td></tr>';
     }
 
+    /** Aviso de vídeo: o vídeo não vai no e-mail — botão leva ao Minutor, onde ele toca. */
+    private static function videoRow(array $s, string $color): string
+    {
+        if (empty($s['video'])) return '';
+        $url = rtrim((string) config('app.frontend_url', config('app.url', '')), '/') . '/';
+        return '<tr><td class="px" style="padding:10px 36px 18px">'
+            . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:' . self::SOFT . ';border-radius:10px"><tr>'
+            . '<td style="padding:16px 18px;font-size:14px;line-height:1.5;color:#1f2937">'
+            . '<div style="font-weight:700;margin-bottom:10px">&#127916; Este comunicado tem um vídeo</div>'
+            . '<a href="' . e($url) . '" target="_blank" style="display:inline-block;padding:11px 24px;font-size:14px;font-weight:700;color:#ffffff;background:' . $color . ';border-radius:8px;text-decoration:none">&#9654; Assistir ao vídeo no Minutor</a>'
+            . '</td></tr></table></td></tr>';
+    }
+
     /** Assinatura padrão ERPSERV (já resolvida pelo controller: do usuário ou da empresa). */
     private static function signatureSection(?array $sig, string $headerLogo): string
     {
@@ -262,6 +278,9 @@ class CommunicationRenderer
             $out .= $line('Data/Hora', $s['datahora'] ?? '');
             $out .= $line('Observação', $s['observacao'] ?? '');
         }
+
+        // Lugar do vídeo no corpo (antes da assinatura) — o FE troca o marcador pelo player.
+        if (!empty($s['video'])) $out .= '<!--MINUTOR_VIDEO-->';
 
         $sig = $s['signature'] ?? null;
         if (is_array($sig) && SignatureRenderer::hasData($sig)) {

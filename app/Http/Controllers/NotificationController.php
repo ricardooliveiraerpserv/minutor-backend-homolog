@@ -235,7 +235,7 @@ class NotificationController extends Controller
         $rows = $this->clientVisibleQuery($u)
             ->orderByDesc('created_at')
             ->limit(50)
-            ->get(['id', 'title', 'message', 'type', 'priority', 'requires_ack', 'version', 'cta_label', 'cta_url', 'created_at']);
+            ->get(['id', 'title', 'message', 'type', 'priority', 'requires_ack', 'version', 'cta_label', 'cta_url', 'created_at', 'video_path']);
 
         $reads = NotificationRead::where('user_id', $u->id)
             ->whereIn('notification_id', $rows->pluck('id'))->get()->keyBy('notification_id');
@@ -253,6 +253,7 @@ class NotificationController extends Controller
                 'requires_ack' => (bool) $n->requires_ack,
                 'cta_label'    => $n->cta_label,
                 'cta_url'      => $n->cta_url,
+                'video_url'    => $n->video_url,
                 'created_at'   => $n->created_at?->toIso8601String(),
                 'viewed'       => $viewed,
                 'acked'        => $acked,
@@ -468,13 +469,17 @@ class NotificationController extends Controller
         $pollVoterIds = $isPoll && $notification->poll
             ? array_map('intval', \App\Models\NotificationPollVote::where('poll_id', $notification->poll->id)->distinct()->pluck('user_id')->all())
             : [];
-        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds, $isSurvey, $isPoll, $pollVoterIds) {
+        // Cliente (empresa) de cada destinatário — filtro "Cliente" no log.
+        $custOf = \App\Models\User::whereIn('id', $recipients->pluck('id'))->whereNotNull('customer_id')->pluck('customer_id', 'id');
+        $custNames = \App\Models\Customer::withoutGlobalScopes()->whereIn('id', $custOf->unique()->values())->pluck('name', 'id');
+        $rows = $recipients->map(function ($usr) use ($reads, $guestsByUser, $cancelledIds, $otherIds, $isSurvey, $isPoll, $pollVoterIds, $custOf, $custNames) {
             $r = $reads->get($usr->id);
             $cancelled = in_array((int) $usr->id, $cancelledIds, true);
             return [
                 'user_id'      => $usr->id,
                 'user_name'    => $usr->name,
                 'user_email'   => $usr->email,
+                'customer'     => $custNames->get($custOf->get($usr->id)),
                 'cancelled'    => $cancelled, // convite cancelado (não recebe)
                 'can_invite_other' => in_array((int) $usr->id, $otherIds, true), // pode indicar "Outro"
                 'survey_responded' => $isSurvey && !$cancelled && $r && $r->ack_at ? true : false, // respondeu a pesquisa
@@ -692,8 +697,7 @@ class NotificationController extends Controller
         if (!$n->send_email || !\App\Services\GraphMailSender::enabled() || empty($n->actions) || !filled($u->email)) {
             return false;
         }
-        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
-            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        $from = \App\Services\SenderMailbox::forRecord($n->from_email ?? null); // remetente escolhido no formulário (fallback: não-responder)
         if (!$from) {
             return false;
         }
@@ -701,7 +705,7 @@ class NotificationController extends Controller
         $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
         $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
         [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-        [$ok] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+        [$ok] = \App\Services\SenderMailbox::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
         return (bool) $ok;
     }
 
@@ -764,9 +768,14 @@ class NotificationController extends Controller
                         ->whereHas('reads', fn ($r) => $r->where('user_id', $admin->id));
                 });
             })
-            ->orderByDesc('created_at')->get()
-            ->map(function (AppNotification $n) use ($admin) {
+            ->orderByDesc('created_at')->get();
+        $meetingsByPub = \App\Models\Meeting::where('origin_type', 'AGENDA')->whereIn('origin_id', $rows->pluck('id'))
+            ->where('provider', 'teams')->where('status', '!=', 'canceled')->get()->keyBy('origin_id');
+        $rows = $rows
+            ->map(function (AppNotification $n) use ($admin, $meetingsByPub) {
                 $arr = $n->toArray();
+                $mt = $meetingsByPub[$n->id] ?? null;
+                $arr['meeting'] = $mt ? ['id' => $mt->id, 'starts_at' => $mt->starts_at?->toIso8601String(), 'status' => $mt->status, 'join_url' => $mt->join_url] : null;
                 $arr['poll'] = $n->type === 'poll' && $n->poll
                     ? \App\Http\Controllers\NotificationPollController::results($n->poll, $admin)
                     : null;
@@ -794,6 +803,7 @@ class NotificationController extends Controller
     {
         $this->authorizeOwnOrAdmin($request->user(), $notification);
         $v = $this->validatePayload($request, false);
+        if (array_key_exists('from_email', $v)) $v['from_email'] = \App\Services\SenderMailbox::resolve($request->user(), $v['from_email']);
         $pollPayload = $v['poll'] ?? null;
         $surveyPayload = $v['survey'] ?? null;
         unset($v['poll'], $v['survey']);
@@ -806,6 +816,7 @@ class NotificationController extends Controller
             if ($notification->type === 'poll' && $pollPayload) $this->savePoll($notification, $pollPayload);
             if ($notification->type === 'survey' && $surveyPayload) $this->saveSurvey($notification, $surveyPayload);
         });
+        $this->applyVideo($request, $notification);
         return response()->json(['data' => $notification->fresh('poll.options')]);
     }
 
@@ -869,8 +880,7 @@ class NotificationController extends Controller
     public function emailNotificationToUser(AppNotification $n, \App\Models\User $u): bool
     {
         if ($n->is_template || !$n->send_email || !\App\Services\GraphMailSender::enabled() || !filled($u->email)) return false;
-        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
-            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        $from = \App\Services\SenderMailbox::forRecord($n->from_email ?? null); // remetente escolhido no formulário (fallback: não-responder)
         if (!$from) return false;
         $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
 
@@ -887,7 +897,7 @@ class NotificationController extends Controller
         }
         $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
         [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-        [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+        [$ok, $err] = \App\Services\SenderMailbox::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
         if (!$ok) {
             \Illuminate\Support\Facades\Log::warning('Falha ao reenviar e-mail por usuário (Graph)', ['notification_id' => $n->id, 'to' => $u->email, 'erro' => $err]);
             return false;
@@ -935,6 +945,7 @@ class NotificationController extends Controller
         $v['message'] = $v['message'] ?? '';
         $v['expires_at'] = $this->normalizeExpiry($v['expires_at'] ?? null);
         $v['created_by'] = $u->id;
+        $v['from_email'] = \App\Services\SenderMailbox::resolve($u, $v['from_email'] ?? null);
 
         $n = \Illuminate\Support\Facades\DB::transaction(function () use ($v, $pollPayload, $surveyPayload) {
             $n = AppNotification::create($v);
@@ -947,6 +958,11 @@ class NotificationController extends Controller
             return $n;
         });
 
+        $this->applyVideo($request, $n);
+        // Reunião do Teams criada junto com a publicação → vincula (origem) p/ o "Reenviar convite".
+        if ($mid = (int) $request->input('meeting_id')) {
+            \App\Models\Meeting::where('id', $mid)->where('origin_type', 'AGENDA')->whereNull('origin_id')->update(['origin_id' => $n->id]);
+        }
         $emailed = $this->emailNotification($n->fresh('poll.options'));   // toda comunicação vai por e-mail tb
         return response()->json(['data' => array_merge($n->fresh('poll.options')->toArray(), ['emailed' => $emailed])], 201);
     }
@@ -1067,6 +1083,7 @@ class NotificationController extends Controller
             'guest_other_user_ids.*' => 'integer',
             'version'      => 'nullable|integer|min:1',
             'expires_at'   => 'nullable|date',
+            'from_email'   => 'nullable|email|max:190', // remetente escolhido (validado em SenderMailbox::resolve)
             // Enquete (quando type=poll)
             'poll'                    => ($creating && $isPoll ? 'required' : 'nullable') . '|array',
             'poll.question'           => ($creating && $isPoll ? 'required' : 'nullable') . '|string|max:300',
@@ -1120,8 +1137,7 @@ class NotificationController extends Controller
         if ($n->is_template) return 0;  // modelo não dispara nada
         if (!$n->send_email || !\App\Services\GraphMailSender::enabled()) return 0;
         // Notificações saem do NOREPLY (config do mailbox Graph → MAIL_FROM_ADDRESS=noreply); HelpDeskEmailAccount só fallback.
-        $from = config('services.graph.mailbox', env('GRAPH_MAILBOX', env('MAIL_FROM_ADDRESS')))
-            ?: \App\Models\HelpDeskEmailAccount::where('provider', 'microsoft365')->where('enabled', true)->orderBy('id')->value('email');
+        $from = \App\Services\SenderMailbox::forRecord($n->from_email ?? null); // remetente escolhido no formulário (fallback: não-responder)
         if (!$from) return 0;
 
         $inlineBase = \App\Services\HelpDeskMailComposer::inlineAssetsSimple();
@@ -1142,7 +1158,7 @@ class NotificationController extends Controller
                 $body = (trim((string) $n->message) !== '' ? '<p style="margin:0 0 10px">' . $n->message . '</p>' : '') . $btn;
                 $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
                 [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-                [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+                [$ok, $err] = \App\Services\SenderMailbox::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
                 if ($ok) $sent++;
                 else \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de pesquisa (Graph)', ['notification_id' => $n->id, 'to' => $u->email, 'erro' => $err]);
             }
@@ -1164,7 +1180,7 @@ class NotificationController extends Controller
                 $body = $this->emailBody($n) . $this->actionButtonsHtml($n, $u);
                 $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $body);
                 [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-                [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
+                [$ok, $err] = \App\Services\SenderMailbox::sendAs($from, [$u->email], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, []);
                 if ($ok) {
                     $sent++;
                 } else {
@@ -1185,7 +1201,7 @@ class NotificationController extends Controller
         if (empty($emails)) return 0;
         $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $this->emailBody($n));
         [$html, $imgAtts] = \App\Services\HelpDeskMailComposer::inlineImages($html);
-        [$ok, $err] = \App\Services\GraphMailSender::sendAs($from, [$from], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, $emails);
+        [$ok, $err] = \App\Services\SenderMailbox::sendAs($from, [$from], [], $n->title, $html, [], array_merge($inlineBase, $imgAtts), false, $emails);
         if (!$ok) {
             \Illuminate\Support\Facades\Log::warning('Falha ao enviar e-mail de publicação (Graph, BCC)', [
                 'notification_id' => $n->id, 'bcc_count' => count($emails), 'from' => $from, 'erro' => $err,
@@ -1420,6 +1436,77 @@ HTML;
     }
 
     /** Corpo do e-mail: mensagem da notificação ou, em enquete, pergunta + opções + chamada p/ votar. */
+    /** Upload do vídeo em partes (8 MB): append sequencial em notification-videos/_tmp/{id}.part. */
+    public function videoChunk(Request $request): JsonResponse
+    {
+        abort_unless($this->canManage($request->user()), 403);
+        $data = $request->validate([
+            'upload_id' => ['required', 'string', 'regex:/^[A-Za-z0-9-]{8,64}$/'],
+            'offset'    => 'required|integer|min:0',
+            'chunk'     => 'required|file|max:20480',
+        ]);
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+        $disk->makeDirectory(AppNotification::VIDEO_DIR . '/_tmp');
+        $abs = $disk->path(AppNotification::VIDEO_DIR . '/_tmp/' . $data['upload_id'] . '.part');
+        $size = file_exists($abs) ? filesize($abs) : 0;
+        if ((int) $data['offset'] === $size) {
+            if ($size + $request->file('chunk')->getSize() > 500 * 1048576) {
+                return response()->json(['message' => 'Vídeo acima de 500 MB.'], 422);
+            }
+            $in = fopen($request->file('chunk')->getRealPath(), 'rb'); $out = fopen($abs, 'ab');
+            stream_copy_to_stream($in, $out); fclose($in); fclose($out);
+            clearstatcache(true, $abs); $size = filesize($abs);
+        } elseif ((int) $data['offset'] > $size) {
+            return response()->json(['message' => 'Parte fora de ordem.', 'size' => $size], 409);
+        }
+        return response()->json(['size' => $size]);
+    }
+
+    /** Aplica o vídeo da requisição (video_upload_id + video_name) ou remove (remove_video=1). */
+    private function applyVideo(Request $request, AppNotification $n): void
+    {
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+        $old = $n->getAttributes()['video_path'] ?? null;
+        $uid = (string) $request->input('video_upload_id', '');
+        if ($uid !== '' && preg_match('/^[A-Za-z0-9-]{8,64}$/', $uid)) {
+            $src = $disk->path(AppNotification::VIDEO_DIR . '/_tmp/' . $uid . '.part');
+            if (!file_exists($src) || filesize($src) === 0) abort(422, 'Upload do vídeo não encontrado — envie o arquivo novamente.');
+            $name = mb_substr((string) $request->input('video_name', 'video.mp4'), 0, 255);
+            $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION)) ?: 'mp4';
+            if (!in_array($ext, ['mp4', 'webm', 'mov', 'm4v'], true)) $ext = 'mp4';
+            $rel = AppNotification::VIDEO_DIR . '/' . $n->id . '_' . \Illuminate\Support\Str::random(8) . '.' . $ext;
+            $dest = $disk->path($rel);
+            if (!@rename($src, $dest)) { copy($src, $dest); @unlink($src); }
+            // MP4 com o índice (moov) no fim não começa a tocar no navegador → reorganiza.
+            if (in_array($ext, ['mp4', 'm4v', 'mov'], true)) {
+                $tmp = $dest . '.fs';
+                try { if (\App\Support\Mp4FastStart::process($dest, $tmp)) rename($tmp, $dest); } catch (\Throwable) {}
+                if (file_exists($tmp)) @unlink($tmp);
+            }
+            @chmod($dest, 0644);
+            $n->forceFill(['video_path' => $rel, 'video_name' => $name, 'video_size' => filesize($dest)])->save();
+            if ($old && $old !== $rel) $disk->delete($old);
+        } elseif ($request->boolean('remove_video') && $old) {
+            $n->forceFill(['video_path' => null, 'video_name' => null, 'video_size' => null])->save();
+            $disk->delete($old);
+        }
+    }
+
+    /** Stream do vídeo (link ASSINADO — <video> não manda Bearer). Range suportado (response()->file). */
+    public function video(Request $request, int $notification)
+    {
+        $n = AppNotification::withoutGlobalScopes()->find($notification);
+        $path = $n ? ($n->getAttributes()['video_path'] ?? null) : null;
+        $disk = \Illuminate\Support\Facades\Storage::disk('local');
+        if (!$path || !$disk->exists($path)) abort(404);
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        return response()->file($disk->path($path), [
+            'Content-Type'  => match ($ext) { 'webm' => 'video/webm', 'mov' => 'video/quicktime', default => 'video/mp4' },
+            'Cache-Control' => 'private, max-age=21600',
+            'Accept-Ranges' => 'bytes',
+        ]);
+    }
+
     private function emailBody(AppNotification $n, ?array $pollPayload = null): string
     {
         if ($n->type !== 'poll') {
@@ -1435,6 +1522,13 @@ HTML;
                 $msg .= '<div style="margin:18px 0 4px"><a href="' . e($url) . '" target="_blank" '
                     . 'style="display:inline-block;padding:12px 28px;font-size:14px;font-weight:700;color:#ffffff;background:#7c3aed;border-radius:8px;text-decoration:none">'
                     . e($n->cta_label) . '</a></div>';
+            }
+            // Vídeo não toca em e-mail → botão que abre o Minutor (a publicação mostra o player).
+            if (!empty($n->getAttributes()['video_path'] ?? null)) {
+                $app = rtrim((string) config('app.frontend_url', config('app.url', '')), '/');
+                $msg .= '<div style="margin:18px 0 4px;padding:14px 16px;border:1px solid #e9e3f7;border-radius:10px;background:#faf8ff">'
+                    . '<div style="font-size:14px;color:#374151;margin:0 0 10px">🎬 Esta publicação tem um <b>vídeo</b>.</div>'
+                    . '<a href="' . e($app . '/') . '" target="_blank" style="display:inline-block;padding:11px 24px;font-size:14px;font-weight:700;color:#ffffff;background:#7c3aed;border-radius:8px;text-decoration:none">▶ Assistir ao vídeo no Minutor</a></div>';
             }
             return $msg;
         }
@@ -1464,6 +1558,34 @@ HTML;
         $n = new AppNotification($v);
         $html = \App\Services\HelpDeskMailComposer::composeSimple($n->title, $this->emailBody($n, $pollPayload), \App\Services\HelpDeskMailFooter::logoDataUri());
         return response()->json(['data' => ['html' => $html, 'recipients' => count($this->resolveRecipientEmails($n))]]);
+    }
+
+    /**
+     * Pessoas (id/nome/e-mail) que a publicação atinge — GRUPOS (perfis/vínculos/contratação/cliente)
+     * + selecionados − retirados. Base do convite do Teams (antes o convite só levava os selecionados
+     * individualmente e ignorava quem vinha pelos grupos). Só usuários ATIVOS e com e-mail.
+     */
+    public function recipientUsers(Request $request): JsonResponse
+    {
+        abort_unless($this->canManage($request->user()), 403);
+        $v = $this->validatePayload($request, true);
+        unset($v['poll']);
+        $n = new AppNotification($v);
+        $rows = $this->resolveRecipientUsers($n)
+            ->filter(fn ($u) => !empty($u->email))
+            ->values();
+        $enabled = \App\Models\User::whereIn('id', $rows->pluck('id'))->where('enabled', true)->pluck('id')->flip();
+        $rows = $rows->filter(fn ($u) => isset($enabled[$u->id]))
+            ->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'email' => $u->email])->values();
+        return response()->json(['data' => $rows]);
+    }
+
+    /** Público ATIVO com e-mail de uma publicação salva (usado pelo reenvio de convite da reunião). */
+    public function audienceUsers(AppNotification $n)
+    {
+        $rows = $this->resolveRecipientUsers($n)->filter(fn ($u) => !empty($u->email))->values();
+        $enabled = \App\Models\User::whereIn('id', $rows->pluck('id'))->where('enabled', true)->pluck('id')->flip();
+        return $rows->filter(fn ($u) => isset($enabled[$u->id]))->values();
     }
 
     /** Metadados p/ o form: tipos de contratação + clientes (select). */

@@ -69,12 +69,22 @@ class TrainingVideo extends Model
         if ($profiles || $hdPerms) {
             $byProfile = $profiles && array_intersect($profiles, $user->configuradorProfileKeys());
             $byHd = false;
-            foreach ($hdPerms as $perm) { if (self::userHasHdPermission($user, $perm)) { $byHd = true; break; } }
+            foreach ($hdPerms as $perm) {
+                // 'hd:admin' = administrador do Help Desk (perfil de acesso "Administradores…").
+                if ($perm === 'admin' ? $user->isHelpDeskAdmin() : self::userHasHdPermission($user, $perm)) { $byHd = true; break; }
+            }
             if (!$byProfile && !$byHd) return false;
         }
         // Restrições extras (vídeo exclusivo de um cliente, ex.: Indicadores da AUSTER):
         // 'customer:ID' → só usuários desse cliente; 'cliente_gestor' → só o Gestor do cliente.
         if ($customers && !in_array((int) $user->customer_id, $customers, true)) return false;
+        // 'empresa:slug' → só quem está com essa EMPRESA ativa (versões ERPSERV × BIZIFY do mesmo vídeo).
+        $empresas = array_values(array_filter(array_map(fn ($t) => preg_match('/^empresa:([a-z0-9_-]+)$/', (string) $t, $m) ? $m[1] : null, (array) ($this->audiences ?? []))));
+        if ($empresas) {
+            $cid  = (int) ($user->current_company_id ?: ($user->companies()->orderBy('companies.id')->value('companies.id') ?? 0));
+            $slug = $cid ? \App\Models\Company::whereKey($cid)->value('slug') : null;
+            if (!$slug || !in_array(strtolower((string) $slug), $empresas, true)) return false;
+        }
         if ($managerOnly && $user->type === 'cliente' && !$user->is_customer_manager) return false;
         return true;
     }
@@ -83,6 +93,7 @@ class TrainingVideo extends Model
     public static function isRestrictionToken(string $t): bool
     {
         return $t === 'cliente_gestor' || (bool) preg_match('/^customer:\d+$/', $t)
+            || (bool) preg_match('/^empresa:[a-z0-9_-]+$/', $t)
             || (bool) preg_match('/^hd:[a-z_.]+$/', $t);
     }
 
@@ -95,6 +106,7 @@ class TrainingVideo extends Model
             if ($t === 'cliente_gestor') { $manager = true; continue; }
             if (preg_match('/^customer:(\d+)$/', $t, $m)) { $customers[] = (int) $m[1]; continue; }
             if (preg_match('/^hd:([a-z_.]+)$/', $t, $m)) { $hd[] = $m[1]; continue; }
+            if (preg_match('/^empresa:/', $t)) continue; // tratado no visibleTo
             $profiles[] = $t;
         }
         return [$profiles, $customers, $manager, $hd];

@@ -38,17 +38,41 @@ class HelpDeskTriggerEngine
 
     public static function dispatch(string $event, HelpDeskTicket $ticket, array $context = []): void
     {
+        // Chamado Promax que vai ganhar CÓPIA no Movidesk: a confirmação ("chamado criado") ESPERA a
+        // cópia — o chamado adota o número do Movidesk e o cliente já recebe o número final.
+        if ($event === 'ticket_created' && empty($context['_copy_ready'])
+            && \App\Services\MovideskPromaxCopyService::shouldDeferCreated($ticket)) {
+            \App\Models\HelpDeskTicket::withoutGlobalScopes()->where('id', $ticket->id)->update(['deferred_created_context' => json_encode($context)]);
+            return;
+        }
         $triggers = HelpDeskTrigger::where('enabled', true)->where('event', $event)
             ->orderBy('run_order')->orderBy('id')->get();
+
+        // Chamado da Promax COM A EQUIPE PROMAX no Movidesk: na criação só sai o que é p/ o CLIENTE
+        // (a equipe da ERPSERV não é avisada de triagem). Quando a Promax transferir p/ nós, o
+        // "chamado criado" é refeito só p/ a equipe (_only_team).
+        $promaxHeld = $event === 'ticket_created' && $ticket->movidesk_copy_id
+            && \App\Services\MovideskPushPolicy::isPromaxTeam($ticket->external_owner_team);
+        $onlyTeam = $event === 'ticket_created' && !empty($context['_only_team']);
 
         foreach ($triggers as $trigger) {
             try {
                 if (!self::matches($trigger, $ticket, $context)) continue;
                 // idle_in_status: não refaz a ação enquanto não houver nova atividade no chamado.
                 if ($event === 'idle_in_status' && self::alreadyFiredSinceActivity($trigger, $ticket)) continue;
+                $ran = false;
                 foreach ((array) $trigger->actions as $action) {
-                    self::runAction($trigger, (array) $action, $ticket, $context);
+                    $action = (array) $action;
+                    if (($promaxHeld || $onlyTeam) && ($action['type'] ?? '') === 'send_email') {
+                        $to = (array) ($action['params']['to'] ?? []);
+                        $to = array_values(array_filter($to, fn ($x) => $promaxHeld ? $x === 'cliente' : $x !== 'cliente'));
+                        if (!$to) continue;
+                        $action['params']['to'] = $to;
+                    }
+                    self::runAction($trigger, $action, $ticket, $context);
+                    $ran = true;
                 }
+                if (!$ran) continue;
                 HelpDeskTicketEvent::log($ticket->id, 'trigger', ['meta' => ['trigger_id' => $trigger->id, 'name' => $trigger->name]]);
             } catch (\Throwable $e) {
                 Log::warning("HelpDesk gatilho #{$trigger->id} ({$trigger->name}) falhou: " . $e->getMessage());

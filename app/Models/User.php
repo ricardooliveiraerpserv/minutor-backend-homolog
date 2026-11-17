@@ -34,6 +34,7 @@ class User extends Authenticatable
         'type',
         'coordinator_type',
         'can_timesheet_sustentacao',
+        'helpdesk_company_ids',
         'extra_permissions',
         'helpdesk_access_profile_id',
     ];
@@ -176,6 +177,7 @@ class User extends Authenticatable
             'can_expense_credit_card' => 'boolean',
             'is_diretor_projetos' => 'boolean',
             'can_timesheet_sustentacao' => 'boolean',
+            'helpdesk_company_ids'      => 'array',
             'bank_hours_start_date' => 'date:Y-m-d',
             'bank_hours_initial_balance' => 'decimal:2',
             'guaranteed_hours'      => 'decimal:2',
@@ -338,6 +340,12 @@ class User extends Authenticatable
     // Fonte de verdade: users.type
 
     public function isAdmin(): bool            { return $this->effectiveType() === 'admin'; }
+    /** BOT Minutor (conversa + alertas) é exclusivo de ADMIN. */
+    public static function isBotAllowed(?self $u): bool
+    {
+        return $u !== null && ($u->type === 'admin' || $u->isAdmin());
+    }
+
     public function isAdministrativo(): bool   { return $this->effectiveType() === 'administrativo'; }
     public function isCoordenador(): bool      { return $this->effectiveType() === 'coordenador'; }
     public function isConsultor(): bool     { return $this->effectiveType() === 'consultor'; }
@@ -443,6 +451,36 @@ class User extends Authenticatable
         return (bool) ($this->helpdesk_access_profile_id
             && \App\Models\HelpDeskAccessProfile::whereKey($this->helpdesk_access_profile_id)
                 ->where('kind', 'agent')->exists());
+    }
+
+    /**
+     * PADRÃO DE NOME (Ricardo 17/11/2026): todo nome de usuário é gravado SEM aspas, com espaços
+     * normalizados e em MAIÚSCULAS — automaticamente, em qualquer cadastro/importação.
+     */
+    public static function normalizeName(?string $name): ?string
+    {
+        if ($name === null) return null;
+        $n = preg_replace('/[\'"`´‘’“”]/u', '', $name);
+        $n = trim(preg_replace('/\s+/u', ' ', (string) $n));
+        return mb_strtoupper($n, 'UTF-8');
+    }
+
+    public function setNameAttribute($value): void
+    {
+        $this->attributes['name'] = self::normalizeName($value);
+    }
+
+    /**
+     * ADMINISTRADOR do Help Desk = perfil de acesso de AGENTE chamado "Administradores…"
+     * (ex.: "Administradores", "Administradores (Ambos)"). Ganha automaticamente os grupos de
+     * menu "Help Desk" e "Configurações Help Desk", qualquer que seja o perfil principal.
+     */
+    public function isHelpDeskAdmin(): bool
+    {
+        if (!$this->helpdesk_access_profile_id) return false;
+        $p = \App\Models\HelpDeskAccessProfile::withoutGlobalScopes()->whereKey($this->helpdesk_access_profile_id)
+            ->where('kind', 'agent')->first(['name']);
+        return $p && preg_match('/^\s*administrador/iu', (string) $p->name) === 1;
     }
 
     // ── BOT: equipe e clientes acessíveis ─────────────────────────────

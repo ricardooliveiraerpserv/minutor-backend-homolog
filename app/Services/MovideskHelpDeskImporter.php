@@ -6,6 +6,7 @@ use App\Models\HelpDeskMovideskStatusMap;
 use App\Models\HelpDeskStatus;
 use App\Models\HelpDeskTicket;
 use App\Models\HelpDeskTicketComment;
+use App\Models\HelpDeskTicketEvent;
 use App\Models\MovideskAgent;
 use App\Models\MovideskOrganization;
 use App\Models\SystemSetting;
@@ -357,11 +358,12 @@ class MovideskHelpDeskImporter
             ->whereNotNull('t.external_ref')
             ->whereNotNull('m.movidesk_status_text')->where('m.movidesk_status_text', '<>', '')
             ->whereRaw("coalesce(t.external_status,'') <> btrim(coalesce(m.movidesk_base_status,'') || '|' || coalesce(m.movidesk_status_text,''))")
-            ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 't.external_owner_team', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
+            ->select('t.id', 't.external_ref', 't.external_status', 't.status_id', 't.company_id', 't.external_owner_team', 't.customer_id', 'm.movidesk_base_status as base', 'm.movidesk_status_text as text')
             ->get()
             // Anti-vaivém ANTES do lote: senão os primeiros N (equivalentes) ocupam o lote para sempre.
             ->reject(fn ($r) => $this->inboundSid((int) $r->company_id, (string) $r->external_status) === (int) $r->status_id
-                || MovideskPushPolicy::isPromaxTeam($r->external_owner_team ?? null)) // equipe Promax não recebe escrita
+                || MovideskPushPolicy::isPromaxTeam($r->external_owner_team ?? null) // equipe Promax não recebe escrita
+                || !in_array((int) $r->customer_id, MovideskPromaxCopyService::writebackCustomerIds(), true)) // só Promax segue no Movidesk
             ->take(30) // lote pequeno por ciclo (API do Movidesk tem limite de requisições)
             ->values();
         if ($rows->isEmpty()) {
@@ -451,8 +453,18 @@ class MovideskHelpDeskImporter
         $reqEmail = $this->firstEmail($client);
         // Contas SECUNDÁRIAS (ex.: BIZIFY): sem org vinculada, amarra o cliente pelo DOMÍNIO do
         // solicitante (Regras de Associação da empresa) e, por fim, pelo contato (users.customer_id).
-        if (!$customerId && !$this->teamFilterApplies($companyId)) {
+        // Sem org vinculada → amarra o cliente pelo DOMÍNIO do solicitante (Regras de Associação da
+        // empresa) e, por fim, pelo contato. Vale p/ TODAS as contas (antes só as secundárias: na
+        // ERPSERV chamado da Promax sem org entrava SEM cliente e saía da regra "Promax via Movidesk").
+        if (!$customerId) {
             $customerId = $this->resolveCustomerByEmail($reqEmail, $companyId);
+        }
+        // Org do Movidesk apontando p/ um cliente INTERNO (ERPSERV/BIZIFY) mas o solicitante é de
+        // OUTRO cliente pelo domínio (ex.: Promax cadastrada na org "ERPSERV" do Movidesk da BIZIFY)
+        // → vale o cliente do e-mail. Antes o chamado entrava como cliente ERPSERV.
+        if ($customerId && $this->isInternalCustomer($customerId)) {
+            $byEmail = $this->resolveCustomerByEmail($reqEmail, $companyId);
+            if ($byEmail && $byEmail !== $customerId && !$this->isInternalCustomer($byEmail)) $customerId = $byEmail;
         }
         // Nome da organização do Movidesk (para clientes legados sem cadastro no Minutor).
         $orgName  = trim((string) ($client['organization']['businessName'] ?? ''));
@@ -487,6 +499,15 @@ class MovideskHelpDeskImporter
         }
         if ($reqName)  { $ticket->requester_name = mb_substr($reqName, 0, 255); }
         if ($reqEmail) { $ticket->requester_email = mb_substr($reqEmail, 0, 255); }
+        // Liga o SOLICITANTE ao usuário cliente do Minutor (mesmo e-mail): sem isso o portal não mostra
+        // o chamado em "Somente próprios"/departamento. Sem cliente vinculado → usa o cliente do usuário.
+        if ($reqEmail && ! $ticket->requester_user_id) {
+            $reqUser = User::query()->where('type', 'cliente')->whereRaw('lower(email) = ?', [mb_strtolower(trim($reqEmail))])->first();
+            if ($reqUser) {
+                $ticket->requester_user_id = $reqUser->id;
+                if (! $ticket->customer_id && $reqUser->customer_id) $ticket->customer_id = $reqUser->customer_id;
+            }
+        }
 
         // RESPONSÁVEL: sincroniza o assignee com o owner do Movidesk (mapeado por e-mail → usuário).
         // Só reaplica quando o responsável MUDOU no Movidesk — não desfaz reatribuição feita no Minutor.
@@ -581,16 +602,21 @@ class MovideskHelpDeskImporter
                 ?? HelpDeskMovideskStatusMap::resolveInbound(null, $base, $statusText);
             if ($sid) { $ticket->status_id = $sid; }
             $ticket->external_status = $mdSig;
+            $this->mdStatusChangedNow = true;
         }
 
         $ticket->external_synced_at = now();
         // company_id NÃO é reimposto em update: o chamado pode ter sido TRANSFERIDO de empresa
         // (transferCompany). A origem fica em origin_company_id.
         $ticket->save();
+        if ($created && $ticket->description) {
+            try { $this->rehostDescriptionImages($ticket); } catch (\Throwable $e) { Log::warning('🖼️ [MOVIDESK HD] prints da descrição', ['ticket' => $ticket->id, 'e' => $e->getMessage()]); }
+        }
 
         // WRITE-BACK: empurra Categoria/Urgência/Nível (e Status quando há justificativa) p/ o Movidesk
         // (só metadado, nunca interação). A sombra só avança se o PATCH tiver sucesso (falha é re-tentada).
-        $mdWritable = MovideskPushPolicy::isPrimaryAccount($ticket) && MovideskPushPolicy::isErpservTeam($md['ownerTeam'] ?? null);
+        $mdWritable = MovideskPushPolicy::isPrimaryAccount($ticket) && MovideskPushPolicy::isErpservTeam($md['ownerTeam'] ?? null)
+            && in_array((int) $ticket->customer_id, MovideskPromaxCopyService::writebackCustomerIds(), true); // só Promax segue no Movidesk
         if ($patch && $this->writebackEnabled() && $mdWritable) {
             if ($this->movidesk->patchTicket((int) $externalId, $patch) && $pushShadow) {
                 foreach ($pushShadow as $col => $val) { $ticket->$col = $val; }
@@ -600,13 +626,19 @@ class MovideskHelpDeskImporter
 
         // A ação de ABERTURA vira a "descrição inicial" do chamado — NÃO deve virar também uma
         // interação (senão duplica: descrição + comentário #1 iguais).
+        $this->syncStatusHistory($ticket, $md);
+        $this->lastCustomerReplyAt = null;
         $comments = $this->importActions($ticket, $md['actions'] ?? [], $this->openingActionId($md));
+        if (!$created && !$this->mdStatusChangedNow && $this->lastCustomerReplyAt) {
+            $this->reactivateOnCustomerReply($ticket, $this->lastCustomerReplyAt);
+        }
+        $this->mdStatusChangedNow = false;
         // Anexos da ação de ABERTURA viram anexos do CHAMADO (a abertura é a descrição, não interação).
         if ($created) {
             $openId = $this->openingActionId($md);
             foreach ($md['actions'] ?? [] as $a) {
                 if ((string) ($a['id'] ?? '') === (string) $openId && !empty($a['attachments'])) {
-                    $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET', 'id' => (int) $ticket->id, 'atts' => $a['attachments'], 'vis' => 'customer', 'actor' => null];
+                    $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET', 'id' => (int) $ticket->id, 'atts' => $a['attachments'], 'vis' => 'customer', 'actor' => null, 'c' => (int) ($ticket->origin_company_id ?: $ticket->company_id)];
                 }
             }
         }
@@ -637,7 +669,7 @@ class MovideskHelpDeskImporter
         foreach ($mdActions as $a) { $maxId = max($maxId, (int) ($a['id'] ?? 0)); }
 
         foreach ($pending as $c) {
-            $text = $this->htmlToText((string) $c->body);
+            $text = $this->htmlForMovidesk((string) $c->body); // texto + assinatura (HTML)
             if ($text === '') { // nada a enviar; marca como tratado p/ não reprocessar
                 $c->external_action_id = '0'; $c->save();
                 continue;
@@ -663,6 +695,60 @@ class MovideskHelpDeskImporter
                 break; // falhou → tenta de novo no próximo ciclo (mantém ordem)
             }
         }
+    }
+
+    /**
+     * Corpo de uma ação para o Movidesk em HTML (o Movidesk aceita e renderiza HTML/data: no
+     * `description` — testado 15/11/2026). Mantém a formatação da resposta: LOGO dos formulários,
+     * títulos, negritos, emojis e a ASSINATURA do agente (moldura branca, sem bordas). Remove CSS/JS/
+     * comentários; imagem relativa pública (ex.: /logo.png) vira URL absoluta do front; imagem
+     * relativa privada (/api/...) sai (iria quebrada). Texto puro (sem tags) segue o htmlToText.
+     */
+    public function htmlForMovidesk(string $html): string
+    {
+        if (!preg_match('/<[a-z][^>]*>/i', $html)) return $this->htmlToText($html);
+        $s = preg_replace('/<(style|script|head|title|xml)\b[^>]*>.*?<\/\1\s*>/is', '', $html) ?? $html;
+        $s = preg_replace('/<!--.*?-->/s', '', $s) ?? $s;
+
+        // ASSINATURA (tabela .sigroot até o último </table>): moldura branca + sem bordas.
+        if (preg_match('/<table\b[^>]*class="sigroot".*<\/table>/is', $s, $m, PREG_OFFSET_CAPTURE)) {
+            $sig = $this->frameSignature($m[0][0]);
+            $s = substr_replace($s, $sig, $m[0][1], strlen($m[0][0]));
+        }
+
+        // Imagens: data:/http(s) ficam; relativa pública → absoluta; relativa privada → sai.
+        $front = rtrim((string) config('app.frontend_url'), '/');
+        $s = preg_replace_callback('/<img\b[^>]*>/i', function ($m) use ($front) {
+            if (!preg_match('/\ssrc="([^"]*)"/i', $m[0], $src)) return '';
+            $u = $src[1];
+            if (preg_match('#^(data:image/|https?://)#i', $u)) return $m[0];
+            if (str_starts_with($u, '/') && !str_starts_with($u, '/api') && $front !== '') {
+                return str_replace('src="' . $u . '"', 'src="' . $front . $u . '"', $m[0]);
+            }
+            return '';
+        }, $s) ?? $s;
+
+        $s = preg_replace('/\s(class|on[a-z]+)="[^"]*"/i', '', $s) ?? $s;
+        $s = trim($s);
+        if (strlen($s) > 900000) return $this->htmlToText($html); // proteção de tamanho
+        return $s;
+    }
+
+    /** Assinatura (tabela) com moldura branca e sem bordas (o CSS do Movidesk desenha borda em table/td). */
+    private function frameSignature(string $sig): string
+    {
+        $sig = preg_replace_callback('/<(table|tr|td|th)\b([^>]*)>/i', function ($m) {
+            $attrs = $m[2];
+            if (preg_match('/\sstyle="([^"]*)"/i', $attrs)) {
+                $attrs = preg_replace('/\sstyle="([^"]*)"/i', ' style="border:0 none;$1"', $attrs, 1);
+            } else {
+                $attrs .= ' style="border:0 none"';
+            }
+            return '<' . $m[1] . $attrs . '>';
+        }, $sig) ?? $sig;
+        $sig = preg_replace('/(<table\b[^>]*?)\swidth="1"/i', '$1', $sig, 1) ?? $sig;
+        return '<div style="display:inline-block;width:max-content;min-width:max-content;max-width:none;background:#ffffff;padding:14px 18px;border-radius:8px;box-sizing:content-box">'
+            . $sig . '</div>';
     }
 
     /** Converte HTML do comentário em texto (preserva quebras) para enviar como `description`.
@@ -739,10 +825,11 @@ class MovideskHelpDeskImporter
             }
 
             $body = (string) ($a['htmlDescription'] ?? '');
-            if (trim(strip_tags($body)) === '' && empty($a['attachments'])) continue; // ação vazia
+            // Ação "vazia" = sem texto, sem anexo E sem imagem colada (print). Antes, ação só com print sumia.
+            if (trim(strip_tags($body)) === '' && empty($a['attachments']) && !preg_match('/<img\b/i', $body)) continue;
 
-            $isPublic = (bool) ($a['isPublic'] ?? true);
-            $authorId = $this->resolveAgentUser($a['createdBy']['email'] ?? null);
+            $isPublic = self::actionIsPublic($a);
+            $authorId = $this->resolveActionAuthor($a);
 
             $comment = HelpDeskTicketComment::create([
                 'ticket_id'          => $ticket->id,
@@ -756,19 +843,111 @@ class MovideskHelpDeskImporter
                 // action.id do Movidesk é sequencial POR ticket (1,2,3…) — a chave precisa do id do ticket.
                 'idempotency_key'    => 'movidesk-' . $this->movideskCompanyTag((int) ($ticket->origin_company_id ?: $ticket->company_id)) . ($ticket->external_ref ?: ('c' . $ticket->movidesk_copy_id)) . '-a' . $aid,
             ]);
+            // Data REAL da ação no Movidesk (não a hora da importação) — senão a interação antiga aparece
+            // no fim da conversa como se fosse nova.
+            if (!empty($a['createdDate'])) {
+                $real = \Illuminate\Support\Carbon::parse($a['createdDate'], 'UTC');
+                HelpDeskTicketComment::whereKey($comment->id)->toBase()->update(['created_at' => $real, 'updated_at' => $real]);
+            }
             // Imagem inline (URL S3 Movidesk) vem com assinatura que EXPIRA em horas. Enfileira p/
             // re-hospedar FORA da transação (download é lento) — baixa agora enquanto a URL é válida.
             // Arquivos anexados na ação → baixa p/ o Minutor (fora da transação).
             if (!empty($a['attachments'])) {
-                $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET_COMMENT', 'id' => (int) $comment->id, 'atts' => $a['attachments'], 'vis' => $isPublic ? 'customer' : 'internal', 'actor' => $authorId];
+                $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET_COMMENT', 'id' => (int) $comment->id, 'atts' => $a['attachments'], 'vis' => $isPublic ? 'customer' : 'internal', 'actor' => $authorId, 'c' => (int) ($ticket->origin_company_id ?: $ticket->company_id)];
             }
             if (preg_match('~s3[.-][^/]*amazonaws\.com/[^?"\']*movidesk~i', $body)) {
                 $this->pendingImageComments[] = ['c' => (int) $comment->id, 't' => (int) $ticket->id];
             }
             $existing->put($aid, true);
             $n++;
+            // Resposta do CLIENTE (pública, autor não-agente/usuário cliente) → candidata a reativar.
+            if ($isPublic && !empty($a['createdDate'])) {
+                // Cliente = perfil de CLIENTE no Movidesk (profileType 2). Automações (sem autor) e agentes
+                // não contam — a mensagem automática "aguardando seu retorno" não pode reativar o chamado.
+                $isClient = (int) ($a['createdBy']['profileType'] ?? 0) === 2
+                    || ($authorId && User::whereKey($authorId)->value('type') === 'cliente');
+                if ($isClient) {
+                    $at = \Illuminate\Support\Carbon::parse($a['createdDate']);
+                    if (!$this->lastCustomerReplyAt || $at->gt($this->lastCustomerReplyAt)) $this->lastCustomerReplyAt = $at;
+                }
+            }
         }
         return $n;
+    }
+
+    /**
+     * Histórico de STATUS do Movidesk → timeline do chamado (evento 'movidesk_status', com QUEM mudou
+     * e a data real). Tipo próprio (não 'status_changed') p/ não interferir no cálculo de SLA.
+     * Idempotente: chave = data da mudança no Movidesk.
+     */
+    public function syncStatusHistory(HelpDeskTicket $t, array $md): int
+    {
+        $hist = $md['statusHistories'] ?? null;
+        if (!is_array($hist) || !$hist) return 0;
+        $done = HelpDeskTicketEvent::where('ticket_id', $t->id)->where('event_type', 'movidesk_status')->get(['meta'])
+            ->map(fn ($e) => (string) (is_array($e->meta) ? ($e->meta['md_at'] ?? '') : (json_decode((string) $e->meta, true)['md_at'] ?? '')))->filter()->flip();
+        usort($hist, fn ($a, $b) => strcmp((string) ($a['changedDate'] ?? ''), (string) ($b['changedDate'] ?? '')));
+        $prev = null; $n = 0;
+        foreach ($hist as $h) {
+            $at = (string) ($h['changedDate'] ?? ''); $to = trim((string) ($h['status'] ?? ''));
+            if ($at === '' || $to === '') { $prev = $to ?: $prev; continue; }
+            if (!$done->has($at)) {
+                $by = $h['changedBy'] ?? [];
+                $uid = $by ? $this->resolveActionAuthor(['createdBy' => $by]) : null;
+                HelpDeskTicketEvent::create([
+                    'ticket_id' => $t->id, 'event_type' => 'movidesk_status', 'field' => 'status',
+                    'from_value' => $prev, 'to_value' => $to, 'triggered_by' => $uid,
+                    'created_at' => \Illuminate\Support\Carbon::parse($at, 'UTC'),
+                    'meta' => ['via' => 'movidesk', 'md_at' => $at, 'by_name' => $by['businessName'] ?? null, 'justification' => $h['justification'] ?? null],
+                ]);
+                $n++;
+            }
+            $prev = $to;
+        }
+        return $n;
+    }
+
+    /** Resposta mais recente do cliente importada nesta passada (null = nenhuma). */
+    private ?\Illuminate\Support\Carbon $lastCustomerReplyAt = null;
+    /** O Movidesk mudou o status nesta passada (aí ele prevalece — não reativa). */
+    private bool $mdStatusChangedNow = false;
+
+    /**
+     * Resposta do CLIENTE chegando pelo Movidesk reativa o chamado — MESMA regra do e-mail do Minutor
+     * (HelpDeskEmailIngestor::moveToEmAndamento): vai para "Em atendimento"; se estava resolvido, conta
+     * como reabertura; status de espera agendado guarda o snapshot p/ "voltar ao status anterior".
+     * Só respostas NOVAS: dos últimos 3 dias e posteriores à última mudança de status (o reparo do
+     * histórico não reabre chamados antigos).
+     */
+    public function reactivateOnCustomerReply(HelpDeskTicket $t, \Illuminate\Support\Carbon $replyAt, bool $ignoreWindow = false): bool
+    {
+        $t->refresh();
+        $old = $t->status;
+        if (!$old || $old->is_terminal || $old->key === 'em_andamento') return false;
+        if (!$ignoreWindow && $replyAt->lt(now()->subDays(3))) return false;
+        $lastChange = HelpDeskTicketEvent::where('ticket_id', $t->id)->where('event_type', 'status_changed')->max('created_at');
+        if ($lastChange && $replyAt->lte(\Illuminate\Support\Carbon::parse($lastChange))) return false;
+        $em = HelpDeskStatus::withoutGlobalScopes()->where('company_id', $t->company_id)->where('key', 'em_andamento')->where('active', true)->first();
+        if (!$em) return false;
+        $wasResolved = (bool) $old->is_resolved;
+        if (in_array($old->key, ['planejamento_gmud', 'em_desenvolvimento', 'pendente_terceiros', 'em_homologacao'], true)) {
+            $t->reactivation_snapshot = [
+                'status_id' => (int) $old->id, 'status_key' => (string) $old->key, 'status_label' => (string) $old->label,
+                'scheduled_until' => optional($t->scheduled_until)->toIso8601String(), 'scheduled_all_day' => (bool) $t->scheduled_all_day,
+                'dev_delivery_at' => $t->dev_delivery_at ? \Illuminate\Support\Carbon::parse($t->dev_delivery_at)->toDateString() : null,
+                'sla_paused_at' => optional($t->sla_paused_at)->toIso8601String(),
+                'justification_id' => $t->justification_id ? (int) $t->justification_id : null,
+                'justification_name' => (string) optional($t->justification)->name,
+                'external_ticket_ref' => (string) $t->external_ticket_ref, 'saved_at' => now()->toIso8601String(),
+            ];
+        }
+        $t->status_id = $em->id;
+        $t->justification_id = null;
+        if ($wasResolved) { $t->reopened_at = now(); $t->resolved_at = null; $t->reopen_count = (int) $t->reopen_count + 1; }
+        $t->save();
+        if ($wasResolved) HelpDeskTicketEvent::log($t->id, 'reopened', ['to_value' => $em->label, 'meta' => ['via' => 'movidesk_reply']]);
+        HelpDeskTicketEvent::log($t->id, 'status_changed', ['field' => 'status', 'from_value' => $old->key, 'to_value' => $em->key, 'meta' => ['via' => 'movidesk_reply']]);
+        return true;
     }
 
     /**
@@ -777,6 +956,30 @@ class MovideskHelpDeskImporter
      * <img src> pro nosso endpoint de download. Roda FORA da transação (download lento). Best-effort:
      * URL expirada (403) ou falha → deixa o <img> como está, sem quebrar o import.
      */
+    /**
+     * Ação PÚBLICA? No Movidesk o tipo vem em `type` (1 = interna, 2 = pública). `isPublic` nem sempre
+     * vem no $select — antes o default "true" fazia NOTA INTERNA entrar como resposta ao cliente.
+     */
+    public static function actionIsPublic(array $a): bool
+    {
+        if (isset($a['type']) && is_numeric($a['type'])) return (int) $a['type'] !== 1;
+        if (array_key_exists('isPublic', $a)) return (bool) $a['isPublic'];
+        return true;
+    }
+
+    /** Fila de downloads/re-hospedagem p/ o REPARO (mesmo pipeline do import). */
+    public function queueRepair(HelpDeskTicketComment $comment, HelpDeskTicket $ticket, array $attachments): void
+    {
+        if ($attachments) {
+            $this->pendingFilePulls[] = ['e' => 'HELPDESK_TICKET_COMMENT', 'id' => (int) $comment->id, 'atts' => $attachments,
+                'vis' => $comment->visibility === 'internal' ? 'internal' : 'customer', 'actor' => $comment->author_user_id,
+                'c' => (int) ($ticket->origin_company_id ?: $ticket->company_id)];
+        }
+        if (preg_match('~s3[.-][^/]*amazonaws\.com/[^?"\']*movidesk~i', (string) $comment->body)) {
+            $this->pendingImageComments[] = ['c' => (int) $comment->id, 't' => (int) $ticket->id];
+        }
+    }
+
     public function rehostPendingImages(): int
     {
         // Anexos (arquivos) das ações importadas — download fora da transação.
@@ -784,7 +987,7 @@ class MovideskHelpDeskImporter
             $pulls = $this->pendingFilePulls; $this->pendingFilePulls = [];
             $sync = app(MovideskAttachmentSync::class);
             foreach ($pulls as $p) {
-                try { $sync->pull($p['e'], $p['id'], $p['atts'], $p['vis'], $p['actor']); }
+                try { $sync->pull($p['e'], $p['id'], $p['atts'], $p['vis'], $p['actor'], $p['c'] ?? null); }
                 catch (\Throwable $e) { Log::warning('📥 [MOVIDESK ANEXO] pull falhou', ['e' => $e->getMessage()]); }
             }
         }
@@ -806,6 +1009,69 @@ class MovideskHelpDeskImporter
         return $done;
     }
 
+    /**
+     * Baixa a imagem de um print do Movidesk: tenta o link S3 e, se expirado (403 — comum), a API de
+     * storage do Movidesk com o token da conta do chamado. @return array{0:string,1:string} [bytes, mime]
+     */
+    private function fetchMovideskImage(string $src, int $ticketId): array
+    {
+        $bytes = ''; $ct = '';
+        try {
+            $resp = \Illuminate\Support\Facades\Http::timeout(25)->get($src);
+            if ($resp->ok()) { $bytes = $resp->body(); $ct = strtolower((string) ($resp->header('Content-Type') ?: '')); }
+        } catch (\Throwable) {}
+        if ($bytes === '' || strncmp($ct, 'image/', 6) !== 0) {
+            if (preg_match('~amazonaws\.com/[^/]*movidesk[^/]*/([A-Za-z0-9]{16,})~i', $src, $pm)) {
+                $tk = HelpDeskTicket::withoutGlobalScopes()->find($ticketId);
+                $cid = (int) ($tk?->origin_company_id ?: $tk?->company_id);
+                $mdSvc = app(\App\Services\MovideskService::class);
+                $prev = $mdSvc->currentCompany();
+                $mdSvc->forCompany($cid && $cid !== \App\Services\MovideskPushPolicy::primaryCompanyId() ? $cid : null);
+                $f = $mdSvc->downloadFile($pm[1]);
+                $mdSvc->forCompany($prev);
+                if ($f && $f['content'] !== '') {
+                    $bytes = $f['content'];
+                    $gi = @getimagesizefromstring($bytes);
+                    $ct = $gi ? strtolower($gi['mime']) : strtolower((string) $f['mime']);
+                }
+            }
+        }
+        return [$bytes, $ct];
+    }
+
+    /** Prints da DESCRIÇÃO (abertura) do chamado: re-hospeda como anexo do chamado e troca o src. */
+    public function rehostDescriptionImages(HelpDeskTicket $ticket, ?string $freshHtml = null): bool
+    {
+        $body = (string) $ticket->description;
+        if (!preg_match('~s3[.-][^/]*amazonaws\.com/[^?"\']*movidesk~i', $body)) return false;
+        if ($freshHtml !== null && $freshHtml !== '') $body = $freshHtml;
+        if (!preg_match_all('/<img\b[^>]*>/i', $body, $tags)) return false;
+        $svc = app(\App\Attachments\AttachmentService::class);
+        $actor = $this->imageActor ??= (\App\Models\User::query()->where('type', 'admin')->where('enabled', true)->orderBy('id')->first()
+            ?? \App\Models\User::query()->orderBy('id')->firstOrFail());
+        $changed = false; $count = 0;
+        foreach ($tags[0] as $tag) {
+            if ($count >= 10) break;
+            if (!preg_match('/src=(["\'])(.*?)\1/i', $tag, $sm)) continue;
+            $src = html_entity_decode($sm[2]);
+            if (!preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $src)) continue;
+            $count++;
+            [$bytes, $ct] = $this->fetchMovideskImage($src, (int) $ticket->id);
+            if ($bytes === '' || strncmp($ct, 'image/', 6) !== 0) continue;
+            $ext = str_contains($ct, 'png') ? 'png' : (str_contains($ct, 'gif') ? 'gif' : (str_contains($ct, 'webp') ? 'webp' : 'jpg'));
+            $tmp = tempnam(sys_get_temp_dir(), 'mvimg'); file_put_contents($tmp, $bytes);
+            try {
+                $uf = new \Illuminate\Http\UploadedFile($tmp, 'movidesk-' . substr(md5($src), 0, 10) . '.' . $ext, $ct, null, true);
+                $att = $svc->store($actor, ['entity_type' => 'HELPDESK_TICKET', 'entity_id' => $ticket->id, 'category' => 'image', 'visibility' => 'customer', 'file' => $uf]);
+            } finally { @unlink($tmp); }
+            $url = "/api/v1/help-desk/tickets/{$ticket->id}/attachments/{$att->id}/download";
+            $body = str_replace($tag, preg_replace('/src=(["\']).*?\1/i', 'src="' . $url . '"', $tag, 1), $body);
+            $changed = true;
+        }
+        if ($changed) { HelpDeskTicket::withoutGlobalScopes()->where('id', $ticket->id)->update(['description' => $body]); }
+        return $changed;
+    }
+
     private function rehostCommentImages(HelpDeskTicketComment $comment, int $ticketId, \App\Attachments\AttachmentService $svc): bool
     {
         $body = (string) $comment->body;
@@ -819,11 +1085,8 @@ class MovideskHelpDeskImporter
             // só URLs S3 do Movidesk (as que expiram); ignora data:, nossas (/api/...), externas
             if (!preg_match('~^https?://[^/]*s3[.-][^/]*amazonaws\.com/[^?]*movidesk~i', $src)) continue;
             $count++;
-            $resp = \Illuminate\Support\Facades\Http::timeout(25)->get($src);
-            if (!$resp->ok()) continue; // 403 expirada → mantém
-            $ct = strtolower((string) ($resp->header('Content-Type') ?: ''));
-            if (strncmp($ct, 'image/', 6) !== 0) continue;
-            $bytes = $resp->body();
+            [$bytes, $ct] = $this->fetchMovideskImage($src, $ticketId);
+            if ($bytes === '' || strncmp($ct, 'image/', 6) !== 0) continue; // não deu → mantém o link original
             if (strlen($bytes) < 64) continue;
             $ext = match (true) {
                 str_contains($ct, 'png')  => 'png',
@@ -863,11 +1126,9 @@ class MovideskHelpDeskImporter
     /** Ator (User) p/ uploaded_by do anexo — autor da interação se mapeado, senão 1º usuário (campo de auditoria). */
     private function imageActorFor(HelpDeskTicketComment $comment): \App\Models\User
     {
-        if ($comment->author_user_id) {
-            $u = \App\Models\User::find($comment->author_user_id);
-            if ($u) return $u;
-        }
-        return $this->imageActor ??= \App\Models\User::query()->orderBy('id')->firstOrFail();
+        // Sempre o ADMIN do sistema: autor (cliente/consultor/parceiro) pode não ter permissão de upload.
+        return $this->imageActor ??= (\App\Models\User::query()->where('type', 'admin')->where('enabled', true)->orderBy('id')->first()
+            ?? \App\Models\User::query()->orderBy('id')->firstOrFail());
     }
 
     // ── Resolução de entidades ────────────────────────────────────────────────
@@ -936,6 +1197,18 @@ class MovideskHelpDeskImporter
         // Vale p/ TODAS as contas (14/11/2026: ERPSERV abre chamado Promax com solicitante = empresa).
         if ((int) ($client['personType'] ?? 0) === 2 && !empty($client['id'])) return $client['id'];
         return null;
+    }
+
+    private array $internalCustomerCache = [];
+    /** Cliente "interno" = a própria empresa do grupo cadastrada como cliente (ERPSERV, BIZIFY…). */
+    private function isInternalCustomer(int $customerId): bool
+    {
+        if (!array_key_exists($customerId, $this->internalCustomerCache)) {
+            $name = mb_strtoupper(trim((string) \App\Models\Customer::withoutGlobalScopes()->whereKey($customerId)->value('name')));
+            $slugs = \App\Models\Company::query()->pluck('name')->map(fn ($n) => mb_strtoupper(trim((string) $n)))->all();
+            $this->internalCustomerCache[$customerId] = in_array($name, array_merge($slugs, ['ERPSERV', 'BIZIFY']), true);
+        }
+        return $this->internalCustomerCache[$customerId];
     }
 
     /** Cliente pelo e-mail do solicitante: regra de associação por domínio (na empresa) → contato. */
@@ -1157,6 +1430,30 @@ class MovideskHelpDeskImporter
     }
 
     /** Mapeia o responsável (owner do Movidesk) para o usuário do Minutor PELO E-MAIL (case-insensitive). */
+    /**
+     * Autor da ação: AGENTE no Movidesk (profileType 1/3) → usuário INTERNO do Minutor (mesmo e-mail,
+     * ou o mesmo nome antes do @ em outro domínio — ex.: daniel@bizify.com.br × daniel@erpserv.com.br).
+     * Sem isso, a resposta do agente vinha sem autor ("Sistema") ou presa a um cadastro de CLIENTE.
+     */
+    public function resolveActionAuthor(array $a): ?int
+    {
+        $email = mb_strtolower(trim((string) ($a['createdBy']['email'] ?? '')));
+        $prof  = (int) ($a['createdBy']['profileType'] ?? 0);
+        if ($prof === 1 || $prof === 3) {
+            if ($email !== '') {
+                $u = User::whereRaw('lower(email) = ?', [$email])->where('type', '<>', 'cliente')->value('id');
+                if ($u) return (int) $u;
+                $local = strstr($email, '@', true);
+                if ($local) {
+                    $ids = User::whereRaw("split_part(lower(email),'@',1) = ?", [$local])->where('type', '<>', 'cliente')->pluck('id');
+                    if ($ids->count() === 1) return (int) $ids->first();
+                }
+            }
+            return null;
+        }
+        return $this->resolveAgentUser($email ?: null);
+    }
+
     private function resolveAgentUser(?string $email): ?int
     {
         $email = mb_strtolower(trim((string) $email));
@@ -1192,13 +1489,19 @@ class MovideskHelpDeskImporter
         foreach (($md['actions'] ?? []) as $a) {
             $b = (string) ($a['htmlDescription'] ?? '');
             if (trim(strip_tags($b)) === '') continue;
-            if ($this->resolveAgentUser($a['createdBy']['email'] ?? null)) continue; // autor é agente → não é descrição do cliente
+            // Autor AGENTE → não é a descrição do cliente. Agente = perfil de agente no Movidesk (1/3) ou
+            // usuário INTERNO do Minutor. Usuário CLIENTE do Minutor NÃO é agente — antes, com os clientes
+            // cadastrados como usuários, a abertura deixava de ser reconhecida e virava interação duplicada.
+            $prof = (int) ($a['createdBy']['profileType'] ?? 0);
+            if ($prof === 2) return $a;
+            $uid = $this->resolveAgentUser($a['createdBy']['email'] ?? null);
+            if ($prof === 1 || $prof === 3 || ($uid && User::whereKey($uid)->value('type') !== 'cliente')) continue;
             return $a;
         }
         return null;
     }
 
-    private function openingActionId(array $md): ?string
+    public function openingActionId(array $md): ?string
     {
         $a = $this->openingClientAction($md);
         return $a ? ((string) ($a['id'] ?? '') ?: null) : null;

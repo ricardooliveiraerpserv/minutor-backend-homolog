@@ -1228,7 +1228,14 @@ class TimesheetController extends Controller
             ]);
 
             // Para projetos On Demand ou Investimento Interno, não bloquear por saldo
-            if (!$isOnDemandContract && !$isInvestimentoInterno) {
+            // Apontamento vindo da INTERAÇÃO do chamado (marca server-side, não forjável) em contrato com
+            // "Permitir apontar com saldo negativo via chamado" (default ligado) → não bloqueia por saldo.
+            $negViaTicket = (bool) $request->attributes->get('from_helpdesk_interaction')
+                && ($project->allow_negative_via_ticket ?? true);
+            if ($negViaTicket) {
+                Log::info('Saldo NÃO validado — apontamento via chamado em contrato que permite negativo', ['project_id' => $project->id]);
+            }
+            if (!$isOnDemandContract && !$isInvestimentoInterno && !$negViaTicket) {
                 // Validar saldo de horas antes de salvar
                 $balanceValidation = $this->validateHoursBalance($project, $timesheetUserId, $hoursToAdd, null);
                 if ($balanceValidation) {

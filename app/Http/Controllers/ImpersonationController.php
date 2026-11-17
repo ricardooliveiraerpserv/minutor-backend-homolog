@@ -95,6 +95,19 @@ class ImpersonationController extends Controller
 
         $query = User::query()->where('enabled', true);
 
+        // Multi-empresa: só usuários da EMPRESA ATIVA (ou de "Ambos"); sem empresa = ERPSERV (padrão).
+        // Mesma regra da lista de Usuários (UserController::applyActiveCompanyScope).
+        if (config('multiempresa.scoping_enabled')) {
+            $activeId = (int) ($me->current_company_id ?: $me->home_company_id ?: 0);
+            if ($activeId) {
+                $erpservId = (int) \App\Models\Company::where('slug', 'erpserv')->value('id');
+                $query->where(function ($w) use ($activeId, $erpservId) {
+                    $w->whereHas('companies', fn ($c) => $c->where('companies.id', $activeId));
+                    if ($activeId === $erpservId) $w->orWhereDoesntHave('companies');
+                });
+            }
+        }
+
         // Trava de nível: some da lista quem tem privilégio igual/maior que o do solicitante
         // (topo = sem restrição). Impede o coordenador de "ver como" admin/administrativo/coordenador.
         if ($blocked = $this->blockedTargetTypes($me)) {

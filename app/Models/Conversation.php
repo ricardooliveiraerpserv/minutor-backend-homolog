@@ -68,7 +68,12 @@ class Conversation extends Model
 
     public function scopeForUser(Builder $q, int $userId): Builder
     {
-        return $q->whereHas('participants', fn ($p) => $p->where('user_id', $userId));
+        $q->whereHas('participants', fn ($p) => $p->where('user_id', $userId));
+        // BOT Minutor: só admin enxerga a conversa (alertas com dados de clientes).
+        if (!\App\Models\User::isBotAllowed(\App\Models\User::find($userId))) {
+            $q->where('type', '!=', 'bot');
+        }
+        return $q;
     }
 
     public function scopeRecent(Builder $q): Builder

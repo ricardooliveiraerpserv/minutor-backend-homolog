@@ -39,7 +39,10 @@ class HelpDeskController extends Controller
                 ->where('helpdesk_teams.company_id', $cid))
             ->distinct()->pluck('helpdesk_team_user.user_id');
         // Agente = membro de equipe OU quem tem PERFIL DE ACESSO de agente (mesmo sem equipe).
-        $agentProfileIds = \App\Models\HelpDeskAccessProfile::where('kind', 'agent')->pluck('id');
+        // Perfis de agente de TODAS as empresas (o escopo de empresa ativa escondia os perfis da BIZIFY
+        // → agentes com perfil "Agentes" da BIZIFY sumiam da lista). A empresa do chamado é validada
+        // abaixo por attendsCompany + o perfil precisa permitir ser responsável.
+        $agentProfileIds = \App\Models\HelpDeskAccessProfile::withoutGlobalScopes()->where('kind', 'agent')->whereNull('deleted_at')->pluck('id');
         $profileUserIds = $agentProfileIds->isEmpty() ? collect()
             : User::whereIn('helpdesk_access_profile_id', $agentProfileIds)->where('type', '<>', 'cliente')->pluck('id');
         $allIds = $memberIds->merge($profileUserIds)->unique()->values();
@@ -48,11 +51,10 @@ class HelpDeskController extends Controller
         $agents = User::whereIn('id', $allIds)
             ->whereIn('helpdesk_access_profile_id', $agentProfileIds)
             ->where('type', '<>', 'cliente')
-            ->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id']);
-        if ($companyId) {
-            $pol = app(\App\Services\HelpDeskAccessPolicy::class);
-            $agents = $agents->filter(fn ($u) => $pol->attendsCompany($u, $companyId))->values();
-        }
+            ->orderBy('name')->get(['id', 'name', 'type', 'helpdesk_access_profile_id', 'enabled']);
+        $pol = app(\App\Services\HelpDeskAccessPolicy::class);
+        $agents = $agents->filter(fn ($u) => $u->enabled !== false && $pol->canBeAssignee($u)
+            && (!$companyId || $pol->attendsCompany($u, $companyId)))->values();
         return response()->json(['data' => $agents->map(fn ($u) => ['id' => $u->id, 'name' => $u->name, 'type' => $u->type])]);
     }
 
