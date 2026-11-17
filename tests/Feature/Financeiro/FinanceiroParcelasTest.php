@@ -151,15 +151,16 @@ class FinanceiroParcelasTest extends TestCase
     public function test_liberacao_on_demand_e_despesa_sem_fechamento_encerrado(): void
     {
         $c = $this->contrato('on_demand');
-        \App\Models\OnDemandBillingRelease::create(['project_id' => $c->project_id, 'year_month' => '2026-09', 'released_at' => now()]);
+        $ym = now()->subMonthNoOverflow()->format('Y-m'); // mês de faturamento corrente (exige liberação)
+        \App\Models\OnDemandBillingRelease::create(['project_id' => $c->project_id, 'year_month' => $ym, 'released_at' => now()]);
         \App\Models\Expense::withoutGlobalScopes()->forceCreate([
             'user_id' => ($this->autor ??= User::factory()->create())->id, 'project_id' => $c->project_id,
-            'expense_category_id' => \App\Models\ExpenseCategory::factory()->create()->id, 'expense_date' => '2026-09-15',
+            'expense_category_id' => \App\Models\ExpenseCategory::factory()->create()->id, 'expense_date' => $ym . '-15',
             'description' => 'Hotel', 'amount' => 834.50, 'status' => 'approved', 'charge_client' => true,
             'expense_type' => 'reimbursement', 'payment_method' => 'pix', 'company_id' => $this->erp->id,
         ]);
 
-        $r = app(ParcelaGenerator::class)->gerar($this->erp->id, '2026-09');
+        $r = app(ParcelaGenerator::class)->gerar($this->erp->id, $ym);
         // projeto liberado sem horas apontadas → sem parcela On Demand; despesa → 1 nota de débito
         $this->assertSame(1, $r['criadas'], json_encode($r));
         $nd = FinInstallment::withoutGlobalScopes()->where('contract_id', $c->id)->first();

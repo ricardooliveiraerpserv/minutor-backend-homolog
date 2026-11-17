@@ -111,10 +111,17 @@ class ParcelaGenerator
         $out = [];
         $mesEncerrado = $ym < now()->format('Y-m');
         $fechados = FechamentoCliente::withoutGlobalScopes()->where('year_month', $ym)->get()->keyBy('customer_id');
+        // Mesma regra do FechamentoClienteController::onDemandBillingStatus: competências ANTERIORES
+        // ao mês de faturamento corrente (mês passado) contam como liberadas; daí em diante só
+        // projetos com liberação explícita do coordenador.
+        $historico = $ym < now()->subMonthNoOverflow()->format('Y-m');
         $liberados = OnDemandBillingRelease::where('year_month', $ym)->pluck('project_id')->map(fn ($v) => (int) $v)->all();
 
         $clientes = collect();
-        if ($liberados) {
+        if ($historico) {
+            $clientes = $clientes->merge(Project::withoutGlobalScopes()->whereNull('parent_project_id')
+                ->whereHas('contractType', fn ($q) => $q->where('code', 'on_demand'))->pluck('customer_id'));
+        } elseif ($liberados) {
             $clientes = $clientes->merge(Project::withoutGlobalScopes()->whereIn('id', $liberados)->pluck('customer_id'));
         }
         $clientes = $clientes->merge($fechados->filter(fn ($f) => $f->status === 'closed')->keys());
@@ -134,10 +141,11 @@ class ParcelaGenerator
                 $despesas = collect($f->snapshot_despesas ?? []);
             } else {
                 $dados = $ctrl->dadosParaFaturamento((int) $customerId, $ym);
-                $servicos = collect($dados['servicos']['projetos'] ?? [])->filter(fn ($p) => in_array((int) $p['projeto_id'], $liberados, true));
+                $servicos = collect($dados['servicos']['projetos'] ?? [])
+                    ->filter(fn ($p) => $historico || in_array((int) $p['projeto_id'], $liberados, true));
                 $despesas = $mesEncerrado ? collect($dados['despesas']) : collect();
             }
-            $fonte = $encerrado ? 'fechamento_encerrado' : 'liberacao_on_demand';
+            $fonte = $encerrado ? 'fechamento_encerrado' : ($historico ? 'competencia_anterior' : 'liberacao_on_demand');
 
             // On Demand
             $servicos = $servicos->filter(fn ($p) => (float) ($p['total_receita'] ?? 0) > 0)->values();
