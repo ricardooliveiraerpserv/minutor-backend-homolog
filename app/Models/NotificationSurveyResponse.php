@@ -10,9 +10,11 @@ class NotificationSurveyResponse extends Model
 {
     protected $table = 'notification_survey_responses';
 
-    protected $fillable = ['survey_id', 'user_id', 'submitted_at'];
+    protected $fillable = ['survey_id', 'user_id', 'submitted_at', 'respondent_name', 'respondent_email', 'respondent_company', 'via_public_link'];
 
-    protected $casts = ['submitted_at' => 'datetime'];
+    protected $attributes = ['via_public_link' => false];
+
+    protected $casts = ['submitted_at' => 'datetime', 'via_public_link' => 'boolean'];
 
     public function survey(): BelongsTo
     {

@@ -166,6 +166,11 @@ Route::prefix('v1')->group(function () {
         ->middleware('signed')->name('surveys.email-form');
     Route::post('/surveys/{survey}/email-submit', [\App\Http\Controllers\NotificationSurveyController::class, 'emailSubmit'])
         ->middleware('signed')->name('surveys.email-submit');
+    // LINK PÚBLICO da pesquisa (sem login; p/ WhatsApp/clientes) — assinado, sem usuário; quem responde se identifica.
+    Route::get('/surveys/{survey}/public',  [\App\Http\Controllers\NotificationSurveyController::class, 'publicForm'])
+        ->middleware(['signed', 'throttle:60,1'])->name('surveys.public-form');
+    Route::post('/surveys/{survey}/public', [\App\Http\Controllers\NotificationSurveyController::class, 'publicSubmit'])
+        ->middleware(['signed', 'throttle:20,1'])->name('surveys.public-submit');
     // 🔗 Callback OAuth Microsoft 365 (público — o browser é redirecionado pela Microsoft;
     // o usuário é identificado pelo `state` assinado, não pelo bearer token).
     Route::get('/integrations/microsoft/callback', [\App\Http\Controllers\UserIntegrationController::class, 'callback'])
@@ -661,6 +666,7 @@ Route::prefix('v1')->group(function () {
         Route::post('/surveys/{survey}/respond', [\App\Http\Controllers\NotificationSurveyController::class, 'respond']);
         Route::get('/surveys/{survey}/results',  [\App\Http\Controllers\NotificationSurveyController::class, 'results']);
         Route::post('/surveys/{survey}/revoke',  [\App\Http\Controllers\NotificationSurveyController::class, 'revoke']);
+        Route::get('/surveys/{survey}/public-link', [\App\Http\Controllers\NotificationSurveyController::class, 'publicLinkEndpoint']);
 
         // Agenda / Calendário da tela inicial (eventos do mês)
         Route::get('/calendar/events', [\App\Http\Controllers\CalendarController::class, 'events']);

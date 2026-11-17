@@ -75,7 +75,14 @@ class NotificationSurveyController extends Controller
         // interna/confidencial; o respondente não sabe que registramos). null só p/
         // respostas legadas gravadas antes de passarmos a vincular as anônimas.
         $respondentName = function (NotificationSurveyResponse $r) {
-            return $r->user?->name;
+            if ($r->user) return $r->user->name;
+            if ($r->respondent_name) { // link público: identificação digitada no form
+                return $r->respondent_name
+                    . ($r->respondent_company ? ' (' . $r->respondent_company . ')' : '')
+                    . ($r->respondent_email ? ' · ' . $r->respondent_email : '')
+                    . ' · link público';
+            }
+            return null;
         };
 
         // Respostas por pergunta (p/ montar agregados por pergunta).
@@ -221,6 +228,62 @@ class NotificationSurveyController extends Controller
         return URL::temporarySignedRoute('surveys.email-form', $expires, ['survey' => $survey->id, 'user' => $u->id]);
     }
 
+    // ───────────────────────── LINK PÚBLICO (sem login; WhatsApp etc.) ─────────────────────────
+
+    /** URL pública (assinada, sem usuário) — qualquer pessoa com o link responde, identificando-se no form. */
+    public static function publicLink(NotificationSurvey $survey): string
+    {
+        return URL::signedRoute('surveys.public-form', ['survey' => $survey->id]);
+    }
+
+    /** Admin/dono: obtém o link público para copiar e compartilhar. */
+    public function publicLinkEndpoint(Request $request, NotificationSurvey $survey): JsonResponse
+    {
+        $this->authorizeAdmin($request, $survey);
+        return response()->json(['url' => self::publicLink($survey), 'closed' => $survey->isClosed()]);
+    }
+
+    public function publicForm(Request $request, NotificationSurvey $survey)
+    {
+        $survey->loadMissing(['questions.options', 'notification.company']);
+        $title = e($survey->notification?->title ?? 'Pesquisa');
+        $brand = $this->brandAssets($survey);
+        if ($survey->isClosed()) {
+            return response($this->emailResultPage($title, false, 'O prazo desta pesquisa já encerrou.', $brand))->header('Content-Type', 'text/html; charset=UTF-8');
+        }
+        return response($this->emailFormPage($survey, null, $title, $brand))->header('Content-Type', 'text/html; charset=UTF-8');
+    }
+
+    public function publicSubmit(Request $request, NotificationSurvey $survey)
+    {
+        $survey->loadMissing(['questions.options', 'notification.company']);
+        $title = e($survey->notification?->title ?? 'Pesquisa');
+        $brand = $this->brandAssets($survey);
+        $html = fn (bool $ok, string $m) => response($this->emailResultPage($title, $ok, $m, $brand))->header('Content-Type', 'text/html; charset=UTF-8');
+        if ($survey->isClosed()) return $html(false, 'O prazo desta pesquisa já encerrou.');
+        if (trim((string) $request->input('website', '')) !== '') return $html(true, 'Pesquisa respondida. Muito obrigado! ✅'); // honeypot (robô)
+
+        $name = mb_substr(trim((string) $request->input('r_name', '')), 0, 160);
+        $email = mb_strtolower(mb_substr(trim((string) $request->input('r_email', '')), 0, 190));
+        $company = mb_substr(trim((string) $request->input('r_company', '')), 0, 190);
+        if ($name === '') return $html(false, 'Informe o seu nome para enviar a pesquisa. Volte e preencha, por favor.');
+        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) return $html(false, 'E-mail inválido. Volte e corrija, por favor.');
+
+        // 1 resposta por e-mail (quando informado); usuário do Minutor com esse e-mail é vinculado.
+        $u = $email !== '' ? User::whereRaw('lower(email) = ?', [$email])->first() : null;
+        if ($email !== '') {
+            $dup = NotificationSurveyResponse::where('survey_id', $survey->id)
+                ->where(fn ($w) => $w->whereRaw('lower(respondent_email) = ?', [$email])->when($u, fn ($x) => $x->orWhere('user_id', $u->id)))->exists();
+            if ($dup) return $html(false, 'Este e-mail já respondeu esta pesquisa. Obrigado!');
+        }
+
+        $this->saveResponse($survey, $u, $this->normalizeEmailAnswers($request, $survey), [
+            'respondent_name' => $name, 'respondent_email' => $email ?: null, 'respondent_company' => $company ?: null, 'via_public_link' => true,
+        ]);
+        if ($u) $this->markAck($survey, $u->id);
+        return $html(true, 'Pesquisa respondida. Muito obrigado! ✅');
+    }
+
     /** Página HTML da pesquisa (GET assinado). */
     public function emailForm(Request $request, NotificationSurvey $survey)
     {
@@ -274,17 +337,17 @@ class NotificationSurveyController extends Controller
      * (mesmo anônima) — rastreio interno/confidencial: o respondente é informado
      * que é anônima, mas o admin consegue ver quem respondeu nos resultados.
      */
-    private function saveResponse(NotificationSurvey $survey, User $u, array $answersInput): void
+    private function saveResponse(NotificationSurvey $survey, ?User $u, array $answersInput, array $extra = []): void
     {
         $survey->loadMissing('questions.options');
         $byQuestion = collect($answersInput)->keyBy(fn ($a) => (int) ($a['question_id'] ?? 0));
 
-        DB::transaction(function () use ($survey, $u, $byQuestion) {
+        DB::transaction(function () use ($survey, $u, $byQuestion, $extra) {
             $response = NotificationSurveyResponse::create([
                 'survey_id'    => $survey->id,
-                'user_id'      => $u->id,
+                'user_id'      => $u?->id,
                 'submitted_at' => now(),
-            ]);
+            ] + $extra);
 
             $rows = [];
             foreach ($survey->questions as $q) {
@@ -411,10 +474,13 @@ class NotificationSurveyController extends Controller
             . '</div></body></html>';
     }
 
-    private function emailFormPage(NotificationSurvey $survey, User $u, string $title, array $brand = []): string
+    private function emailFormPage(NotificationSurvey $survey, ?User $u, string $title, array $brand = []): string
     {
         $expires = $survey->expires_at && $survey->expires_at->isFuture() ? $survey->expires_at : now()->addWeek();
-        $action = e(URL::temporarySignedRoute('surveys.email-submit', $expires, ['survey' => $survey->id, 'user' => $u->id]));
+        $public = $u === null; // link público: identificação no próprio form
+        $action = e($public
+            ? URL::signedRoute('surveys.public-submit', ['survey' => $survey->id])
+            : URL::temporarySignedRoute('surveys.email-submit', $expires, ['survey' => $survey->id, 'user' => $u->id]));
         $anon = (bool) $survey->anonymous;
         $accent = $brand['accent'] ?? '#06b6d4';
         $needPeople = $survey->questions->contains(fn ($q) => $q->type === 'person');
@@ -427,9 +493,20 @@ class NotificationSurveyController extends Controller
             }
         }
 
-        $ident = $anon
-            ? '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Esta pesquisa é <b>anônima</b> — sua identidade não é registrada.</p>'
-            : '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Respondendo como <b>' . e($u->name) . '</b>.</p>';
+        $inp = 'width:100%;box-sizing:border-box;padding:11px;background:#0b0f14;border:1px solid #374151;border-radius:8px;color:#e5e7eb;font-size:14px';
+        $lbl = 'font-size:14px;font-weight:600;color:#fff;margin:0 0 8px';
+        $ident = $public
+            ? '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Identifique-se e responda as perguntas abaixo.</p>'
+            : ($anon
+                ? '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Esta pesquisa é <b>anônima</b> — sua identidade não é registrada.</p>'
+                : '<p style="font-size:13px;color:#9ca3af;margin:0;text-align:center">Respondendo como <b>' . e($u->name) . '</b>.</p>');
+        $identFields = $public
+            ? '<div style="margin:0 0 20px"><div style="' . $lbl . '">Seu nome <span style="color:#f87171">*</span></div><input name="r_name" required maxlength="160" autocomplete="name" style="' . $inp . '"></div>'
+              . '<div style="margin:0 0 20px"><div style="' . $lbl . '">Empresa</div><input name="r_company" maxlength="190" autocomplete="organization" style="' . $inp . '"></div>'
+              . '<div style="margin:0 0 20px"><div style="' . $lbl . '">E-mail</div><input name="r_email" type="email" maxlength="190" autocomplete="email" style="' . $inp . '"></div>'
+              . '<input name="website" tabindex="-1" autocomplete="off" style="position:absolute;left:-5000px" aria-hidden="true">'
+              . '<div style="height:1px;background:#1f2937;margin:4px 0 20px"></div>'
+            : '';
 
         $qsHtml = '';
         foreach ($survey->questions as $idx => $q) {
@@ -465,7 +542,7 @@ class NotificationSurveyController extends Controller
         $brandName = $brand['name'] ?? '';
         $header = '<div style="text-align:center;margin:0 0 22px">'
             . ($logoHtml ? '<div style="margin:0 0 12px">' . $logoHtml . '</div>' : '')
-            . ($brandName ? '<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#64748b">Pesquisa interna · ' . e($brandName) . '</div>' : '')
+            . ($brandName ? '<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#64748b">' . ($public ? 'Pesquisa' : 'Pesquisa interna') . ' · ' . e($brandName) . '</div>' : '')
             . '</div>';
         $year = now()->format('Y');
         $footer = '<p style="text-align:center;font-size:11px;color:#4b5563;margin:20px 0 0">'
@@ -480,7 +557,7 @@ class NotificationSurveyController extends Controller
             . $ident
             . '<div style="height:1px;background:#1f2937;margin:4px 0 20px"></div>'
             . '<form method="POST" action="' . $action . '" onsubmit="return vf(this)">'
-            . $qsHtml
+            . $identFields . $qsHtml
             . '<button type="submit" style="width:100%;padding:14px;background:' . $accent . ';color:#fff;border:none;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer">Enviar respostas</button>'
             . '</form>'
             . $footer
