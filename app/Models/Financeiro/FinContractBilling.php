@@ -52,7 +52,8 @@ class FinContractBilling extends Model
         $code = strtolower((string) ($c->contractType->code ?? ''));
         return match (true) {
             in_array($code, ['cloud', 'saas'], true) => 'mensalidade',
-            in_array($code, ['monthly_hours', 'fixed_hours'], true) => 'banco_horas',
+            // Banco de Horas FIXO é pacote comprado de uma vez (parcela avulsa), não mensalidade.
+            $code === 'monthly_hours' => 'banco_horas',
             default => 'none',
         };
     }
