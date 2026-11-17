@@ -67,7 +67,7 @@ class EmissaoService
             $empresa->dps_proximo_numero = $numeroDps + 1; // nunca reaproveita, mesmo se rejeitar
             $empresa->save();
             $nota = FinInvoice::create($base + [
-                'emissor' => $this->emissor()->nome(), 'ambiente' => $empresa->nfse_ambiente, 'status' => 'enviando',
+                'emissor' => $this->emissor($empresa)->nome(), 'ambiente' => $empresa->nfse_ambiente, 'status' => 'enviando',
                 'serie' => $empresa->dps_serie ?: '1', 'numero_dps' => $numeroDps,
             ]);
             return [$nota, $empresa];
@@ -79,7 +79,7 @@ class EmissaoService
 
         // Chamada externa FORA da transação (não segura lock durante a rede).
         try {
-            $r = $this->emissor()->emitir($nota, $empresa);
+            $r = $this->emissor($empresa)->emitir($nota, $empresa);
         } catch (\Throwable $e) {
             $nota->update(['status' => 'erro', 'mensagens' => [['codigo' => 'EXC', 'descricao' => mb_substr($e->getMessage(), 0, 500)]]]);
             return $nota->fresh();
@@ -104,9 +104,9 @@ class EmissaoService
         return $nota->fresh();
     }
 
-    public function emissor(): NfseEmissor
+    public function emissor(?FinCompanySetting $empresa = null): NfseEmissor
     {
-        return match (config('financeiro.nfse_emissor')) {
+        return match ($empresa?->nfse_emissor ?: config('financeiro.nfse_emissor')) {
             'nacional' => app(\App\Services\Financeiro\Nfse\NacionalNfseEmissor::class),
             default => app(SimuladoNfseEmissor::class),
         };
@@ -118,10 +118,10 @@ class EmissaoService
         if ($producao && ! config('financeiro.nfse_permitir_producao')) {
             throw new EmissaoException('Emissão de NFS-e em PRODUÇÃO está bloqueada neste ambiente (FIN_NFSE_PERMITIR_PRODUCAO).');
         }
-        if ($producao && $this->emissor()->nome() === 'simulado') {
+        if ($producao && $this->emissor($empresa)->nome() === 'simulado') {
             throw new EmissaoException('O emissor simulado só pode ser usado com a NFS-e em homologação.');
         }
-        if ($this->emissor()->nome() === 'nacional') {
+        if ($this->emissor($empresa)->nome() === 'nacional') {
             if (! $empresa->tem_certificado || ! $empresa->certificado_valido_ate?->isFuture()) {
                 throw new EmissaoException('Certificado A1 ausente ou vencido (Financeiro › Cadastros › Empresa).');
             }

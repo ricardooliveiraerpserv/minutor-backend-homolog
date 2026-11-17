@@ -20,13 +20,13 @@ class FinCompanySetting extends Model
         'cep', 'logradouro', 'numero', 'bairro', 'cidade', 'uf',
         'aliquota_iss', 'aliquota_irrf', 'aliquota_csll', 'aliquota_pis', 'aliquota_cofins',
         'aliquota_cbs', 'aliquota_ibs', 'codigo_tributacao_nacional',
-        'dps_serie', 'dps_proximo_numero', 'nfse_ambiente',
+        'dps_serie', 'dps_proximo_numero', 'nfse_ambiente', 'nfse_emissor',
     ];
 
     protected $hidden = ['certificado_pfx', 'certificado_senha'];
 
     // Espelha os defaults do banco para o model recém-criado já sair completo.
-    protected $attributes = ['nfse_ambiente' => 'homologacao', 'dps_proximo_numero' => 1];
+    protected $attributes = ['nfse_ambiente' => 'homologacao', 'dps_proximo_numero' => 1, 'nfse_emissor' => 'simulado'];
 
     protected $casts = [
         'certificado_pfx' => 'encrypted',
@@ -43,6 +43,7 @@ class FinCompanySetting extends Model
 
     public const AMBIENTES = ['homologacao', 'producao'];
     public const REGIMES = ['simples', 'lucro_presumido', 'lucro_real'];
+    public const EMISSORES = ['simulado', 'nacional'];
 
     public function company(): BelongsTo { return $this->belongsTo(Company::class); }
     public function enviadoPor(): BelongsTo { return $this->belongsTo(User::class, 'certificado_enviado_por'); }

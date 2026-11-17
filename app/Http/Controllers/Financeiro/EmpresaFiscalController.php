@@ -44,6 +44,7 @@ class EmpresaFiscalController extends FinanceiroController
             'dps_serie' => 'nullable|string|max:5',
             'dps_proximo_numero' => 'nullable|integer|min:1',
             'nfse_ambiente' => ['nullable', Rule::in(FinCompanySetting::AMBIENTES)],
+            'nfse_emissor' => ['nullable', Rule::in(FinCompanySetting::EMISSORES)],
         ]);
 
         $s = FinCompanySetting::forCompany($this->empresaId($request));
@@ -58,6 +59,14 @@ class EmpresaFiscalController extends FinanceiroController
         // validate() devolve só as chaves enviadas: o que não veio fica como está; null limpa.
         if (array_key_exists('nfse_ambiente', $data) && $data['nfse_ambiente'] === null) {
             unset($data['nfse_ambiente']); // coluna NOT NULL — ignorar null
+        }
+        if (($data['nfse_emissor'] ?? null) === 'nacional' && $s->nfse_emissor !== 'nacional') {
+            abort_unless($s->tem_certificado && $s->certificado_valido_ate?->isFuture(), 422,
+                'Envie um certificado A1 válido antes de usar o emissor nacional.');
+            FinAuditLog::registrar($request, $s->company_id, 'nfse.emissor.nacional', $s);
+        }
+        if (array_key_exists('nfse_emissor', $data) && $data['nfse_emissor'] === null) {
+            unset($data['nfse_emissor']);
         }
         if (array_key_exists('dps_proximo_numero', $data) && $data['dps_proximo_numero'] === null) {
             unset($data['dps_proximo_numero']);
